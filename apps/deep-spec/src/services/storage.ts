@@ -1,57 +1,85 @@
+/**
+ * Lookups persistence: browser localStorage, or Supabase (Postgres + Storage + RLS)
+ * once anonymous auth succeeds.
+ */
+
 import type { ChatMessage, Lookup } from "../types";
+import { isSupabaseConfigured } from "../lib/supabase/config";
+import { getSupabase } from "../lib/supabase/client";
+import {
+  appendChatMessageLocal,
+  deleteLookupLocal,
+  getLookupLocal,
+  listLookupsLocal,
+  saveNewLookupLocal,
+  updateLookupLocal,
+} from "./storage-local";
+import {
+  appendChatMessageRemote,
+  deleteLookupRemote,
+  getLookupRemote,
+  listLookupsRemote,
+  saveNewLookupRemote,
+  updateLookupRemote,
+} from "./storage-supabase";
 
-const STORAGE_KEY = "deep-spec:lookups";
+export type StorageBackendKind = "local" | "remote";
 
-function readRaw(): Lookup[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed as Lookup[];
-  } catch {
-    return [];
-  }
+let backend: StorageBackendKind = "local";
+
+export function getActiveStorageBackend(): StorageBackendKind {
+  return backend;
 }
 
-function writeRaw(items: Lookup[]) {
+/** Call once on startup when using the app routes (after age gate). */
+export async function bootstrapStorageBackend(): Promise<StorageBackendKind> {
+  backend = "local";
+  if (!isSupabaseConfigured()) return backend;
+
+  const sb = getSupabase();
+  if (!sb) return backend;
+
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    const {
+      data: { session },
+    } = await sb.auth.getSession();
+    if (!session) {
+      const { error } = await sb.auth.signInAnonymously();
+      if (error) throw error;
+    }
+    backend = "remote";
+    return backend;
   } catch (e) {
-    console.error("localStorage write failed", e);
-    throw new Error(
-      "Storage is full or unavailable. Try deleting older lookups in the app (we will add a clearer UI for this).",
-      { cause: e },
-    );
+    console.warn("[storage]", {
+      severity: "warn",
+      topic: "supabase_fallback",
+      detail: e instanceof Error ? e.message : String(e),
+    });
+    backend = "local";
+    return backend;
   }
 }
 
-export function listLookups(): Lookup[] {
-  return readRaw().sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+export async function listLookups(): Promise<Lookup[]> {
+  return backend === "remote" ? listLookupsRemote() : listLookupsLocal();
 }
 
-export function getLookup(id: string): Lookup | undefined {
-  return readRaw().find((x) => x.id === id);
+export async function getLookup(id: string): Promise<Lookup | undefined> {
+  return backend === "remote" ? getLookupRemote(id) : getLookupLocal(id);
 }
 
-export function upsertLookup(lookup: Lookup) {
-  const all = readRaw().filter((x) => x.id !== lookup.id);
-  all.push(lookup);
-  writeRaw(all);
+export async function saveNewLookup(lookup: Lookup): Promise<void> {
+  return backend === "remote" ? saveNewLookupRemote(lookup) : saveNewLookupLocal(lookup);
 }
 
-export function deleteLookup(id: string) {
-  writeRaw(readRaw().filter((x) => x.id !== id));
+export async function updateLookup(id: string, patch: Partial<Lookup>): Promise<void> {
+  return backend === "remote" ? updateLookupRemote(id, patch) : updateLookupLocal(id, patch);
 }
 
-export function updateLookup(id: string, patch: Partial<Lookup>) {
-  const cur = getLookup(id);
-  if (!cur) return;
-  upsertLookup({ ...cur, ...patch, id: cur.id });
+export async function deleteLookup(id: string): Promise<void> {
+  return backend === "remote" ? deleteLookupRemote(id) : deleteLookupLocal(id);
 }
 
-export function appendChatMessage(lookupId: string, message: ChatMessage) {
-  const cur = getLookup(lookupId);
-  if (!cur) return;
-  upsertLookup({ ...cur, chatHistory: [...cur.chatHistory, message] });
+export async function appendChatMessage(lookupId: string, message: ChatMessage): Promise<void> {
+  return backend === "remote" ? appendChatMessageRemote(lookupId, message) : appendChatMessageLocal(lookupId, message);
 }

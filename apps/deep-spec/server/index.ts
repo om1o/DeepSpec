@@ -6,6 +6,7 @@
 import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,7 +29,30 @@ app.use(
     },
   }),
 );
-app.use(express.json({ limit: "22mb" }));
+app.use(express.json({ limit: "8mb" }));
+
+app.use((req, res, next) => {
+  const rid = randomUUID();
+  (req as express.Request & { requestId?: string }).requestId = rid;
+  res.setHeader("x-request-id", rid);
+  const t0 = performance.now();
+  res.on("finish", () => {
+    if (req.path.startsWith("/api/")) {
+      console.log(
+        JSON.stringify({
+          severity: "info",
+          topic: "http_access",
+          requestId: rid,
+          method: req.method,
+          path: req.path,
+          status: res.statusCode,
+          ms: Math.round(performance.now() - t0),
+        }),
+      );
+    }
+  });
+  next();
+});
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true, service: "deep-spec-api" });

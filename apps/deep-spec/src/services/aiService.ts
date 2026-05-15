@@ -6,7 +6,14 @@ export type AIInput = {
   responseAsJson?: boolean;
 };
 
-export type AIServiceErrorCode = "rate_limit" | "network" | "parse" | "config" | "bad_request" | "unknown";
+export type AIServiceErrorCode =
+  | "rate_limit"
+  | "network"
+  | "parse"
+  | "config"
+  | "bad_request"
+  | "payload_too_large"
+  | "unknown";
 
 export class AIServiceError extends Error {
   readonly code: AIServiceErrorCode;
@@ -50,6 +57,9 @@ export async function runAI(input: AIInput): Promise<string | object> {
     }
     if (code === "config") {
       throw new AIServiceError("config", msg);
+    }
+    if (res.status === 413 || code === "payload_too_large") {
+      throw new AIServiceError("payload_too_large", msg || "Photo or request is too large. Try a smaller image.");
     }
     if (code === "bad_request") {
       throw new AIServiceError("bad_request", msg);

@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Button, Card } from "../components/ui";
 import { CorrectionField } from "./CorrectionField";
 import { cn } from "../lib/utils";
+import { useStorageRevision } from "../hooks/useStorageRevision";
 import { deleteLookup, getLookup, updateLookup } from "../services/storage";
 import type { Lookup } from "../types";
 
@@ -15,15 +16,30 @@ function confidenceStyle(c: Lookup["result"]["confidence"]) {
 export default function Result() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [reload, setReload] = useState(0);
-  const bump = () => setReload((x) => x + 1);
+  const rev = useStorageRevision();
+  const [ticket, setTicket] = useState<{ id: string; lookup: Lookup | null } | null>(null);
 
-  const lookup = useMemo(
-    () => (id ? getLookup(id) : undefined),
-    // reload intentionally busts stale reads after localStorage writes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [id, reload],
-  );
+  useEffect(() => {
+    if (!id) return;
+    let ok = true;
+    void getLookup(id).then((l) => {
+      if (!ok) return;
+      setTicket({ id, lookup: l ?? null });
+    });
+    return () => {
+      ok = false;
+    };
+  }, [id, rev]);
+
+  const ticketMatches = Boolean(id && ticket && ticket.id === id);
+  const lookup = ticketMatches && ticket?.lookup ? ticket.lookup : null;
+  const phase: "loading" | "ready" | "missing" = !id
+    ? "missing"
+    : !ticketMatches
+      ? "loading"
+      : lookup
+        ? "ready"
+        : "missing";
 
   const stateNote = useMemo(() => {
     if (!lookup) return null;
@@ -33,7 +49,15 @@ export default function Result() {
     return null;
   }, [lookup]);
 
-  if (!lookup) {
+  if (phase === "loading") {
+    return (
+      <div className="flex min-h-dvh flex-col px-6 py-24 text-center text-[15px] text-ds-muted-light dark:text-ds-muted">
+        Loading lookup…
+      </div>
+    );
+  }
+
+  if (phase === "missing" || !lookup) {
     return (
       <div className="px-4 py-14 text-center">
         <p className="mb-6 text-neutral-900 dark:text-ds-text">That lookup wasn&apos;t found.</p>
@@ -45,10 +69,12 @@ export default function Result() {
   }
 
   const onRate = (rating: NonNullable<Lookup["rating"]>) => {
-    updateLookup(lookup.id, { rating });
-    bump();
+    void (async () => {
+      await updateLookup(lookup.id, { rating });
+      const next = await getLookup(lookup.id);
+      setTicket({ id: lookup.id, lookup: next ?? null });
+    })();
   };
-
 
   return (
     <div className="flex min-h-screen flex-col pb-36">
@@ -72,10 +98,12 @@ export default function Result() {
               <button
                 type="button"
                 className="flex w-full px-4 py-2 text-left text-[14px] hover:bg-neutral-100 dark:hover:bg-neutral-900"
-                onClick={() => {
-                  deleteLookup(lookup.id);
-                  navigate("/", { replace: true });
-                }}
+                onClick={() =>
+                  void (async () => {
+                    await deleteLookup(lookup.id);
+                    navigate("/", { replace: true });
+                  })()
+                }
               >
                 Delete
               </button>
@@ -101,7 +129,11 @@ export default function Result() {
 
       <div className="px-4 pb-6">
         <button type="button" className="w-full overflow-hidden rounded-xl bg-black/5 dark:bg-neutral-900">
-          <img src={lookup.imageBase64} alt="" className="mx-auto block max-h-[38vh] w-full object-contain" />
+          {lookup.imageBase64 ? (
+            <img src={lookup.imageBase64} alt="" className="mx-auto block max-h-[38vh] w-full object-contain" />
+          ) : (
+            <div className="py-24 text-[14px] text-ds-muted">Photo unavailable.</div>
+          )}
         </button>
       </div>
 
@@ -187,10 +219,9 @@ export default function Result() {
 
         {lookup.rating === "down" || lookup.correction ? (
           <CorrectionField
-            key={`${lookup.id}-${lookup.rating}`}
+            key={`${lookup.id}-${lookup.rating}-${lookup.correction ?? ""}`}
             lookupId={lookup.id}
             initial={lookup.correction}
-            onCommitted={bump}
           />
         ) : null}
       </div>

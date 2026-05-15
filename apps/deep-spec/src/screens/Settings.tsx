@@ -60,19 +60,26 @@ export default function Settings() {
             About Deep Spec
           </h2>
           <p className="text-[14px] leading-relaxed text-neutral-800 dark:text-neutral-300">
-            Deep Spec helps nervous drivers decode what&apos;s under the hood — straight answers without shop talk theater.
+            Deep Spec turns a photo into plain-language guesses about what kind of part you&apos;re looking at. Built for
+            vans, weekend wrenchers, and anyone who wants to walk into a shop with more context.
           </p>
         </div>
 
-        <Disclosure title="Privacy Policy">
+        <Disclosure title="Privacy (draft — not legal advice)">
           <pre className="whitespace-pre-wrap font-sans text-[14px] leading-relaxed text-neutral-800 dark:text-neutral-200">
-            {`Photos may be reviewed to improve Deep Spec. We never sell your data.\nYou can request deletion anytime.\n\n(This is informal summary wording — replace with lawyer-reviewed policy when you publish.)`}
+            {`What we collect:\n- Compressed part photos you choose to analyze\n- Notes you type (car + problem context)\n- AI output, your ratings, and correction text\n\nCloud mode (Supabase): data is stored under an anonymous account bound to this browser until you clear site data. Row-level security keeps each user isolated; object storage is private with per-user prefixes.\n\nModeration: we may introduce human review for obvious abuse or legally sensitive content. Rows include a moderation_status field reserved for that workflow.\n\nWe do not sell personal data. Deletion: contact the operator (your parent/guardian until you have a formal business) until a self-serve delete portal ships.\n\nReplace this block with a lawyer-reviewed Privacy Policy before GA.`}
           </pre>
         </Disclosure>
 
-        <Disclosure title="Terms of Service">
+        <Disclosure title="Terms & safety (draft — not legal advice)">
           <pre className="whitespace-pre-wrap font-sans text-[14px] leading-relaxed text-neutral-800 dark:text-neutral-200">
-            {`Deep Spec uses AI guesses from photos—they can be wrong. You must be 13+ to use Deep Spec.\nFor safety-critical systems, rely on professional inspection.\n`}
+            {`Age: You must be 13+ or use the product with a supervising adult. This app is not COPPA-ready for under-13 standalone use.\n\nNo warranty: AI guesses can be wrong—do not rely on them for braking, steering, suspension, fuel systems, or airbags without a mechanic.\n\nPricing & fitment: Deep Spec does not provide OEM part numbers or live pricing.\n\nHave counsel review these terms before you onboard real customers.`}
+          </pre>
+        </Disclosure>
+
+        <Disclosure title="Abuse & safety rails (product + engineering)">
+          <pre className="whitespace-pre-wrap font-sans text-[14px] leading-relaxed text-neutral-800 dark:text-neutral-200">
+            {`Already in the stack:\n- Server caps on /api/ai body size (configure AI_MAX_BODY_BYTES)\n- Structured JSON logs around HTTP + Gemini failures (hook up Sentry / Datadog / Supabase Log Drains)\n- Device-scoped anonymous Supabase sessions instead of sharing one global key client-side\n\nStill to wire for production scale:\n- Per-user quotas (Edge Function or Redis) for vision calls\n- Automated blocklists for policy-violating uploads\n- Parent/guardian-visible opt-in if you target younger audiences with supervision\n`}
           </pre>
         </Disclosure>
       </div>

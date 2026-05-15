@@ -54,7 +54,23 @@ That means the browser hit `/api/ai` but **nothing listened on port 8788**. Comm
 3. **Environment variables**: add **`GEMINI_API_KEY`** (same as local `.env`).
 4. The repo includes **`vercel.json`**: SPA deep links fallback to `index.html`; **`api/ai.ts`** is serverless Gemini using the shared **`server/invoke-ai.ts`** logic as local Express.
 
-**Architecture (short):** The React app never sees the Gemini key—it only **`fetch`es `/api/ai`**. `runAI()` in `src/services/aiService.ts` is still the single client choke point. Locally, Express mounts that path and Vite proxies it; on Vercel, `api/ai.ts` calls the same `invokeAiPost()`. Near-term backlog: migrate off `localStorage` (Supabase/Postgres), add auth/session, rate-limit & abuse protections, observability/alerts on the API route, upload size limits tuning for big photos.
+**Architecture (short):** The SPA never bundles `GEMINI_API_KEY`. It **`fetch`es `/api/ai`** (`runAI()` is the sole client choke point). Optional **`VITE_SUPABASE_*`** swaps lookup persistence from **`localStorage` → Postgres + Storage** behind anonymous JWTs + strict RLS. Configure **`AI_MAX_BODY_BYTES`** and wire log drains/alerts on the Gemini route for safer launch.
+
+### Supabase cloud saves (optional)
+
+1. Enable **Anonymous sign-ins**: Supabase dashboard → Authentication → Providers → Anonymous.
+2. Paste `apps/deep-spec/supabase/migrations/20250515100000_deep_spec_lookups.sql` into the SQL editor (**run once**) or hook the folder with Supabase CLI and `db push`.
+3. Append to `apps/deep-spec/.env` (never commit secrets):
+
+```
+VITE_SUPABASE_URL=https://YOUR_REF.supabase.co
+VITE_SUPABASE_ANON_KEY=YOUR_ANON_PUBLISHABLE_KEY
+```
+
+Restart `npm run web`. Confirm in the DevTools console: `[storage] { backend: \"remote\" }`. If anon sign-in fails, the app silently keeps **local-only** caches.
+
+Compliance & ops notes live in-app under **Settings** (Privacy / Terms / Abuse) — swap those blobs for lawyer-reviewed prose before GA.
+
 ## Mobile shell (`apps/mobile`)
 
 ```bash

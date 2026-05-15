@@ -1,12 +1,13 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Button, Card } from "../components/ui";
 import { AIServiceError, runAI } from "../services/aiService";
 import { FOLLOWUP_PROMPT } from "../services/systemPrompts";
-import { appendChatMessage, getLookup, upsertLookup } from "../services/storage";
-import type { ChatMessage } from "../types";
+import { appendChatMessage, getLookup, updateLookup } from "../services/storage";
+import { useStorageRevision } from "../hooks/useStorageRevision";
+import type { ChatMessage, Lookup } from "../types";
 
-function buildFollowUpUserBlob(lookup: NonNullable<ReturnType<typeof getLookup>>, newest: string) {
+function buildFollowUpUserBlob(lookup: Lookup, newest: string) {
   const history = [...lookup.chatHistory]
     .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
     .join("\n");
@@ -27,20 +28,35 @@ function buildFollowUpUserBlob(lookup: NonNullable<ReturnType<typeof getLookup>>
 export default function Chat() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [reload, setReload] = useState(0);
-
-  const lookup = useMemo(
-    () => (id ? getLookup(id) : undefined),
-    // reload intentionally forces re-query from localStorage after writes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [id, reload],
-  );
+  const rev = useStorageRevision();
+  const [ticket, setTicket] = useState<{ id: string; lookup: Lookup | null } | null>(null);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!id) return;
+    let ok = true;
+    void getLookup(id).then((l) => {
+      if (!ok) return;
+      setTicket({ id, lookup: l ?? null });
+    });
+    return () => {
+      ok = false;
+    };
+  }, [id, rev]);
+
+  const ticketMatches = Boolean(id && ticket && ticket.id === id);
+  const lookup = ticketMatches && ticket?.lookup ? ticket.lookup : null;
+  const phase: "loading" | "ready" | "missing" = !id
+    ? "missing"
+    : !ticketMatches
+      ? "loading"
+      : lookup
+        ? "ready"
+        : "missing";
+
   const messages = lookup?.chatHistory ?? [];
-  const bump = () => setReload((r) => r + 1);
 
   const send = useCallback(async () => {
     if (!lookup) return;
@@ -58,11 +74,10 @@ export default function Chat() {
     setError(null);
     const blob = buildFollowUpUserBlob(lookup, text);
 
-    upsertLookup({ ...lookup, chatHistory: [...lookup.chatHistory, userMsg] });
-    bump();
-    setDraft("");
-
     try {
+      await updateLookup(lookup.id, { chatHistory: [...lookup.chatHistory, userMsg] });
+      setDraft("");
+
       const body = await runAI({
         type: "text",
         userMessage: blob,
@@ -70,13 +85,13 @@ export default function Chat() {
         responseAsJson: false,
       });
       const content = typeof body === "string" ? body : "";
-      appendChatMessage(lookup.id, {
+
+      await appendChatMessage(lookup.id, {
         id: crypto.randomUUID(),
         role: "assistant",
         content,
         timestamp: new Date().toISOString(),
       });
-      bump();
     } catch (e) {
       const msg = e instanceof AIServiceError ? e.message : "Could not reply.";
       setError(msg);
@@ -85,7 +100,15 @@ export default function Chat() {
     }
   }, [draft, lookup]);
 
-  if (!lookup) {
+  if (phase === "loading") {
+    return (
+      <div className="flex min-h-dvh flex-col px-6 py-24 text-center text-ds-muted">
+        Loading chat…
+      </div>
+    );
+  }
+
+  if (phase === "missing" || !lookup) {
     return (
       <div className="px-4 py-14 text-center">
         <p className="mb-6 dark:text-ds-text">Lookup not found.</p>
@@ -108,7 +131,9 @@ export default function Chat() {
 
       <Card className="mx-4 mt-4 flex gap-3 border-0 p-3 shadow-sm dark:bg-ds-card">
         <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-neutral-200 dark:bg-neutral-800">
-          <img src={lookup.imageBase64} alt="" className="h-full w-full object-cover" />
+          {lookup.imageBase64 ? (
+            <img src={lookup.imageBase64} alt="" className="h-full w-full object-cover" />
+          ) : null}
         </div>
         <div className="min-w-0">
           <div className="truncate text-[16px] font-semibold">{lookup.result.partName}</div>

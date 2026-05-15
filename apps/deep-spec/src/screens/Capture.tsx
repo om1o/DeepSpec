@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { AIServiceError, runAI } from "../services/aiService";
 import { IDENTIFY_PROMPT } from "../services/systemPrompts";
-import { upsertLookup } from "../services/storage";
+import { saveNewLookup } from "../services/storage";
 import type { IdentifyJson } from "../types";
 import { mapIdentifyJson } from "../lib/mapIdentify";
 import { cn, compressImageFile } from "../lib/utils";
@@ -65,7 +65,7 @@ export default function Capture() {
         correction: null,
         chatHistory: [],
       };
-      upsertLookup(lookup);
+      await saveNewLookup(lookup);
       navigate(`/result/${id}`, { replace: true });
     } catch (e) {
       const msg =

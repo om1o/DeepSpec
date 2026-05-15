@@ -80,9 +80,40 @@ async function executeWithRetry(genAI: GoogleGenerativeAI, input: AiRequestBody)
   }
 }
 
+function approxSerializedBytes(raw: unknown): number {
+  try {
+    return new TextEncoder().encode(JSON.stringify(raw)).length;
+  } catch {
+    return Number.MAX_SAFE_INTEGER;
+  }
+}
+
 export async function invokeAiPost(rawBody: unknown): Promise<AiHandlerResult> {
   const t0 = performance.now();
   const apiKey = process.env.GEMINI_API_KEY;
+
+  const maxBody = Number(process.env.AI_MAX_BODY_BYTES ?? 6_291_456);
+  const approxBytes = approxSerializedBytes(rawBody);
+  if (approxBytes > maxBody) {
+    console.warn(
+      JSON.stringify({
+        severity: "warn",
+        topic: "ai_payload_limit",
+        approxBytes,
+        maxBody,
+        ms: Math.round(performance.now() - t0),
+      }),
+    );
+    return {
+      status: 413,
+      json: {
+        error: {
+          code: "payload_too_large",
+          message: "Request too large. Try a smaller photo or shorten your notes.",
+        },
+      },
+    };
+  }
 
   if (!apiKey) {
     console.error("[invokeAiPost] missing GEMINI_API_KEY");
