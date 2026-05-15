@@ -38,6 +38,23 @@ npm run web
 
 Opens Vite (~5173) with `/api/*` proxied to the Gemini proxy on localhost `8788` by default.
 
+### `ERR_CONNECTION_REFUSED` when you tap Identify
+
+That means the browser hit `/api/ai` but **nothing listened on port 8788**. Common causes:
+
+| What you ran | Fix |
+|---|---|
+| Only `vite` / `npm run dev:web` | Start both: from repo root use **`npm run web`**. |
+| `vite preview` only | Run **`npm run preview:with-api -w deep-spec`** from repo root *or* run **`npm run dev:api -w deep-spec`** in a second terminal. |
+
+### Deploy on Vercel (previews / production SPA + `/api`)
+
+1. In Vercel → Project → **Root Directory**: `apps/deep-spec`.
+2. Build: **`npm run build`**, Output: **`dist`** (framework **Vite** / static).
+3. **Environment variables**: add **`GEMINI_API_KEY`** (same as local `.env`).
+4. The repo includes **`vercel.json`**: SPA deep links fallback to `index.html`; **`api/ai.ts`** is serverless Gemini using the shared **`server/invoke-ai.ts`** logic as local Express.
+
+**Architecture (short):** The React app never sees the Gemini key—it only **`fetch`es `/api/ai`**. `runAI()` in `src/services/aiService.ts` is still the single client choke point. Locally, Express mounts that path and Vite proxies it; on Vercel, `api/ai.ts` calls the same `invokeAiPost()`. Near-term backlog: migrate off `localStorage` (Supabase/Postgres), add auth/session, rate-limit & abuse protections, observability/alerts on the API route, upload size limits tuning for big photos.
 ## Mobile shell (`apps/mobile`)
 
 ```bash

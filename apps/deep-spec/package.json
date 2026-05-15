@@ -9,6 +9,7 @@
     "dev:api": "tsx watch server/index.ts",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "preview:with-api": "concurrently -k -n api,preview -c blue,magenta \"npm run dev:api\" \"vite preview\"",
     "lint": "eslint ."
   },
   "dependencies": {
@@ -39,6 +40,7 @@
     "tsx": "^4.19.4",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
-    "vite": "^8.0.12"
+    "vite": "^8.0.12",
+    "@vercel/node": "^5.1.13"
   }
 }
