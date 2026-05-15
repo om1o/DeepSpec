@@ -1,0 +1,12 @@
+fastapi>=0.115
+uvicorn[standard]>=0.32
+sqlalchemy[asyncio]>=2.0
+asyncpg>=0.30
+pydantic>=2.10
+pydantic-settings>=2.6
+python-multipart>=0.0.17
+httpx>=0.28
+pymupdf>=1.24
+rank-bm25>=0.2.2
+minio>=7.2
+reportlab>=4.2

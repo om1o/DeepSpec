@@ -1,0 +1,12 @@
+{
+  "name": "deepspec-pro",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "web": "npm run dev -w web-admin",
+    "mobile": "npm run start -w mobile"
+  }
+}

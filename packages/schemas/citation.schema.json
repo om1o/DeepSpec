@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deepspec.local/schemas/citation.schema.json",
+  "title": "Citation",
+  "type": "object",
+  "required": ["source_type", "document_id", "page", "excerpt", "excerpt_hash"],
+  "properties": {
+    "source_type": {
+      "type": "string",
+      "enum": ["manual_pdf", "catalog_record", "uploaded_image", "archived_url", "unknown"]
+    },
+    "document_id": { "type": "string", "description": "UUID of stored artifact in DeepSpec" },
+    "page": { "type": "integer", "minimum": 1 },
+    "char_start": { "type": ["integer", "null"], "minimum": 0 },
+    "char_end": { "type": ["integer", "null"], "minimum": 0 },
+    "excerpt": { "type": "string", "maxLength": 4000 },
+    "excerpt_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "url_archived": { "type": ["string", "null"], "format": "uri" }
+  },
+  "additionalProperties": false
+}

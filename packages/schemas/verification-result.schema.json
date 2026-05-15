@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deepspec.local/schemas/verification-result.schema.json",
+  "title": "VerificationResult",
+  "type": "object",
+  "required": ["verification", "physical_specs", "technical_data", "action_required", "citations", "risk_gate"],
+  "properties": {
+    "verification": {
+      "type": "object",
+      "required": ["composite_score", "source_verified", "matched_mpn", "signals"],
+      "properties": {
+        "composite_score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "source_verified": { "type": "boolean" },
+        "matched_mpn": { "type": ["string", "null"] },
+        "signals": {
+          "type": "object",
+          "properties": {
+            "ocr_consensus": { "type": "number", "minimum": 0, "maximum": 1 },
+            "catalog_agreement": { "type": "number", "minimum": 0, "maximum": 1 },
+            "retrieval_overlap": { "type": "number", "minimum": 0, "maximum": 1 },
+            "duplicate_evidence_agreement": { "type": "number", "minimum": 0, "maximum": 1 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "physical_specs": {
+      "type": "object",
+      "required": ["material_composition", "dimensions_weight"],
+      "properties": {
+        "material_composition": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "dimensions_weight": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "technical_data": {
+      "type": "object",
+      "required": ["functional_purpose", "wiring_pinout", "compatibility_set"],
+      "properties": {
+        "functional_purpose": { "type": "string" },
+        "wiring_pinout": { "type": "string" },
+        "compatibility_set": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "action_required": { "type": "string" },
+    "citations": {
+      "type": "array",
+      "items": { "$ref": "citation.schema.json" }
+    },
+    "risk_gate": {
+      "type": "object",
+      "required": ["human_review_required", "reasons"],
+      "properties": {
+        "human_review_required": { "type": "boolean" },
+        "reasons": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "incomplete_data": {
+      "type": ["object", "null"],
+      "properties": {
+        "message": { "type": "string" },
+        "camera_guidance": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
