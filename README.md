@@ -1,5 +1,7 @@
 # DeepSpec Pro (greenfield)
 
+Repo: [github.com/om1o/DeepSpec](https://github.com/om1o/DeepSpec)
+
 Citation-first technical verification prototype: OCR/barcode fusion, archived manuals, BM25-grounded extraction with mandatory citations, composite verification scoring, and human-in-the-loop gates for high-risk fields.
 
 ## Prerequisites
