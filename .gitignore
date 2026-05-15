@@ -14,3 +14,9 @@ web-build/
 coverage/
 .DS_Store
 *.tsbuildinfo
+
+# Local Sprinter capture pipeline (optional: commit parts.auto.csv if you want it shared)
+data/sprinter/vin.txt
+data/sprinter/vehicle_profile.json
+data/sprinter/staging/
+data/sprinter/logs/

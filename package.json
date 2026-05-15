@@ -7,6 +7,9 @@
   ],
   "scripts": {
     "web": "npm run dev -w web-admin",
-    "mobile": "npm run start -w mobile"
+    "mobile": "npm run start -w mobile",
+    "sprinter:once": "py -3 scripts/sprinter_watch.py --once",
+    "sprinter:watch": "py -3 scripts/sprinter_watch.py",
+    "sprinter:tonight": "py -3 scripts/sprinter_watch.py --tonight"
   }
 }
