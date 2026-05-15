@@ -25,23 +25,27 @@ py -3 -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 API docs: http://localhost:8000/docs
 
-## Web admin (Source HUD)
+## Deep Spec (consumer web app — React/Vite/Tailwind)
 
-From repo root:
+Runs a **tiny local API** that holds `GEMINI_API_KEY`, so keys never bundle into the browser. From repo root:
 
 ```bash
 npm install
+copy apps\deep-spec\.env.example apps\deep-spec\.env
+# Paste your Google AI Studio key into GEMINI_API_KEY
 npm run web
 ```
 
-## Mobile shell
+Opens Vite (~5173) with `/api/*` proxied to the Gemini proxy on localhost `8788` by default.
+
+## Mobile shell (`apps/mobile`)
 
 ```bash
 npm install
 npm run mobile
 ```
 
-Point `apps/mobile/.env` / web-admin proxy at `http://localhost:8000` (use machine LAN IP for device testing).
+Point `apps/mobile/.env` / API base at whatever backend you expose (prototype API on `localhost:8000` if needed; use LAN IP on device testing).
 
 ## Schemas
 

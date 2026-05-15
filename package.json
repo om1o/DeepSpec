@@ -6,7 +6,7 @@
     "apps/*"
   ],
   "scripts": {
-    "web": "npm run dev -w web-admin",
+    "web": "npm run dev -w deep-spec",
     "mobile": "npm run start -w mobile",
     "sprinter:once": "py -3 scripts/sprinter_watch.py --once",
     "sprinter:watch": "py -3 scripts/sprinter_watch.py",
