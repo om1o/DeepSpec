@@ -1,9 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { CameraView, useCameraPermissions } from "expo-camera";
 import * as ImageManipulator from "expo-image-manipulator";
-import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
-import * as Speech from "expo-speech";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -23,6 +22,7 @@ import {
 type Confidence = "high" | "medium" | "low";
 type Triage = "can_help" | "needs_better_photo" | "needs_professional";
 type Screen = "scan" | "history" | "settings" | "result" | "chat";
+type CameraFacing = "back" | "front";
 
 type LookupResult = {
   partName: string;
@@ -197,31 +197,6 @@ async function compressForVision(uri: string): Promise<string> {
   return `data:image/jpeg;base64,${output.base64}`;
 }
 
-async function pickFromCamera(): Promise<string | null> {
-  const permission = await ImagePicker.requestCameraPermissionsAsync();
-  if (!permission.granted) {
-    Alert.alert("Camera needed", "Allow camera access to scan a part.");
-    return null;
-  }
-  const result = await ImagePicker.launchCameraAsync({
-    mediaTypes: ["images"],
-    quality: 0.85,
-    allowsEditing: false,
-  });
-  if (result.canceled || !result.assets[0]) return null;
-  return compressForVision(result.assets[0].uri);
-}
-
-async function pickFromLibrary(): Promise<string | null> {
-  const result = await ImagePicker.launchImageLibraryAsync({
-    mediaTypes: ["images"],
-    quality: 0.85,
-    allowsEditing: false,
-  });
-  if (result.canceled || !result.assets[0]) return null;
-  return compressForVision(result.assets[0].uri);
-}
-
 async function runAI(apiBase: string, input: AIInput): Promise<string | object> {
   const endpoint = `${apiBase.replace(/\/$/, "")}/api/ai`;
   let response: Response;
@@ -272,6 +247,8 @@ function buildFollowupMessage(lookup: Lookup, question: string) {
 }
 
 export default function App() {
+  const cameraRef = useRef<CameraView | null>(null);
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [signedIn, setSignedIn] = useState(false);
   const [email, setEmail] = useState("");
   const [passcode, setPasscode] = useState("");
@@ -279,6 +256,8 @@ export default function App() {
   const [lookups, setLookups] = useState<Lookup[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [imageBase64, setImageBase64] = useState<string | null>(null);
+  const [cameraFacing, setCameraFacing] = useState<CameraFacing>("back");
+  const [cameraReady, setCameraReady] = useState(false);
   const [carContext, setCarContext] = useState("");
   const [problemContext, setProblemContext] = useState("");
   const [apiBase, setApiBase] = useState("http://127.0.0.1:8788");
@@ -317,14 +296,56 @@ export default function App() {
     setCorrection(lookups.find((lookup) => lookup.id === id)?.correction ?? "");
   };
 
-  const choosePhoto = async (source: "camera" | "library") => {
+  const capturePhoto = async () => {
     setError(null);
     try {
-      const picked = source === "camera" ? await pickFromCamera() : await pickFromLibrary();
-      if (picked) setImageBase64(picked);
+      if (!cameraRef.current || !cameraReady) {
+        setError("Camera is still getting ready.");
+        return;
+      }
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.85, base64: true, skipProcessing: false });
+      if (!photo?.uri && !photo?.base64) {
+        throw new Error("Camera did not return a photo.");
+      }
+      if (photo.base64) {
+        setImageBase64(`data:image/jpeg;base64,${photo.base64}`);
+        return;
+      }
+      setImageBase64(await compressForVision(photo.uri));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load that image.");
+      setError(e instanceof Error ? e.message : "Could not capture a photo.");
     }
+  };
+
+  const saveCameraCapture = async () => {
+    if (!imageBase64) return;
+    const lookup: Lookup = {
+      id: newId(),
+      createdAt: new Date().toISOString(),
+      imageBase64,
+      userCarContext: carContext,
+      userProblemContext: problemContext,
+      result: {
+        partName: "Camera capture",
+        confidence: "low",
+        whatItDoes: "AI identification is turned off for this camera-first build. This saved photo is ready for the AI layer later.",
+        conditionObservations: ["Photo captured from the live DeepSpec camera."],
+        concerns: [],
+        isSafetyCritical: false,
+        nextSteps: "Retake if the part label, connector, leak, or damage is not clearly visible.",
+        needsBetterPhoto: false,
+        followUpQuestions: [],
+        triage: "can_help",
+      },
+      rating: null,
+      correction: null,
+      chatHistory: [],
+    };
+    await saveLookups([lookup, ...lookups]);
+    setImageBase64(null);
+    setActiveId(lookup.id);
+    setCorrection("");
+    setScreen("result");
   };
 
   const identify = async () => {
@@ -380,13 +401,6 @@ export default function App() {
     await saveLookups(next);
     setActiveId(null);
     setScreen("history");
-  };
-
-  const speakResult = () => {
-    if (!activeLookup) return;
-    const speech = `${activeLookup.result.partName}. ${activeLookup.result.whatItDoes} ${activeLookup.result.nextSteps}`;
-    Speech.stop();
-    Speech.speak(speech.slice(0, 900), { rate: 0.94 });
   };
 
   const findHelpNearby = async () => {
@@ -508,24 +522,63 @@ export default function App() {
 
         {screen === "scan" ? (
           <ScrollView contentContainerStyle={styles.content}>
-            <Text style={styles.screenTitle}>Scan a car part</Text>
-            <Text style={styles.muted}>Take a photo or pick one from your gallery. DeepSpec will identify, explain, and triage it.</Text>
+            <Text style={styles.screenTitle}>DeepSpec Camera</Text>
+            <Text style={styles.muted}>Point at the part, label, connector, leak, or visible damage. AI is off for this build.</Text>
 
-            <View style={styles.photoBox}>
+            <View style={styles.cameraShell}>
               {imageBase64 ? (
-                <Image source={{ uri: imageBase64 }} style={styles.photoPreview} resizeMode="contain" />
+                <Image source={{ uri: imageBase64 }} style={styles.cameraPreview} resizeMode="cover" />
+              ) : cameraPermission?.granted ? (
+                <CameraView
+                  ref={cameraRef}
+                  style={styles.cameraPreview}
+                  facing={cameraFacing}
+                  onCameraReady={() => setCameraReady(true)}
+                  onMountError={(event) => setError(event.message)}
+                >
+                  <View style={styles.cameraOverlay}>
+                    <View style={[styles.liveCorner, styles.liveCornerTopLeft]} />
+                    <View style={[styles.liveCorner, styles.liveCornerTopRight]} />
+                    <View style={[styles.liveCorner, styles.liveCornerBottomLeft]} />
+                    <View style={[styles.liveCorner, styles.liveCornerBottomRight]} />
+                    <View style={styles.cameraHint}>
+                      <Text style={styles.cameraHintText}>Hold steady. Fill the frame.</Text>
+                    </View>
+                  </View>
+                </CameraView>
               ) : (
-                <View style={styles.photoEmpty}>
-                  <Text style={styles.photoEmptyTitle}>No photo selected</Text>
-                  <Text style={styles.mutedCenter}>Point at the part, label, connector, leak, or visible damage.</Text>
+                <View style={styles.cameraPermissionBox}>
+                  <BrandLogo size={92} />
+                  <Text style={styles.photoEmptyTitle}>Camera access needed</Text>
+                  <Text style={styles.mutedCenter}>DeepSpec needs the live camera to work like a scanner.</Text>
+                  <ActionButton label="Allow camera" onPress={() => void requestCameraPermission()} />
                 </View>
               )}
             </View>
 
-            <View style={styles.row}>
-              <ActionButton label="Camera" onPress={() => void choosePhoto("camera")} half />
-              <GhostButton label="Gallery" onPress={() => void choosePhoto("library")} half />
-            </View>
+            {imageBase64 ? (
+              <View style={styles.row}>
+                <GhostButton label="Retake" onPress={() => setImageBase64(null)} half />
+                <ActionButton label="Save capture" onPress={() => void saveCameraCapture()} half />
+              </View>
+            ) : cameraPermission?.granted ? (
+              <View style={styles.cameraControls}>
+                <GhostButton
+                  label={cameraFacing === "back" ? "Back camera" : "Front camera"}
+                  onPress={() => setCameraFacing((current) => (current === "back" ? "front" : "back"))}
+                  half
+                />
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Capture photo"
+                  disabled={!cameraReady}
+                  onPress={() => void capturePhoto()}
+                  style={({ pressed }) => [styles.shutterButton, pressed ? styles.shutterPressed : null, !cameraReady ? styles.disabled : null]}
+                >
+                  <View style={styles.shutterInner} />
+                </Pressable>
+              </View>
+            ) : null}
 
             <Field label="Your car (optional)" value={carContext} onChangeText={setCarContext} placeholder="2018 Mercedes Sprinter" />
             <Field
@@ -537,7 +590,6 @@ export default function App() {
             />
 
             {error ? <ErrorBox message={error} /> : null}
-            <ActionButton label={busy ? "Analyzing..." : "Identify part"} disabled={!imageBase64 || busy} onPress={() => void identify()} />
             {busy ? <ActivityIndicator color="#3B82F6" /> : null}
           </ScrollView>
         ) : null}
@@ -563,8 +615,8 @@ export default function App() {
             <Section title="What to do next" body={activeLookup.result.nextSteps} />
 
             <View style={styles.row}>
-              <GhostButton label="Read aloud" onPress={speakResult} half />
-              <GhostButton label="Ask follow-up" onPress={() => setScreen("chat")} half />
+              <ActionButton label="New capture" onPress={() => setScreen("scan")} half />
+              <GhostButton label="Saved scans" onPress={() => setScreen("history")} half />
             </View>
             <View style={styles.row}>
               <GhostButton label={activeLookup.rating === "up" ? "Helpful: yes" : "Helpful"} onPress={() => void rate("up")} half />
@@ -916,6 +968,46 @@ const styles = StyleSheet.create({
   photoPreview: { width: "100%", minHeight: 245 },
   photoEmpty: { minHeight: 245, alignItems: "center", justifyContent: "center", padding: 24 },
   photoEmptyTitle: { color: "#F5F5F5", fontSize: 18, fontWeight: "800", marginBottom: 8 },
+  cameraShell: {
+    height: 520,
+    maxHeight: "70%",
+    borderWidth: 1,
+    borderColor: "#262626",
+    backgroundColor: "#050505",
+    borderRadius: 26,
+    overflow: "hidden",
+    marginBottom: 14,
+  },
+  cameraPreview: { flex: 1, width: "100%", height: "100%" },
+  cameraOverlay: { flex: 1, justifyContent: "flex-end", padding: 18 },
+  liveCorner: { position: "absolute", width: 54, height: 54, borderColor: "#A7F3FF", borderWidth: 0 },
+  liveCornerTopLeft: { left: 22, top: 22, borderLeftWidth: 5, borderTopWidth: 5, borderTopLeftRadius: 18 },
+  liveCornerTopRight: { right: 22, top: 22, borderRightWidth: 5, borderTopWidth: 5, borderTopRightRadius: 18 },
+  liveCornerBottomLeft: { left: 22, bottom: 86, borderLeftWidth: 5, borderBottomWidth: 5, borderBottomLeftRadius: 18 },
+  liveCornerBottomRight: { right: 22, bottom: 86, borderRightWidth: 5, borderBottomWidth: 5, borderBottomRightRadius: 18 },
+  cameraHint: {
+    alignSelf: "center",
+    borderRadius: 999,
+    backgroundColor: "rgba(0,0,0,0.58)",
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    marginBottom: 14,
+  },
+  cameraHintText: { color: "#F5F5F5", fontSize: 13, fontWeight: "800" },
+  cameraPermissionBox: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
+  cameraControls: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 12 },
+  shutterButton: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    borderWidth: 4,
+    borderColor: "#F5F5F5",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#111827",
+  },
+  shutterInner: { width: 52, height: 52, borderRadius: 26, backgroundColor: "#F5F5F5" },
+  shutterPressed: { opacity: 0.78, transform: [{ scale: 0.98 }] },
   row: { flexDirection: "row", gap: 10, marginBottom: 12 },
   half: { flex: 1 },
   fieldWrap: { marginBottom: 14 },
