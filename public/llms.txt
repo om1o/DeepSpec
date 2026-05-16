@@ -1,0 +1,23 @@
+# Deep Spec
+
+Deep Spec is a mobile-first Progressive Web App for car owners who need to understand car parts from a camera scan. The product direction is an AI car part finding helper, with safety-first explanations for regular people.
+
+## Important pages
+
+- Home scanner: https://deepspec.app/
+- Article: https://deepspec.app/articles/ai-car-part-finding.html
+- Clean markdown article: https://deepspec.app/articles/ai-car-part-finding.md
+
+## Core topics
+
+- AI car part finding
+- AI carpart finding
+- car parts
+- AI helper
+- car part scanner
+- vehicle part identification
+- automotive AI assistant
+
+## Accuracy note
+
+Deep Spec should not be described as a repair certification tool, exact OEM fitment database, or live pricing database. The current Phase 1 product is a camera-first scanner. AI identification is the next planned phase.

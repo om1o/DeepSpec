@@ -3,20 +3,75 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta
+      name="description"
+      content="Deep Spec is a mobile-first AI car part finding helper for car owners. Scan car parts with a steady camera reticle, then use AI-assisted identification in the Deep Spec workflow."
+    />
+    <meta
+      name="keywords"
+      content="AI car part finding, AI carpart finding, car parts, AI helper, car part scanner, automotive AI, vehicle part identification"
+    />
+    <meta name="robots" content="index,follow,max-image-preview:large" />
     <meta name="theme-color" content="#0A0A0A" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Deep Spec" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Deep Spec" />
+    <meta property="og:title" content="Deep Spec - AI Car Part Finding Helper" />
+    <meta
+      property="og:description"
+      content="Know what you're looking at. Deep Spec is a camera-first AI helper for car parts and vehicle part identification."
+    />
+    <meta property="og:image" content="https://deepspec.app/icon-512.png" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Deep Spec - AI Car Part Finding Helper" />
+    <meta
+      name="twitter:description"
+      content="A mobile-first scanner for car parts, built for regular car owners who need a clear AI helper."
+    />
+    <meta name="twitter:image" content="https://deepspec.app/icon-512.png" />
+    <link rel="canonical" href="https://deepspec.app/" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <title>Deep Spec</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Deep Spec",
+        "applicationCategory": "UtilitiesApplication",
+        "operatingSystem": "Web, iOS, Android",
+        "description": "Deep Spec is a mobile-first camera scanner and AI car part finding helper for car owners who need to understand what they are looking at.",
+        "url": "https://deepspec.app/",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        }
+      }
+    </script>
+    <title>Deep Spec - AI Car Part Finding Helper</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <main style="min-height: 100vh; background: #0a0a0a; color: #f5f5f5; font-family: Inter, system-ui, sans-serif; padding: 32px;">
+        <h1>Deep Spec: AI car part finding helper</h1>
+        <p>
+          Deep Spec helps regular car owners scan car parts with a mobile camera-first workflow.
+          It is built for people who need a clear AI helper, not a confusing parts catalog.
+        </p>
+        <p>
+          Read the guide:
+          <a style="color: #facc15;" href="/articles/ai-car-part-finding.html">
+            Can AI tools save time for engineers and car owners?
+          </a>
+        </p>
+      </main>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

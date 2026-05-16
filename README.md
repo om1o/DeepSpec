@@ -28,3 +28,9 @@ npm run check
 ```
 
 This runs lint, automated tests, and the production build. Use it before starting the next phase.
+
+## SEO and AI discovery
+
+The app includes search metadata, `robots.txt`, `sitemap.xml`, `llms.txt`, and an article at `/articles/ai-car-part-finding.html`.
+
+Before launch, replace `https://deepspec.app` in SEO files with the real production domain. Buying or connecting a domain needs parent help.
