@@ -55,6 +55,36 @@ app.use((req, res, next) => {
   next();
 });
 
+app.get("/", (_req, res) => {
+  res.type("html").send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DeepSpec API</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0a0a0a; color: #f5f5f5; }
+      main { width: min(520px, calc(100vw - 32px)); border: 1px solid #262626; border-radius: 18px; background: #171717; padding: 28px; }
+      h1 { margin: 0 0 8px; font-size: 28px; letter-spacing: 0; }
+      p { color: #a1a1aa; line-height: 1.5; }
+      a { color: #60a5fa; font-weight: 700; }
+      code { color: #d4d4d8; }
+      .ok { color: #10b981; font-weight: 800; text-transform: uppercase; font-size: 12px; letter-spacing: .08em; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="ok">API online</div>
+      <h1>DeepSpec API</h1>
+      <p>This is the local AI proxy on <code>127.0.0.1:${PORT}</code>. It is not the app UI.</p>
+      <p>Open the mobile app preview at <a href="http://localhost:19006">http://localhost:19006</a>.</p>
+      <p>Health check: <a href="/health">/health</a>. AI route: <code>POST /api/ai</code>.</p>
+    </main>
+  </body>
+</html>`);
+});
+
 app.get("/health", (_req, res) => {
   res.json({ ok: true, service: "deep-spec-api" });
 });
