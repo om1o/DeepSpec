@@ -453,6 +453,7 @@ export default function App() {
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.flex}>
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.authScroll}>
             <View style={styles.brandBlock}>
+              <BrandLogo size={118} />
               <Text style={styles.brandMark}>DeepSpec</Text>
               <Text style={styles.tagline}>Know what you are looking at.</Text>
             </View>
@@ -493,9 +494,12 @@ export default function App() {
     <SafeAreaView style={styles.appSafe}>
       <View style={styles.shell}>
         <View style={styles.header}>
-          <View>
-            <Text style={styles.logo}>DeepSpec</Text>
-            <Text style={styles.headerSub}>iOS-first scanner preview</Text>
+          <View style={styles.headerBrand}>
+            <BrandLogo size={44} compact />
+            <View>
+              <Text style={styles.logo}>DeepSpec</Text>
+              <Text style={styles.headerSub}>iOS-first scanner preview</Text>
+            </View>
           </View>
           <Pressable onPress={() => setSignedIn(false)} style={styles.smallPill}>
             <Text style={styles.smallPillText}>Sign out</Text>
@@ -582,7 +586,7 @@ export default function App() {
                 <View style={styles.historyBody}>
                   <Text style={styles.historyTitle}>{lookup.result.partName}</Text>
                   <Text style={styles.historyMeta}>
-                    {lookup.result.confidence} confidence • {lookup.result.triage.replace(/_/g, " ")}
+                    {lookup.result.confidence} confidence - {lookup.result.triage.replace(/_/g, " ")}
                   </Text>
                 </View>
               </Pressable>
@@ -642,6 +646,73 @@ export default function App() {
         </View>
       </View>
     </SafeAreaView>
+  );
+}
+
+function BrandLogo({ size, compact }: { size: number; compact?: boolean }) {
+  const cornerSize = size * 0.22;
+  const cornerThickness = Math.max(3, size * 0.045);
+  const lensSize = size * (compact ? 0.34 : 0.38);
+  const nutSize = size * (compact ? 0.56 : 0.58);
+  return (
+    <View style={[styles.logoMark, { width: size, height: size, borderRadius: size * 0.22 }]}>
+      <View
+        style={[
+          styles.scanCorner,
+          styles.scanCornerTopLeft,
+          { width: cornerSize, height: cornerSize, borderTopWidth: cornerThickness, borderLeftWidth: cornerThickness },
+        ]}
+      />
+      <View
+        style={[
+          styles.scanCorner,
+          styles.scanCornerTopRight,
+          { width: cornerSize, height: cornerSize, borderTopWidth: cornerThickness, borderRightWidth: cornerThickness },
+        ]}
+      />
+      <View
+        style={[
+          styles.scanCorner,
+          styles.scanCornerBottomLeft,
+          { width: cornerSize, height: cornerSize, borderBottomWidth: cornerThickness, borderLeftWidth: cornerThickness },
+        ]}
+      />
+      <View
+        style={[
+          styles.scanCorner,
+          styles.scanCornerBottomRight,
+          { width: cornerSize, height: cornerSize, borderBottomWidth: cornerThickness, borderRightWidth: cornerThickness },
+        ]}
+      />
+
+      {!compact ? (
+        <View style={styles.scanLines}>
+          <View style={[styles.scanLine, { width: size * 0.22 }]} />
+          <View style={[styles.scanLine, { width: size * 0.28 }]} />
+          <View style={[styles.scanLine, { width: size * 0.2 }]} />
+        </View>
+      ) : null}
+
+      <View style={[styles.hexNut, { width: nutSize, height: nutSize * 0.74, borderRadius: size * 0.07 }]}>
+        <View style={styles.rustPatch} />
+        <View style={[styles.lensOuter, { width: lensSize, height: lensSize, borderRadius: lensSize / 2 }]}>
+          <View style={[styles.lensMid, { width: lensSize * 0.72, height: lensSize * 0.72, borderRadius: lensSize * 0.36 }]}>
+            <View style={[styles.lensCore, { width: lensSize * 0.42, height: lensSize * 0.42, borderRadius: lensSize * 0.21 }]} />
+          </View>
+        </View>
+      </View>
+
+      {!compact ? (
+        <View style={styles.wrenchRow}>
+          <View style={styles.wrenchIcon}>
+            <View style={styles.wrenchHead} />
+            <View style={styles.wrenchJaw} />
+            <View style={styles.wrenchHandle} />
+          </View>
+          <View style={styles.spark} />
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -724,7 +795,7 @@ function ListSection({ title, items, empty }: { title: string; items: string[]; 
       <Text style={styles.sectionTitle}>{title}</Text>
       {(items.length ? items : [empty]).map((item) => (
         <Text key={item} style={styles.listItem}>
-          • {item}
+          - {item}
         </Text>
       ))}
     </Card>
@@ -755,9 +826,76 @@ const styles = StyleSheet.create({
   appSafe: { flex: 1, backgroundColor: "#0A0A0A" },
   shell: { flex: 1, backgroundColor: "#0A0A0A" },
   authScroll: { flexGrow: 1, justifyContent: "center", paddingHorizontal: 20, paddingVertical: 28 },
-  brandBlock: { marginBottom: 24 },
+  brandBlock: { alignItems: "center", marginBottom: 24 },
   brandMark: { color: "#F5F5F5", fontSize: 34, fontWeight: "800", letterSpacing: 0 },
   tagline: { color: "#A1A1AA", fontSize: 16, marginTop: 6 },
+  logoMark: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#070D12",
+    borderWidth: 1,
+    borderColor: "#1F2937",
+    marginBottom: 16,
+    overflow: "hidden",
+  },
+  scanCorner: {
+    position: "absolute",
+    borderColor: "#A7F3FF",
+    shadowColor: "#38BDF8",
+    shadowOpacity: 0.9,
+    shadowRadius: 10,
+  },
+  scanCornerTopLeft: { left: "12%", top: "12%", borderTopLeftRadius: 16 },
+  scanCornerTopRight: { right: "12%", top: "12%", borderTopRightRadius: 16 },
+  scanCornerBottomLeft: { left: "12%", bottom: "12%", borderBottomLeftRadius: 16 },
+  scanCornerBottomRight: { right: "12%", bottom: "12%", borderBottomRightRadius: 16 },
+  scanLines: { position: "absolute", left: "16%", gap: 6 },
+  scanLine: { height: 4, borderRadius: 999, backgroundColor: "#18BDFB", opacity: 0.75, marginBottom: 7 },
+  hexNut: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#AEB8C2",
+    borderWidth: 2,
+    borderColor: "#E5E7EB",
+    transform: [{ rotate: "0deg" }],
+    overflow: "hidden",
+  },
+  rustPatch: {
+    position: "absolute",
+    right: -10,
+    top: "18%",
+    width: "30%",
+    height: "72%",
+    backgroundColor: "#C2410C",
+    opacity: 0.86,
+    transform: [{ rotate: "-15deg" }],
+  },
+  lensOuter: { alignItems: "center", justifyContent: "center", backgroundColor: "#030712", borderWidth: 3, borderColor: "#111827" },
+  lensMid: { alignItems: "center", justifyContent: "center", backgroundColor: "#0B3B78" },
+  lensCore: { backgroundColor: "#38BDF8", shadowColor: "#38BDF8", shadowOpacity: 1, shadowRadius: 12 },
+  wrenchRow: { position: "absolute", bottom: "9%", flexDirection: "row", alignItems: "center", gap: 12 },
+  wrenchIcon: { width: 32, height: 32, transform: [{ rotate: "-35deg" }] },
+  wrenchHead: {
+    position: "absolute",
+    top: 0,
+    left: 2,
+    width: 14,
+    height: 14,
+    borderRadius: 9,
+    borderWidth: 4,
+    borderColor: "#F5F5F5",
+  },
+  wrenchJaw: { position: "absolute", top: 2, left: 9, width: 11, height: 8, backgroundColor: "#070D12", borderRadius: 3 },
+  wrenchHandle: {
+    position: "absolute",
+    left: 13,
+    top: 11,
+    width: 7,
+    height: 24,
+    borderRadius: 999,
+    backgroundColor: "#F5F5F5",
+  },
+  spark: { width: 16, height: 16, backgroundColor: "#22D3EE", transform: [{ rotate: "45deg" }], borderRadius: 3 },
   card: { borderWidth: 1, borderColor: "#262626", backgroundColor: "#171717", borderRadius: 16, padding: 18, marginBottom: 14 },
   eyebrow: { color: "#60A5FA", fontSize: 12, fontWeight: "800", letterSpacing: 0.8, marginBottom: 10, textTransform: "uppercase" },
   authTitle: { color: "#F5F5F5", fontSize: 25, fontWeight: "800", letterSpacing: 0, marginBottom: 8 },
@@ -767,6 +905,7 @@ const styles = StyleSheet.create({
   safetyTitle: { color: "#F59E0B", fontSize: 13, fontWeight: "800", marginBottom: 6 },
   safetyText: { color: "#D4D4D8", fontSize: 13, lineHeight: 19 },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 18, paddingBottom: 12, paddingTop: 10, borderBottomColor: "#171717", borderBottomWidth: 1 },
+  headerBrand: { flexDirection: "row", alignItems: "center", gap: 10 },
   logo: { color: "#F5F5F5", fontSize: 24, fontWeight: "900", letterSpacing: 0 },
   headerSub: { color: "#A1A1AA", fontSize: 12, marginTop: 2 },
   smallPill: { borderWidth: 1, borderColor: "#262626", borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },

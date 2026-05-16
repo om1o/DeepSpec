@@ -15,7 +15,8 @@ import { invokeAiPost } from "./invoke-ai";
 export type { AiRequestBody } from "./invoke-ai";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.join(__dirname, "..", ".env") });
+dotenv.config({ path: path.join(__dirname, "..", "..", "..", ".env") });
+dotenv.config({ path: path.join(__dirname, "..", ".env"), override: true });
 
 const PORT = Number(process.env.DEEP_SPEC_API_PORT ?? 8788);
 
