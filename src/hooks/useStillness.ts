@@ -12,9 +12,11 @@ type MotionSample = {
   still: boolean;
 };
 
-const STABLE_DURATION_MS = 2000;
-const ACCELERATION_THRESHOLD = 0.5;
-const ROTATION_THRESHOLD = 5;
+export const STILLNESS_CONFIG = {
+  stableDurationMs: 2000,
+  accelerationThreshold: 0.5,
+  rotationThreshold: 5,
+} as const;
 
 export function useStillness() {
   const [permissionState, setPermissionState] = useState<MotionPermissionState>(() =>
@@ -60,16 +62,14 @@ export function useStillness() {
       hasReceivedMotionRef.current = true;
 
       const now = Date.now();
-      const acceleration = getAccelerationMagnitude(event);
-      const rotation = getRotationMagnitude(event);
-      const still = acceleration < ACCELERATION_THRESHOLD && rotation < ROTATION_THRESHOLD;
+      const still = isMotionSampleStill(event);
 
-      const samples = samplesRef.current.filter((sample) => now - sample.time <= STABLE_DURATION_MS);
+      const samples = samplesRef.current.filter((sample) => now - sample.time <= STILLNESS_CONFIG.stableDurationMs);
       samples.push({ time: now, still });
       samplesRef.current = samples;
 
       const firstSample = samples[0];
-      const hasFullWindow = Boolean(firstSample && now - firstSample.time >= STABLE_DURATION_MS - 100);
+      const hasFullWindow = Boolean(firstSample && now - firstSample.time >= STILLNESS_CONFIG.stableDurationMs - 100);
       setIsStableFromMotion(hasFullWindow && samples.every((sample) => sample.still));
     };
 
@@ -104,7 +104,14 @@ function hasMotionEvent() {
   return typeof window !== "undefined" && "DeviceMotionEvent" in window;
 }
 
-function getAccelerationMagnitude(event: DeviceMotionEvent) {
+export function isMotionSampleStill(event: Pick<DeviceMotionEvent, "acceleration" | "accelerationIncludingGravity" | "rotationRate">) {
+  const acceleration = getAccelerationMagnitude(event);
+  const rotation = getRotationMagnitude(event);
+
+  return acceleration < STILLNESS_CONFIG.accelerationThreshold && rotation < STILLNESS_CONFIG.rotationThreshold;
+}
+
+function getAccelerationMagnitude(event: Pick<DeviceMotionEvent, "acceleration" | "accelerationIncludingGravity">) {
   const acceleration = event.acceleration;
   if (acceleration && hasNumber(acceleration.x) && hasNumber(acceleration.y) && hasNumber(acceleration.z)) {
     return magnitude(acceleration.x, acceleration.y, acceleration.z);
@@ -123,7 +130,7 @@ function getAccelerationMagnitude(event: DeviceMotionEvent) {
   return 0;
 }
 
-function getRotationMagnitude(event: DeviceMotionEvent) {
+function getRotationMagnitude(event: Pick<DeviceMotionEvent, "rotationRate">) {
   const rotation = event.rotationRate;
   if (!rotation) {
     return 0;

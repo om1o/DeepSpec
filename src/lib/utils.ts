@@ -8,9 +8,7 @@ export async function compressImageDataUrl(
   quality = 0.8,
 ): Promise<string> {
   const image = await loadImage(dataUrl);
-  const scale = Math.min(1, maxLongestEdge / Math.max(image.width, image.height));
-  const width = Math.max(1, Math.round(image.width * scale));
-  const height = Math.max(1, Math.round(image.height * scale));
+  const { width, height } = getScaledDimensions(image.width, image.height, maxLongestEdge);
 
   const canvas = document.createElement("canvas");
   canvas.width = width;
@@ -23,6 +21,15 @@ export async function compressImageDataUrl(
 
   context.drawImage(image, 0, 0, width, height);
   return canvas.toDataURL("image/jpeg", quality);
+}
+
+export function getScaledDimensions(width: number, height: number, maxLongestEdge: number) {
+  const scale = Math.min(1, maxLongestEdge / Math.max(width, height));
+
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
 }
 
 function loadImage(dataUrl: string): Promise<HTMLImageElement> {

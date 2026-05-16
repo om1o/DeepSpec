@@ -20,3 +20,11 @@ Open the URL from Vite. For real iPhone camera and motion testing, use an HTTPS 
 - Placeholder result screen
 
 No AI, history, ratings, chat, pricing, or settings are included in this phase.
+
+## Test before moving on
+
+```bash
+npm run check
+```
+
+This runs lint, automated tests, and the production build. Use it before starting the next phase.

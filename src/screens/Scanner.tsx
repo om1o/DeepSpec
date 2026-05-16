@@ -65,17 +65,19 @@ export default function Scanner() {
 
       {cameraState === "blocked" ? <CameraBlocked message={cameraError} /> : null}
 
-      <Reticle isVisible={isStable && cameraState !== "blocked"} />
-      <IdentifyButton isDisabled={!canIdentify} isVisible={isStable && cameraState === "ready"} onIdentify={handleIdentify} />
+      {cameraState !== "blocked" ? (
+        <>
+          <Reticle isVisible={isStable} />
+          <IdentifyButton isDisabled={!canIdentify} isVisible={isStable && cameraState === "ready"} onIdentify={handleIdentify} />
 
-      {usesFallback && cameraState !== "blocked" ? (
-        <p className="fixed bottom-[94px] left-1/2 z-20 w-[calc(100%-32px)] -translate-x-1/2 text-center text-xs font-semibold text-white/58">
-          {permissionState === "denied" ? "Motion access is off. You can still identify manually." : "Motion sensing unavailable. Manual scan is ready."}
-        </p>
-      ) : null}
+          {usesFallback ? (
+            <p className="fixed bottom-[94px] left-1/2 z-20 w-[calc(100%-32px)] -translate-x-1/2 text-center text-xs font-semibold text-white/58">
+              {permissionState === "denied" ? "Motion access is off. You can still identify manually." : "Motion sensing unavailable. Manual scan is ready."}
+            </p>
+          ) : null}
 
-      {needsPermission && cameraState !== "blocked" ? (
-        <MotionPermissionModal error={motionError} onAllow={requestPermission} />
+          {needsPermission ? <MotionPermissionModal error={motionError} onAllow={requestPermission} /> : null}
+        </>
       ) : null}
       {isAnalyzing ? <AnalyzingOverlay /> : null}
     </main>
@@ -84,7 +86,7 @@ export default function Scanner() {
 
 function CameraBlocked({ message }: { message: string | null }) {
   return (
-    <div className="fixed inset-0 z-20 grid place-items-center bg-[#0A0A0A] px-6 text-center">
+    <div className="fixed inset-0 z-30 grid place-items-center bg-[#0A0A0A] px-6 text-center">
       <div className="max-w-sm">
         <div className="mx-auto mb-5 grid size-14 place-items-center rounded-2xl border border-[#EF4444]/30 bg-[#EF4444]/10 text-[#EF4444]">
           !
