@@ -28,6 +28,7 @@ export type ScanAnalysisState = {
   errorMessage?: string;
   errorCode?: string;
   analyzedAt?: string;
+  storageWarning?: string;
 };
 
 export type AIInput = {
@@ -36,4 +37,44 @@ export type AIInput = {
   userMessage: string;
   systemPrompt: string;
   responseAsJson?: boolean;
+};
+
+export type Rating = "up" | "down" | null;
+
+export type ScanCategory =
+  | "engine"
+  | "electrical"
+  | "brakes"
+  | "steering"
+  | "suspension"
+  | "fuel"
+  | "airbag"
+  | "body"
+  | "leak"
+  | "unknown";
+
+export type TrainingStatus = "raw_unreviewed" | "user_confirmed" | "user_corrected";
+
+export type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: string;
+};
+
+export type Lookup = {
+  id: string;
+  createdAt: string;
+  frame: CapturedFrame;
+  result?: IdentificationResult;
+  errorMessage?: string;
+  errorCode?: string;
+  analyzedAt?: string;
+  rating: Rating;
+  correction: string | null;
+  notes: string;
+  scanCategory: ScanCategory;
+  trainingLabel: string;
+  trainingStatus: TrainingStatus;
+  chatHistory: ChatMessage[];
 };

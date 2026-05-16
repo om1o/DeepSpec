@@ -57,6 +57,7 @@ describe("Scanner", () => {
   beforeEach(() => {
     captureFrame.mockClear();
     identifyCapturedFrame.mockClear();
+    localStorage.clear();
     sessionStorage.clear();
   });
 
@@ -66,6 +67,7 @@ describe("Scanner", () => {
         <Routes>
           <Route path="/" element={<Scanner />} />
           <Route path="/result" element={<Result />} />
+          <Route path="/result/:id" element={<Result />} />
         </Routes>
       </MemoryRouter>,
     );
@@ -82,5 +84,6 @@ describe("Scanner", () => {
       "data:image/jpeg;base64,compressed-frame",
     );
     expect(screen.getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
-  });
+    expect(screen.getByText("Saved scan")).toBeInTheDocument();
+  }, 10000);
 });

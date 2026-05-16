@@ -27,8 +27,11 @@ Do not use a `VITE_` API key. The app calls `/api/identify`, and the server-side
 - Yellow reticle and Identify button after the phone is steady
 - Capture and compress the current frame
 - Gemini-backed result screen through `/api/identify`
+- Saved scan database in localStorage with photo, AI result/error, category, training label, rating, correction, and notes
 
-History, ratings, chat, pricing, and settings are not included yet.
+Chat, pricing, account sync, and settings are not included yet.
+
+Every scan should be treated as future model-training/evaluation data. LocalStorage is the Phase 4 storage layer; Supabase should preserve the same fields later.
 
 ## Test before moving on
 

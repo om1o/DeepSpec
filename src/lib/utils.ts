@@ -59,6 +59,7 @@ export function readLatestScanState(): ScanAnalysisState | null {
       errorMessage: typeof state.errorMessage === "string" ? state.errorMessage : undefined,
       errorCode: typeof state.errorCode === "string" ? state.errorCode : undefined,
       analyzedAt: typeof state.analyzedAt === "string" ? state.analyzedAt : undefined,
+      storageWarning: typeof state.storageWarning === "string" ? state.storageWarning : undefined,
     };
   } catch {
     return null;

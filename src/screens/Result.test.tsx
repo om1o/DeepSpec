@@ -1,7 +1,9 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import Result from "./Result";
-import type { ScanAnalysisState } from "../types";
+import { LOOKUPS_STORAGE_KEY } from "../services/storage";
+import type { Lookup, ScanAnalysisState } from "../types";
 
 const frame = {
   imageBase64: "data:image/jpeg;base64,test-image",
@@ -27,6 +29,7 @@ const successfulScan: ScanAnalysisState = {
 
 describe("Result", () => {
   beforeEach(() => {
+    localStorage.clear();
     sessionStorage.clear();
   });
 
@@ -124,21 +127,76 @@ describe("Result", () => {
 
     expect(screen.getByText("No captured frame yet.")).toBeInTheDocument();
   });
+
+  it("updates rating, correction, and notes for a saved scan", async () => {
+    const lookup = makeLookup();
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+
+    renderResult(null, `/result/${lookup.id}`);
+
+    await userEvent.click(screen.getByRole("button", { name: "Wrong" }));
+    await userEvent.type(screen.getByLabelText("What was it actually?"), "It was the starter.");
+    await userEvent.type(screen.getByLabelText("Private notes"), "Near the lower engine bay.");
+
+    const savedLookup = JSON.parse(localStorage.getItem(LOOKUPS_STORAGE_KEY) ?? "[]")[0] as Lookup;
+    expect(savedLookup.rating).toBe("down");
+    expect(savedLookup.correction).toBe("It was the starter.");
+    expect(savedLookup.notes).toBe("Near the lower engine bay.");
+    expect(savedLookup.trainingLabel).toBe("It was the starter.");
+    expect(savedLookup.trainingStatus).toBe("user_corrected");
+  });
+
+  it("deletes a saved scan and returns to history", async () => {
+    const lookup = makeLookup();
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+
+    render(
+      <MemoryRouter initialEntries={[`/result/${lookup.id}`]}>
+        <Routes>
+          <Route path="/history" element={<p>History page</p>} />
+          <Route path="/result/:id" element={<Result />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete saved scan" }));
+
+    expect(screen.getByText("History page")).toBeInTheDocument();
+    expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBe("[]");
+  });
 });
 
-function renderResult(state: ScanAnalysisState | null) {
+function renderResult(state: ScanAnalysisState | null, path = "/result") {
   render(
     <MemoryRouter
       initialEntries={[
         {
-          pathname: "/result",
+          pathname: path,
           state,
         },
       ]}
     >
       <Routes>
         <Route path="/result" element={<Result />} />
+        <Route path="/result/:id" element={<Result />} />
       </Routes>
     </MemoryRouter>,
   );
+}
+
+function makeLookup(): Lookup {
+  return {
+    id: "lookup-1",
+    createdAt: "2026-05-16T00:00:00.000Z",
+    frame,
+    result: successfulScan.result,
+    analyzedAt: successfulScan.analyzedAt,
+    rating: null,
+    correction: null,
+    notes: "",
+    scanCategory: "electrical",
+    trainingLabel: "Alternator",
+    trainingStatus: "raw_unreviewed",
+    chatHistory: [],
+  };
 }

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import Webcam from "react-webcam";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import IdentifyButton from "../components/scanner/IdentifyButton";
 import MotionPermissionModal from "../components/scanner/MotionPermissionModal";
 import Reticle from "../components/scanner/Reticle";
@@ -9,6 +9,7 @@ import { useCamera } from "../hooks/useCamera";
 import { useStillness } from "../hooks/useStillness";
 import { saveLatestScanState } from "../lib/utils";
 import { AIServiceError, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
+import { createLookup } from "../services/storage";
 import type { CapturedFrame, ScanAnalysisState } from "../types";
 
 const videoConstraints: MediaTrackConstraints = {
@@ -43,8 +44,7 @@ export default function Scanner() {
           result,
           analyzedAt: new Date().toISOString(),
         };
-        saveLatestScanState(scanState);
-        navigate("/result", { state: scanState });
+        persistAndNavigate(scanState);
       } catch (analysisError) {
         const scanState: ScanAnalysisState = {
           frame,
@@ -52,14 +52,26 @@ export default function Scanner() {
           errorCode: analysisError instanceof AIServiceError ? analysisError.code : "analysis_failed",
           analyzedAt: new Date().toISOString(),
         };
-        saveLatestScanState(scanState);
-        navigate("/result", { state: scanState });
+        persistAndNavigate(scanState);
       }
     } catch (error) {
       markError(error instanceof Error ? error.message : "Capture failed.");
     } finally {
       setIsAnalyzing(false);
     }
+  }
+
+  function persistAndNavigate(scanState: ScanAnalysisState) {
+    const storageResult = createLookup(scanState);
+    const routeState = storageResult.ok
+      ? scanState
+      : {
+          ...scanState,
+          storageWarning: storageResult.message,
+        };
+
+    saveLatestScanState(routeState);
+    navigate(storageResult.ok ? `/result/${storageResult.value.id}` : "/result", { state: routeState });
   }
 
   return (
@@ -79,7 +91,12 @@ export default function Scanner() {
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(0,0,0,0.52),rgba(0,0,0,0)_28%,rgba(0,0,0,0)_62%,rgba(0,0,0,0.62))]" />
 
       <header className="fixed left-0 right-0 top-0 z-20 px-5 pt-[max(18px,env(safe-area-inset-top))]">
-        <p className="text-[13px] font-extrabold uppercase tracking-[0.18em] text-white/92">Deep Spec</p>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-[13px] font-extrabold uppercase tracking-[0.18em] text-white/92">Deep Spec</p>
+          <Link to="/history" className="rounded-full bg-black/35 px-3 py-2 text-xs font-extrabold text-white/82 backdrop-blur-md">
+            Saved
+          </Link>
+        </div>
         <p className="mt-2 text-sm font-medium text-white/68">
           {usesFallback
             ? "Manual scan ready. Line up the part first."

@@ -1,13 +1,75 @@
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { useState } from "react";
 import Button from "../components/ui/Button";
 import { readLatestCapturedFrame, readLatestScanState } from "../lib/utils";
-import type { CapturedFrame, Confidence, IdentificationResult, ScanAnalysisState } from "../types";
+import { deleteLookup, getLookup, scanStateFromLookup, updateLookup } from "../services/storage";
+import type { CapturedFrame, Confidence, IdentificationResult, Lookup, Rating, ScanAnalysisState } from "../types";
 
 export default function Result() {
   const location = useLocation();
-  const scanState = getScanState(location.state);
+  const navigate = useNavigate();
+  const { id } = useParams();
+  const [lookup, setLookup] = useState<Lookup | null>(() => (id ? getLookup(id) : null));
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const scanState = lookup ? scanStateFromLookup(lookup) : getScanState(location.state);
   const frame = scanState?.frame ?? readLatestCapturedFrame();
   const capturedAt = frame?.capturedAt ? new Date(frame.capturedAt).toLocaleString() : null;
+  const storageWarning = scanState?.storageWarning;
+
+  function handleRating(rating: Rating) {
+    if (!lookup) {
+      return;
+    }
+
+    const result = updateLookup(lookup.id, {
+      rating,
+      correction: rating === "down" ? lookup.correction : null,
+    });
+    handleLookupUpdate(result);
+  }
+
+  function handleCorrection(correction: string) {
+    if (!lookup) {
+      return;
+    }
+
+    handleLookupUpdate(updateLookup(lookup.id, { correction }));
+  }
+
+  function handleNotes(notes: string) {
+    if (!lookup) {
+      return;
+    }
+
+    handleLookupUpdate(updateLookup(lookup.id, { notes }));
+  }
+
+  function handleDelete() {
+    if (!lookup) {
+      return;
+    }
+
+    const result = deleteLookup(lookup.id);
+    if (result.ok) {
+      navigate("/history", { replace: true });
+      return;
+    }
+
+    setSaveError(result.message);
+  }
+
+  function handleLookupUpdate(result: ReturnType<typeof updateLookup>) {
+    if (result.ok) {
+      setLookup(result.value);
+      setSaveError(null);
+      return;
+    }
+
+    setSaveError(result.message);
+    if (result.value) {
+      setLookup(result.value);
+    }
+  }
 
   return (
     <main className="min-h-dvh bg-[#0A0A0A] px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-white">
@@ -37,9 +99,20 @@ export default function Result() {
         )}
 
         <div className="mt-5 space-y-4">
+          {storageWarning ? <StorageWarning message={storageWarning} /> : null}
           {scanState?.result ? <AnalysisResult result={scanState.result} capturedAt={capturedAt} /> : null}
           {scanState?.errorMessage ? <AnalysisError message={scanState.errorMessage} capturedAt={capturedAt} /> : null}
           {!scanState?.result && !scanState?.errorMessage ? <NotAnalyzed capturedAt={capturedAt} /> : null}
+          {lookup ? (
+            <SavedScanControls
+              lookup={lookup}
+              saveError={saveError}
+              onCorrectionChange={handleCorrection}
+              onDelete={handleDelete}
+              onNotesChange={handleNotes}
+              onRating={handleRating}
+            />
+          ) : null}
         </div>
 
         <Button className="mt-6 w-full" onClick={() => window.location.assign("/")}>
@@ -47,6 +120,84 @@ export default function Result() {
         </Button>
       </div>
     </main>
+  );
+}
+
+function StorageWarning({ message }: { message: string }) {
+  return (
+    <section className="rounded-[24px] border border-[#F59E0B]/30 bg-[#F59E0B]/10 p-5">
+      <p className="text-sm font-bold text-[#FACC15]">Not saved locally</p>
+      <p className="mt-2 text-sm leading-6 text-white/82">{message}</p>
+    </section>
+  );
+}
+
+function SavedScanControls({
+  lookup,
+  onCorrectionChange,
+  onDelete,
+  onNotesChange,
+  onRating,
+  saveError,
+}: {
+  lookup: Lookup;
+  onCorrectionChange: (correction: string) => void;
+  onDelete: () => void;
+  onNotesChange: (notes: string) => void;
+  onRating: (rating: Rating) => void;
+  saveError: string | null;
+}) {
+  return (
+    <section className="rounded-[24px] border border-white/10 bg-[#171717] p-5">
+      <p className="text-sm font-extrabold text-white">Saved scan</p>
+      <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">
+        Your rating and correction stay on this device. This is the data moat for improving Deep Spec later.
+      </p>
+      <div className="mt-4 grid grid-cols-1 gap-3">
+        <TrustRow label="Dataset category" value={lookup.scanCategory} />
+        <TrustRow label="Training label" value={lookup.trainingLabel} />
+        <TrustRow label="Review status" value={lookup.trainingStatus.replaceAll("_", " ")} />
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        <Button variant={lookup.rating === "up" ? "primary" : "ghost"} onClick={() => onRating("up")}>
+          Helpful
+        </Button>
+        <Button variant={lookup.rating === "down" ? "primary" : "ghost"} onClick={() => onRating("down")}>
+          Wrong
+        </Button>
+      </div>
+
+      {lookup.rating === "down" ? (
+        <label className="mt-4 block">
+          <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/42">What was it actually?</span>
+          <textarea
+            className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-white/10 bg-black/28 p-3 text-sm leading-6 text-white outline-none placeholder:text-white/32 focus:border-[#FACC15]/50"
+            maxLength={240}
+            onChange={(event) => onCorrectionChange(event.target.value)}
+            placeholder="Example: coolant reservoir cap, not brake fluid cap"
+            value={lookup.correction ?? ""}
+          />
+        </label>
+      ) : null}
+
+      <label className="mt-4 block">
+        <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/42">Private notes</span>
+        <textarea
+          className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-white/10 bg-black/28 p-3 text-sm leading-6 text-white outline-none placeholder:text-white/32 focus:border-[#FACC15]/50"
+          maxLength={500}
+          onChange={(event) => onNotesChange(event.target.value)}
+          placeholder="Optional: where the part was, symptoms, what you checked next"
+          value={lookup.notes}
+        />
+      </label>
+
+      {saveError ? <p className="mt-3 text-sm font-semibold text-[#FCA5A5]">{saveError}</p> : null}
+
+      <Button className="mt-4 w-full border border-[#EF4444]/30 bg-[#EF4444]/10 text-[#FCA5A5] shadow-none" onClick={onDelete}>
+        Delete saved scan
+      </Button>
+    </section>
   );
 }
 
