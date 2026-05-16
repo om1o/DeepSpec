@@ -1,7 +1,18 @@
-.DS_Store
-xcuserdata/
-DerivedData/
-*.xcuserstate
-*.xcscmblueprint
-.env
+node_modules/
+dist/
+dev-dist/
+dist-ssr/
+.vite/
+.vercel/
 
+.DS_Store
+*.local
+.env
+.env.*
+!.env.example
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
