@@ -14,6 +14,8 @@ web-build/
 coverage/
 .DS_Store
 *.tsbuildinfo
+.playwright-mcp/
+expo-mobile-web.log
 
 # Local Sprinter capture pipeline (optional: commit parts.auto.csv if you want it shared)
 data/sprinter/vin.txt

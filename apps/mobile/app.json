@@ -1,10 +1,26 @@
 {
   "expo": {
-    "name": "DeepSpecMobile",
+    "name": "DeepSpec",
     "slug": "deepspec-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
     "platforms": ["ios", "android", "web"],
-    "scheme": "deepspec"
+    "scheme": "deepspec",
+    "ios": {
+      "bundleIdentifier": "com.deepspec.mobile",
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSCameraUsageDescription": "DeepSpec uses the camera so you can scan a visible car part.",
+        "NSPhotoLibraryUsageDescription": "DeepSpec lets you choose existing part photos from your library.",
+        "NSLocationWhenInUseUsageDescription": "DeepSpec uses your location only when you ask to find nearby repair options."
+      }
+    },
+    "android": {
+      "package": "com.deepspec.mobile",
+      "permissions": ["CAMERA", "ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
+    },
+    "web": {
+      "bundler": "metro"
+    }
   }
 }

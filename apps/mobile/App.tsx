@@ -1,8 +1,15 @@
-import React, { useMemo, useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as ImageManipulator from "expo-image-manipulator";
+import * as ImagePicker from "expo-image-picker";
+import * as Location from "expo-location";
+import * as Speech from "expo-speech";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
-  Button,
+  Image,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   SafeAreaView,
@@ -13,107 +20,467 @@ import {
   View,
 } from "react-native";
 
+type Confidence = "high" | "medium" | "low";
+type Triage = "can_help" | "needs_better_photo" | "needs_professional";
+type Screen = "scan" | "history" | "settings" | "result" | "chat";
+
+type LookupResult = {
+  partName: string;
+  confidence: Confidence;
+  whatItDoes: string;
+  conditionObservations: string[];
+  concerns: string[];
+  isSafetyCritical: boolean;
+  nextSteps: string;
+  needsBetterPhoto: boolean;
+  followUpQuestions: string[];
+  triage: Triage;
+};
+
+type ChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: string;
+};
+
+type Lookup = {
+  id: string;
+  createdAt: string;
+  imageBase64: string;
+  userCarContext: string;
+  userProblemContext: string;
+  result: LookupResult;
+  rating: "up" | "down" | null;
+  correction: string | null;
+  chatHistory: ChatMessage[];
+};
+
+type AIInput = {
+  type: "vision" | "text";
+  imageBase64?: string;
+  userMessage: string;
+  systemPrompt: string;
+  responseAsJson?: boolean;
+};
+
+const STORAGE_KEY = "deep-spec:mobile-lookups";
+const SETTINGS_KEY = "deep-spec:mobile-settings";
+
+const IDENTIFY_PROMPT = `You are DeepSpec, an app that helps regular people understand visible car parts from photos.
+
+Return only valid JSON. Do not use markdown.
+
+Rules:
+- Identify the visible part in plain language. Never invent exact OEM part numbers, prices, fitment, wiring pinouts, or shop recommendations.
+- Explain what the part does in one or two short sentences.
+- Assess visible condition: rust, leaks, cracks, missing bolts, frayed wires, oil residue, melted plastic, or unclear photo quality.
+- Set is_safety_critical true for brakes, steering, suspension, fuel, airbags, severe electrical burning, or anything that could make driving unsafe.
+- Set triage_status:
+  - "can_help" for safe explanation/simple inspection advice.
+  - "needs_better_photo" when the photo is too blurry, dark, close, far, or unclear.
+  - "needs_professional" for safety-critical parts, severe leaks, burning, structural damage, or unclear high-risk cases.
+- If triage_status is "needs_professional", tell the user to get professional help and do not give risky repair steps.
+
+JSON shape:
+{
+  "part_name": "max 60 chars",
+  "confidence": "high" | "medium" | "low",
+  "what_it_does": "plain language",
+  "condition_observations": ["specific visible observations"],
+  "concerns": ["visible concerns, empty if none"],
+  "is_safety_critical": false,
+  "next_steps": "one or two sentences",
+  "needs_better_photo": false,
+  "follow_up_questions": ["optional questions"],
+  "triage_status": "can_help" | "needs_better_photo" | "needs_professional"
+}`;
+
+const FOLLOWUP_PROMPT = `You are DeepSpec's follow-up assistant.
+
+Answer in 2-4 short sentences. Use plain language.
+If the part is safety-critical or the user asks for risky repair steps, tell them to verify with a mechanic.
+Do not give exact OEM part numbers, live prices, wiring pinouts, or repair certification advice.`;
+
+function newId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function asString(value: unknown, fallback = "") {
+  return typeof value === "string" ? value : fallback;
+}
+
+function asArray(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function asConfidence(value: unknown): Confidence {
+  return value === "high" || value === "medium" || value === "low" ? value : "medium";
+}
+
+function deriveTriage(raw: Record<string, unknown>, result: Omit<LookupResult, "triage">): Triage {
+  const explicit = raw.triage_status;
+  if (explicit === "can_help" || explicit === "needs_better_photo" || explicit === "needs_professional") {
+    return explicit;
+  }
+  if (result.needsBetterPhoto || result.confidence === "low") return "needs_better_photo";
+  if (result.isSafetyCritical) return "needs_professional";
+  const joined = [...result.concerns, result.nextSteps].join(" ").toLowerCase();
+  if (/brake|steering|suspension|fuel|airbag|fire|burn|severe leak|do not drive|don't drive/.test(joined)) {
+    return "needs_professional";
+  }
+  return "can_help";
+}
+
+function mapIdentify(raw: unknown): LookupResult {
+  const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const base = {
+    partName: asString(obj.part_name, "Unknown part").slice(0, 80),
+    confidence: asConfidence(obj.confidence),
+    whatItDoes: asString(obj.what_it_does, "DeepSpec could not explain this from the current photo."),
+    conditionObservations: asArray(obj.condition_observations),
+    concerns: asArray(obj.concerns),
+    isSafetyCritical: obj.is_safety_critical === true,
+    nextSteps: asString(obj.next_steps, "Try another photo with better light and a clearer angle."),
+    needsBetterPhoto: obj.needs_better_photo === true,
+    followUpQuestions: asArray(obj.follow_up_questions),
+  };
+  return { ...base, triage: deriveTriage(obj, base) };
+}
+
+function triageCopy(triage: Triage) {
+  if (triage === "needs_professional") {
+    return {
+      title: "Get professional help",
+      body: "This scan touches a safety-critical or high-risk area. DeepSpec can explain what it sees, but it should not guide this repair.",
+    };
+  }
+  if (triage === "needs_better_photo") {
+    return {
+      title: "Needs a better photo",
+      body: "Move closer, add light, and point at labels, connectors, leaks, or damaged areas.",
+    };
+  }
+  return {
+    title: "DeepSpec can help",
+    body: "This looks safe enough for plain-language explanation and simple inspection guidance.",
+  };
+}
+
+function confidenceStyle(confidence: Confidence) {
+  if (confidence === "high") return [styles.badge, styles.badgeGood];
+  if (confidence === "medium") return [styles.badge, styles.badgeWarn];
+  return [styles.badge, styles.badgeRisk];
+}
+
+async function readJson<T>(key: string, fallback: T): Promise<T> {
+  try {
+    const raw = await AsyncStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function writeJson<T>(key: string, value: T): Promise<void> {
+  await AsyncStorage.setItem(key, JSON.stringify(value));
+}
+
+async function compressForVision(uri: string): Promise<string> {
+  const output = await ImageManipulator.manipulateAsync(
+    uri,
+    [{ resize: { width: 1024 } }],
+    { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG, base64: true },
+  );
+  if (!output.base64) throw new Error("Could not prepare that photo for scanning.");
+  return `data:image/jpeg;base64,${output.base64}`;
+}
+
+async function pickFromCamera(): Promise<string | null> {
+  const permission = await ImagePicker.requestCameraPermissionsAsync();
+  if (!permission.granted) {
+    Alert.alert("Camera needed", "Allow camera access to scan a part.");
+    return null;
+  }
+  const result = await ImagePicker.launchCameraAsync({
+    mediaTypes: ["images"],
+    quality: 0.85,
+    allowsEditing: false,
+  });
+  if (result.canceled || !result.assets[0]) return null;
+  return compressForVision(result.assets[0].uri);
+}
+
+async function pickFromLibrary(): Promise<string | null> {
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ["images"],
+    quality: 0.85,
+    allowsEditing: false,
+  });
+  if (result.canceled || !result.assets[0]) return null;
+  return compressForVision(result.assets[0].uri);
+}
+
+async function runAI(apiBase: string, input: AIInput): Promise<string | object> {
+  const endpoint = `${apiBase.replace(/\/$/, "")}/api/ai`;
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+  } catch {
+    throw new Error("DeepSpec AI is not reachable. Start the DeepSpec API or use your computer LAN address on a phone.");
+  }
+
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    const msg =
+      body && typeof body === "object" && "error" in body
+        ? String((body as { error?: { message?: string } }).error?.message ?? response.statusText)
+        : response.statusText;
+    throw new Error(msg || "DeepSpec AI request failed.");
+  }
+  if (!body || typeof body !== "object" || !("kind" in body)) throw new Error("DeepSpec AI returned an unreadable response.");
+  const envelope = body as { kind?: unknown; value?: unknown };
+  if (envelope.kind === "json" && envelope.value && typeof envelope.value === "object") return envelope.value as object;
+  if (envelope.kind === "text" && typeof envelope.value === "string") return envelope.value;
+  throw new Error("DeepSpec AI returned an unexpected response.");
+}
+
+function buildScanMessage(car: string, problem: string) {
+  return [
+    car.trim() ? `Vehicle context: ${car.trim()}` : "",
+    problem.trim() ? `User concern: ${problem.trim()}` : "",
+    "Identify the visible car part and triage whether DeepSpec can help safely.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function buildFollowupMessage(lookup: Lookup, question: string) {
+  return [
+    `Part: ${lookup.result.partName}`,
+    `Triage: ${lookup.result.triage}`,
+    `Safety-critical: ${lookup.result.isSafetyCritical}`,
+    `What it does: ${lookup.result.whatItDoes}`,
+    `Visible concerns: ${lookup.result.concerns.join("; ") || "none listed"}`,
+    `User question: ${question}`,
+  ].join("\n");
+}
+
 export default function App() {
   const [signedIn, setSignedIn] = useState(false);
   const [email, setEmail] = useState("");
   const [passcode, setPasscode] = useState("");
-  const [apiBase, setApiBase] = useState("http://127.0.0.1:8000");
-  const [ocrLines, setOcrLines] = useState("31100-R40-A01\nAC DELCO REMAN");
-  const [barcode, setBarcode] = useState("31100-R40-A01");
-  const [blurScore, setBlurScore] = useState("0.9");
-  const [log, setLog] = useState<string>("");
+  const [screen, setScreen] = useState<Screen>("scan");
+  const [lookups, setLookups] = useState<Lookup[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [imageBase64, setImageBase64] = useState<string | null>(null);
+  const [carContext, setCarContext] = useState("");
+  const [problemContext, setProblemContext] = useState("");
+  const [apiBase, setApiBase] = useState("http://127.0.0.1:8788");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [correction, setCorrection] = useState("");
+  const [chatDraft, setChatDraft] = useState("");
 
-  const canSubmit = useMemo(() => {
-    return email.trim().includes("@") && passcode.trim().length >= 4;
-  }, [email, passcode]);
+  useEffect(() => {
+    void (async () => {
+      setLookups(await readJson<Lookup[]>(STORAGE_KEY, []));
+      const settings = await readJson<{ apiBase?: string }>(SETTINGS_KEY, {});
+      if (settings.apiBase) setApiBase(settings.apiBase);
+    })();
+  }, []);
 
-  function signIn() {
-    if (!canSubmit) {
-      Alert.alert("Check the fields", "Use an email address and a passcode with at least 4 characters.");
-      return;
+  const activeLookup = useMemo(() => lookups.find((lookup) => lookup.id === activeId) ?? null, [activeId, lookups]);
+  const canSubmit = email.trim().includes("@") && passcode.trim().length >= 4;
+
+  const saveLookups = useCallback(async (next: Lookup[]) => {
+    const sorted = [...next].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    setLookups(sorted);
+    await writeJson(STORAGE_KEY, sorted);
+  }, []);
+
+  const updateLookup = useCallback(
+    async (id: string, patch: Partial<Lookup>) => {
+      await saveLookups(lookups.map((lookup) => (lookup.id === id ? { ...lookup, ...patch, id } : lookup)));
+    },
+    [lookups, saveLookups],
+  );
+
+  const selectLookup = (id: string, nextScreen: Screen = "result") => {
+    setActiveId(id);
+    setScreen(nextScreen);
+    setCorrection(lookups.find((lookup) => lookup.id === id)?.correction ?? "");
+  };
+
+  const choosePhoto = async (source: "camera" | "library") => {
+    setError(null);
+    try {
+      const picked = source === "camera" ? await pickFromCamera() : await pickFromLibrary();
+      if (picked) setImageBase64(picked);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not load that image.");
     }
-    setSignedIn(true);
-  }
+  };
+
+  const identify = async () => {
+    if (!imageBase64 || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const raw = await runAI(apiBase, {
+        type: "vision",
+        imageBase64,
+        userMessage: buildScanMessage(carContext, problemContext),
+        systemPrompt: IDENTIFY_PROMPT,
+        responseAsJson: true,
+      });
+      const result = mapIdentify(raw);
+      const lookup: Lookup = {
+        id: newId(),
+        createdAt: new Date().toISOString(),
+        imageBase64,
+        userCarContext: carContext,
+        userProblemContext: problemContext,
+        result,
+        rating: null,
+        correction: null,
+        chatHistory: [],
+      };
+      await saveLookups([lookup, ...lookups]);
+      setImageBase64(null);
+      setProblemContext("");
+      setActiveId(lookup.id);
+      setCorrection("");
+      setScreen("result");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Scan failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const rate = async (rating: "up" | "down") => {
+    if (!activeLookup) return;
+    await updateLookup(activeLookup.id, { rating });
+  };
+
+  const saveCorrection = async () => {
+    if (!activeLookup) return;
+    await updateLookup(activeLookup.id, { correction: correction.trim() || null, rating: "down" });
+  };
+
+  const deleteActive = async () => {
+    if (!activeLookup) return;
+    const next = lookups.filter((lookup) => lookup.id !== activeLookup.id);
+    await saveLookups(next);
+    setActiveId(null);
+    setScreen("history");
+  };
+
+  const speakResult = () => {
+    if (!activeLookup) return;
+    const speech = `${activeLookup.result.partName}. ${activeLookup.result.whatItDoes} ${activeLookup.result.nextSteps}`;
+    Speech.stop();
+    Speech.speak(speech.slice(0, 900), { rate: 0.94 });
+  };
+
+  const findHelpNearby = async () => {
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      const query = encodeURIComponent("auto repair");
+      if (!permission.granted) {
+        await Linking.openURL(`https://maps.apple.com/?q=${query}`);
+        return;
+      }
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const { latitude, longitude } = pos.coords;
+      if (Platform.OS === "ios") {
+        await Linking.openURL(`maps://?q=${query}&ll=${latitude},${longitude}`);
+      } else if (Platform.OS === "android") {
+        await Linking.openURL(`geo:${latitude},${longitude}?q=${query}`);
+      } else {
+        await Linking.openURL(`https://maps.apple.com/?q=${query}&ll=${latitude},${longitude}`);
+      }
+    } catch {
+      await Linking.openURL("https://maps.apple.com/?q=auto%20repair");
+    }
+  };
+
+  const sendChat = async () => {
+    if (!activeLookup) return;
+    const text = chatDraft.trim().slice(0, 500);
+    if (!text || busy) return;
+    const userMsg: ChatMessage = { id: newId(), role: "user", content: text, timestamp: new Date().toISOString() };
+    const optimistic = { ...activeLookup, chatHistory: [...activeLookup.chatHistory, userMsg] };
+    await updateLookup(activeLookup.id, { chatHistory: optimistic.chatHistory });
+    setChatDraft("");
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await runAI(apiBase, {
+        type: "text",
+        userMessage: buildFollowupMessage(optimistic, text),
+        systemPrompt: FOLLOWUP_PROMPT,
+      });
+      const assistantMsg: ChatMessage = {
+        id: newId(),
+        role: "assistant",
+        content: typeof response === "string" ? response : "I could not read the response.",
+        timestamp: new Date().toISOString(),
+      };
+      const fresh = lookups.find((lookup) => lookup.id === activeLookup.id) ?? optimistic;
+      await updateLookup(activeLookup.id, { chatHistory: [...fresh.chatHistory, assistantMsg] });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not answer that.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveSettings = async () => {
+    await writeJson(SETTINGS_KEY, { apiBase });
+    Alert.alert("Saved", "DeepSpec will use this AI API base URL.");
+  };
 
   if (!signedIn) {
     return (
       <SafeAreaView style={styles.authSafe}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={styles.authAvoidingView}
-        >
-          <ScrollView
-            keyboardShouldPersistTaps="handled"
-            contentContainerStyle={styles.authScroll}
-          >
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.flex}>
+          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.authScroll}>
             <View style={styles.brandBlock}>
               <Text style={styles.brandMark}>DeepSpec</Text>
               <Text style={styles.tagline}>Know what you are looking at.</Text>
             </View>
 
-            <View style={styles.authPanel}>
-              <Text style={styles.authEyebrow}>Tester access</Text>
+            <Card>
+              <Text style={styles.eyebrow}>Tester access</Text>
               <Text style={styles.authTitle}>Sign in to scan parts</Text>
-              <Text style={styles.authCopy}>
-                This preview uses a local tester sign-in. Real accounts and parent-managed billing come later.
+              <Text style={styles.muted}>
+                Local tester sign-in for this preview. Real accounts and parent-managed billing come later.
               </Text>
-
-              <Text style={styles.authLabel}>Email</Text>
-              <TextInput
-                value={email}
-                onChangeText={setEmail}
-                placeholder="you@example.com"
-                placeholderTextColor="#71717A"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-                textContentType="emailAddress"
-                style={styles.authInput}
-              />
-
-              <Text style={styles.authLabel}>Passcode</Text>
-              <TextInput
-                value={passcode}
-                onChangeText={setPasscode}
-                placeholder="4+ characters"
-                placeholderTextColor="#71717A"
-                secureTextEntry
-                textContentType="password"
-                style={styles.authInput}
-              />
-
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Sign in"
-                onPress={signIn}
-                style={({ pressed }) => [
-                  styles.primaryButton,
-                  !canSubmit && styles.primaryButtonDisabled,
-                  pressed && canSubmit ? styles.primaryButtonPressed : null,
-                ]}
-              >
-                <Text style={styles.primaryButtonText}>Sign in</Text>
-              </Pressable>
-
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Continue as demo tester"
+              <Field label="Email" value={email} onChangeText={setEmail} placeholder="you@example.com" keyboardType="email-address" />
+              <Field label="Passcode" value={passcode} onChangeText={setPasscode} placeholder="4+ characters" secureTextEntry />
+              <ActionButton disabled={!canSubmit} label="Sign in" onPress={() => setSignedIn(true)} />
+              <GhostButton
+                label="Continue as demo tester"
                 onPress={() => {
                   setEmail("tester@deepspec.local");
                   setPasscode("0000");
                   setSignedIn(true);
                 }}
-                style={({ pressed }) => [styles.secondaryButton, pressed ? styles.secondaryButtonPressed : null]}
-              >
-                <Text style={styles.secondaryButtonText}>Continue as demo tester</Text>
-              </Pressable>
-            </View>
+              />
+            </Card>
 
             <View style={styles.safetyNote}>
               <Text style={styles.safetyTitle}>Safety rule</Text>
               <Text style={styles.safetyText}>
-                DeepSpec can explain visible parts, but it will escalate brakes, steering, suspension, fuel, airbags,
-                severe leaks, and unclear high-risk scans to professional help.
+                DeepSpec explains visible parts, but escalates brakes, steering, suspension, fuel, airbags, severe
+                leaks, and unclear high-risk scans to professional help.
               </Text>
             </View>
           </ScrollView>
@@ -122,171 +489,343 @@ export default function App() {
     );
   }
 
-  async function createScan() {
-    try {
-      const form = new FormData();
-      form.append("ocr_lines", ocrLines);
-      form.append("barcode_text", barcode);
-      form.append("blur_score", blurScore);
-
-      const resp = await fetch(`${apiBase.replace(/\/$/, "")}/scans`, { method: "POST", body: form });
-      const txt = await resp.text();
-      setLog(`${resp.status}\n${txt}`);
-    } catch (e) {
-      setLog(String(e));
-    }
-  }
-
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScrollView contentContainerStyle={styles.container}>
-        <View style={styles.prototypeHeader}>
+    <SafeAreaView style={styles.appSafe}>
+      <View style={styles.shell}>
+        <View style={styles.header}>
           <View>
-            <Text style={styles.title}>DeepSpec Mobile Shell</Text>
-            <Text style={styles.help}>Signed in as {email || "tester"}.</Text>
+            <Text style={styles.logo}>DeepSpec</Text>
+            <Text style={styles.headerSub}>iOS-first scanner preview</Text>
           </View>
-          <Pressable onPress={() => setSignedIn(false)} style={styles.signOutButton}>
-            <Text style={styles.signOutText}>Sign out</Text>
+          <Pressable onPress={() => setSignedIn(false)} style={styles.smallPill}>
+            <Text style={styles.smallPillText}>Sign out</Text>
           </Pressable>
         </View>
-        <Text style={styles.help}>Use your PC LAN IP instead of localhost when testing on-device.</Text>
 
-        <Text style={styles.label}>API base URL</Text>
-        <TextInput value={apiBase} onChangeText={setApiBase} autoCapitalize="none" style={styles.input} />
+        {screen === "scan" ? (
+          <ScrollView contentContainerStyle={styles.content}>
+            <Text style={styles.screenTitle}>Scan a car part</Text>
+            <Text style={styles.muted}>Take a photo or pick one from your gallery. DeepSpec will identify, explain, and triage it.</Text>
 
-        <Text style={styles.label}>OCR lines</Text>
-        <TextInput value={ocrLines} onChangeText={setOcrLines} multiline style={[styles.input, { minHeight: 90 }]} />
+            <View style={styles.photoBox}>
+              {imageBase64 ? (
+                <Image source={{ uri: imageBase64 }} style={styles.photoPreview} resizeMode="contain" />
+              ) : (
+                <View style={styles.photoEmpty}>
+                  <Text style={styles.photoEmptyTitle}>No photo selected</Text>
+                  <Text style={styles.mutedCenter}>Point at the part, label, connector, leak, or visible damage.</Text>
+                </View>
+              )}
+            </View>
 
-        <Text style={styles.label}>Barcode text</Text>
-        <TextInput value={barcode} onChangeText={setBarcode} autoCapitalize="characters" style={styles.input} />
+            <View style={styles.row}>
+              <ActionButton label="Camera" onPress={() => void choosePhoto("camera")} half />
+              <GhostButton label="Gallery" onPress={() => void choosePhoto("library")} half />
+            </View>
 
-        <Text style={styles.label}>Blur score</Text>
-        <TextInput value={blurScore} onChangeText={setBlurScore} keyboardType="decimal-pad" style={styles.input} />
+            <Field label="Your car (optional)" value={carContext} onChangeText={setCarContext} placeholder="2018 Mercedes Sprinter" />
+            <Field
+              label="What is going on? (optional)"
+              value={problemContext}
+              onChangeText={setProblemContext}
+              placeholder="Leak under engine, grinding noise, warning light..."
+              multiline
+            />
 
-        <Button title="POST /scans (fusion demo)" onPress={() => createScan()} />
+            {error ? <ErrorBox message={error} /> : null}
+            <ActionButton label={busy ? "Analyzing..." : "Identify part"} disabled={!imageBase64 || busy} onPress={() => void identify()} />
+            {busy ? <ActivityIndicator color="#3B82F6" /> : null}
+          </ScrollView>
+        ) : null}
 
-        <Text style={styles.mono}>{log}</Text>
-      </ScrollView>
+        {screen === "result" && activeLookup ? (
+          <ScrollView contentContainerStyle={styles.content}>
+            <Image source={{ uri: activeLookup.imageBase64 }} style={styles.resultImage} resizeMode="contain" />
+            <View style={styles.titleRow}>
+              <Text style={styles.screenTitle}>{activeLookup.result.partName}</Text>
+              <View style={confidenceStyle(activeLookup.result.confidence)}>
+                <Text style={styles.badgeText}>{activeLookup.result.confidence}</Text>
+              </View>
+            </View>
+
+            <TriageCard triage={activeLookup.result.triage} />
+            {activeLookup.result.triage === "needs_professional" ? (
+              <ActionButton label="Find help nearby" onPress={() => void findHelpNearby()} />
+            ) : null}
+
+            <Section title="What it does" body={activeLookup.result.whatItDoes} />
+            <ListSection title="What I see" items={activeLookup.result.conditionObservations} empty="No specific observations listed." />
+            <ListSection title="Concerns" items={activeLookup.result.concerns} empty="Nothing concerning visible from this photo." />
+            <Section title="What to do next" body={activeLookup.result.nextSteps} />
+
+            <View style={styles.row}>
+              <GhostButton label="Read aloud" onPress={speakResult} half />
+              <GhostButton label="Ask follow-up" onPress={() => setScreen("chat")} half />
+            </View>
+            <View style={styles.row}>
+              <GhostButton label={activeLookup.rating === "up" ? "Helpful: yes" : "Helpful"} onPress={() => void rate("up")} half />
+              <GhostButton label={activeLookup.rating === "down" ? "Marked wrong" : "Wrong"} onPress={() => void rate("down")} half />
+            </View>
+            <Field label="Correction (if wrong)" value={correction} onChangeText={setCorrection} placeholder="What was it actually?" />
+            <GhostButton label="Save correction" onPress={() => void saveCorrection()} />
+            <GhostButton label="Delete scan" danger onPress={() => void deleteActive()} />
+          </ScrollView>
+        ) : null}
+
+        {screen === "history" ? (
+          <ScrollView contentContainerStyle={styles.content}>
+            <Text style={styles.screenTitle}>Saved scans</Text>
+            {lookups.length === 0 ? <Text style={styles.muted}>No scans yet.</Text> : null}
+            {lookups.map((lookup) => (
+              <Pressable key={lookup.id} onPress={() => selectLookup(lookup.id)} style={styles.historyCard}>
+                <Image source={{ uri: lookup.imageBase64 }} style={styles.historyImage} />
+                <View style={styles.historyBody}>
+                  <Text style={styles.historyTitle}>{lookup.result.partName}</Text>
+                  <Text style={styles.historyMeta}>
+                    {lookup.result.confidence} confidence • {lookup.result.triage.replace(/_/g, " ")}
+                  </Text>
+                </View>
+              </Pressable>
+            ))}
+          </ScrollView>
+        ) : null}
+
+        {screen === "chat" && activeLookup ? (
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.flex}>
+            <ScrollView contentContainerStyle={styles.content}>
+              <Text style={styles.screenTitle}>Ask about {activeLookup.result.partName}</Text>
+              {activeLookup.chatHistory.length === 0 ? (
+                <Text style={styles.muted}>Ask a short follow-up. DeepSpec will stay cautious for risky parts.</Text>
+              ) : null}
+              {activeLookup.chatHistory.map((msg) => (
+                <View key={msg.id} style={msg.role === "user" ? styles.userBubble : styles.assistantBubble}>
+                  <Text style={msg.role === "user" ? styles.userBubbleText : styles.assistantBubbleText}>{msg.content}</Text>
+                </View>
+              ))}
+              {error ? <ErrorBox message={error} /> : null}
+            </ScrollView>
+            <View style={styles.chatComposer}>
+              <TextInput
+                value={chatDraft}
+                onChangeText={(text) => setChatDraft(text.slice(0, 500))}
+                placeholder="Ask a follow-up..."
+                placeholderTextColor="#71717A"
+                multiline
+                style={styles.chatInput}
+              />
+              <Pressable onPress={() => void sendChat()} disabled={!chatDraft.trim() || busy} style={styles.sendButton}>
+                <Text style={styles.sendText}>{busy ? "..." : "Send"}</Text>
+              </Pressable>
+            </View>
+          </KeyboardAvoidingView>
+        ) : null}
+
+        {screen === "settings" ? (
+          <ScrollView contentContainerStyle={styles.content}>
+            <Text style={styles.screenTitle}>Settings</Text>
+            <Field label="AI API base URL" value={apiBase} onChangeText={setApiBase} placeholder="http://127.0.0.1:8788" />
+            <Text style={styles.muted}>
+              On a real phone, use your PC LAN IP, for example http://192.168.1.25:8788. The Gemini key stays on the server.
+            </Text>
+            <ActionButton label="Save settings" onPress={() => void saveSettings()} />
+            <Section
+              title="Roadmap"
+              body="Next: photo overlays. Later: live camera guidance, voice questions, and native AR after identification is reliable."
+            />
+          </ScrollView>
+        ) : null}
+
+        <View style={styles.nav}>
+          <NavButton active={screen === "scan"} label="Scan" onPress={() => setScreen("scan")} />
+          <NavButton active={screen === "history"} label="Saved" onPress={() => setScreen("history")} />
+          <NavButton active={screen === "settings"} label="Settings" onPress={() => setScreen("settings")} />
+        </View>
+      </View>
     </SafeAreaView>
   );
 }
 
+function Card({ children }: { children: React.ReactNode }) {
+  return <View style={styles.card}>{children}</View>;
+}
+
+function Field({
+  label,
+  value,
+  onChangeText,
+  placeholder,
+  keyboardType,
+  secureTextEntry,
+  multiline,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (text: string) => void;
+  placeholder: string;
+  keyboardType?: "email-address";
+  secureTextEntry?: boolean;
+  multiline?: boolean;
+}) {
+  return (
+    <View style={styles.fieldWrap}>
+      <Text style={styles.label}>{label}</Text>
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor="#71717A"
+        keyboardType={keyboardType}
+        secureTextEntry={secureTextEntry}
+        multiline={multiline}
+        autoCapitalize="none"
+        autoCorrect={false}
+        style={[styles.input, multiline ? styles.textArea : null]}
+      />
+    </View>
+  );
+}
+
+function ActionButton({ label, onPress, disabled, half }: { label: string; onPress: () => void; disabled?: boolean; half?: boolean }) {
+  return (
+    <Pressable onPress={onPress} disabled={disabled} style={({ pressed }) => [styles.primaryButton, half ? styles.half : null, disabled ? styles.disabled : null, pressed && !disabled ? styles.pressed : null]}>
+      <Text style={styles.primaryButtonText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function GhostButton({ label, onPress, half, danger }: { label: string; onPress: () => void; half?: boolean; danger?: boolean }) {
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.ghostButton, half ? styles.half : null, danger ? styles.dangerButton : null, pressed ? styles.ghostPressed : null]}>
+      <Text style={danger ? styles.dangerText : styles.ghostButtonText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function NavButton({ active, label, onPress }: { active: boolean; label: string; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={[styles.navButton, active ? styles.navActive : null]}>
+      <Text style={active ? styles.navTextActive : styles.navText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function Section({ title, body }: { title: string; body: string }) {
+  return (
+    <Card>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      <Text style={styles.bodyText}>{body}</Text>
+    </Card>
+  );
+}
+
+function ListSection({ title, items, empty }: { title: string; items: string[]; empty: string }) {
+  return (
+    <Card>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {(items.length ? items : [empty]).map((item) => (
+        <Text key={item} style={styles.listItem}>
+          • {item}
+        </Text>
+      ))}
+    </Card>
+  );
+}
+
+function TriageCard({ triage }: { triage: Triage }) {
+  const copy = triageCopy(triage);
+  return (
+    <View style={[styles.triageCard, triage === "needs_professional" ? styles.triageRisk : triage === "needs_better_photo" ? styles.triageWarn : styles.triageGood]}>
+      <Text style={styles.triageTitle}>{copy.title}</Text>
+      <Text style={styles.triageBody}>{copy.body}</Text>
+    </View>
+  );
+}
+
+function ErrorBox({ message }: { message: string }) {
+  return (
+    <View style={styles.errorBox}>
+      <Text style={styles.errorText}>{message}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  flex: { flex: 1 },
   authSafe: { flex: 1, backgroundColor: "#0A0A0A" },
-  authAvoidingView: { flex: 1 },
-  authScroll: {
-    flexGrow: 1,
-    justifyContent: "center",
-    paddingHorizontal: 20,
-    paddingVertical: 28,
-  },
+  appSafe: { flex: 1, backgroundColor: "#0A0A0A" },
+  shell: { flex: 1, backgroundColor: "#0A0A0A" },
+  authScroll: { flexGrow: 1, justifyContent: "center", paddingHorizontal: 20, paddingVertical: 28 },
   brandBlock: { marginBottom: 24 },
-  brandMark: {
-    color: "#F5F5F5",
-    fontSize: 34,
-    fontWeight: "800",
-    letterSpacing: 0,
-  },
+  brandMark: { color: "#F5F5F5", fontSize: 34, fontWeight: "800", letterSpacing: 0 },
   tagline: { color: "#A1A1AA", fontSize: 16, marginTop: 6 },
-  authPanel: {
-    borderWidth: 1,
-    borderColor: "#262626",
-    backgroundColor: "#171717",
-    borderRadius: 18,
-    padding: 20,
-  },
-  authEyebrow: {
-    color: "#60A5FA",
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 0.8,
-    marginBottom: 10,
-    textTransform: "uppercase",
-  },
-  authTitle: {
-    color: "#F5F5F5",
-    fontSize: 25,
-    fontWeight: "800",
-    letterSpacing: 0,
-    marginBottom: 8,
-  },
-  authCopy: { color: "#A1A1AA", fontSize: 14, lineHeight: 21, marginBottom: 22 },
-  authLabel: {
-    color: "#D4D4D8",
-    fontSize: 13,
-    fontWeight: "700",
-    marginBottom: 8,
-    marginTop: 12,
-  },
-  authInput: {
-    minHeight: 50,
-    borderWidth: 1,
-    borderColor: "#262626",
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    color: "#F5F5F5",
-    backgroundColor: "#0F0F10",
-    fontSize: 15,
-  },
-  primaryButton: {
-    minHeight: 52,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 14,
-    backgroundColor: "#3B82F6",
-    marginTop: 22,
-  },
-  primaryButtonDisabled: { opacity: 0.45 },
-  primaryButtonPressed: { opacity: 0.82 },
-  primaryButtonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "800" },
-  secondaryButton: {
-    minHeight: 48,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#262626",
-    marginTop: 12,
-  },
-  secondaryButtonPressed: { backgroundColor: "#262626" },
-  secondaryButtonText: { color: "#D4D4D8", fontSize: 15, fontWeight: "700" },
-  safetyNote: {
-    borderWidth: 1,
-    borderColor: "#3F2F16",
-    backgroundColor: "#1A1308",
-    borderRadius: 14,
-    padding: 16,
-    marginTop: 18,
-  },
+  card: { borderWidth: 1, borderColor: "#262626", backgroundColor: "#171717", borderRadius: 16, padding: 18, marginBottom: 14 },
+  eyebrow: { color: "#60A5FA", fontSize: 12, fontWeight: "800", letterSpacing: 0.8, marginBottom: 10, textTransform: "uppercase" },
+  authTitle: { color: "#F5F5F5", fontSize: 25, fontWeight: "800", letterSpacing: 0, marginBottom: 8 },
+  muted: { color: "#A1A1AA", fontSize: 14, lineHeight: 21, marginBottom: 14 },
+  mutedCenter: { color: "#A1A1AA", fontSize: 14, lineHeight: 21, textAlign: "center" },
+  safetyNote: { borderWidth: 1, borderColor: "#3F2F16", backgroundColor: "#1A1308", borderRadius: 14, padding: 16, marginTop: 18 },
   safetyTitle: { color: "#F59E0B", fontSize: 13, fontWeight: "800", marginBottom: 6 },
   safetyText: { color: "#D4D4D8", fontSize: 13, lineHeight: 19 },
-  safe: { flex: 1, backgroundColor: "#fff" },
-  container: { padding: 16, gap: 10 },
-  prototypeHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: 12,
-  },
-  title: { fontSize: 22, fontWeight: "700" },
-  help: { color: "#555", marginBottom: 8 },
-  signOutButton: {
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  signOutText: { color: "#333", fontWeight: "700" },
-  label: { marginTop: 6, fontSize: 13, color: "#333", fontWeight: "600" },
-  input: {
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
-    backgroundColor: "#fafafa",
-  },
-  mono: { marginTop: 14, fontFamily: "Courier", fontSize: 12 },
+  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 18, paddingBottom: 12, paddingTop: 10, borderBottomColor: "#171717", borderBottomWidth: 1 },
+  logo: { color: "#F5F5F5", fontSize: 24, fontWeight: "900", letterSpacing: 0 },
+  headerSub: { color: "#A1A1AA", fontSize: 12, marginTop: 2 },
+  smallPill: { borderWidth: 1, borderColor: "#262626", borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
+  smallPillText: { color: "#D4D4D8", fontWeight: "800", fontSize: 12 },
+  content: { paddingHorizontal: 18, paddingBottom: 110, paddingTop: 18 },
+  screenTitle: { color: "#F5F5F5", fontSize: 25, fontWeight: "900", letterSpacing: 0, marginBottom: 8 },
+  photoBox: { minHeight: 245, borderWidth: 1, borderColor: "#262626", backgroundColor: "#101010", borderRadius: 18, overflow: "hidden", marginBottom: 14 },
+  photoPreview: { width: "100%", minHeight: 245 },
+  photoEmpty: { minHeight: 245, alignItems: "center", justifyContent: "center", padding: 24 },
+  photoEmptyTitle: { color: "#F5F5F5", fontSize: 18, fontWeight: "800", marginBottom: 8 },
+  row: { flexDirection: "row", gap: 10, marginBottom: 12 },
+  half: { flex: 1 },
+  fieldWrap: { marginBottom: 14 },
+  label: { color: "#D4D4D8", fontSize: 13, fontWeight: "800", marginBottom: 8 },
+  input: { minHeight: 50, borderWidth: 1, borderColor: "#262626", borderRadius: 12, paddingHorizontal: 14, color: "#F5F5F5", backgroundColor: "#0F0F10", fontSize: 15 },
+  textArea: { minHeight: 92, paddingTop: 12, textAlignVertical: "top" },
+  primaryButton: { minHeight: 52, alignItems: "center", justifyContent: "center", borderRadius: 14, backgroundColor: "#3B82F6", marginBottom: 12 },
+  disabled: { opacity: 0.42 },
+  pressed: { opacity: 0.82 },
+  primaryButtonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "900" },
+  ghostButton: { minHeight: 50, alignItems: "center", justifyContent: "center", borderRadius: 14, borderWidth: 1, borderColor: "#262626", marginBottom: 12 },
+  ghostPressed: { backgroundColor: "#171717" },
+  ghostButtonText: { color: "#D4D4D8", fontSize: 15, fontWeight: "800" },
+  dangerButton: { borderColor: "#7F1D1D" },
+  dangerText: { color: "#FCA5A5", fontSize: 15, fontWeight: "800" },
+  errorBox: { borderWidth: 1, borderColor: "#7F1D1D", backgroundColor: "#2A0D0D", borderRadius: 12, padding: 12, marginBottom: 12 },
+  errorText: { color: "#FCA5A5", fontSize: 13, lineHeight: 19 },
+  resultImage: { width: "100%", height: 240, borderRadius: 16, backgroundColor: "#101010", marginBottom: 14 },
+  titleRow: { flexDirection: "row", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 },
+  badge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
+  badgeGood: { backgroundColor: "#064E3B" },
+  badgeWarn: { backgroundColor: "#78350F" },
+  badgeRisk: { backgroundColor: "#7C2D12" },
+  badgeText: { color: "#F5F5F5", fontSize: 12, fontWeight: "900", textTransform: "uppercase" },
+  triageCard: { borderWidth: 1, borderRadius: 16, padding: 16, marginBottom: 14 },
+  triageGood: { borderColor: "#065F46", backgroundColor: "#052E24" },
+  triageWarn: { borderColor: "#92400E", backgroundColor: "#261604" },
+  triageRisk: { borderColor: "#991B1B", backgroundColor: "#2A0D0D" },
+  triageTitle: { color: "#F5F5F5", fontSize: 17, fontWeight: "900", marginBottom: 6 },
+  triageBody: { color: "#D4D4D8", fontSize: 14, lineHeight: 20 },
+  sectionTitle: { color: "#A1A1AA", fontSize: 12, fontWeight: "900", letterSpacing: 0.8, marginBottom: 10, textTransform: "uppercase" },
+  bodyText: { color: "#F5F5F5", fontSize: 15, lineHeight: 22 },
+  listItem: { color: "#F5F5F5", fontSize: 15, lineHeight: 23, marginBottom: 5 },
+  historyCard: { flexDirection: "row", gap: 12, borderWidth: 1, borderColor: "#262626", backgroundColor: "#171717", borderRadius: 14, padding: 10, marginBottom: 10 },
+  historyImage: { width: 64, height: 64, borderRadius: 10, backgroundColor: "#0F0F10" },
+  historyBody: { flex: 1, justifyContent: "center" },
+  historyTitle: { color: "#F5F5F5", fontSize: 16, fontWeight: "900", marginBottom: 4 },
+  historyMeta: { color: "#A1A1AA", fontSize: 12, lineHeight: 18 },
+  userBubble: { alignSelf: "flex-end", maxWidth: "86%", borderRadius: 16, backgroundColor: "#3B82F6", padding: 12, marginBottom: 10 },
+  assistantBubble: { alignSelf: "flex-start", maxWidth: "86%", borderRadius: 16, backgroundColor: "#171717", borderWidth: 1, borderColor: "#262626", padding: 12, marginBottom: 10 },
+  userBubbleText: { color: "#FFFFFF", fontSize: 14, lineHeight: 20 },
+  assistantBubbleText: { color: "#F5F5F5", fontSize: 14, lineHeight: 20 },
+  chatComposer: { flexDirection: "row", gap: 10, alignItems: "flex-end", borderTopWidth: 1, borderTopColor: "#171717", padding: 12, paddingBottom: 18, backgroundColor: "#0A0A0A" },
+  chatInput: { flex: 1, minHeight: 48, maxHeight: 110, borderWidth: 1, borderColor: "#262626", borderRadius: 14, color: "#F5F5F5", backgroundColor: "#0F0F10", paddingHorizontal: 12, paddingTop: 12, fontSize: 15 },
+  sendButton: { minHeight: 48, borderRadius: 14, backgroundColor: "#3B82F6", alignItems: "center", justifyContent: "center", paddingHorizontal: 16 },
+  sendText: { color: "#FFFFFF", fontWeight: "900" },
+  nav: { position: "absolute", bottom: 0, left: 0, right: 0, flexDirection: "row", gap: 8, padding: 12, paddingBottom: 18, borderTopWidth: 1, borderTopColor: "#171717", backgroundColor: "#0A0A0A" },
+  navButton: { flex: 1, minHeight: 48, borderRadius: 14, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "#262626" },
+  navActive: { backgroundColor: "#172554", borderColor: "#2563EB" },
+  navText: { color: "#A1A1AA", fontWeight: "900" },
+  navTextActive: { color: "#F5F5F5", fontWeight: "900" },
 });
