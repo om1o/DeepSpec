@@ -1,5 +1,46 @@
+import type { CapturedFrame } from "../types";
+
+const LATEST_CAPTURED_FRAME_KEY = "deep-spec:latest-captured-frame";
+
 export function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
+}
+
+export function saveLatestCapturedFrame(frame: CapturedFrame) {
+  if (typeof sessionStorage === "undefined") {
+    return;
+  }
+
+  try {
+    sessionStorage.setItem(LATEST_CAPTURED_FRAME_KEY, JSON.stringify(frame));
+  } catch {
+    // Phase 1 should still navigate even if browser storage is unavailable.
+  }
+}
+
+export function readLatestCapturedFrame(): CapturedFrame | null {
+  if (typeof sessionStorage === "undefined") {
+    return null;
+  }
+
+  try {
+    const rawFrame = sessionStorage.getItem(LATEST_CAPTURED_FRAME_KEY);
+    if (!rawFrame) {
+      return null;
+    }
+
+    const frame = JSON.parse(rawFrame) as Partial<CapturedFrame>;
+    if (typeof frame.imageBase64 !== "string" || typeof frame.capturedAt !== "string") {
+      return null;
+    }
+
+    return {
+      imageBase64: frame.imageBase64,
+      capturedAt: frame.capturedAt,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function compressImageDataUrl(

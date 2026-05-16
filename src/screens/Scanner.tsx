@@ -7,10 +7,11 @@ import Reticle from "../components/scanner/Reticle";
 import Button from "../components/ui/Button";
 import { useCamera } from "../hooks/useCamera";
 import { useStillness } from "../hooks/useStillness";
+import { saveLatestCapturedFrame } from "../lib/utils";
 import type { CapturedFrame } from "../types";
 
 const videoConstraints: MediaTrackConstraints = {
-  facingMode: { exact: "environment" },
+  facingMode: { ideal: "environment" },
   width: { ideal: 1920 },
   height: { ideal: 1080 },
 };
@@ -32,6 +33,7 @@ export default function Scanner() {
         imageBase64,
         capturedAt: new Date().toISOString(),
       };
+      saveLatestCapturedFrame(frame);
       navigate("/result", { state: frame });
     } catch (error) {
       markError(error instanceof Error ? error.message : "Capture failed.");
@@ -59,7 +61,11 @@ export default function Scanner() {
       <header className="fixed left-0 right-0 top-0 z-20 px-5 pt-[max(18px,env(safe-area-inset-top))]">
         <p className="text-[13px] font-extrabold uppercase tracking-[0.18em] text-white/92">Deep Spec</p>
         <p className="mt-2 text-sm font-medium text-white/68">
-          {isStable ? "Hold steady and scan the part" : "Point at a car part and hold steady"}
+          {usesFallback
+            ? "Manual scan ready. Line up the part first."
+            : isStable
+              ? "Hold steady and scan the part"
+              : "Point at a car part and hold steady"}
         </p>
       </header>
 

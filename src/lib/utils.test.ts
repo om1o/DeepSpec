@@ -1,4 +1,4 @@
-import { cx, getScaledDimensions } from "./utils";
+import { cx, getScaledDimensions, readLatestCapturedFrame, saveLatestCapturedFrame } from "./utils";
 
 describe("cx", () => {
   it("keeps truthy class names and removes empty values", () => {
@@ -17,5 +17,28 @@ describe("getScaledDimensions", () => {
 
   it("does not upscale small images", () => {
     expect(getScaledDimensions(800, 600, 1024)).toEqual({ width: 800, height: 600 });
+  });
+});
+
+describe("latest captured frame storage", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+  });
+
+  it("saves and reads the last captured frame", () => {
+    const frame = {
+      imageBase64: "data:image/jpeg;base64,test",
+      capturedAt: "2026-05-16T00:00:00.000Z",
+    };
+
+    saveLatestCapturedFrame(frame);
+
+    expect(readLatestCapturedFrame()).toEqual(frame);
+  });
+
+  it("ignores invalid saved frame data", () => {
+    sessionStorage.setItem("deep-spec:latest-captured-frame", JSON.stringify({ imageBase64: 123 }));
+
+    expect(readLatestCapturedFrame()).toBeNull();
   });
 });

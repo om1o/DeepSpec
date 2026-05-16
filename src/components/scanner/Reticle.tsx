@@ -18,9 +18,11 @@ export default function Reticle({ isVisible }: ReticleProps) {
       <div className="scanner-corner scanner-corner-tr" />
       <div className="scanner-corner scanner-corner-bl" />
       <div className="scanner-corner scanner-corner-br" />
-      <p className="scanner-helper absolute left-1/2 top-[calc(100%+18px)] w-max -translate-x-1/2 rounded-full bg-black/50 px-3 py-2 text-xs font-semibold text-[#FACC15] backdrop-blur-md">
-        Tap Identify when ready
-      </p>
+      {isVisible ? (
+        <p className="scanner-helper absolute left-1/2 top-[calc(100%+18px)] w-max -translate-x-1/2 rounded-full bg-black/50 px-3 py-2 text-xs font-semibold text-[#FACC15] backdrop-blur-md">
+          Tap Identify when ready
+        </p>
+      ) : null}
     </div>
   );
 }

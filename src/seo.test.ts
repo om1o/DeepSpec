@@ -27,6 +27,15 @@ describe("SEO assets", () => {
     expect(llms).toContain("AI car part finding");
   });
 
+  it("keeps the install manifest mobile-friendly", () => {
+    const viteConfig = read("vite.config.ts");
+
+    expect(viteConfig).toContain('display: "standalone"');
+    expect(viteConfig).toContain('orientation: "portrait"');
+    expect(viteConfig).toContain('purpose: "any maskable"');
+    expect(viteConfig).toContain("enabled: false");
+  });
+
   it("publishes an article and markdown version for AI-readable discovery", () => {
     const article = read("public/articles/ai-car-part-finding.html");
     const markdown = read("public/articles/ai-car-part-finding.md");

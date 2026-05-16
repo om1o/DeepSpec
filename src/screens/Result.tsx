@@ -1,10 +1,12 @@
 import { Link, useLocation } from "react-router-dom";
 import Button from "../components/ui/Button";
+import { readLatestCapturedFrame } from "../lib/utils";
 import type { CapturedFrame } from "../types";
 
 export default function Result() {
   const location = useLocation();
-  const frame = location.state as CapturedFrame | null;
+  const frame = (location.state as CapturedFrame | null) ?? readLatestCapturedFrame();
+  const capturedAt = frame?.capturedAt ? new Date(frame.capturedAt).toLocaleString() : null;
 
   return (
     <main className="min-h-dvh bg-[#0A0A0A] px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-white">
@@ -22,7 +24,7 @@ export default function Result() {
         {frame?.imageBase64 ? (
           <img
             alt="Captured car part"
-            className="aspect-[3/4] w-full rounded-[24px] border border-white/10 object-cover shadow-2xl"
+            className="aspect-[3/4] w-full rounded-[24px] border border-white/10 bg-black object-contain shadow-2xl"
             src={frame.imageBase64}
           />
         ) : (
@@ -32,14 +34,15 @@ export default function Result() {
         )}
 
         <section className="mt-5 rounded-[24px] border border-white/10 bg-[#171717] p-5">
-          <p className="text-sm font-bold text-[#FACC15]">Phase 1 complete</p>
+          <p className="text-sm font-bold text-[#FACC15]">Not analyzed yet</p>
           <h2 className="mt-2 text-xl font-extrabold tracking-tight">Phase 2 will identify this</h2>
           <p className="mt-3 text-sm leading-6 text-[#A1A1AA]">
             The scanner captured and compressed this frame. AI identification is intentionally not included yet.
           </p>
+          {capturedAt ? <p className="mt-3 text-xs font-semibold text-white/42">Captured {capturedAt}</p> : null}
         </section>
 
-        <Button className="mt-auto w-full" onClick={() => history.back()}>
+        <Button className="mt-auto w-full" onClick={() => window.location.assign("/")}>
           Try another scan
         </Button>
       </div>

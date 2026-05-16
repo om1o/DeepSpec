@@ -6,8 +6,11 @@ type CameraState = "loading" | "ready" | "blocked";
 
 export function useCamera() {
   const webcamRef = useRef<Webcam>(null);
-  const [cameraState, setCameraState] = useState<CameraState>("loading");
-  const [cameraError, setCameraError] = useState<string | null>(null);
+  const cameraCaptureSupported = hasCameraCapture();
+  const [cameraState, setCameraState] = useState<CameraState>(() => (cameraCaptureSupported ? "loading" : "blocked"));
+  const [cameraError, setCameraError] = useState<string | null>(() =>
+    cameraCaptureSupported ? null : "This browser does not support camera capture. Use Safari or Chrome over HTTPS.",
+  );
 
   const markReady = useCallback(() => {
     setCameraState("ready");
@@ -37,4 +40,8 @@ export function useCamera() {
     markError,
     captureFrame,
   };
+}
+
+function hasCameraCapture() {
+  return typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia);
 }
