@@ -159,6 +159,15 @@ function SavedScanControls({
         <TrustRow label="Review status" value={lookup.trainingStatus.replaceAll("_", " ")} />
       </div>
 
+      {lookup.result ? (
+        <Link
+          className="mt-4 block rounded-full bg-white px-5 py-3 text-center text-sm font-bold text-neutral-950 shadow-[0_12px_40px_rgba(255,255,255,0.16)]"
+          to={`/result/${lookup.id}/chat`}
+        >
+          Tell me more
+        </Link>
+      ) : null}
+
       <div className="mt-4 grid grid-cols-2 gap-3">
         <Button variant={lookup.rating === "up" ? "primary" : "ghost"} onClick={() => onRating("up")}>
           Helpful
@@ -216,6 +225,7 @@ function AnalysisResult({ capturedAt, result }: { capturedAt: string | null; res
           <ConfidenceBadge confidence={result.confidence} />
         </div>
         {capturedAt ? <p className="mt-3 text-xs font-semibold text-white/42">Captured {capturedAt}</p> : null}
+        <p className="mt-2 text-xs font-extrabold uppercase tracking-[0.14em] text-white/36">Dataset bucket: {result.scanCategory}</p>
       </section>
 
       <TrustReviewCard review={trustReview} />

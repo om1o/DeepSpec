@@ -16,6 +16,7 @@ const successfulScan: ScanAnalysisState = {
   result: {
     partName: "Alternator",
     confidence: "high",
+    scanCategory: "electrical",
     whatItDoes: "It charges the battery while the engine runs.",
     visibleObservations: ["Belt-driven metal housing is visible."],
     concerns: [],
@@ -55,6 +56,7 @@ describe("Result", () => {
       result: {
         ...successfulScan.result!,
         partName: "Brake caliper",
+        scanCategory: "brakes",
         safetyTriage: "needs_professional",
         isSafetyCritical: true,
       },

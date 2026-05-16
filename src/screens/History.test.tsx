@@ -14,6 +14,7 @@ const lookup: Lookup = {
   result: {
     partName: "Alternator",
     confidence: "high",
+    scanCategory: "electrical",
     whatItDoes: "It charges the battery while the engine runs.",
     visibleObservations: ["Belt-driven housing is visible."],
     concerns: [],

@@ -1,6 +1,6 @@
 # Deep Spec
 
-Mobile-first PWA scanner for identifying car parts. The current build covers the scanner plus Phase 2 AI identification through a server-side Gemini proxy.
+Mobile-first PWA scanner for identifying car parts. The current build covers scanning, AI identification, trust checks, saved scan records, and follow-up chat through server-side Gemini proxies.
 
 ## Run locally
 
@@ -16,9 +16,10 @@ For AI identification, create `.env` or `.env.local` with:
 ```bash
 GEMINI_API_KEY=your_server_key_here
 GEMINI_MODEL=gemini-2.5-pro
+GEMINI_CHAT_MODEL=gemini-2.5-flash
 ```
 
-Do not use a `VITE_` API key. The app calls `/api/identify`, and the server-side proxy sends the key to Gemini.
+Do not use a `VITE_` API key. The app calls `/api/identify` and `/api/chat`, and the server-side proxies send the key to Gemini.
 
 ## Current scope
 
@@ -27,11 +28,13 @@ Do not use a `VITE_` API key. The app calls `/api/identify`, and the server-side
 - Yellow reticle and Identify button after the phone is steady
 - Capture and compress the current frame
 - Gemini-backed result screen through `/api/identify`
-- Saved scan database in localStorage with photo, AI result/error, category, training label, rating, correction, and notes
+- Model-backed scan category saved on every AI result, with deterministic fallback for old scans and user corrections
+- Saved scan database in localStorage with photo, AI result/error, category, training label, rating, correction, notes, and chat history
+- Follow-up chat attached to each saved scan through `/api/chat`
 
-Chat, pricing, account sync, and settings are not included yet.
+Pricing, account sync, and settings are not included yet.
 
-Every scan should be treated as future model-training/evaluation data. LocalStorage is the Phase 4 storage layer; Supabase should preserve the same fields later.
+Every scan should be treated as future model-training/evaluation data. LocalStorage is the Phase 4 storage layer, capped at 50 saved scans and validated on read. It is not a secure cloud database; Supabase should preserve the same fields later with auth, row-level security, storage bucket policies, and parent-reviewed privacy terms.
 
 ## Test before moving on
 

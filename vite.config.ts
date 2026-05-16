@@ -4,6 +4,7 @@ import type { IncomingMessage } from "node:http";
 import { defineConfig } from "vitest/config";
 import { loadEnv } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
+import { createChatResponse } from "./api/chat.shared";
 import { createIdentifyResponse } from "./api/identify.shared";
 
 export default defineConfig(({ mode }) => {
@@ -32,6 +33,23 @@ export default defineConfig(({ mode }) => {
 
             const body = await readJsonBody(request).catch(() => null);
             const result = await createIdentifyResponse(body, serverEnv);
+            response.statusCode = result.status;
+            response.setHeader("Content-Type", "application/json");
+            response.end(JSON.stringify(result.body));
+          });
+
+          server.middlewares.use("/api/chat", async (request, response) => {
+            response.setHeader("Cache-Control", "no-store");
+
+            if (request.method !== "POST") {
+              response.statusCode = 405;
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify({ error: { code: "method_not_allowed", message: "Use POST for AI follow-up chat." } }));
+              return;
+            }
+
+            const body = await readJsonBody(request).catch(() => null);
+            const result = await createChatResponse(body, serverEnv);
             response.statusCode = result.status;
             response.setHeader("Content-Type", "application/json");
             response.end(JSON.stringify(result.body));

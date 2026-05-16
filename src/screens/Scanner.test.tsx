@@ -9,6 +9,7 @@ const captureFrame = vi.fn(async () => "data:image/jpeg;base64,compressed-frame"
 const identifyCapturedFrame = vi.fn(async () => ({
   partName: "Alternator",
   confidence: "high",
+  scanCategory: "electrical",
   whatItDoes: "It charges the battery while the engine runs.",
   visibleObservations: ["Belt-driven metal housing is visible."],
   concerns: [],

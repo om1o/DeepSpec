@@ -1,6 +1,8 @@
-import type { IdentificationResult, Lookup, Rating, ScanAnalysisState, ScanCategory, TrainingStatus } from "../types";
+import type { ChatMessage, Confidence, IdentificationResult, Lookup, Rating, ScanAnalysisState, ScanCategory, TrainingStatus } from "../types";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
+export const MAX_SAVED_LOOKUPS = 50;
+const MAX_CHAT_MESSAGES = 40;
 
 type StorageResult<T> =
   | {
@@ -92,6 +94,42 @@ export function updateLookup(
     : { ok: false, message: writeResult.message, value: updatedLookup };
 }
 
+export function createChatMessage(role: ChatMessage["role"], content: string): ChatMessage {
+  return {
+    id: createId(),
+    role,
+    content: cleanText(content, role === "user" ? 500 : 1200),
+    timestamp: new Date().toISOString(),
+  };
+}
+
+export function appendChatMessages(id: string, messages: ChatMessage[]): StorageResult<Lookup | null> {
+  const lookups = getLookups();
+  const index = lookups.findIndex((lookup) => lookup.id === id);
+
+  if (index === -1) {
+    return { ok: false, message: "This saved scan was not found.", value: null };
+  }
+
+  const cleanMessages = messages.map(normalizeChatMessage).filter((message): message is ChatMessage => Boolean(message));
+  if (cleanMessages.length === 0) {
+    return { ok: true, value: lookups[index] };
+  }
+
+  const updatedLookup: Lookup = {
+    ...lookups[index],
+    chatHistory: [...lookups[index].chatHistory, ...cleanMessages].slice(-MAX_CHAT_MESSAGES),
+  };
+
+  const updatedLookups = [...lookups];
+  updatedLookups[index] = updatedLookup;
+
+  const writeResult = writeLookups(updatedLookups);
+  return writeResult.ok
+    ? { ok: true, value: updatedLookup }
+    : { ok: false, message: writeResult.message, value: updatedLookup };
+}
+
 export function deleteLookup(id: string): StorageResult<boolean> {
   const existing = getLookups();
   const next = existing.filter((lookup) => lookup.id !== id);
@@ -115,24 +153,26 @@ export function scanStateFromLookup(lookup: Lookup): ScanAnalysisState {
 }
 
 function writeLookups(lookups: Lookup[]): StorageResult<Lookup[]> {
+  const cappedLookups = lookups.slice(0, MAX_SAVED_LOOKUPS);
+
   if (!hasLocalStorage()) {
     return {
       ok: false,
       message: "Saved scans are not available in this browser.",
-      value: lookups,
+      value: cappedLookups,
     };
   }
 
   try {
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify(lookups));
-    return { ok: true, value: lookups };
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify(cappedLookups));
+    return { ok: true, value: cappedLookups };
   } catch (error) {
     return {
       ok: false,
       message: isQuotaError(error)
         ? "Your device storage is full. Delete older saved scans, then try again."
         : "Deep Spec could not save this scan on this device.",
-      value: lookups,
+      value: cappedLookups,
     };
   }
 }
@@ -165,37 +205,35 @@ function normalizeLookup(value: unknown): Lookup | null {
     typeof lookup.id !== "string" ||
     typeof lookup.createdAt !== "string" ||
     typeof lookup.frame?.imageBase64 !== "string" ||
-    typeof lookup.frame?.capturedAt !== "string" ||
-    !isRating(lookup.rating) ||
-    (lookup.correction !== null && typeof lookup.correction !== "string") ||
-    typeof lookup.notes !== "string" ||
-    !Array.isArray(lookup.chatHistory)
+    typeof lookup.frame?.capturedAt !== "string"
   ) {
     return null;
   }
 
-  const scanCategory = isScanCategory(lookup.scanCategory)
-    ? lookup.scanCategory
-    : categorizeScan(lookup.result, lookup.correction ?? undefined);
+  const rating = isRating(lookup.rating) ? lookup.rating : null;
+  const correction = typeof lookup.correction === "string" ? lookup.correction : null;
+  const notes = typeof lookup.notes === "string" ? lookup.notes : "";
+  const result = normalizeStoredIdentificationResult(lookup.result, correction ?? undefined);
+  const scanCategory = isScanCategory(lookup.scanCategory) ? lookup.scanCategory : categorizeScan(result, correction ?? undefined);
   const trainingStatus = isTrainingStatus(lookup.trainingStatus)
     ? lookup.trainingStatus
-    : getTrainingStatus(lookup.rating, lookup.correction);
+    : getTrainingStatus(rating, correction);
 
   return {
     id: lookup.id,
     createdAt: lookup.createdAt,
     frame: lookup.frame,
-    result: lookup.result,
+    result,
     errorMessage: lookup.errorMessage,
     errorCode: lookup.errorCode,
     analyzedAt: lookup.analyzedAt,
-    rating: lookup.rating,
-    correction: lookup.correction,
-    notes: lookup.notes,
+    rating,
+    correction,
+    notes,
     scanCategory,
-    trainingLabel: typeof lookup.trainingLabel === "string" ? lookup.trainingLabel : getTrainingLabel(lookup.result, lookup.correction),
+    trainingLabel: typeof lookup.trainingLabel === "string" ? lookup.trainingLabel : getTrainingLabel(result, correction),
     trainingStatus,
-    chatHistory: lookup.chatHistory,
+    chatHistory: normalizeChatHistory(lookup.chatHistory),
   };
 }
 
@@ -218,6 +256,10 @@ function isScanCategory(value: unknown): value is ScanCategory {
   );
 }
 
+function isConfidence(value: unknown): value is Confidence {
+  return value === "high" || value === "medium" || value === "low";
+}
+
 function isTrainingStatus(value: unknown): value is TrainingStatus {
   return value === "raw_unreviewed" || value === "user_confirmed" || value === "user_corrected";
 }
@@ -234,26 +276,117 @@ function getTrainingStatus(rating: Rating | undefined, correction: string | null
   return "raw_unreviewed";
 }
 
-function getTrainingLabel(result: IdentificationResult | undefined, correction: string | null | undefined) {
+function getTrainingLabel(result: Partial<IdentificationResult> | undefined, correction: string | null | undefined) {
   return correction?.trim() || result?.partName || "unlabeled";
 }
 
-function categorizeScan(result?: IdentificationResult, correction?: string): ScanCategory {
+function categorizeScan(result?: Partial<IdentificationResult>, correction?: string): ScanCategory {
+  if (correction?.trim()) {
+    const correctedCategory = categorizeText(correction);
+    if (correctedCategory !== "unknown") {
+      return correctedCategory;
+    }
+  }
+
+  if (isScanCategory(result?.scanCategory)) {
+    return result.scanCategory;
+  }
+
   const text = [correction, result?.partName, result?.whatItDoes, ...(result?.visibleObservations ?? []), ...(result?.concerns ?? [])]
     .join(" ")
     .toLowerCase();
 
-  if (/airbag|srs/.test(text)) return "airbag";
-  if (/brake|caliper|rotor|pad/.test(text)) return "brakes";
-  if (/steering|tie rod|rack and pinion/.test(text)) return "steering";
-  if (/suspension|control arm|strut|shock|ball joint/.test(text)) return "suspension";
-  if (/fuel|gas|injector|fuel line|tank/.test(text)) return "fuel";
-  if (/leak|oil|coolant|fluid/.test(text)) return "leak";
-  if (/battery|alternator|starter|wire|wiring|connector|fuse|sensor|electrical/.test(text)) return "electrical";
-  if (/bumper|fender|door|panel|body/.test(text)) return "body";
-  if (/engine|belt|hose|radiator|thermostat|filter|intake|manifold/.test(text)) return "engine";
+  return categorizeText(text);
+}
+
+function categorizeText(text: string): ScanCategory {
+  const normalized = text.toLowerCase();
+
+  if (/airbag|srs/.test(normalized)) return "airbag";
+  if (/brake|caliper|rotor|pad/.test(normalized)) return "brakes";
+  if (/steering|tie rod|rack and pinion/.test(normalized)) return "steering";
+  if (/suspension|control arm|strut|shock|ball joint/.test(normalized)) return "suspension";
+  if (/fuel|gas|injector|fuel line|tank/.test(normalized)) return "fuel";
+  if (/leak|oil|coolant|fluid/.test(normalized)) return "leak";
+  if (/battery|alternator|starter|wire|wiring|connector|fuse|sensor|electrical/.test(normalized)) return "electrical";
+  if (/bumper|fender|door|panel|body/.test(normalized)) return "body";
+  if (/engine|belt|hose|radiator|thermostat|filter|intake|manifold/.test(normalized)) return "engine";
 
   return "unknown";
+}
+
+function normalizeStoredIdentificationResult(value: unknown, correction?: string): IdentificationResult | undefined {
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+
+  const result = value as Partial<IdentificationResult>;
+  if (
+    typeof result.partName !== "string" ||
+    !isConfidence(result.confidence) ||
+    typeof result.whatItDoes !== "string" ||
+    !Array.isArray(result.visibleObservations) ||
+    !Array.isArray(result.concerns) ||
+    !Array.isArray(result.evidence) ||
+    typeof result.nextAction !== "string" ||
+    typeof result.needsBetterPhoto !== "boolean" ||
+    typeof result.isSafetyCritical !== "boolean" ||
+    (result.safetyTriage !== "can_help" && result.safetyTriage !== "needs_better_photo" && result.safetyTriage !== "needs_professional")
+  ) {
+    return undefined;
+  }
+
+  return {
+    partName: cleanText(result.partName, 80),
+    confidence: result.confidence,
+    scanCategory: isScanCategory(result.scanCategory) ? result.scanCategory : categorizeScan(result, correction),
+    whatItDoes: cleanText(result.whatItDoes, 500),
+    visibleObservations: cleanStringArray(result.visibleObservations, 6, 180),
+    concerns: cleanStringArray(result.concerns, 6, 180),
+    safetyTriage: result.safetyTriage,
+    isSafetyCritical: result.isSafetyCritical,
+    nextAction: cleanText(result.nextAction, 500),
+    needsBetterPhoto: result.needsBetterPhoto,
+    evidence: cleanStringArray(result.evidence, 6, 180),
+  };
+}
+
+function normalizeChatHistory(value: unknown): ChatMessage[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map(normalizeChatMessage).filter((message): message is ChatMessage => Boolean(message)).slice(-MAX_CHAT_MESSAGES);
+}
+
+function normalizeChatMessage(value: unknown): ChatMessage | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+
+  const message = value as Partial<ChatMessage>;
+  if (!isChatRole(message.role) || typeof message.content !== "string" || typeof message.timestamp !== "string") {
+    return null;
+  }
+
+  return {
+    id: typeof message.id === "string" ? message.id : createId(),
+    role: message.role,
+    content: cleanText(message.content, message.role === "user" ? 500 : 1200),
+    timestamp: message.timestamp,
+  };
+}
+
+function isChatRole(value: unknown): value is ChatMessage["role"] {
+  return value === "user" || value === "assistant";
+}
+
+function cleanText(value: string, maxLength: number) {
+  return value.trim().replace(/\s+/g, " ").slice(0, maxLength);
+}
+
+function cleanStringArray(value: unknown[], maxItems: number, maxItemLength: number) {
+  return value.filter((item): item is string => typeof item === "string").map((item) => cleanText(item, maxItemLength)).filter(Boolean).slice(0, maxItems);
 }
 
 function hasLocalStorage() {

@@ -60,6 +60,7 @@ describe("latest captured frame storage", () => {
       result: {
         partName: "Alternator",
         confidence: "high" as const,
+        scanCategory: "electrical" as const,
         whatItDoes: "It charges the battery while the engine runs.",
         visibleObservations: ["Belt-driven housing is visible."],
         concerns: [],

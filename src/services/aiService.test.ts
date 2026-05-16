@@ -1,8 +1,9 @@
-import { AIServiceError, identifyCapturedFrame, runAI } from "./aiService";
+import { identifyCapturedFrame, runAI, sendFollowUp } from "./aiService";
 
 const result = {
   partName: "Alternator",
   confidence: "high",
+  scanCategory: "electrical",
   whatItDoes: "It charges the battery while the engine runs.",
   visibleObservations: ["Belt-driven metal housing is visible."],
   concerns: [],
@@ -68,13 +69,60 @@ describe("aiService", () => {
     });
   });
 
-  it("rejects non-vision calls until chat phase", async () => {
+  it("routes text calls through the chat API", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ message: "This is safe to inspect visually, but do not force anything." }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
     await expect(
       runAI({
         type: "text",
         userMessage: "What is this?",
         systemPrompt: "test",
       }),
-    ).rejects.toBeInstanceOf(AIServiceError);
+    ).resolves.toBe("This is safe to inspect visually, but do not force anything.");
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/chat",
+      expect.objectContaining({
+        method: "POST",
+      }),
+    );
+  });
+
+  it("builds follow-up chat from saved scan context", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ message: "The alternator charges the battery while the engine runs." }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(
+      sendFollowUp(
+        {
+          id: "lookup-1",
+          createdAt: "2026-05-16T00:00:00.000Z",
+          frame: {
+            imageBase64: "data:image/jpeg;base64,test",
+            capturedAt: "2026-05-16T00:00:00.000Z",
+          },
+          result,
+          rating: null,
+          correction: null,
+          notes: "",
+          scanCategory: "electrical",
+          trainingLabel: "Alternator",
+          trainingStatus: "raw_unreviewed",
+          chatHistory: [],
+        },
+        "What does it do?",
+      ),
+    ).resolves.toBe("The alternator charges the battery while the engine runs.");
+
+    expect(JSON.stringify(fetchSpy.mock.calls[0][1]?.body)).toContain("Part name: Alternator");
   });
 });

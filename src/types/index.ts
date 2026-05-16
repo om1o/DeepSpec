@@ -9,9 +9,25 @@ export type SafetyTriage = "can_help" | "needs_better_photo" | "needs_profession
 
 export type Confidence = "high" | "medium" | "low";
 
+export const SCAN_CATEGORIES = [
+  "engine",
+  "electrical",
+  "brakes",
+  "steering",
+  "suspension",
+  "fuel",
+  "airbag",
+  "body",
+  "leak",
+  "unknown",
+] as const;
+
+export type ScanCategory = (typeof SCAN_CATEGORIES)[number];
+
 export type IdentificationResult = {
   partName: string;
   confidence: Confidence;
+  scanCategory: ScanCategory;
   whatItDoes: string;
   visibleObservations: string[];
   concerns: string[];
@@ -40,18 +56,6 @@ export type AIInput = {
 };
 
 export type Rating = "up" | "down" | null;
-
-export type ScanCategory =
-  | "engine"
-  | "electrical"
-  | "brakes"
-  | "steering"
-  | "suspension"
-  | "fuel"
-  | "airbag"
-  | "body"
-  | "leak"
-  | "unknown";
 
 export type TrainingStatus = "raw_unreviewed" | "user_confirmed" | "user_corrected";
 

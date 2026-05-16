@@ -1,5 +1,5 @@
 import { IDENTIFY_PROMPT } from "../src/services/systemPrompts";
-import type { IdentificationResult } from "../src/types";
+import { SCAN_CATEGORIES, type IdentificationResult, type ScanCategory } from "../src/types";
 
 type JsonObject = Record<string, unknown>;
 
@@ -27,6 +27,7 @@ const IDENTIFICATION_RESPONSE_SCHEMA = {
   properties: {
     partName: { type: "string" },
     confidence: { type: "string", enum: ["high", "medium", "low"] },
+    scanCategory: { type: "string", enum: [...SCAN_CATEGORIES] },
     whatItDoes: { type: "string" },
     visibleObservations: {
       type: "array",
@@ -48,6 +49,7 @@ const IDENTIFICATION_RESPONSE_SCHEMA = {
   required: [
     "partName",
     "confidence",
+    "scanCategory",
     "whatItDoes",
     "visibleObservations",
     "concerns",
@@ -136,6 +138,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
     latencyMs: Date.now() - startedAt,
     success: true,
     confidence: normalizedResult.confidence,
+    scanCategory: normalizedResult.scanCategory,
     safetyTriage: normalizedResult.safetyTriage,
   });
 
@@ -218,6 +221,7 @@ function normalizeIdentificationResult(result: IdentificationResult): Identifica
   return {
     ...result,
     partName: cleanText(result.partName, "Unidentified car part"),
+    scanCategory: getTrustedCategory(result),
     whatItDoes: cleanText(result.whatItDoes, "Deep Spec could not verify what this part does from this photo."),
     visibleObservations: cleanList(result.visibleObservations),
     concerns: cleanList(result.concerns),
@@ -255,6 +259,7 @@ function isIdentificationResult(value: unknown): value is IdentificationResult {
   return (
     typeof value.partName === "string" &&
     isConfidence(value.confidence) &&
+    isScanCategory(value.scanCategory) &&
     typeof value.whatItDoes === "string" &&
     isStringArray(value.visibleObservations) &&
     isStringArray(value.concerns) &&
@@ -301,4 +306,40 @@ function isConfidence(value: unknown) {
 
 function isSafetyTriage(value: unknown) {
   return value === "can_help" || value === "needs_better_photo" || value === "needs_professional";
+}
+
+function isScanCategory(value: unknown): value is ScanCategory {
+  return typeof value === "string" && SCAN_CATEGORIES.includes(value as ScanCategory);
+}
+
+function getTrustedCategory(result: IdentificationResult): ScanCategory {
+  if (result.scanCategory !== "unknown") {
+    return result.scanCategory;
+  }
+
+  return categorizeIdentificationText(result);
+}
+
+function categorizeIdentificationText(result: IdentificationResult): ScanCategory {
+  const text = [
+    result.partName,
+    result.whatItDoes,
+    ...result.visibleObservations,
+    ...result.concerns,
+    ...result.evidence,
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  if (/airbag|srs/.test(text)) return "airbag";
+  if (/brake|caliper|rotor|pad/.test(text)) return "brakes";
+  if (/steering|tie rod|rack and pinion/.test(text)) return "steering";
+  if (/suspension|control arm|strut|shock|ball joint/.test(text)) return "suspension";
+  if (/fuel|gas|injector|fuel line|tank/.test(text)) return "fuel";
+  if (/leak|oil|coolant|fluid/.test(text)) return "leak";
+  if (/battery|alternator|starter|wire|wiring|connector|fuse|sensor|electrical/.test(text)) return "electrical";
+  if (/bumper|fender|door|panel|body/.test(text)) return "body";
+  if (/engine|belt|hose|radiator|thermostat|filter|intake|manifold/.test(text)) return "engine";
+
+  return "unknown";
 }

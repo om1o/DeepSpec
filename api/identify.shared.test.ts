@@ -6,6 +6,7 @@ const imageBase64 =
 const result = {
   partName: "Alternator",
   confidence: "high",
+  scanCategory: "electrical",
   whatItDoes: "It charges the battery while the engine runs.",
   visibleObservations: ["Belt-driven metal housing is visible."],
   concerns: [],
@@ -92,6 +93,7 @@ describe("createIdentifyResponse", () => {
     const riskyResult = {
       ...result,
       partName: "Fuel line",
+      scanCategory: "fuel",
       safetyTriage: "can_help",
       isSafetyCritical: true,
       nextAction: "Do not touch the damaged line.",
