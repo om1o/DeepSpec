@@ -1,1 +1,0 @@
-Paste a 17-character VIN here, then save a copy as vin.txt (vin.txt is gitignored — keep yours local).

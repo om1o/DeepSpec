@@ -1,25 +1,7 @@
-node_modules/
-dist/
-build/
-.env
-.env.local
-*.pyc
-__pycache__/
-.pytest_cache/
-.venv/
-venv/
-*.egg-info/
-.expo/
-web-build/
-coverage/
 .DS_Store
-*.tsbuildinfo
-.playwright-mcp/
-expo-mobile-web.log
-deep-spec-api.log
+xcuserdata/
+DerivedData/
+*.xcuserstate
+*.xcscmblueprint
+.env
 
-# Local Sprinter capture pipeline (optional: commit parts.auto.csv if you want it shared)
-data/sprinter/vin.txt
-data/sprinter/vehicle_profile.json
-data/sprinter/staging/
-data/sprinter/logs/
