@@ -129,18 +129,20 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
     return errorResponse(502, "invalid_response", "Gemini returned JSON that Deep Spec could not read.");
   }
 
+  const normalizedResult = normalizeIdentificationResult(result);
+
   console.info("[DeepSpec AI]", {
     model,
     latencyMs: Date.now() - startedAt,
     success: true,
-    confidence: result.confidence,
-    safetyTriage: result.safetyTriage,
+    confidence: normalizedResult.confidence,
+    safetyTriage: normalizedResult.safetyTriage,
   });
 
   return {
     status: 200,
     body: {
-      result,
+      result: normalizedResult,
     },
   };
 }
@@ -207,6 +209,42 @@ function parseIdentificationResult(text: string): IdentificationResult | null {
   } catch {
     return null;
   }
+}
+
+function normalizeIdentificationResult(result: IdentificationResult): IdentificationResult {
+  const safetyTriage = result.isSafetyCritical ? "needs_professional" : result.safetyTriage;
+  const needsBetterPhoto = result.needsBetterPhoto || safetyTriage === "needs_better_photo";
+
+  return {
+    ...result,
+    partName: cleanText(result.partName, "Unidentified car part"),
+    whatItDoes: cleanText(result.whatItDoes, "Deep Spec could not verify what this part does from this photo."),
+    visibleObservations: cleanList(result.visibleObservations),
+    concerns: cleanList(result.concerns),
+    evidence: cleanList(result.evidence),
+    nextAction:
+      safetyTriage === "needs_professional"
+        ? ensureProfessionalNextAction(result.nextAction)
+        : cleanText(result.nextAction, "Take a clearer photo from another angle before acting on this result."),
+    safetyTriage,
+    needsBetterPhoto,
+  };
+}
+
+function ensureProfessionalNextAction(nextAction: string) {
+  const cleaned = cleanText(nextAction, "Verify this part with a mechanic before driving or attempting repair.");
+  return /mechanic|professional|shop/i.test(cleaned)
+    ? cleaned
+    : `${cleaned} Verify this with a mechanic before driving or attempting repair.`;
+}
+
+function cleanText(value: string, fallback: string) {
+  const cleaned = value.trim().replace(/\s+/g, " ");
+  return cleaned || fallback;
+}
+
+function cleanList(value: string[]) {
+  return value.map((item) => item.trim().replace(/\s+/g, " ")).filter(Boolean).slice(0, 6);
 }
 
 function isIdentificationResult(value: unknown): value is IdentificationResult {

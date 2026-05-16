@@ -40,6 +40,10 @@ describe("Result", () => {
     );
     expect(screen.getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
     expect(screen.getByText("Nothing concerning visible.")).toBeInTheDocument();
+    expect(screen.getByText("Trust check")).toBeInTheDocument();
+    expect(screen.getByText("Useful match")).toBeInTheDocument();
+    expect(screen.getByText("Good")).toBeInTheDocument();
+    expect(screen.getByText("The pulley and vented housing match common alternator shapes.")).toBeInTheDocument();
   });
 
   it("shows safety-critical guidance", () => {
@@ -54,7 +58,40 @@ describe("Result", () => {
     });
 
     expect(screen.getByText("Safety-critical")).toBeInTheDocument();
+    expect(screen.getByText("Professional verification needed")).toBeInTheDocument();
     expect(screen.getByText(/Verify this with a mechanic/)).toBeInTheDocument();
+  });
+
+  it("shows incomplete data guidance when the scan needs a better photo", () => {
+    renderResult({
+      ...successfulScan,
+      result: {
+        ...successfulScan.result!,
+        confidence: "low",
+        safetyTriage: "needs_better_photo",
+        needsBetterPhoto: true,
+      },
+    });
+
+    expect(screen.getByText("Incomplete data")).toBeInTheDocument();
+    expect(screen.getByText("Poor")).toBeInTheDocument();
+    expect(screen.getByText("Better photo needed")).toBeInTheDocument();
+    expect(screen.getByText("Move closer, add light, and center the label, connector, leak, crack, or damaged area.")).toBeInTheDocument();
+  });
+
+  it("shows low-confidence uncertainty separately from better-photo cases", () => {
+    renderResult({
+      ...successfulScan,
+      result: {
+        ...successfulScan.result!,
+        confidence: "low",
+        safetyTriage: "can_help",
+        needsBetterPhoto: false,
+      },
+    });
+
+    expect(screen.getByText("Low-confidence result")).toBeInTheDocument();
+    expect(screen.getByText("Usable but weak")).toBeInTheDocument();
   });
 
   it("shows a friendly AI error while keeping the captured image", () => {

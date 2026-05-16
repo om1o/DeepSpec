@@ -52,6 +52,7 @@ export default function Result() {
 
 function AnalysisResult({ capturedAt, result }: { capturedAt: string | null; result: IdentificationResult }) {
   const showSafetyWarning = result.isSafetyCritical || result.safetyTriage === "needs_professional";
+  const trustReview = getTrustReview(result);
 
   return (
     <>
@@ -65,6 +66,8 @@ function AnalysisResult({ capturedAt, result }: { capturedAt: string | null; res
         </div>
         {capturedAt ? <p className="mt-3 text-xs font-semibold text-white/42">Captured {capturedAt}</p> : null}
       </section>
+
+      <TrustReviewCard review={trustReview} />
 
       {showSafetyWarning ? (
         <section className="rounded-[24px] border border-[#F59E0B]/30 bg-[#F59E0B]/10 p-5">
@@ -87,9 +90,61 @@ function AnalysisResult({ capturedAt, result }: { capturedAt: string | null; res
       <ResultSection title="What it does" items={[result.whatItDoes]} />
       <ResultSection title="What I see" items={result.visibleObservations} emptyText="No clear visual clues were returned." />
       <ResultSection title="Concerns" items={result.concerns} emptyText="Nothing concerning visible." />
-      <ResultSection title="Why Deep Spec thinks this" items={result.evidence} emptyText="No evidence returned." />
+      <EvidenceSection items={result.evidence} />
       <ResultSection title="Next action" items={[result.nextAction]} />
     </>
+  );
+}
+
+type TrustReview = {
+  borderClass: string;
+  description: string;
+  photoQuality: string;
+  retakeGuidance: string;
+  status: string;
+};
+
+function TrustReviewCard({ review }: { review: TrustReview }) {
+  return (
+    <section className={`rounded-[24px] border bg-[#171717] p-5 ${review.borderClass}`}>
+      <p className="text-sm font-extrabold text-white">Trust check</p>
+      <h2 className="mt-2 text-xl font-extrabold tracking-tight">{review.status}</h2>
+      <p className="mt-3 text-sm leading-6 text-[#A1A1AA]">{review.description}</p>
+      <div className="mt-4 grid grid-cols-1 gap-3">
+        <TrustRow label="Photo quality" value={review.photoQuality} />
+        <TrustRow label="Retake guidance" value={review.retakeGuidance} />
+      </div>
+    </section>
+  );
+}
+
+function TrustRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-3">
+      <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-white/42">{label}</p>
+      <p className="mt-1 text-sm leading-6 text-white/84">{value}</p>
+    </div>
+  );
+}
+
+function EvidenceSection({ items }: { items: string[] }) {
+  const visibleItems = items.filter(Boolean);
+
+  return (
+    <section className="rounded-[24px] border border-white/10 bg-[#171717] p-5">
+      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-white/62">Why Deep Spec thinks this</h2>
+      {visibleItems.length > 0 ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {visibleItems.map((item) => (
+            <span key={item} className="rounded-full border border-[#3B82F6]/24 bg-[#3B82F6]/10 px-3 py-2 text-xs font-semibold leading-5 text-[#BFDBFE]">
+              {item}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-3 text-sm leading-6 text-[#A1A1AA]">No visual evidence returned. Treat this result as uncertain.</p>
+      )}
+    </section>
   );
 }
 
@@ -156,6 +211,57 @@ function ConfidenceBadge({ confidence }: { confidence: Confidence }) {
       {confidence}
     </span>
   );
+}
+
+function getTrustReview(result: IdentificationResult): TrustReview {
+  if (result.safetyTriage === "needs_professional" || result.isSafetyCritical) {
+    return {
+      borderClass: "border-[#F59E0B]/35",
+      description:
+        "Deep Spec can explain the visible clues, but this category can affect driving safety. Do not treat this as repair approval.",
+      photoQuality: result.confidence === "low" ? "Risk flagged and identification uncertain" : "Risk flagged",
+      retakeGuidance: "Take another photo for your records, then verify with a mechanic before driving or repairing.",
+      status: "Professional verification needed",
+    };
+  }
+
+  if (result.safetyTriage === "needs_better_photo" || result.needsBetterPhoto) {
+    return {
+      borderClass: "border-[#F59E0B]/35",
+      description: "The image does not give Deep Spec enough reliable detail. A better photo matters more than another guess.",
+      photoQuality: "Poor",
+      retakeGuidance: "Move closer, add light, and center the label, connector, leak, crack, or damaged area.",
+      status: "Incomplete data",
+    };
+  }
+
+  if (result.confidence === "low") {
+    return {
+      borderClass: "border-[#EF4444]/30",
+      description: "The app found some clues, but not enough to make a strong identification.",
+      photoQuality: "Usable but weak",
+      retakeGuidance: "Retake from a wider angle and one close-up of any label or connector.",
+      status: "Low-confidence result",
+    };
+  }
+
+  if (result.confidence === "medium") {
+    return {
+      borderClass: "border-[#F59E0B]/25",
+      description: "This is useful for understanding the part, but one more angle would make the result stronger.",
+      photoQuality: "Usable",
+      retakeGuidance: "Optional: capture the label, connector, mounting point, or nearby part context.",
+      status: "Check another angle",
+    };
+  }
+
+  return {
+    borderClass: "border-[#10B981]/25",
+    description: "The image has enough visual evidence for a useful consumer-level explanation.",
+    photoQuality: "Good",
+    retakeGuidance: "Optional: take a close-up label photo if you need more certainty later.",
+    status: "Useful match",
+  };
 }
 
 function getScanState(state: unknown): ScanAnalysisState | null {

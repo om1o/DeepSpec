@@ -87,4 +87,88 @@ describe("createIdentifyResponse", () => {
       }),
     );
   });
+
+  it("normalizes inconsistent safety-critical model output", async () => {
+    const riskyResult = {
+      ...result,
+      partName: "Fuel line",
+      safetyTriage: "can_help",
+      isSafetyCritical: true,
+      nextAction: "Do not touch the damaged line.",
+    };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: JSON.stringify(riskyResult),
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          safetyTriage: "needs_professional",
+          isSafetyCritical: true,
+          nextAction: expect.stringContaining("mechanic"),
+        },
+      },
+    });
+  });
+
+  it("normalizes better-photo model output", async () => {
+    const unclearResult = {
+      ...result,
+      confidence: "low",
+      safetyTriage: "needs_better_photo",
+      needsBetterPhoto: false,
+    };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: JSON.stringify(unclearResult),
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          safetyTriage: "needs_better_photo",
+          needsBetterPhoto: true,
+        },
+      },
+    });
+  });
 });
