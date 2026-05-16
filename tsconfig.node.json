@@ -7,8 +7,10 @@
     "skipLibCheck": true,
     "moduleResolution": "Bundler",
     "allowSyntheticDefaultImports": true,
+    "types": ["node"],
     "strict": true,
     "noEmit": true
   },
-  "include": ["vite.config.ts", "eslint.config.js"]
+  "include": ["vite.config.ts", "eslint.config.js", "api/**/*.ts"],
+  "exclude": ["api/**/*.test.ts"]
 }

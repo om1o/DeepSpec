@@ -7,8 +7,9 @@ import Reticle from "../components/scanner/Reticle";
 import Button from "../components/ui/Button";
 import { useCamera } from "../hooks/useCamera";
 import { useStillness } from "../hooks/useStillness";
-import { saveLatestCapturedFrame } from "../lib/utils";
-import type { CapturedFrame } from "../types";
+import { saveLatestScanState } from "../lib/utils";
+import { AIServiceError, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
+import type { CapturedFrame, ScanAnalysisState } from "../types";
 
 const videoConstraints: MediaTrackConstraints = {
   facingMode: { ideal: "environment" },
@@ -33,8 +34,27 @@ export default function Scanner() {
         imageBase64,
         capturedAt: new Date().toISOString(),
       };
-      saveLatestCapturedFrame(frame);
-      navigate("/result", { state: frame });
+      saveLatestScanState({ frame });
+
+      try {
+        const result = await identifyCapturedFrame(frame);
+        const scanState: ScanAnalysisState = {
+          frame,
+          result,
+          analyzedAt: new Date().toISOString(),
+        };
+        saveLatestScanState(scanState);
+        navigate("/result", { state: scanState });
+      } catch (analysisError) {
+        const scanState: ScanAnalysisState = {
+          frame,
+          errorMessage: getAIErrorMessage(analysisError),
+          errorCode: analysisError instanceof AIServiceError ? analysisError.code : "analysis_failed",
+          analyzedAt: new Date().toISOString(),
+        };
+        saveLatestScanState(scanState);
+        navigate("/result", { state: scanState });
+      }
     } catch (error) {
       markError(error instanceof Error ? error.message : "Capture failed.");
     } finally {
@@ -114,7 +134,7 @@ function AnalyzingOverlay() {
   return (
     <div className="fixed inset-0 z-40 grid place-items-center bg-black/70 backdrop-blur-md">
       <div className="rounded-full border border-white/10 bg-white/10 px-5 py-3 text-sm font-bold text-white shadow-2xl">
-        Analyzing...
+        Analyzing photo...
       </div>
     </div>
   );

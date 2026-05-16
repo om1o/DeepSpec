@@ -1,6 +1,6 @@
 # Deep Spec
 
-Mobile-first PWA scanner for identifying car parts. Phase 1 is intentionally narrow: live rear-camera scanning, a motion-aware reticle, frame capture, and a placeholder result screen.
+Mobile-first PWA scanner for identifying car parts. The current build covers the scanner plus Phase 2 AI identification through a server-side Gemini proxy.
 
 ## Run locally
 
@@ -11,15 +11,24 @@ npm run dev
 
 Open the URL from Vite. For real iPhone camera and motion testing, use an HTTPS URL. A Vercel preview is the preferred path; a temporary HTTPS tunnel can work for quick testing.
 
-## Phase 1 scope
+For AI identification, create `.env` or `.env.local` with:
+
+```bash
+GEMINI_API_KEY=your_server_key_here
+GEMINI_MODEL=gemini-2.5-pro
+```
+
+Do not use a `VITE_` API key. The app calls `/api/identify`, and the server-side proxy sends the key to Gemini.
+
+## Current scope
 
 - Fullscreen rear-camera scanner
 - Motion permission prompt for iOS
 - Yellow reticle and Identify button after the phone is steady
 - Capture and compress the current frame
-- Placeholder result screen
+- Gemini-backed result screen through `/api/identify`
 
-No AI, history, ratings, chat, pricing, or settings are included in this phase.
+History, ratings, chat, pricing, and settings are not included yet.
 
 ## Test before moving on
 

@@ -6,6 +6,18 @@ import Result from "./Result";
 import Scanner from "./Scanner";
 
 const captureFrame = vi.fn(async () => "data:image/jpeg;base64,compressed-frame");
+const identifyCapturedFrame = vi.fn(async () => ({
+  partName: "Alternator",
+  confidence: "high",
+  whatItDoes: "It charges the battery while the engine runs.",
+  visibleObservations: ["Belt-driven metal housing is visible."],
+  concerns: [],
+  safetyTriage: "can_help",
+  isSafetyCritical: false,
+  nextAction: "Compare the scan with another angle if you need more detail.",
+  needsBetterPhoto: false,
+  evidence: ["The pulley and housing match common alternator shapes."],
+}));
 
 vi.mock("../hooks/useCamera", () => ({
   useCamera: () => ({
@@ -33,12 +45,22 @@ vi.mock("react-webcam", () => ({
   default: () => <div data-testid="webcam-preview" />,
 }));
 
+vi.mock("../services/aiService", () => ({
+  AIServiceError: class AIServiceError extends Error {
+    code = "test";
+  },
+  getAIErrorMessage: (error: unknown) => (error instanceof Error ? error.message : "AI failed"),
+  identifyCapturedFrame: (...args: unknown[]) => identifyCapturedFrame(...args),
+}));
+
 describe("Scanner", () => {
   beforeEach(() => {
     captureFrame.mockClear();
+    identifyCapturedFrame.mockClear();
+    sessionStorage.clear();
   });
 
-  it("captures and navigates to the placeholder result", async () => {
+  it("captures, identifies, and navigates to the result", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <Routes>
@@ -53,10 +75,12 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Identify" }));
 
     expect(captureFrame).toHaveBeenCalledTimes(1);
-    expect(await screen.findByText("Phase 2 will identify this")).toBeInTheDocument();
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute(
       "src",
       "data:image/jpeg;base64,compressed-frame",
     );
+    expect(screen.getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
   });
 });

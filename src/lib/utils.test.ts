@@ -1,4 +1,11 @@
-import { cx, getScaledDimensions, readLatestCapturedFrame, saveLatestCapturedFrame } from "./utils";
+import {
+  cx,
+  getScaledDimensions,
+  readLatestCapturedFrame,
+  readLatestScanState,
+  saveLatestCapturedFrame,
+  saveLatestScanState,
+} from "./utils";
 
 describe("cx", () => {
   it("keeps truthy class names and removes empty values", () => {
@@ -34,11 +41,38 @@ describe("latest captured frame storage", () => {
     saveLatestCapturedFrame(frame);
 
     expect(readLatestCapturedFrame()).toEqual(frame);
+    expect(readLatestScanState()).toEqual({ frame });
   });
 
   it("ignores invalid saved frame data", () => {
     sessionStorage.setItem("deep-spec:latest-captured-frame", JSON.stringify({ imageBase64: 123 }));
 
     expect(readLatestCapturedFrame()).toBeNull();
+  });
+
+  it("saves and reads an analyzed scan state", () => {
+    const scanState = {
+      frame: {
+        imageBase64: "data:image/jpeg;base64,test",
+        capturedAt: "2026-05-16T00:00:00.000Z",
+      },
+      analyzedAt: "2026-05-16T00:00:05.000Z",
+      result: {
+        partName: "Alternator",
+        confidence: "high" as const,
+        whatItDoes: "It charges the battery while the engine runs.",
+        visibleObservations: ["Belt-driven housing is visible."],
+        concerns: [],
+        safetyTriage: "can_help" as const,
+        isSafetyCritical: false,
+        nextAction: "Take another photo if you need more detail.",
+        needsBetterPhoto: false,
+        evidence: ["The pulley and housing match an alternator."],
+      },
+    };
+
+    saveLatestScanState(scanState);
+
+    expect(readLatestScanState()).toEqual(scanState);
   });
 });
