@@ -10,9 +10,12 @@ describe("SEO assets", () => {
 
     expect(html).toContain("Deep Spec - AI Car Part Finding Helper");
     expect(html).toContain("AI car part finding");
+    expect(html).toContain("AI car parts scanner");
+    expect(html).toContain("identify car parts with camera");
     expect(html).toContain("application/ld+json");
     expect(html).toContain("https://deepspec.app/icon-512.png");
     expect(html).toContain("/articles/ai-car-part-finding.html");
+    expect(html).toContain("/articles/visual-ai-inspection-tools.html");
   });
 
   it("exposes crawler and sitemap files", () => {
@@ -24,7 +27,12 @@ describe("SEO assets", () => {
     expect(robots).toContain("User-agent: ClaudeBot");
     expect(robots).toContain("User-agent: PerplexityBot");
     expect(sitemap).toContain("https://deepspec.app/articles/ai-car-part-finding.html");
+    expect(sitemap).toContain("https://deepspec.app/articles/ai-car-parts-scanner.html");
+    expect(sitemap).toContain("https://deepspec.app/articles/car-damage-ai-scanner.html");
+    expect(sitemap).toContain("https://deepspec.app/articles/visual-ai-inspection-tools.html");
     expect(llms).toContain("AI car part finding");
+    expect(llms).toContain("Follow-up chat attached to saved scans");
+    expect(llms).not.toContain("AI identification is the next planned phase");
   });
 
   it("keeps the install manifest mobile-friendly", () => {
@@ -45,5 +53,28 @@ describe("SEO assets", () => {
     expect(article).toContain('"@type": "FAQPage"');
     expect(markdown).toContain("AI carpart finding");
     expect(markdown).toContain("https://deepspec.app/");
+    expect(markdown).not.toContain("AI identification in the next phase");
+  });
+
+  it("publishes useful discovery articles without thin keyword pages", () => {
+    const scannerArticle = read("public/articles/ai-car-parts-scanner.html");
+    const damageArticle = read("public/articles/car-damage-ai-scanner.html");
+    const inspectionArticle = read("public/articles/visual-ai-inspection-tools.html");
+    const scannerMarkdown = read("public/articles/ai-car-parts-scanner.md");
+    const damageMarkdown = read("public/articles/car-damage-ai-scanner.md");
+    const inspectionMarkdown = read("public/articles/visual-ai-inspection-tools.md");
+
+    expect(scannerArticle).toContain("AI car parts scanner");
+    expect(scannerArticle).toContain("Try the Deep Spec scanner");
+    expect(scannerArticle).toContain('"@type": "FAQPage"');
+    expect(scannerMarkdown).toContain("identify car parts with camera");
+
+    expect(damageArticle).toContain("Car damage AI scanner");
+    expect(damageArticle).toContain("verify with a mechanic");
+    expect(damageMarkdown).toContain("car damage AI scanner");
+
+    expect(inspectionArticle).toContain("Visual AI inspection tools");
+    expect(inspectionArticle).toContain("Can AI tools save time for engineers?");
+    expect(inspectionMarkdown).toContain("structured scan records");
   });
 });

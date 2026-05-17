@@ -46,6 +46,13 @@ This runs lint, automated tests, and the production build. Use it before startin
 
 ## SEO and AI discovery
 
-The app includes search metadata, `robots.txt`, `sitemap.xml`, `llms.txt`, and an article at `/articles/ai-car-part-finding.html`.
+The app includes search metadata, JSON-LD, `robots.txt`, `sitemap.xml`, `llms.txt`, and useful article pages:
+
+- `/articles/ai-car-part-finding.html`
+- `/articles/ai-car-parts-scanner.html`
+- `/articles/car-damage-ai-scanner.html`
+- `/articles/visual-ai-inspection-tools.html`
+
+Each article also has a `.md` version for AI-readable discovery.
 
 Before launch, replace `https://deepspec.app` in SEO files with the real production domain. Buying or connecting a domain needs parent help.

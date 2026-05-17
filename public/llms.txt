@@ -1,12 +1,19 @@
 # Deep Spec
 
-Deep Spec is a mobile-first Progressive Web App for car owners who need to understand car parts from a camera scan. The product direction is an AI car part finding helper, with safety-first explanations for regular people.
+Deep Spec is a mobile-first Progressive Web App for car owners who need to understand car parts from a camera scan. It is an AI car part finding helper with safety-first explanations for regular people.
 
 ## Important pages
 
 - Home scanner: https://deepspec.app/
-- Article: https://deepspec.app/articles/ai-car-part-finding.html
-- Clean markdown article: https://deepspec.app/articles/ai-car-part-finding.md
+- AI car part finding guide: https://deepspec.app/articles/ai-car-part-finding.html
+- AI car parts scanner guide: https://deepspec.app/articles/ai-car-parts-scanner.html
+- Car damage AI scanner guide: https://deepspec.app/articles/car-damage-ai-scanner.html
+- Visual AI inspection tools guide: https://deepspec.app/articles/visual-ai-inspection-tools.html
+- Clean markdown articles:
+  - https://deepspec.app/articles/ai-car-part-finding.md
+  - https://deepspec.app/articles/ai-car-parts-scanner.md
+  - https://deepspec.app/articles/car-damage-ai-scanner.md
+  - https://deepspec.app/articles/visual-ai-inspection-tools.md
 
 ## Core topics
 
@@ -15,9 +22,24 @@ Deep Spec is a mobile-first Progressive Web App for car owners who need to under
 - car parts
 - AI helper
 - car part scanner
+- AI car parts scanner
+- identify car parts with camera
+- car part AI helper
+- car damage AI scanner
+- visual AI inspection tools
+- can AI tools save time for engineers
 - vehicle part identification
 - automotive AI assistant
 
+## Current product capabilities
+
+- Rear-camera PWA scanner
+- Smart reticle and stillness-based capture
+- Gemini-backed AI identification through a server-side proxy
+- Safety triage for better-photo and professional-verification cases
+- Saved scan records with photo, AI result/error, category, training label, rating, correction, notes, and chat history
+- Follow-up chat attached to saved scans
+
 ## Accuracy note
 
-Deep Spec should not be described as a repair certification tool, exact OEM fitment database, or live pricing database. The current Phase 1 product is a camera-first scanner. AI identification is the next planned phase.
+Deep Spec should not be described as a repair certification tool, exact OEM fitment database, or live pricing database. For brakes, steering, suspension, fuel, airbags, electrical burning, severe leaks, or unclear high-risk damage, Deep Spec should tell users to verify with a mechanic.

@@ -30,7 +30,7 @@ That does not replace judgment. It reduces the number of tabs and dead ends befo
 
 Deep Spec starts with a steady camera scanner because better photos produce better answers. The smart reticle asks the user to hold still before capturing a frame.
 
-That keeps the workflow simple: point at the part, hold steady, tap Identify, and keep the scan clean enough for AI identification in the next phase.
+That keeps the workflow simple: point at the part, hold steady, tap Identify, get a cautious AI-assisted result, and save the scan with category, rating, correction, notes, and follow-up chat.
 
 ## Safety note
 
