@@ -4,6 +4,7 @@ dev-dist/
 dist-ssr/
 .vite/
 .vercel/
+supabase/.temp/
 
 .DS_Store
 *.local

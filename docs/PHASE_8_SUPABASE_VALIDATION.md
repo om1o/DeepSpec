@@ -65,10 +65,11 @@ If the verifier says `Could not find public.scan_lookups in Supabase Data API sc
 Fix:
 
 1. Open Supabase Dashboard -> SQL Editor.
-2. Run `supabase/migrations/20260518000100_deepspec_secure_foundation.sql`.
-3. Go to Project Settings -> API and make sure the `public` schema is exposed.
-4. Wait a minute or reload the schema cache if Supabase offers that button.
-5. Rerun `npm run verify:supabase`.
+2. Run `npm run supabase:print-migration`.
+3. Paste the printed SQL into the Supabase SQL Editor and run it.
+4. Go to Project Settings -> API and make sure the `public` schema is exposed.
+5. Wait a minute or reload the schema cache if Supabase offers that button.
+6. Rerun `npm run verify:supabase`.
 
 ## Phone Acceptance Test
 
