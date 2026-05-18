@@ -33,6 +33,9 @@ let ownerClient;
 let failureMessage;
 
 try {
+  console.log("[0/6] Checking Supabase public settings and schema...");
+  await runPreflight(config);
+
   ownerClient = createClient(config.url, config.key, {
     auth: {
       autoRefreshToken: false,
@@ -144,6 +147,52 @@ async function signInAnonymously(supabase) {
   }
 
   return data.user;
+}
+
+async function runPreflight(config) {
+  const headers = {
+    apikey: config.key,
+    Authorization: `Bearer ${config.key}`,
+  };
+  const settings = await fetchJson(`${config.url}/auth/v1/settings`, headers);
+
+  if (!settings.ok) {
+    throw new Error(`Could not read Supabase Auth settings: ${settings.status} ${settings.bodyText}`);
+  }
+
+  if (settings.body?.external?.anonymous_users !== true) {
+    throw new Error("Anonymous sign-ins are disabled in Supabase Auth settings.");
+  }
+
+  const scanTable = await fetchJson(`${config.url}/rest/v1/scan_lookups?select=local_id&limit=1`, headers);
+  if (scanTable.status === 404 && scanTable.body?.code === "PGRST205") {
+    throw new Error(
+      [
+        "Could not find public.scan_lookups in Supabase Data API schema cache.",
+        "Apply supabase/migrations/20260518000100_deepspec_secure_foundation.sql,",
+        "then reload the Data API schema cache or wait for Supabase to refresh it.",
+      ].join(" "),
+    );
+  }
+}
+
+async function fetchJson(url, headers) {
+  const response = await fetch(url, { headers });
+  const bodyText = await response.text();
+  let parsedBody;
+
+  try {
+    parsedBody = bodyText ? JSON.parse(bodyText) : null;
+  } catch {
+    parsedBody = null;
+  }
+
+  return {
+    body: parsedBody,
+    bodyText,
+    ok: response.ok,
+    status: response.status,
+  };
 }
 
 async function assertNoError(result, label) {
