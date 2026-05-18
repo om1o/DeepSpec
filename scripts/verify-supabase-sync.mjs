@@ -178,5 +178,5 @@ function loadLocalEnv(filename) {
 
 function fail(message) {
   console.error(message);
-  process.exit(1);
+  process.exitCode = 1;
 }

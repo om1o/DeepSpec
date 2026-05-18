@@ -1,12 +1,19 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { afterEach, vi } from "vitest";
 import EarlyAccess from "./EarlyAccess";
 import { ENGAGEMENT_STORAGE_KEY } from "../services/engagement";
 
 describe("EarlyAccess", () => {
   beforeEach(() => {
     localStorage.clear();
+    vi.stubEnv("VITE_SUPABASE_URL", "");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("shows the business experiment page", () => {
