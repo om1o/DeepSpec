@@ -14,6 +14,8 @@ describe("Phase 8 Supabase validation tooling", () => {
   });
 
   it("checks private image upload, scan row write, owner read, cross-user block, and cleanup", () => {
+    expect(verifier).toContain("/auth/v1/settings");
+    expect(verifier).toContain("PGRST205");
     expect(verifier).toContain("storage.from(SCAN_BUCKET).upload");
     expect(verifier).toContain('from("scan_lookups").upsert');
     expect(verifier).toContain("Owner read failed");
