@@ -170,7 +170,8 @@ async function runPreflight(config) {
       [
         "Could not find public.scan_lookups in Supabase Data API schema cache.",
         "Apply supabase/migrations/20260518000100_deepspec_secure_foundation.sql,",
-        "then reload the Data API schema cache or wait for Supabase to refresh it.",
+        "or run npm run supabase:print-migration and paste that SQL into Supabase SQL Editor.",
+        "Then reload the Data API schema cache or wait for Supabase to refresh it.",
       ].join(" "),
     );
   }

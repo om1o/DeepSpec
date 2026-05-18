@@ -11,6 +11,7 @@ describe("Phase 8 Supabase validation tooling", () => {
 
   it("exposes a dedicated Supabase verification command", () => {
     expect(packageJson.scripts["verify:supabase"]).toBe("node scripts/verify-supabase-sync.mjs");
+    expect(packageJson.scripts["supabase:print-migration"]).toBe("node scripts/print-supabase-migration.mjs");
   });
 
   it("checks private image upload, scan row write, owner read, cross-user block, and cleanup", () => {

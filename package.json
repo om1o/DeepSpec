@@ -9,6 +9,7 @@
     "check": "npm run lint && npm test && npm run build",
     "lint": "eslint .",
     "test": "vitest run",
+    "supabase:print-migration": "node scripts/print-supabase-migration.mjs",
     "verify:supabase": "node scripts/verify-supabase-sync.mjs",
     "preview": "vite preview --host 0.0.0.0"
   },
