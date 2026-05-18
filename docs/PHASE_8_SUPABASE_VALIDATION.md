@@ -43,6 +43,20 @@ The verifier must:
 
 If any step fails, Phase 8 is not complete yet. Fix the Supabase config, migration, bucket, Auth setting, or RLS policy, then run the verifier again.
 
+## If Anonymous Sign-In Returns A Database Error
+
+If `npm run verify:supabase` says `Database error creating anonymous user`, the app reached Supabase Auth but Supabase failed while inserting the anonymous user.
+
+Check this before changing app code:
+
+1. Supabase Dashboard -> Authentication -> Sign In / Providers -> Anonymous sign-ins is enabled.
+2. Supabase Dashboard -> Auth logs: open the failed `/signup` event and read the database error.
+3. Database triggers on `auth.users`: make sure there is no trigger writing to a missing `profiles` table or required column.
+4. Apply this repo's migration if it has not been applied yet.
+5. Rerun `npm run verify:supabase`.
+
+Do not start Phase 9 until anonymous sign-in can create a user and the verifier passes.
+
 ## Phone Acceptance Test
 
 After the command passes:

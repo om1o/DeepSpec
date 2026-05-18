@@ -132,8 +132,14 @@ try {
 async function signInAnonymously(supabase) {
   const { data, error } = await supabase.auth.signInAnonymously();
   if (error || !data.user) {
+    const code = error?.code ? ` (${error.code})` : "";
+    const status = error?.status ? `HTTP ${error.status}` : "unknown status";
     throw new Error(
-      `Anonymous sign-in failed. Enable anonymous sign-ins in Supabase Auth settings. ${error?.message ?? ""}`.trim(),
+      [
+        `Anonymous sign-in failed: ${error?.message ?? "No user returned"}${code}, ${status}.`,
+        "Check Supabase Auth logs for the database error behind /signup.",
+        "Common causes: anonymous sign-ins not fully enabled, Auth schema not upgraded, or a database trigger on auth.users failing.",
+      ].join(" "),
     );
   }
 
