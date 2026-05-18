@@ -58,6 +58,14 @@ Waitlist and feedback entries save locally first, then sync to Supabase only whe
 - `public.waitlist_signups` and `public.feedback_submissions`: public insert only, narrow validation checks, no public read.
 - The browser uses Supabase Auth anonymous sign-in for scan sync. That creates a real auth user without building a full account system yet.
 
+To prove a real Supabase project is wired correctly, run:
+
+```bash
+npm run verify:supabase
+```
+
+That command signs in anonymously, uploads a private test image, writes a scan row, checks cross-user RLS blocking, downloads the owner image, and cleans up. See `docs/PHASE_8_SUPABASE_VALIDATION.md` for the full Phase 8 checklist.
+
 ## Test before moving on
 
 ```bash
