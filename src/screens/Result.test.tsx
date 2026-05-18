@@ -155,6 +155,8 @@ describe("Result", () => {
     renderResult(null, `/result/${lookup.id}`);
 
     expect(screen.getByText("Scan report")).toBeInTheDocument();
+    expect(screen.getByText("Cloud dataset sync")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sync this scan" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Share" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Export" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Tell me more" })).toHaveAttribute("href", `/result/${lookup.id}/chat`);

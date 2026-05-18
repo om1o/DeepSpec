@@ -1,6 +1,7 @@
 import { FormEvent, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import Button from "../components/ui/Button";
+import { getCloudSyncStatus, syncFeedbackToCloud, syncWaitlistSignupToCloud } from "../services/cloudSync";
 import { getEngagementData, saveFeedbackSubmission, saveWaitlistSignup } from "../services/engagement";
 import type { FeedbackSubmission, WaitlistSignup } from "../types";
 
@@ -14,16 +15,17 @@ export default function EarlyAccess() {
   const [contactEmail, setContactEmail] = useState("");
   const [waitlistStatus, setWaitlistStatus] = useState<string | null>(null);
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
+  const cloudSync = getCloudSyncStatus();
   const demandSignals = useMemo(
     () => [
       { label: "Local waitlist entries", value: String(stats.waitlist.length) },
       { label: "Feedback notes", value: String(stats.feedback.length) },
-      { label: "Storage mode", value: "Device only" },
+      { label: "Cloud sync", value: cloudSync.configured ? "Ready" : "Off" },
     ],
-    [stats],
+    [cloudSync.configured, stats],
   );
 
-  function handleWaitlistSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleWaitlistSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const result = saveWaitlistSignup({ email, mainProblem, userType });
 
@@ -34,11 +36,18 @@ export default function EarlyAccess() {
 
     setEmail("");
     setMainProblem("");
-    setWaitlistStatus("Saved on this device. Backend sync comes after privacy review.");
     setStats(getEngagementData());
+
+    if (cloudSync.configured && result.value) {
+      const cloudResult = await syncWaitlistSignupToCloud(result.value);
+      setWaitlistStatus(`Saved on this device. ${cloudResult.message}`);
+      return;
+    }
+
+    setWaitlistStatus("Saved on this device. Backend sync comes after privacy review.");
   }
 
-  function handleFeedbackSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleFeedbackSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const result = saveFeedbackSubmission({
       category: feedbackCategory,
@@ -52,8 +61,15 @@ export default function EarlyAccess() {
     }
 
     setFeedbackMessage("");
-    setFeedbackStatus("Feedback saved locally.");
     setStats(getEngagementData());
+
+    if (cloudSync.configured && result.value) {
+      const cloudResult = await syncFeedbackToCloud(result.value);
+      setFeedbackStatus(`Feedback saved locally. ${cloudResult.message}`);
+      return;
+    }
+
+    setFeedbackStatus("Feedback saved locally.");
   }
 
   return (
@@ -75,6 +91,9 @@ export default function EarlyAccess() {
           <p className="mt-3 text-sm leading-6 text-[#A1A1AA]">
             Deep Spec is testing demand with waitlist signups, feedback, saved scan reports, and mechanic escalation CTAs.
             Payments, accounts, domains, and legal docs need parent review later.
+          </p>
+          <p className="mt-3 rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-sm leading-6 text-[#A1A1AA]">
+            {cloudSync.message}
           </p>
           <div className="mt-4 grid grid-cols-1 gap-3">
             {demandSignals.map((item) => (

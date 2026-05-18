@@ -21,6 +21,15 @@ GEMINI_CHAT_MODEL=gemini-2.5-flash
 
 Do not use a `VITE_` API key. The app calls `/api/identify` and `/api/chat`, and the server-side proxies send the key to Gemini.
 
+Optional cloud sync uses Supabase. This needs parent-approved privacy terms before real users upload photos:
+
+```bash
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=your_publishable_or_anon_key
+```
+
+Never put a Supabase service-role key in a `VITE_` variable. Browser code can only use the publishable/anon key. Apply the migration in `supabase/migrations/20260518000100_deepspec_secure_foundation.sql`, enable Supabase anonymous sign-ins if you want device-only users to sync scans, and keep the `scan-images` bucket private.
+
 ## Current scope
 
 - Fullscreen rear-camera scanner
@@ -31,15 +40,23 @@ Do not use a `VITE_` API key. The app calls `/api/identify` and `/api/chat`, and
 - Model-backed scan category saved on every AI result, with deterministic fallback for old scans and user corrections
 - Saved scan database in localStorage with photo, AI result/error, category, training label, rating, correction, notes, and chat history
 - Follow-up chat attached to each saved scan through `/api/chat`
-- Early access page at `/early-access` for local waitlist and feedback validation
+- Early access page at `/early-access` for waitlist and feedback validation
 - Scan report sharing/export from saved scan results
 - Nearby repair options CTA for professional-verification cases
+- Optional Supabase cloud sync for saved scans, waitlist entries, and feedback
 
 Pricing, account sync, public share links, and settings are not included yet.
 
-Every scan should be treated as future model-training/evaluation data. LocalStorage is the current storage layer, capped at 50 saved scans and validated on read. It is not a secure cloud database; Supabase should preserve the same fields later with auth, row-level security, storage bucket policies, and parent-reviewed privacy terms.
+Every scan should be treated as future model-training/evaluation data. LocalStorage is the default storage layer, capped at 50 saved scans and validated on read. Supabase sync is optional and preserves the same dataset fields with auth ownership, row-level security, a private storage bucket, and explicit grants for browser-safe access.
 
-Waitlist and feedback entries are also local-only right now. A real public waitlist needs parent-approved privacy terms and backend storage.
+Waitlist and feedback entries save locally first, then sync to Supabase only when cloud config exists. A real public launch still needs parent-approved privacy terms.
+
+## Supabase security shape
+
+- `public.scan_lookups`: owned by `auth.uid()`, no anonymous table access, RLS for select/insert/update/delete.
+- `storage.scan-images`: private bucket; users can only access files in their own user-id folder.
+- `public.waitlist_signups` and `public.feedback_submissions`: public insert only, narrow validation checks, no public read.
+- The browser uses Supabase Auth anonymous sign-in for scan sync. That creates a real auth user without building a full account system yet.
 
 ## Test before moving on
 

@@ -2,6 +2,7 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useState } from "react";
 import Button from "../components/ui/Button";
 import { readLatestCapturedFrame, readLatestScanState } from "../lib/utils";
+import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
 import { buildScanReport, downloadTextFile, getMechanicSearchUrl, getScanReportFilename } from "../services/report";
 import { deleteLookup, getLookup, scanStateFromLookup, updateLookup } from "../services/storage";
 import type { CapturedFrame, Confidence, IdentificationResult, Lookup, Rating, ScanAnalysisState } from "../types";
@@ -149,6 +150,9 @@ function SavedScanControls({
   saveError: string | null;
 }) {
   const [reportStatus, setReportStatus] = useState<string | null>(null);
+  const [cloudStatusMessage, setCloudStatusMessage] = useState<string | null>(null);
+  const [isSyncingCloud, setIsSyncingCloud] = useState(false);
+  const cloudSync = getCloudSyncStatus();
   const needsProfessional = lookup.result?.isSafetyCritical || lookup.result?.safetyTriage === "needs_professional";
 
   async function handleShareReport() {
@@ -173,6 +177,15 @@ function SavedScanControls({
   function handleDownloadReport() {
     downloadTextFile(getScanReportFilename(lookup), buildScanReport(lookup));
     setReportStatus("Report downloaded.");
+  }
+
+  async function handleCloudSync() {
+    setIsSyncingCloud(true);
+    setCloudStatusMessage("Syncing scan...");
+
+    const result = await syncLookupToCloud(lookup);
+    setCloudStatusMessage(result.message);
+    setIsSyncingCloud(false);
   }
 
   return (
@@ -242,6 +255,20 @@ function SavedScanControls({
       </label>
 
       {saveError ? <p className="mt-3 text-sm font-semibold text-[#FCA5A5]">{saveError}</p> : null}
+
+      <div className="mt-4 rounded-[20px] border border-white/10 bg-white/[0.04] p-4">
+        <p className="text-sm font-extrabold text-white">Cloud dataset sync</p>
+        <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">{cloudSync.message}</p>
+        <Button
+          className="mt-3 w-full"
+          disabled={!cloudSync.configured || isSyncingCloud}
+          onClick={handleCloudSync}
+          variant="ghost"
+        >
+          {isSyncingCloud ? "Syncing..." : "Sync this scan"}
+        </Button>
+        {cloudStatusMessage ? <p className="mt-3 text-sm font-semibold text-[#FACC15]">{cloudStatusMessage}</p> : null}
+      </div>
 
       <div className="mt-4 rounded-[20px] border border-white/10 bg-white/[0.04] p-4">
         <p className="text-sm font-extrabold text-white">Scan report</p>
