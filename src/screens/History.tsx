@@ -15,9 +15,14 @@ export default function History() {
             <p className="text-[13px] font-extrabold uppercase tracking-[0.18em] text-white/70">Deep Spec</p>
             <h1 className="mt-2 text-2xl font-extrabold tracking-tight">Saved scans</h1>
           </div>
-          <Link to="/" className="rounded-full bg-white/10 px-4 py-2 text-sm font-bold text-white">
-            Scan
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link to="/early-access" className="rounded-full bg-white/10 px-4 py-2 text-sm font-bold text-white">
+              Join
+            </Link>
+            <Link to="/" className="rounded-full bg-white/10 px-4 py-2 text-sm font-bold text-white">
+              Scan
+            </Link>
+          </div>
         </header>
 
         {lookups.length > 0 ? (

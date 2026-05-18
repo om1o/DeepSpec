@@ -31,10 +31,15 @@ Do not use a `VITE_` API key. The app calls `/api/identify` and `/api/chat`, and
 - Model-backed scan category saved on every AI result, with deterministic fallback for old scans and user corrections
 - Saved scan database in localStorage with photo, AI result/error, category, training label, rating, correction, notes, and chat history
 - Follow-up chat attached to each saved scan through `/api/chat`
+- Early access page at `/early-access` for local waitlist and feedback validation
+- Scan report sharing/export from saved scan results
+- Nearby repair options CTA for professional-verification cases
 
-Pricing, account sync, and settings are not included yet.
+Pricing, account sync, public share links, and settings are not included yet.
 
-Every scan should be treated as future model-training/evaluation data. LocalStorage is the Phase 4 storage layer, capped at 50 saved scans and validated on read. It is not a secure cloud database; Supabase should preserve the same fields later with auth, row-level security, storage bucket policies, and parent-reviewed privacy terms.
+Every scan should be treated as future model-training/evaluation data. LocalStorage is the current storage layer, capped at 50 saved scans and validated on read. It is not a secure cloud database; Supabase should preserve the same fields later with auth, row-level security, storage bucket policies, and parent-reviewed privacy terms.
+
+Waitlist and feedback entries are also local-only right now. A real public waitlist needs parent-approved privacy terms and backend storage.
 
 ## Test before moving on
 

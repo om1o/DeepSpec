@@ -2,6 +2,7 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useState } from "react";
 import Button from "../components/ui/Button";
 import { readLatestCapturedFrame, readLatestScanState } from "../lib/utils";
+import { buildScanReport, downloadTextFile, getMechanicSearchUrl, getScanReportFilename } from "../services/report";
 import { deleteLookup, getLookup, scanStateFromLookup, updateLookup } from "../services/storage";
 import type { CapturedFrame, Confidence, IdentificationResult, Lookup, Rating, ScanAnalysisState } from "../types";
 
@@ -147,6 +148,33 @@ function SavedScanControls({
   onRating: (rating: Rating) => void;
   saveError: string | null;
 }) {
+  const [reportStatus, setReportStatus] = useState<string | null>(null);
+  const needsProfessional = lookup.result?.isSafetyCritical || lookup.result?.safetyTriage === "needs_professional";
+
+  async function handleShareReport() {
+    const report = buildScanReport(lookup);
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: `Deep Spec: ${lookup.trainingLabel}`,
+          text: report,
+        });
+        setReportStatus("Report shared.");
+        return;
+      }
+
+      await navigator.clipboard.writeText(report);
+      setReportStatus("Report copied to clipboard.");
+    } catch {
+      setReportStatus("Could not share this report from this browser.");
+    }
+  }
+
+  function handleDownloadReport() {
+    downloadTextFile(getScanReportFilename(lookup), buildScanReport(lookup));
+    setReportStatus("Report downloaded.");
+  }
+
   return (
     <section className="rounded-[24px] border border-white/10 bg-[#171717] p-5">
       <p className="text-sm font-extrabold text-white">Saved scan</p>
@@ -160,12 +188,24 @@ function SavedScanControls({
       </div>
 
       {lookup.result ? (
-        <Link
-          className="mt-4 block rounded-full bg-white px-5 py-3 text-center text-sm font-bold text-neutral-950 shadow-[0_12px_40px_rgba(255,255,255,0.16)]"
-          to={`/result/${lookup.id}/chat`}
-        >
-          Tell me more
-        </Link>
+        <div className="mt-4 grid grid-cols-1 gap-3">
+          <Link
+            className="block rounded-full bg-white px-5 py-3 text-center text-sm font-bold text-neutral-950 shadow-[0_12px_40px_rgba(255,255,255,0.16)]"
+            to={`/result/${lookup.id}/chat`}
+          >
+            Tell me more
+          </Link>
+          {needsProfessional ? (
+            <a
+              className="block rounded-full border border-[#F59E0B]/30 bg-[#F59E0B]/10 px-5 py-3 text-center text-sm font-bold text-[#FACC15]"
+              href={getMechanicSearchUrl(lookup)}
+              rel="noreferrer"
+              target="_blank"
+            >
+              Find nearby options
+            </a>
+          ) : null}
+        </div>
       ) : null}
 
       <div className="mt-4 grid grid-cols-2 gap-3">
@@ -202,6 +242,22 @@ function SavedScanControls({
       </label>
 
       {saveError ? <p className="mt-3 text-sm font-semibold text-[#FCA5A5]">{saveError}</p> : null}
+
+      <div className="mt-4 rounded-[20px] border border-white/10 bg-white/[0.04] p-4">
+        <p className="text-sm font-extrabold text-white">Scan report</p>
+        <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">
+          Export a plain-text summary for a mechanic, buyer, or your own records. This does not create a public link.
+        </p>
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <Button variant="ghost" onClick={handleShareReport}>
+            Share
+          </Button>
+          <Button variant="ghost" onClick={handleDownloadReport}>
+            Export
+          </Button>
+        </div>
+        {reportStatus ? <p className="mt-3 text-sm font-semibold text-[#FACC15]">{reportStatus}</p> : null}
+      </div>
 
       <Button className="mt-4 w-full border border-[#EF4444]/30 bg-[#EF4444]/10 text-[#FCA5A5] shadow-none" onClick={onDelete}>
         Delete saved scan

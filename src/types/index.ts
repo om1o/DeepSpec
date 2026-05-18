@@ -82,3 +82,19 @@ export type Lookup = {
   trainingStatus: TrainingStatus;
   chatHistory: ChatMessage[];
 };
+
+export type WaitlistSignup = {
+  id: string;
+  createdAt: string;
+  email: string;
+  userType: "car_owner" | "van_life" | "used_car_buyer" | "weekend_wrencher" | "other";
+  mainProblem: string;
+};
+
+export type FeedbackSubmission = {
+  id: string;
+  createdAt: string;
+  category: "scanner" | "ai_result" | "saved_scans" | "chat" | "business" | "other";
+  message: string;
+  contactEmail: string;
+};

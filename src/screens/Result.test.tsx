@@ -148,6 +148,40 @@ describe("Result", () => {
     expect(savedLookup.trainingStatus).toBe("user_corrected");
   });
 
+  it("shows scan report actions for saved scans", () => {
+    const lookup = makeLookup();
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+
+    renderResult(null, `/result/${lookup.id}`);
+
+    expect(screen.getByText("Scan report")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Share" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Export" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Tell me more" })).toHaveAttribute("href", `/result/${lookup.id}/chat`);
+  });
+
+  it("shows nearby options for professional verification cases", () => {
+    const lookup = makeLookup({
+      result: {
+        ...successfulScan.result!,
+        partName: "Brake caliper",
+        scanCategory: "brakes",
+        safetyTriage: "needs_professional",
+        isSafetyCritical: true,
+      },
+      scanCategory: "brakes",
+      trainingLabel: "Brake caliper",
+    });
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+
+    renderResult(null, `/result/${lookup.id}`);
+
+    expect(screen.getByRole("link", { name: "Find nearby options" })).toHaveAttribute(
+      "href",
+      "https://www.google.com/maps/search/brakes%20auto%20repair%20near%20me",
+    );
+  });
+
   it("deletes a saved scan and returns to history", async () => {
     const lookup = makeLookup();
     localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
@@ -186,7 +220,7 @@ function renderResult(state: ScanAnalysisState | null, path = "/result") {
   );
 }
 
-function makeLookup(): Lookup {
+function makeLookup(patch: Partial<Lookup> = {}): Lookup {
   return {
     id: "lookup-1",
     createdAt: "2026-05-16T00:00:00.000Z",
@@ -200,5 +234,6 @@ function makeLookup(): Lookup {
     trainingLabel: "Alternator",
     trainingStatus: "raw_unreviewed",
     chatHistory: [],
+    ...patch,
   };
 }

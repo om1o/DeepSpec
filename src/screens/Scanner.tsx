@@ -93,9 +93,14 @@ export default function Scanner() {
       <header className="fixed left-0 right-0 top-0 z-20 px-5 pt-[max(18px,env(safe-area-inset-top))]">
         <div className="flex items-center justify-between gap-3">
           <p className="text-[13px] font-extrabold uppercase tracking-[0.18em] text-white/92">Deep Spec</p>
-          <Link to="/history" className="rounded-full bg-black/35 px-3 py-2 text-xs font-extrabold text-white/82 backdrop-blur-md">
-            Saved
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link to="/early-access" className="rounded-full bg-black/35 px-3 py-2 text-xs font-extrabold text-white/82 backdrop-blur-md">
+              Join
+            </Link>
+            <Link to="/history" className="rounded-full bg-black/35 px-3 py-2 text-xs font-extrabold text-white/82 backdrop-blur-md">
+              Saved
+            </Link>
+          </div>
         </div>
         <p className="mt-2 text-sm font-medium text-white/68">
           {usesFallback
