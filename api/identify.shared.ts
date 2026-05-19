@@ -78,6 +78,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
   const startedAt = Date.now();
   const response = await fetch(endpoint, {
     method: "POST",
+    signal: AbortSignal.timeout(25_000),
     headers: {
       "Content-Type": "application/json",
       "x-goog-api-key": apiKey,
@@ -115,7 +116,8 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
     return errorResponse(429, "rate_limited", "Too many AI lookups right now. Try again in a few minutes.");
   }
 
-  const responseBody = (await response.json().catch(() => null)) as JsonObject | null;
+  const isJson = (response.headers.get("content-type") ?? "").includes("application/json");
+  const responseBody = isJson ? ((await response.json().catch(() => null)) as JsonObject | null) : null;
 
   if (!response.ok) {
     return errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
@@ -159,6 +161,11 @@ function parseIdentifyRequest(body: unknown):
   | { error: IdentifyResponse } {
   if (!isRecord(body) || typeof body.imageBase64 !== "string") {
     return { error: errorResponse(400, "invalid_input", "A captured image is required.") };
+  }
+
+  // ~10 MB decoded; check length before running the regex on a giant string
+  if (body.imageBase64.length > 14_000_000) {
+    return { error: errorResponse(400, "image_too_large", "The captured image is too large. Try a lower-resolution photo.") };
   }
 
   const parsedImage = parseDataUrl(body.imageBase64);

@@ -133,6 +133,64 @@ describe("createIdentifyResponse", () => {
     });
   });
 
+  it("returns a network error when fetch fails", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Network error"));
+
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 502,
+      body: { error: { code: "network" } },
+    });
+  });
+
+  it("returns a network error when fetch times out", async () => {
+    const abort = new DOMException("The operation was aborted.", "AbortError");
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(abort);
+
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 502,
+      body: { error: { code: "network" } },
+    });
+  });
+
+  it("returns an invalid_response error when Gemini returns an empty candidates array", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ candidates: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 502,
+      body: { error: { code: "invalid_response" } },
+    });
+  });
+
+  it("returns a provider_error and preserves HTTP status when Gemini responds with non-JSON", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("<html>Service Unavailable</html>", {
+        status: 503,
+        headers: { "Content-Type": "text/html" },
+      }),
+    );
+
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 503,
+      body: { error: { code: "provider_error" } },
+    });
+  });
+
+  it("rejects images over 10 MB before calling Gemini", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const bigImage = `data:image/jpeg;base64,${"A".repeat(14_000_001)}`;
+
+    await expect(createIdentifyResponse({ imageBase64: bigImage }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 400,
+      body: { error: { code: "image_too_large" } },
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("normalizes better-photo model output", async () => {
     const unclearResult = {
       ...result,

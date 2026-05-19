@@ -23,6 +23,7 @@ const videoConstraints: MediaTrackConstraints = {
 export default function Scanner() {
   const navigate = useNavigate();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [captureError, setCaptureError] = useState<string | null>(null);
   const { cameraError, cameraRequestId, cameraState, captureFrame, markError, markReady, retryCamera, webcamRef } =
     useCamera();
   const { error: motionError, isStable, needsPermission, permissionState, requestPermission, usesFallback } =
@@ -33,6 +34,7 @@ export default function Scanner() {
   async function handleIdentify() {
     try {
       setIsAnalyzing(true);
+      setCaptureError(null);
       const imageBase64 = await captureFrame();
       const frame: CapturedFrame = {
         imageBase64,
@@ -60,7 +62,9 @@ export default function Scanner() {
         persistAndNavigate(scanState);
       }
     } catch (error) {
-      markError(error instanceof Error ? error.message : "Capture failed.");
+      // Don't mark camera as blocked — captureFrame can fail transiently when
+      // the video frame isn't ready yet. Show a retry prompt instead.
+      setCaptureError(error instanceof Error ? error.message : "Capture failed. Try again.");
     } finally {
       setIsAnalyzing(false);
     }
@@ -146,6 +150,11 @@ export default function Scanner() {
           ) : null}
 
           {needsPermission ? <MotionPermissionModal error={motionError} onAllow={requestPermission} /> : null}
+          {captureError ? (
+            <p className="fixed bottom-[294px] left-1/2 z-20 w-[calc(100%-32px)] -translate-x-1/2 rounded-2xl bg-[#EF4444]/20 px-4 py-2 text-center text-xs font-semibold text-[#FCA5A5] ring-1 ring-[#EF4444]/20">
+              {captureError}
+            </p>
+          ) : null}
         </>
       ) : null}
       {isAnalyzing ? <AnalyzingOverlay /> : null}

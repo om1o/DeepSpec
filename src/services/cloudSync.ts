@@ -168,14 +168,19 @@ function getCloudSyncConfig(): CloudSyncConfig | null {
 
 async function getClient(config: CloudSyncConfig) {
   if (!clientPromise) {
-    clientPromise = import("@supabase/supabase-js").then(({ createClient }) =>
-      createClient(config.url, config.key, {
-        auth: {
-          autoRefreshToken: true,
-          persistSession: true,
-        },
-      }),
-    );
+    clientPromise = import("@supabase/supabase-js")
+      .then(({ createClient }) =>
+        createClient(config.url, config.key, {
+          auth: {
+            autoRefreshToken: true,
+            persistSession: true,
+          },
+        }),
+      )
+      .catch((error) => {
+        clientPromise = null;
+        throw error;
+      });
   }
 
   return clientPromise;
@@ -216,9 +221,14 @@ function dataUrlToBlob(dataUrl: string) {
 }
 
 function base64ToBytes(base64: string) {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
+  let binary: string;
+  try {
+    binary = atob(base64);
+  } catch {
+    throw new Error("Captured image could not be read. Try taking a new photo.");
+  }
 
+  const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) {
     bytes[index] = binary.charCodeAt(index);
   }

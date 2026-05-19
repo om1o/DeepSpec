@@ -5,6 +5,7 @@ import { vi } from "vitest";
 import Chat from "./Chat";
 import { sendFollowUp } from "../services/aiService";
 import { LOOKUPS_STORAGE_KEY } from "../services/storage";
+import type { ChatMessage } from "../types";
 import type { Lookup } from "../types";
 
 vi.mock("../services/aiService", async () => {
@@ -71,9 +72,9 @@ describe("Chat", () => {
 
     expect(await screen.findByText("The alternator charges the battery while the engine runs.")).toBeInTheDocument();
 
-    const savedLookup = JSON.parse(localStorage.getItem(LOOKUPS_STORAGE_KEY) ?? "[]")[0] as Lookup;
-    expect(savedLookup.chatHistory).toHaveLength(2);
-    expect(savedLookup.chatHistory.map((message) => message.role)).toEqual(["user", "assistant"]);
+    const chatHistory = JSON.parse(localStorage.getItem(`deep-spec:chat:${lookup.id}`) ?? "[]") as ChatMessage[];
+    expect(chatHistory).toHaveLength(2);
+    expect(chatHistory.map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(sendFollowUpMock).toHaveBeenCalledWith(expect.objectContaining({ id: lookup.id }), "What does it do?");
   });
 });
