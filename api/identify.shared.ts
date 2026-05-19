@@ -84,6 +84,9 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
       "x-goog-api-key": apiKey,
     },
     body: JSON.stringify({
+      system_instruction: {
+        parts: [{ text: IDENTIFY_PROMPT }],
+      },
       contents: [
         {
           role: "user",
@@ -94,14 +97,13 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
                 data: parsed.base64,
               },
             },
-            {
-              text: `${IDENTIFY_PROMPT}\n\nUser task: ${parsed.userMessage}`,
-            },
+            { text: parsed.userMessage },
           ],
         },
       ],
       generationConfig: {
-        temperature: 0.4,
+        temperature: 0.1,
+        maxOutputTokens: 1024,
         responseMimeType: "application/json",
         responseJsonSchema: IDENTIFICATION_RESPONSE_SCHEMA,
       },

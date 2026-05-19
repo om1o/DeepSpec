@@ -44,19 +44,18 @@ export async function createChatResponse(body: unknown, env: Record<string, stri
       "x-goog-api-key": apiKey,
     },
     body: JSON.stringify({
+      system_instruction: {
+        parts: [{ text: FOLLOWUP_PROMPT }],
+      },
       contents: [
         {
           role: "user",
-          parts: [
-            {
-              text: `${FOLLOWUP_PROMPT}\n\nSaved scan context and user question:\n${parsed.userMessage}`,
-            },
-          ],
+          parts: [{ text: parsed.userMessage }],
         },
       ],
       generationConfig: {
-        temperature: 0.4,
-        maxOutputTokens: 320,
+        temperature: 0.3,
+        maxOutputTokens: 480,
       },
     }),
   }).catch(() => null);
