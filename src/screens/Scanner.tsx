@@ -141,7 +141,7 @@ export default function Scanner() {
       {cameraState !== "blocked" ? (
         <>
           <Reticle isVisible={isStable} />
-          <IdentifyButton isDisabled={!canIdentify} isVisible={isStable && cameraState === "ready"} onIdentify={handleIdentify} />
+          <IdentifyButton isDisabled={!canIdentify} isReady={isStable} isVisible={cameraState === "ready"} onIdentify={handleIdentify} />
 
           {usesFallback ? (
             <p className="fixed bottom-[282px] left-1/2 z-20 w-[calc(100%-32px)] -translate-x-1/2 text-center text-xs font-semibold text-white/62">
