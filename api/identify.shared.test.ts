@@ -82,7 +82,7 @@ describe("createIdentifyResponse", () => {
     });
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      expect.stringContaining("/models/gemini-2.5-pro:generateContent"),
+      expect.stringContaining("/models/gemini-2.5-flash:generateContent"),
       expect.objectContaining({
         method: "POST",
       }),

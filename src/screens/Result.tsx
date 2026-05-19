@@ -17,6 +17,7 @@ export default function Result() {
   const frame = scanState?.frame ?? readLatestCapturedFrame();
   const capturedAt = frame?.capturedAt ? new Date(frame.capturedAt).toLocaleString() : null;
   const storageWarning = scanState?.storageWarning;
+  const isQaTestRun = Boolean(scanState?.testRun);
 
   function handleRating(rating: Rating) {
     if (!lookup) {
@@ -101,7 +102,8 @@ export default function Result() {
         )}
 
         <div className="mt-5 space-y-4">
-          {storageWarning ? <StorageWarning message={storageWarning} /> : null}
+          {isQaTestRun ? <TestRunNotice label={scanState?.testVehicleLabel} /> : null}
+          {!isQaTestRun && storageWarning ? <StorageWarning message={storageWarning} /> : null}
           {scanState?.result ? <AnalysisResult result={scanState.result} capturedAt={capturedAt} /> : null}
           {scanState?.errorMessage ? <AnalysisError message={scanState.errorMessage} capturedAt={capturedAt} /> : null}
           {!scanState?.result && !scanState?.errorMessage ? <NotAnalyzed capturedAt={capturedAt} /> : null}
@@ -122,6 +124,17 @@ export default function Result() {
         </Button>
       </div>
     </main>
+  );
+}
+
+function TestRunNotice({ label }: { label?: string }) {
+  return (
+    <section className="rounded-[24px] border border-[#FACC15]/30 bg-[#FACC15]/10 p-5">
+      <p className="text-sm font-bold text-[#FACC15]">QA test result</p>
+      <p className="mt-2 text-sm leading-6 text-white/82">
+        This scan used {label ?? "a generated test photo"} and was not saved to history, cloud sync, or training review.
+      </p>
+    </section>
   );
 }
 
