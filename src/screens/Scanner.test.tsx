@@ -6,6 +6,7 @@ import Result from "./Result";
 import Scanner from "./Scanner";
 
 const captureFrame = vi.fn(async () => "data:image/jpeg;base64,compressed-frame");
+const retryCamera = vi.fn();
 const identifyCapturedFrame = vi.fn(async () => ({
   partName: "Alternator",
   confidence: "high",
@@ -22,11 +23,13 @@ const identifyCapturedFrame = vi.fn(async () => ({
 
 vi.mock("../hooks/useCamera", () => ({
   useCamera: () => ({
+    cameraRequestId: 0,
     cameraError: null,
     cameraState: "ready",
     captureFrame,
     markError: vi.fn(),
     markReady: vi.fn(),
+    retryCamera,
     webcamRef: { current: null },
   }),
 }));
@@ -57,6 +60,7 @@ vi.mock("../services/aiService", () => ({
 describe("Scanner", () => {
   beforeEach(() => {
     captureFrame.mockClear();
+    retryCamera.mockClear();
     identifyCapturedFrame.mockClear();
     localStorage.clear();
     sessionStorage.clear();

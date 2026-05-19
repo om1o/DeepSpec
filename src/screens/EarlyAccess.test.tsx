@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, vi } from "vitest";
@@ -28,13 +28,17 @@ describe("EarlyAccess", () => {
   it("saves waitlist and feedback entries locally", async () => {
     renderEarlyAccess();
 
-    await userEvent.type(screen.getByLabelText("Email"), "tester@example.com");
-    await userEvent.type(screen.getByLabelText("What problem should Deep Spec solve?"), "Help me understand used-car leaks.");
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "tester@example.com" } });
+    fireEvent.change(screen.getByLabelText("What problem should Deep Spec solve?"), {
+      target: { value: "Help me understand used-car leaks." },
+    });
     await userEvent.click(screen.getByRole("button", { name: "Save waitlist entry" }));
 
     expect(await screen.findByText("Saved on this device. Backend sync comes after privacy review.")).toBeInTheDocument();
 
-    await userEvent.type(screen.getByLabelText("Feedback"), "I would pay for scan reports I can send to a mechanic.");
+    fireEvent.change(screen.getByLabelText("Feedback"), {
+      target: { value: "I would pay for scan reports I can send to a mechanic." },
+    });
     await userEvent.click(screen.getByRole("button", { name: "Save feedback" }));
 
     expect(await screen.findByText("Feedback saved locally.")).toBeInTheDocument();

@@ -7,6 +7,7 @@ type CameraState = "loading" | "ready" | "blocked";
 export function useCamera() {
   const webcamRef = useRef<Webcam>(null);
   const cameraCaptureSupported = hasCameraCapture();
+  const [cameraRequestId, setCameraRequestId] = useState(0);
   const [cameraState, setCameraState] = useState<CameraState>(() => (cameraCaptureSupported ? "loading" : "blocked"));
   const [cameraError, setCameraError] = useState<string | null>(() =>
     cameraCaptureSupported ? null : "This browser does not support camera capture. Use Safari or Chrome over HTTPS.",
@@ -23,6 +24,18 @@ export function useCamera() {
     setCameraError(message || "Camera access was blocked.");
   }, []);
 
+  const retryCamera = useCallback(() => {
+    if (!cameraCaptureSupported) {
+      setCameraState("blocked");
+      setCameraError("This browser does not support camera capture. Use Safari or Chrome over HTTPS.");
+      return;
+    }
+
+    setCameraState("loading");
+    setCameraError(null);
+    setCameraRequestId((current) => current + 1);
+  }, [cameraCaptureSupported]);
+
   const captureFrame = useCallback(async () => {
     const screenshot = webcamRef.current?.getScreenshot();
     if (!screenshot) {
@@ -33,11 +46,13 @@ export function useCamera() {
   }, []);
 
   return {
+    cameraRequestId,
     webcamRef,
     cameraState,
     cameraError,
     markReady,
     markError,
+    retryCamera,
     captureFrame,
   };
 }
