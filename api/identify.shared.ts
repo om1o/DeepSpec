@@ -20,7 +20,7 @@ export type IdentifyResponse =
       };
     };
 
-const DEFAULT_MODEL = "gemini-2.5-pro";
+const DEFAULT_MODEL = "gemini-2.5-flash";
 
 const IDENTIFICATION_RESPONSE_SCHEMA = {
   type: "object",

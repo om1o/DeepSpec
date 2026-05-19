@@ -122,6 +122,19 @@ describe("Result", () => {
     );
   });
 
+  it("labels QA test results as unsaved", () => {
+    renderResult({
+      ...successfulScan,
+      testRun: true,
+      testVehicleLabel: "Generated engine bay QA photo",
+    });
+
+    expect(screen.getByText("QA test result")).toBeInTheDocument();
+    expect(screen.getByText(/Generated engine bay QA photo/)).toBeInTheDocument();
+    expect(screen.getByText(/not saved to history, cloud sync, or training review/i)).toBeInTheDocument();
+    expect(screen.queryByText("Saved scan")).not.toBeInTheDocument();
+  });
+
   it("restores the latest successful scan after a refresh", () => {
     sessionStorage.setItem("deep-spec:latest-scan-state", JSON.stringify(successfulScan));
 

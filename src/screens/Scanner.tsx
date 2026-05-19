@@ -7,7 +7,9 @@ import Reticle from "../components/scanner/Reticle";
 import Button from "../components/ui/Button";
 import { useCamera } from "../hooks/useCamera";
 import { useStillness } from "../hooks/useStillness";
+import { isTestMode } from "../lib/testMode";
 import { saveLatestScanState } from "../lib/utils";
+import TestScanPanel from "../components/scanner/TestScanPanel";
 import { AIServiceError, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
 import { createLookup } from "../services/storage";
 import type { CapturedFrame, ScanAnalysisState } from "../types";
@@ -36,7 +38,9 @@ export default function Scanner() {
         imageBase64,
         capturedAt: new Date().toISOString(),
       };
-      saveLatestScanState({ frame });
+      if (!isTestMode()) {
+        saveLatestScanState({ frame });
+      }
 
       try {
         const result = await identifyCapturedFrame(frame);
@@ -63,6 +67,11 @@ export default function Scanner() {
   }
 
   function persistAndNavigate(scanState: ScanAnalysisState) {
+    if (isTestMode()) {
+      navigate("/result", { state: { ...scanState, testRun: true } });
+      return;
+    }
+
     const storageResult = createLookup(scanState);
     const routeState = storageResult.ok
       ? scanState
@@ -140,6 +149,7 @@ export default function Scanner() {
         </>
       ) : null}
       {isAnalyzing ? <AnalyzingOverlay /> : null}
+      {isTestMode() ? <TestScanPanel onBusyChange={setIsAnalyzing} /> : null}
     </main>
   );
 }

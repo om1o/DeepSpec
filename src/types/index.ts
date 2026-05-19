@@ -45,6 +45,10 @@ export type ScanAnalysisState = {
   errorCode?: string;
   analyzedAt?: string;
   storageWarning?: string;
+  /** Set when `?test=1`; result is in-memory only with no history or cloud save. */
+  testRun?: boolean;
+  /** Dev fixture label (e.g. which OEM sample photo was used). */
+  testVehicleLabel?: string;
 };
 
 export type AIInput = {

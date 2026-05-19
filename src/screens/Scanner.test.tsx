@@ -1,7 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { vi } from "vitest";
+import { afterEach, vi } from "vitest";
 import Result from "./Result";
 import Scanner from "./Scanner";
 
@@ -58,6 +58,11 @@ vi.mock("../services/aiService", () => ({
 }));
 
 describe("Scanner", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    window.history.pushState({}, "", "/");
+  });
+
   beforeEach(() => {
     captureFrame.mockClear();
     retryCamera.mockClear();
@@ -82,7 +87,7 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Identify" }));
 
     expect(captureFrame).toHaveBeenCalledTimes(1);
-    expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute(
       "src",
@@ -90,5 +95,30 @@ describe("Scanner", () => {
     );
     expect(screen.getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
     expect(screen.getByText("Saved scan")).toBeInTheDocument();
+  }, 10000);
+
+  it("runs the generated engine test scan without saving it to history", async () => {
+    window.history.pushState({}, "", "/?test=1");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(new Blob(["test-engine-image"], { type: "image/jpeg" }), { status: 200 })),
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/?test=1"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+          <Route path="/result" element={<Result />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Test engine photo" }));
+
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("QA test result")).toBeInTheDocument();
+    expect(screen.getByText(/not saved to history, cloud sync, or training review/i)).toBeInTheDocument();
+    expect(localStorage.getItem("deep-spec:lookups")).toBeNull();
+    expect(sessionStorage.getItem("deep-spec:latest-scan-state")).toBeNull();
   }, 10000);
 });
