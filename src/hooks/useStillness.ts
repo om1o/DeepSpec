@@ -19,9 +19,13 @@ export const STILLNESS_CONFIG = {
 } as const;
 
 export function useStillness() {
-  const [permissionState, setPermissionState] = useState<MotionPermissionState>(() =>
-    hasMotionEvent() ? "idle" : "unsupported",
-  );
+  const [permissionState, setPermissionState] = useState<MotionPermissionState>(() => {
+    if (!hasMotionEvent()) {
+      return "unsupported";
+    }
+
+    return requiresMotionPermission() ? "idle" : "granted";
+  });
   const [isStableFromMotion, setIsStableFromMotion] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const samplesRef = useRef<MotionSample[]>([]);
@@ -102,6 +106,14 @@ export function useStillness() {
 
 function hasMotionEvent() {
   return typeof window !== "undefined" && "DeviceMotionEvent" in window;
+}
+
+function requiresMotionPermission() {
+  if (!hasMotionEvent()) {
+    return false;
+  }
+
+  return typeof (window.DeviceMotionEvent as DeviceMotionConstructor).requestPermission === "function";
 }
 
 export function isMotionSampleStill(event: Pick<DeviceMotionEvent, "acceleration" | "accelerationIncludingGravity" | "rotationRate">) {
