@@ -99,6 +99,31 @@ describe("cloudSync", () => {
     });
   });
 
+  it("resets clientPromise so the next call can retry after an import failure", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    mocks.createClient.mockRejectedValueOnce(new Error("Module load failed"));
+    const { syncLookupToCloud } = await import("./cloudSync");
+
+    // First call — import throws; should fail but not lock the promise
+    const first = await syncLookupToCloud(makeLookup());
+    expect(first.ok).toBe(false);
+
+    // Second call — createClient now succeeds
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    const upsert = vi.fn().mockResolvedValue({ error: null });
+    mocks.createClient.mockReturnValue({
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "user-retry" } }, error: null }),
+      },
+      from: vi.fn().mockReturnValue({ upsert }),
+      storage: { from: vi.fn().mockReturnValue({ upload }) },
+    });
+    const second = await syncLookupToCloud(makeLookup());
+    expect(second.ok).toBe(true);
+  });
+
   it("syncs waitlist and feedback rows without storing service-role credentials", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");

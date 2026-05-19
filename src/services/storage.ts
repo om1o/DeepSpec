@@ -3,6 +3,7 @@ import type { ChatMessage, Confidence, IdentificationResult, Lookup, Rating, Sca
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
 export const MAX_SAVED_LOOKUPS = 50;
 const MAX_CHAT_MESSAGES = 40;
+const CHAT_KEY = (id: string) => `deep-spec:chat:${id}`;
 
 type StorageResult<T> =
   | {
@@ -62,7 +63,9 @@ export function getLookups(): Lookup[] {
 }
 
 export function getLookup(id: string): Lookup | null {
-  return getLookups().find((lookup) => lookup.id === id) ?? null;
+  const lookup = getLookups().find((l) => l.id === id) ?? null;
+  if (!lookup) return null;
+  return mergeLookupChatHistory(lookup);
 }
 
 export function updateLookup(
@@ -104,27 +107,20 @@ export function createChatMessage(role: ChatMessage["role"], content: string): C
 }
 
 export function appendChatMessages(id: string, messages: ChatMessage[]): StorageResult<Lookup | null> {
-  const lookups = getLookups();
-  const index = lookups.findIndex((lookup) => lookup.id === id);
-
-  if (index === -1) {
+  const lookup = getLookup(id);
+  if (!lookup) {
     return { ok: false, message: "This saved scan was not found.", value: null };
   }
 
   const cleanMessages = messages.map(normalizeChatMessage).filter((message): message is ChatMessage => Boolean(message));
   if (cleanMessages.length === 0) {
-    return { ok: true, value: lookups[index] };
+    return { ok: true, value: lookup };
   }
 
-  const updatedLookup: Lookup = {
-    ...lookups[index],
-    chatHistory: [...lookups[index].chatHistory, ...cleanMessages].slice(-MAX_CHAT_MESSAGES),
-  };
+  const updatedHistory = [...lookup.chatHistory, ...cleanMessages].slice(-MAX_CHAT_MESSAGES);
+  const writeResult = writeChatHistory(id, updatedHistory);
+  const updatedLookup: Lookup = { ...lookup, chatHistory: updatedHistory };
 
-  const updatedLookups = [...lookups];
-  updatedLookups[index] = updatedLookup;
-
-  const writeResult = writeLookups(updatedLookups);
   return writeResult.ok
     ? { ok: true, value: updatedLookup }
     : { ok: false, message: writeResult.message, value: updatedLookup };
@@ -139,6 +135,9 @@ export function deleteLookup(id: string): StorageResult<boolean> {
   }
 
   const writeResult = writeLookups(next);
+  if (writeResult.ok && hasLocalStorage()) {
+    try { localStorage.removeItem(CHAT_KEY(id)); } catch {}
+  }
   return writeResult.ok ? { ok: true, value: true } : { ok: false, message: writeResult.message, value: false };
 }
 
@@ -150,6 +149,38 @@ export function scanStateFromLookup(lookup: Lookup): ScanAnalysisState {
     errorCode: lookup.errorCode,
     analyzedAt: lookup.analyzedAt,
   };
+}
+
+function mergeLookupChatHistory(lookup: Lookup): Lookup {
+  if (!hasLocalStorage()) return lookup;
+  try {
+    const raw = localStorage.getItem(CHAT_KEY(lookup.id));
+    if (!raw) return lookup;
+    const parsed = JSON.parse(raw) as unknown;
+    const chatHistory = normalizeChatHistory(parsed);
+    if (chatHistory.length === 0) return lookup;
+    return { ...lookup, chatHistory };
+  } catch {
+    return lookup;
+  }
+}
+
+function writeChatHistory(id: string, history: ChatMessage[]): StorageResult<ChatMessage[]> {
+  if (!hasLocalStorage()) {
+    return { ok: false, message: "Saved scans are not available in this browser.", value: history };
+  }
+  try {
+    localStorage.setItem(CHAT_KEY(id), JSON.stringify(history));
+    return { ok: true, value: history };
+  } catch (error) {
+    return {
+      ok: false,
+      message: isQuotaError(error)
+        ? "Your device storage is full. Delete older saved scans, then try again."
+        : "Deep Spec could not save this scan on this device.",
+      value: history,
+    };
+  }
 }
 
 function writeLookups(lookups: Lookup[]): StorageResult<Lookup[]> {
