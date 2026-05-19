@@ -21,7 +21,8 @@ const videoConstraints: MediaTrackConstraints = {
 export default function Scanner() {
   const navigate = useNavigate();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const { cameraError, cameraState, captureFrame, markError, markReady, webcamRef } = useCamera();
+  const { cameraError, cameraRequestId, cameraState, captureFrame, markError, markReady, retryCamera, webcamRef } =
+    useCamera();
   const { error: motionError, isStable, needsPermission, permissionState, requestPermission, usesFallback } =
     useStillness();
 
@@ -77,6 +78,7 @@ export default function Scanner() {
   return (
     <main className="relative min-h-dvh overflow-hidden bg-[#0A0A0A] text-white">
       <Webcam
+        key={cameraRequestId}
         ref={webcamRef}
         audio={false}
         className="absolute inset-0 h-full w-full object-cover"
@@ -111,7 +113,7 @@ export default function Scanner() {
         </p>
       </header>
 
-      {cameraState === "blocked" ? <CameraBlocked message={cameraError} /> : null}
+      {cameraState === "blocked" ? <CameraBlocked message={cameraError} onRetry={retryCamera} /> : null}
 
       {cameraState !== "blocked" ? (
         <>
@@ -132,7 +134,9 @@ export default function Scanner() {
   );
 }
 
-function CameraBlocked({ message }: { message: string | null }) {
+function CameraBlocked({ message, onRetry }: { message: string | null; onRetry: () => void }) {
+  const denied = /denied|notallowed/i.test(message ?? "");
+
   return (
     <div className="fixed inset-0 z-30 grid place-items-center bg-[#0A0A0A] px-6 text-center">
       <div className="max-w-sm">
@@ -141,12 +145,15 @@ function CameraBlocked({ message }: { message: string | null }) {
         </div>
         <h1 className="text-2xl font-extrabold tracking-tight">Camera access needed</h1>
         <p className="mt-3 text-sm leading-6 text-[#A1A1AA]">
-          Deep Spec needs your camera to scan parts. Enable camera access in browser settings, then reload.
+          Deep Spec needs your camera to scan parts. {denied ? "Allow camera access for this site, then try again." : "Check camera access, then try again."}
         </p>
         {message ? <p className="mt-3 text-xs text-white/48">{message}</p> : null}
-        <Button className="mt-6" onClick={() => window.location.reload()}>
-          Reload
+        <Button className="mt-6" onClick={onRetry}>
+          Try camera again
         </Button>
+        <button className="mt-4 text-xs font-bold text-white/48 underline underline-offset-4" onClick={() => window.location.reload()}>
+          Reload app
+        </button>
       </div>
     </div>
   );

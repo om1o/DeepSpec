@@ -33,7 +33,7 @@ let ownerClient;
 let failureMessage;
 
 try {
-  console.log("[0/6] Checking Supabase public settings and schema...");
+  console.log("[0/6] Checking Supabase Auth settings...");
   await runPreflight(config);
 
   ownerClient = createClient(config.url, config.key, {
@@ -142,6 +142,7 @@ async function signInAnonymously(supabase) {
         `Anonymous sign-in failed: ${error?.message ?? "No user returned"}${code}, ${status}.`,
         "Check Supabase Auth logs for the database error behind /signup.",
         "Common causes: anonymous sign-ins not fully enabled, Auth schema not upgraded, or a database trigger on auth.users failing.",
+        "The private scan table and storage checks cannot run until Auth can create an anonymous user.",
       ].join(" "),
     );
   }
@@ -162,18 +163,6 @@ async function runPreflight(config) {
 
   if (settings.body?.external?.anonymous_users !== true) {
     throw new Error("Anonymous sign-ins are disabled in Supabase Auth settings.");
-  }
-
-  const scanTable = await fetchJson(`${config.url}/rest/v1/scan_lookups?select=local_id&limit=1`, headers);
-  if (scanTable.status === 404 && scanTable.body?.code === "PGRST205") {
-    throw new Error(
-      [
-        "Could not find public.scan_lookups in Supabase Data API schema cache.",
-        "Apply supabase/migrations/20260518000100_deepspec_secure_foundation.sql,",
-        "or run npm run supabase:print-migration and paste that SQL into Supabase SQL Editor.",
-        "Then reload the Data API schema cache or wait for Supabase to refresh it.",
-      ].join(" "),
-    );
   }
 }
 
@@ -198,8 +187,31 @@ async function fetchJson(url, headers) {
 
 async function assertNoError(result, label) {
   if (result.error) {
-    throw new Error(`${label}: ${result.error.message}`);
+    throw new Error(`${label}: ${formatSupabaseError(result.error)}`);
   }
+}
+
+function formatSupabaseError(error) {
+  const message = error.message ?? "Unknown Supabase error.";
+  const code = error.code ? ` (${error.code})` : "";
+
+  if (error.code === "PGRST205" || /schema cache/i.test(message)) {
+    return [
+      `${message}${code}.`,
+      "Apply supabase/migrations/20260518000100_deepspec_secure_foundation.sql,",
+      "or run npm run supabase:print-migration and paste that SQL into Supabase SQL Editor.",
+      "Then make sure Project Settings -> API exposes the public schema and wait for the schema cache to refresh.",
+    ].join(" ");
+  }
+
+  if (/bucket not found/i.test(message)) {
+    return [
+      `${message}${code}.`,
+      "Apply the DeepSpec Supabase migration so the private scan-images bucket and storage policies are created.",
+    ].join(" ");
+  }
+
+  return `${message}${code}`;
 }
 
 async function cleanupTestData(supabase, userId, testId, imagePath) {

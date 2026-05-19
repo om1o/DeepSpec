@@ -33,7 +33,7 @@ npm run verify:supabase
 
 The verifier must:
 
-1. Check that anonymous sign-ins are enabled and the scan table is visible to the Supabase Data API schema cache.
+1. Check that anonymous sign-ins are enabled.
 1. Sign in as an anonymous Supabase user.
 2. Upload a tiny private test image to `scan-images`.
 3. Upsert a test row in `public.scan_lookups`.
@@ -60,7 +60,7 @@ Do not start Phase 9 until anonymous sign-in can create a user and the verifier 
 
 ## If scan_lookups Is Missing From The Schema Cache
 
-If the verifier says `Could not find public.scan_lookups in Supabase Data API schema cache`, the DeepSpec migration has not been applied to that Supabase project, or the Data API schema cache has not refreshed yet.
+If the verifier says `Could not find the table 'public.scan_lookups' in the schema cache`, the DeepSpec migration has not been applied to that Supabase project, the `public` schema is not exposed to the Data API, or the Data API schema cache has not refreshed yet.
 
 Fix:
 
@@ -68,7 +68,7 @@ Fix:
 2. Run `npm run supabase:print-migration`.
 3. Paste the printed SQL into the Supabase SQL Editor and run it.
 4. Go to Project Settings -> API and make sure the `public` schema is exposed.
-5. Wait a minute or reload the schema cache if Supabase offers that button.
+5. Wait a minute. The migration also sends `notify pgrst, 'reload schema';` to ask the Data API to refresh.
 6. Rerun `npm run verify:supabase`.
 
 ## Phone Acceptance Test
