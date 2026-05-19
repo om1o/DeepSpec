@@ -4,10 +4,11 @@ import { cx } from "../../lib/utils";
 type IdentifyButtonProps = {
   isVisible: boolean;
   isDisabled: boolean;
+  isReady: boolean;
   onIdentify: () => void;
 };
 
-export default function IdentifyButton({ isVisible, isDisabled, onIdentify }: IdentifyButtonProps) {
+export default function IdentifyButton({ isVisible, isDisabled, isReady, onIdentify }: IdentifyButtonProps) {
   return (
     <div
       className={cx(
@@ -20,10 +21,13 @@ export default function IdentifyButton({ isVisible, isDisabled, onIdentify }: Id
           <button
             aria-label="Identify"
             className="absolute left-1/2 top-0 grid size-16 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border-[5px] border-[#F5F5F5] bg-[#0A0A0A] text-white shadow-[0_10px_40px_rgba(0,0,0,0.35)] transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={!isVisible || isDisabled}
+            disabled={isDisabled}
             onClick={onIdentify}
           >
-            <span className="grid size-9 place-items-center rounded-full bg-[#FACC15] text-[13px] font-black text-[#0A0A0A]">DS</span>
+            <span className={cx(
+              "grid size-9 place-items-center rounded-full bg-[#FACC15] text-[13px] font-black text-[#0A0A0A] transition duration-300",
+              isReady && !isDisabled ? "ring-2 ring-[#4ADE80]/70 ring-offset-1 ring-offset-[#0A0A0A]" : "",
+            )}>DS</span>
           </button>
 
           <div className="mt-6 flex h-10 items-center gap-3 rounded-full bg-white px-4 text-sm font-semibold text-[#52525B] shadow-sm ring-1 ring-black/8">
