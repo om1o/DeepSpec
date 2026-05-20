@@ -23,6 +23,7 @@ export type IdentifyResponse =
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
 const DEFAULT_OCR_MODEL = "microsoft/trocr-large-printed";
+const IDENTIFY_MAX_OUTPUT_TOKENS = 2048;
 
 const IDENTIFICATION_RESPONSE_SCHEMA = {
   type: "object",
@@ -110,7 +111,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
       ],
       generationConfig: {
         temperature: 0.1,
-        maxOutputTokens: 1024,
+        maxOutputTokens: IDENTIFY_MAX_OUTPUT_TOKENS,
         responseMimeType: "application/json",
         responseJsonSchema: IDENTIFICATION_RESPONSE_SCHEMA,
       },
