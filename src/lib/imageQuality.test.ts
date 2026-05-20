@@ -33,9 +33,14 @@ describe("analyzeQuality", () => {
     expect(result).toMatchObject({ ok: false, issue: "too_blurry" });
   });
 
-  it("rejects a uniform white image (overexposed or plain background)", () => {
+  it("rejects an overexposed image above the brightness threshold", () => {
+    const result = analyzeQuality(makeLum(240), QUALITY_SAMPLE_W, QUALITY_SAMPLE_H);
+    expect(result).toMatchObject({ ok: false, issue: "too_bright" });
+  });
+
+  it("rejects a fully white image as overexposed (not blurry)", () => {
     const result = analyzeQuality(makeLum(255), QUALITY_SAMPLE_W, QUALITY_SAMPLE_H);
-    expect(result).toMatchObject({ ok: false, issue: "too_blurry" });
+    expect(result).toMatchObject({ ok: false, issue: "too_bright" });
   });
 
   it("accepts a high-contrast image with strong edges", () => {
