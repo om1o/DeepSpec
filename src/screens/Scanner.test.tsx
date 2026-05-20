@@ -62,6 +62,13 @@ vi.mock("../lib/imageQuality", () => ({
   assessImageQuality: vi.fn(async () => ({ ok: true })),
 }));
 
+// Cache always misses in scanner tests — cache logic tested in scanCache.test.ts
+vi.mock("../lib/scanCache", () => ({
+  hashImageDataUrl: vi.fn(async () => null),
+  getCachedScanResult: vi.fn(() => null),
+  setCachedScanResult: vi.fn(),
+}));
+
 describe("Scanner", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

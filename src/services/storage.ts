@@ -97,6 +97,39 @@ export function updateLookup(
     : { ok: false, message: writeResult.message, value: updatedLookup };
 }
 
+export function updateLookupResult(
+  id: string,
+  result: IdentificationResult,
+): StorageResult<Lookup | null> {
+  const lookups = getLookups();
+  const index = lookups.findIndex((lookup) => lookup.id === id);
+
+  if (index === -1) {
+    return { ok: false, message: "This saved scan was not found.", value: null };
+  }
+
+  const existing = lookups[index];
+  const updatedLookup: Lookup = {
+    ...existing,
+    result,
+    errorMessage: undefined,
+    errorCode: undefined,
+    analyzedAt: new Date().toISOString(),
+    scanCategory: categorizeScan(result, existing.correction ?? undefined),
+    trainingLabel: getTrainingLabel(result, existing.correction),
+    trainingStatus: getTrainingStatus(existing.rating, existing.correction),
+  };
+
+  const updatedLookups = [...lookups];
+  updatedLookups[index] = updatedLookup;
+
+  const writeResult = writeLookups(updatedLookups);
+  return writeResult.ok
+    ? { ok: true, value: updatedLookup }
+    : { ok: false, message: writeResult.message, value: updatedLookup };
+}
+
+
 export function createChatMessage(role: ChatMessage["role"], content: string): ChatMessage {
   return {
     id: createId(),
@@ -136,7 +169,7 @@ export function deleteLookup(id: string): StorageResult<boolean> {
 
   const writeResult = writeLookups(next);
   if (writeResult.ok && hasLocalStorage()) {
-    try { localStorage.removeItem(CHAT_KEY(id)); } catch {}
+    try { localStorage.removeItem(CHAT_KEY(id)); } catch { /* ignore */ }
   }
   return writeResult.ok ? { ok: true, value: true } : { ok: false, message: writeResult.message, value: false };
 }

@@ -1,10 +1,11 @@
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
 import Button from "../components/ui/Button";
 import { readLatestCapturedFrame, readLatestScanState } from "../lib/utils";
 import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
 import { buildScanReport, downloadTextFile, getMechanicSearchUrl, getScanReportFilename } from "../services/report";
-import { deleteLookup, getLookup, scanStateFromLookup, updateLookup } from "../services/storage";
+import { deleteLookup, getLookup, scanStateFromLookup, updateLookup, updateLookupResult } from "../services/storage";
 import type { CapturedFrame, Confidence, IdentificationResult, Lookup, Rating, ScanAnalysisState } from "../types";
 
 export default function Result() {
@@ -105,7 +106,14 @@ export default function Result() {
           {isQaTestRun ? <TestRunNotice label={scanState?.testVehicleLabel} /> : null}
           {!isQaTestRun && storageWarning ? <StorageWarning message={storageWarning} /> : null}
           {scanState?.result ? <AnalysisResult result={scanState.result} capturedAt={capturedAt} /> : null}
-          {scanState?.errorMessage ? <AnalysisError message={scanState.errorMessage} capturedAt={capturedAt} /> : null}
+          {scanState?.errorMessage ? (
+            <AnalysisError 
+              message={scanState.errorMessage} 
+              capturedAt={capturedAt} 
+              lookup={lookup}
+              onRetrySuccess={setLookup}
+            />
+          ) : null}
           {!scanState?.result && !scanState?.errorMessage ? <NotAnalyzed capturedAt={capturedAt} /> : null}
           {lookup ? (
             <SavedScanControls
@@ -405,13 +413,83 @@ function EvidenceSection({ items }: { items: string[] }) {
   );
 }
 
-function AnalysisError({ capturedAt, message }: { capturedAt: string | null; message: string }) {
+function AnalysisError({
+  capturedAt,
+  lookup,
+  message,
+  onRetrySuccess,
+}: {
+  capturedAt: string | null;
+  lookup: Lookup | null;
+  message: string;
+  onRetrySuccess: (updatedLookup: Lookup) => void;
+}) {
+  const [isOnline, setIsOnline] = useState(() => typeof navigator !== "undefined" ? navigator.onLine : true);
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  async function handleRetry() {
+    if (!lookup || isRetrying) return;
+    setIsRetrying(true);
+    setRetryError(null);
+
+    try {
+      const result = await identifyCapturedFrame(lookup.frame);
+      const updateResult = updateLookupResult(lookup.id, result);
+      if (updateResult.ok) {
+        if (updateResult.value) {
+          onRetrySuccess(updateResult.value);
+        } else {
+          setRetryError("This saved scan was not found.");
+        }
+      } else {
+        setRetryError(updateResult.message);
+      }
+    } catch (err) {
+      setRetryError(getAIErrorMessage(err));
+    } finally {
+      setIsRetrying(false);
+    }
+  }
+
   return (
     <section className="rounded-[24px] border border-[#EF4444]/30 bg-[#EF4444]/10 p-5">
       <p className="text-sm font-bold text-[#FCA5A5]">AI identification failed</p>
       <h2 className="mt-2 text-xl font-extrabold tracking-tight">Keep the photo and try again</h2>
       <p className="mt-3 text-sm leading-6 text-white/78">{message}</p>
       {capturedAt ? <p className="mt-3 text-xs font-semibold text-white/42">Captured {capturedAt}</p> : null}
+
+      {lookup ? (
+        <div className="mt-4 border-t border-white/10 pt-4">
+          <p className="text-xs font-semibold text-white/62">
+            {isOnline ? "⚡ Internet connection is active." : "⚠️ Offline. Find an internet connection to retry identification."}
+          </p>
+          <Button
+            className="mt-3 w-full"
+            disabled={!isOnline || isRetrying}
+            onClick={handleRetry}
+          >
+            {isRetrying ? "Retrying scan..." : "Retry scan now"}
+          </Button>
+          {retryError ? (
+            <p className="mt-3 text-sm font-semibold text-[#FCA5A5]">{retryError}</p>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }
