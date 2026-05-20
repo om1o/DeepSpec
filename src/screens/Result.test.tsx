@@ -56,6 +56,11 @@ describe("Result", () => {
     expect(screen.getByText("Useful match")).toBeInTheDocument();
     expect(screen.getByText("Good")).toBeInTheDocument();
     expect(screen.getByText("The pulley and vented housing match common alternator shapes.")).toBeInTheDocument();
+    expect(screen.getByText("Reference links")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Search this part" })).toHaveAttribute(
+      "href",
+      "https://www.google.com/search?q=Alternator%20car%20part",
+    );
   });
 
   it("shows safety-critical guidance", () => {
@@ -121,6 +126,7 @@ describe("Result", () => {
       "src",
       "data:image/jpeg;base64,test-image",
     );
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 
   it("labels QA test results as unsaved", () => {
@@ -224,7 +230,32 @@ describe("Result", () => {
     expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBe("[]");
   });
 
-  it("allows retrying a failed scan when online", async () => {
+  it("allows retrying an unsaved failed scan when online", async () => {
+    const onlineSpy = vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    const identifySpy = vi.spyOn(aiService, "identifyCapturedFrame").mockResolvedValue(successfulScan.result!);
+
+    renderResult({
+      frame,
+      errorMessage: "Network error",
+      errorCode: "network",
+      analyzedAt: "2026-05-16T00:00:05.000Z",
+    });
+
+    expect(screen.getByText("AI identification failed")).toBeInTheDocument();
+    expect(screen.getByText("Network error")).toBeInTheDocument();
+    expect(screen.getByText(/Internet connection is active/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(identifySpy).toHaveBeenCalledWith(frame);
+    expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBeNull();
+    expect(screen.queryByText("AI identification failed")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
+
+    onlineSpy.mockRestore();
+  });
+
+  it("allows retrying a saved failed scan when online", async () => {
     const failedLookup = makeLookup({
       result: undefined,
       errorMessage: "Network error",
@@ -242,7 +273,7 @@ describe("Result", () => {
     expect(screen.getByText("Network error")).toBeInTheDocument();
     expect(screen.getByText(/Internet connection is active/)).toBeInTheDocument();
 
-    const retryButton = screen.getByRole("button", { name: "Retry scan now" });
+    const retryButton = screen.getByRole("button", { name: "Try again" });
     await userEvent.click(retryButton);
 
     expect(identifySpy).toHaveBeenCalledWith(failedLookup.frame);
@@ -272,7 +303,7 @@ describe("Result", () => {
     renderResult(null, `/result/${failedLookup.id}`);
 
     expect(screen.getByText(/Offline. Find an internet connection/)).toBeInTheDocument();
-    const retryButton = screen.getByRole("button", { name: "Retry scan now" });
+    const retryButton = screen.getByRole("button", { name: "Try again" });
     expect(retryButton).toBeDisabled();
 
     onlineSpy.mockRestore();

@@ -2,7 +2,7 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
 import Button from "../components/ui/Button";
-import { readLatestCapturedFrame, readLatestScanState } from "../lib/utils";
+import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } from "../lib/utils";
 import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
 import { buildScanReport, downloadTextFile, getMechanicSearchUrl, getScanReportFilename } from "../services/report";
 import { deleteLookup, getLookup, scanStateFromLookup, updateLookup, updateLookupResult } from "../services/storage";
@@ -13,8 +13,9 @@ export default function Result() {
   const navigate = useNavigate();
   const { id } = useParams();
   const [lookup, setLookup] = useState<Lookup | null>(() => (id ? getLookup(id) : null));
+  const [liveScanState, setLiveScanState] = useState<ScanAnalysisState | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const scanState = lookup ? scanStateFromLookup(lookup) : getScanState(location.state);
+  const scanState = lookup ? scanStateFromLookup(lookup) : liveScanState ?? getScanState(location.state);
   const frame = scanState?.frame ?? readLatestCapturedFrame();
   const capturedAt = frame?.capturedAt ? new Date(frame.capturedAt).toLocaleString() : null;
   const storageWarning = scanState?.storageWarning;
@@ -76,16 +77,16 @@ export default function Result() {
   }
 
   return (
-    <main className="min-h-dvh bg-[#0A0A0A] px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-white">
+    <main className="min-h-dvh bg-neutral-50 px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-neutral-900">
       <div className="mx-auto flex min-h-[calc(100dvh-48px)] w-full max-w-md flex-col">
         <header className="mb-5 flex items-center justify-between">
           <div>
-            <p className="text-[13px] font-extrabold uppercase tracking-[0.18em] text-white/70">Deep Spec</p>
+            <p className="text-[13px] font-extrabold uppercase tracking-[0.18em] text-neutral-400">Deep Spec</p>
             <h1 className="mt-2 text-2xl font-extrabold tracking-tight">
               {scanState?.result ? scanState.result.partName : "Captured frame"}
             </h1>
           </div>
-          <Link to="/" className="rounded-full bg-white/10 px-4 py-2 text-sm font-bold text-white">
+          <Link to="/" className="rounded-full bg-neutral-100 px-4 py-2 text-sm font-bold text-neutral-900">
             Back
           </Link>
         </header>
@@ -93,11 +94,11 @@ export default function Result() {
         {frame?.imageBase64 ? (
           <img
             alt="Captured car part"
-            className="aspect-[3/4] w-full rounded-[24px] border border-white/10 bg-black object-contain shadow-2xl"
+            className="aspect-[3/4] w-full rounded-[24px] border border-neutral-200 bg-neutral-100 object-contain shadow-2xl"
             src={frame.imageBase64}
           />
         ) : (
-          <div className="grid aspect-[3/4] w-full place-items-center rounded-[24px] border border-dashed border-white/15 bg-[#171717] px-8 text-center text-sm text-[#A1A1AA]">
+          <div className="grid aspect-[3/4] w-full place-items-center rounded-[24px] border border-dashed border-neutral-200 bg-white px-8 text-center text-sm text-neutral-500">
             No captured frame yet.
           </div>
         )}
@@ -110,8 +111,13 @@ export default function Result() {
             <AnalysisError 
               message={scanState.errorMessage} 
               capturedAt={capturedAt} 
+              frame={frame}
               lookup={lookup}
-              onRetrySuccess={setLookup}
+              onLookupRetrySuccess={setLookup}
+              onScanRetrySuccess={(nextScanState) => {
+                setLiveScanState(nextScanState);
+                saveLatestScanState(nextScanState);
+              }}
             />
           ) : null}
           {!scanState?.result && !scanState?.errorMessage ? <NotAnalyzed capturedAt={capturedAt} /> : null}
@@ -127,7 +133,7 @@ export default function Result() {
           ) : null}
         </div>
 
-        <Button className="mt-6 w-full" onClick={() => window.location.assign("/")}>
+        <Button className="mt-6 w-full bg-neutral-900 text-white shadow-none" onClick={() => window.location.assign("/")}>
           Try another scan
         </Button>
       </div>
@@ -139,7 +145,7 @@ function TestRunNotice({ label }: { label?: string }) {
   return (
     <section className="rounded-[24px] border border-[#FACC15]/30 bg-[#FACC15]/10 p-5">
       <p className="text-sm font-bold text-[#FACC15]">QA test result</p>
-      <p className="mt-2 text-sm leading-6 text-white/82">
+      <p className="mt-2 text-sm leading-6 text-neutral-700">
         This scan used {label ?? "a generated test photo"} and was not saved to history, cloud sync, or training review.
       </p>
     </section>
@@ -150,7 +156,7 @@ function StorageWarning({ message }: { message: string }) {
   return (
     <section className="rounded-[24px] border border-[#F59E0B]/30 bg-[#F59E0B]/10 p-5">
       <p className="text-sm font-bold text-[#FACC15]">Not saved locally</p>
-      <p className="mt-2 text-sm leading-6 text-white/82">{message}</p>
+      <p className="mt-2 text-sm leading-6 text-neutral-700">{message}</p>
     </section>
   );
 }
@@ -210,9 +216,9 @@ function SavedScanControls({
   }
 
   return (
-    <section className="rounded-[24px] border border-white/10 bg-[#171717] p-5">
-      <p className="text-sm font-extrabold text-white">Saved scan</p>
-      <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">
+    <section className="rounded-[24px] border border-neutral-200 bg-white p-5">
+      <p className="text-sm font-extrabold text-neutral-900">Saved scan</p>
+      <p className="mt-2 text-sm leading-6 text-neutral-500">
         Your rating and correction stay on this device. This is the data moat for improving Deep Spec later.
       </p>
       <div className="mt-4 grid grid-cols-1 gap-3">
@@ -224,7 +230,7 @@ function SavedScanControls({
       {lookup.result ? (
         <div className="mt-4 grid grid-cols-1 gap-3">
           <Link
-            className="block rounded-full bg-white px-5 py-3 text-center text-sm font-bold text-neutral-950 shadow-[0_12px_40px_rgba(255,255,255,0.16)]"
+            className="block rounded-full bg-neutral-900 px-5 py-3 text-center text-sm font-bold text-white"
             to={`/result/${lookup.id}/chat`}
           >
             Tell me more
@@ -243,19 +249,25 @@ function SavedScanControls({
       ) : null}
 
       <div className="mt-4 grid grid-cols-2 gap-3">
-        <Button variant={lookup.rating === "up" ? "primary" : "ghost"} onClick={() => onRating("up")}>
+        <Button
+          className={lookup.rating === "up" ? "bg-neutral-900 text-white shadow-none" : "bg-neutral-100 text-neutral-900 shadow-none"}
+          onClick={() => onRating("up")}
+        >
           Helpful
         </Button>
-        <Button variant={lookup.rating === "down" ? "primary" : "ghost"} onClick={() => onRating("down")}>
+        <Button
+          className={lookup.rating === "down" ? "bg-neutral-900 text-white shadow-none" : "bg-neutral-100 text-neutral-900 shadow-none"}
+          onClick={() => onRating("down")}
+        >
           Wrong
         </Button>
       </div>
 
       {lookup.rating === "down" ? (
         <label className="mt-4 block">
-          <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/42">What was it actually?</span>
+          <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">What was it actually?</span>
           <textarea
-            className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-white/10 bg-black/28 p-3 text-sm leading-6 text-white outline-none placeholder:text-white/32 focus:border-[#FACC15]/50"
+            className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[#FACC15]/50"
             maxLength={240}
             onChange={(event) => onCorrectionChange(event.target.value)}
             placeholder="Example: coolant reservoir cap, not brake fluid cap"
@@ -265,9 +277,9 @@ function SavedScanControls({
       ) : null}
 
       <label className="mt-4 block">
-        <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/42">Private notes</span>
+        <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Private notes</span>
         <textarea
-          className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-white/10 bg-black/28 p-3 text-sm leading-6 text-white outline-none placeholder:text-white/32 focus:border-[#FACC15]/50"
+          className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[#FACC15]/50"
           maxLength={500}
           onChange={(event) => onNotesChange(event.target.value)}
           placeholder="Optional: where the part was, symptoms, what you checked next"
@@ -277,37 +289,36 @@ function SavedScanControls({
 
       {saveError ? <p className="mt-3 text-sm font-semibold text-[#FCA5A5]">{saveError}</p> : null}
 
-      <div className="mt-4 rounded-[20px] border border-white/10 bg-white/[0.04] p-4">
-        <p className="text-sm font-extrabold text-white">Cloud dataset sync</p>
-        <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">{cloudSync.message}</p>
+      <div className="mt-4 rounded-[20px] border border-neutral-200 bg-neutral-50 p-4">
+        <p className="text-sm font-extrabold text-neutral-900">Cloud dataset sync</p>
+        <p className="mt-2 text-sm leading-6 text-neutral-500">{cloudSync.message}</p>
         <Button
-          className="mt-3 w-full"
+          className="mt-3 w-full bg-neutral-100 text-neutral-900 shadow-none"
           disabled={!cloudSync.configured || isSyncingCloud}
           onClick={handleCloudSync}
-          variant="ghost"
         >
           {isSyncingCloud ? "Syncing..." : "Sync this scan"}
         </Button>
         {cloudStatusMessage ? <p className="mt-3 text-sm font-semibold text-[#FACC15]">{cloudStatusMessage}</p> : null}
       </div>
 
-      <div className="mt-4 rounded-[20px] border border-white/10 bg-white/[0.04] p-4">
-        <p className="text-sm font-extrabold text-white">Scan report</p>
-        <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">
+      <div className="mt-4 rounded-[20px] border border-neutral-200 bg-neutral-50 p-4">
+        <p className="text-sm font-extrabold text-neutral-900">Scan report</p>
+        <p className="mt-2 text-sm leading-6 text-neutral-500">
           Export a plain-text summary for a mechanic, buyer, or your own records. This does not create a public link.
         </p>
         <div className="mt-3 grid grid-cols-2 gap-3">
-          <Button variant="ghost" onClick={handleShareReport}>
+          <Button className="bg-neutral-100 text-neutral-900 shadow-none" onClick={handleShareReport}>
             Share
           </Button>
-          <Button variant="ghost" onClick={handleDownloadReport}>
+          <Button className="bg-neutral-100 text-neutral-900 shadow-none" onClick={handleDownloadReport}>
             Export
           </Button>
         </div>
         {reportStatus ? <p className="mt-3 text-sm font-semibold text-[#FACC15]">{reportStatus}</p> : null}
       </div>
 
-      <Button className="mt-4 w-full border border-[#EF4444]/30 bg-[#EF4444]/10 text-[#FCA5A5] shadow-none" onClick={onDelete}>
+      <Button className="mt-4 w-full border border-[#EF4444]/30 bg-[#EF4444]/10 text-[#EF4444] shadow-none" onClick={onDelete}>
         Delete saved scan
       </Button>
     </section>
@@ -320,7 +331,7 @@ function AnalysisResult({ capturedAt, result }: { capturedAt: string | null; res
 
   return (
     <>
-      <section className="rounded-[24px] border border-white/10 bg-[#171717] p-5">
+      <section className="rounded-[24px] border border-neutral-200 bg-white p-5">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-sm font-bold text-[#FACC15]">AI identification</p>
@@ -328,8 +339,8 @@ function AnalysisResult({ capturedAt, result }: { capturedAt: string | null; res
           </div>
           <ConfidenceBadge confidence={result.confidence} />
         </div>
-        {capturedAt ? <p className="mt-3 text-xs font-semibold text-white/42">Captured {capturedAt}</p> : null}
-        <p className="mt-2 text-xs font-extrabold uppercase tracking-[0.14em] text-white/36">Dataset bucket: {result.scanCategory}</p>
+        {capturedAt ? <p className="mt-3 text-xs font-semibold text-neutral-400">Captured {capturedAt}</p> : null}
+        <p className="mt-2 text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Dataset bucket: {result.scanCategory}</p>
       </section>
 
       <TrustReviewCard review={trustReview} />
@@ -337,16 +348,16 @@ function AnalysisResult({ capturedAt, result }: { capturedAt: string | null; res
       {showSafetyWarning ? (
         <section className="rounded-[24px] border border-[#F59E0B]/30 bg-[#F59E0B]/10 p-5">
           <p className="text-sm font-extrabold text-[#FACC15]">Safety-critical</p>
-          <p className="mt-2 text-sm leading-6 text-white/82">
+          <p className="mt-2 text-sm leading-6 text-neutral-700">
             Verify this with a mechanic before driving or attempting repair. Deep Spec can explain what is visible, but this category needs professional confirmation.
           </p>
         </section>
       ) : null}
 
       {result.needsBetterPhoto || result.safetyTriage === "needs_better_photo" ? (
-        <section className="rounded-[24px] border border-white/10 bg-white/[0.06] p-5">
-          <p className="text-sm font-extrabold text-white">Better photo needed</p>
-          <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">
+        <section className="rounded-[24px] border border-neutral-200 bg-neutral-50 p-5">
+          <p className="text-sm font-extrabold text-neutral-900">Better photo needed</p>
+          <p className="mt-2 text-sm leading-6 text-neutral-500">
             Move closer, add light, and center any label, connector, hose, or damaged area in the yellow reticle.
           </p>
         </section>
@@ -357,6 +368,7 @@ function AnalysisResult({ capturedAt, result }: { capturedAt: string | null; res
       <ResultSection title="Concerns" items={result.concerns} emptyText="Nothing concerning visible." />
       <EvidenceSection items={result.evidence} />
       <ResultSection title="Next action" items={[result.nextAction]} />
+      <ReferenceLinksSection links={getReferenceLinks(result)} />
     </>
   );
 }
@@ -371,10 +383,10 @@ type TrustReview = {
 
 function TrustReviewCard({ review }: { review: TrustReview }) {
   return (
-    <section className={`rounded-[24px] border bg-[#171717] p-5 ${review.borderClass}`}>
-      <p className="text-sm font-extrabold text-white">Trust check</p>
+    <section className={`rounded-[24px] border bg-white p-5 ${review.borderClass}`}>
+      <p className="text-sm font-extrabold text-neutral-900">Trust check</p>
       <h2 className="mt-2 text-xl font-extrabold tracking-tight">{review.status}</h2>
-      <p className="mt-3 text-sm leading-6 text-[#A1A1AA]">{review.description}</p>
+      <p className="mt-3 text-sm leading-6 text-neutral-500">{review.description}</p>
       <div className="mt-4 grid grid-cols-1 gap-3">
         <TrustRow label="Photo quality" value={review.photoQuality} />
         <TrustRow label="Retake guidance" value={review.retakeGuidance} />
@@ -385,9 +397,9 @@ function TrustReviewCard({ review }: { review: TrustReview }) {
 
 function TrustRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-3">
-      <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-white/42">{label}</p>
-      <p className="mt-1 text-sm leading-6 text-white/84">{value}</p>
+    <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
+      <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-neutral-400">{label}</p>
+      <p className="mt-1 text-sm leading-6 text-neutral-700">{value}</p>
     </div>
   );
 }
@@ -396,33 +408,63 @@ function EvidenceSection({ items }: { items: string[] }) {
   const visibleItems = items.filter(Boolean);
 
   return (
-    <section className="rounded-[24px] border border-white/10 bg-[#171717] p-5">
-      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-white/62">Why Deep Spec thinks this</h2>
+    <section className="rounded-[24px] border border-neutral-200 bg-white p-5">
+      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Why Deep Spec thinks this</h2>
       {visibleItems.length > 0 ? (
         <div className="mt-3 flex flex-wrap gap-2">
           {visibleItems.map((item) => (
-            <span key={item} className="rounded-full border border-[#3B82F6]/24 bg-[#3B82F6]/10 px-3 py-2 text-xs font-semibold leading-5 text-[#BFDBFE]">
+            <span key={item} className="rounded-full border border-[#3B82F6]/24 bg-[#3B82F6]/10 px-3 py-2 text-xs font-semibold leading-5 text-[#3B82F6]">
               {item}
             </span>
           ))}
         </div>
       ) : (
-        <p className="mt-3 text-sm leading-6 text-[#A1A1AA]">No visual evidence returned. Treat this result as uncertain.</p>
+        <p className="mt-3 text-sm leading-6 text-neutral-500">No visual evidence returned. Treat this result as uncertain.</p>
       )}
+    </section>
+  );
+}
+
+type ReferenceLink = {
+  label: string;
+  url: string;
+};
+
+function ReferenceLinksSection({ links }: { links: ReferenceLink[] }) {
+  return (
+    <section className="rounded-[24px] border border-neutral-200 bg-white p-5">
+      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Reference links</h2>
+      <div className="mt-3 grid grid-cols-1 gap-2">
+        {links.map((link) => (
+          <a
+            key={link.url}
+            className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm font-bold text-[#3B82F6]"
+            href={link.url}
+            rel="noreferrer"
+            target="_blank"
+          >
+            {link.label}
+          </a>
+        ))}
+      </div>
     </section>
   );
 }
 
 function AnalysisError({
   capturedAt,
+  frame,
   lookup,
   message,
-  onRetrySuccess,
+  onLookupRetrySuccess,
+  onScanRetrySuccess,
 }: {
   capturedAt: string | null;
+  frame: CapturedFrame | null | undefined;
   lookup: Lookup | null;
   message: string;
-  onRetrySuccess: (updatedLookup: Lookup) => void;
+  onLookupRetrySuccess: (updatedLookup: Lookup) => void;
+  onScanRetrySuccess: (scanState: ScanAnalysisState) => void;
 }) {
   const [isOnline, setIsOnline] = useState(() => typeof navigator !== "undefined" ? navigator.onLine : true);
   const [isRetrying, setIsRetrying] = useState(false);
@@ -443,21 +485,30 @@ function AnalysisError({
   }, []);
 
   async function handleRetry() {
-    if (!lookup || isRetrying) return;
+    const retryFrame = lookup?.frame ?? frame;
+    if (!retryFrame || isRetrying) return;
     setIsRetrying(true);
     setRetryError(null);
 
     try {
-      const result = await identifyCapturedFrame(lookup.frame);
-      const updateResult = updateLookupResult(lookup.id, result);
-      if (updateResult.ok) {
-        if (updateResult.value) {
-          onRetrySuccess(updateResult.value);
+      const result = await identifyCapturedFrame(retryFrame);
+      if (lookup) {
+        const updateResult = updateLookupResult(lookup.id, result);
+        if (updateResult.ok) {
+          if (updateResult.value) {
+            onLookupRetrySuccess(updateResult.value);
+          } else {
+            setRetryError("This saved scan was not found.");
+          }
         } else {
-          setRetryError("This saved scan was not found.");
+          setRetryError(updateResult.message);
         }
       } else {
-        setRetryError(updateResult.message);
+        onScanRetrySuccess({
+          frame: retryFrame,
+          result,
+          analyzedAt: new Date().toISOString(),
+        });
       }
     } catch (err) {
       setRetryError(getAIErrorMessage(err));
@@ -467,23 +518,23 @@ function AnalysisError({
   }
 
   return (
-    <section className="rounded-[24px] border border-[#EF4444]/30 bg-[#EF4444]/10 p-5">
+    <section className="scanner-error-flash rounded-[24px] border border-[#EF4444]/30 bg-[#EF4444]/10 p-5">
       <p className="text-sm font-bold text-[#FCA5A5]">AI identification failed</p>
       <h2 className="mt-2 text-xl font-extrabold tracking-tight">Keep the photo and try again</h2>
-      <p className="mt-3 text-sm leading-6 text-white/78">{message}</p>
-      {capturedAt ? <p className="mt-3 text-xs font-semibold text-white/42">Captured {capturedAt}</p> : null}
+      <p className="mt-3 text-sm leading-6 text-neutral-700">{message}</p>
+      {capturedAt ? <p className="mt-3 text-xs font-semibold text-neutral-400">Captured {capturedAt}</p> : null}
 
-      {lookup ? (
-        <div className="mt-4 border-t border-white/10 pt-4">
-          <p className="text-xs font-semibold text-white/62">
-            {isOnline ? "⚡ Internet connection is active." : "⚠️ Offline. Find an internet connection to retry identification."}
+      {frame ? (
+        <div className="mt-4 border-t border-neutral-200 pt-4">
+          <p className="text-xs font-semibold text-neutral-500">
+            {isOnline ? "Internet connection is active." : "Offline. Find an internet connection to retry identification."}
           </p>
           <Button
-            className="mt-3 w-full"
+            className="mt-3 w-full bg-neutral-900 text-white shadow-none"
             disabled={!isOnline || isRetrying}
             onClick={handleRetry}
           >
-            {isRetrying ? "Retrying scan..." : "Retry scan now"}
+            {isRetrying ? "Retrying..." : "Try again"}
           </Button>
           {retryError ? (
             <p className="mt-3 text-sm font-semibold text-[#FCA5A5]">{retryError}</p>
@@ -496,13 +547,13 @@ function AnalysisError({
 
 function NotAnalyzed({ capturedAt }: { capturedAt: string | null }) {
   return (
-    <section className="rounded-[24px] border border-white/10 bg-[#171717] p-5">
+    <section className="rounded-[24px] border border-neutral-200 bg-white p-5">
       <p className="text-sm font-bold text-[#FACC15]">Not analyzed yet</p>
       <h2 className="mt-2 text-xl font-extrabold tracking-tight">Scan again to identify this</h2>
-      <p className="mt-3 text-sm leading-6 text-[#A1A1AA]">
+      <p className="mt-3 text-sm leading-6 text-neutral-500">
         Deep Spec has the captured frame, but no AI result is attached to this screen.
       </p>
-      {capturedAt ? <p className="mt-3 text-xs font-semibold text-white/42">Captured {capturedAt}</p> : null}
+      {capturedAt ? <p className="mt-3 text-xs font-semibold text-neutral-400">Captured {capturedAt}</p> : null}
     </section>
   );
 }
@@ -519,16 +570,16 @@ function ResultSection({
   const visibleItems = items.filter(Boolean);
 
   return (
-    <section className="rounded-[24px] border border-white/10 bg-[#171717] p-5">
-      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-white/62">{title}</h2>
+    <section className="rounded-[24px] border border-neutral-200 bg-white p-5">
+      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">{title}</h2>
       {visibleItems.length > 0 ? (
-        <ul className="mt-3 space-y-2 text-sm leading-6 text-[#E5E7EB]">
+        <ul className="mt-3 space-y-2 text-sm leading-6 text-neutral-800">
           {visibleItems.map((item) => (
             <li key={item}>{item}</li>
           ))}
         </ul>
       ) : (
-        <p className="mt-3 text-sm leading-6 text-[#A1A1AA]">{emptyText}</p>
+        <p className="mt-3 text-sm leading-6 text-neutral-500">{emptyText}</p>
       )}
     </section>
   );
@@ -546,6 +597,35 @@ function ConfidenceBadge({ confidence }: { confidence: Confidence }) {
       {confidence}
     </span>
   );
+}
+
+function getReferenceLinks(result: IdentificationResult): ReferenceLink[] {
+  const partQuery = encodeURIComponent(`${result.partName} car part`);
+  const repairQuery = encodeURIComponent(`${result.scanCategory} auto repair near me`);
+  const links: ReferenceLink[] = [
+    {
+      label: "Search this part",
+      url: `https://www.google.com/search?q=${partQuery}`,
+    },
+    {
+      label: "NHTSA recalls",
+      url: "https://www.nhtsa.gov/recalls",
+    },
+  ];
+
+  if (result.safetyTriage === "needs_professional" || result.isSafetyCritical) {
+    links.push({
+      label: "Nearby repair options",
+      url: `https://www.google.com/maps/search/${repairQuery}`,
+    });
+  }
+
+  links.push({
+    label: "Report a vehicle safety issue",
+    url: "https://www.nhtsa.gov/report-a-safety-problem",
+  });
+
+  return links;
 }
 
 function getTrustReview(result: IdentificationResult): TrustReview {
