@@ -136,7 +136,11 @@ export function deleteLookup(id: string): StorageResult<boolean> {
 
   const writeResult = writeLookups(next);
   if (writeResult.ok && hasLocalStorage()) {
-    try { localStorage.removeItem(CHAT_KEY(id)); } catch {}
+    try {
+      localStorage.removeItem(CHAT_KEY(id));
+    } catch {
+      // Best-effort cleanup; the saved scan deletion already succeeded.
+    }
   }
   return writeResult.ok ? { ok: true, value: true } : { ok: false, message: writeResult.message, value: false };
 }
