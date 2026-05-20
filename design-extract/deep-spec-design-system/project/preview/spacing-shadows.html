@@ -1,0 +1,32 @@
+<!doctype html>
+<html><head><meta charset="utf-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  body { margin: 0; padding: 28px; background: var(--ds-bg); font-family: var(--ds-font-sans); color: #fff; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; align-items: center; }
+  .item { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  .pill { background: #fff; color: #0A0A0A; padding: 14px 28px; border-radius: 999px; font-weight: 700; font-size: 14px; box-shadow: 0 12px 40px rgba(255,255,255,0.18); }
+  .reticle-mini { width: 110px; height: 80px; border-radius: 14px; border: 1.5px dashed rgba(250,204,21,0.45); box-shadow: 0 0 20px rgba(250,204,21,0.30); }
+  .card-mini { width: 110px; height: 80px; border-radius: 18px; background: #171717; border: 1px solid rgba(255,255,255,0.10); }
+  .label { font-size: 11px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; }
+  .val { font-family: ui-monospace, monospace; font-size: 10px; color: rgba(255,255,255,0.62); text-align: center; max-width: 220px; }
+</style></head>
+<body>
+  <div class="grid">
+    <div class="item">
+      <div class="pill">Identify</div>
+      <div class="label">PRIMARY CTA GLOW</div>
+      <div class="val">0 12px 40px rgba(255,255,255,0.18)</div>
+    </div>
+    <div class="item">
+      <div class="reticle-mini"></div>
+      <div class="label">RETICLE HALO</div>
+      <div class="val">0 0 20px rgba(250,204,21,0.30)</div>
+    </div>
+    <div class="item">
+      <div class="card-mini"></div>
+      <div class="label">CARD — NO SHADOW</div>
+      <div class="val">depth = border + bg step only</div>
+    </div>
+  </div>
+</body></html>
