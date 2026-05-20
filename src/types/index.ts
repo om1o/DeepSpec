@@ -9,6 +9,8 @@ export type SafetyTriage = "can_help" | "needs_better_photo" | "needs_profession
 
 export type Confidence = "high" | "medium" | "low";
 
+export type LabelRescueTrigger = "too_blurry";
+
 export const SCAN_CATEGORIES = [
   "engine",
   "electrical",
@@ -55,6 +57,7 @@ export type AIInput = {
   type: "vision" | "text";
   imageBase64?: string;
   imageBase64_2?: string;
+  labelRescueTrigger?: LabelRescueTrigger;
   userMessage: string;
   systemPrompt: string;
   responseAsJson?: boolean;

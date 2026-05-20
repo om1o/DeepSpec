@@ -42,6 +42,28 @@ describe("aiService", () => {
     );
   });
 
+  it("passes blurry label rescue hints to the identify API", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ result }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await identifyCapturedFrame(
+      {
+        imageBase64: "data:image/jpeg;base64,test",
+        capturedAt: "2026-05-16T00:00:00.000Z",
+      },
+      undefined,
+      "too_blurry",
+    );
+
+    expect(JSON.parse(fetchSpy.mock.calls[0][1]?.body as string)).toMatchObject({
+      labelRescueTrigger: "too_blurry",
+    });
+  });
+
   it("throws a clean service error when the API rejects the request", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
