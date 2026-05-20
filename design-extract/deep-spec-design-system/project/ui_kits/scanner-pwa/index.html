@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Deep Spec — Scanner PWA UI Kit</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+  :root { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
+  html, body, #root { margin: 0; background: #050505; }
+  body { min-height: 100dvh; -webkit-font-smoothing: antialiased; color: #fff; }
+  /* Hide scrollbars inside phone screens for a cleaner look */
+  ::-webkit-scrollbar { width: 0; height: 0; }
+  /* Tab pill — bypasses Tailwind CDN entirely so highlight stays in sync */
+  .ds-toggle {
+    display: inline-flex;
+    border-radius: 9999px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.10);
+    padding: 4px;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 2px;
+  }
+  .ds-tab-pill {
+    padding: 0 12px; height: 32px; border-radius: 9999px;
+    font-size: 11px; font-weight: 800; font-family: inherit;
+    background-color: transparent; color: rgba(255,255,255,0.70);
+    box-shadow: none; border: 0; cursor: pointer;
+    transition: background-color 180ms ease, color 180ms ease, box-shadow 180ms ease;
+  }
+  .ds-tab-pill[aria-pressed="true"] {
+    background-color: #FFFFFF !important;
+    color: #0A0A0A !important;
+    box-shadow: 0 6px 18px rgba(255,255,255,0.18) !important;
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- Components first (Babel-transpiled, exported to window) -->
+<script type="text/babel" data-presets="env,react" src="components/Primitives.jsx"></script>
+<script type="text/babel" data-presets="env,react" src="components/Cards.jsx"></script>
+<script type="text/babel" data-presets="env,react" src="components/Inputs.jsx"></script>
+<script type="text/babel" data-presets="env,react" src="components/Reticle.jsx"></script>
+<script type="text/babel" data-presets="env,react" src="components/Header.jsx"></script>
+
+<!-- Screens -->
+<script type="text/babel" data-presets="env,react" src="screens/Scanner.jsx"></script>
+<script type="text/babel" data-presets="env,react" src="screens/Result.jsx"></script>
+<script type="text/babel" data-presets="env,react" src="screens/History.jsx"></script>
+<script type="text/babel" data-presets="env,react" src="screens/Chat.jsx"></script>
+<script type="text/babel" data-presets="env,react" src="screens/EarlyAccess.jsx"></script>
+
+<!-- App shell last -->
+<script type="text/babel" data-presets="env,react" src="App.jsx"></script>
+</body>
+</html>
