@@ -2,6 +2,8 @@
 
 Mobile-first PWA scanner for identifying car parts. The current build covers scanning, AI identification, trust checks, saved scan records, and follow-up chat through server-side Gemini proxies.
 
+See `docs/PROJECT_GOAL.md` for the Deep Spec engineering, UI, UX, framework, and definition-of-done standard.
+
 ## Run locally
 
 ```bash
