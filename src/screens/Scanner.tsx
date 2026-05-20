@@ -14,7 +14,7 @@ import { saveLatestScanState } from "../lib/utils";
 import TestScanPanel from "../components/scanner/TestScanPanel";
 import { AIServiceError, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
 import { createLookup } from "../services/storage";
-import type { CapturedFrame, ScanAnalysisState } from "../types";
+import type { CapturedFrame, LabelRescueTrigger, ScanAnalysisState } from "../types";
 
 const videoConstraints: MediaTrackConstraints = {
   facingMode: { ideal: "environment" },
@@ -40,7 +40,10 @@ export default function Scanner() {
       const imageBase64 = await captureFrame();
 
       const quality = await assessImageQuality(imageBase64);
-      if (!quality.ok) {
+      let labelRescueTrigger: LabelRescueTrigger | undefined;
+      if (!quality.ok && quality.issue === "too_blurry") {
+        labelRescueTrigger = "too_blurry";
+      } else if (!quality.ok) {
         setCaptureError(quality.message);
         return;
       }
@@ -80,7 +83,7 @@ export default function Scanner() {
       }
 
       try {
-        const result = await identifyCapturedFrame(frame, secondFrame);
+        const result = await identifyCapturedFrame(frame, secondFrame, labelRescueTrigger);
         if (imageHash) setCachedScanResult(imageHash, result);
         const scanState: ScanAnalysisState = {
           frame,

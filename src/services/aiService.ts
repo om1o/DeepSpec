@@ -1,5 +1,5 @@
 import { FOLLOWUP_PROMPT, IDENTIFY_PROMPT } from "./systemPrompts";
-import { SCAN_CATEGORIES, type AIInput, type CapturedFrame, type IdentificationResult, type Lookup, type ScanCategory } from "../types";
+import { SCAN_CATEGORIES, type AIInput, type CapturedFrame, type IdentificationResult, type LabelRescueTrigger, type Lookup, type ScanCategory } from "../types";
 
 type AIErrorCode = "invalid_input" | "not_configured" | "rate_limited" | "invalid_response" | "network" | "unsupported";
 
@@ -51,6 +51,7 @@ export async function runAI(input: AIInput): Promise<string | object> {
     const body = await postAI<IdentifyApiSuccess>("/api/identify", {
       imageBase64: input.imageBase64,
       ...(input.imageBase64_2 ? { imageBase64_2: input.imageBase64_2 } : {}),
+      ...(input.labelRescueTrigger ? { labelRescueTrigger: input.labelRescueTrigger } : {}),
       userMessage: input.userMessage,
       responseAsJson: input.responseAsJson ?? true,
     });
@@ -85,11 +86,13 @@ async function postAI<TSuccess extends object>(path: string, payload: object): P
 export async function identifyCapturedFrame(
   frame: CapturedFrame,
   secondFrame?: CapturedFrame,
+  labelRescueTrigger?: LabelRescueTrigger,
 ): Promise<IdentificationResult> {
   const result = await runAI({
     type: "vision",
     imageBase64: frame.imageBase64,
     imageBase64_2: secondFrame?.imageBase64,
+    labelRescueTrigger,
     userMessage: "Identify this car part from the captured photo.",
     systemPrompt: IDENTIFY_PROMPT,
     responseAsJson: true,

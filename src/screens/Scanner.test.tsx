@@ -7,6 +7,7 @@ import Scanner from "./Scanner";
 
 const captureFrame = vi.fn(async () => "data:image/jpeg;base64,compressed-frame");
 const retryCamera = vi.fn();
+const assessImageQuality = vi.fn(async () => ({ ok: true }));
 const identifyCapturedFrame = vi.fn(async () => ({
   partName: "Alternator",
   confidence: "high",
@@ -59,7 +60,7 @@ vi.mock("../services/aiService", () => ({
 
 // Pass all images as ok — quality logic is tested separately in imageQuality.test.ts
 vi.mock("../lib/imageQuality", () => ({
-  assessImageQuality: vi.fn(async () => ({ ok: true })),
+  assessImageQuality: (...args: unknown[]) => assessImageQuality(...args),
 }));
 
 // Cache always misses in scanner tests — cache logic tested in scanCache.test.ts
@@ -78,6 +79,8 @@ describe("Scanner", () => {
   beforeEach(() => {
     captureFrame.mockClear();
     retryCamera.mockClear();
+    assessImageQuality.mockClear();
+    assessImageQuality.mockResolvedValue({ ok: true });
     identifyCapturedFrame.mockClear();
     localStorage.clear();
     sessionStorage.clear();
@@ -132,5 +135,29 @@ describe("Scanner", () => {
     expect(screen.getByText(/not saved to history, cloud sync, or training review/i)).toBeInTheDocument();
     expect(localStorage.getItem("deep-spec:lookups")).toBeNull();
     expect(sessionStorage.getItem("deep-spec:latest-scan-state")).toBeNull();
+  }, 10000);
+
+  it("rescues blurry captures by sending a label OCR hint to identify", async () => {
+    assessImageQuality.mockResolvedValueOnce({
+      ok: false,
+      issue: "too_blurry",
+      message: "Move closer and hold steady. Not enough detail to identify.",
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+          <Route path="/result" element={<Result />} />
+          <Route path="/result/:id" element={<Result />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Identify" }));
+
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    expect(identifyCapturedFrame.mock.calls[0][2]).toBe("too_blurry");
+    expect(screen.queryByText(/Move closer and hold steady/)).not.toBeInTheDocument();
   }, 10000);
 });

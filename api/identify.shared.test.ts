@@ -1,7 +1,10 @@
 import { createIdentifyResponse } from "./identify.shared";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 const imageBase64 =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+const engineFixtureBase64 = `data:image/jpeg;base64,${readFileSync(resolve(process.cwd(), "public/test-fixtures/engine-scan-test.jpg")).toString("base64")}`;
 
 const result = {
   partName: "Alternator",
@@ -87,6 +90,78 @@ describe("createIdentifyResponse", () => {
         method: "POST",
       }),
     );
+  });
+
+  it("keeps the current engine QA fixture on the normal Gemini path", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(createIdentifyResponse({ imageBase64: engineFixtureBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toEqual({
+      status: 200,
+      body: {
+        result,
+      },
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0][0]).toEqual(expect.stringContaining("generativelanguage.googleapis.com"));
+  });
+
+  it("runs OCR before Gemini for a blurry label rescue and saves extracted text as evidence", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([{ generated_text: "DENSO 104210-1230" }]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+
+    await expect(
+      createIdentifyResponse(
+        {
+          imageBase64,
+          labelRescueTrigger: "too_blurry",
+        },
+        {
+          GEMINI_API_KEY: "test-key",
+          HUGGINGFACE_API_KEY: "hf-test-key",
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          evidence: expect.arrayContaining(["OCR label text: DENSO 104210-1230"]),
+        },
+      },
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy.mock.calls[0][0]).toEqual(expect.stringContaining("api-inference.huggingface.co/models/microsoft%2Ftrocr-large-printed"));
+    expect(fetchSpy.mock.calls[1][0]).toEqual(expect.stringContaining("generativelanguage.googleapis.com"));
+    const geminiBody = JSON.parse((fetchSpy.mock.calls[1][1] as RequestInit).body as string);
+    expect(JSON.stringify(geminiBody)).toContain("DENSO 104210-1230");
   });
 
   it("normalizes inconsistent safety-critical model output", async () => {

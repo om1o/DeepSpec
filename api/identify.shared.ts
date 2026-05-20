@@ -2,6 +2,7 @@ import { IDENTIFY_PROMPT } from "../src/services/systemPrompts";
 import { SCAN_CATEGORIES, type IdentificationResult, type ScanCategory } from "../src/types";
 
 type JsonObject = Record<string, unknown>;
+type LabelRescueTrigger = "too_blurry";
 
 export type IdentifyResponse =
   | {
@@ -21,6 +22,7 @@ export type IdentifyResponse =
     };
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
+const DEFAULT_OCR_MODEL = "microsoft/trocr-large-printed";
 
 const IDENTIFICATION_RESPONSE_SCHEMA = {
   type: "object",
@@ -74,6 +76,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
 
   const model = env.GEMINI_MODEL || DEFAULT_MODEL;
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  const ocr = shouldRunOcr(parsed) ? await runOcrFallback(parsed, env) : null;
 
   const startedAt = Date.now();
   const response = await fetch(endpoint, {
@@ -100,6 +103,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
             ...(parsed.base64_2 && parsed.mimeType_2
               ? [{ inline_data: { mime_type: parsed.mimeType_2, data: parsed.base64_2 } }]
               : []),
+            ...(ocr?.text ? [{ text: buildOcrContext(ocr.text) }] : []),
             { text: parsed.userMessage },
           ],
         },
@@ -138,7 +142,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
     return errorResponse(502, "invalid_response", "Gemini returned JSON that Deep Spec could not read.");
   }
 
-  const normalizedResult = normalizeIdentificationResult(result);
+  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null);
 
   console.info("[DeepSpec AI]", {
     model,
@@ -147,6 +151,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
     confidence: normalizedResult.confidence,
     scanCategory: normalizedResult.scanCategory,
     safetyTriage: normalizedResult.safetyTriage,
+    ocrUsed: Boolean(ocr?.text),
   });
 
   return {
@@ -164,6 +169,7 @@ function parseIdentifyRequest(body: unknown):
       base64_2: string | null;
       mimeType_2: string | null;
       userMessage: string;
+      labelRescueTrigger: LabelRescueTrigger | null;
     }
   | { error: IdentifyResponse } {
   if (!isRecord(body) || typeof body.imageBase64 !== "string") {
@@ -203,6 +209,7 @@ function parseIdentifyRequest(body: unknown):
         : hasSecond
           ? "Identify this car part from two photos taken from slightly different angles."
           : "Identify this car part from the captured photo.",
+    labelRescueTrigger: body.labelRescueTrigger === "too_blurry" ? "too_blurry" : null,
   };
 }
 
@@ -244,7 +251,7 @@ function parseIdentificationResult(text: string): IdentificationResult | null {
   }
 }
 
-function normalizeIdentificationResult(result: IdentificationResult): IdentificationResult {
+function normalizeIdentificationResult(result: IdentificationResult, ocrText: string | null = null): IdentificationResult {
   const safetyTriage = result.isSafetyCritical ? "needs_professional" : result.safetyTriage;
   const needsBetterPhoto = result.needsBetterPhoto || safetyTriage === "needs_better_photo";
 
@@ -255,7 +262,7 @@ function normalizeIdentificationResult(result: IdentificationResult): Identifica
     whatItDoes: cleanText(result.whatItDoes, "Deep Spec could not verify what this part does from this photo."),
     visibleObservations: cleanList(result.visibleObservations),
     concerns: cleanList(result.concerns),
-    evidence: cleanList(result.evidence),
+    evidence: appendOcrEvidence(cleanList(result.evidence), ocrText),
     nextAction:
       safetyTriage === "needs_professional"
         ? ensureProfessionalNextAction(result.nextAction)
@@ -263,6 +270,105 @@ function normalizeIdentificationResult(result: IdentificationResult): Identifica
     safetyTriage,
     needsBetterPhoto,
   };
+}
+
+function appendOcrEvidence(evidence: string[], ocrText: string | null) {
+  if (!ocrText) {
+    return evidence;
+  }
+
+  const ocrEvidence = `OCR label text: ${ocrText}`;
+  if (evidence.some((item) => item.toLowerCase() === ocrEvidence.toLowerCase())) {
+    return evidence;
+  }
+
+  return [...evidence, ocrEvidence].slice(0, 6);
+}
+
+function shouldRunOcr(parsed: { userMessage: string; labelRescueTrigger: LabelRescueTrigger | null }) {
+  return (
+    parsed.labelRescueTrigger === "too_blurry" ||
+    /\b(label|part\s*(number|#)|serial|barcode|sticker|oem|printed|etched|stamp|stamped|text|low confidence)\b/i.test(parsed.userMessage)
+  );
+}
+
+async function runOcrFallback(
+  parsed: { base64: string; mimeType: string },
+  env: Record<string, string | undefined>,
+): Promise<{ text: string; model: string } | null> {
+  const token = env.HUGGINGFACE_API_KEY || env.HF_API_TOKEN || env.HF_TOKEN;
+  if (!token) {
+    return null;
+  }
+
+  const model = env.HUGGINGFACE_OCR_MODEL || DEFAULT_OCR_MODEL;
+  const endpoint = `https://api-inference.huggingface.co/models/${encodeURIComponent(model)}`;
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    signal: AbortSignal.timeout(12_000),
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": parsed.mimeType,
+      Accept: "application/json",
+    },
+    body: Buffer.from(parsed.base64, "base64"),
+  }).catch(() => null);
+
+  if (!response?.ok) {
+    return null;
+  }
+
+  const body = (await response.json().catch(() => null)) as unknown;
+  const text = cleanOcrText(extractOcrText(body));
+  return text ? { text, model } : null;
+}
+
+function extractOcrText(body: unknown): string | null {
+  if (Array.isArray(body)) {
+    return body.map(extractOcrText).filter(Boolean).join(" ");
+  }
+
+  if (!isRecord(body)) {
+    return null;
+  }
+
+  const generated = body.generated_text;
+  if (typeof generated === "string") {
+    return generated;
+  }
+
+  const text = body.text;
+  if (typeof text === "string") {
+    return text;
+  }
+
+  return null;
+}
+
+function cleanOcrText(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const cleaned = value
+    .replace(/[^\w\s./#:-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (cleaned.length < 3 || !/[A-Za-z0-9]/.test(cleaned)) {
+    return null;
+  }
+
+  return cleaned.slice(0, 160);
+}
+
+function buildOcrContext(text: string) {
+  return [
+    "OCR label rescue text extracted before visual identification:",
+    text,
+    "Use this only as visible label evidence. Do not invent OEM fitment, pricing, or compatibility from it.",
+  ].join("\n");
 }
 
 function ensureProfessionalNextAction(nextAction: string) {
