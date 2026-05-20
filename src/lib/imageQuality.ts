@@ -124,5 +124,21 @@ export function sampleLuminance(dataUrl: string): Promise<Uint8Array | null> {
 export async function assessImageQuality(dataUrl: string): Promise<ImageQualityResult> {
   const lum = await sampleLuminance(dataUrl);
   if (!lum) return { ok: true }; // can't check → let AI handle it
-  return analyzeQuality(lum, QUALITY_SAMPLE_W, QUALITY_SAMPLE_H);
+  const result = analyzeQuality(lum, QUALITY_SAMPLE_W, QUALITY_SAMPLE_H);
+  if (import.meta.env.DEV) {
+    const pixels = QUALITY_SAMPLE_W * QUALITY_SAMPLE_H;
+    let sum = 0; for (let i = 0; i < pixels; i++) sum += lum[i];
+    const avgLum = (sum / pixels).toFixed(1);
+    let sg = 0, sg2 = 0;
+    const gc = (QUALITY_SAMPLE_W - 2) * (QUALITY_SAMPLE_H - 2);
+    for (let y = 1; y < QUALITY_SAMPLE_H - 1; y++) for (let x = 1; x < QUALITY_SAMPLE_W - 1; x++) {
+      const idx = y * QUALITY_SAMPLE_W + x;
+      const g = Math.abs(lum[idx+1]-lum[idx-1]) + Math.abs(lum[idx+QUALITY_SAMPLE_W]-lum[idx-QUALITY_SAMPLE_W]);
+      sg += g; sg2 += g * g;
+    }
+    const mean = sg / gc;
+    const varGrad = (sg2 / gc - mean * mean).toFixed(0);
+    console.log("[deep-spec quality]", { avgLum, varGrad, verdict: result.ok ? "pass" : result.issue });
+  }
+  return result;
 }

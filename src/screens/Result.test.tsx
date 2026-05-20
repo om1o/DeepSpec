@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, vi } from "vitest";
 import Result from "./Result";
+import * as aiService from "../services/aiService";
 import { LOOKUPS_STORAGE_KEY } from "../services/storage";
 import type { Lookup, ScanAnalysisState } from "../types";
 
@@ -221,6 +222,60 @@ describe("Result", () => {
 
     expect(screen.getByText("History page")).toBeInTheDocument();
     expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBe("[]");
+  });
+
+  it("allows retrying a failed scan when online", async () => {
+    const failedLookup = makeLookup({
+      result: undefined,
+      errorMessage: "Network error",
+      errorCode: "network",
+      analyzedAt: undefined,
+    });
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([failedLookup]));
+
+    const onlineSpy = vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    const identifySpy = vi.spyOn(aiService, "identifyCapturedFrame").mockResolvedValue(successfulScan.result!);
+
+    renderResult(null, `/result/${failedLookup.id}`);
+
+    expect(screen.getByText("AI identification failed")).toBeInTheDocument();
+    expect(screen.getByText("Network error")).toBeInTheDocument();
+    expect(screen.getByText(/Internet connection is active/)).toBeInTheDocument();
+
+    const retryButton = screen.getByRole("button", { name: "Retry scan now" });
+    await userEvent.click(retryButton);
+
+    expect(identifySpy).toHaveBeenCalledWith(failedLookup.frame);
+
+    const savedLookups = JSON.parse(localStorage.getItem(LOOKUPS_STORAGE_KEY) ?? "[]") as Lookup[];
+    expect(savedLookups[0].result?.partName).toBe("Alternator");
+    expect(savedLookups[0].errorMessage).toBeUndefined();
+
+    expect(screen.queryByText("AI identification failed")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
+    expect(screen.getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
+
+    onlineSpy.mockRestore();
+  });
+
+  it("disables retry button when offline", () => {
+    const failedLookup = makeLookup({
+      result: undefined,
+      errorMessage: "Network error",
+      errorCode: "network",
+      analyzedAt: undefined,
+    });
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([failedLookup]));
+
+    const onlineSpy = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+
+    renderResult(null, `/result/${failedLookup.id}`);
+
+    expect(screen.getByText(/Offline. Find an internet connection/)).toBeInTheDocument();
+    const retryButton = screen.getByRole("button", { name: "Retry scan now" });
+    expect(retryButton).toBeDisabled();
+
+    onlineSpy.mockRestore();
   });
 });
 

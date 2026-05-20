@@ -8,6 +8,7 @@ import Button from "../components/ui/Button";
 import { useCamera } from "../hooks/useCamera";
 import { useStillness } from "../hooks/useStillness";
 import { assessImageQuality } from "../lib/imageQuality";
+import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
 import { isTestMode } from "../lib/testMode";
 import { saveLatestScanState } from "../lib/utils";
 import TestScanPanel from "../components/scanner/TestScanPanel";
@@ -52,6 +53,16 @@ export default function Scanner() {
         saveLatestScanState({ frame });
       }
 
+      // Cache check — same image seen before → skip AI entirely
+      const imageHash = !isTestMode() ? await hashImageDataUrl(imageBase64) : null;
+      if (imageHash) {
+        const cached = getCachedScanResult(imageHash);
+        if (cached) {
+          persistAndNavigate({ frame, result: cached, analyzedAt: new Date().toISOString() });
+          return;
+        }
+      }
+
       // Silently capture a second frame 300ms later for confidence anchoring.
       // The overlay is showing and the user is likely still holding steady.
       let secondFrame: CapturedFrame | undefined;
@@ -70,6 +81,7 @@ export default function Scanner() {
 
       try {
         const result = await identifyCapturedFrame(frame, secondFrame);
+        if (imageHash) setCachedScanResult(imageHash, result);
         const scanState: ScanAnalysisState = {
           frame,
           result,

@@ -8,6 +8,7 @@ import {
   LOOKUPS_STORAGE_KEY,
   MAX_SAVED_LOOKUPS,
   updateLookup,
+  updateLookupResult,
 } from "./storage";
 import type { ScanAnalysisState } from "../types";
 
@@ -70,6 +71,34 @@ describe("storage", () => {
       trainingStatus: "user_corrected",
     });
   });
+
+  it("updates AI result on successful retry", () => {
+    const failedScanState: ScanAnalysisState = {
+      frame: {
+        imageBase64: "data:image/jpeg;base64,test",
+        capturedAt: "2026-05-16T00:00:00.000Z",
+      },
+      errorMessage: "Connection timed out",
+      errorCode: "network",
+      analyzedAt: "2026-05-16T00:00:05.000Z",
+    };
+    const lookup = createLookup(failedScanState).value;
+    expect(lookup.result).toBeUndefined();
+    expect(lookup.errorMessage).toBe("Connection timed out");
+
+    const result = updateLookupResult(lookup.id, scanState.result!);
+
+    expect(result.ok).toBe(true);
+    const updated = getLookup(lookup.id);
+    expect(updated).toMatchObject({
+      errorMessage: undefined,
+      errorCode: undefined,
+      scanCategory: "electrical",
+      trainingLabel: "Alternator",
+    });
+    expect(updated?.result?.partName).toBe("Alternator");
+  });
+
 
   it("marks helpful scans as user-confirmed training data", () => {
     const lookup = createLookup(scanState).value;
