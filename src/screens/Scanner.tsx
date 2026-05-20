@@ -52,8 +52,24 @@ export default function Scanner() {
         saveLatestScanState({ frame });
       }
 
+      // Silently capture a second frame 300ms later for confidence anchoring.
+      // The overlay is showing and the user is likely still holding steady.
+      let secondFrame: CapturedFrame | undefined;
+      if (!isTestMode()) {
+        await new Promise<void>((r) => setTimeout(r, 300));
+        try {
+          const second = await captureFrame();
+          const secondQuality = await assessImageQuality(second);
+          if (secondQuality.ok) {
+            secondFrame = { imageBase64: second, capturedAt: new Date().toISOString() };
+          }
+        } catch {
+          // Second frame is optional — any failure is silent
+        }
+      }
+
       try {
-        const result = await identifyCapturedFrame(frame);
+        const result = await identifyCapturedFrame(frame, secondFrame);
         const scanState: ScanAnalysisState = {
           frame,
           result,

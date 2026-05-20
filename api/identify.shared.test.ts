@@ -191,6 +191,48 @@ describe("createIdentifyResponse", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("includes a second inline_data part when imageBase64_2 is provided", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    await createIdentifyResponse(
+      { imageBase64, imageBase64_2: imageBase64 },
+      { GEMINI_API_KEY: "test-key" },
+    );
+
+    const callBody = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+    const parts = callBody.contents[0].parts;
+    const imageParts = parts.filter((p: { inline_data?: unknown }) => "inline_data" in p);
+    expect(imageParts).toHaveLength(2);
+  });
+
+  it("proceeds with one image when imageBase64_2 is invalid", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    await createIdentifyResponse(
+      { imageBase64, imageBase64_2: "not-a-valid-data-url" },
+      { GEMINI_API_KEY: "test-key" },
+    );
+
+    const callBody = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+    const parts = callBody.contents[0].parts;
+    const imageParts = parts.filter((p: { inline_data?: unknown }) => "inline_data" in p);
+    expect(imageParts).toHaveLength(1);
+  });
+
   it("normalizes better-photo model output", async () => {
     const unclearResult = {
       ...result,
