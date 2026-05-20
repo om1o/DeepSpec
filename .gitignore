@@ -5,6 +5,7 @@ dist-ssr/
 .vite/
 .vercel/
 supabase/.temp/
+.deepspec-eval/
 
 .DS_Store
 *.local
