@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Webcam from "react-webcam";
 import { Link, useNavigate } from "react-router-dom";
-import IdentifyButton from "../components/scanner/IdentifyButton";
 import MotionPermissionModal from "../components/scanner/MotionPermissionModal";
 import Reticle from "../components/scanner/Reticle";
 import Button from "../components/ui/Button";
 import { useCamera } from "../hooks/useCamera";
+import { useObjectTarget } from "../hooks/useObjectTarget";
 import { useStillness } from "../hooks/useStillness";
 import { assessImageQuality } from "../lib/imageQuality";
 import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
@@ -13,7 +13,6 @@ import { isTestMode } from "../lib/testMode";
 import { saveLatestScanState } from "../lib/utils";
 import TestScanPanel from "../components/scanner/TestScanPanel";
 import { AIServiceError, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
-import { createLookup } from "../services/storage";
 import type { CapturedFrame, LabelRescueTrigger, ScanAnalysisState } from "../types";
 
 const videoConstraints: MediaTrackConstraints = {
@@ -25,26 +24,68 @@ const videoConstraints: MediaTrackConstraints = {
 export default function Scanner() {
   const navigate = useNavigate();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [autoScanPaused, setAutoScanPaused] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
+  const autoScanStartedRef = useRef(false);
+  const cancelScanRef = useRef(false);
   const { cameraError, cameraRequestId, cameraState, captureFrame, markError, markReady, retryCamera, webcamRef } =
     useCamera();
   const { error: motionError, isStable, needsPermission, permissionState, requestPermission, usesFallback } =
     useStillness();
+  const qaTestMode = isTestMode();
+  const objectTarget = useObjectTarget(webcamRef, {
+    enabled: cameraState === "ready" && !qaTestMode && !isAnalyzing,
+    holdEnabled: cameraState === "ready" && isStable && !isAnalyzing && !autoScanPaused,
+  });
+  const scannerStatus = getScannerStatus({
+    autoScanPaused,
+    cameraState,
+    hasTarget: Boolean(objectTarget),
+    isStable,
+    usesFallback,
+  });
 
-  const canIdentify = cameraState === "ready" && !isAnalyzing;
+  const pauseAutoScan = useCallback((message?: string) => {
+    autoScanStartedRef.current = false;
+    setAutoScanPaused(true);
+    if (message) {
+      setCaptureError(message);
+    }
 
-  async function handleIdentify() {
+    window.setTimeout(() => setAutoScanPaused(false), 1800);
+  }, []);
+
+  const persistAndNavigate = useCallback(
+    (scanState: ScanAnalysisState) => {
+      if (qaTestMode) {
+        navigate("/result", { state: { ...scanState, testRun: true } });
+        return;
+      }
+
+      saveLatestScanState(scanState);
+      navigate("/result", { state: scanState });
+    },
+    [navigate, qaTestMode],
+  );
+
+  const handleIdentify = useCallback(async () => {
+    if (isAnalyzing) {
+      return;
+    }
+
     try {
+      cancelScanRef.current = false;
       setIsAnalyzing(true);
       setCaptureError(null);
       const imageBase64 = await captureFrame();
+      if (cancelScanRef.current) return;
 
       const quality = await assessImageQuality(imageBase64);
       let labelRescueTrigger: LabelRescueTrigger | undefined;
       if (!quality.ok && quality.issue === "too_blurry") {
         labelRescueTrigger = "too_blurry";
       } else if (!quality.ok) {
-        setCaptureError(quality.message);
+        pauseAutoScan(quality.message);
         return;
       }
 
@@ -52,12 +93,12 @@ export default function Scanner() {
         imageBase64,
         capturedAt: new Date().toISOString(),
       };
-      if (!isTestMode()) {
+      if (!qaTestMode) {
         saveLatestScanState({ frame });
       }
 
-      // Cache check — same image seen before → skip AI entirely
-      const imageHash = !isTestMode() ? await hashImageDataUrl(imageBase64) : null;
+      const imageHash = !qaTestMode ? await hashImageDataUrl(imageBase64) : null;
+      if (cancelScanRef.current) return;
       if (imageHash) {
         const cached = getCachedScanResult(imageHash);
         if (cached) {
@@ -66,11 +107,10 @@ export default function Scanner() {
         }
       }
 
-      // Silently capture a second frame 300ms later for confidence anchoring.
-      // The overlay is showing and the user is likely still holding steady.
       let secondFrame: CapturedFrame | undefined;
-      if (!isTestMode()) {
-        await new Promise<void>((r) => setTimeout(r, 300));
+      if (!qaTestMode) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 300));
+        if (cancelScanRef.current) return;
         try {
           const second = await captureFrame();
           const secondQuality = await assessImageQuality(second);
@@ -78,53 +118,58 @@ export default function Scanner() {
             secondFrame = { imageBase64: second, capturedAt: new Date().toISOString() };
           }
         } catch {
-          // Second frame is optional — any failure is silent
+          // A second frame helps confidence but is not required.
         }
       }
 
       try {
         const result = await identifyCapturedFrame(frame, secondFrame, labelRescueTrigger);
+        if (cancelScanRef.current) return;
         if (imageHash) setCachedScanResult(imageHash, result);
-        const scanState: ScanAnalysisState = {
+        persistAndNavigate({
           frame,
           result,
           analyzedAt: new Date().toISOString(),
-        };
-        persistAndNavigate(scanState);
+        });
       } catch (analysisError) {
-        const scanState: ScanAnalysisState = {
+        if (cancelScanRef.current) return;
+        persistAndNavigate({
           frame,
           errorMessage: getAIErrorMessage(analysisError),
           errorCode: analysisError instanceof AIServiceError ? analysisError.code : "analysis_failed",
           analyzedAt: new Date().toISOString(),
-        };
-        persistAndNavigate(scanState);
+        });
       }
     } catch (error) {
-      // Don't mark camera as blocked — captureFrame can fail transiently when
-      // the video frame isn't ready yet. Show a retry prompt instead.
-      setCaptureError(error instanceof Error ? error.message : "Capture failed. Try again.");
+      pauseAutoScan(error instanceof Error ? error.message : "Capture failed. Try again.");
     } finally {
       setIsAnalyzing(false);
     }
-  }
+  }, [captureFrame, isAnalyzing, pauseAutoScan, persistAndNavigate, qaTestMode]);
 
-  function persistAndNavigate(scanState: ScanAnalysisState) {
-    if (isTestMode()) {
-      navigate("/result", { state: { ...scanState, testRun: true } });
+  useEffect(() => {
+    if (!objectTarget?.isLocked || cameraState !== "ready" || isAnalyzing || autoScanPaused) {
       return;
     }
 
-    const storageResult = createLookup(scanState);
-    const routeState = storageResult.ok
-      ? scanState
-      : {
-          ...scanState,
-          storageWarning: storageResult.message,
-        };
+    if (autoScanStartedRef.current) {
+      return;
+    }
 
-    saveLatestScanState(routeState);
-    navigate(storageResult.ok ? `/result/${storageResult.value.id}` : "/result", { state: routeState });
+    autoScanStartedRef.current = true;
+    void handleIdentify();
+  }, [autoScanPaused, cameraState, handleIdentify, isAnalyzing, objectTarget?.isLocked]);
+
+  useEffect(() => {
+    if (!objectTarget?.isLocked && !isAnalyzing) {
+      autoScanStartedRef.current = false;
+    }
+  }, [isAnalyzing, objectTarget?.isLocked]);
+
+  function cancelCurrentScan() {
+    cancelScanRef.current = true;
+    setIsAnalyzing(false);
+    pauseAutoScan("Scan canceled. Hold the right item steady to try again.");
   }
 
   return (
@@ -146,13 +191,9 @@ export default function Scanner() {
 
       <header className="fixed left-0 right-0 top-0 z-20 px-5 pt-[max(18px,env(safe-area-inset-top))]">
         <div className="grid grid-cols-[44px_1fr_44px] items-center gap-3">
-          <Link
-            to="/history"
-            aria-label="Saved scans"
-            className="grid size-11 place-items-center rounded-full bg-black/38 text-xs font-black text-white ring-1 ring-white/10 backdrop-blur-xl"
-          >
-            DS
-          </Link>
+          <div className="grid size-11 place-items-center rounded-full bg-black/38 ring-1 ring-white/10 backdrop-blur-xl overflow-hidden">
+            <img src="/icon-192.png" alt="Deep Spec" className="w-9 h-9 rounded-full object-cover" />
+          </div>
           <div className="rounded-full bg-black/34 px-4 py-2 text-center ring-1 ring-white/10 backdrop-blur-xl">
             <p className="text-[13px] font-extrabold tracking-tight text-white">Deep Spec</p>
             <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-[#FACC15]">AI part scanner</p>
@@ -166,11 +207,7 @@ export default function Scanner() {
           </Link>
         </div>
         <p className="mx-auto mt-3 w-fit rounded-full bg-black/28 px-3 py-2 text-center text-xs font-extrabold text-white/72 ring-1 ring-white/10 backdrop-blur-xl">
-          {usesFallback
-            ? "Manual scan ready. Line up the part first."
-            : isStable
-              ? "Hold steady and scan the part"
-              : "Point at a car part and hold steady"}
+          {scannerStatus}
         </p>
       </header>
 
@@ -178,27 +215,54 @@ export default function Scanner() {
 
       {cameraState !== "blocked" ? (
         <>
-          <Reticle isVisible={isStable} />
-          <IdentifyButton isDisabled={!canIdentify} isReady={isStable} isVisible={cameraState === "ready"} onIdentify={handleIdentify} />
+          <Reticle isVisible={cameraState === "ready" && Boolean(objectTarget)} target={objectTarget} />
 
           {usesFallback ? (
             <p className="fixed bottom-[96px] left-1/2 z-20 w-[calc(100%-32px)] -translate-x-1/2 text-center text-xs font-semibold text-white/62">
-              {permissionState === "denied" ? "Motion access is off. You can still identify manually." : "Motion sensing unavailable. Manual scan is ready."}
+              {permissionState === "denied" ? "Motion access is off. Hold the item still to scan." : "Motion sensing unavailable. Visual hold scan is active."}
             </p>
           ) : null}
 
           {needsPermission ? <MotionPermissionModal error={motionError} onAllow={requestPermission} /> : null}
-          {captureError ? (
-            <p className="fixed bottom-[96px] left-1/2 z-20 w-[calc(100%-32px)] -translate-x-1/2 rounded-2xl bg-[#EF4444]/20 px-4 py-2 text-center text-xs font-semibold text-[#FCA5A5] ring-1 ring-[#EF4444]/20">
-              {captureError}
-            </p>
-          ) : null}
+          {captureError ? <CaptureErrorNotice message={captureError} onTryAgain={() => setCaptureError(null)} /> : null}
         </>
       ) : null}
-      {isAnalyzing ? <AnalyzingOverlay /> : null}
-      {isTestMode() ? <TestScanPanel onBusyChange={setIsAnalyzing} /> : null}
+      {isAnalyzing ? <AnalyzingOverlay onCancel={cancelCurrentScan} /> : null}
+      {qaTestMode ? <TestScanPanel onBusyChange={setIsAnalyzing} /> : null}
     </main>
   );
+}
+
+function getScannerStatus({
+  autoScanPaused,
+  cameraState,
+  hasTarget,
+  isStable,
+  usesFallback,
+}: {
+  autoScanPaused: boolean;
+  cameraState: string;
+  hasTarget: boolean;
+  isStable: boolean;
+  usesFallback: boolean;
+}) {
+  if (cameraState !== "ready") {
+    return "Starting camera";
+  }
+
+  if (autoScanPaused) {
+    return "Scan paused. Recenter the item.";
+  }
+
+  if (!hasTarget) {
+    return "Move an item into the yellow target area";
+  }
+
+  if (!usesFallback && !isStable) {
+    return "Hold the camera still";
+  }
+
+  return "Hold the item still to scan";
 }
 
 function CameraBlocked({ message, onRetry }: { message: string | null; onRetry: () => void }) {
@@ -226,12 +290,28 @@ function CameraBlocked({ message, onRetry }: { message: string | null; onRetry: 
   );
 }
 
-function AnalyzingOverlay() {
+function AnalyzingOverlay({ onCancel }: { onCancel: () => void }) {
   return (
-    <div className="fixed inset-0 z-40 grid place-items-center bg-black/70 backdrop-blur-md">
-      <div className="rounded-full border border-white/10 bg-white/10 px-5 py-3 text-sm font-bold text-white shadow-2xl">
-        Analyzing photo...
+    <div className="fixed inset-0 z-40 grid place-items-center bg-black/82 px-6 text-center backdrop-blur-md">
+      <div className="w-full max-w-xs rounded-[24px] border border-white/10 bg-[#171717]/92 p-6 shadow-2xl">
+        <div className="mx-auto grid size-14 place-items-center rounded-full border-2 border-white/10 border-t-[#FACC15]" />
+        <p className="mt-5 text-lg font-extrabold tracking-tight text-white">Scanning photo</p>
+        <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">Deep Spec is checking the visible part and damage.</p>
+        <Button className="mt-5 w-full" variant="ghost" onClick={onCancel}>
+          Cancel scan
+        </Button>
       </div>
+    </div>
+  );
+}
+
+function CaptureErrorNotice({ message, onTryAgain }: { message: string; onTryAgain: () => void }) {
+  return (
+    <div className="fixed bottom-[96px] left-1/2 z-20 w-[calc(100%-32px)] max-w-sm -translate-x-1/2 rounded-2xl border border-[#EF4444]/30 bg-[#2A0F12]/92 p-4 text-center shadow-2xl">
+      <p className="text-sm font-extrabold text-[#FCA5A5]">{message}</p>
+      <Button className="mt-3 w-full" onClick={onTryAgain}>
+        Try again
+      </Button>
     </div>
   );
 }

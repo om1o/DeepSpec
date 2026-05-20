@@ -21,6 +21,25 @@ const identifyCapturedFrame = vi.fn(async () => ({
   needsBetterPhoto: false,
   evidence: ["The pulley and housing match common alternator shapes."],
 }));
+const objectTargetState = vi.hoisted(() => ({
+  current: {
+    confidence: 0.82,
+    height: 180,
+    holdProgress: 1,
+    isLocked: true,
+    left: 80,
+    top: 160,
+    width: 240,
+  } as null | {
+    confidence: number;
+    height: number;
+    holdProgress: number;
+    isLocked: boolean;
+    left: number;
+    top: number;
+    width: number;
+  },
+}));
 
 vi.mock("../hooks/useCamera", () => ({
   useCamera: () => ({
@@ -44,6 +63,10 @@ vi.mock("../hooks/useStillness", () => ({
     requestPermission: vi.fn(),
     usesFallback: true,
   }),
+}));
+
+vi.mock("../hooks/useObjectTarget", () => ({
+  useObjectTarget: () => objectTargetState.current,
 }));
 
 vi.mock("react-webcam", () => ({
@@ -82,11 +105,20 @@ describe("Scanner", () => {
     assessImageQuality.mockClear();
     assessImageQuality.mockResolvedValue({ ok: true });
     identifyCapturedFrame.mockClear();
+    objectTargetState.current = {
+      confidence: 0.82,
+      height: 180,
+      holdProgress: 1,
+      isLocked: true,
+      left: 80,
+      top: 160,
+      width: 240,
+    };
     localStorage.clear();
     sessionStorage.clear();
   });
 
-  it("captures, identifies, and navigates to the result", async () => {
+  it("auto captures a held target, identifies, and navigates to an unsaved result", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <Routes>
@@ -98,10 +130,10 @@ describe("Scanner", () => {
     );
 
     expect(screen.getByTestId("webcam-preview")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Identify" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("object-reticle")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Identify" }));
-
-    expect(captureFrame).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(captureFrame).toHaveBeenCalled());
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute(
@@ -109,11 +141,13 @@ describe("Scanner", () => {
       "data:image/jpeg;base64,compressed-frame",
     );
     expect(screen.getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
-    expect(screen.getByText("Saved scan")).toBeInTheDocument();
+    expect(screen.queryByText("Saved scan")).not.toBeInTheDocument();
+    expect(localStorage.getItem("deep-spec:lookups")).toBeNull();
   }, 10000);
 
   it("runs the generated engine test scan without saving it to history", async () => {
     window.history.pushState({}, "", "/?test=1");
+    objectTargetState.current = null;
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(new Blob(["test-engine-image"], { type: "image/jpeg" }), { status: 200 })),
@@ -137,6 +171,24 @@ describe("Scanner", () => {
     expect(sessionStorage.getItem("deep-spec:latest-scan-state")).toBeNull();
   }, 10000);
 
+  it("lets the user cancel an accidental auto scan before the result opens", async () => {
+    identifyCapturedFrame.mockImplementationOnce(() => new Promise(() => undefined));
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+          <Route path="/result" element={<Result />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: "Cancel scan" }));
+
+    expect(await screen.findByText("Scan canceled. Hold the right item steady to try again.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 1, name: "Alternator" })).not.toBeInTheDocument();
+  }, 10000);
+
   it("rescues blurry captures by sending a label OCR hint to identify", async () => {
     assessImageQuality.mockResolvedValueOnce({
       ok: false,
@@ -153,8 +205,6 @@ describe("Scanner", () => {
         </Routes>
       </MemoryRouter>,
     );
-
-    await userEvent.click(screen.getByRole("button", { name: "Identify" }));
 
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
     expect(identifyCapturedFrame.mock.calls[0][2]).toBe("too_blurry");

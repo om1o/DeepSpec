@@ -16,6 +16,9 @@ export default function EarlyAccess() {
   const [waitlistStatus, setWaitlistStatus] = useState<string | null>(null);
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
   const cloudSync = getCloudSyncStatus();
+  const cloudStatusMessage = cloudSync.configured
+    ? "Cloud sync is ready for waitlist and feedback."
+    : cloudSync.message;
   const demandSignals = useMemo(
     () => [
       { label: "Local waitlist entries", value: String(stats.waitlist.length) },
@@ -73,47 +76,47 @@ export default function EarlyAccess() {
   }
 
   return (
-    <main className="min-h-dvh bg-[#0A0A0A] px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-white">
+    <main className="min-h-dvh bg-neutral-50 px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-neutral-900">
       <div className="mx-auto w-full max-w-md">
         <header className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-[13px] font-extrabold uppercase tracking-[0.18em] text-white/70">Deep Spec</p>
+            <p className="text-[13px] font-extrabold uppercase tracking-[0.18em] text-neutral-400">Deep Spec</p>
             <h1 className="mt-2 text-2xl font-extrabold tracking-tight">Early access</h1>
           </div>
-          <Link to="/" className="rounded-full bg-white/10 px-4 py-2 text-sm font-bold text-white">
+          <Link to="/" className="rounded-full bg-neutral-100 px-4 py-2 text-sm font-bold text-neutral-900">
             Scan
           </Link>
         </header>
 
-        <section className="mt-6 rounded-[24px] border border-white/10 bg-[#171717] p-5">
+        <section className="mt-6 rounded-[24px] border border-neutral-200 bg-white p-5">
           <p className="text-sm font-bold text-[#FACC15]">Business experiment</p>
           <h2 className="mt-2 text-2xl font-extrabold tracking-tight">Prove people want this before charging.</h2>
-          <p className="mt-3 text-sm leading-6 text-[#A1A1AA]">
-            Deep Spec is testing demand with waitlist signups, feedback, saved scan reports, and mechanic escalation CTAs.
+          <p className="mt-3 text-sm leading-6 text-neutral-500">
+            Deep Spec is testing demand with waitlist signups, feedback, instant AI answers, and mechanic escalation CTAs.
             Payments, accounts, domains, and legal docs need parent review later.
           </p>
-          <p className="mt-3 rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-sm leading-6 text-[#A1A1AA]">
-            {cloudSync.message}
+          <p className="mt-3 rounded-2xl border border-neutral-100 bg-neutral-50 p-3 text-sm leading-6 text-neutral-500">
+            {cloudStatusMessage}
           </p>
           <div className="mt-4 grid grid-cols-1 gap-3">
             {demandSignals.map((item) => (
-              <div key={item.label} className="rounded-2xl border border-white/10 bg-white/[0.04] p-3">
-                <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-white/42">{item.label}</p>
-                <p className="mt-1 text-lg font-extrabold text-white">{item.value}</p>
+              <div key={item.label} className="rounded-2xl border border-neutral-100 bg-neutral-50 p-3">
+                <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-neutral-400">{item.label}</p>
+                <p className="mt-1 text-lg font-extrabold text-neutral-900">{item.value}</p>
               </div>
             ))}
           </div>
         </section>
 
-        <form className="mt-4 rounded-[24px] border border-white/10 bg-[#171717] p-5" onSubmit={handleWaitlistSubmit}>
+        <form className="mt-4 rounded-[24px] border border-neutral-200 bg-white p-5" onSubmit={handleWaitlistSubmit}>
           <h2 className="text-lg font-extrabold tracking-tight">Join the waitlist</h2>
-          <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">
+          <p className="mt-2 text-sm leading-6 text-neutral-500">
             This saves locally right now. A real launch waitlist needs parent-approved privacy terms and backend storage.
           </p>
           <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/42">Email</span>
+            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Email</span>
             <input
-              className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/28 px-3 text-sm text-white outline-none placeholder:text-white/32 focus:border-[#FACC15]/50"
+              className="mt-2 h-12 w-full rounded-2xl border border-neutral-200 bg-white px-3 text-sm text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[#FACC15]/50"
               inputMode="email"
               onChange={(event) => setEmail(event.target.value)}
               placeholder="you@example.com"
@@ -122,9 +125,9 @@ export default function EarlyAccess() {
             />
           </label>
           <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/42">I am a</span>
+            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">I am a</span>
             <select
-              className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/28 px-3 text-sm text-white outline-none focus:border-[#FACC15]/50"
+              className="mt-2 h-12 w-full rounded-2xl border border-neutral-200 bg-white px-3 text-sm text-neutral-900 outline-none focus:border-[#FACC15]/50"
               onChange={(event) => setUserType(event.target.value as WaitlistSignup["userType"])}
               value={userType}
             >
@@ -136,9 +139,9 @@ export default function EarlyAccess() {
             </select>
           </label>
           <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/42">What problem should Deep Spec solve?</span>
+            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">What problem should Deep Spec solve?</span>
             <textarea
-              className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-white/10 bg-black/28 p-3 text-sm leading-6 text-white outline-none placeholder:text-white/32 focus:border-[#FACC15]/50"
+              className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[#FACC15]/50"
               maxLength={240}
               onChange={(event) => setMainProblem(event.target.value)}
               placeholder="Example: I want to know if a used car leak is serious before buying."
@@ -146,35 +149,34 @@ export default function EarlyAccess() {
             />
           </label>
           {waitlistStatus ? <p className="mt-3 text-sm font-semibold text-[#FACC15]">{waitlistStatus}</p> : null}
-          <Button className="mt-4 w-full" type="submit">
+          <Button className="mt-4 w-full bg-neutral-900 text-white shadow-none" type="submit">
             Save waitlist entry
           </Button>
         </form>
 
-        <form className="mt-4 rounded-[24px] border border-white/10 bg-[#171717] p-5" onSubmit={handleFeedbackSubmit}>
+        <form className="mt-4 rounded-[24px] border border-neutral-200 bg-white p-5" onSubmit={handleFeedbackSubmit}>
           <h2 className="text-lg font-extrabold tracking-tight">Send product feedback</h2>
-          <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">
+          <p className="mt-2 text-sm leading-6 text-neutral-500">
             Tell us what would make Deep Spec worth coming back to. This is local-only until backend sync exists.
           </p>
           <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/42">Topic</span>
+            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Topic</span>
             <select
-              className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/28 px-3 text-sm text-white outline-none focus:border-[#FACC15]/50"
+              className="mt-2 h-12 w-full rounded-2xl border border-neutral-200 bg-white px-3 text-sm text-neutral-900 outline-none focus:border-[#FACC15]/50"
               onChange={(event) => setFeedbackCategory(event.target.value as FeedbackSubmission["category"])}
               value={feedbackCategory}
             >
               <option value="scanner">Scanner</option>
               <option value="ai_result">AI result</option>
-              <option value="saved_scans">Saved scans</option>
               <option value="chat">Follow-up chat</option>
               <option value="business">Would pay for</option>
               <option value="other">Other</option>
             </select>
           </label>
           <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/42">Feedback</span>
+            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Feedback</span>
             <textarea
-              className="mt-2 min-h-28 w-full resize-none rounded-2xl border border-white/10 bg-black/28 p-3 text-sm leading-6 text-white outline-none placeholder:text-white/32 focus:border-[#FACC15]/50"
+              className="mt-2 min-h-28 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[#FACC15]/50"
               maxLength={800}
               onChange={(event) => setFeedbackMessage(event.target.value)}
               placeholder="What felt useful, confusing, unsafe, or worth paying for?"
@@ -182,9 +184,9 @@ export default function EarlyAccess() {
             />
           </label>
           <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/42">Contact email optional</span>
+            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Contact email optional</span>
             <input
-              className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/28 px-3 text-sm text-white outline-none placeholder:text-white/32 focus:border-[#FACC15]/50"
+              className="mt-2 h-12 w-full rounded-2xl border border-neutral-200 bg-white px-3 text-sm text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[#FACC15]/50"
               inputMode="email"
               onChange={(event) => setContactEmail(event.target.value)}
               placeholder="only if you want a follow-up"
@@ -193,14 +195,10 @@ export default function EarlyAccess() {
             />
           </label>
           {feedbackStatus ? <p className="mt-3 text-sm font-semibold text-[#FACC15]">{feedbackStatus}</p> : null}
-          <Button className="mt-4 w-full" type="submit">
+          <Button className="mt-4 w-full bg-neutral-900 text-white shadow-none" type="submit">
             Save feedback
           </Button>
         </form>
-
-        <Link className="mt-5 block rounded-full bg-white/10 px-5 py-3 text-center text-sm font-bold text-white" to="/history">
-          View saved scans
-        </Link>
       </div>
     </main>
   );
