@@ -54,6 +54,7 @@ export type ScanAnalysisState = {
 export type AIInput = {
   type: "vision" | "text";
   imageBase64?: string;
+  imageBase64_2?: string;
   userMessage: string;
   systemPrompt: string;
   responseAsJson?: boolean;

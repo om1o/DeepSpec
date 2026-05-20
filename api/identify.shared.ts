@@ -97,6 +97,9 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
                 data: parsed.base64,
               },
             },
+            ...(parsed.base64_2 && parsed.mimeType_2
+              ? [{ inline_data: { mime_type: parsed.mimeType_2, data: parsed.base64_2 } }]
+              : []),
             { text: parsed.userMessage },
           ],
         },
@@ -158,6 +161,8 @@ function parseIdentifyRequest(body: unknown):
   | {
       base64: string;
       mimeType: string;
+      base64_2: string | null;
+      mimeType_2: string | null;
       userMessage: string;
     }
   | { error: IdentifyResponse } {
@@ -175,13 +180,29 @@ function parseIdentifyRequest(body: unknown):
     return { error: errorResponse(400, "invalid_input", "The captured image must be a JPEG, PNG, or WebP data URL.") };
   }
 
+  // Optional second image — silently ignored if invalid or oversized
+  let base64_2: string | null = null;
+  let mimeType_2: string | null = null;
+  if (typeof body.imageBase64_2 === "string" && body.imageBase64_2.length <= 14_000_000) {
+    const parsed2 = parseDataUrl(body.imageBase64_2);
+    if (parsed2) {
+      base64_2 = parsed2.base64;
+      mimeType_2 = parsed2.mimeType;
+    }
+  }
+
+  const hasSecond = base64_2 !== null;
   return {
     base64: parsedImage.base64,
     mimeType: parsedImage.mimeType,
+    base64_2,
+    mimeType_2,
     userMessage:
       typeof body.userMessage === "string" && body.userMessage.trim()
         ? body.userMessage.trim().slice(0, 500)
-        : "Identify this car part from the captured photo.",
+        : hasSecond
+          ? "Identify this car part from two photos taken from slightly different angles."
+          : "Identify this car part from the captured photo.",
   };
 }
 
