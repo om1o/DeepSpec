@@ -7,6 +7,7 @@ import Reticle from "../components/scanner/Reticle";
 import Button from "../components/ui/Button";
 import { useCamera } from "../hooks/useCamera";
 import { useStillness } from "../hooks/useStillness";
+import { assessImageQuality } from "../lib/imageQuality";
 import { isTestMode } from "../lib/testMode";
 import { saveLatestScanState } from "../lib/utils";
 import TestScanPanel from "../components/scanner/TestScanPanel";
@@ -36,6 +37,13 @@ export default function Scanner() {
       setIsAnalyzing(true);
       setCaptureError(null);
       const imageBase64 = await captureFrame();
+
+      const quality = await assessImageQuality(imageBase64);
+      if (!quality.ok) {
+        setCaptureError(quality.message);
+        return;
+      }
+
       const frame: CapturedFrame = {
         imageBase64,
         capturedAt: new Date().toISOString(),

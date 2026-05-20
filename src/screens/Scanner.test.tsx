@@ -57,6 +57,11 @@ vi.mock("../services/aiService", () => ({
   identifyCapturedFrame: (...args: unknown[]) => identifyCapturedFrame(...args),
 }));
 
+// Pass all images as ok — quality logic is tested separately in imageQuality.test.ts
+vi.mock("../lib/imageQuality", () => ({
+  assessImageQuality: vi.fn(async () => ({ ok: true })),
+}));
+
 describe("Scanner", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
