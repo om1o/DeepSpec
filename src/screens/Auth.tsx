@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   getVerifiedAuthUser,
@@ -22,6 +22,7 @@ export default function Auth() {
   const [isCheckingSession, setIsCheckingSession] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const codeInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -43,6 +44,12 @@ export default function Auth() {
       isMounted = false;
     };
   }, [navigate]);
+
+  useEffect(() => {
+    if (step === "code") {
+      codeInputRef.current?.focus();
+    }
+  }, [step]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -173,11 +180,16 @@ export default function Auth() {
               <span className="sr-only">Email address</span>
               <input
                 className="h-14 w-full rounded-[8px] border border-neutral-200 bg-white px-4 text-base font-semibold text-neutral-900 shadow-sm outline-none placeholder:text-neutral-400 focus:border-[#FACC15] focus:ring-4 focus:ring-yellow-100 disabled:bg-neutral-100"
+                autoCapitalize="none"
+                autoComplete="email"
                 disabled={step === "code" || isSubmitting}
+                enterKeyHint="next"
                 inputMode="email"
+                name="email"
                 onChange={(event) => setEmail(event.target.value)}
                 placeholder="Enter your email address"
                 required={supabaseConfigured}
+                spellCheck={false}
                 type="email"
                 value={email}
               />
@@ -187,10 +199,15 @@ export default function Auth() {
               <label className="block">
                 <span className="mb-2 block text-sm font-black text-neutral-700">Verification code</span>
                 <input
+                  ref={codeInputRef}
                   className="h-14 w-full rounded-[8px] border border-neutral-200 bg-white px-4 text-center text-xl font-black text-neutral-900 shadow-sm outline-none placeholder:text-neutral-400 focus:border-[#FACC15] focus:ring-4 focus:ring-yellow-100"
+                  autoComplete="one-time-code"
+                  enterKeyHint="done"
                   inputMode="numeric"
                   maxLength={8}
+                  name="verification-code"
                   onChange={(event) => setCode(event.target.value.replace(/\D/g, ""))}
+                  pattern="[0-9]*"
                   placeholder="000000"
                   required
                   type="text"
@@ -242,7 +259,7 @@ export default function Auth() {
         </div>
 
         <p className="mt-8 max-w-sm text-center text-xs font-semibold leading-5 text-neutral-500">
-          Verification codes are handled by Supabase Auth. Deep Spec checks your session before opening scanner tools.
+          Use a one-time verification code to continue.
         </p>
       </section>
     </main>
