@@ -6,6 +6,7 @@ const DATASET_ID = "Akilarasan01/car-parts-and-damage-dataset";
 const DATASET_URL = `https://huggingface.co/datasets/${DATASET_ID}`;
 const DEFAULT_OUTPUT = ".deepspec-eval/identify-failures.jsonl";
 const DEFAULT_SUMMARY = ".deepspec-eval/identify-summary.json";
+const RATE_LIMIT_RETRY_DELAYS_MS = [15_000, 30_000];
 
 const SAMPLE_IMAGES = [
   "Car damages dataset/File1/img/Car damages 100.png",
@@ -121,13 +122,7 @@ async function main() {
       const image = await fetchBytes(resolveUrl(imagePath));
       const dataUrl = toDataUrl(image.bytes, image.contentType);
       const analyzedAt = new Date().toISOString();
-      const response = await identify.createIdentifyResponse(
-        {
-          imageBase64: dataUrl,
-          userMessage: "Identify this car part or visible damage from the captured photo.",
-        },
-        env,
-      );
+      const response = await createIdentifyResponseWithRetry(identify, dataUrl, env);
       const result = response.status === 200 ? response.body.result : null;
       const error = response.status === 200 ? null : response.body.error;
       const score = scoreIdentificationResult(result, expectedLabels);
@@ -181,6 +176,28 @@ async function main() {
 
   console.log(`Saved ${failures.length} failure review row(s) to ${options.output}`);
   console.log(`Saved summary to ${options.summary}`);
+}
+
+async function createIdentifyResponseWithRetry(identify, dataUrl, env) {
+  const payload = {
+    imageBase64: dataUrl,
+    userMessage: "Identify this car part or visible damage from the captured photo.",
+  };
+
+  for (let attempt = 0; attempt <= RATE_LIMIT_RETRY_DELAYS_MS.length; attempt += 1) {
+    const response = await identify.createIdentifyResponse(payload, env);
+    const code = response.status === 200 ? null : response.body.error.code;
+
+    if (code !== "rate_limited" || attempt === RATE_LIMIT_RETRY_DELAYS_MS.length) {
+      return response;
+    }
+
+    const delayMs = RATE_LIMIT_RETRY_DELAYS_MS[attempt];
+    console.log(`rate_limited; retrying in ${Math.round(delayMs / 1000)}s`);
+    await sleep(delayMs);
+  }
+
+  throw new Error("Unreachable identify retry state.");
 }
 
 function parseArgs(args) {
@@ -433,6 +450,12 @@ function stableId(value) {
   }
 
   return hash.toString(16).padStart(8, "0");
+}
+
+function sleep(delayMs) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
 }
 
 async function writeJsonl(path, rows) {

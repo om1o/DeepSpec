@@ -164,6 +164,25 @@ describe("createIdentifyResponse", () => {
     expect(JSON.stringify(geminiBody)).toContain("DENSO 104210-1230");
   });
 
+  it("gives Gemini enough output budget to finish structured identify JSON", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" });
+
+    const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.generationConfig.maxOutputTokens).toBeGreaterThanOrEqual(2048);
+  });
+
   it("normalizes inconsistent safety-critical model output", async () => {
     const riskyResult = {
       ...result,
