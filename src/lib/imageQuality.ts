@@ -1,4 +1,4 @@
-export type ImageQualityIssue = "too_dark" | "too_blurry";
+export type ImageQualityIssue = "too_dark" | "too_bright" | "too_blurry";
 
 export type ImageQualityResult =
   | { ok: true }
@@ -10,6 +10,7 @@ export const QUALITY_SAMPLE_H = 72;
 
 // Thresholds
 const DARK_THRESHOLD = 20;    // avg luminance 0–255; below this = too dark to see detail
+const BRIGHT_THRESHOLD = 235; // above this = overexposed / direct sunlight / reflective chrome
 const BLUR_THRESHOLD = 120;   // gradient variance; below this = insufficient texture/sharpness
 
 /**
@@ -33,6 +34,14 @@ export function analyzeQuality(
       ok: false,
       issue: "too_dark",
       message: "Too dark to scan. Add light or move to a brighter spot.",
+    };
+  }
+
+  if (avgLum > BRIGHT_THRESHOLD) {
+    return {
+      ok: false,
+      issue: "too_bright",
+      message: "Too much glare or light. Shade the part or move out of direct sun.",
     };
   }
 
