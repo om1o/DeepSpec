@@ -191,6 +191,34 @@ describe("Scanner", () => {
     expect(screen.getByText("Saved scan")).toBeInTheDocument();
   }, 10000);
 
+  it("identifies an uploaded photo when the camera is blocked", async () => {
+    cameraHookState.current = {
+      cameraError: "Permission denied",
+      cameraRequestId: 7,
+      cameraState: "blocked",
+    };
+    objectTargetState.current = null;
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+          <Route path="/result" element={<Result />} />
+          <Route path="/result/:id" element={<Result />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await userEvent.upload(
+      screen.getByLabelText("Upload photo"),
+      new File(["test-image"], "alternator.jpg", { type: "image/jpeg" }),
+    );
+
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
+    expect(screen.getByText("Saved scan")).toBeInTheDocument();
+  }, 10000);
+
   it("requires a five-second hold before auto capture locks", () => {
     objectTargetState.current = {
       confidence: 0.82,

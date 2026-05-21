@@ -203,6 +203,10 @@ describe("Result", () => {
     expect(screen.getByRole("button", { name: "Share" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Export" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Tell me more" })).toHaveAttribute("href", `/result/${lookup.id}/chat`);
+    expect(screen.getByRole("link", { name: "What should I check next?" })).toHaveAttribute(
+      "href",
+      `/result/${lookup.id}/chat?q=What%20should%20I%20check%20next%20for%20this%20Alternator%3F`,
+    );
   });
 
   it("shows nearby options for professional verification cases", () => {
