@@ -27,6 +27,7 @@ describe("createIdentifyResponse", () => {
 
   afterEach(() => {
     rmSync(resolve(process.cwd(), "tmp-test-dataset"), { force: true, recursive: true });
+    rmSync(resolve(process.cwd(), "tmp-test-dataset-index"), { force: true, recursive: true });
   });
 
   it("requires a server-side Gemini key", async () => {
@@ -409,6 +410,7 @@ describe("createIdentifyResponse", () => {
         { imageBase64 },
         {
           DEEPSPEC_DATASET_ROOT: datasetRoot,
+          DEEPSPEC_DATASET_INDEX_PATH: resolve(datasetRoot, "missing-records.jsonl"),
           GEMINI_API_KEY: "test-key",
         },
       ),
@@ -423,5 +425,120 @@ describe("createIdentifyResponse", () => {
         },
       },
     });
+  });
+
+  it("uses the sorted local dataset index and source links when available", async () => {
+    const datasetRoot = resolve(process.cwd(), "tmp-test-dataset-index");
+    const indexPath = resolve(datasetRoot, "records.jsonl");
+    mkdirSync(datasetRoot, { recursive: true });
+    writeFileSync(
+      indexPath,
+      [
+        JSON.stringify({
+          canonicalKind: "part",
+          labels: ["Front-bumper"],
+          links: {
+            image:
+              "https://huggingface.co/datasets/DrBimmer/car-parts-and-damage-dataset/resolve/main/Car%20damages%20dataset/File1/img/Car%20damages%20100.png",
+          },
+          primaryLabel: "Front-bumper",
+        }),
+        JSON.stringify({
+          canonicalKind: "part",
+          labels: ["Front-bumper"],
+          links: {
+            image:
+              "https://huggingface.co/datasets/DrBimmer/car-parts-and-damage-dataset/resolve/main/Car%20damages%20dataset/File1/img/Car%20damages%20101.png",
+          },
+          primaryLabel: "Front-bumper",
+        }),
+      ].join("\n"),
+    );
+    const bumperResult = {
+      ...result,
+      partName: "Front bumper cover",
+      scanCategory: "body",
+      visibleObservations: ["Front bumper cover is centered in the photo."],
+    };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(bumperResult) }] } }],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(
+      createIdentifyResponse(
+        { imageBase64 },
+        {
+          DEEPSPEC_DATASET_INDEX_PATH: indexPath,
+          GEMINI_API_KEY: "test-key",
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          evidence: expect.arrayContaining([
+            "Local dataset match: Front-bumper (part, 2 labeled samples)",
+            "Dataset source: https://huggingface.co/datasets/DrBimmer/car-parts-and-damage-dataset/resolve/main/Car%20damages%20dataset/File1/img/Car%20damages%20100.png",
+          ]),
+        },
+      },
+    });
+  });
+
+  it("does not create a damage dataset match from negated damage text", async () => {
+    const datasetRoot = resolve(process.cwd(), "tmp-test-dataset-index");
+    const indexPath = resolve(datasetRoot, "records.jsonl");
+    mkdirSync(datasetRoot, { recursive: true });
+    writeFileSync(
+      indexPath,
+      JSON.stringify({
+        canonicalKind: "damage",
+        labels: ["Corrosion"],
+        links: {
+          image:
+            "https://huggingface.co/datasets/DrBimmer/car-parts-and-damage-dataset/resolve/main/Car%20parts%20dataset/File1/img/Car%20damages%201075.png",
+        },
+        primaryLabel: "Corrosion",
+      }),
+    );
+    const cleanResult = {
+      ...result,
+      concerns: ["The part appears clean and free of visible damage or corrosion."],
+      evidence: ["No corrosion is visible on the housing."],
+    };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(cleanResult) }] } }],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    const response = await createIdentifyResponse(
+      { imageBase64 },
+      {
+        DEEPSPEC_DATASET_INDEX_PATH: indexPath,
+        GEMINI_API_KEY: "test-key",
+      },
+    );
+
+    expect(response.status).toBe(200);
+    if (response.status === 200) {
+      expect(response.body.result.evidence).not.toEqual(expect.arrayContaining(["Local dataset match: Corrosion (damage, 1 labeled sample)"]));
+    }
   });
 });

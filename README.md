@@ -46,6 +46,16 @@ http://localhost:5173/scan?test=1
 
 Tap **Test engine photo** on the yellow panel. Requires `GEMINI_API_KEY` in `.env` / `.env.local` and `npm run dev`.
 
+### Local dataset matching
+
+After downloading `DrBimmer/car-parts-and-damage-dataset` into `datasets/raw/drbimmer-car-parts-and-damage-dataset`, build the local labeled index with:
+
+```bash
+npm run dataset:sort
+```
+
+The command writes ignored local files under `datasets/derived/drbimmer-car-parts-and-damage-dataset`, including `records.jsonl`, per-label indexes, and sorted image links. `/api/identify` reads that index after Gemini responds, adds matching local dataset evidence, and surfaces direct Hugging Face source links on the result screen.
+
 Google sign-in is hidden by default because it depends on a live Google OAuth client configured in the Supabase Google provider. Only enable it after the Google client ID and secret are valid:
 
 ```bash

@@ -76,7 +76,6 @@ describe("Auth", () => {
     expect(supabaseMock.auth.signInWithOtp.mock.calls[0][0].options).not.toHaveProperty("emailRedirectTo");
 
     await user.type(await screen.findByLabelText("Verification code"), "123456");
-    await user.click(screen.getByRole("button", { name: "Verify code" }));
 
     await waitFor(() => {
       expect(supabaseMock.auth.verifyOtp).toHaveBeenCalledWith({
