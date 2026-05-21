@@ -135,12 +135,12 @@ export default function Auth() {
     <main
       className="min-h-dvh bg-[var(--ds-page)] px-4 pb-8 pt-[max(28px,env(safe-area-inset-top))] text-slate-950"
       style={{
-        backgroundImage: "radial-gradient(circle, rgba(37,99,235,0.10) 1px, transparent 1px)",
+        backgroundImage: "radial-gradient(circle, rgba(11,116,255,0.10) 1px, transparent 1px)",
         backgroundSize: "20px 20px",
       }}
     >
       <section className="mx-auto flex w-full max-w-[540px] flex-col items-center">
-        <img src="/brand/deepspec-logo.png" alt="Deep Spec" className="h-28 w-full max-w-xs rounded-[14px] bg-white object-contain p-2 shadow-sm ring-1 ring-slate-200" />
+        <img src="/brand/deepspec-logo.png" alt="Deep Spec" className="h-28 w-full max-w-xs rounded-[14px] bg-white object-contain p-2 shadow-sm ring-1 ring-[var(--ds-accent-line)]" />
         <p className="mt-5 text-sm font-black text-[var(--ds-accent)]">Deep Spec</p>
         <h1 className="mt-7 text-center text-3xl font-black text-slate-950">Sign in with a code</h1>
         <p className="mt-3 text-center text-lg font-semibold text-slate-500">No password. No setup link.</p>
@@ -179,7 +179,7 @@ export default function Auth() {
             <label className="block">
               <span className="sr-only">Email address</span>
               <input
-                className="h-14 w-full rounded-[8px] border border-slate-200 bg-white px-4 text-base font-semibold text-slate-950 shadow-sm outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-blue-100 disabled:bg-slate-100"
+                className="h-14 w-full rounded-[8px] border border-slate-200 bg-white px-4 text-base font-semibold text-slate-950 shadow-sm outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)] disabled:bg-slate-100"
                 autoCapitalize="none"
                 autoComplete="email"
                 disabled={step === "code" || isSubmitting}
@@ -200,7 +200,7 @@ export default function Auth() {
                 <span className="mb-2 block text-sm font-black text-neutral-700">Verification code</span>
                 <input
                   ref={codeInputRef}
-                  className="h-14 w-full rounded-[8px] border border-slate-200 bg-white px-4 text-center text-xl font-black text-slate-950 shadow-sm outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-blue-100"
+                  className="h-14 w-full rounded-[8px] border border-slate-200 bg-white px-4 text-center text-xl font-black text-slate-950 shadow-sm outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)]"
                   autoComplete="one-time-code"
                   enterKeyHint="done"
                   inputMode="numeric"
@@ -217,7 +217,7 @@ export default function Auth() {
             ) : null}
 
             {notice ? (
-              <p className="rounded-[8px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800">
+              <p className="rounded-[8px] border border-[var(--ds-ok-line)] bg-[var(--ds-ok-soft)] px-4 py-3 text-sm font-bold text-[var(--ds-ok-ink)]">
                 {notice}
               </p>
             ) : null}
@@ -229,7 +229,7 @@ export default function Auth() {
             ) : null}
 
             <button
-              className="h-14 w-full rounded-[8px] bg-[var(--ds-accent)] px-4 text-base font-black text-white shadow-[var(--ds-shadow-primary)] transition active:bg-blue-700 disabled:pointer-events-none disabled:opacity-50"
+              className="h-14 w-full rounded-[8px] bg-[var(--ds-accent)] px-4 text-base font-black text-white shadow-[var(--ds-shadow-primary)] transition active:bg-[var(--ds-accent-pressed)] disabled:pointer-events-none disabled:opacity-50"
               disabled={isSubmitting || isGoogleLoading}
               type="submit"
             >

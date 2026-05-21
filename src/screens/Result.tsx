@@ -81,7 +81,7 @@ export default function Result() {
       <div className="mx-auto flex min-h-[calc(100dvh-48px)] w-full max-w-md flex-col">
         <header className="mb-5 flex items-center justify-between">
           <div className="min-w-0">
-            <img src="/brand/deepspec-logo.png" alt="Deep Spec" className="h-12 w-36 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-slate-200" />
+            <img src="/brand/deepspec-logo.png" alt="Deep Spec" className="h-12 w-36 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-[var(--ds-accent-line)]" />
             <h1 className="mt-2 truncate text-2xl font-extrabold tracking-tight">
               {scanState?.result ? scanState.result.partName : "Captured frame"}
             </h1>
