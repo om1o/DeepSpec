@@ -1,5 +1,5 @@
 import { createIdentifyResponse } from "./identify.shared";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const imageBase64 =
@@ -23,6 +23,10 @@ const result = {
 describe("createIdentifyResponse", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    rmSync(resolve(process.cwd(), "tmp-test-dataset"), { force: true, recursive: true });
   });
 
   it("requires a server-side Gemini key", async () => {
@@ -363,6 +367,59 @@ describe("createIdentifyResponse", () => {
         result: {
           safetyTriage: "needs_better_photo",
           needsBetterPhoto: true,
+        },
+      },
+    });
+  });
+
+  it("adds local dataset matches to result evidence when metadata is available", async () => {
+    const datasetRoot = resolve(process.cwd(), "tmp-test-dataset");
+    mkdirSync(resolve(datasetRoot, "Car damages dataset"), { recursive: true });
+    mkdirSync(resolve(datasetRoot, "Car parts dataset"), { recursive: true });
+    writeFileSync(
+      resolve(datasetRoot, "Car damages dataset", "meta.json"),
+      JSON.stringify({ classes: [{ title: "Front-bumper" }, { title: "Fender" }] }),
+    );
+    writeFileSync(
+      resolve(datasetRoot, "Car parts dataset", "meta.json"),
+      JSON.stringify({ classes: [{ title: "Dent" }, { title: "Scratch" }] }),
+    );
+    const bumperResult = {
+      ...result,
+      partName: "Front bumper",
+      scanCategory: "body",
+      visibleObservations: ["Large dent on the lower bumper cover."],
+      concerns: ["Dent visible near the center."],
+    };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(bumperResult) }] } }],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(
+      createIdentifyResponse(
+        { imageBase64 },
+        {
+          DEEPSPEC_DATASET_ROOT: datasetRoot,
+          GEMINI_API_KEY: "test-key",
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          evidence: expect.arrayContaining([
+            "Local dataset match: Front-bumper (part)",
+            "Local dataset match: Dent (damage)",
+          ]),
         },
       },
     });
