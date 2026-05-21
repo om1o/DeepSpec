@@ -1,5 +1,7 @@
 import { IDENTIFY_PROMPT } from "../src/services/systemPrompts";
 import { SCAN_CATEGORIES, type IdentificationResult, type ScanCategory } from "../src/types";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 type JsonObject = Record<string, unknown>;
 type LabelRescueTrigger = "too_blurry";
@@ -24,6 +26,7 @@ export type IdentifyResponse =
 const DEFAULT_MODEL = "gemini-2.5-flash";
 const DEFAULT_OCR_MODEL = "microsoft/trocr-large-printed";
 const IDENTIFY_MAX_OUTPUT_TOKENS = 2048;
+const DEFAULT_DATASET_ROOT = "datasets/raw/drbimmer-car-parts-and-damage-dataset";
 
 const IDENTIFICATION_RESPONSE_SCHEMA = {
   type: "object",
@@ -143,7 +146,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
     return errorResponse(502, "invalid_response", "Gemini returned JSON that Deep Spec could not read.");
   }
 
-  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null);
+  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env);
 
   console.info("[DeepSpec AI]", {
     model,
@@ -252,9 +255,14 @@ function parseIdentificationResult(text: string): IdentificationResult | null {
   }
 }
 
-function normalizeIdentificationResult(result: IdentificationResult, ocrText: string | null = null): IdentificationResult {
+function normalizeIdentificationResult(
+  result: IdentificationResult,
+  ocrText: string | null = null,
+  env: Record<string, string | undefined> = {},
+): IdentificationResult {
   const safetyTriage = result.isSafetyCritical ? "needs_professional" : result.safetyTriage;
   const needsBetterPhoto = result.needsBetterPhoto || safetyTriage === "needs_better_photo";
+  const cleanEvidence = appendDatasetEvidence(appendOcrEvidence(cleanList(result.evidence), ocrText), result, env);
 
   return {
     ...result,
@@ -263,7 +271,7 @@ function normalizeIdentificationResult(result: IdentificationResult, ocrText: st
     whatItDoes: cleanText(result.whatItDoes, "Deep Spec could not verify what this part does from this photo."),
     visibleObservations: cleanList(result.visibleObservations),
     concerns: cleanList(result.concerns),
-    evidence: appendOcrEvidence(cleanList(result.evidence), ocrText),
+    evidence: cleanEvidence,
     nextAction:
       safetyTriage === "needs_professional"
         ? ensureProfessionalNextAction(result.nextAction)
@@ -271,6 +279,114 @@ function normalizeIdentificationResult(result: IdentificationResult, ocrText: st
     safetyTriage,
     needsBetterPhoto,
   };
+}
+
+function appendDatasetEvidence(evidence: string[], result: IdentificationResult, env: Record<string, string | undefined>) {
+  const matches = findDatasetMatches(result, env);
+  if (!matches.length) {
+    return evidence;
+  }
+
+  const existingEvidence = new Set(evidence.map((item) => item.toLowerCase()));
+  const datasetEvidence = matches
+    .map((match) => `Local dataset match: ${match.label} (${match.kind})`)
+    .filter((item) => !existingEvidence.has(item.toLowerCase()));
+
+  return [...evidence, ...datasetEvidence].slice(0, 8);
+}
+
+type DatasetMatch = {
+  kind: "part" | "damage";
+  label: string;
+  score: number;
+};
+
+function findDatasetMatches(result: IdentificationResult, env: Record<string, string | undefined>): DatasetMatch[] {
+  const datasetRoot = resolve(process.cwd(), env.DEEPSPEC_DATASET_ROOT || DEFAULT_DATASET_ROOT);
+  const labelSets = [
+    {
+      kind: "part" as const,
+      labels: readDatasetClassTitles(resolve(datasetRoot, "Car damages dataset", "meta.json")),
+    },
+    {
+      kind: "damage" as const,
+      labels: readDatasetClassTitles(resolve(datasetRoot, "Car parts dataset", "meta.json")),
+    },
+  ];
+  const text = normalizeMatchText(
+    [
+      result.partName,
+      result.whatItDoes,
+      ...result.visibleObservations,
+      ...result.concerns,
+      ...result.evidence,
+    ].join(" "),
+  );
+
+  return labelSets
+    .map(({ kind, labels }) => findBestLabelMatch(kind, labels, text))
+    .filter((match): match is DatasetMatch => Boolean(match))
+    .sort((a, b) => b.score - a.score);
+}
+
+function readDatasetClassTitles(metaPath: string) {
+  if (!existsSync(metaPath)) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(metaPath, "utf8")) as unknown;
+    if (!isRecord(parsed) || !Array.isArray(parsed.classes)) {
+      return [];
+    }
+
+    return parsed.classes
+      .map((item) => (isRecord(item) && typeof item.title === "string" ? item.title : ""))
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function findBestLabelMatch(kind: DatasetMatch["kind"], labels: string[], text: string): DatasetMatch | null {
+  let best: DatasetMatch | null = null;
+
+  for (const label of labels) {
+    const normalizedLabel = normalizeMatchText(label);
+    const labelWords = normalizedLabel.split(" ").filter((word) => word.length > 2);
+    const score = scoreDatasetLabel(normalizedLabel, labelWords, text);
+    if (score > 0 && (!best || score > best.score)) {
+      best = { kind, label, score };
+    }
+  }
+
+  return best && best.score >= 2 ? best : null;
+}
+
+function scoreDatasetLabel(label: string, labelWords: string[], text: string) {
+  if (!label || !text) {
+    return 0;
+  }
+
+  if (text.includes(label)) {
+    return 4 + labelWords.length;
+  }
+
+  const matchedWords = labelWords.filter((word) => text.includes(word));
+  if (matchedWords.length === labelWords.length && labelWords.length > 0) {
+    return 3 + matchedWords.length;
+  }
+
+  return matchedWords.length;
+}
+
+function normalizeMatchText(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[-_/]/g, " ")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function appendOcrEvidence(evidence: string[], ocrText: string | null) {
