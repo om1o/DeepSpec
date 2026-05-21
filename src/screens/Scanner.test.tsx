@@ -40,6 +40,9 @@ const objectTargetState = vi.hoisted(() => ({
     width: number;
   },
 }));
+const objectTargetOptions = vi.hoisted(() => ({
+  latest: null as null | { enabled: boolean; holdDurationMs?: number; holdEnabled: boolean },
+}));
 const cameraHookState = vi.hoisted(() => ({
   current: {
     cameraError: null as string | null,
@@ -73,7 +76,10 @@ vi.mock("../hooks/useStillness", () => ({
 }));
 
 vi.mock("../hooks/useObjectTarget", () => ({
-  useObjectTarget: () => objectTargetState.current,
+  useObjectTarget: (_webcamRef: unknown, options: { enabled: boolean; holdDurationMs?: number; holdEnabled: boolean }) => {
+    objectTargetOptions.latest = options;
+    return objectTargetState.current;
+  },
 }));
 
 vi.mock("react-webcam", () => ({
@@ -88,12 +94,12 @@ vi.mock("../services/aiService", () => ({
   identifyCapturedFrame: (...args: unknown[]) => identifyCapturedFrame(...args),
 }));
 
-// Pass all images as ok — quality logic is tested separately in imageQuality.test.ts
+// Pass all images as ok - quality logic is tested separately in imageQuality.test.ts
 vi.mock("../lib/imageQuality", () => ({
   assessImageQuality: (...args: unknown[]) => assessImageQuality(...args),
 }));
 
-// Cache always misses in scanner tests — cache logic tested in scanCache.test.ts
+// Cache always misses in scanner tests - cache logic tested in scanCache.test.ts
 vi.mock("../lib/scanCache", () => ({
   hashImageDataUrl: vi.fn(async () => null),
   getCachedScanResult: vi.fn(() => null),
@@ -126,6 +132,7 @@ describe("Scanner", () => {
       top: 160,
       width: 240,
     };
+    objectTargetOptions.latest = null;
     localStorage.clear();
     sessionStorage.clear();
   });
@@ -183,6 +190,31 @@ describe("Scanner", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
     expect(screen.getByText("Saved scan")).toBeInTheDocument();
   }, 10000);
+
+  it("requires a five-second hold before auto capture locks", () => {
+    objectTargetState.current = {
+      confidence: 0.82,
+      height: 180,
+      holdProgress: 0,
+      isLocked: false,
+      left: 80,
+      top: 160,
+      width: 240,
+    };
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("Auto scan in 5s")).toBeInTheDocument();
+    expect(screen.getByText("Hold still 5s")).toBeInTheDocument();
+    expect(objectTargetOptions.latest?.holdDurationMs).toBe(5000);
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+  });
 
   it("shows camera permission denial and lets the user retry camera access", async () => {
     cameraHookState.current = {
@@ -274,6 +306,28 @@ describe("Scanner", () => {
     expect(localStorage.getItem("deep-spec:lookups")).toBeNull();
     expect(sessionStorage.getItem("deep-spec:latest-scan-state")).toBeNull();
   }, 10000);
+
+  it("keeps test scan mode clean when camera access is blocked", () => {
+    window.history.pushState({}, "", "/scan?test=1");
+    cameraHookState.current = {
+      cameraError: "Permission denied",
+      cameraRequestId: 9,
+      cameraState: "blocked",
+    };
+    objectTargetState.current = null;
+
+    render(
+      <MemoryRouter initialEntries={["/scan?test=1"]}>
+        <Routes>
+          <Route path="/scan" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("button", { name: "Test engine photo" })).toBeInTheDocument();
+    expect(screen.getByText("Test scan ready")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 1, name: "Camera access needed" })).not.toBeInTheDocument();
+  });
 
   it("lets the user cancel an accidental auto scan before the result opens", async () => {
     identifyCapturedFrame.mockImplementationOnce(() => new Promise(() => undefined));

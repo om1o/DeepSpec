@@ -52,11 +52,10 @@ describe("Result", () => {
     );
     expect(screen.getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
     expect(screen.getByText("Nothing concerning visible.")).toBeInTheDocument();
-    expect(screen.getByText("Trust check")).toBeInTheDocument();
+    expect(screen.getByText("Best match")).toBeInTheDocument();
     expect(screen.getByText("Useful match")).toBeInTheDocument();
-    expect(screen.getByText("Good")).toBeInTheDocument();
     expect(screen.getByText("The pulley and vented housing match common alternator shapes.")).toBeInTheDocument();
-    expect(screen.getByText("Reference links")).toBeInTheDocument();
+    expect(screen.getByText("Useful links")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Search this part" })).toHaveAttribute(
       "href",
       "https://www.google.com/search?q=Alternator%20car%20part",
@@ -78,7 +77,8 @@ describe("Result", () => {
       },
     });
 
-    expect(screen.getByRole("link", { name: "Dataset source" })).toHaveAttribute("href", sourceUrl);
+    expect(screen.getByRole("link", { name: "Hugging Face source 1" })).toHaveAttribute("href", sourceUrl);
+    expect(screen.queryByRole("link", { name: "Dataset source" })).not.toBeInTheDocument();
   });
 
   it("shows safety-critical guidance", () => {
@@ -93,9 +93,9 @@ describe("Result", () => {
       },
     });
 
-    expect(screen.getByText("Safety-critical")).toBeInTheDocument();
+    expect(screen.getByText("Professional check needed")).toBeInTheDocument();
     expect(screen.getByText("Professional verification needed")).toBeInTheDocument();
-    expect(screen.getByText(/Verify this with a mechanic/)).toBeInTheDocument();
+    expect(screen.getByText(/Verify this before driving/)).toBeInTheDocument();
   });
 
   it("shows incomplete data guidance when the scan needs a better photo", () => {
@@ -110,9 +110,8 @@ describe("Result", () => {
     });
 
     expect(screen.getByText("Incomplete data")).toBeInTheDocument();
-    expect(screen.getByText("Poor")).toBeInTheDocument();
     expect(screen.getByText("Better photo needed")).toBeInTheDocument();
-    expect(screen.getByText("Move closer, add light, and center any label, connector, leak, crack, or damaged area in the lens frame.")).toBeInTheDocument();
+    expect(screen.getByText("Move closer, add light, and center any label, connector, hose, or damaged area in the lens frame.")).toBeInTheDocument();
   });
 
   it("shows low-confidence uncertainty separately from better-photo cases", () => {
@@ -127,7 +126,6 @@ describe("Result", () => {
     });
 
     expect(screen.getByText("Low-confidence result")).toBeInTheDocument();
-    expect(screen.getByText("Usable but weak")).toBeInTheDocument();
   });
 
   it("shows a friendly AI error while keeping the captured image", () => {
