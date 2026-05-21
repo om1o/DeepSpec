@@ -101,6 +101,16 @@ export default defineConfig(async ({ mode }) => {
       globals: true,
       setupFiles: "./src/test/setup.ts",
     },
+    server: {
+      host: "0.0.0.0",
+      port: 5174,
+      strictPort: false,
+    },
+    preview: {
+      host: "0.0.0.0",
+      port: 4174,
+      strictPort: false,
+    },
   };
 });
 

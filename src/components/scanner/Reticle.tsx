@@ -3,10 +3,11 @@ import { cx } from "../../lib/utils";
 type ReticleProps = {
   isVisible: boolean;
   isLocked: boolean;
+  label?: string;
   progress: number;
 };
 
-export default function Reticle({ isLocked, isVisible, progress }: ReticleProps) {
+export default function Reticle({ isLocked, isVisible, label, progress }: ReticleProps) {
   const safeProgress = Math.max(0, Math.min(1, progress));
 
   return (
@@ -25,7 +26,12 @@ export default function Reticle({ isLocked, isVisible, progress }: ReticleProps)
       <div className="scanner-corner scanner-corner-bl" />
       <div className="scanner-corner scanner-corner-br" />
 
-      <div className="absolute left-1/2 top-[calc(100%+18px)] w-[min(240px,70vw)] -translate-x-1/2 rounded-full bg-black/45 p-1.5 ring-1 ring-white/12 backdrop-blur-md">
+      {label ? (
+        <div className="absolute left-1/2 top-[calc(100%+14px)] -translate-x-1/2 rounded-full bg-black/55 px-3 py-1.5 text-[11px] font-extrabold uppercase tracking-[0.16em] text-white/88 ring-1 ring-white/12 backdrop-blur-md">
+          {label}
+        </div>
+      ) : null}
+      <div className="absolute left-1/2 top-[calc(100%+48px)] w-[min(240px,70vw)] -translate-x-1/2 rounded-full bg-black/45 p-1.5 ring-1 ring-white/12 backdrop-blur-md">
         <div className="h-1.5 overflow-hidden rounded-full bg-white/14">
           <div
             className={cx(

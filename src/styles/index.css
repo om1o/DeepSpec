@@ -197,6 +197,11 @@ a {
   animation: scanner-error-flash 900ms var(--ds-ease-out) 1;
 }
 
+.scanner-analysis-sweep {
+  animation: scanner-analysis-sweep 1.15s var(--ds-ease) infinite;
+  box-shadow: 0 0 20px rgba(11,116,255,0.72);
+}
+
 .scanner-helper {
   animation: helper-fade 2.4s var(--ds-ease) forwards;
 }
@@ -219,6 +224,17 @@ a {
   }
   20%, 60% {
     box-shadow: 0 0 0 4px rgba(239,68,68,0.24), 0 0 28px rgba(239,68,68,0.22);
+  }
+}
+
+@keyframes scanner-analysis-sweep {
+  0%, 100% {
+    transform: translateY(-18px) scaleX(0.72);
+    opacity: 0.32;
+  }
+  50% {
+    transform: translateY(18px) scaleX(1);
+    opacity: 1;
   }
 }
 

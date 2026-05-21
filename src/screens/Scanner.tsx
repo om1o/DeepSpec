@@ -17,6 +17,9 @@ import { AIServiceError, getAIErrorMessage, identifyCapturedFrame } from "../ser
 import { createLookup } from "../services/storage";
 import type { CapturedFrame, LabelRescueTrigger, ScanAnalysisState } from "../types";
 
+const AUTO_SCAN_HOLD_MS = 5000;
+const SECOND_FRAME_DELAY_MS = 120;
+
 const videoConstraints: MediaTrackConstraints = {
   facingMode: { ideal: "environment" },
   width: { ideal: 1920 },
@@ -26,6 +29,7 @@ const videoConstraints: MediaTrackConstraints = {
 export default function Scanner() {
   const navigate = useNavigate();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisStep, setAnalysisStep] = useState<string | null>(null);
   const [autoScanPaused, setAutoScanPaused] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const autoScanStartedRef = useRef(false);
@@ -37,18 +41,23 @@ export default function Scanner() {
   const qaTestMode = isTestMode();
   const objectTarget = useObjectTarget(webcamRef, {
     enabled: cameraState === "ready" && !qaTestMode && !isAnalyzing,
+    holdDurationMs: AUTO_SCAN_HOLD_MS,
     holdEnabled: cameraState === "ready" && isStable && !isAnalyzing && !autoScanPaused,
   });
   const targetProgress = objectTarget?.holdProgress ?? 0;
   const hasTargetLock = Boolean(objectTarget?.isLocked);
-  const scannerStatus = getScannerStatus({
-    autoScanPaused,
-    cameraState,
-    hasTarget: Boolean(objectTarget),
-    hasTargetLock,
-    isStable,
-    usesFallback,
-  });
+  const autoScanSeconds = Math.max(1, Math.ceil((1 - targetProgress) * (AUTO_SCAN_HOLD_MS / 1000)));
+  const scannerStatus = qaTestMode
+    ? "Test scan ready"
+    : getScannerStatus({
+        autoScanPaused,
+        autoScanSeconds,
+        cameraState,
+        hasTarget: Boolean(objectTarget),
+        hasTargetLock,
+        isStable,
+        usesFallback,
+      });
 
   const pauseAutoScan = useCallback((message?: string) => {
     autoScanStartedRef.current = false;
@@ -92,10 +101,12 @@ export default function Scanner() {
     try {
       cancelScanRef.current = false;
       setIsAnalyzing(true);
+      setAnalysisStep("Capturing photo");
       setCaptureError(null);
       const imageBase64 = await captureFrame();
       if (cancelScanRef.current) return;
 
+      setAnalysisStep("Checking photo quality");
       const quality = await assessImageQuality(imageBase64);
       let labelRescueTrigger: LabelRescueTrigger | undefined;
       if (!quality.ok && quality.issue === "too_blurry") {
@@ -113,11 +124,13 @@ export default function Scanner() {
         saveLatestScanState({ frame });
       }
 
+      setAnalysisStep("Checking saved matches");
       const imageHash = !qaTestMode ? await hashImageDataUrl(imageBase64) : null;
       if (cancelScanRef.current) return;
       if (imageHash) {
         const cached = getCachedScanResult(imageHash);
         if (cached) {
+          setAnalysisStep("Opening result");
           persistAndNavigate({ frame, result: cached, analyzedAt: new Date().toISOString() });
           return;
         }
@@ -125,7 +138,7 @@ export default function Scanner() {
 
       let secondFrame: CapturedFrame | undefined;
       if (!qaTestMode) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 300));
+        await new Promise<void>((resolve) => setTimeout(resolve, SECOND_FRAME_DELAY_MS));
         if (cancelScanRef.current) return;
         try {
           const second = await captureFrame();
@@ -139,9 +152,11 @@ export default function Scanner() {
       }
 
       try {
+        setAnalysisStep("Matching vehicle data");
         const result = await identifyCapturedFrame(frame, secondFrame, labelRescueTrigger);
         if (cancelScanRef.current) return;
         if (imageHash) setCachedScanResult(imageHash, result);
+        setAnalysisStep("Saving result");
         persistAndNavigate({
           frame,
           result,
@@ -160,6 +175,7 @@ export default function Scanner() {
       pauseAutoScan(error instanceof Error ? error.message : "Capture failed. Try again.");
     } finally {
       setIsAnalyzing(false);
+      setAnalysisStep(null);
     }
   }, [captureFrame, isAnalyzing, pauseAutoScan, persistAndNavigate, qaTestMode]);
 
@@ -188,6 +204,7 @@ export default function Scanner() {
   function cancelCurrentScan() {
     cancelScanRef.current = true;
     setIsAnalyzing(false);
+    setAnalysisStep(null);
     pauseAutoScan("Scan canceled. Hold the right item steady to try again.");
   }
 
@@ -231,18 +248,23 @@ export default function Scanner() {
         </p>
       </header>
 
-      {cameraState === "loading" ? <CameraLoading /> : null}
-      {cameraState === "blocked" ? <CameraBlocked message={cameraError} onRetry={retryCamera} /> : null}
+      {!qaTestMode && cameraState === "loading" ? <CameraLoading /> : null}
+      {!qaTestMode && cameraState === "blocked" ? <CameraBlocked message={cameraError} onRetry={retryCamera} /> : null}
 
       {cameraState !== "blocked" ? (
         <>
-          <Reticle isLocked={hasTargetLock} isVisible={cameraState === "ready"} progress={targetProgress} />
+          <Reticle
+            isLocked={hasTargetLock}
+            isVisible={cameraState === "ready"}
+            label={getReticleLabel(Boolean(objectTarget), hasTargetLock, autoScanSeconds)}
+            progress={targetProgress}
+          />
 
           {needsPermission ? <MotionPermissionModal error={motionError} onAllow={requestPermission} /> : null}
           {captureError ? <CaptureErrorNotice message={captureError} onTryAgain={() => setCaptureError(null)} /> : null}
         </>
       ) : null}
-      {isAnalyzing ? <AnalyzingOverlay onCancel={cancelCurrentScan} /> : null}
+      {isAnalyzing ? <AnalyzingOverlay onCancel={cancelCurrentScan} step={analysisStep} /> : null}
       {!qaTestMode ? (
         <IdentifyButton
           isDisabled={cameraState !== "ready" || isAnalyzing}
@@ -259,6 +281,7 @@ export default function Scanner() {
 
 function getScannerStatus({
   autoScanPaused,
+  autoScanSeconds,
   cameraState,
   hasTarget,
   hasTargetLock,
@@ -266,6 +289,7 @@ function getScannerStatus({
   usesFallback,
 }: {
   autoScanPaused: boolean;
+  autoScanSeconds: number;
   cameraState: string;
   hasTarget: boolean;
   hasTargetLock: boolean;
@@ -285,7 +309,7 @@ function getScannerStatus({
   }
 
   if (hasTarget) {
-    return "Locking focus";
+    return `Auto scan in ${autoScanSeconds}s`;
   }
 
   if (!usesFallback && !isStable) {
@@ -293,6 +317,18 @@ function getScannerStatus({
   }
 
   return "Lens ready";
+}
+
+function getReticleLabel(hasTarget: boolean, hasTargetLock: boolean, autoScanSeconds: number) {
+  if (hasTargetLock) {
+    return "Scanning";
+  }
+
+  if (hasTarget) {
+    return `Hold still ${autoScanSeconds}s`;
+  }
+
+  return "Center the part";
 }
 
 function CameraLoading() {
@@ -331,13 +367,18 @@ function CameraBlocked({ message, onRetry }: { message: string | null; onRetry: 
   );
 }
 
-function AnalyzingOverlay({ onCancel }: { onCancel: () => void }) {
+function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; step: string | null }) {
   return (
-    <div className="fixed inset-0 z-40 grid place-items-center bg-slate-950/82 px-6 text-center backdrop-blur-md">
-      <div className="w-full max-w-xs rounded-[24px] border border-white/10 bg-slate-950/92 p-6 shadow-2xl">
-        <div className="mx-auto grid size-14 place-items-center rounded-full border-2 border-white/10 border-t-[var(--ds-accent)]" />
+    <div className="fixed inset-0 z-40 grid place-items-center bg-slate-950/78 px-6 text-center backdrop-blur-md">
+      <div className="w-full max-w-xs overflow-hidden rounded-[24px] border border-white/12 bg-slate-950/94 p-6 shadow-2xl">
+        <div className="relative mx-auto grid size-24 place-items-center">
+          <div className="absolute inset-0 rounded-full border border-white/10" />
+          <div className="absolute inset-2 animate-spin rounded-full border-2 border-white/10 border-t-[var(--ds-accent)]" />
+          <div className="absolute inset-7 rounded-full bg-[var(--ds-accent)]/16 shadow-[0_0_38px_rgba(11,116,255,0.45)]" />
+          <div className="scanner-analysis-sweep absolute inset-x-3 top-1/2 h-0.5 rounded-full bg-[var(--ds-accent)]" />
+        </div>
         <p className="mt-5 text-lg font-extrabold tracking-tight text-white">Analyzing photo</p>
-        <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">Checking the AI result against labeled mechanic data.</p>
+        <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">{step ?? "Matching the scan against vehicle data."}</p>
         <Button className="mt-5 w-full" variant="ghost" onClick={onCancel}>
           Cancel scan
         </Button>
