@@ -614,6 +614,13 @@ function getReferenceLinks(result: IdentificationResult): ReferenceLink[] {
     },
   ];
 
+  for (const url of getDatasetSourceUrls(result.evidence)) {
+    links.push({
+      label: "Dataset source",
+      url,
+    });
+  }
+
   if (result.safetyTriage === "needs_professional" || result.isSafetyCritical) {
     links.push({
       label: "Nearby repair options",
@@ -627,6 +634,21 @@ function getReferenceLinks(result: IdentificationResult): ReferenceLink[] {
   });
 
   return links;
+}
+
+function getDatasetSourceUrls(evidence: string[]) {
+  const urls = new Set<string>();
+
+  for (const item of evidence) {
+    const matches = item.match(/https:\/\/[^\s)]+/g) ?? [];
+    for (const match of matches) {
+      if (match.includes("huggingface.co/datasets/")) {
+        urls.add(match);
+      }
+    }
+  }
+
+  return [...urls].slice(0, 3);
 }
 
 function getTrustReview(result: IdentificationResult): TrustReview {

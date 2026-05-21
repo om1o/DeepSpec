@@ -411,7 +411,7 @@ function normalizeStoredIdentificationResult(value: unknown, correction?: string
     isSafetyCritical: result.isSafetyCritical,
     nextAction: cleanText(result.nextAction, 500),
     needsBetterPhoto: result.needsBetterPhoto,
-    evidence: cleanStringArray(result.evidence, 6, 180),
+    evidence: cleanStringArray(result.evidence, 8, 320),
   };
 }
 

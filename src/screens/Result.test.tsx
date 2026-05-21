@@ -63,6 +63,24 @@ describe("Result", () => {
     );
   });
 
+  it("turns matched dataset source evidence into a reference link", () => {
+    const sourceUrl =
+      "https://huggingface.co/datasets/DrBimmer/car-parts-and-damage-dataset/resolve/main/Car%20damages%20dataset/File1/img/Car%20damages%20100.png";
+
+    renderResult({
+      ...successfulScan,
+      result: {
+        ...successfulScan.result!,
+        evidence: [
+          "Local dataset match: Front-bumper (part, 12 labeled samples)",
+          `Dataset source: ${sourceUrl}`,
+        ],
+      },
+    });
+
+    expect(screen.getByRole("link", { name: "Dataset source" })).toHaveAttribute("href", sourceUrl);
+  });
+
   it("shows safety-critical guidance", () => {
     renderResult({
       ...successfulScan,

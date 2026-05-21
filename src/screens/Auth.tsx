@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { ClipboardEvent, FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   getVerifiedAuthUser,
@@ -12,6 +12,8 @@ import {
 
 type AuthStep = "email" | "code";
 const SCAN_ROUTE = "/scan";
+const CODE_LENGTH = 6;
+const RESEND_COOLDOWN_SECONDS = 30;
 
 export default function Auth() {
   const navigate = useNavigate();
@@ -25,7 +27,9 @@ export default function Auth() {
   const [isCheckingSession, setIsCheckingSession] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
   const codeInputRef = useRef<HTMLInputElement | null>(null);
+  const autoSubmittedCodeRef = useRef<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -54,6 +58,42 @@ export default function Auth() {
     }
   }, [step]);
 
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = window.setInterval(() => {
+      setResendCooldown((previous) => Math.max(0, previous - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [resendCooldown]);
+
+  const verifyCurrentCode = useCallback(async () => {
+    if (isSubmitting || !supabaseConfigured) return;
+    setError(null);
+    setNotice(null);
+    setIsSubmitting(true);
+    try {
+      const normalizedEmail = email.trim().toLowerCase();
+      await verifyEmailCode(normalizedEmail, code.trim());
+      navigate(SCAN_ROUTE, { replace: true });
+    } catch (authError) {
+      autoSubmittedCodeRef.current = null;
+      setError(authError instanceof Error ? authError.message : "Authentication failed. Try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [code, email, isSubmitting, navigate, supabaseConfigured]);
+
+  useEffect(() => {
+    if (step !== "code" || !supabaseConfigured || isSubmitting) return;
+    if (code.length !== CODE_LENGTH) {
+      if (code.length < CODE_LENGTH) autoSubmittedCodeRef.current = null;
+      return;
+    }
+    if (autoSubmittedCodeRef.current === code) return;
+    autoSubmittedCodeRef.current = code;
+    void verifyCurrentCode();
+  }, [code, isSubmitting, step, supabaseConfigured, verifyCurrentCode]);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
@@ -64,20 +104,19 @@ export default function Auth() {
       return;
     }
 
+    if (step === "code") {
+      await verifyCurrentCode();
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
       const normalizedEmail = email.trim().toLowerCase();
-
-      if (step === "email") {
-        await sendEmailVerificationCode(normalizedEmail);
-        setStep("code");
-        setNotice(`Verification code sent to ${normalizedEmail}.`);
-        return;
-      }
-
-      await verifyEmailCode(normalizedEmail, code.trim());
-      navigate(SCAN_ROUTE, { replace: true });
+      await sendEmailVerificationCode(normalizedEmail);
+      setStep("code");
+      setNotice(`Verification code sent to ${normalizedEmail}.`);
+      setResendCooldown(RESEND_COOLDOWN_SECONDS);
     } catch (authError) {
       setError(authError instanceof Error ? authError.message : "Authentication failed. Try again.");
     } finally {
@@ -99,6 +138,7 @@ export default function Auth() {
   }
 
   async function handleResendCode() {
+    if (resendCooldown > 0) return;
     setError(null);
     setNotice(null);
     setIsSubmitting(true);
@@ -107,6 +147,8 @@ export default function Auth() {
       const normalizedEmail = email.trim().toLowerCase();
       await sendEmailVerificationCode(normalizedEmail);
       setNotice(`New verification code sent to ${normalizedEmail}.`);
+      setResendCooldown(RESEND_COOLDOWN_SECONDS);
+      autoSubmittedCodeRef.current = null;
     } catch (authError) {
       setError(authError instanceof Error ? authError.message : "Could not resend the code. Try again.");
     } finally {
@@ -114,11 +156,20 @@ export default function Auth() {
     }
   }
 
+  function handleCodePaste(event: ClipboardEvent<HTMLInputElement>) {
+    const pasted = event.clipboardData.getData("text");
+    const digits = pasted.replace(/\D/g, "").slice(0, CODE_LENGTH);
+    if (!digits) return;
+    event.preventDefault();
+    setCode(digits);
+  }
+
   function handleUseDifferentEmail() {
     setStep("email");
     setCode("");
     setError(null);
     setNotice(null);
+    autoSubmittedCodeRef.current = null;
   }
 
   function handleLocalContinue() {
@@ -203,13 +254,14 @@ export default function Auth() {
                 <span className="mb-2 block text-sm font-black text-neutral-700">Verification code</span>
                 <input
                   ref={codeInputRef}
-                  className="h-14 w-full rounded-[8px] border border-slate-200 bg-white px-4 text-center text-xl font-black text-slate-950 shadow-sm outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)]"
+                  className="h-14 w-full rounded-[8px] border border-slate-200 bg-white px-4 text-center text-xl font-black tracking-[0.4em] text-slate-950 shadow-sm outline-none placeholder:text-slate-400 placeholder:tracking-normal focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)]"
                   autoComplete="one-time-code"
                   enterKeyHint="done"
                   inputMode="numeric"
-                  maxLength={8}
+                  maxLength={CODE_LENGTH}
                   name="verification-code"
-                  onChange={(event) => setCode(event.target.value.replace(/\D/g, ""))}
+                  onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, CODE_LENGTH))}
+                  onPaste={handleCodePaste}
                   pattern="[0-9]*"
                   placeholder="000000"
                   required
@@ -253,9 +305,9 @@ export default function Auth() {
                 type="button"
                 onClick={handleResendCode}
                 className="h-12 rounded-[8px] border border-neutral-200 bg-white px-3 text-sm font-black text-neutral-700 shadow-sm active:bg-neutral-50 disabled:pointer-events-none disabled:opacity-50"
-                disabled={isSubmitting}
+                disabled={isSubmitting || resendCooldown > 0}
               >
-                Resend code
+                {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : "Resend code"}
               </button>
             </div>
           ) : null}

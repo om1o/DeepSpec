@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import Button from "../components/ui/Button";
 import { getAIErrorMessage, sendFollowUp } from "../services/aiService";
@@ -11,6 +11,11 @@ export default function Chat() {
   const [question, setQuestion] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView?.({ behavior: "smooth", block: "end" });
+  }, [lookup?.chatHistory.length, isSending]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -144,6 +149,7 @@ export default function Chat() {
                 Thinking...
               </article>
             ) : null}
+            <div ref={messagesEndRef} aria-hidden="true" />
           </div>
 
           {error ? <p className="mt-3 text-sm font-semibold text-[var(--ds-danger-ink)]">{error}</p> : null}

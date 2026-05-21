@@ -74,7 +74,7 @@ describe("identify eval scoring", () => {
         imageBase64: "data:image/jpeg;base64,aGVsbG8=",
       },
       eval: {
-        datasetId: "Akilarasan01/car-parts-and-damage-dataset",
+        datasetId: "DrBimmer/car-parts-and-damage-dataset",
         expectedLabels: ["Back-bumper", "Dent"],
       },
     });

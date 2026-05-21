@@ -27,6 +27,7 @@ const DEFAULT_MODEL = "gemini-2.5-flash";
 const DEFAULT_OCR_MODEL = "microsoft/trocr-large-printed";
 const IDENTIFY_MAX_OUTPUT_TOKENS = 2048;
 const DEFAULT_DATASET_ROOT = "datasets/raw/drbimmer-car-parts-and-damage-dataset";
+const DEFAULT_DATASET_INDEX_PATH = "datasets/derived/drbimmer-car-parts-and-damage-dataset/records.jsonl";
 
 const IDENTIFICATION_RESPONSE_SCHEMA = {
   type: "object",
@@ -288,8 +289,7 @@ function appendDatasetEvidence(evidence: string[], result: IdentificationResult,
   }
 
   const existingEvidence = new Set(evidence.map((item) => item.toLowerCase()));
-  const datasetEvidence = matches
-    .map((match) => `Local dataset match: ${match.label} (${match.kind})`)
+  const datasetEvidence = matches.flatMap((match) => formatDatasetEvidence(match))
     .filter((item) => !existingEvidence.has(item.toLowerCase()));
 
   return [...evidence, ...datasetEvidence].slice(0, 8);
@@ -299,20 +299,14 @@ type DatasetMatch = {
   kind: "part" | "damage";
   label: string;
   score: number;
+  sampleCount?: number;
+  sourceUrl?: string | null;
 };
 
 function findDatasetMatches(result: IdentificationResult, env: Record<string, string | undefined>): DatasetMatch[] {
+  const datasetIndexPath = resolve(process.cwd(), env.DEEPSPEC_DATASET_INDEX_PATH || DEFAULT_DATASET_INDEX_PATH);
+  const datasetRecords = readDatasetRecords(datasetIndexPath);
   const datasetRoot = resolve(process.cwd(), env.DEEPSPEC_DATASET_ROOT || DEFAULT_DATASET_ROOT);
-  const labelSets = [
-    {
-      kind: "part" as const,
-      labels: readDatasetClassTitles(resolve(datasetRoot, "Car damages dataset", "meta.json")),
-    },
-    {
-      kind: "damage" as const,
-      labels: readDatasetClassTitles(resolve(datasetRoot, "Car parts dataset", "meta.json")),
-    },
-  ];
   const text = normalizeMatchText(
     [
       result.partName,
@@ -323,10 +317,123 @@ function findDatasetMatches(result: IdentificationResult, env: Record<string, st
     ].join(" "),
   );
 
+  if (datasetRecords.length) {
+    return findDatasetRecordMatches(datasetRecords, text);
+  }
+
+  return findRawMetadataMatches(datasetRoot, text);
+}
+
+function findRawMetadataMatches(datasetRoot: string, text: string): DatasetMatch[] {
+  const labelSets = [
+    {
+      kind: "part" as const,
+      labels: readDatasetClassTitles(resolve(datasetRoot, "Car damages dataset", "meta.json")),
+    },
+    {
+      kind: "damage" as const,
+      labels: readDatasetClassTitles(resolve(datasetRoot, "Car parts dataset", "meta.json")),
+    },
+  ];
+
   return labelSets
     .map(({ kind, labels }) => findBestLabelMatch(kind, labels, text))
     .filter((match): match is DatasetMatch => Boolean(match))
     .sort((a, b) => b.score - a.score);
+}
+
+type DatasetRecord = {
+  canonicalKind?: unknown;
+  labels?: unknown;
+  links?: unknown;
+  primaryLabel?: unknown;
+};
+
+function readDatasetRecords(indexPath: string): DatasetRecord[] {
+  if (!existsSync(indexPath)) {
+    return [];
+  }
+
+  try {
+    return readFileSync(indexPath, "utf8")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as unknown)
+      .filter(isRecord);
+  } catch {
+    return [];
+  }
+}
+
+function findDatasetRecordMatches(records: DatasetRecord[], text: string): DatasetMatch[] {
+  const labelGroups = new Map<string, DatasetMatch>();
+
+  for (const record of records) {
+    const kind = record.canonicalKind === "damage" ? "damage" : record.canonicalKind === "part" ? "part" : null;
+    if (!kind) {
+      continue;
+    }
+
+    const labels = getRecordLabels(record);
+    for (const label of labels) {
+      const key = `${kind}:${label.toLowerCase()}`;
+      const existing = labelGroups.get(key);
+      const sourceUrl = existing?.sourceUrl ?? getRecordSourceUrl(record);
+
+      labelGroups.set(key, {
+        kind,
+        label,
+        sampleCount: (existing?.sampleCount ?? 0) + 1,
+        score: existing?.score ?? 0,
+        sourceUrl,
+      });
+    }
+  }
+
+  return [...labelGroups.values()]
+    .map((match) => {
+      const normalizedLabel = normalizeMatchText(match.label);
+      const labelWords = normalizedLabel.split(" ").filter((word) => word.length > 2);
+      return {
+        ...match,
+        score: scoreDatasetLabel(match.kind, normalizedLabel, labelWords, text),
+      };
+    })
+    .filter((match) => match.score >= 2)
+    .sort((a, b) => b.score - a.score || (b.sampleCount ?? 0) - (a.sampleCount ?? 0))
+    .slice(0, 3);
+}
+
+function getRecordLabels(record: DatasetRecord) {
+  const labels = Array.isArray(record.labels) ? record.labels.filter((label): label is string => typeof label === "string" && Boolean(label.trim())) : [];
+  if (labels.length) {
+    return labels;
+  }
+
+  return typeof record.primaryLabel === "string" && record.primaryLabel.trim() ? [record.primaryLabel.trim()] : [];
+}
+
+function getRecordSourceUrl(record: DatasetRecord) {
+  if (!isRecord(record.links)) {
+    return null;
+  }
+
+  return typeof record.links.image === "string" ? record.links.image : typeof record.links.dataset === "string" ? record.links.dataset : null;
+}
+
+function formatDatasetEvidence(match: DatasetMatch) {
+  const sampleText =
+    typeof match.sampleCount === "number"
+      ? `, ${match.sampleCount} labeled sample${match.sampleCount === 1 ? "" : "s"}`
+      : "";
+  const evidence = [`Local dataset match: ${match.label} (${match.kind}${sampleText})`];
+
+  if (match.sourceUrl) {
+    evidence.push(`Dataset source: ${match.sourceUrl}`);
+  }
+
+  return evidence;
 }
 
 function readDatasetClassTitles(metaPath: string) {
@@ -354,7 +461,7 @@ function findBestLabelMatch(kind: DatasetMatch["kind"], labels: string[], text: 
   for (const label of labels) {
     const normalizedLabel = normalizeMatchText(label);
     const labelWords = normalizedLabel.split(" ").filter((word) => word.length > 2);
-    const score = scoreDatasetLabel(normalizedLabel, labelWords, text);
+    const score = scoreDatasetLabel(kind, normalizedLabel, labelWords, text);
     if (score > 0 && (!best || score > best.score)) {
       best = { kind, label, score };
     }
@@ -363,8 +470,12 @@ function findBestLabelMatch(kind: DatasetMatch["kind"], labels: string[], text: 
   return best && best.score >= 2 ? best : null;
 }
 
-function scoreDatasetLabel(label: string, labelWords: string[], text: string) {
+function scoreDatasetLabel(kind: DatasetMatch["kind"], label: string, labelWords: string[], text: string) {
   if (!label || !text) {
+    return 0;
+  }
+
+  if (kind === "damage" && isNegatedDamageLabel(label, text)) {
     return 0;
   }
 
@@ -378,6 +489,14 @@ function scoreDatasetLabel(label: string, labelWords: string[], text: string) {
   }
 
   return matchedWords.length;
+}
+
+function isNegatedDamageLabel(label: string, text: string) {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+  const beforeLabel = new RegExp(`\\b(no|not|without|free\\s+of|free\\s+from|none|absence\\s+of)\\b[^.]{0,80}\\b${escapedLabel}\\b`);
+  const afterLabel = new RegExp(`\\b${escapedLabel}\\b[^.]{0,60}\\b(absent|not\\s+visible|not\\s+present|was\\s+not\\s+visible)\\b`);
+
+  return beforeLabel.test(text) || afterLabel.test(text);
 }
 
 function normalizeMatchText(value: string) {
