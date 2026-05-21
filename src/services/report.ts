@@ -2,10 +2,17 @@ import type { Lookup } from "../types";
 
 export function buildScanReport(lookup: Lookup) {
   const result = lookup.result;
+  const datasetEvidence = getDatasetEvidence(result?.evidence ?? []);
   const lines = [
     "Deep Spec Scan Report",
     `Created: ${formatDate(lookup.createdAt)}`,
     `Captured: ${formatDate(lookup.frame.capturedAt)}`,
+    "",
+    "Mechanic summary:",
+    `${result?.partName ?? "Unidentified part"} · ${result?.confidence ?? "unknown"} confidence · ${lookup.scanCategory}`,
+    result?.safetyTriage === "needs_professional" || result?.isSafetyCritical
+      ? "Safety: verify with a qualified mechanic before driving or repairing."
+      : "Safety: no immediate safety-critical flag from the scan.",
     "",
     `Part: ${result?.partName ?? "Not identified"}`,
     `Confidence: ${result?.confidence ?? "unknown"}`,
@@ -22,6 +29,9 @@ export function buildScanReport(lookup: Lookup) {
     "",
     "Concerns:",
     formatList(result?.concerns, "Nothing concerning visible."),
+    "",
+    "Dataset evidence:",
+    formatList(datasetEvidence, "No local labeled dataset evidence matched this result."),
     "",
     "Next action:",
     result?.nextAction ?? "Scan again or ask a professional if this looks unsafe.",
@@ -75,5 +85,14 @@ function formatDate(value: string) {
 
 function formatList(items: string[] | undefined, emptyText = "None") {
   const visibleItems = items?.filter(Boolean) ?? [];
-  return visibleItems.length > 0 ? visibleItems.map((item) => `- ${item}`).join("\n") : emptyText;
+  return visibleItems.length > 0 ? visibleItems.slice(0, 8).map((item) => `- ${trimReportLine(item)}`).join("\n") : emptyText;
+}
+
+function getDatasetEvidence(evidence: string[]) {
+  return evidence.filter((item) => /^Local dataset match:|^Dataset source:/i.test(item));
+}
+
+function trimReportLine(value: string) {
+  const trimmed = value.replace(/\s+/g, " ").trim();
+  return trimmed.length > 220 ? `${trimmed.slice(0, 217)}...` : trimmed;
 }

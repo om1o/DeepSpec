@@ -105,7 +105,7 @@ describe("Auth", () => {
     expect(screen.queryByText(/apple/i)).not.toBeInTheDocument();
   });
 
-  it("keeps local continue limited to unconfigured development builds", async () => {
+  it("shows local continue when Supabase auth is not configured", async () => {
     const user = userEvent.setup();
     vi.stubEnv("VITE_SUPABASE_URL", "");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "");
@@ -114,6 +114,19 @@ describe("Auth", () => {
 
     expect(await screen.findByText("Supabase auth is not configured for this build. Local continue is only available for development.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /google/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Continue locally" }));
+
+    expect(localStorage.getItem("ds_auth_seen")).toBe("1");
+    expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
+  });
+
+  it("allows local browser QA to bypass configured Supabase auth in dev", async () => {
+    const user = userEvent.setup();
+
+    await renderAuth();
+
+    expect(await screen.findByText("Local browser QA can continue without sending an email code.")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Continue locally" }));
 

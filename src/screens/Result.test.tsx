@@ -112,7 +112,7 @@ describe("Result", () => {
     expect(screen.getByText("Incomplete data")).toBeInTheDocument();
     expect(screen.getByText("Poor")).toBeInTheDocument();
     expect(screen.getByText("Better photo needed")).toBeInTheDocument();
-    expect(screen.getByText("Move closer, add light, and center the label, connector, leak, crack, or damaged area.")).toBeInTheDocument();
+    expect(screen.getByText("Move closer, add light, and center any label, connector, leak, crack, or damaged area in the lens frame.")).toBeInTheDocument();
   });
 
   it("shows low-confidence uncertainty separately from better-photo cases", () => {

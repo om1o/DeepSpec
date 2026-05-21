@@ -66,7 +66,7 @@ VITE_ENABLE_GOOGLE_AUTH=true
 
 - Fullscreen rear-camera scanner
 - Motion permission prompt for iOS
-- Blue reticle, automatic hold capture, and a manual Scan button
+- Fixed lens frame, automatic hold capture, and a low manual Scan shutter
 - Capture and compress the current frame
 - Gemini-backed result screen through `/api/identify`
 - Model-backed scan category saved on every AI result, with deterministic fallback for old scans and user corrections

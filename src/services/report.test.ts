@@ -19,7 +19,11 @@ const lookup: Lookup = {
     isSafetyCritical: true,
     nextAction: "Verify this with a mechanic before driving.",
     needsBetterPhoto: false,
-    evidence: ["Caliper shape near wheel area."],
+    evidence: [
+      "Caliper shape near wheel area.",
+      "Local dataset match: Brake caliper (part, 4 labeled samples)",
+      "Dataset source: https://huggingface.co/datasets/DrBimmer/car-parts-and-damage-dataset/resolve/main/sample.jpg",
+    ],
   },
   analyzedAt: "2026-05-17T12:00:05.000Z",
   rating: "up",
@@ -36,8 +40,11 @@ describe("report", () => {
     const report = buildScanReport(lookup);
 
     expect(report).toContain("Deep Spec Scan Report");
+    expect(report).toContain("Mechanic summary:");
     expect(report).toContain("Part: Brake caliper");
     expect(report).toContain("Safety triage: needs_professional");
+    expect(report).toContain("Local dataset match: Brake caliper");
+    expect(report).toContain("Dataset source: https://huggingface.co/datasets/DrBimmer/car-parts-and-damage-dataset");
     expect(report).toContain("Front driver side.");
     expect(report).toContain("not a repair certification tool");
   });
