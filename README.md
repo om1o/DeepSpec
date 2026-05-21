@@ -32,11 +32,13 @@ VITE_SUPABASE_PUBLISHABLE_KEY=your_publishable_or_anon_key
 
 Never put a Supabase service-role key in a `VITE_` variable. Browser code can only use the publishable/anon key. Apply the migration in `supabase/migrations/20260518000100_deepspec_secure_foundation.sql`, enable Supabase anonymous sign-ins if you want device-only users to sync scans, and keep the `scan-images` bucket private.
 
+For email sign-in, configure the Supabase Auth email template to show the OTP token with `{{ .Token }}` instead of a setup or magic-link URL with `{{ .ConfirmationURL }}`. The app sends an email OTP request and verifies the typed code in the UI; it does not request an email redirect link for code sign-in.
+
 ## Current scope
 
 - Fullscreen rear-camera scanner
 - Motion permission prompt for iOS
-- Yellow reticle and Identify button after the phone is steady
+- Blue reticle, automatic hold capture, and a manual Scan button
 - Capture and compress the current frame
 - Gemini-backed result screen through `/api/identify`
 - Model-backed scan category saved on every AI result, with deterministic fallback for old scans and user corrections

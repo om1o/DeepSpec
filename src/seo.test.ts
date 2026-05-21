@@ -13,7 +13,7 @@ describe("SEO assets", () => {
     expect(html).toContain("AI car parts scanner");
     expect(html).toContain("identify car parts with camera");
     expect(html).toContain("application/ld+json");
-    expect(html).toContain("https://deepspec.app/icon-512.png");
+    expect(html).toContain("https://deepspec.app/brand/deepspec-logo.png");
     expect(html).toContain("/articles/ai-car-part-finding.html");
     expect(html).toContain("/articles/visual-ai-inspection-tools.html");
   });

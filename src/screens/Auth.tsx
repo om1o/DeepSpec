@@ -133,17 +133,17 @@ export default function Auth() {
 
   return (
     <main
-      className="min-h-dvh bg-white px-4 pb-8 pt-[max(28px,env(safe-area-inset-top))] text-neutral-900"
+      className="min-h-dvh bg-[var(--ds-page)] px-4 pb-8 pt-[max(28px,env(safe-area-inset-top))] text-slate-950"
       style={{
-        backgroundImage: "radial-gradient(circle, rgba(10,10,10,0.11) 1px, transparent 1px)",
+        backgroundImage: "radial-gradient(circle, rgba(37,99,235,0.10) 1px, transparent 1px)",
         backgroundSize: "20px 20px",
       }}
     >
       <section className="mx-auto flex w-full max-w-[540px] flex-col items-center">
-        <img src="/icon-192.png" alt="Deep Spec" className="h-16 w-16 rounded-[8px] object-cover shadow-sm" />
-        <p className="mt-4 text-sm font-black text-[#b49100]">Deep Spec</p>
-        <h1 className="mt-8 text-center text-3xl font-black text-neutral-900">Sign in or sign up</h1>
-        <p className="mt-3 text-center text-lg font-semibold text-neutral-500">Start scanning with Deep Spec</p>
+        <img src="/brand/deepspec-logo.png" alt="Deep Spec" className="h-28 w-full max-w-xs rounded-[14px] bg-white object-contain p-2 shadow-sm ring-1 ring-slate-200" />
+        <p className="mt-5 text-sm font-black text-[var(--ds-accent)]">Deep Spec</p>
+        <h1 className="mt-7 text-center text-3xl font-black text-slate-950">Sign in with a code</h1>
+        <p className="mt-3 text-center text-lg font-semibold text-slate-500">No password. No setup link.</p>
 
         <div className="mt-16 w-full space-y-3">
           {supabaseConfigured ? (
@@ -179,7 +179,7 @@ export default function Auth() {
             <label className="block">
               <span className="sr-only">Email address</span>
               <input
-                className="h-14 w-full rounded-[8px] border border-neutral-200 bg-white px-4 text-base font-semibold text-neutral-900 shadow-sm outline-none placeholder:text-neutral-400 focus:border-[#FACC15] focus:ring-4 focus:ring-yellow-100 disabled:bg-neutral-100"
+                className="h-14 w-full rounded-[8px] border border-slate-200 bg-white px-4 text-base font-semibold text-slate-950 shadow-sm outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-blue-100 disabled:bg-slate-100"
                 autoCapitalize="none"
                 autoComplete="email"
                 disabled={step === "code" || isSubmitting}
@@ -200,7 +200,7 @@ export default function Auth() {
                 <span className="mb-2 block text-sm font-black text-neutral-700">Verification code</span>
                 <input
                   ref={codeInputRef}
-                  className="h-14 w-full rounded-[8px] border border-neutral-200 bg-white px-4 text-center text-xl font-black text-neutral-900 shadow-sm outline-none placeholder:text-neutral-400 focus:border-[#FACC15] focus:ring-4 focus:ring-yellow-100"
+                  className="h-14 w-full rounded-[8px] border border-slate-200 bg-white px-4 text-center text-xl font-black text-slate-950 shadow-sm outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-blue-100"
                   autoComplete="one-time-code"
                   enterKeyHint="done"
                   inputMode="numeric"
@@ -229,7 +229,7 @@ export default function Auth() {
             ) : null}
 
             <button
-              className="h-14 w-full rounded-[8px] bg-neutral-900 px-4 text-base font-black text-white shadow-sm transition active:bg-neutral-800 disabled:pointer-events-none disabled:opacity-50"
+              className="h-14 w-full rounded-[8px] bg-[var(--ds-accent)] px-4 text-base font-black text-white shadow-[var(--ds-shadow-primary)] transition active:bg-blue-700 disabled:pointer-events-none disabled:opacity-50"
               disabled={isSubmitting || isGoogleLoading}
               type="submit"
             >
@@ -259,7 +259,7 @@ export default function Auth() {
         </div>
 
         <p className="mt-8 max-w-sm text-center text-xs font-semibold leading-5 text-neutral-500">
-          Use a one-time verification code to continue.
+          Use the one-time code from your email to continue.
         </p>
       </section>
     </main>
