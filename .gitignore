@@ -6,6 +6,8 @@ dist-ssr/
 .vercel/
 supabase/.temp/
 .deepspec-eval/
+datasets/raw/
+datasets/derived/
 
 .DS_Store
 *.local
