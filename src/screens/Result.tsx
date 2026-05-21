@@ -2,6 +2,7 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
 import Button from "../components/ui/Button";
+import { isTestMode } from "../lib/testMode";
 import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } from "../lib/utils";
 import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
 import { buildScanReport, downloadTextFile, getMechanicSearchUrl, getScanReportFilename } from "../services/report";
@@ -686,6 +687,10 @@ function getScanState(state: unknown): ScanAnalysisState | null {
 
   if (isCapturedFrame(state)) {
     return { frame: state };
+  }
+
+  if (isTestMode()) {
+    return null;
   }
 
   return readLatestScanState();
