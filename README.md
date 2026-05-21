@@ -36,6 +36,16 @@ For email sign-in, configure the Supabase Auth email template to show the OTP to
 
 After a session is verified, Deep Spec opens the scanner at `/scan`.
 
+### QA test scan (no save)
+
+Use this to send a bundled engine photo through Gemini without writing history, session cache, or cloud sync:
+
+```
+http://localhost:5173/scan?test=1
+```
+
+Tap **Test engine photo** on the yellow panel. Requires `GEMINI_API_KEY` in `.env` / `.env.local` and `npm run dev`.
+
 Google sign-in is hidden by default because it depends on a live Google OAuth client configured in the Supabase Google provider. Only enable it after the Google client ID and secret are valid:
 
 ```bash

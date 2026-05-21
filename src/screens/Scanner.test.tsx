@@ -173,17 +173,24 @@ describe("Scanner", () => {
   }, 10000);
 
   it("runs the generated engine test scan without saving it to history", async () => {
-    window.history.pushState({}, "", "/?test=1");
+    window.history.pushState({}, "", "/scan?test=1");
     objectTargetState.current = null;
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => new Response(new Blob(["test-engine-image"], { type: "image/jpeg" }), { status: 200 })),
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        headers: {
+          get: (name: string) => (name.toLowerCase() === "content-type" ? "image/jpeg" : null),
+        },
+        arrayBuffer: async () => new TextEncoder().encode("test-engine-image").buffer,
+      })),
     );
 
     render(
-      <MemoryRouter initialEntries={["/?test=1"]}>
+      <MemoryRouter initialEntries={["/scan?test=1"]}>
         <Routes>
-          <Route path="/" element={<Scanner />} />
+          <Route path="/scan" element={<Scanner />} />
           <Route path="/result" element={<Result />} />
         </Routes>
       </MemoryRouter>,

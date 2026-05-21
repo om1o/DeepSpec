@@ -11,22 +11,26 @@ type Props = {
   onBusyChange: (busy: boolean) => void;
 };
 
+async function responseToDataUrl(response: Response): Promise<string> {
+  const buffer = await response.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  const mime = response.headers.get("content-type")?.split(";")[0]?.trim() || "image/jpeg";
+  return `data:${mime};base64,${btoa(binary)}`;
+}
+
 async function loadTestFrame(): Promise<CapturedFrame> {
   const response = await fetch(TEST_ENGINE_IMAGE_URL);
   if (!response.ok) {
     throw new Error("Could not load the test engine photo.");
   }
 
-  const blob = await response.blob();
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error("Could not read test image."));
-    reader.readAsDataURL(blob);
-  });
-
   return {
-    imageBase64: dataUrl,
+    imageBase64: await responseToDataUrl(response),
     capturedAt: new Date().toISOString(),
   };
 }
