@@ -6,6 +6,9 @@ dist-ssr/
 .vercel/
 supabase/.temp/
 .deepspec-eval/
+.playwright-mcp/
+datasets/raw/
+datasets/derived/
 
 .DS_Store
 *.local
