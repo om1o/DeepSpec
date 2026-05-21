@@ -72,8 +72,9 @@ export default function App() {
   return (
     <Routes>
       <Route path="/auth" element={<Auth />} />
+      <Route path="/" element={<Navigate to="/scan" replace />} />
       <Route
-        path="/"
+        path="/scan"
         element={
           <RequireAuth>
             <Scanner />

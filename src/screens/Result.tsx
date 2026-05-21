@@ -86,7 +86,7 @@ export default function Result() {
               {scanState?.result ? scanState.result.partName : "Captured frame"}
             </h1>
           </div>
-          <Link to="/" className="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200">
+          <Link to="/scan" className="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200">
             Back
           </Link>
         </header>

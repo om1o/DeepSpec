@@ -13,6 +13,10 @@ export function isSupabaseAuthConfigured() {
   return Boolean(getSupabaseAuthConfig());
 }
 
+export function isGoogleAuthEnabled() {
+  return isSupabaseAuthConfigured() && import.meta.env.VITE_ENABLE_GOOGLE_AUTH?.trim().toLowerCase() === "true";
+}
+
 export function hasLocalAuthBypass() {
   return !isSupabaseAuthConfigured() && localStorage.getItem(LOCAL_AUTH_KEY) === "1";
 }
@@ -74,7 +78,7 @@ export async function signInWithGoogle() {
   const result = await client.auth.signInWithOAuth({
     provider: "google",
     options: {
-      redirectTo: window.location.origin,
+      redirectTo: new URL("/scan", window.location.origin).toString(),
     },
   });
 

@@ -34,6 +34,14 @@ Never put a Supabase service-role key in a `VITE_` variable. Browser code can on
 
 For email sign-in, configure the Supabase Auth email template to show the OTP token with `{{ .Token }}` instead of a setup or magic-link URL with `{{ .ConfirmationURL }}`. The app sends an email OTP request and verifies the typed code in the UI; it does not request an email redirect link for code sign-in.
 
+After a session is verified, Deep Spec opens the scanner at `/scan`.
+
+Google sign-in is hidden by default because it depends on a live Google OAuth client configured in the Supabase Google provider. Only enable it after the Google client ID and secret are valid:
+
+```bash
+VITE_ENABLE_GOOGLE_AUTH=true
+```
+
 ## Current scope
 
 - Fullscreen rear-camera scanner

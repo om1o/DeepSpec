@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   getVerifiedAuthUser,
+  isGoogleAuthEnabled,
   isSupabaseAuthConfigured,
   markLocalAuthBypass,
   sendEmailVerificationCode,
@@ -10,10 +11,12 @@ import {
 } from "../services/auth";
 
 type AuthStep = "email" | "code";
+const SCAN_ROUTE = "/scan";
 
 export default function Auth() {
   const navigate = useNavigate();
   const supabaseConfigured = isSupabaseAuthConfigured();
+  const googleAuthEnabled = isGoogleAuthEnabled();
   const [step, setStep] = useState<AuthStep>("email");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -30,7 +33,7 @@ export default function Auth() {
     getVerifiedAuthUser()
       .then((user) => {
         if (user) {
-          navigate("/", { replace: true });
+          navigate(SCAN_ROUTE, { replace: true });
         }
       })
       .catch(() => undefined)
@@ -74,7 +77,7 @@ export default function Auth() {
       }
 
       await verifyEmailCode(normalizedEmail, code.trim());
-      navigate("/", { replace: true });
+      navigate(SCAN_ROUTE, { replace: true });
     } catch (authError) {
       setError(authError instanceof Error ? authError.message : "Authentication failed. Try again.");
     } finally {
@@ -120,7 +123,7 @@ export default function Auth() {
 
   function handleLocalContinue() {
     markLocalAuthBypass();
-    navigate("/", { replace: true });
+    navigate(SCAN_ROUTE, { replace: true });
   }
 
   if (isCheckingSession) {
@@ -143,10 +146,10 @@ export default function Auth() {
         <img src="/brand/deepspec-logo.png" alt="Deep Spec" className="h-28 w-full max-w-xs rounded-[14px] bg-white object-contain p-2 shadow-sm ring-1 ring-[var(--ds-accent-line)]" />
         <p className="mt-5 text-sm font-black text-[var(--ds-accent)]">Deep Spec</p>
         <h1 className="mt-7 text-center text-3xl font-black text-slate-950">Sign in with a code</h1>
-        <p className="mt-3 text-center text-lg font-semibold text-slate-500">No password. No setup link.</p>
+        <p className="mt-3 text-center text-lg font-semibold text-slate-500">No password. No magic link.</p>
 
         <div className="mt-16 w-full space-y-3">
-          {supabaseConfigured ? (
+          {googleAuthEnabled ? (
             <button
               type="button"
               onClick={handleGoogleSignIn}
@@ -161,7 +164,7 @@ export default function Auth() {
             </button>
           ) : null}
 
-          {supabaseConfigured ? (
+          {googleAuthEnabled ? (
             <div className="flex items-center py-5">
               <div className="h-px flex-1 bg-neutral-200" />
               <span className="mx-4 text-sm font-semibold text-neutral-400">Or</span>
