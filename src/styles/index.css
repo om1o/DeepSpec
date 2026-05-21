@@ -2,17 +2,17 @@
 
 /* ============================================================================
    Deep Spec - Design Tokens
-   Clean diagnostic palette: graphite, cobalt, teal, amber, and red.
+   Logo-aligned palette: white field, DeepSpec blue, deep blue, and scanner ink.
    ========================================================================= */
 
 :root {
   /* Surfaces */
-  --ds-bg:            #08111F;
-  --ds-page:          #F6F8FB;
-  --ds-panel:         #F8FAFC;
+  --ds-bg:            #061522;
+  --ds-page:          #F7FAFF;
+  --ds-panel:         #F2F7FF;
   --ds-surface-1:     #FFFFFF;
-  --ds-surface-2:     #EEF2F7;
-  --ds-surface-3:     #E2E8F0;
+  --ds-surface-2:     #EAF2FF;
+  --ds-surface-3:     #D6E6FF;
   --ds-surface-input: #FFFFFF;
 
   /* Foregrounds */
@@ -24,32 +24,36 @@
   --ds-fg-6:    rgba(255,255,255,0.42);
   --ds-fg-7:    rgba(255,255,255,0.36);
   --ds-fg-8:    rgba(255,255,255,0.32);
-  --ds-fg-mute: #64748B;
+  --ds-fg-mute: #5F7086;
   --ds-fg-soft: #E5E7EB;
 
   /* Brand */
-  --ds-accent:         #2563EB;
-  --ds-accent-soft:    rgba(37,99,235,0.12);
-  --ds-accent-line:    rgba(37,99,235,0.45);
-  --ds-accent-glow:    0 0 20px rgba(37,99,235,0.30);
-  --ds-accent-corner:  rgba(37,99,235,0.92);
-  --ds-accent-corner-glow: drop-shadow(0 0 8px rgba(37,99,235,0.38));
-  --ds-feature-identify: #2563EB;
-  --ds-feature-damage:   #DC2626;
-  --ds-feature-leak:     #22D3EE;
-  --ds-feature-safety:   #7C3AED;
+  --ds-logo-ink:      #07111E;
+  --ds-logo-blue:     #0B74FF;
+  --ds-logo-blue-deep:#0A4EAD;
+  --ds-accent:        var(--ds-logo-blue);
+  --ds-accent-pressed:#0757C8;
+  --ds-accent-soft:   rgba(11,116,255,0.12);
+  --ds-accent-line:   rgba(11,116,255,0.38);
+  --ds-accent-glow:   0 0 20px rgba(11,116,255,0.32);
+  --ds-accent-corner: rgba(11,116,255,0.94);
+  --ds-accent-corner-glow: drop-shadow(0 0 8px rgba(11,116,255,0.42));
+  --ds-feature-identify: #0B74FF;
+  --ds-feature-damage:   #07111E;
+  --ds-feature-leak:     #47B5FF;
+  --ds-feature-safety:   #0A4EAD;
 
   /* Evidence */
-  --ds-evidence:      #2563EB;
-  --ds-evidence-soft: rgba(37,99,235,0.10);
-  --ds-evidence-line: rgba(37,99,235,0.24);
-  --ds-evidence-ink:  #1D4ED8;
+  --ds-evidence:      #0B74FF;
+  --ds-evidence-soft: rgba(11,116,255,0.10);
+  --ds-evidence-line: rgba(11,116,255,0.24);
+  --ds-evidence-ink:  #0A4EAD;
 
   /* Triage */
-  --ds-ok:         #14B8A6;
-  --ds-ok-soft:    rgba(20,184,166,0.15);
-  --ds-ok-line:    rgba(20,184,166,0.30);
-  --ds-ok-ink:     #0F766E;
+  --ds-ok:         #0B74FF;
+  --ds-ok-soft:    rgba(11,116,255,0.12);
+  --ds-ok-line:    rgba(11,116,255,0.28);
+  --ds-ok-ink:     #0A4EAD;
 
   --ds-warn:       #F59E0B;
   --ds-warn-soft:  rgba(245,158,11,0.14);
@@ -68,7 +72,7 @@
   --ds-border-3: rgba(15,23,42,0.20);
 
   /* Shadows */
-  --ds-shadow-primary:      0 14px 34px rgba(37,99,235,0.24);
+  --ds-shadow-primary:      0 14px 34px rgba(11,116,255,0.24);
   --ds-shadow-primary-soft: 0 12px 30px rgba(15,23,42,0.10);
 
   /* Radii */
@@ -184,8 +188,8 @@ a {
   right: 8px;
   top: 0;
   height: 2px;
-  background: linear-gradient(90deg, transparent, rgba(37,99,235,0.92), transparent);
-  box-shadow: 0 0 16px rgba(37,99,235,0.5);
+  background: linear-gradient(90deg, transparent, rgba(11,116,255,0.94), transparent);
+  box-shadow: 0 0 16px rgba(11,116,255,0.52);
   animation: scanner-sweep 1.3s var(--ds-ease) infinite;
 }
 
@@ -222,7 +226,7 @@ a {
 .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
 
 @keyframes ds-pulse-ring {
-  0%   { box-shadow: 0 0 0 0 rgba(20,184,166,0.55); }
-  70%  { box-shadow: 0 0 0 12px rgba(20,184,166,0.0); }
-  100% { box-shadow: 0 0 0 0 rgba(20,184,166,0.0); }
+  0%   { box-shadow: 0 0 0 0 rgba(11,116,255,0.52); }
+  70%  { box-shadow: 0 0 0 12px rgba(11,116,255,0.0); }
+  100% { box-shadow: 0 0 0 0 rgba(11,116,255,0.0); }
 }

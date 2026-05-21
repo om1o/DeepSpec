@@ -12,7 +12,7 @@ export default function IdentifyButton({ isVisible, isDisabled, isReady, onIdent
   const scanModes = [
     { label: "Identify", className: "bg-[var(--ds-feature-identify)] text-white" },
     { label: "Damage", className: "bg-[var(--ds-feature-damage)] text-white" },
-    { label: "Leak", className: "bg-[var(--ds-feature-leak)] text-slate-950" },
+    { label: "Leak", className: "bg-[var(--ds-feature-leak)] text-[var(--ds-logo-ink)]" },
     { label: "Safety", className: "bg-[var(--ds-feature-safety)] text-white" },
   ];
 
@@ -73,7 +73,7 @@ function DSButton({ isReady, isDisabled, onIdentify }: { isReady: boolean; isDis
         <span
           aria-hidden
           className="absolute inset-0 rounded-full animate-[ds-pulse-ring_1.6s_ease-out_infinite]"
-          style={{ boxShadow: "0 0 0 0 rgba(20,184,166,0.55)" }}
+          style={{ boxShadow: "0 0 0 0 rgba(11,116,255,0.52)" }}
         />
       )}
       <button
@@ -81,10 +81,10 @@ function DSButton({ isReady, isDisabled, onIdentify }: { isReady: boolean; isDis
         onClick={onIdentify}
         className="relative grid h-20 w-20 place-items-center rounded-full text-white transition-transform active:scale-95 disabled:pointer-events-none disabled:opacity-45"
         style={{
-          background: "linear-gradient(135deg, var(--ds-accent), #1D4ED8)",
+          background: "linear-gradient(135deg, var(--ds-accent), var(--ds-logo-blue-deep))",
           border: "6px solid var(--ds-panel)",
           boxShadow: isReady && !isDisabled
-            ? "0 0 0 2px rgba(20,184,166,0.78), 0 0 0 5px rgba(15,23,42,0.92), 0 14px 34px rgba(2,6,23,0.48)"
+            ? "0 0 0 2px rgba(11,116,255,0.78), 0 0 0 5px rgba(7,17,30,0.92), 0 14px 34px rgba(2,6,23,0.48)"
             : "0 14px 34px rgba(2,6,23,0.48)",
         }}
         aria-label="Scan now"
