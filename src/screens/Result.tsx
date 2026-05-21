@@ -77,16 +77,16 @@ export default function Result() {
   }
 
   return (
-    <main className="min-h-dvh bg-neutral-50 px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-neutral-900">
+    <main className="min-h-dvh bg-[var(--ds-page)] px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-slate-950">
       <div className="mx-auto flex min-h-[calc(100dvh-48px)] w-full max-w-md flex-col">
         <header className="mb-5 flex items-center justify-between">
-          <div>
-            <p className="text-[13px] font-extrabold uppercase tracking-[0.18em] text-neutral-400">Deep Spec</p>
-            <h1 className="mt-2 text-2xl font-extrabold tracking-tight">
+          <div className="min-w-0">
+            <img src="/brand/deepspec-logo.png" alt="Deep Spec" className="h-12 w-36 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-slate-200" />
+            <h1 className="mt-2 truncate text-2xl font-extrabold tracking-tight">
               {scanState?.result ? scanState.result.partName : "Captured frame"}
             </h1>
           </div>
-          <Link to="/" className="rounded-full bg-neutral-100 px-4 py-2 text-sm font-bold text-neutral-900">
+          <Link to="/" className="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200">
             Back
           </Link>
         </header>
@@ -133,7 +133,7 @@ export default function Result() {
           ) : null}
         </div>
 
-        <Button className="mt-6 w-full bg-neutral-900 text-white shadow-none" onClick={() => window.location.assign("/")}>
+        <Button className="mt-6 w-full" onClick={() => window.location.assign("/")}>
           Try another scan
         </Button>
       </div>
@@ -143,8 +143,8 @@ export default function Result() {
 
 function TestRunNotice({ label }: { label?: string }) {
   return (
-    <section className="rounded-[24px] border border-[#FACC15]/30 bg-[#FACC15]/10 p-5">
-      <p className="text-sm font-bold text-[#FACC15]">QA test result</p>
+    <section className="rounded-[24px] border border-[var(--ds-accent-line)] bg-[var(--ds-accent-soft)] p-5">
+      <p className="text-sm font-bold text-[var(--ds-accent)]">QA test result</p>
       <p className="mt-2 text-sm leading-6 text-neutral-700">
         This scan used {label ?? "a generated test photo"} and was not saved to history, cloud sync, or training review.
       </p>
@@ -154,8 +154,8 @@ function TestRunNotice({ label }: { label?: string }) {
 
 function StorageWarning({ message }: { message: string }) {
   return (
-    <section className="rounded-[24px] border border-[#F59E0B]/30 bg-[#F59E0B]/10 p-5">
-      <p className="text-sm font-bold text-[#FACC15]">Not saved locally</p>
+    <section className="rounded-[24px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-5">
+      <p className="text-sm font-bold text-[var(--ds-warn-ink)]">Not saved locally</p>
       <p className="mt-2 text-sm leading-6 text-neutral-700">{message}</p>
     </section>
   );
@@ -230,14 +230,14 @@ function SavedScanControls({
       {lookup.result ? (
         <div className="mt-4 grid grid-cols-1 gap-3">
           <Link
-            className="block rounded-full bg-neutral-900 px-5 py-3 text-center text-sm font-bold text-white"
+            className="block rounded-full bg-[var(--ds-accent)] px-5 py-3 text-center text-sm font-bold text-white shadow-sm"
             to={`/result/${lookup.id}/chat`}
           >
             Tell me more
           </Link>
           {needsProfessional ? (
             <a
-              className="block rounded-full border border-[#F59E0B]/30 bg-[#F59E0B]/10 px-5 py-3 text-center text-sm font-bold text-[#FACC15]"
+              className="block rounded-full border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-5 py-3 text-center text-sm font-bold text-[var(--ds-warn-ink)]"
               href={getMechanicSearchUrl(lookup)}
               rel="noreferrer"
               target="_blank"
@@ -250,13 +250,13 @@ function SavedScanControls({
 
       <div className="mt-4 grid grid-cols-2 gap-3">
         <Button
-          className={lookup.rating === "up" ? "bg-neutral-900 text-white shadow-none" : "bg-neutral-100 text-neutral-900 shadow-none"}
+          className={lookup.rating === "up" ? "bg-[var(--ds-ok)] text-white shadow-none" : "bg-neutral-100 text-neutral-900 shadow-none"}
           onClick={() => onRating("up")}
         >
           Helpful
         </Button>
         <Button
-          className={lookup.rating === "down" ? "bg-neutral-900 text-white shadow-none" : "bg-neutral-100 text-neutral-900 shadow-none"}
+          className={lookup.rating === "down" ? "bg-[var(--ds-danger)] text-white shadow-none" : "bg-neutral-100 text-neutral-900 shadow-none"}
           onClick={() => onRating("down")}
         >
           Wrong
@@ -267,7 +267,7 @@ function SavedScanControls({
         <label className="mt-4 block">
           <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">What was it actually?</span>
           <textarea
-            className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[#FACC15]/50"
+            className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[var(--ds-accent)]"
             maxLength={240}
             onChange={(event) => onCorrectionChange(event.target.value)}
             placeholder="Example: coolant reservoir cap, not brake fluid cap"
@@ -279,7 +279,7 @@ function SavedScanControls({
       <label className="mt-4 block">
         <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Private notes</span>
         <textarea
-          className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[#FACC15]/50"
+          className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[var(--ds-accent)]"
           maxLength={500}
           onChange={(event) => onNotesChange(event.target.value)}
           placeholder="Optional: where the part was, symptoms, what you checked next"
@@ -287,7 +287,7 @@ function SavedScanControls({
         />
       </label>
 
-      {saveError ? <p className="mt-3 text-sm font-semibold text-[#FCA5A5]">{saveError}</p> : null}
+      {saveError ? <p className="mt-3 text-sm font-semibold text-[var(--ds-danger-ink)]">{saveError}</p> : null}
 
       <div className="mt-4 rounded-[20px] border border-neutral-200 bg-neutral-50 p-4">
         <p className="text-sm font-extrabold text-neutral-900">Cloud dataset sync</p>
@@ -299,7 +299,7 @@ function SavedScanControls({
         >
           {isSyncingCloud ? "Syncing..." : "Sync this scan"}
         </Button>
-        {cloudStatusMessage ? <p className="mt-3 text-sm font-semibold text-[#FACC15]">{cloudStatusMessage}</p> : null}
+        {cloudStatusMessage ? <p className="mt-3 text-sm font-semibold text-[var(--ds-accent)]">{cloudStatusMessage}</p> : null}
       </div>
 
       <div className="mt-4 rounded-[20px] border border-neutral-200 bg-neutral-50 p-4">
@@ -315,10 +315,10 @@ function SavedScanControls({
             Export
           </Button>
         </div>
-        {reportStatus ? <p className="mt-3 text-sm font-semibold text-[#FACC15]">{reportStatus}</p> : null}
+        {reportStatus ? <p className="mt-3 text-sm font-semibold text-[var(--ds-accent)]">{reportStatus}</p> : null}
       </div>
 
-      <Button className="mt-4 w-full border border-[#EF4444]/30 bg-[#EF4444]/10 text-[#EF4444] shadow-none" onClick={onDelete}>
+      <Button className="mt-4 w-full border border-[var(--ds-danger-line)] bg-[var(--ds-danger-soft)] text-[var(--ds-danger)] shadow-none" onClick={onDelete}>
         Delete saved scan
       </Button>
     </section>
@@ -334,7 +334,7 @@ function AnalysisResult({ capturedAt, result }: { capturedAt: string | null; res
       <section className="rounded-[24px] border border-neutral-200 bg-white p-5">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-sm font-bold text-[#FACC15]">AI identification</p>
+            <p className="text-sm font-bold text-[var(--ds-accent)]">AI identification</p>
             <h2 className="mt-2 text-xl font-extrabold tracking-tight">{result.partName}</h2>
           </div>
           <ConfidenceBadge confidence={result.confidence} />
@@ -346,8 +346,8 @@ function AnalysisResult({ capturedAt, result }: { capturedAt: string | null; res
       <TrustReviewCard review={trustReview} />
 
       {showSafetyWarning ? (
-        <section className="rounded-[24px] border border-[#F59E0B]/30 bg-[#F59E0B]/10 p-5">
-          <p className="text-sm font-extrabold text-[#FACC15]">Safety-critical</p>
+        <section className="rounded-[24px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-5">
+          <p className="text-sm font-extrabold text-[var(--ds-warn-ink)]">Safety-critical</p>
           <p className="mt-2 text-sm leading-6 text-neutral-700">
             Verify this with a mechanic before driving or attempting repair. Deep Spec can explain what is visible, but this category needs professional confirmation.
           </p>
@@ -358,7 +358,7 @@ function AnalysisResult({ capturedAt, result }: { capturedAt: string | null; res
         <section className="rounded-[24px] border border-neutral-200 bg-neutral-50 p-5">
           <p className="text-sm font-extrabold text-neutral-900">Better photo needed</p>
           <p className="mt-2 text-sm leading-6 text-neutral-500">
-            Move closer, add light, and center any label, connector, hose, or damaged area in the yellow reticle.
+            Move closer, add light, and center any label, connector, hose, or damaged area in the blue reticle.
           </p>
         </section>
       ) : null}
@@ -413,7 +413,7 @@ function EvidenceSection({ items }: { items: string[] }) {
       {visibleItems.length > 0 ? (
         <div className="mt-3 flex flex-wrap gap-2">
           {visibleItems.map((item) => (
-            <span key={item} className="rounded-full border border-[#3B82F6]/24 bg-[#3B82F6]/10 px-3 py-2 text-xs font-semibold leading-5 text-[#3B82F6]">
+            <span key={item} className="rounded-full border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 py-2 text-xs font-semibold leading-5 text-[var(--ds-evidence-ink)]">
               {item}
             </span>
           ))}
@@ -438,7 +438,7 @@ function ReferenceLinksSection({ links }: { links: ReferenceLink[] }) {
         {links.map((link) => (
           <a
             key={link.url}
-            className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm font-bold text-[#3B82F6]"
+            className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm font-bold text-[var(--ds-evidence-ink)]"
             href={link.url}
             rel="noreferrer"
             target="_blank"
@@ -518,8 +518,8 @@ function AnalysisError({
   }
 
   return (
-    <section className="scanner-error-flash rounded-[24px] border border-[#EF4444]/30 bg-[#EF4444]/10 p-5">
-      <p className="text-sm font-bold text-[#FCA5A5]">AI identification failed</p>
+    <section className="scanner-error-flash rounded-[24px] border border-[var(--ds-danger-line)] bg-[var(--ds-danger-soft)] p-5">
+      <p className="text-sm font-bold text-[var(--ds-danger-ink)]">AI identification failed</p>
       <h2 className="mt-2 text-xl font-extrabold tracking-tight">Keep the photo and try again</h2>
       <p className="mt-3 text-sm leading-6 text-neutral-700">{message}</p>
       {capturedAt ? <p className="mt-3 text-xs font-semibold text-neutral-400">Captured {capturedAt}</p> : null}
@@ -530,14 +530,14 @@ function AnalysisError({
             {isOnline ? "Internet connection is active." : "Offline. Find an internet connection to retry identification."}
           </p>
           <Button
-            className="mt-3 w-full bg-neutral-900 text-white shadow-none"
+            className="mt-3 w-full"
             disabled={!isOnline || isRetrying}
             onClick={handleRetry}
           >
             {isRetrying ? "Retrying..." : "Try again"}
           </Button>
           {retryError ? (
-            <p className="mt-3 text-sm font-semibold text-[#FCA5A5]">{retryError}</p>
+            <p className="mt-3 text-sm font-semibold text-[var(--ds-danger-ink)]">{retryError}</p>
           ) : null}
         </div>
       ) : null}
@@ -548,7 +548,7 @@ function AnalysisError({
 function NotAnalyzed({ capturedAt }: { capturedAt: string | null }) {
   return (
     <section className="rounded-[24px] border border-neutral-200 bg-white p-5">
-      <p className="text-sm font-bold text-[#FACC15]">Not analyzed yet</p>
+      <p className="text-sm font-bold text-[var(--ds-accent)]">Not analyzed yet</p>
       <h2 className="mt-2 text-xl font-extrabold tracking-tight">Scan again to identify this</h2>
       <p className="mt-3 text-sm leading-6 text-neutral-500">
         Deep Spec has the captured frame, but no AI result is attached to this screen.
@@ -587,9 +587,9 @@ function ResultSection({
 
 function ConfidenceBadge({ confidence }: { confidence: Confidence }) {
   const styles = {
-    high: "bg-[#10B981]/15 text-[#6EE7B7] border-[#10B981]/30",
-    medium: "bg-[#F59E0B]/15 text-[#FCD34D] border-[#F59E0B]/30",
-    low: "bg-[#EF4444]/15 text-[#FCA5A5] border-[#EF4444]/30",
+    high: "bg-[var(--ds-ok-soft)] text-[var(--ds-ok-ink)] border-[var(--ds-ok-line)]",
+    medium: "bg-[var(--ds-warn-soft)] text-[var(--ds-warn-ink)] border-[var(--ds-warn-line)]",
+    low: "bg-[var(--ds-danger-soft)] text-[var(--ds-danger-ink)] border-[var(--ds-danger-line)]",
   };
 
   return (
@@ -631,7 +631,7 @@ function getReferenceLinks(result: IdentificationResult): ReferenceLink[] {
 function getTrustReview(result: IdentificationResult): TrustReview {
   if (result.safetyTriage === "needs_professional" || result.isSafetyCritical) {
     return {
-      borderClass: "border-[#F59E0B]/35",
+      borderClass: "border-[var(--ds-warn-line)]",
       description:
         "Deep Spec can explain the visible clues, but this category can affect driving safety. Do not treat this as repair approval.",
       photoQuality: result.confidence === "low" ? "Risk flagged and identification uncertain" : "Risk flagged",
@@ -642,7 +642,7 @@ function getTrustReview(result: IdentificationResult): TrustReview {
 
   if (result.safetyTriage === "needs_better_photo" || result.needsBetterPhoto) {
     return {
-      borderClass: "border-[#F59E0B]/35",
+      borderClass: "border-[var(--ds-warn-line)]",
       description: "The image does not give Deep Spec enough reliable detail. A better photo matters more than another guess.",
       photoQuality: "Poor",
       retakeGuidance: "Move closer, add light, and center the label, connector, leak, crack, or damaged area.",
@@ -652,7 +652,7 @@ function getTrustReview(result: IdentificationResult): TrustReview {
 
   if (result.confidence === "low") {
     return {
-      borderClass: "border-[#EF4444]/30",
+      borderClass: "border-[var(--ds-danger-line)]",
       description: "The app found some clues, but not enough to make a strong identification.",
       photoQuality: "Usable but weak",
       retakeGuidance: "Retake from a wider angle and one close-up of any label or connector.",
@@ -662,7 +662,7 @@ function getTrustReview(result: IdentificationResult): TrustReview {
 
   if (result.confidence === "medium") {
     return {
-      borderClass: "border-[#F59E0B]/25",
+      borderClass: "border-[var(--ds-warn-line)]",
       description: "This is useful for understanding the part, but one more angle would make the result stronger.",
       photoQuality: "Usable",
       retakeGuidance: "Optional: capture the label, connector, mounting point, or nearby part context.",
@@ -671,7 +671,7 @@ function getTrustReview(result: IdentificationResult): TrustReview {
   }
 
   return {
-    borderClass: "border-[#10B981]/25",
+    borderClass: "border-[var(--ds-ok-line)]",
     description: "The image has enough visual evidence for a useful consumer-level explanation.",
     photoQuality: "Good",
     retakeGuidance: "Optional: take a close-up label photo if you need more certainty later.",

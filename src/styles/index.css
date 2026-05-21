@@ -1,19 +1,21 @@
 @import "tailwindcss";
 
 /* ============================================================================
-   Deep Spec — Design Tokens
-   The mechanical professional. Dark, high-contrast, safety-first.
+   Deep Spec - Design Tokens
+   Clean diagnostic palette: graphite, cobalt, teal, amber, and red.
    ========================================================================= */
 
 :root {
   /* Surfaces */
-  --ds-bg:            #0A0A0A;
-  --ds-surface-1:     #171717;
-  --ds-surface-2:     rgba(255,255,255,0.04);
-  --ds-surface-3:     rgba(255,255,255,0.06);
-  --ds-surface-input: rgba(0,0,0,0.28);
+  --ds-bg:            #08111F;
+  --ds-page:          #F6F8FB;
+  --ds-panel:         #F8FAFC;
+  --ds-surface-1:     #FFFFFF;
+  --ds-surface-2:     #EEF2F7;
+  --ds-surface-3:     #E2E8F0;
+  --ds-surface-input: #FFFFFF;
 
-  /* Foregrounds — graduated white opacity scale */
+  /* Foregrounds */
   --ds-fg-1:    #FFFFFF;
   --ds-fg-2:    rgba(255,255,255,0.92);
   --ds-fg-3:    rgba(255,255,255,0.84);
@@ -22,48 +24,52 @@
   --ds-fg-6:    rgba(255,255,255,0.42);
   --ds-fg-7:    rgba(255,255,255,0.36);
   --ds-fg-8:    rgba(255,255,255,0.32);
-  --ds-fg-mute: #A1A1AA;
+  --ds-fg-mute: #64748B;
   --ds-fg-soft: #E5E7EB;
 
   /* Brand */
-  --ds-accent:         #FACC15;
-  --ds-accent-soft:    rgba(250,204,21,0.12);
-  --ds-accent-line:    rgba(250,204,21,0.45);
-  --ds-accent-glow:    0 0 20px rgba(250,204,21,0.30);
-  --ds-accent-corner:  rgba(250,204,21,0.88);
-  --ds-accent-corner-glow: drop-shadow(0 0 8px rgba(250,204,21,0.42));
+  --ds-accent:         #2563EB;
+  --ds-accent-soft:    rgba(37,99,235,0.12);
+  --ds-accent-line:    rgba(37,99,235,0.45);
+  --ds-accent-glow:    0 0 20px rgba(37,99,235,0.30);
+  --ds-accent-corner:  rgba(37,99,235,0.92);
+  --ds-accent-corner-glow: drop-shadow(0 0 8px rgba(37,99,235,0.38));
+  --ds-feature-identify: #2563EB;
+  --ds-feature-damage:   #DC2626;
+  --ds-feature-leak:     #22D3EE;
+  --ds-feature-safety:   #7C3AED;
 
   /* Evidence */
-  --ds-evidence:      #3B82F6;
-  --ds-evidence-soft: rgba(59,130,246,0.10);
-  --ds-evidence-line: rgba(59,130,246,0.24);
-  --ds-evidence-ink:  #BFDBFE;
+  --ds-evidence:      #2563EB;
+  --ds-evidence-soft: rgba(37,99,235,0.10);
+  --ds-evidence-line: rgba(37,99,235,0.24);
+  --ds-evidence-ink:  #1D4ED8;
 
   /* Triage */
-  --ds-ok:         #10B981;
-  --ds-ok-soft:    rgba(16,185,129,0.15);
-  --ds-ok-line:    rgba(16,185,129,0.30);
-  --ds-ok-ink:     #6EE7B7;
+  --ds-ok:         #14B8A6;
+  --ds-ok-soft:    rgba(20,184,166,0.15);
+  --ds-ok-line:    rgba(20,184,166,0.30);
+  --ds-ok-ink:     #0F766E;
 
   --ds-warn:       #F59E0B;
-  --ds-warn-soft:  rgba(245,158,11,0.15);
+  --ds-warn-soft:  rgba(245,158,11,0.14);
   --ds-warn-line:  rgba(245,158,11,0.30);
-  --ds-warn-ink:   #FCD34D;
-  --ds-warn-ink-2: #FACC15;
+  --ds-warn-ink:   #B45309;
+  --ds-warn-ink-2: #D97706;
 
   --ds-danger:      #EF4444;
   --ds-danger-soft: rgba(239,68,68,0.10);
   --ds-danger-line: rgba(239,68,68,0.30);
-  --ds-danger-ink:  #FCA5A5;
+  --ds-danger-ink:  #B91C1C;
 
   /* Borders */
-  --ds-border-1: rgba(255,255,255,0.10);
-  --ds-border-2: rgba(255,255,255,0.15);
-  --ds-border-3: rgba(255,255,255,0.20);
+  --ds-border-1: rgba(15,23,42,0.10);
+  --ds-border-2: rgba(15,23,42,0.15);
+  --ds-border-3: rgba(15,23,42,0.20);
 
   /* Shadows */
-  --ds-shadow-primary:      0 12px 40px rgba(255,255,255,0.18);
-  --ds-shadow-primary-soft: 0 12px 40px rgba(255,255,255,0.16);
+  --ds-shadow-primary:      0 14px 34px rgba(37,99,235,0.24);
+  --ds-shadow-primary-soft: 0 12px 30px rgba(15,23,42,0.10);
 
   /* Radii */
   --ds-radius-pill: 9999px;
@@ -90,7 +96,7 @@
 
 :root {
   color: var(--ds-fg-1);
-  background: var(--ds-bg);
+  background: var(--ds-page);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -107,7 +113,7 @@ body,
 #root {
   min-height: 100%;
   margin: 0;
-  background: var(--ds-bg);
+  background: var(--ds-page);
 }
 
 body {
@@ -121,7 +127,7 @@ a {
 }
 
 /* ============================================================================
-   Scanner reticle — corner brackets + helper tooltip
+   Scanner reticle - corner brackets + helper tooltip
    ========================================================================= */
 
 .scanner-corner {
@@ -178,8 +184,8 @@ a {
   right: 8px;
   top: 0;
   height: 2px;
-  background: linear-gradient(90deg, transparent, rgba(250,204,21,0.92), transparent);
-  box-shadow: 0 0 16px rgba(250,204,21,0.5);
+  background: linear-gradient(90deg, transparent, rgba(37,99,235,0.92), transparent);
+  box-shadow: 0 0 16px rgba(37,99,235,0.5);
   animation: scanner-sweep 1.3s var(--ds-ease) infinite;
 }
 
@@ -187,7 +193,6 @@ a {
   animation: scanner-error-flash 900ms var(--ds-ease-out) 1;
 }
 
-/* Helper tooltip auto-fades after showing — state-driven, not decorative */
 .scanner-helper {
   animation: helper-fade 2.4s var(--ds-ease) forwards;
 }
@@ -217,7 +222,7 @@ a {
 .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
 
 @keyframes ds-pulse-ring {
-  0%   { box-shadow: 0 0 0 0 rgba(74,222,128,0.55); }
-  70%  { box-shadow: 0 0 0 10px rgba(74,222,128,0.0); }
-  100% { box-shadow: 0 0 0 0 rgba(74,222,128,0.0); }
+  0%   { box-shadow: 0 0 0 0 rgba(20,184,166,0.55); }
+  70%  { box-shadow: 0 0 0 12px rgba(20,184,166,0.0); }
+  100% { box-shadow: 0 0 0 0 rgba(20,184,166,0.0); }
 }

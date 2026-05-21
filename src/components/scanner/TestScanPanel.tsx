@@ -72,13 +72,13 @@ export default function TestScanPanel({ onBusyChange }: Props) {
   }
 
   return (
-    <div className="fixed bottom-[120px] left-4 right-4 z-30 rounded-2xl border border-[#FACC15]/35 bg-black/78 p-4 backdrop-blur-xl">
-      <p className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-[#FACC15]">Test mode</p>
+    <div className="fixed bottom-[120px] left-4 right-4 z-30 rounded-2xl border border-[var(--ds-accent-line)] bg-slate-950/78 p-4 backdrop-blur-xl">
+      <p className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Test mode</p>
       <p className="mt-1 text-xs leading-5 text-white/72">Runs in memory only. No history or cloud save.</p>
       <Button className="mt-3 w-full" type="button" onClick={() => void runTestScan()}>
         Test engine photo
       </Button>
-      {error ? <p className="mt-2 text-xs text-[#EF4444]">{error}</p> : null}
+      {error ? <p className="mt-2 text-xs text-[var(--ds-danger-ink)]">{error}</p> : null}
     </div>
   );
 }

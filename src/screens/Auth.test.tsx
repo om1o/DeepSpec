@@ -44,7 +44,7 @@ describe("Auth", () => {
   it("uses Deep Spec branding and only shows the allowed provider", async () => {
     await renderAuth();
 
-    expect(await screen.findByRole("heading", { name: "Sign in or sign up" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sign in with a code" })).toBeInTheDocument();
     expect(screen.getByAltText("Deep Spec")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue with Google" })).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Enter your email address")).toBeInTheDocument();
@@ -68,7 +68,6 @@ describe("Auth", () => {
       expect(supabaseMock.auth.signInWithOtp).toHaveBeenCalledWith({
         email: "tester@example.com",
         options: {
-          emailRedirectTo: "http://localhost:3000",
           shouldCreateUser: true,
         },
       });

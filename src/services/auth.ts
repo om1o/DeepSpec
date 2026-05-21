@@ -40,7 +40,6 @@ export async function sendEmailVerificationCode(email: string) {
   const result = await client.auth.signInWithOtp({
     email,
     options: {
-      emailRedirectTo: window.location.origin,
       shouldCreateUser: true,
     },
   });

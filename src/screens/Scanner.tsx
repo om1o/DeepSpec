@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Webcam from "react-webcam";
 import { Link, useNavigate } from "react-router-dom";
+import IdentifyButton from "../components/scanner/IdentifyButton";
 import MotionPermissionModal from "../components/scanner/MotionPermissionModal";
 import Reticle from "../components/scanner/Reticle";
 import Button from "../components/ui/Button";
@@ -13,6 +14,7 @@ import { isTestMode } from "../lib/testMode";
 import { saveLatestScanState } from "../lib/utils";
 import TestScanPanel from "../components/scanner/TestScanPanel";
 import { AIServiceError, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
+import { createLookup } from "../services/storage";
 import type { CapturedFrame, LabelRescueTrigger, ScanAnalysisState } from "../types";
 
 const videoConstraints: MediaTrackConstraints = {
@@ -62,8 +64,19 @@ export default function Scanner() {
         return;
       }
 
-      saveLatestScanState(scanState);
-      navigate("/result", { state: scanState });
+      const saved = createLookup(scanState);
+      if (saved.ok) {
+        saveLatestScanState(scanState);
+        navigate(`/result/${saved.value.id}`, { state: scanState });
+        return;
+      }
+
+      const fallbackState = {
+        ...scanState,
+        storageWarning: saved.message,
+      };
+      saveLatestScanState(fallbackState);
+      navigate("/result", { state: fallbackState });
     },
     [navigate, qaTestMode],
   );
@@ -173,7 +186,7 @@ export default function Scanner() {
   }
 
   return (
-    <main className="relative min-h-dvh overflow-hidden bg-[#0A0A0A] text-white">
+    <main className="relative min-h-dvh overflow-hidden bg-[var(--ds-bg)] text-white">
       <Webcam
         key={cameraRequestId}
         ref={webcamRef}
@@ -187,26 +200,26 @@ export default function Scanner() {
         onUserMediaError={markError}
       />
 
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(0,0,0,0.52),rgba(0,0,0,0)_28%,rgba(0,0,0,0)_62%,rgba(0,0,0,0.62))]" />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(2,6,23,0.58),rgba(2,6,23,0)_30%,rgba(2,6,23,0)_58%,rgba(2,6,23,0.74))]" />
 
       <header className="fixed left-0 right-0 top-0 z-20 px-5 pt-[max(18px,env(safe-area-inset-top))]">
-        <div className="grid grid-cols-[44px_1fr_44px] items-center gap-3">
-          <div className="grid size-11 place-items-center rounded-full bg-black/38 ring-1 ring-white/10 backdrop-blur-xl overflow-hidden">
-            <img src="/icon-192.png" alt="Deep Spec" className="w-9 h-9 rounded-full object-cover" />
+        <div className="grid grid-cols-[96px_1fr_44px] items-center gap-3">
+          <div className="grid h-11 w-24 place-items-center overflow-hidden rounded-full bg-white/94 px-2 ring-1 ring-white/30 backdrop-blur-xl">
+            <img src="/brand/deepspec-logo.png" alt="Deep Spec" className="h-9 w-full object-contain" />
           </div>
-          <div className="rounded-full bg-black/34 px-4 py-2 text-center ring-1 ring-white/10 backdrop-blur-xl">
+          <div className="rounded-full bg-slate-950/54 px-4 py-2 text-center ring-1 ring-white/12 backdrop-blur-xl">
             <p className="text-[13px] font-extrabold tracking-tight text-white">Deep Spec</p>
-            <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-[#FACC15]">AI part scanner</p>
+            <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-[var(--ds-accent)]">AI part scanner</p>
           </div>
           <Link
             to="/early-access"
             aria-label="Early access"
-            className="grid size-11 place-items-center rounded-full bg-black/38 text-lg font-black leading-none text-white ring-1 ring-white/10 backdrop-blur-xl"
+            className="grid size-11 place-items-center rounded-full bg-slate-950/54 text-lg font-black leading-none text-white ring-1 ring-white/12 backdrop-blur-xl"
           >
             +
           </Link>
         </div>
-        <p className="mx-auto mt-3 w-fit rounded-full bg-black/28 px-3 py-2 text-center text-xs font-extrabold text-white/72 ring-1 ring-white/10 backdrop-blur-xl">
+        <p className="mx-auto mt-3 w-fit rounded-full bg-slate-950/42 px-3 py-2 text-center text-xs font-extrabold text-white/78 ring-1 ring-white/12 backdrop-blur-xl">
           {scannerStatus}
         </p>
       </header>
@@ -218,7 +231,7 @@ export default function Scanner() {
           <Reticle isVisible={cameraState === "ready" && Boolean(objectTarget)} target={objectTarget} />
 
           {usesFallback ? (
-            <p className="fixed bottom-[96px] left-1/2 z-20 w-[calc(100%-32px)] -translate-x-1/2 text-center text-xs font-semibold text-white/62">
+            <p className="fixed bottom-[220px] left-1/2 z-20 w-[calc(100%-32px)] -translate-x-1/2 text-center text-xs font-semibold text-white/70">
               {permissionState === "denied" ? "Motion access is off. Hold the item still to scan." : "Motion sensing unavailable. Visual hold scan is active."}
             </p>
           ) : null}
@@ -228,7 +241,16 @@ export default function Scanner() {
         </>
       ) : null}
       {isAnalyzing ? <AnalyzingOverlay onCancel={cancelCurrentScan} /> : null}
-      {qaTestMode ? <TestScanPanel onBusyChange={setIsAnalyzing} /> : null}
+      {!qaTestMode ? (
+        <IdentifyButton
+          isDisabled={cameraState !== "ready" || isAnalyzing}
+          isReady={cameraState === "ready" && !isAnalyzing && (Boolean(objectTarget) || usesFallback || isStable)}
+          isVisible={cameraState !== "blocked"}
+          onIdentify={() => void handleIdentify()}
+        />
+      ) : (
+        <TestScanPanel onBusyChange={setIsAnalyzing} />
+      )}
     </main>
   );
 }
@@ -255,7 +277,7 @@ function getScannerStatus({
   }
 
   if (!hasTarget) {
-    return "Move an item into the yellow target area";
+    return "Move an item into the blue target area";
   }
 
   if (!usesFallback && !isStable) {
@@ -269,9 +291,9 @@ function CameraBlocked({ message, onRetry }: { message: string | null; onRetry: 
   const denied = /denied|notallowed/i.test(message ?? "");
 
   return (
-    <div className="fixed inset-0 z-30 grid place-items-center bg-[#0A0A0A] px-6 text-center">
+    <div className="fixed inset-0 z-30 grid place-items-center bg-[var(--ds-bg)] px-6 text-center">
       <div className="max-w-sm">
-        <div className="mx-auto mb-5 grid size-14 place-items-center rounded-2xl border border-[#EF4444]/30 bg-[#EF4444]/10 text-[#EF4444]">
+        <div className="mx-auto mb-5 grid size-14 place-items-center rounded-2xl border border-[var(--ds-danger-line)] bg-[var(--ds-danger-soft)] text-[var(--ds-danger)]">
           !
         </div>
         <h1 className="text-2xl font-extrabold tracking-tight">Camera access needed</h1>
@@ -292,9 +314,9 @@ function CameraBlocked({ message, onRetry }: { message: string | null; onRetry: 
 
 function AnalyzingOverlay({ onCancel }: { onCancel: () => void }) {
   return (
-    <div className="fixed inset-0 z-40 grid place-items-center bg-black/82 px-6 text-center backdrop-blur-md">
-      <div className="w-full max-w-xs rounded-[24px] border border-white/10 bg-[#171717]/92 p-6 shadow-2xl">
-        <div className="mx-auto grid size-14 place-items-center rounded-full border-2 border-white/10 border-t-[#FACC15]" />
+    <div className="fixed inset-0 z-40 grid place-items-center bg-slate-950/82 px-6 text-center backdrop-blur-md">
+      <div className="w-full max-w-xs rounded-[24px] border border-white/10 bg-slate-950/92 p-6 shadow-2xl">
+        <div className="mx-auto grid size-14 place-items-center rounded-full border-2 border-white/10 border-t-[var(--ds-accent)]" />
         <p className="mt-5 text-lg font-extrabold tracking-tight text-white">Scanning photo</p>
         <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">Deep Spec is checking the visible part and damage.</p>
         <Button className="mt-5 w-full" variant="ghost" onClick={onCancel}>
@@ -307,8 +329,8 @@ function AnalyzingOverlay({ onCancel }: { onCancel: () => void }) {
 
 function CaptureErrorNotice({ message, onTryAgain }: { message: string; onTryAgain: () => void }) {
   return (
-    <div className="fixed bottom-[96px] left-1/2 z-20 w-[calc(100%-32px)] max-w-sm -translate-x-1/2 rounded-2xl border border-[#EF4444]/30 bg-[#2A0F12]/92 p-4 text-center shadow-2xl">
-      <p className="text-sm font-extrabold text-[#FCA5A5]">{message}</p>
+    <div className="fixed bottom-[220px] left-1/2 z-20 w-[calc(100%-32px)] max-w-sm -translate-x-1/2 rounded-2xl border border-[var(--ds-danger-line)] bg-[#2A0F12]/92 p-4 text-center shadow-2xl">
+      <p className="text-sm font-extrabold text-[var(--ds-danger-ink)]">{message}</p>
       <Button className="mt-3 w-full" onClick={onTryAgain}>
         Try again
       </Button>

@@ -118,7 +118,7 @@ describe("Scanner", () => {
     sessionStorage.clear();
   });
 
-  it("auto captures a held target, identifies, and navigates to an unsaved result", async () => {
+  it("auto captures a held target, identifies, saves it, and opens the saved result", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <Routes>
@@ -130,7 +130,7 @@ describe("Scanner", () => {
     );
 
     expect(screen.getByTestId("webcam-preview")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Identify" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Scan now" })).toBeInTheDocument();
     expect(screen.getByTestId("object-reticle")).toBeInTheDocument();
 
     await waitFor(() => expect(captureFrame).toHaveBeenCalled());
@@ -141,8 +141,35 @@ describe("Scanner", () => {
       "data:image/jpeg;base64,compressed-frame",
     );
     expect(screen.getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
-    expect(screen.queryByText("Saved scan")).not.toBeInTheDocument();
-    expect(localStorage.getItem("deep-spec:lookups")).toBeNull();
+    expect(screen.getByText("Saved scan")).toBeInTheDocument();
+    const savedLookups = JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]");
+    expect(savedLookups).toHaveLength(1);
+    expect(savedLookups[0]).toMatchObject({
+      scanCategory: "electrical",
+      trainingLabel: "Alternator",
+      trainingStatus: "raw_unreviewed",
+    });
+  }, 10000);
+
+  it("lets the user run a manual scan when target lock is not available", async () => {
+    objectTargetState.current = null;
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+          <Route path="/result" element={<Result />} />
+          <Route path="/result/:id" element={<Result />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByTestId("object-reticle")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
+    expect(screen.getByText("Saved scan")).toBeInTheDocument();
   }, 10000);
 
   it("runs the generated engine test scan without saving it to history", async () => {

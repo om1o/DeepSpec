@@ -62,13 +62,13 @@ export default defineConfig(async ({ mode }) => {
       },
       VitePWA({
         registerType: "autoUpdate",
-        includeAssets: ["icon-192.png", "icon-512.png"],
+        includeAssets: ["icon-192.png", "icon-512.png", "brand/deepspec-logo.png"],
         manifest: {
           name: "Deep Spec",
           short_name: "Deep Spec",
           description: "Know what you're looking at.",
-          theme_color: "#0A0A0A",
-          background_color: "#0A0A0A",
+          theme_color: "#08111F",
+          background_color: "#F6F8FB",
           display: "standalone",
           orientation: "portrait",
           start_url: "/",
