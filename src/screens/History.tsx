@@ -19,7 +19,7 @@ export default function History() {
             <Link to="/early-access" className="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200">
               Join
             </Link>
-            <Link to="/" className="rounded-full bg-[var(--ds-accent)] px-4 py-2 text-sm font-bold text-white shadow-sm">
+            <Link to="/scan" className="rounded-full bg-[var(--ds-accent)] px-4 py-2 text-sm font-bold text-white shadow-sm">
               Scan
             </Link>
           </div>
@@ -38,7 +38,7 @@ export default function History() {
             <p className="mt-3 text-sm leading-6 text-neutral-500">
               Deep Spec will save the photo, AI result, rating, correction, and notes on this device.
             </p>
-            <Button className="mt-5 w-full" onClick={() => window.location.assign("/")}>
+            <Button className="mt-5 w-full" onClick={() => window.location.assign("/scan")}>
               Open scanner
             </Button>
           </section>

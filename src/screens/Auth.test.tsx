@@ -23,6 +23,7 @@ describe("Auth", () => {
     localStorage.clear();
     vi.stubEnv("VITE_SUPABASE_URL", "https://deep-spec.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "public-test-key");
+    vi.stubEnv("VITE_ENABLE_GOOGLE_AUTH", "");
 
     supabaseMock.auth.getUser.mockReset();
     supabaseMock.auth.signInWithOAuth.mockReset();
@@ -41,12 +42,12 @@ describe("Auth", () => {
     vi.unstubAllEnvs();
   });
 
-  it("uses Deep Spec branding and only shows the allowed provider", async () => {
+  it("uses Deep Spec branding and defaults to code sign-in", async () => {
     await renderAuth();
 
     expect(await screen.findByRole("heading", { name: "Sign in with a code" })).toBeInTheDocument();
     expect(screen.getByAltText("Deep Spec")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Continue with Google" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Continue with Google" })).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText("Enter your email address")).toBeInTheDocument();
     expect(screen.queryByText(/facebook/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/microsoft/i)).not.toBeInTheDocument();
@@ -72,6 +73,7 @@ describe("Auth", () => {
         },
       });
     });
+    expect(supabaseMock.auth.signInWithOtp.mock.calls[0][0].options).not.toHaveProperty("emailRedirectTo");
 
     await user.type(await screen.findByLabelText("Verification code"), "123456");
     await user.click(screen.getByRole("button", { name: "Verify code" }));
@@ -86,8 +88,9 @@ describe("Auth", () => {
     expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
   });
 
-  it("starts Google auth without showing removed providers", async () => {
+  it("starts Google auth only when explicitly enabled", async () => {
     const user = userEvent.setup();
+    vi.stubEnv("VITE_ENABLE_GOOGLE_AUTH", "true");
     await renderAuth();
 
     await user.click(await screen.findByRole("button", { name: "Continue with Google" }));
@@ -95,7 +98,7 @@ describe("Auth", () => {
     expect(supabaseMock.auth.signInWithOAuth).toHaveBeenCalledWith({
       provider: "google",
       options: {
-        redirectTo: "http://localhost:3000",
+        redirectTo: "http://localhost:3000/scan",
       },
     });
     expect(screen.queryByText(/facebook/i)).not.toBeInTheDocument();
@@ -127,7 +130,7 @@ async function renderAuth() {
     <MemoryRouter initialEntries={["/auth"]}>
       <Routes>
         <Route path="/auth" element={<Auth />} />
-        <Route path="/" element={<div>Scanner opened</div>} />
+        <Route path="/scan" element={<div>Scanner opened</div>} />
       </Routes>
     </MemoryRouter>,
   );

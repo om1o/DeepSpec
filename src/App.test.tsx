@@ -30,12 +30,26 @@ describe("App auth guard", () => {
   it("redirects protected routes when Supabase does not verify a user", async () => {
     authMock.getVerifiedAuthUser.mockResolvedValue(null);
 
-    renderApp("/");
+    renderApp("/scan");
 
     expect(await screen.findByText("Auth screen")).toBeInTheDocument();
   });
 
   it("opens protected routes after the Supabase auth check passes", async () => {
+    authMock.getVerifiedAuthUser.mockResolvedValue({
+      app_metadata: {},
+      aud: "authenticated",
+      created_at: new Date(0).toISOString(),
+      id: "verified-user",
+      user_metadata: {},
+    });
+
+    renderApp("/scan");
+
+    expect(await screen.findByText("Scanner screen")).toBeInTheDocument();
+  });
+
+  it("sends the app root to the scanner route", async () => {
     authMock.getVerifiedAuthUser.mockResolvedValue({
       app_metadata: {},
       aud: "authenticated",
