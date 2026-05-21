@@ -1,47 +1,41 @@
 import { cx } from "../../lib/utils";
-import type { CameraObjectTarget } from "../../hooks/useObjectTarget";
 
 type ReticleProps = {
   isVisible: boolean;
-  target: CameraObjectTarget | null;
+  isLocked: boolean;
+  progress: number;
 };
 
-export default function Reticle({ isVisible, target }: ReticleProps) {
-  if (!target) {
-    return null;
-  }
+export default function Reticle({ isLocked, isVisible, progress }: ReticleProps) {
+  const safeProgress = Math.max(0, Math.min(1, progress));
 
   return (
     <div
       aria-hidden="true"
       data-testid="object-reticle"
-      style={{
-        height: target.height,
-        left: target.left,
-        top: target.top,
-        width: target.width,
-      }}
       className={cx(
-        "pointer-events-none fixed z-10 transition-[height,left,opacity,top,width] duration-200",
+        "pointer-events-none fixed left-1/2 top-[45dvh] z-10 aspect-[3/4] w-[min(76vw,390px)] -translate-x-1/2 -translate-y-1/2 transition-opacity duration-300",
         isVisible ? "opacity-100" : "opacity-0",
       )}
     >
-      <div className="absolute inset-0 rounded-[18px] border border-dashed border-[var(--ds-accent)]/45 shadow-[var(--ds-accent-glow)]" />
-      <div className="scanner-sweep" />
+      <div className="absolute inset-0 rounded-[30px] border border-white/18 bg-black/5 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08),0_0_34px_rgba(11,116,255,0.25)]" />
+      <div className={cx("scanner-sweep", isLocked ? "opacity-0" : "opacity-100")} />
       <div className="scanner-corner scanner-corner-tl" />
       <div className="scanner-corner scanner-corner-tr" />
       <div className="scanner-corner scanner-corner-bl" />
       <div className="scanner-corner scanner-corner-br" />
-      {isVisible ? (
-        <div className="absolute left-1/2 top-[calc(100%+14px)] w-[min(220px,70vw)] -translate-x-1/2 rounded-full bg-black/58 p-1 backdrop-blur-md">
-          <div className="h-1.5 overflow-hidden rounded-full bg-white/12">
-            <div className="h-full rounded-full bg-[var(--ds-ok)] transition-[width] duration-200" style={{ width: `${Math.round(target.holdProgress * 100)}%` }} />
-          </div>
-          <p className="mt-1.5 text-center text-[11px] font-extrabold uppercase tracking-[0.12em] text-white">
-            {target.isLocked ? "Capturing" : "Hold still"}
-          </p>
+
+      <div className="absolute left-1/2 top-[calc(100%+18px)] w-[min(240px,70vw)] -translate-x-1/2 rounded-full bg-black/45 p-1.5 ring-1 ring-white/12 backdrop-blur-md">
+        <div className="h-1.5 overflow-hidden rounded-full bg-white/14">
+          <div
+            className={cx(
+              "h-full rounded-full transition-[width,background-color] duration-200",
+              isLocked ? "bg-[var(--ds-ok)]" : "bg-[var(--ds-accent)]",
+            )}
+            style={{ width: `${Math.round(safeProgress * 100)}%` }}
+          />
         </div>
-      ) : null}
+      </div>
     </div>
   );
 }

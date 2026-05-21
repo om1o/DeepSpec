@@ -18,7 +18,7 @@ export function isGoogleAuthEnabled() {
 }
 
 export function hasLocalAuthBypass() {
-  return !isSupabaseAuthConfigured() && localStorage.getItem(LOCAL_AUTH_KEY) === "1";
+  return canUseLocalAuthBypass() && localStorage.getItem(LOCAL_AUTH_KEY) === "1";
 }
 
 export function markLocalAuthBypass() {
@@ -134,6 +134,10 @@ function getSupabaseAuthConfig(): SupabaseAuthConfig | null {
   }
 
   return { key, url };
+}
+
+function canUseLocalAuthBypass() {
+  return !isSupabaseAuthConfigured() || import.meta.env.DEV;
 }
 
 async function getRequiredAuthClient() {

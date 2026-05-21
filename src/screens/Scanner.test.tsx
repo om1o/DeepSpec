@@ -40,12 +40,19 @@ const objectTargetState = vi.hoisted(() => ({
     width: number;
   },
 }));
+const cameraHookState = vi.hoisted(() => ({
+  current: {
+    cameraError: null as string | null,
+    cameraRequestId: 0,
+    cameraState: "ready" as "loading" | "ready" | "blocked",
+  },
+}));
 
 vi.mock("../hooks/useCamera", () => ({
   useCamera: () => ({
-    cameraRequestId: 0,
-    cameraError: null,
-    cameraState: "ready",
+    cameraRequestId: cameraHookState.current.cameraRequestId,
+    cameraError: cameraHookState.current.cameraError,
+    cameraState: cameraHookState.current.cameraState,
     captureFrame,
     markError: vi.fn(),
     markReady: vi.fn(),
@@ -105,6 +112,11 @@ describe("Scanner", () => {
     assessImageQuality.mockClear();
     assessImageQuality.mockResolvedValue({ ok: true });
     identifyCapturedFrame.mockClear();
+    cameraHookState.current = {
+      cameraError: null,
+      cameraRequestId: 0,
+      cameraState: "ready",
+    };
     objectTargetState.current = {
       confidence: 0.82,
       height: 180,
@@ -164,12 +176,70 @@ describe("Scanner", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.queryByTestId("object-reticle")).not.toBeInTheDocument();
+    expect(screen.getByTestId("object-reticle")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
 
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
     expect(screen.getByText("Saved scan")).toBeInTheDocument();
+  }, 10000);
+
+  it("shows camera permission denial and lets the user retry camera access", async () => {
+    cameraHookState.current = {
+      cameraError: "Permission denied",
+      cameraRequestId: 4,
+      cameraState: "blocked",
+    };
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("heading", { level: 1, name: "Camera access needed" })).toBeInTheDocument();
+    expect(screen.getByText(/Allow camera access for this site/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Try camera again" }));
+
+    expect(retryCamera).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the camera loading state before the first frame is ready", () => {
+    cameraHookState.current = {
+      cameraError: null,
+      cameraRequestId: 2,
+      cameraState: "loading",
+    };
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getAllByText("Opening camera")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Scan now" })).toBeDisabled();
+  });
+
+  it("keeps the camera alive when a transient frame capture fails", async () => {
+    captureFrame.mockRejectedValueOnce(new Error("No camera frame was available."));
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("No camera frame was available.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 1, name: "Camera access needed" })).not.toBeInTheDocument();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
   }, 10000);
 
   it("runs the generated engine test scan without saving it to history", async () => {

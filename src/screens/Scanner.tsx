@@ -32,17 +32,20 @@ export default function Scanner() {
   const cancelScanRef = useRef(false);
   const { cameraError, cameraRequestId, cameraState, captureFrame, markError, markReady, retryCamera, webcamRef } =
     useCamera();
-  const { error: motionError, isStable, needsPermission, permissionState, requestPermission, usesFallback } =
+  const { error: motionError, isStable, needsPermission, requestPermission, usesFallback } =
     useStillness();
   const qaTestMode = isTestMode();
   const objectTarget = useObjectTarget(webcamRef, {
     enabled: cameraState === "ready" && !qaTestMode && !isAnalyzing,
     holdEnabled: cameraState === "ready" && isStable && !isAnalyzing && !autoScanPaused,
   });
+  const targetProgress = objectTarget?.holdProgress ?? 0;
+  const hasTargetLock = Boolean(objectTarget?.isLocked);
   const scannerStatus = getScannerStatus({
     autoScanPaused,
     cameraState,
     hasTarget: Boolean(objectTarget),
+    hasTargetLock,
     isStable,
     usesFallback,
   });
@@ -161,7 +164,7 @@ export default function Scanner() {
   }, [captureFrame, isAnalyzing, pauseAutoScan, persistAndNavigate, qaTestMode]);
 
   useEffect(() => {
-    if (!objectTarget?.isLocked || cameraState !== "ready" || isAnalyzing || autoScanPaused) {
+    if (!hasTargetLock || cameraState !== "ready" || isAnalyzing || autoScanPaused) {
       return;
     }
 
@@ -170,14 +173,17 @@ export default function Scanner() {
     }
 
     autoScanStartedRef.current = true;
+    if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+      navigator.vibrate(12);
+    }
     void handleIdentify();
-  }, [autoScanPaused, cameraState, handleIdentify, isAnalyzing, objectTarget?.isLocked]);
+  }, [autoScanPaused, cameraState, handleIdentify, hasTargetLock, isAnalyzing]);
 
   useEffect(() => {
-    if (!objectTarget?.isLocked && !isAnalyzing) {
+    if (!hasTargetLock && !isAnalyzing) {
       autoScanStartedRef.current = false;
     }
-  }, [isAnalyzing, objectTarget?.isLocked]);
+  }, [hasTargetLock, isAnalyzing]);
 
   function cancelCurrentScan() {
     cancelScanRef.current = true;
@@ -201,6 +207,7 @@ export default function Scanner() {
       />
 
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(2,6,23,0.58),rgba(2,6,23,0)_30%,rgba(2,6,23,0)_58%,rgba(2,6,23,0.74))]" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[42dvh] bg-[radial-gradient(circle_at_50%_72%,rgba(11,116,255,0.18),rgba(2,6,23,0)_34%),linear-gradient(to_top,rgba(2,6,23,0.86),rgba(2,6,23,0))]" />
 
       <header className="fixed left-0 right-0 top-0 z-20 px-5 pt-[max(18px,env(safe-area-inset-top))]">
         <div className="grid grid-cols-[96px_1fr_44px] items-center gap-3">
@@ -224,17 +231,12 @@ export default function Scanner() {
         </p>
       </header>
 
+      {cameraState === "loading" ? <CameraLoading /> : null}
       {cameraState === "blocked" ? <CameraBlocked message={cameraError} onRetry={retryCamera} /> : null}
 
       {cameraState !== "blocked" ? (
         <>
-          <Reticle isVisible={cameraState === "ready" && Boolean(objectTarget)} target={objectTarget} />
-
-          {usesFallback ? (
-            <p className="fixed bottom-[220px] left-1/2 z-20 w-[calc(100%-32px)] -translate-x-1/2 text-center text-xs font-semibold text-white/70">
-              {permissionState === "denied" ? "Motion access is off. Hold the item still to scan." : "Motion sensing unavailable. Visual hold scan is active."}
-            </p>
-          ) : null}
+          <Reticle isLocked={hasTargetLock} isVisible={cameraState === "ready"} progress={targetProgress} />
 
           {needsPermission ? <MotionPermissionModal error={motionError} onAllow={requestPermission} /> : null}
           {captureError ? <CaptureErrorNotice message={captureError} onTryAgain={() => setCaptureError(null)} /> : null}
@@ -244,7 +246,7 @@ export default function Scanner() {
       {!qaTestMode ? (
         <IdentifyButton
           isDisabled={cameraState !== "ready" || isAnalyzing}
-          isReady={cameraState === "ready" && !isAnalyzing && (Boolean(objectTarget) || usesFallback || isStable)}
+          isReady={cameraState === "ready" && !isAnalyzing && (hasTargetLock || usesFallback || isStable)}
           isVisible={cameraState !== "blocked"}
           onIdentify={() => void handleIdentify()}
         />
@@ -259,32 +261,49 @@ function getScannerStatus({
   autoScanPaused,
   cameraState,
   hasTarget,
+  hasTargetLock,
   isStable,
   usesFallback,
 }: {
   autoScanPaused: boolean;
   cameraState: string;
   hasTarget: boolean;
+  hasTargetLock: boolean;
   isStable: boolean;
   usesFallback: boolean;
 }) {
   if (cameraState !== "ready") {
-    return "Starting camera";
+    return "Opening camera";
   }
 
   if (autoScanPaused) {
-    return "Scan paused. Recenter the item.";
+    return "Scan paused";
   }
 
-  if (!hasTarget) {
-    return "Move an item into the blue target area";
+  if (hasTargetLock) {
+    return "Capturing";
+  }
+
+  if (hasTarget) {
+    return "Locking focus";
   }
 
   if (!usesFallback && !isStable) {
-    return "Hold the camera still";
+    return "Stabilizing";
   }
 
-  return "Hold the item still to scan";
+  return "Lens ready";
+}
+
+function CameraLoading() {
+  return (
+    <div className="fixed inset-0 z-10 grid place-items-center bg-[var(--ds-bg)] px-6 text-center">
+      <div className="rounded-[24px] border border-white/10 bg-white/10 p-5 shadow-2xl backdrop-blur-md">
+        <div className="mx-auto grid size-12 place-items-center rounded-full border-2 border-white/10 border-t-[var(--ds-accent)]" />
+        <p className="mt-4 text-sm font-extrabold text-white">Opening camera</p>
+      </div>
+    </div>
+  );
 }
 
 function CameraBlocked({ message, onRetry }: { message: string | null; onRetry: () => void }) {
@@ -317,8 +336,8 @@ function AnalyzingOverlay({ onCancel }: { onCancel: () => void }) {
     <div className="fixed inset-0 z-40 grid place-items-center bg-slate-950/82 px-6 text-center backdrop-blur-md">
       <div className="w-full max-w-xs rounded-[24px] border border-white/10 bg-slate-950/92 p-6 shadow-2xl">
         <div className="mx-auto grid size-14 place-items-center rounded-full border-2 border-white/10 border-t-[var(--ds-accent)]" />
-        <p className="mt-5 text-lg font-extrabold tracking-tight text-white">Scanning photo</p>
-        <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">Deep Spec is checking the visible part and damage.</p>
+        <p className="mt-5 text-lg font-extrabold tracking-tight text-white">Analyzing photo</p>
+        <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">Checking the AI result against labeled mechanic data.</p>
         <Button className="mt-5 w-full" variant="ghost" onClick={onCancel}>
           Cancel scan
         </Button>

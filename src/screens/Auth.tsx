@@ -19,6 +19,7 @@ export default function Auth() {
   const navigate = useNavigate();
   const supabaseConfigured = isSupabaseAuthConfigured();
   const googleAuthEnabled = isGoogleAuthEnabled();
+  const localDevBypassEnabled = import.meta.env.DEV;
   const [step, setStep] = useState<AuthStep>("email");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -229,6 +230,11 @@ export default function Auth() {
                 Supabase auth is not configured for this build. Local continue is only available for development.
               </div>
             ) : null}
+            {localDevBypassEnabled && supabaseConfigured ? (
+              <div className="rounded-[8px] border border-[var(--ds-accent-line)] bg-[var(--ds-accent-soft)] px-4 py-3 text-sm font-semibold leading-6 text-[var(--ds-ok-ink)]">
+                Local browser QA can continue without sending an email code.
+              </div>
+            ) : null}
 
             <label className="block">
               <span className="sr-only">Email address</span>
@@ -291,6 +297,16 @@ export default function Auth() {
               {submitLabel(step, supabaseConfigured, isSubmitting)}
             </button>
           </form>
+
+          {localDevBypassEnabled && supabaseConfigured ? (
+            <button
+              type="button"
+              onClick={handleLocalContinue}
+              className="h-12 w-full rounded-[8px] border border-neutral-200 bg-white px-3 text-sm font-black text-neutral-700 shadow-sm active:bg-neutral-50"
+            >
+              Continue locally
+            </button>
+          ) : null}
 
           {step === "code" ? (
             <div className="grid grid-cols-2 gap-3">

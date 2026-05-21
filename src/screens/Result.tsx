@@ -78,33 +78,42 @@ export default function Result() {
   }
 
   return (
-    <main className="min-h-dvh bg-[var(--ds-page)] px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-slate-950">
-      <div className="mx-auto flex min-h-[calc(100dvh-48px)] w-full max-w-md flex-col">
-        <header className="mb-5 flex items-center justify-between">
-          <div className="min-w-0">
-            <img src="/brand/deepspec-logo.png" alt="Deep Spec" className="h-12 w-36 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-[var(--ds-accent-line)]" />
-            <h1 className="mt-2 truncate text-2xl font-extrabold tracking-tight">
+    <main className="min-h-dvh bg-[var(--ds-bg)] text-slate-950">
+      <div className="mx-auto min-h-dvh w-full max-w-md bg-[var(--ds-page)]">
+        <section className="relative min-h-[46dvh] overflow-hidden bg-[#020617] text-white">
+          {frame?.imageBase64 ? (
+            <img
+              alt="Captured car part"
+              className="absolute inset-0 h-full w-full object-contain"
+              src={frame.imageBase64}
+            />
+          ) : (
+            <div className="absolute inset-0 grid place-items-center bg-[#061522] px-8 text-center text-sm text-white/62">
+              No captured frame yet.
+            </div>
+          )}
+          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(2,6,23,0.68),rgba(2,6,23,0.04)_38%,rgba(2,6,23,0.82))]" />
+          <header className="absolute left-0 right-0 top-0 z-10 flex items-center justify-between px-4 pt-[max(18px,env(safe-area-inset-top))]">
+            <img src="/brand/deepspec-logo.png" alt="Deep Spec" className="h-11 w-32 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-white/30" />
+            <Link to="/scan" className="rounded-full bg-white/90 px-4 py-2 text-sm font-bold text-slate-800 shadow-sm ring-1 ring-white/40 backdrop-blur-md">
+              Back
+            </Link>
+          </header>
+          <div className="absolute bottom-8 left-0 right-0 z-10 px-4">
+            <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Deep Spec result</p>
+            <h1 className="mt-2 truncate text-3xl font-extrabold tracking-tight text-white">
               {scanState?.result ? scanState.result.partName : "Captured frame"}
             </h1>
+            {scanState?.result ? (
+              <p className="mt-2 text-sm font-semibold text-white/72">
+                {scanState.result.confidence} confidence · {scanState.result.scanCategory}
+              </p>
+            ) : null}
           </div>
-          <Link to="/scan" className="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200">
-            Back
-          </Link>
-        </header>
+        </section>
 
-        {frame?.imageBase64 ? (
-          <img
-            alt="Captured car part"
-            className="aspect-[3/4] w-full rounded-[24px] border border-neutral-200 bg-neutral-100 object-contain shadow-2xl"
-            src={frame.imageBase64}
-          />
-        ) : (
-          <div className="grid aspect-[3/4] w-full place-items-center rounded-[24px] border border-dashed border-neutral-200 bg-white px-8 text-center text-sm text-neutral-500">
-            No captured frame yet.
-          </div>
-        )}
-
-        <div className="mt-5 space-y-4">
+        <div className="-mt-6 rounded-t-[32px] bg-[var(--ds-page)] px-4 pb-8 pt-5 shadow-[0_-18px_48px_rgba(2,6,23,0.18)]">
+          <div className="space-y-4">
           {isQaTestRun ? <TestRunNotice label={scanState?.testVehicleLabel} /> : null}
           {!isQaTestRun && storageWarning ? <StorageWarning message={storageWarning} /> : null}
           {scanState?.result ? <AnalysisResult result={scanState.result} capturedAt={capturedAt} /> : null}
@@ -137,6 +146,7 @@ export default function Result() {
         <Button className="mt-6 w-full" onClick={() => window.location.assign("/")}>
           Try another scan
         </Button>
+        </div>
       </div>
     </main>
   );
@@ -251,13 +261,13 @@ function SavedScanControls({
 
       <div className="mt-4 grid grid-cols-2 gap-3">
         <Button
-          className={lookup.rating === "up" ? "bg-[var(--ds-ok)] text-white shadow-none" : "bg-neutral-100 text-neutral-900 shadow-none"}
+          className={lookup.rating === "up" ? "!bg-[var(--ds-ok)] !text-white shadow-none" : "!bg-neutral-100 !text-neutral-900 shadow-none"}
           onClick={() => onRating("up")}
         >
           Helpful
         </Button>
         <Button
-          className={lookup.rating === "down" ? "bg-[var(--ds-danger)] text-white shadow-none" : "bg-neutral-100 text-neutral-900 shadow-none"}
+          className={lookup.rating === "down" ? "!bg-[var(--ds-danger)] !text-white shadow-none" : "!bg-neutral-100 !text-neutral-900 shadow-none"}
           onClick={() => onRating("down")}
         >
           Wrong
@@ -294,7 +304,7 @@ function SavedScanControls({
         <p className="text-sm font-extrabold text-neutral-900">Cloud dataset sync</p>
         <p className="mt-2 text-sm leading-6 text-neutral-500">{cloudSync.message}</p>
         <Button
-          className="mt-3 w-full bg-neutral-100 text-neutral-900 shadow-none"
+          className="mt-3 w-full !bg-neutral-100 !text-neutral-900 shadow-none"
           disabled={!cloudSync.configured || isSyncingCloud}
           onClick={handleCloudSync}
         >
@@ -309,17 +319,17 @@ function SavedScanControls({
           Export a plain-text summary for a mechanic, buyer, or your own records. This does not create a public link.
         </p>
         <div className="mt-3 grid grid-cols-2 gap-3">
-          <Button className="bg-neutral-100 text-neutral-900 shadow-none" onClick={handleShareReport}>
+          <Button className="!bg-neutral-100 !text-neutral-900 shadow-none" onClick={handleShareReport}>
             Share
           </Button>
-          <Button className="bg-neutral-100 text-neutral-900 shadow-none" onClick={handleDownloadReport}>
+          <Button className="!bg-neutral-100 !text-neutral-900 shadow-none" onClick={handleDownloadReport}>
             Export
           </Button>
         </div>
         {reportStatus ? <p className="mt-3 text-sm font-semibold text-[var(--ds-accent)]">{reportStatus}</p> : null}
       </div>
 
-      <Button className="mt-4 w-full border border-[var(--ds-danger-line)] bg-[var(--ds-danger-soft)] text-[var(--ds-danger)] shadow-none" onClick={onDelete}>
+      <Button className="mt-4 w-full border border-[var(--ds-danger-line)] !bg-[var(--ds-danger-soft)] !text-[var(--ds-danger)] shadow-none" onClick={onDelete}>
         Delete saved scan
       </Button>
     </section>
@@ -359,7 +369,7 @@ function AnalysisResult({ capturedAt, result }: { capturedAt: string | null; res
         <section className="rounded-[24px] border border-neutral-200 bg-neutral-50 p-5">
           <p className="text-sm font-extrabold text-neutral-900">Better photo needed</p>
           <p className="mt-2 text-sm leading-6 text-neutral-500">
-            Move closer, add light, and center any label, connector, hose, or damaged area in the blue reticle.
+            Move closer, add light, and center any label, connector, hose, or damaged area in the lens frame.
           </p>
         </section>
       ) : null}
@@ -668,7 +678,7 @@ function getTrustReview(result: IdentificationResult): TrustReview {
       borderClass: "border-[var(--ds-warn-line)]",
       description: "The image does not give Deep Spec enough reliable detail. A better photo matters more than another guess.",
       photoQuality: "Poor",
-      retakeGuidance: "Move closer, add light, and center the label, connector, leak, crack, or damaged area.",
+      retakeGuidance: "Move closer, add light, and center any label, connector, leak, crack, or damaged area in the lens frame.",
       status: "Incomplete data",
     };
   }

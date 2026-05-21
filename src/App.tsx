@@ -22,7 +22,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
     getVerifiedAuthUser()
       .then((user) => {
         if (isMounted) {
-          setStatus(user ? "allowed" : "blocked");
+          setStatus(user || hasLocalAuthBypass() ? "allowed" : "blocked");
         }
       })
       .catch(() => {

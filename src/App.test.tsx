@@ -49,6 +49,15 @@ describe("App auth guard", () => {
     expect(await screen.findByText("Scanner screen")).toBeInTheDocument();
   });
 
+  it("opens protected routes when the local dev auth marker is present", async () => {
+    authMock.getVerifiedAuthUser.mockResolvedValue(null);
+    authMock.hasLocalAuthBypass.mockReturnValue(true);
+
+    renderApp("/scan");
+
+    expect(await screen.findByText("Scanner screen")).toBeInTheDocument();
+  });
+
   it("sends the app root to the scanner route", async () => {
     authMock.getVerifiedAuthUser.mockResolvedValue({
       app_metadata: {},
