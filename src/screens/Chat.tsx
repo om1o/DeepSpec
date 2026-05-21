@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import Button from "../components/ui/Button";
 import { getAIErrorMessage, sendFollowUp } from "../services/aiService";
 import { appendChatMessages, createChatMessage, getLookup } from "../services/storage";
@@ -7,8 +7,9 @@ import type { Lookup } from "../types";
 
 export default function Chat() {
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
   const [lookup, setLookup] = useState<Lookup | null>(() => (id ? getLookup(id) : null));
-  const [question, setQuestion] = useState("");
+  const [question, setQuestion] = useState(() => searchParams.get("q")?.trim().slice(0, 500) ?? "");
   const [error, setError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);

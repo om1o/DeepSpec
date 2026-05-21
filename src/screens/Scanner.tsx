@@ -19,6 +19,7 @@ import type { CapturedFrame, LabelRescueTrigger, ScanAnalysisState } from "../ty
 
 const AUTO_SCAN_HOLD_MS = 5000;
 const SECOND_FRAME_DELAY_MS = 120;
+const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
 
 const videoConstraints: MediaTrackConstraints = {
   facingMode: { ideal: "environment" },
@@ -93,6 +94,77 @@ export default function Scanner() {
     [navigate, qaTestMode],
   );
 
+  const analyzeImageBase64 = useCallback(async (
+    imageBase64: string,
+    secondFrameProvider?: () => Promise<string>,
+  ) => {
+    setAnalysisStep("Checking photo quality");
+    const quality = await assessImageQuality(imageBase64);
+    let labelRescueTrigger: LabelRescueTrigger | undefined;
+    if (!quality.ok && quality.issue === "too_blurry") {
+      labelRescueTrigger = "too_blurry";
+    } else if (!quality.ok) {
+      pauseAutoScan(quality.message);
+      return;
+    }
+
+    const frame: CapturedFrame = {
+      imageBase64,
+      capturedAt: new Date().toISOString(),
+    };
+    if (!qaTestMode) {
+      saveLatestScanState({ frame });
+    }
+
+    setAnalysisStep("Checking saved matches");
+    const imageHash = !qaTestMode ? await hashImageDataUrl(imageBase64) : null;
+    if (cancelScanRef.current) return;
+    if (imageHash) {
+      const cached = getCachedScanResult(imageHash);
+      if (cached) {
+        setAnalysisStep("Opening result");
+        persistAndNavigate({ frame, result: cached, analyzedAt: new Date().toISOString() });
+        return;
+      }
+    }
+
+    let secondFrame: CapturedFrame | undefined;
+    if (!qaTestMode && secondFrameProvider) {
+      await new Promise<void>((resolve) => setTimeout(resolve, SECOND_FRAME_DELAY_MS));
+      if (cancelScanRef.current) return;
+      try {
+        const second = await secondFrameProvider();
+        const secondQuality = await assessImageQuality(second);
+        if (secondQuality.ok) {
+          secondFrame = { imageBase64: second, capturedAt: new Date().toISOString() };
+        }
+      } catch {
+        // A second frame helps confidence but is not required.
+      }
+    }
+
+    try {
+      setAnalysisStep("Matching vehicle data");
+      const result = await identifyCapturedFrame(frame, secondFrame, labelRescueTrigger);
+      if (cancelScanRef.current) return;
+      if (imageHash) setCachedScanResult(imageHash, result);
+      setAnalysisStep("Saving result");
+      persistAndNavigate({
+        frame,
+        result,
+        analyzedAt: new Date().toISOString(),
+      });
+    } catch (analysisError) {
+      if (cancelScanRef.current) return;
+      persistAndNavigate({
+        frame,
+        errorMessage: getAIErrorMessage(analysisError),
+        errorCode: analysisError instanceof AIServiceError ? analysisError.code : "analysis_failed",
+        analyzedAt: new Date().toISOString(),
+      });
+    }
+  }, [pauseAutoScan, persistAndNavigate, qaTestMode]);
+
   const handleIdentify = useCallback(async () => {
     if (isAnalyzing) {
       return;
@@ -106,78 +178,36 @@ export default function Scanner() {
       const imageBase64 = await captureFrame();
       if (cancelScanRef.current) return;
 
-      setAnalysisStep("Checking photo quality");
-      const quality = await assessImageQuality(imageBase64);
-      let labelRescueTrigger: LabelRescueTrigger | undefined;
-      if (!quality.ok && quality.issue === "too_blurry") {
-        labelRescueTrigger = "too_blurry";
-      } else if (!quality.ok) {
-        pauseAutoScan(quality.message);
-        return;
-      }
-
-      const frame: CapturedFrame = {
-        imageBase64,
-        capturedAt: new Date().toISOString(),
-      };
-      if (!qaTestMode) {
-        saveLatestScanState({ frame });
-      }
-
-      setAnalysisStep("Checking saved matches");
-      const imageHash = !qaTestMode ? await hashImageDataUrl(imageBase64) : null;
-      if (cancelScanRef.current) return;
-      if (imageHash) {
-        const cached = getCachedScanResult(imageHash);
-        if (cached) {
-          setAnalysisStep("Opening result");
-          persistAndNavigate({ frame, result: cached, analyzedAt: new Date().toISOString() });
-          return;
-        }
-      }
-
-      let secondFrame: CapturedFrame | undefined;
-      if (!qaTestMode) {
-        await new Promise<void>((resolve) => setTimeout(resolve, SECOND_FRAME_DELAY_MS));
-        if (cancelScanRef.current) return;
-        try {
-          const second = await captureFrame();
-          const secondQuality = await assessImageQuality(second);
-          if (secondQuality.ok) {
-            secondFrame = { imageBase64: second, capturedAt: new Date().toISOString() };
-          }
-        } catch {
-          // A second frame helps confidence but is not required.
-        }
-      }
-
-      try {
-        setAnalysisStep("Matching vehicle data");
-        const result = await identifyCapturedFrame(frame, secondFrame, labelRescueTrigger);
-        if (cancelScanRef.current) return;
-        if (imageHash) setCachedScanResult(imageHash, result);
-        setAnalysisStep("Saving result");
-        persistAndNavigate({
-          frame,
-          result,
-          analyzedAt: new Date().toISOString(),
-        });
-      } catch (analysisError) {
-        if (cancelScanRef.current) return;
-        persistAndNavigate({
-          frame,
-          errorMessage: getAIErrorMessage(analysisError),
-          errorCode: analysisError instanceof AIServiceError ? analysisError.code : "analysis_failed",
-          analyzedAt: new Date().toISOString(),
-        });
-      }
+      await analyzeImageBase64(imageBase64, captureFrame);
     } catch (error) {
       pauseAutoScan(error instanceof Error ? error.message : "Capture failed. Try again.");
     } finally {
       setIsAnalyzing(false);
       setAnalysisStep(null);
     }
-  }, [captureFrame, isAnalyzing, pauseAutoScan, persistAndNavigate, qaTestMode]);
+  }, [analyzeImageBase64, captureFrame, isAnalyzing, pauseAutoScan]);
+
+  const handleGalleryFile = useCallback(async (file: File) => {
+    if (isAnalyzing) {
+      return;
+    }
+
+    try {
+      cancelScanRef.current = false;
+      autoScanStartedRef.current = false;
+      setIsAnalyzing(true);
+      setAnalysisStep("Loading photo");
+      setCaptureError(null);
+      const imageBase64 = await readImageFileAsDataUrl(file);
+      if (cancelScanRef.current) return;
+      await analyzeImageBase64(imageBase64);
+    } catch (error) {
+      pauseAutoScan(error instanceof Error ? error.message : "Could not read that photo.");
+    } finally {
+      setIsAnalyzing(false);
+      setAnalysisStep(null);
+    }
+  }, [analyzeImageBase64, isAnalyzing, pauseAutoScan]);
 
   useEffect(() => {
     if (!hasTargetLock || cameraState !== "ready" || isAnalyzing || autoScanPaused) {
@@ -263,6 +293,12 @@ export default function Scanner() {
           {needsPermission ? <MotionPermissionModal error={motionError} onAllow={requestPermission} /> : null}
           {captureError ? <CaptureErrorNotice message={captureError} onTryAgain={() => setCaptureError(null)} /> : null}
         </>
+      ) : null}
+      {!qaTestMode ? (
+        <GalleryScanButton
+          isDisabled={isAnalyzing}
+          onFileSelected={(file) => void handleGalleryFile(file)}
+        />
       ) : null}
       {isAnalyzing ? <AnalyzingOverlay onCancel={cancelCurrentScan} step={analysisStep} /> : null}
       {!qaTestMode ? (
@@ -367,6 +403,38 @@ function CameraBlocked({ message, onRetry }: { message: string | null; onRetry: 
   );
 }
 
+function GalleryScanButton({
+  isDisabled,
+  onFileSelected,
+}: {
+  isDisabled: boolean;
+  onFileSelected: (file: File) => void;
+}) {
+  return (
+    <label
+      className={`fixed bottom-[112px] left-1/2 z-40 -translate-x-1/2 rounded-full bg-slate-950/62 px-4 py-2 text-xs font-extrabold text-white ring-1 ring-white/14 backdrop-blur-xl transition ${
+        isDisabled ? "pointer-events-none opacity-45" : "cursor-pointer opacity-100"
+      }`}
+    >
+      Upload photo
+      <input
+        aria-label="Upload photo"
+        accept="image/jpeg,image/png,image/webp"
+        className="sr-only"
+        disabled={isDisabled}
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          if (file) {
+            onFileSelected(file);
+          }
+        }}
+        type="file"
+      />
+    </label>
+  );
+}
+
 function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; step: string | null }) {
   return (
     <div className="fixed inset-0 z-40 grid place-items-center bg-slate-950/78 px-6 text-center backdrop-blur-md">
@@ -385,6 +453,31 @@ function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; step: stri
       </div>
     </div>
   );
+}
+
+function readImageFileAsDataUrl(file: File) {
+  if (!file.type.startsWith("image/")) {
+    return Promise.reject(new Error("Choose a JPEG, PNG, or WebP photo."));
+  }
+
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return Promise.reject(new Error("Choose a photo under 12 MB."));
+  }
+
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result === "string") {
+        resolve(result);
+        return;
+      }
+
+      reject(new Error("Could not read that photo."));
+    };
+    reader.onerror = () => reject(new Error("Could not read that photo."));
+    reader.readAsDataURL(file);
+  });
 }
 
 function CaptureErrorNotice({ message, onTryAgain }: { message: string; onTryAgain: () => void }) {

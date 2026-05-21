@@ -412,6 +412,7 @@ function AnalysisResult({
       <EvidenceSection items={result.evidence} />
       <ResultSection title="Concerns" items={result.concerns} emptyText="Nothing concerning visible." />
       <ResultSection title="Next action" items={[result.nextAction]} />
+      <FollowUpSuggestions lookupId={lookupId} result={result} />
       <ReferenceLinksSection links={getReferenceLinks(result)} />
     </>
   );
@@ -456,6 +457,36 @@ function QuickActions({ lookupId, result }: { lookupId: string | null; result: I
         Nearby
       </a>
     </div>
+  );
+}
+
+function FollowUpSuggestions({ lookupId, result }: { lookupId: string | null; result: IdentificationResult }) {
+  const prompts = getFollowUpPrompts(result);
+
+  return (
+    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
+      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Ask next</h2>
+      <div className="mt-3 grid grid-cols-1 gap-2">
+        {prompts.map((prompt) => (
+          lookupId ? (
+            <Link
+              key={prompt.question}
+              className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3 text-sm font-bold leading-5 text-[var(--ds-evidence-ink)]"
+              to={`/result/${lookupId}/chat?q=${encodeURIComponent(prompt.question)}`}
+            >
+              {prompt.label}
+            </Link>
+          ) : (
+            <span
+              key={prompt.question}
+              className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3 text-sm font-bold leading-5 text-neutral-400"
+            >
+              {prompt.label}
+            </span>
+          )
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -715,6 +746,34 @@ function getReferenceLinks(result: IdentificationResult): ReferenceLink[] {
       url: "https://www.nhtsa.gov/report-a-safety-problem",
     },
   ];
+}
+
+function getFollowUpPrompts(result: IdentificationResult) {
+  const partName = result.partName;
+  const prompts = [
+    {
+      label: "What should I check next?",
+      question: `What should I check next for this ${partName}?`,
+    },
+    {
+      label: "How serious is this?",
+      question: `How serious is this ${partName} result based only on the photo?`,
+    },
+  ];
+
+  prompts.push(
+    result.needsBetterPhoto || result.safetyTriage === "needs_better_photo"
+      ? {
+          label: "What photo angle would help?",
+          question: `What photo angle would help identify this ${partName} better?`,
+        }
+      : {
+          label: "What symptoms match this part?",
+          question: `What common symptoms connect to this ${partName}?`,
+        },
+  );
+
+  return prompts;
 }
 
 function getMapsSearchUrl(result: IdentificationResult) {

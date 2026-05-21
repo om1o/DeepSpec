@@ -77,6 +77,14 @@ describe("Chat", () => {
     expect(chatHistory.map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(sendFollowUpMock).toHaveBeenCalledWith(expect.objectContaining({ id: lookup.id }), "What does it do?");
   });
+
+  it("prefills a suggested question from the result screen", () => {
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+
+    renderChat(`/result/${lookup.id}/chat?q=How%20serious%20is%20this%3F`);
+
+    expect(screen.getByLabelText("Ask a follow-up question")).toHaveValue("How serious is this?");
+  });
 });
 
 function renderChat(path: string) {
