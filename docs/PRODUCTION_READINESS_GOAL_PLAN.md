@@ -27,7 +27,7 @@ Use a 900-check audit grid instead: 9 production tracks x 100 checks each. Every
 - `npm run verify:identify-eval` passed with `Identify eval passed: 50/50 samples passed with provider available.`
 - Provider hang guards are now covered: browser AI requests abort after 60s, and release eval samples have a 240s per-sample budget including retries.
 - A configured `npm run verify:supabase` run still failed after confirming anonymous sign-ins were enabled: anonymous signup returned `Database error creating anonymous user (unexpected_failure), HTTP 500`.
-- Latest captured configured-run Supabase request/error id: `019e4fde-78fc-7ede-81c1-bbb7ccfa1026`.
+- Latest captured configured-run Supabase request/error id: `019e4fe3-b54a-7f13-82d3-d489825029b9`.
 - A bare checkout-local `npm run verify:supabase` also needs `.env.local` copied in; without `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`, it stops before the Auth preflight.
 - Supabase Preview check on PR #50 failed with `Failed to fetch existing branch project`.
 - GitHub Actions release gate is failing because repository secrets `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` are not configured.
