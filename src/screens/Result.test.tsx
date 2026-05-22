@@ -94,6 +94,9 @@ describe("Result", () => {
     expect(screen.getByText("Useful match")).toBeInTheDocument();
     expect(screen.getByText("The pulley and vented housing match common alternator shapes.")).toBeInTheDocument();
     expect(screen.getByText("Ranked sources")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Research" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Nearby help" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Safety" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Refine" })).toHaveAttribute("href", "/scan");
     expect(screen.getByRole("link", { name: "Search this part" })).toHaveAttribute(
       "href",
@@ -169,6 +172,8 @@ describe("Result", () => {
       },
     });
 
+    expect(screen.getByRole("heading", { name: "Visual dataset matches" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Dataset match 1" })).toHaveAttribute("href", sourceUrl);
     expect(screen.getByRole("link", { name: "Hugging Face source 1" })).toHaveAttribute("href", sourceUrl);
     expect(screen.queryByRole("link", { name: "Dataset source" })).not.toBeInTheDocument();
   });

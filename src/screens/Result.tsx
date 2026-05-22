@@ -954,25 +954,51 @@ function formatEvidenceItem(item: string) {
 }
 
 type ReferenceLink = Pick<SourceLink, "label" | "sourceType" | "url">;
+type ReferenceGroup = {
+  description: string;
+  id: "dataset" | "nearby" | "research" | "safety";
+  links: ReferenceLink[];
+  title: string;
+};
 
 function ReferenceLinksSection({ links }: { links: ReferenceLink[] }) {
+  const groups = groupReferenceLinks(links);
+  if (!groups.length) {
+    return null;
+  }
+
   return (
     <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
       <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Ranked sources</h2>
-      <div className="mt-3 grid grid-cols-2 gap-2">
-        {links.map((link) => (
-          <a
-            key={link.url}
-            className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3 text-sm font-bold leading-5 text-[var(--ds-evidence-ink)]"
-            href={link.url}
-            rel="noreferrer"
-            target="_blank"
-          >
-            {link.label}
-            <span aria-hidden="true" className="mt-1 block text-[11px] font-extrabold uppercase tracking-[0.12em] text-neutral-400">
-              {link.sourceType}
-            </span>
-          </a>
+      <div className="mt-3 space-y-3">
+        {groups.map((group) => (
+          <div key={group.id} className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-extrabold text-neutral-900">{group.title}</h3>
+                <p className="mt-1 text-xs leading-5 text-neutral-500">{group.description}</p>
+              </div>
+              <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[11px] font-extrabold text-neutral-400 ring-1 ring-neutral-200">
+                {group.links.length}
+              </span>
+            </div>
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {group.links.map((link) => (
+                <a
+                  key={link.url}
+                  className="rounded-2xl border border-neutral-200 bg-white px-3 py-3 text-sm font-bold leading-5 text-[var(--ds-evidence-ink)]"
+                  href={link.url}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  {link.label}
+                  <span aria-hidden="true" className="mt-1 block text-[11px] font-extrabold uppercase tracking-[0.12em] text-neutral-400">
+                    {link.sourceType}
+                  </span>
+                </a>
+              ))}
+            </div>
+          </div>
         ))}
       </div>
     </section>
@@ -1157,6 +1183,11 @@ function ConfidenceBadge({ confidence }: { confidence: Confidence }) {
 
 function getReferenceLinks(result: IdentificationResult): ReferenceLink[] {
   const sourceLinks = (result.sourceLinks ?? []).filter((link) => /^https:\/\//.test(link.url));
+  const datasetLinks = getDatasetSourceUrls(result.evidence).map((url, index) => ({
+    label: `Dataset match ${index + 1}`,
+    sourceType: "dataset" as const,
+    url,
+  }));
   const defaults: ReferenceLink[] = [
     {
       label: "Nearby help",
@@ -1170,7 +1201,7 @@ function getReferenceLinks(result: IdentificationResult): ReferenceLink[] {
     },
   ];
 
-  return uniqueReferenceLinks([...sourceLinks, ...defaults]).slice(0, 6);
+  return uniqueReferenceLinks([...sourceLinks, ...datasetLinks, ...defaults]).slice(0, 8);
 }
 
 function getCandidateReferenceLinks(candidate: CandidateMatch): ReferenceLink[] {
@@ -1196,6 +1227,59 @@ function uniqueReferenceLinks(links: ReferenceLink[]) {
   }
 
   return unique;
+}
+
+function groupReferenceLinks(links: ReferenceLink[]): ReferenceGroup[] {
+  const groups: ReferenceGroup[] = [
+    {
+      description: "Annotated examples and dataset matches for visual comparison, not fitment proof.",
+      id: "dataset",
+      links: [],
+      title: "Visual dataset matches",
+    },
+    {
+      description: "Part-specific search and reference links for checking symptoms, labels, and common locations.",
+      id: "research",
+      links: [],
+      title: "Research",
+    },
+    {
+      description: "Local service searches when the result may need inspection, testing, or replacement.",
+      id: "nearby",
+      links: [],
+      title: "Nearby help",
+    },
+    {
+      description: "Safety reporting and recall-oriented links for risk-sensitive findings.",
+      id: "safety",
+      links: [],
+      title: "Safety",
+    },
+  ];
+  const byId = new Map(groups.map((group) => [group.id, group]));
+
+  for (const link of links) {
+    const group = byId.get(getReferenceGroupId(link));
+    group?.links.push(link);
+  }
+
+  return groups.filter((group) => group.links.length > 0);
+}
+
+function getReferenceGroupId(link: ReferenceLink): ReferenceGroup["id"] {
+  if (link.sourceType === "dataset" || link.url.includes("huggingface.co/datasets/")) {
+    return "dataset";
+  }
+
+  if (link.sourceType === "safety" || /nhtsa|recall|safety/i.test(`${link.label} ${link.url}`)) {
+    return "safety";
+  }
+
+  if (/google\.com\/maps|nearby/i.test(`${link.label} ${link.url}`)) {
+    return "nearby";
+  }
+
+  return "research";
 }
 
 function getFollowUpPrompts(result: IdentificationResult) {
