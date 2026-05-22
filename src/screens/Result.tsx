@@ -530,9 +530,7 @@ function AnalysisResult({
   promotedPartName?: string | null;
   result: IdentificationResult;
 }) {
-  const showSafetyWarning = result.isSafetyCritical || result.safetyTriage === "needs_professional";
-  const trustReview = getTrustReview(result);
-  const needsBetterPhoto = result.needsBetterPhoto || result.safetyTriage === "needs_better_photo";
+  const safetyState = getSafetyState(result);
 
   return (
     <>
@@ -546,30 +544,12 @@ function AnalysisResult({
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           <MiniPill label={result.scanCategory} />
-          <MiniPill label={trustReview.status} />
         </div>
-        <p className="mt-3 text-sm leading-6 text-neutral-600">{trustReview.description}</p>
         {capturedAt ? <p className="mt-3 text-xs font-semibold text-neutral-400">Captured {capturedAt}</p> : null}
         <QuickActions canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
       </section>
 
-      {showSafetyWarning ? (
-        <section className="rounded-[22px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-4">
-          <p className="text-sm font-extrabold text-[var(--ds-warn-ink)]">Professional check needed</p>
-          <p className="mt-2 text-sm leading-6 text-neutral-700">
-            Verify this before driving or attempting repair. The scan can explain visible clues, but this category can affect safety.
-          </p>
-        </section>
-      ) : null}
-
-      {needsBetterPhoto ? (
-        <section className="rounded-[22px] border border-neutral-200 bg-neutral-50 p-4">
-          <p className="text-sm font-extrabold text-neutral-900">Better photo needed</p>
-          <p className="mt-2 text-sm leading-6 text-neutral-500">
-            Move closer, add light, and center any label, connector, hose, or damaged area in the lens frame.
-          </p>
-        </section>
-      ) : null}
+      <SafetyStateSection state={safetyState} />
 
       <CandidateMatchesSection
         candidates={result.candidateMatches ?? []}
@@ -582,7 +562,6 @@ function AnalysisResult({
       <EvidenceSection items={result.evidence} />
       <UncertaintySection result={result} />
       <ResultSection title="Concerns" items={result.concerns} emptyText="Nothing concerning visible." />
-      <ResultSection title="Next action" items={[result.nextAction]} />
       <ResultAskBox canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
       <FollowUpSuggestions canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
       <ReferenceLinksSection links={getReferenceLinks(result)} />
@@ -659,10 +638,33 @@ function CandidateMatchesSection({
   );
 }
 
-type TrustReview = {
+type SafetyState = {
+  action: string;
   description: string;
+  tone: "danger" | "neutral" | "success" | "warning";
   status: string;
 };
+
+function SafetyStateSection({ state }: { state: SafetyState }) {
+  const toneClasses = {
+    danger: "border-[var(--ds-danger-line)] bg-[var(--ds-danger-soft)] text-[var(--ds-danger-ink)]",
+    neutral: "border-neutral-200 bg-neutral-50 text-neutral-900",
+    success: "border-[var(--ds-ok-line)] bg-[var(--ds-ok-soft)] text-[var(--ds-ok-ink)]",
+    warning: "border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] text-[var(--ds-warn-ink)]",
+  };
+
+  return (
+    <section className={`rounded-[22px] border p-4 ${toneClasses[state.tone]}`} aria-label="Safety state">
+      <p className="text-xs font-extrabold uppercase tracking-[0.14em] opacity-70">Safety state</p>
+      <h2 className="mt-2 text-base font-extrabold tracking-tight">{state.status}</h2>
+      <p className="mt-2 text-sm leading-6 text-neutral-700">{state.description}</p>
+      <div className="mt-3 border-t border-current/20 pt-3">
+        <p className="text-xs font-extrabold uppercase tracking-[0.14em] opacity-70">Action</p>
+        <p className="mt-1 text-sm font-semibold leading-6 text-neutral-800">{state.action}</p>
+      </div>
+    </section>
+  );
+}
 
 function MiniPill({ label }: { label: string }) {
   return (
@@ -1467,39 +1469,49 @@ function getPartTextSearchUrl(text: string, partName: string) {
   return `https://www.google.com/search?q=${query}`;
 }
 
-function getTrustReview(result: IdentificationResult): TrustReview {
+function getSafetyState(result: IdentificationResult): SafetyState {
   if (result.safetyTriage === "needs_professional" || result.isSafetyCritical) {
     return {
+      action: "Have a qualified mechanic verify it before driving or repair work.",
       description:
-        "Deep Spec can explain the visible clues, but this category can affect driving safety. Do not treat this as repair approval.",
+        "Deep Spec can explain visible clues, but this category can affect driving safety and is not repair approval.",
       status: "Professional verification needed",
+      tone: "warning",
     };
   }
 
   if (result.safetyTriage === "needs_better_photo" || result.needsBetterPhoto) {
     return {
+      action: "Move closer, add light, and center any label, connector, hose, or damaged area in the lens frame.",
       description: "The image does not give Deep Spec enough reliable detail. A better photo matters more than another guess.",
-      status: "Incomplete data",
+      status: "Better photo needed",
+      tone: "neutral",
     };
   }
 
   if (result.confidence === "low") {
     return {
+      action: result.nextAction,
       description: "The app found some clues, but not enough to make a strong identification.",
       status: "Low-confidence result",
+      tone: "danger",
     };
   }
 
   if (result.confidence === "medium") {
     return {
+      action: result.nextAction,
       description: "This is useful for understanding the part, but one more angle would make the result stronger.",
       status: "Check another angle",
+      tone: "warning",
     };
   }
 
   return {
+    action: result.nextAction,
     description: "The image has enough visual evidence for a useful consumer-level explanation.",
     status: "Useful match",
+    tone: "success",
   };
 }
 

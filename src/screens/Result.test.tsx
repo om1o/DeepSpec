@@ -100,6 +100,9 @@ describe("Result", () => {
     expect(screen.getByRole("heading", { name: "Research" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Nearby help" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Safety" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Safety state" })).toBeInTheDocument();
+    expect(screen.getByText("Take another photo of the label if you need more detail.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Next action" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Refine" })).toHaveAttribute("href", "/scan");
     expect(screen.getByRole("link", { name: "Search this part" })).toHaveAttribute(
       "href",
@@ -193,9 +196,10 @@ describe("Result", () => {
       },
     });
 
-    expect(screen.getByText("Professional check needed")).toBeInTheDocument();
     expect(screen.getByText("Professional verification needed")).toBeInTheDocument();
-    expect(screen.getByText(/Verify this before driving/)).toBeInTheDocument();
+    expect(screen.getByText("Have a qualified mechanic verify it before driving or repair work.")).toBeInTheDocument();
+    expect(screen.queryByText("Professional check needed")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Next action" })).not.toBeInTheDocument();
   });
 
   it("shows incomplete data guidance when the scan needs a better photo", () => {
@@ -209,9 +213,10 @@ describe("Result", () => {
       },
     });
 
-    expect(screen.getByText("Incomplete data")).toBeInTheDocument();
     expect(screen.getByText("Better photo needed")).toBeInTheDocument();
     expect(screen.getByText("Move closer, add light, and center any label, connector, hose, or damaged area in the lens frame.")).toBeInTheDocument();
+    expect(screen.queryByText("Incomplete data")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Next action" })).not.toBeInTheDocument();
     expect(screen.getByText("Why it might be wrong")).toBeInTheDocument();
     expect(screen.getByText("The current photo does not show enough detail for a strong match.")).toBeInTheDocument();
     expect(screen.getByText("Move closer, add light, and include any label, connector, hose path, or mounting bolts in the frame.")).toBeInTheDocument();
