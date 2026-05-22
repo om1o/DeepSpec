@@ -121,6 +121,18 @@ describe("Auth", () => {
     expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
   });
 
+  it("fails closed when production auth config is missing", async () => {
+    vi.stubEnv("DEV", false);
+    vi.stubEnv("VITE_SUPABASE_URL", "");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "");
+
+    await renderAuth();
+
+    expect(await screen.findByText("Supabase auth is not configured for this build. Local continue is only available for development.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Auth unavailable" })).toBeDisabled();
+    expect(screen.queryByText("Scanner opened")).not.toBeInTheDocument();
+  });
+
   it("allows local browser QA to bypass configured Supabase auth in dev", async () => {
     const user = userEvent.setup();
 

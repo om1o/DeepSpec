@@ -30,6 +30,10 @@ export function hasLocalAuthBypass() {
 }
 
 export function markLocalAuthBypass() {
+  if (!canUseLocalAuthBypass()) {
+    return false;
+  }
+
   try {
     localStorage.setItem(LOCAL_AUTH_KEY, "1");
     return true;
@@ -150,7 +154,7 @@ function getSupabaseAuthConfig(): SupabaseAuthConfig | null {
 }
 
 function canUseLocalAuthBypass() {
-  return !isSupabaseAuthConfigured() || import.meta.env.DEV;
+  return import.meta.env.DEV;
 }
 
 async function getRequiredAuthClient() {

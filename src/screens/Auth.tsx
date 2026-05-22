@@ -20,6 +20,7 @@ export default function Auth() {
   const supabaseConfigured = isSupabaseAuthConfigured();
   const googleAuthEnabled = isGoogleAuthEnabled();
   const localDevBypassEnabled = import.meta.env.DEV;
+  const canSubmit = supabaseConfigured || localDevBypassEnabled;
   const [step, setStep] = useState<AuthStep>("email");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -101,7 +102,11 @@ export default function Auth() {
     setNotice(null);
 
     if (!supabaseConfigured) {
-      handleLocalContinue();
+      if (localDevBypassEnabled) {
+        handleLocalContinue();
+      } else {
+        setError("Supabase auth is not configured for this build.");
+      }
       return;
     }
 
@@ -291,10 +296,10 @@ export default function Auth() {
 
             <button
               className="h-14 w-full rounded-[8px] bg-[var(--ds-accent)] px-4 text-base font-black text-white shadow-[var(--ds-shadow-primary)] transition active:bg-[var(--ds-accent-pressed)] disabled:pointer-events-none disabled:opacity-50"
-              disabled={isSubmitting || isGoogleLoading}
+              disabled={isSubmitting || isGoogleLoading || !canSubmit}
               type="submit"
             >
-              {submitLabel(step, supabaseConfigured, isSubmitting)}
+              {submitLabel(step, supabaseConfigured, localDevBypassEnabled, isSubmitting)}
             </button>
           </form>
 
@@ -337,13 +342,18 @@ export default function Auth() {
   );
 }
 
-function submitLabel(step: AuthStep, supabaseConfigured: boolean, isSubmitting: boolean) {
+function submitLabel(
+  step: AuthStep,
+  supabaseConfigured: boolean,
+  localDevBypassEnabled: boolean,
+  isSubmitting: boolean,
+) {
   if (isSubmitting) {
     return step === "email" ? "Sending code..." : "Checking code...";
   }
 
   if (!supabaseConfigured) {
-    return "Continue locally";
+    return localDevBypassEnabled ? "Continue locally" : "Auth unavailable";
   }
 
   return step === "email" ? "Send verification code" : "Verify code";
