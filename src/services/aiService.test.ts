@@ -1,4 +1,4 @@
-import { identifyCapturedFrame, runAI, sendFollowUp } from "./aiService";
+import { getAIErrorDetails, identifyCapturedFrame, runAI, sendFollowUp } from "./aiService";
 
 const result = {
   partName: "Alternator",
@@ -110,6 +110,17 @@ describe("aiService", () => {
     ).rejects.toMatchObject({
       code: "rate_limited",
       message: "Too many AI lookups right now. Try again in a few minutes.",
+    });
+  });
+
+  it("classifies provider availability errors separately from model output errors", () => {
+    expect(getAIErrorDetails("rate_limited")).toMatchObject({
+      category: "provider_unavailable",
+      title: "AI provider is rate-limited",
+    });
+    expect(getAIErrorDetails("invalid_response")).toMatchObject({
+      category: "model_response",
+      title: "AI response was unreadable",
     });
   });
 

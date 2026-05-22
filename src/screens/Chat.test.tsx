@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { vi } from "vitest";
 import Chat from "./Chat";
-import { sendFollowUp } from "../services/aiService";
+import { AIServiceError, sendFollowUp } from "../services/aiService";
 import { LOOKUPS_STORAGE_KEY } from "../services/storage";
 import type { ChatMessage } from "../types";
 import type { Lookup } from "../types";
@@ -87,6 +87,20 @@ describe("Chat", () => {
     renderChat(`/result/${lookup.id}/chat?q=How%20serious%20is%20this%3F`);
 
     expect(screen.getByLabelText("Ask a follow-up question")).toHaveValue("How serious is this?");
+  });
+
+  it("explains provider rate limits without treating them as bad scan answers", async () => {
+    sendFollowUpMock.mockRejectedValue(new AIServiceError("rate_limited", "Too many AI chat requests right now. Try again in a few minutes."));
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+
+    renderChat(`/result/${lookup.id}/chat`);
+
+    await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "What should I check next?");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("AI provider is rate-limited")).toBeInTheDocument();
+    expect(screen.getByText("Too many AI chat requests right now. Try again in a few minutes.")).toBeInTheDocument();
+    expect(screen.getByText(/not proof the model identified the part incorrectly/i)).toBeInTheDocument();
   });
 });
 

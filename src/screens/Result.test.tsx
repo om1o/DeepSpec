@@ -184,13 +184,15 @@ describe("Result", () => {
       analyzedAt: "2026-05-16T00:00:05.000Z",
     });
 
-    expect(screen.getByText("AI identification failed")).toBeInTheDocument();
+    expect(screen.getByText("Provider unavailable")).toBeInTheDocument();
+    expect(screen.getByText("AI provider is rate-limited")).toBeInTheDocument();
     expect(screen.getByText("Too many AI lookups right now. Try again in a few minutes.")).toBeInTheDocument();
+    expect(screen.getByText(/not proof the model identified the part incorrectly/i)).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute(
       "src",
       "data:image/jpeg;base64,test-image",
     );
-    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again later" })).toBeInTheDocument();
   });
 
   it("labels QA test results as unsaved", () => {
@@ -309,7 +311,8 @@ describe("Result", () => {
       analyzedAt: "2026-05-16T00:00:05.000Z",
     });
 
-    expect(screen.getByText("AI identification failed")).toBeInTheDocument();
+    expect(screen.getByText("Provider unavailable")).toBeInTheDocument();
+    expect(screen.getByText("AI provider could not be reached")).toBeInTheDocument();
     expect(screen.getByText("Network error")).toBeInTheDocument();
     expect(screen.getByText(/Internet connection is active/)).toBeInTheDocument();
 
@@ -317,7 +320,7 @@ describe("Result", () => {
 
     expect(identifySpy).toHaveBeenCalledWith(frame);
     expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBeNull();
-    expect(screen.queryByText("AI identification failed")).not.toBeInTheDocument();
+    expect(screen.queryByText("Provider unavailable")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
 
     onlineSpy.mockRestore();
@@ -337,7 +340,8 @@ describe("Result", () => {
 
     renderResult(null, `/result/${failedLookup.id}`);
 
-    expect(screen.getByText("AI identification failed")).toBeInTheDocument();
+    expect(screen.getByText("Provider unavailable")).toBeInTheDocument();
+    expect(screen.getByText("AI provider could not be reached")).toBeInTheDocument();
     expect(screen.getByText("Network error")).toBeInTheDocument();
     expect(screen.getByText(/Internet connection is active/)).toBeInTheDocument();
 
@@ -350,7 +354,7 @@ describe("Result", () => {
     expect(savedLookups[0].result?.partName).toBe("Alternator");
     expect(savedLookups[0].errorMessage).toBeUndefined();
 
-    expect(screen.queryByText("AI identification failed")).not.toBeInTheDocument();
+    expect(screen.queryByText("Provider unavailable")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
     expect(screen.getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
 
