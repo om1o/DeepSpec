@@ -18,11 +18,24 @@ export function isGoogleAuthEnabled() {
 }
 
 export function hasLocalAuthBypass() {
-  return canUseLocalAuthBypass() && localStorage.getItem(LOCAL_AUTH_KEY) === "1";
+  if (!canUseLocalAuthBypass()) {
+    return false;
+  }
+
+  try {
+    return localStorage.getItem(LOCAL_AUTH_KEY) === "1";
+  } catch {
+    return false;
+  }
 }
 
 export function markLocalAuthBypass() {
-  localStorage.setItem(LOCAL_AUTH_KEY, "1");
+  try {
+    localStorage.setItem(LOCAL_AUTH_KEY, "1");
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function getVerifiedAuthUser(): Promise<User | null> {
