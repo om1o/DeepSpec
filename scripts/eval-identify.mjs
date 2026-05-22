@@ -168,6 +168,31 @@ export function getEvalExitCode(summary) {
   return 0;
 }
 
+export function buildEvalResultRow({
+  elapsedMs,
+  error,
+  expectedLabels,
+  imagePath,
+  providerAvailabilityFailure,
+  responseStatus,
+  result,
+  score,
+}) {
+  return {
+    imagePath,
+    expectedLabels,
+    status: responseStatus,
+    errorCode: error?.code ?? null,
+    errorMessage: error?.message ?? null,
+    partName: result?.partName ?? null,
+    confidence: result?.confidence ?? null,
+    scanCategory: result?.scanCategory ?? null,
+    matchedLabels: score.matchedLabels,
+    failureReasons: providerAvailabilityFailure && error ? [error.code] : score.failureReasons,
+    elapsedMs,
+  };
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const env = await loadEnv();
@@ -206,17 +231,16 @@ async function main() {
         providerFailureCount += 1;
       }
 
-      results.push({
+      results.push(buildEvalResultRow({
+        elapsedMs,
+        error,
         imagePath,
         expectedLabels,
-        status: response.status,
-        partName: result?.partName ?? null,
-        confidence: result?.confidence ?? null,
-        scanCategory: result?.scanCategory ?? null,
-        matchedLabels: score.matchedLabels,
-        failureReasons: providerAvailabilityFailure ? [error.code] : score.failureReasons,
-        elapsedMs,
-      });
+        providerAvailabilityFailure,
+        responseStatus: response.status,
+        result,
+        score,
+      }));
 
       if ((!score.ok || error) && isReviewableEvalFailure(error)) {
         failures.push(

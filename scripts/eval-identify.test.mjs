@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DATASET_FETCH_TIMEOUT_MS,
   RELEASE_SAMPLE_IMAGES,
+  buildEvalResultRow,
   buildEvalViteServerOptions,
   buildReviewLookup,
   getEvalExitCode,
@@ -181,6 +182,33 @@ describe("identify eval scoring", () => {
         sampleSize: 6,
       }),
     ).toBe(1);
+  });
+
+  it("keeps provider error details in release summaries", () => {
+    expect(
+      buildEvalResultRow({
+        elapsedMs: 150,
+        error: {
+          code: "provider_error",
+          message: "API key not valid. Please pass a valid API key.",
+        },
+        expectedLabels: ["Hood"],
+        imagePath: "Car damages dataset/File1/img/Car damages 2.jpg",
+        providerAvailabilityFailure: true,
+        responseStatus: 400,
+        result: null,
+        score: {
+          ok: false,
+          matchedLabels: [],
+          failureReasons: ["wrong_result"],
+        },
+      }),
+    ).toMatchObject({
+      errorCode: "provider_error",
+      errorMessage: "API key not valid. Please pass a valid API key.",
+      failureReasons: ["provider_error"],
+      status: 400,
+    });
   });
 
   it("does not open a Vite HMR websocket during eval SSR loading", () => {

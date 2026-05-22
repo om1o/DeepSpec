@@ -57,8 +57,17 @@ Check this before changing app code:
 4. If SQL shows non-internal triggers on `auth.users`, inspect the matching function body, `security_type`, owner, and `function_config`. A trigger function writing to `public.profiles` or `public.users` must be `security definer` and should pin `search_path`.
 5. If SQL shows `public.profiles` / `public.users` constraints, make sure they allow anonymous users or remove the trigger that writes to them. Do not run the generated drop-trigger statements until the Auth log or function body proves that trigger is the failing object.
 6. If diagnostics show the standard Supabase template path `auth.users -> public.handle_new_user() -> public.profiles`, run `npm run supabase:print-auth-anonymous-repair`, review the printed SQL, then paste it into Supabase SQL Editor. This repair does not drop triggers; it makes `public.handle_new_user()` return immediately for anonymous users so profile-row constraints cannot block DeepSpec cloud-sync auth.
-7. Apply this repo's migration if it has not been applied yet.
-8. Rerun `npm run verify:supabase`.
+7. If you have a privileged Postgres connection and the diagnostics confirmed that exact standard trigger path, you can apply the same repair without putting the database password on the command line:
+
+```powershell
+$env:SUPABASE_DB_URL="postgresql://postgres:<password>@db.<project-ref>.supabase.co:5432/postgres"
+npm run supabase:apply-auth-anonymous-repair -- --confirm-standard-profile-trigger
+```
+
+The apply command refuses to run without `--confirm-standard-profile-trigger`, uses `psql` over stdin, and maps the connection string into `PG*` environment variables so the URL is not passed as a process argument.
+
+8. Apply this repo's migration if it has not been applied yet.
+9. Rerun `npm run verify:supabase`.
 
 ## GitHub Actions
 

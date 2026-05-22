@@ -8,6 +8,9 @@ describe("Phase 8 Supabase validation tooling", () => {
   };
   const verifier = readFileSync(join(process.cwd(), "scripts", "verify-supabase-sync.mjs"), "utf8");
   const authDiagnostics = readFileSync(join(process.cwd(), "scripts", "print-supabase-auth-diagnostics.mjs"), "utf8");
+  const authRepairApply = readFileSync(join(process.cwd(), "scripts", "apply-supabase-auth-anonymous-repair.mjs"), "utf8");
+  const authRepairPrint = readFileSync(join(process.cwd(), "scripts", "print-supabase-auth-anonymous-repair.mjs"), "utf8");
+  const authRepairSql = readFileSync(join(process.cwd(), "scripts", "supabase-auth-anonymous-repair-sql.mjs"), "utf8");
   const docs = readFileSync(join(process.cwd(), "docs", "PHASE_8_SUPABASE_VALIDATION.md"), "utf8");
   const ciWorkflow = readFileSync(join(process.cwd(), ".github", "workflows", "ci.yml"), "utf8");
 
@@ -16,6 +19,7 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(packageJson.scripts["supabase:print-migration"]).toBe("node scripts/print-supabase-migration.mjs");
     expect(packageJson.scripts["supabase:print-auth-diagnostics"]).toBe("node scripts/print-supabase-auth-diagnostics.mjs");
     expect(packageJson.scripts["supabase:print-auth-anonymous-repair"]).toBe("node scripts/print-supabase-auth-anonymous-repair.mjs");
+    expect(packageJson.scripts["supabase:apply-auth-anonymous-repair"]).toBe("node scripts/apply-supabase-auth-anonymous-repair.mjs");
   });
 
   it("checks private image upload, scan row write, owner read, cross-user block, and cleanup", () => {
@@ -47,7 +51,7 @@ describe("Phase 8 Supabase validation tooling", () => {
   });
 
   it("prints a narrow anonymous Auth repair SQL for the standard profile trigger", () => {
-    const authRepair = readFileSync(join(process.cwd(), "scripts", "print-supabase-auth-anonymous-repair.mjs"), "utf8");
+    const authRepair = `${authRepairPrint}\n${authRepairSql}`;
 
     expect(authRepair).toContain("public.handle_new_user");
     expect(authRepair).toContain("coalesce(new.is_anonymous, false)");
@@ -57,12 +61,23 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(authRepair).not.toContain("drop trigger if exists");
   });
 
+  it("guards the executable anonymous Auth repair behind explicit confirmation and privileged Postgres credentials", () => {
+    expect(authRepairApply).toContain("--confirm-standard-profile-trigger");
+    expect(authRepairApply).toContain("SUPABASE_DB_URL");
+    expect(authRepairApply).toContain("PGPASSWORD");
+    expect(authRepairApply).toContain('["--no-psqlrc", "--set", "ON_ERROR_STOP=1"]');
+    expect(authRepairApply).toContain("input: AUTH_ANONYMOUS_REPAIR_SQL");
+    expect(authRepairApply).toContain("Do not use VITE_SUPABASE_PUBLISHABLE_KEY");
+    expect(authRepairApply).not.toContain("drop trigger if exists");
+  });
+
   it("documents that parent setup and non-service-role keys are required", () => {
     expect(docs).toContain("Parent-Required Setup");
     expect(docs).toContain("Do not put a service-role key");
     expect(docs).toContain("VITE_SUPABASE_PUBLISHABLE_KEY");
     expect(docs).toContain("supabase:print-auth-diagnostics");
     expect(docs).toContain("supabase:print-auth-anonymous-repair");
+    expect(docs).toContain("supabase:apply-auth-anonymous-repair");
     expect(docs).toContain("codex/production-readiness-release*");
   });
 
