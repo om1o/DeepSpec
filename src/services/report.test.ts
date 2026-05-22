@@ -12,8 +12,23 @@ const lookup: Lookup = {
     partName: "Brake caliper",
     confidence: "medium",
     scanCategory: "brakes",
+    candidateMatches: [
+      {
+        partName: "Brake rotor",
+        confidence: "low",
+        scanCategory: "brakes",
+        reason: "Nearby wheel-well part, but caliper body is more visible.",
+      },
+    ],
     whatItDoes: "It helps squeeze the brake pads against the rotor.",
     visibleObservations: ["Rusty caliper body is visible."],
+    evidenceRegions: [
+      {
+        label: "Caliper body",
+        observation: "Rusty caliper body is visible near the wheel area.",
+        regionLabel: "Scanned area",
+      },
+    ],
     concerns: ["Brake parts are safety-critical."],
     safetyTriage: "needs_professional",
     isSafetyCritical: true,
@@ -23,6 +38,13 @@ const lookup: Lookup = {
       "Caliper shape near wheel area.",
       "Local dataset match: Brake caliper (part, 4 labeled samples)",
       "Dataset source: https://huggingface.co/datasets/DrBimmer/car-parts-and-damage-dataset/resolve/main/sample.jpg",
+    ],
+    sourceLinks: [
+      {
+        label: "Dataset sample: Brake caliper",
+        url: "https://huggingface.co/datasets/DrBimmer/car-parts-and-damage-dataset/resolve/main/sample.jpg",
+        sourceType: "dataset",
+      },
     ],
   },
   analyzedAt: "2026-05-17T12:00:05.000Z",
@@ -43,6 +65,12 @@ describe("report", () => {
     expect(report).toContain("Mechanic summary:");
     expect(report).toContain("Part: Brake caliper");
     expect(report).toContain("Safety triage: needs_professional");
+    expect(report).toContain("Other possible matches:");
+    expect(report).toContain("Brake rotor (low): Nearby wheel-well part");
+    expect(report).toContain("Image evidence:");
+    expect(report).toContain("Scanned area: Caliper body");
+    expect(report).toContain("Ranked sources:");
+    expect(report).toContain("Dataset sample: Brake caliper (dataset)");
     expect(report).toContain("Local dataset match: Brake caliper");
     expect(report).toContain("Dataset source: https://huggingface.co/datasets/DrBimmer/car-parts-and-damage-dataset");
     expect(report).toContain("Front driver side.");

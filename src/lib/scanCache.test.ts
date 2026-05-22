@@ -12,14 +12,17 @@ const makeResult = (partName: string): IdentificationResult => ({
   partName,
   confidence: "high",
   scanCategory: "brakes",
+  candidateMatches: [],
   whatItDoes: "Stops the car",
   visibleObservations: [],
+  evidenceRegions: [],
   concerns: [],
   safetyTriage: "can_help",
   isSafetyCritical: true,
   nextAction: "Inspect pads",
   needsBetterPhoto: false,
   evidence: [],
+  sourceLinks: [],
 });
 
 beforeEach(() => {

@@ -1,5 +1,16 @@
 import { FOLLOWUP_PROMPT, IDENTIFY_PROMPT } from "./systemPrompts";
-import { SCAN_CATEGORIES, type AIInput, type CapturedFrame, type IdentificationResult, type LabelRescueTrigger, type Lookup, type ScanCategory } from "../types";
+import {
+  SCAN_CATEGORIES,
+  type AIInput,
+  type CandidateMatch,
+  type CapturedFrame,
+  type EvidenceRegion,
+  type IdentificationResult,
+  type LabelRescueTrigger,
+  type Lookup,
+  type ScanCategory,
+  type SourceLink,
+} from "../types";
 
 type AIErrorCode = "invalid_input" | "not_configured" | "rate_limited" | "invalid_response" | "network" | "unsupported";
 
@@ -150,14 +161,17 @@ function isIdentificationResult(value: unknown): value is IdentificationResult {
     typeof value.partName === "string" &&
     isConfidence(value.confidence) &&
     isScanCategory(value.scanCategory) &&
+    isCandidateMatchArray(value.candidateMatches) &&
     typeof value.whatItDoes === "string" &&
     isStringArray(value.visibleObservations) &&
+    isEvidenceRegionArray(value.evidenceRegions) &&
     isStringArray(value.concerns) &&
     isSafetyTriage(value.safetyTriage) &&
     typeof value.isSafetyCritical === "boolean" &&
     typeof value.nextAction === "string" &&
     typeof value.needsBetterPhoto === "boolean" &&
-    isStringArray(value.evidence)
+    isStringArray(value.evidence) &&
+    isSourceLinkArray(value.sourceLinks)
   );
 }
 
@@ -167,6 +181,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isCandidateMatchArray(value: unknown): value is CandidateMatch[] {
+  return Array.isArray(value) && value.every((item) => (
+    isRecord(item) &&
+    typeof item.partName === "string" &&
+    isConfidence(item.confidence) &&
+    isScanCategory(item.scanCategory) &&
+    typeof item.reason === "string"
+  ));
+}
+
+function isEvidenceRegionArray(value: unknown): value is EvidenceRegion[] {
+  return Array.isArray(value) && value.every((item) => (
+    isRecord(item) &&
+    typeof item.label === "string" &&
+    typeof item.observation === "string" &&
+    typeof item.regionLabel === "string"
+  ));
+}
+
+function isSourceLinkArray(value: unknown): value is SourceLink[] {
+  return Array.isArray(value) && value.every((item) => (
+    isRecord(item) &&
+    typeof item.label === "string" &&
+    typeof item.url === "string" &&
+    (item.sourceType === "dataset" || item.sourceType === "reference" || item.sourceType === "search" || item.sourceType === "safety")
+  ));
 }
 
 function isConfidence(value: unknown) {

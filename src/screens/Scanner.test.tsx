@@ -12,14 +12,36 @@ const identifyCapturedFrame = vi.fn(async () => ({
   partName: "Alternator",
   confidence: "high",
   scanCategory: "electrical",
+  candidateMatches: [
+    {
+      partName: "Starter motor",
+      confidence: "low",
+      scanCategory: "electrical",
+      reason: "Engine bay electrical component, but the pulley favors alternator.",
+    },
+  ],
   whatItDoes: "It charges the battery while the engine runs.",
   visibleObservations: ["Belt-driven metal housing is visible."],
+  evidenceRegions: [
+    {
+      label: "Pulley",
+      observation: "Belt-driven pulley is visible.",
+      regionLabel: "Scanned area",
+    },
+  ],
   concerns: [],
   safetyTriage: "can_help",
   isSafetyCritical: false,
   nextAction: "Compare the scan with another angle if you need more detail.",
   needsBetterPhoto: false,
   evidence: ["The pulley and housing match common alternator shapes."],
+  sourceLinks: [
+    {
+      label: "Search this part",
+      url: "https://www.google.com/search?q=Alternator%20car%20part",
+      sourceType: "search",
+    },
+  ],
 }));
 const objectTargetState = vi.hoisted(() => ({
   current: {

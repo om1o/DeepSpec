@@ -1,5 +1,12 @@
 import { IDENTIFY_PROMPT } from "../src/services/systemPrompts";
-import { SCAN_CATEGORIES, type IdentificationResult, type ScanCategory } from "../src/types";
+import {
+  SCAN_CATEGORIES,
+  type CandidateMatch,
+  type EvidenceRegion,
+  type IdentificationResult,
+  type ScanCategory,
+  type SourceLink,
+} from "../src/types";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -35,10 +42,35 @@ const IDENTIFICATION_RESPONSE_SCHEMA = {
     partName: { type: "string" },
     confidence: { type: "string", enum: ["high", "medium", "low"] },
     scanCategory: { type: "string", enum: [...SCAN_CATEGORIES] },
+    candidateMatches: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          partName: { type: "string" },
+          confidence: { type: "string", enum: ["high", "medium", "low"] },
+          scanCategory: { type: "string", enum: [...SCAN_CATEGORIES] },
+          reason: { type: "string" },
+        },
+        required: ["partName", "confidence", "scanCategory", "reason"],
+      },
+    },
     whatItDoes: { type: "string" },
     visibleObservations: {
       type: "array",
       items: { type: "string" },
+    },
+    evidenceRegions: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          label: { type: "string" },
+          observation: { type: "string" },
+          regionLabel: { type: "string" },
+        },
+        required: ["label", "observation", "regionLabel"],
+      },
     },
     concerns: {
       type: "array",
@@ -52,19 +84,34 @@ const IDENTIFICATION_RESPONSE_SCHEMA = {
       type: "array",
       items: { type: "string" },
     },
+    sourceLinks: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          label: { type: "string" },
+          url: { type: "string" },
+          sourceType: { type: "string", enum: ["dataset", "reference", "search", "safety"] },
+        },
+        required: ["label", "url", "sourceType"],
+      },
+    },
   },
   required: [
     "partName",
     "confidence",
     "scanCategory",
+    "candidateMatches",
     "whatItDoes",
     "visibleObservations",
+    "evidenceRegions",
     "concerns",
     "safetyTriage",
     "isSafetyCritical",
     "nextAction",
     "needsBetterPhoto",
     "evidence",
+    "sourceLinks",
   ],
 };
 
@@ -263,16 +310,23 @@ function normalizeIdentificationResult(
 ): IdentificationResult {
   const safetyTriage = result.isSafetyCritical ? "needs_professional" : result.safetyTriage;
   const needsBetterPhoto = result.needsBetterPhoto || safetyTriage === "needs_better_photo";
-  const cleanEvidence = appendDatasetEvidence(appendOcrEvidence(cleanList(result.evidence), ocrText), result, env);
+  const datasetMatches = findDatasetMatches(result, env);
+  const cleanEvidence = appendDatasetEvidence(appendOcrEvidence(cleanList(result.evidence), ocrText), datasetMatches);
+  const partName = cleanText(result.partName, "Unidentified car part");
+  const scanCategory = getTrustedCategory(result);
+  const visibleObservations = cleanList(result.visibleObservations);
 
   return {
     ...result,
-    partName: cleanText(result.partName, "Unidentified car part"),
-    scanCategory: getTrustedCategory(result),
+    partName,
+    scanCategory,
+    candidateMatches: normalizeCandidateMatches(result, datasetMatches, partName, scanCategory),
     whatItDoes: cleanText(result.whatItDoes, "Deep Spec could not verify what this part does from this photo."),
-    visibleObservations: cleanList(result.visibleObservations),
+    visibleObservations,
+    evidenceRegions: normalizeEvidenceRegions(result.evidenceRegions, visibleObservations, cleanEvidence),
     concerns: cleanList(result.concerns),
     evidence: cleanEvidence,
+    sourceLinks: normalizeSourceLinks(result.sourceLinks, datasetMatches, partName),
     nextAction:
       safetyTriage === "needs_professional"
         ? ensureProfessionalNextAction(result.nextAction)
@@ -282,8 +336,7 @@ function normalizeIdentificationResult(
   };
 }
 
-function appendDatasetEvidence(evidence: string[], result: IdentificationResult, env: Record<string, string | undefined>) {
-  const matches = findDatasetMatches(result, env);
+function appendDatasetEvidence(evidence: string[], matches: DatasetMatch[]) {
   if (!matches.length) {
     return evidence;
   }
@@ -293,6 +346,117 @@ function appendDatasetEvidence(evidence: string[], result: IdentificationResult,
     .filter((item) => !existingEvidence.has(item.toLowerCase()));
 
   return [...evidence, ...datasetEvidence].slice(0, 8);
+}
+
+function normalizeCandidateMatches(
+  result: IdentificationResult,
+  datasetMatches: DatasetMatch[],
+  primaryPartName: string,
+  primaryCategory: ScanCategory,
+): CandidateMatch[] {
+  const cleanCandidates = result.candidateMatches
+    .map((candidate) => ({
+      partName: cleanText(candidate.partName, ""),
+      confidence: candidate.confidence,
+      scanCategory: getTrustedCandidateCategory(candidate.scanCategory, candidate.partName),
+      reason: cleanText(candidate.reason, ""),
+    }))
+    .filter((candidate) => candidate.partName && candidate.reason)
+    .filter((candidate) => candidate.partName.toLowerCase() !== primaryPartName.toLowerCase());
+
+  const datasetCandidates = datasetMatches
+    .filter((match) => match.kind === "part")
+    .map((match) => ({
+      partName: match.label,
+      confidence: match.score >= 5 ? "medium" as const : "low" as const,
+      scanCategory: getTrustedCandidateCategory(primaryCategory, match.label),
+      reason: `Similar local dataset label with ${match.sampleCount ?? 1} sample${match.sampleCount === 1 ? "" : "s"}.`,
+    }));
+
+  return uniqueCandidates([...cleanCandidates, ...datasetCandidates]).slice(0, 4);
+}
+
+function uniqueCandidates(candidates: CandidateMatch[]) {
+  const seen = new Set<string>();
+  const unique: CandidateMatch[] = [];
+
+  for (const candidate of candidates) {
+    const key = candidate.partName.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(candidate);
+  }
+
+  return unique;
+}
+
+function normalizeEvidenceRegions(evidenceRegions: EvidenceRegion[], observations: string[], evidence: string[]) {
+  const cleanRegions = evidenceRegions
+    .map((region) => ({
+      label: cleanText(region.label, ""),
+      observation: cleanText(region.observation, ""),
+      regionLabel: cleanText(region.regionLabel, "Scanned area"),
+    }))
+    .filter((region) => region.label && region.observation);
+
+  if (cleanRegions.length) {
+    return cleanRegions.slice(0, 4);
+  }
+
+  return [...observations, ...evidence]
+    .slice(0, 3)
+    .map((observation, index) => ({
+      label: index === 0 ? "Primary clue" : `Clue ${index + 1}`,
+      observation,
+      regionLabel: "Scanned area",
+    }));
+}
+
+function normalizeSourceLinks(sourceLinks: SourceLink[], datasetMatches: DatasetMatch[], partName: string) {
+  const cleanLinks = sourceLinks
+    .map((link) => ({
+      label: cleanText(link.label, ""),
+      url: cleanUrl(link.url),
+      sourceType: link.sourceType,
+    }))
+    .filter((link): link is SourceLink => Boolean(link.label && link.url && isSourceType(link.sourceType)));
+
+  const datasetLinks = datasetMatches
+    .filter((match) => match.sourceUrl)
+    .map((match) => ({
+      label: `Dataset sample: ${match.label}`,
+      url: match.sourceUrl as string,
+      sourceType: "dataset" as const,
+    }));
+
+  const defaultLinks: SourceLink[] = [
+    {
+      label: "Search this part",
+      url: `https://www.google.com/search?q=${encodeURIComponent(`${partName} car part`)}`,
+      sourceType: "search",
+    },
+    {
+      label: "NHTSA recalls",
+      url: "https://www.nhtsa.gov/recalls",
+      sourceType: "safety",
+    },
+  ];
+
+  return uniqueSourceLinks([...datasetLinks, ...cleanLinks, ...defaultLinks]).slice(0, 6);
+}
+
+function uniqueSourceLinks(links: SourceLink[]) {
+  const seen = new Set<string>();
+  const unique: SourceLink[] = [];
+
+  for (const link of links) {
+    const key = link.url.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(link);
+  }
+
+  return unique;
 }
 
 type DatasetMatch = {
@@ -623,6 +787,16 @@ function cleanList(value: string[]) {
   return value.map((item) => item.trim().replace(/\s+/g, " ")).filter(Boolean).slice(0, 6);
 }
 
+function cleanUrl(value: string) {
+  const cleaned = value.trim();
+  try {
+    const url = new URL(cleaned);
+    return url.protocol === "https:" ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
 function isIdentificationResult(value: unknown): value is IdentificationResult {
   if (!isRecord(value)) {
     return false;
@@ -632,14 +806,17 @@ function isIdentificationResult(value: unknown): value is IdentificationResult {
     typeof value.partName === "string" &&
     isConfidence(value.confidence) &&
     isScanCategory(value.scanCategory) &&
+    isCandidateMatchArray(value.candidateMatches) &&
     typeof value.whatItDoes === "string" &&
     isStringArray(value.visibleObservations) &&
+    isEvidenceRegionArray(value.evidenceRegions) &&
     isStringArray(value.concerns) &&
     isSafetyTriage(value.safetyTriage) &&
     typeof value.isSafetyCritical === "boolean" &&
     typeof value.nextAction === "string" &&
     typeof value.needsBetterPhoto === "boolean" &&
-    isStringArray(value.evidence)
+    isStringArray(value.evidence) &&
+    isSourceLinkArray(value.sourceLinks)
   );
 }
 
@@ -672,6 +849,34 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
+function isCandidateMatchArray(value: unknown): value is CandidateMatch[] {
+  return Array.isArray(value) && value.every((item) => (
+    isRecord(item) &&
+    typeof item.partName === "string" &&
+    isConfidence(item.confidence) &&
+    isScanCategory(item.scanCategory) &&
+    typeof item.reason === "string"
+  ));
+}
+
+function isEvidenceRegionArray(value: unknown): value is EvidenceRegion[] {
+  return Array.isArray(value) && value.every((item) => (
+    isRecord(item) &&
+    typeof item.label === "string" &&
+    typeof item.observation === "string" &&
+    typeof item.regionLabel === "string"
+  ));
+}
+
+function isSourceLinkArray(value: unknown): value is SourceLink[] {
+  return Array.isArray(value) && value.every((item) => (
+    isRecord(item) &&
+    typeof item.label === "string" &&
+    typeof item.url === "string" &&
+    isSourceType(item.sourceType)
+  ));
+}
+
 function isConfidence(value: unknown) {
   return value === "high" || value === "medium" || value === "low";
 }
@@ -684,12 +889,20 @@ function isScanCategory(value: unknown): value is ScanCategory {
   return typeof value === "string" && SCAN_CATEGORIES.includes(value as ScanCategory);
 }
 
+function isSourceType(value: unknown): value is SourceLink["sourceType"] {
+  return value === "dataset" || value === "reference" || value === "search" || value === "safety";
+}
+
 function getTrustedCategory(result: IdentificationResult): ScanCategory {
   if (result.scanCategory !== "unknown") {
     return result.scanCategory;
   }
 
   return categorizeIdentificationText(result);
+}
+
+function getTrustedCandidateCategory(category: ScanCategory, text: string): ScanCategory {
+  return category === "unknown" ? categorizeText(text) : category;
 }
 
 function categorizeIdentificationText(result: IdentificationResult): ScanCategory {
@@ -703,15 +916,21 @@ function categorizeIdentificationText(result: IdentificationResult): ScanCategor
     .join(" ")
     .toLowerCase();
 
-  if (/airbag|srs/.test(text)) return "airbag";
-  if (/brake|caliper|rotor|pad/.test(text)) return "brakes";
-  if (/steering|tie rod|rack and pinion/.test(text)) return "steering";
-  if (/suspension|control arm|strut|shock|ball joint/.test(text)) return "suspension";
-  if (/fuel|gas|injector|fuel line|tank/.test(text)) return "fuel";
-  if (/leak|oil|coolant|fluid/.test(text)) return "leak";
-  if (/battery|alternator|starter|wire|wiring|connector|fuse|sensor|electrical/.test(text)) return "electrical";
-  if (/bumper|fender|door|panel|body/.test(text)) return "body";
-  if (/engine|belt|hose|radiator|thermostat|filter|intake|manifold/.test(text)) return "engine";
+  return categorizeText(text);
+}
+
+function categorizeText(text: string): ScanCategory {
+  const normalized = text.toLowerCase();
+
+  if (/airbag|srs/.test(normalized)) return "airbag";
+  if (/brake|caliper|rotor|pad/.test(normalized)) return "brakes";
+  if (/steering|tie rod|rack and pinion/.test(normalized)) return "steering";
+  if (/suspension|control arm|strut|shock|ball joint/.test(normalized)) return "suspension";
+  if (/fuel|gas|injector|fuel line|tank/.test(normalized)) return "fuel";
+  if (/leak|oil|coolant|fluid/.test(normalized)) return "leak";
+  if (/battery|alternator|starter|wire|wiring|connector|fuse|sensor|electrical/.test(normalized)) return "electrical";
+  if (/bumper|fender|door|panel|body/.test(normalized)) return "body";
+  if (/engine|belt|hose|radiator|thermostat|filter|intake|manifold/.test(normalized)) return "engine";
 
   return "unknown";
 }

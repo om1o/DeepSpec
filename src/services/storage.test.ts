@@ -22,14 +22,36 @@ const scanState: ScanAnalysisState = {
     partName: "Alternator",
     confidence: "high",
     scanCategory: "electrical",
+    candidateMatches: [
+      {
+        partName: "Starter motor",
+        confidence: "low",
+        scanCategory: "electrical",
+        reason: "Also mounted nearby, but the pulley favors alternator.",
+      },
+    ],
     whatItDoes: "It charges the battery while the engine runs.",
     visibleObservations: ["Belt-driven housing is visible."],
+    evidenceRegions: [
+      {
+        label: "Pulley",
+        observation: "Belt-driven housing is visible.",
+        regionLabel: "Scanned area",
+      },
+    ],
     concerns: [],
     safetyTriage: "can_help",
     isSafetyCritical: false,
     nextAction: "Take another photo if needed.",
     needsBetterPhoto: false,
     evidence: ["The pulley and housing match an alternator."],
+    sourceLinks: [
+      {
+        label: "Search this part",
+        url: "https://www.google.com/search?q=Alternator%20car%20part",
+        sourceType: "search",
+      },
+    ],
   },
 };
 

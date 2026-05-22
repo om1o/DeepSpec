@@ -4,14 +4,36 @@ const result = {
   partName: "Alternator",
   confidence: "high",
   scanCategory: "electrical",
+  candidateMatches: [
+    {
+      partName: "Starter motor",
+      confidence: "low",
+      scanCategory: "electrical",
+      reason: "Also mounted nearby, but the visible pulley favors alternator.",
+    },
+  ],
   whatItDoes: "It charges the battery while the engine runs.",
   visibleObservations: ["Belt-driven metal housing is visible."],
+  evidenceRegions: [
+    {
+      label: "Pulley",
+      observation: "Belt-driven pulley is visible.",
+      regionLabel: "Scanned area",
+    },
+  ],
   concerns: [],
   safetyTriage: "can_help",
   isSafetyCritical: false,
   nextAction: "Take another photo of the label if you need more detail.",
   needsBetterPhoto: false,
   evidence: ["The pulley and vented housing match common alternator shapes."],
+  sourceLinks: [
+    {
+      label: "Search this part",
+      url: "https://www.google.com/search?q=Alternator%20car%20part",
+      sourceType: "search",
+    },
+  ],
 };
 
 describe("aiService", () => {

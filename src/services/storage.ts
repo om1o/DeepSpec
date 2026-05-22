@@ -1,4 +1,4 @@
-import type { ChatMessage, Confidence, IdentificationResult, Lookup, Rating, ScanAnalysisState, ScanCategory, TrainingStatus } from "../types";
+import type { CandidateMatch, ChatMessage, Confidence, EvidenceRegion, IdentificationResult, Lookup, Rating, ScanAnalysisState, ScanCategory, SourceLink, TrainingStatus } from "../types";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
 export const MAX_SAVED_LOOKUPS = 50;
@@ -328,6 +328,10 @@ function isTrainingStatus(value: unknown): value is TrainingStatus {
   return value === "raw_unreviewed" || value === "user_confirmed" || value === "user_corrected";
 }
 
+function isSourceType(value: unknown): value is SourceLink["sourceType"] {
+  return value === "dataset" || value === "reference" || value === "search" || value === "safety";
+}
+
 function getTrainingStatus(rating: Rating | undefined, correction: string | null | undefined): TrainingStatus {
   if (correction?.trim()) {
     return "user_corrected";
@@ -404,15 +408,75 @@ function normalizeStoredIdentificationResult(value: unknown, correction?: string
     partName: cleanText(result.partName, 80),
     confidence: result.confidence,
     scanCategory: isScanCategory(result.scanCategory) ? result.scanCategory : categorizeScan(result, correction),
+    candidateMatches: normalizeCandidateMatches(result.candidateMatches),
     whatItDoes: cleanText(result.whatItDoes, 500),
     visibleObservations: cleanStringArray(result.visibleObservations, 6, 180),
+    evidenceRegions: normalizeEvidenceRegions(result.evidenceRegions, result.visibleObservations, result.evidence),
     concerns: cleanStringArray(result.concerns, 6, 180),
     safetyTriage: result.safetyTriage,
     isSafetyCritical: result.isSafetyCritical,
     nextAction: cleanText(result.nextAction, 500),
     needsBetterPhoto: result.needsBetterPhoto,
     evidence: cleanStringArray(result.evidence, 8, 320),
+    sourceLinks: normalizeSourceLinks(result.sourceLinks),
   };
+}
+
+function normalizeCandidateMatches(value: unknown): CandidateMatch[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is Partial<CandidateMatch> => typeof item === "object" && item !== null)
+    .map((candidate) => ({
+      partName: typeof candidate.partName === "string" ? cleanText(candidate.partName, 80) : "",
+      confidence: isConfidence(candidate.confidence) ? candidate.confidence : "low",
+      scanCategory: isScanCategory(candidate.scanCategory) ? candidate.scanCategory : categorizeText(candidate.partName ?? ""),
+      reason: typeof candidate.reason === "string" ? cleanText(candidate.reason, 180) : "",
+    }))
+    .filter((candidate) => candidate.partName && candidate.reason)
+    .slice(0, 4);
+}
+
+function normalizeEvidenceRegions(regions: unknown, observations: unknown[], evidence: unknown[]): EvidenceRegion[] {
+  if (Array.isArray(regions)) {
+    const cleaned = regions
+      .filter((item): item is Partial<EvidenceRegion> => typeof item === "object" && item !== null)
+      .map((region) => ({
+        label: typeof region.label === "string" ? cleanText(region.label, 80) : "",
+        observation: typeof region.observation === "string" ? cleanText(region.observation, 180) : "",
+        regionLabel: typeof region.regionLabel === "string" ? cleanText(region.regionLabel, 80) : "Scanned area",
+      }))
+      .filter((region) => region.label && region.observation)
+      .slice(0, 4);
+
+    if (cleaned.length) {
+      return cleaned;
+    }
+  }
+
+  return cleanStringArray([...observations, ...evidence], 3, 180).map((observation, index) => ({
+    label: index === 0 ? "Primary clue" : `Clue ${index + 1}`,
+    observation,
+    regionLabel: "Scanned area",
+  }));
+}
+
+function normalizeSourceLinks(value: unknown): SourceLink[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is Partial<SourceLink> => typeof item === "object" && item !== null)
+    .map((link) => ({
+      label: typeof link.label === "string" ? cleanText(link.label, 80) : "",
+      url: typeof link.url === "string" ? cleanText(link.url, 300) : "",
+      sourceType: isSourceType(link.sourceType) ? link.sourceType : "reference",
+    }))
+    .filter((link) => link.label && /^https:\/\//.test(link.url))
+    .slice(0, 6);
 }
 
 function normalizeChatHistory(value: unknown): ChatMessage[] {

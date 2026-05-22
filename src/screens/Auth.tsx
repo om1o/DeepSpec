@@ -77,7 +77,6 @@ export default function Auth() {
       await verifyEmailCode(normalizedEmail, code.trim());
       navigate(SCAN_ROUTE, { replace: true });
     } catch (authError) {
-      autoSubmittedCodeRef.current = null;
       setError(authError instanceof Error ? authError.message : "Authentication failed. Try again.");
     } finally {
       setIsSubmitting(false);
