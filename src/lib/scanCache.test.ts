@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   SCAN_CACHE_KEY,
   SCAN_CACHE_MAX,
   clearScanCache,
   getCachedScanResult,
+  hashImageDataUrl,
   setCachedScanResult,
 } from "./scanCache";
 import type { IdentificationResult } from "../types/index";
@@ -54,6 +55,14 @@ describe("setCachedScanResult / getCachedScanResult", () => {
     const raw = JSON.parse(localStorage.getItem(SCAN_CACHE_KEY)!);
     expect(raw).toHaveLength(1);
   });
+
+  it("does not throw when cache persistence is blocked", () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("quota", "QuotaExceededError");
+    });
+
+    expect(() => setCachedScanResult("hash1", makeResult("Brake Caliper"))).not.toThrow();
+  });
 });
 
 describe("capacity eviction", () => {
@@ -90,5 +99,11 @@ describe("corrupt localStorage data", () => {
   it("returns null gracefully when stored value is not an array", () => {
     localStorage.setItem(SCAN_CACHE_KEY, JSON.stringify({ hash: "hash1" }));
     expect(getCachedScanResult("hash1")).toBeNull();
+  });
+});
+
+describe("hashImageDataUrl", () => {
+  it("returns null for malformed base64 instead of throwing", async () => {
+    await expect(hashImageDataUrl("data:image/jpeg;base64,not valid base64!")).resolves.toBeNull();
   });
 });

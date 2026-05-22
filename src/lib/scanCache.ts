@@ -13,8 +13,15 @@ export async function hashImageDataUrl(dataUrl: string): Promise<string | null> 
   if (!crypto?.subtle) return null;
 
   const base64 = dataUrl.includes(",") ? dataUrl.split(",")[1] : dataUrl;
-  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  let bytes: Uint8Array;
+  try {
+    bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  } catch {
+    return null;
+  }
+  const digestInput = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(digestInput).set(bytes);
+  const digest = await crypto.subtle.digest("SHA-256", digestInput);
   const hex = Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
@@ -34,7 +41,11 @@ function loadCache(): CacheEntry[] {
 }
 
 function saveCache(entries: CacheEntry[]): void {
-  localStorage.setItem(SCAN_CACHE_KEY, JSON.stringify(entries));
+  try {
+    localStorage.setItem(SCAN_CACHE_KEY, JSON.stringify(entries));
+  } catch {
+    // Scan caching is best-effort and must not break identification.
+  }
 }
 
 export function getCachedScanResult(hash: string): IdentificationResult | null {
@@ -53,5 +64,9 @@ export function setCachedScanResult(hash: string, result: IdentificationResult):
 }
 
 export function clearScanCache(): void {
-  localStorage.removeItem(SCAN_CACHE_KEY);
+  try {
+    localStorage.removeItem(SCAN_CACHE_KEY);
+  } catch {
+    // Ignore cache cleanup failures.
+  }
 }
