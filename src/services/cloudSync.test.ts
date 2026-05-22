@@ -278,6 +278,9 @@ describe("cloudSync", () => {
     expect(report.overall).toBe("blocked");
     expect(report.checks.configured.status).toBe("pass");
     expect(report.checks.anonymousAuth.status).toBe("fail");
+    expect(report.checks.anonymousAuth.message).toBe(
+      "Cloud sync reached Supabase Auth, but the database failed while creating the anonymous user. Check Auth logs and auth.users triggers before changing app code.",
+    );
     expect(report.checks.storageUpload.status).toBe("unknown");
     expect(report.lastVerifiedAt).toBeNull();
     expect(upload).not.toHaveBeenCalled();

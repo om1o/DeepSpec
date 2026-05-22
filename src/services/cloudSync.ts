@@ -425,6 +425,10 @@ function getImageExtension(contentType: string) {
 function getFriendlySyncError(error: unknown) {
   const message = error instanceof Error ? error.message : "Unknown cloud sync error.";
 
+  if (/database error|unexpected_failure|saving new user|creating anonymous user/i.test(message)) {
+    return "Cloud sync reached Supabase Auth, but the database failed while creating the anonymous user. Check Auth logs and auth.users triggers before changing app code.";
+  }
+
   if (/anonymous|signup|sign-in|sign in/i.test(message)) {
     return "Cloud sync needs Supabase anonymous sign-ins enabled before scans can upload.";
   }
