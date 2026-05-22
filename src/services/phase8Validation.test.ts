@@ -12,6 +12,7 @@ describe("Phase 8 Supabase validation tooling", () => {
   it("exposes a dedicated Supabase verification command", () => {
     expect(packageJson.scripts["verify:supabase"]).toBe("node scripts/verify-supabase-sync.mjs");
     expect(packageJson.scripts["supabase:print-migration"]).toBe("node scripts/print-supabase-migration.mjs");
+    expect(packageJson.scripts["supabase:print-auth-diagnostics"]).toBe("node scripts/print-supabase-auth-diagnostics.mjs");
   });
 
   it("checks private image upload, scan row write, owner read, cross-user block, and cleanup", () => {
@@ -32,5 +33,6 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(docs).toContain("Parent-Required Setup");
     expect(docs).toContain("Do not put a service-role key");
     expect(docs).toContain("VITE_SUPABASE_PUBLISHABLE_KEY");
+    expect(docs).toContain("supabase:print-auth-diagnostics");
   });
 });

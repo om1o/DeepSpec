@@ -328,8 +328,9 @@ describe("Scanner", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Test engine photo" }));
 
-    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
     expect(await screen.findByText("QA test result")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
     expect(screen.getByText(/not saved to history, cloud sync, or training review/i)).toBeInTheDocument();
     expect(localStorage.getItem("deep-spec:lookups")).toBeNull();
     expect(sessionStorage.getItem("deep-spec:latest-scan-state")).toBeNull();

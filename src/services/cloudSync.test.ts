@@ -78,6 +78,17 @@ describe("cloudSync", () => {
     );
   });
 
+  it("does not call configured cloud sync ready before the verifier proves it", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const { getCloudSyncStatus } = await import("./cloudSync");
+
+    expect(getCloudSyncStatus()).toEqual({
+      configured: true,
+      message: "Cloud sync is configured but not verified. Run the Supabase verifier before calling storage and RLS ready.",
+    });
+  });
+
   it("returns a plain-language error when anonymous sign-in is not enabled", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");

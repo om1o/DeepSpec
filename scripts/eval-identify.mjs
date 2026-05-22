@@ -6,7 +6,9 @@ const DATASET_ID = "DrBimmer/car-parts-and-damage-dataset";
 const DATASET_URL = `https://huggingface.co/datasets/${DATASET_ID}`;
 const DEFAULT_OUTPUT = ".deepspec-eval/identify-failures.jsonl";
 const DEFAULT_SUMMARY = ".deepspec-eval/identify-summary.json";
-const RATE_LIMIT_RETRY_DELAYS_MS = [15_000, 30_000];
+const DEFAULT_EVAL_DELAY_MS = 20_000;
+const RATE_LIMIT_RETRY_DELAYS_MS = [60_000, 120_000];
+const PROVIDER_AVAILABILITY_ERROR_CODES = new Set(["network", "provider_error", "rate_limited"]);
 
 const SAMPLE_IMAGES = [
   "Car damages dataset/File1/img/Car damages 100.png",
@@ -101,6 +103,10 @@ export function buildReviewLookup({
   };
 }
 
+export function isReviewableEvalFailure(error) {
+  return !error || !PROVIDER_AVAILABILITY_ERROR_CODES.has(error.code);
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const env = await loadEnv();
@@ -113,9 +119,12 @@ async function main() {
   const identify = await loadIdentifyPipeline();
   const failures = [];
   const results = [];
+  let providerFailureCount = 0;
+  let stoppedEarlyReason = null;
 
   try {
-    for (const imagePath of selectedSamples) {
+    for (let index = 0; index < selectedSamples.length; index += 1) {
+      const imagePath = selectedSamples[index];
       const startedAt = Date.now();
       const annotation = await fetchJson(resolveUrl(annotationPathForImage(imagePath)));
       const expectedLabels = getExpectedLabels(annotation);
@@ -127,6 +136,11 @@ async function main() {
       const error = response.status === 200 ? null : response.body.error;
       const score = scoreIdentificationResult(result, expectedLabels);
       const elapsedMs = Date.now() - startedAt;
+      const providerAvailabilityFailure = error && !isReviewableEvalFailure(error);
+
+      if (providerAvailabilityFailure) {
+        providerFailureCount += 1;
+      }
 
       results.push({
         imagePath,
@@ -136,11 +150,11 @@ async function main() {
         confidence: result?.confidence ?? null,
         scanCategory: result?.scanCategory ?? null,
         matchedLabels: score.matchedLabels,
-        failureReasons: score.failureReasons,
+        failureReasons: providerAvailabilityFailure ? [error.code] : score.failureReasons,
         elapsedMs,
       });
 
-      if (!score.ok || error) {
+      if ((!score.ok || error) && isReviewableEvalFailure(error)) {
         failures.push(
           buildReviewLookup({
             analyzedAt,
@@ -157,6 +171,19 @@ async function main() {
       console.log(
         `${score.ok && !error ? "PASS" : "FAIL"} ${imagePath} -> ${result?.partName ?? error?.code ?? "no result"} (${elapsedMs}ms)`,
       );
+
+      if (providerFailureCount >= options.maxProviderFailures) {
+        stoppedEarlyReason = "provider_availability";
+        console.log(
+          `Stopping eval after ${providerFailureCount} provider availability failure(s). Fix quota/provider health before using eval as a release gate.`,
+        );
+        break;
+      }
+
+      if (options.delayMs > 0 && index < selectedSamples.length - 1) {
+        console.log(`waiting ${Math.round(options.delayMs / 1000)}s before next provider call`);
+        await sleep(options.delayMs);
+      }
     }
   } finally {
     await identify.close();
@@ -168,8 +195,14 @@ async function main() {
     datasetUrl: DATASET_URL,
     generatedAt: new Date().toISOString(),
     sampleSize: selectedSamples.length,
+    attemptedCount: results.length,
+    skippedCount: Math.max(0, selectedSamples.length - results.length),
     failureCount: failures.length,
-    passCount: selectedSamples.length - failures.length,
+    providerFailureCount,
+    passCount: results.filter((result) => result.status === 200 && result.failureReasons.length === 0).length,
+    providerStatus: providerFailureCount > 0 ? "blocked" : "available",
+    stoppedEarlyReason,
+    throttleDelayMs: options.delayMs,
     output: options.output,
     results,
   });
@@ -202,6 +235,8 @@ async function createIdentifyResponseWithRetry(identify, dataUrl, env) {
 
 function parseArgs(args) {
   const options = {
+    delayMs: parseDelayMs(process.env.DEEPSPEC_EVAL_DELAY_MS, DEFAULT_EVAL_DELAY_MS),
+    maxProviderFailures: parseMaxProviderFailures(process.env.DEEPSPEC_EVAL_MAX_PROVIDER_FAILURES, 1),
     output: DEFAULT_OUTPUT,
     sampleSize: SAMPLE_IMAGES.length,
     summary: DEFAULT_SUMMARY,
@@ -214,6 +249,12 @@ function parseArgs(args) {
 
     if (name === "--sample-size") {
       options.sampleSize = clampSampleSize(Number(value));
+      if (!inlineValue) index += 1;
+    } else if (name === "--delay-ms") {
+      options.delayMs = parseDelayMs(value, options.delayMs);
+      if (!inlineValue) index += 1;
+    } else if (name === "--max-provider-failures") {
+      options.maxProviderFailures = parseMaxProviderFailures(value, options.maxProviderFailures);
       if (!inlineValue) index += 1;
     } else if (name === "--output") {
       options.output = value;
@@ -232,6 +273,32 @@ function parseArgs(args) {
   return options;
 }
 
+function parseDelayMs(value, fallback) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+
+  const delayMs = Number(value);
+  if (!Number.isInteger(delayMs) || delayMs < 0 || delayMs > 300_000) {
+    throw new Error("--delay-ms must be an integer from 0 to 300000.");
+  }
+
+  return delayMs;
+}
+
+function parseMaxProviderFailures(value, fallback) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+
+  const failures = Number(value);
+  if (!Number.isInteger(failures) || failures < 1 || failures > SAMPLE_IMAGES.length) {
+    throw new Error(`--max-provider-failures must be an integer from 1 to ${SAMPLE_IMAGES.length}.`);
+  }
+
+  return failures;
+}
+
 function clampSampleSize(value) {
   if (!Number.isInteger(value) || value < 1 || value > SAMPLE_IMAGES.length) {
     throw new Error(`--sample-size must be an integer from 1 to ${SAMPLE_IMAGES.length}.`);
@@ -245,6 +312,9 @@ function printHelp() {
 
 Options:
   --sample-size <n>  Number of curated HF samples to run, 1-${SAMPLE_IMAGES.length}. Default: ${SAMPLE_IMAGES.length}
+  --delay-ms <n>     Delay between provider calls. Default: ${DEFAULT_EVAL_DELAY_MS}
+  --max-provider-failures <n>
+                     Stop after this many provider availability failures. Default: 1
   --output <path>    JSONL failure review rows. Default: ${DEFAULT_OUTPUT}
   --summary <path>   JSON summary. Default: ${DEFAULT_SUMMARY}
 `);

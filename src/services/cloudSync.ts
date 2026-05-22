@@ -38,7 +38,7 @@ export function getCloudSyncStatus(): CloudSyncStatus {
 
   return {
     configured: true,
-    message: "Cloud sync is ready. Scans upload to a private Supabase bucket owned by this device user.",
+    message: "Cloud sync is configured but not verified. Run the Supabase verifier before calling storage and RLS ready.",
   };
 }
 

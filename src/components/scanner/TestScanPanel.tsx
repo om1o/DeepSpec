@@ -1,11 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Button from "../ui/Button";
-import { getAIErrorMessage, identifyCapturedFrame } from "../../services/aiService";
+import { TEST_ENGINE_IDENTIFICATION, TEST_ENGINE_IMAGE_URL, TEST_VEHICLE_LABEL } from "../../services/testScanFixture";
 import type { CapturedFrame, ScanAnalysisState } from "../../types";
-
-const TEST_ENGINE_IMAGE_URL = "/test-fixtures/engine-scan-test.jpg";
-const TEST_VEHICLE_LABEL = "Generated engine bay QA photo";
 
 type Props = {
   onBusyChange: (busy: boolean) => void;
@@ -45,22 +42,12 @@ export default function TestScanPanel({ onBusyChange }: Props) {
 
     try {
       const frame = await loadTestFrame();
-      let scanState: ScanAnalysisState = { frame, testRun: true };
-
-      try {
-        const result = await identifyCapturedFrame(frame);
-        scanState = {
-          ...scanState,
-          result,
-          analyzedAt: new Date().toISOString(),
-        };
-      } catch (analysisError) {
-        scanState = {
-          ...scanState,
-          errorMessage: getAIErrorMessage(analysisError),
-          analyzedAt: new Date().toISOString(),
-        };
-      }
+      const scanState: ScanAnalysisState = {
+        frame,
+        result: TEST_ENGINE_IDENTIFICATION,
+        analyzedAt: new Date().toISOString(),
+        testRun: true,
+      };
 
       navigate("/result", {
         state: {
@@ -78,7 +65,7 @@ export default function TestScanPanel({ onBusyChange }: Props) {
   return (
     <div className="fixed bottom-[120px] left-4 right-4 z-30 rounded-2xl border border-[var(--ds-accent-line)] bg-slate-950/78 p-4 backdrop-blur-xl">
       <p className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Test mode</p>
-      <p className="mt-1 text-xs leading-5 text-white/72">Runs in memory only. No history or cloud save.</p>
+      <p className="mt-1 text-xs leading-5 text-white/72">Runs in memory only. No history, cloud save, or provider quota.</p>
       <Button className="mt-3 w-full" type="button" onClick={() => void runTestScan()}>
         Test engine photo
       </Button>
