@@ -44,9 +44,9 @@ Use a 900-check audit grid instead: 9 production tracks x 100 checks each. Every
 - Saved scan controls are now split into Review, Actions, Cloud, Export, and Danger zone sections so rating/correction, follow-up, sync, report export, and deletion are not mixed together in one long control stack.
 - History now has review filters for search, category, review status, and confidence so saved scans can be narrowed before opening results or exporting the local dataset.
 - A configured `npm run verify:supabase` run still failed after confirming anonymous sign-ins were enabled: anonymous signup returned `Database error creating anonymous user (unexpected_failure), HTTP 500`.
-- Latest captured configured-run Supabase request/error id: `019e5086-262f-7f7e-a6aa-bf39c7de7319`.
+- Latest captured configured-run Supabase request/error id: `019e50fe-bf47-784c-8177-c54c0f323cb8`.
 - Remote Supabase repair is blocked from this workspace until an authenticated Supabase CLI session, `SUPABASE_ACCESS_TOKEN`, or privileged Postgres connection is available; the current env files only provide public app config plus the Gemini key.
-- A bare checkout-local `npm run verify:supabase` also needs `.env.local` copied in; without `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`, it stops before the Auth preflight.
+- The release checkout can reach the hosted verifier after copying the local public Supabase `.env.local` from `C:\Users\omiol\deepspec`, but it still fails at anonymous user creation before storage/RLS checks.
 - Supabase Preview check on the active release PR passed.
 - GitHub Actions release gate is failing because repository secrets `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` are not configured.
 - Hugging Face connector confirmed `DrBimmer/car-parts-and-damage-dataset` as the current fixed release dataset source: 1,812 high-resolution polygon-annotated car part/damage images, MIT license, object-detection and image-segmentation tags.
