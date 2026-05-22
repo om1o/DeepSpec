@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, vi } from "vitest";
@@ -86,6 +86,28 @@ describe("Result", () => {
       "href",
       "https://www.google.com/search?q=Alternator%20car%20part",
     );
+  });
+
+  it("groups OCR label text into a Lens-style text section", () => {
+    renderResult({
+      ...successfulScan,
+      result: {
+        ...successfulScan.result!,
+        evidence: [
+          ...successfulScan.result!.evidence,
+          "OCR label text: DENSO 104210-1230",
+        ],
+      },
+    });
+
+    const textFound = screen.getByRole("region", { name: "Text found" });
+    expect(within(textFound).getByText("DENSO 104210-1230")).toBeInTheDocument();
+    expect(within(textFound).getByText("104210-1230")).toBeInTheDocument();
+    expect(within(textFound).getByRole("link", { name: "Search text" })).toHaveAttribute(
+      "href",
+      "https://www.google.com/search?q=DENSO%20104210-1230%20Alternator%20car%20part",
+    );
+    expect(screen.queryByText("Visible label text: DENSO 104210-1230")).not.toBeInTheDocument();
   });
 
   it("turns matched dataset source evidence into a reference link", () => {
