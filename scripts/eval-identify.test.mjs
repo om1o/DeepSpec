@@ -7,6 +7,7 @@ import {
   buildReviewLookup,
   getEvalExitCode,
   isReviewableEvalFailure,
+  isRetryableProviderAvailabilityResponse,
   scoreIdentificationResult,
 } from "./eval-identify.mjs";
 
@@ -190,6 +191,13 @@ describe("identify eval scoring", () => {
     expect(isReviewableEvalFailure({ code: "network" })).toBe(false);
     expect(isReviewableEvalFailure({ code: "invalid_response" })).toBe(true);
     expect(isReviewableEvalFailure(null)).toBe(true);
+  });
+
+  it("retries temporary provider availability responses during eval", () => {
+    expect(isRetryableProviderAvailabilityResponse({ status: 429 }, "rate_limited")).toBe(true);
+    expect(isRetryableProviderAvailabilityResponse({ status: 503 }, "provider_error")).toBe(true);
+    expect(isRetryableProviderAvailabilityResponse({ status: 500 }, "network")).toBe(true);
+    expect(isRetryableProviderAvailabilityResponse({ status: 400 }, "provider_error")).toBe(false);
   });
 
   it("fails the release gate when provider availability or scoring blocks the eval", () => {

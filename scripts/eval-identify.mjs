@@ -329,7 +329,7 @@ async function createIdentifyResponseWithRetry(identify, dataUrl, env) {
   throw new Error("Unreachable identify retry state.");
 }
 
-function isRetryableProviderAvailabilityResponse(response, code) {
+export function isRetryableProviderAvailabilityResponse(response, code) {
   return code === "rate_limited" || response.status === 503 || code === "network";
 }
 
