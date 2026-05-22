@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  DATASET_FETCH_TIMEOUT_MS,
   RELEASE_SAMPLE_IMAGES,
   buildEvalViteServerOptions,
   buildReviewLookup,
@@ -190,5 +191,9 @@ describe("identify eval scoring", () => {
         ws: false,
       },
     });
+  });
+
+  it("allows slower Hugging Face dataset reads before timing out", () => {
+    expect(DATASET_FETCH_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
   });
 });
