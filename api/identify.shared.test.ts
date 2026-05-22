@@ -453,7 +453,7 @@ describe("createIdentifyResponse", () => {
       concerns: ["Dent visible near the center."],
     };
 
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
           candidates: [{ content: { parts: [{ text: JSON.stringify(bumperResult) }] } }],
@@ -485,6 +485,10 @@ describe("createIdentifyResponse", () => {
         },
       },
     });
+
+    const requestBody = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+    expect(JSON.stringify(requestBody)).toContain("Deep Spec local source context");
+    expect(JSON.stringify(requestBody)).toContain("Front-bumper");
   });
 
   it("uses the sorted local dataset index and source links when available", async () => {
@@ -521,7 +525,7 @@ describe("createIdentifyResponse", () => {
       visibleObservations: ["Front bumper cover is centered in the photo."],
     };
 
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
           candidates: [{ content: { parts: [{ text: JSON.stringify(bumperResult) }] } }],
@@ -552,6 +556,13 @@ describe("createIdentifyResponse", () => {
         },
       },
     });
+
+    const requestBody = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+    expect(JSON.stringify(requestBody)).toContain("Deep Spec local source context");
+    expect(JSON.stringify(requestBody)).toContain("Front-bumper");
+    expect(JSON.stringify(requestBody)).toContain(
+      "https://huggingface.co/datasets/DrBimmer/car-parts-and-damage-dataset/resolve/main/Car%20damages%20dataset/File1/img/Car%20damages%20100.png",
+    );
   });
 
   it("does not create a damage dataset match from negated damage text", async () => {
