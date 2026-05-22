@@ -38,13 +38,13 @@ After a session is verified, Deep Spec opens the scanner at `/scan`.
 
 ### QA test scan (no save)
 
-Use this to send a bundled engine photo through Gemini without writing history, session cache, or cloud sync:
+Use this to run a bundled engine photo through the fixed QA result without writing history, session cache, provider quota, or cloud sync:
 
 ```
 http://localhost:5173/scan?test=1
 ```
 
-Tap **Test engine photo** on the yellow panel. Requires `GEMINI_API_KEY` in `.env` / `.env.local` and `npm run dev`.
+Tap **Test engine photo** on the yellow panel. It does not require `GEMINI_API_KEY`; it only requires `npm run dev`.
 
 ### Local dataset matching
 
@@ -79,7 +79,7 @@ VITE_ENABLE_GOOGLE_AUTH=true
 
 Pricing, account sync, public share links, and settings are not included yet.
 
-Every scan should be treated as future model-training/evaluation data. LocalStorage is the default storage layer, capped at 50 saved scans and validated on read. Supabase sync is optional and preserves the same dataset fields with auth ownership, row-level security, a private storage bucket, and explicit grants for browser-safe access.
+Every scan should be treated as future model-training/evaluation data. LocalStorage is the default storage layer, capped at 300 saved scans and validated on read. Supabase sync is optional and preserves the same dataset fields with auth ownership, row-level security, a private storage bucket, and explicit grants for browser-safe access.
 
 Waitlist and feedback entries save locally first, then sync to Supabase only when cloud config exists. A real public launch still needs parent-approved privacy terms.
 

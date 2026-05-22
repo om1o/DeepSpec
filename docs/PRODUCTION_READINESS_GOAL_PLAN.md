@@ -19,7 +19,7 @@ Use a 900-check audit grid instead: 9 production tracks x 100 checks each. Every
 
 ## Evidence From This Audit
 
-- `npm run check` passed locally on May 22, 2026: lint, 30 test files, 221 tests, and production build.
+- `npm run check` passed locally on May 22, 2026: lint, 30 test files, 231 tests, and production build.
 - GitHub Quality gate has also passed `npm ci`, `npm run check`, and production build on the current release stack; the release cloud gate must still fail until Supabase Actions secrets are configured.
 - The live GitHub release stack is down to one open draft production-readiness PR.
 - Browser QA passed for `/scan?test=1` on the current release branch: the test engine photo opened `/result`, identified `Alternator`, switched through the Match/Evidence/Sources tabs, and produced 0 local app console errors.
@@ -47,7 +47,7 @@ Use a 900-check audit grid instead: 9 production tracks x 100 checks each. Every
 - History now has review filters for search, category, review status, and confidence so saved scans can be narrowed before opening results or exporting the local dataset.
 - A configured `npm run verify:supabase` run still failed after confirming anonymous sign-ins were enabled: anonymous signup returned `Database error creating anonymous user (unexpected_failure), HTTP 500`.
 - Latest captured configured-run Supabase request/error id: `019e50fe-bf47-784c-8177-c54c0f323cb8`.
-- Remote Supabase repair is blocked from this workspace until an authenticated Supabase CLI session, `SUPABASE_ACCESS_TOKEN`, or privileged Postgres connection is available; the current env files only provide public app config plus the Gemini key.
+- Remote Supabase repair is blocked from this workspace until an authenticated Supabase CLI session, `SUPABASE_ACCESS_TOKEN`, or privileged Postgres connection is available; the inspected shell and env files provide public Supabase app config only, and no `GEMINI_API_KEY` is set for local provider calls.
 - The release checkout can reach the hosted verifier after copying the local public Supabase `.env.local` from `C:\Users\omiol\deepspec`, but it still fails at anonymous user creation before storage/RLS checks.
 - Supabase Preview check on the active release PR passed.
 - GitHub Actions release gate is failing because repository secrets `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` are not configured.
