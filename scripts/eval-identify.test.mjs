@@ -5,14 +5,30 @@ const result = {
   partName: "Rear bumper",
   confidence: "high",
   scanCategory: "body",
+  candidateMatches: [
+    {
+      partName: "Tail light",
+      confidence: "low",
+      scanCategory: "body",
+      reason: "A nearby rear body part that may appear in the same crop.",
+    },
+  ],
   whatItDoes: "It protects the rear of the vehicle.",
   visibleObservations: ["Painted rear bumper cover is visible."],
+  evidenceRegions: [
+    {
+      label: "Rear bumper cover",
+      observation: "Painted rear bumper cover is visible.",
+      regionLabel: "Scanned area",
+    },
+  ],
   concerns: [],
   safetyTriage: "can_help",
   isSafetyCritical: false,
   nextAction: "Take a closer photo if you need damage detail.",
   needsBetterPhoto: false,
   evidence: ["The lower rear body panel shape matches a bumper."],
+  sourceLinks: [],
 };
 
 describe("identify eval scoring", () => {
@@ -99,6 +115,14 @@ describe("identify eval scoring", () => {
     });
 
     expect(lookup.scanCategory).toBe("body");
+  });
+
+  it("scores ranked candidate labels as possible matches", () => {
+    expect(scoreIdentificationResult(result, ["Tail light"])).toMatchObject({
+      ok: true,
+      matchedLabels: ["Tail light"],
+      failureReasons: [],
+    });
   });
 
   it("keeps provider availability failures out of training review rows", () => {

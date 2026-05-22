@@ -7,6 +7,7 @@ const DATASET_URL = `https://huggingface.co/datasets/${DATASET_ID}`;
 const DEFAULT_OUTPUT = ".deepspec-eval/identify-failures.jsonl";
 const DEFAULT_SUMMARY = ".deepspec-eval/identify-summary.json";
 const DEFAULT_EVAL_DELAY_MS = 20_000;
+const DATASET_FETCH_TIMEOUT_MS = 30_000;
 const RATE_LIMIT_RETRY_DELAYS_MS = [60_000, 120_000];
 const PROVIDER_AVAILABILITY_ERROR_CODES = new Set(["network", "provider_error", "rate_limited"]);
 
@@ -33,7 +34,9 @@ export function scoreIdentificationResult(result, expectedLabels) {
       result.partName,
       result.scanCategory,
       result.whatItDoes,
+      ...(Array.isArray(result.candidateMatches) ? result.candidateMatches.map(formatCandidateForScoring) : []),
       ...(Array.isArray(result.visibleObservations) ? result.visibleObservations : []),
+      ...(Array.isArray(result.evidenceRegions) ? result.evidenceRegions.map(formatEvidenceRegionForScoring) : []),
       ...(Array.isArray(result.concerns) ? result.concerns : []),
       ...(Array.isArray(result.evidence) ? result.evidence : []),
     ].join(" "),
@@ -126,11 +129,14 @@ async function main() {
     for (let index = 0; index < selectedSamples.length; index += 1) {
       const imagePath = selectedSamples[index];
       const startedAt = Date.now();
+      console.log(`[${index + 1}/${selectedSamples.length}] Fetching annotation for ${imagePath}`);
       const annotation = await fetchJson(resolveUrl(annotationPathForImage(imagePath)));
       const expectedLabels = getExpectedLabels(annotation);
+      console.log(`[${index + 1}/${selectedSamples.length}] Fetching image (${expectedLabels.join(", ") || "unlabeled"})`);
       const image = await fetchBytes(resolveUrl(imagePath));
       const dataUrl = toDataUrl(image.bytes, image.contentType);
       const analyzedAt = new Date().toISOString();
+      console.log(`[${index + 1}/${selectedSamples.length}] Identifying image with provider`);
       const response = await createIdentifyResponseWithRetry(identify, dataUrl, env);
       const result = response.status === 200 ? response.body.result : null;
       const error = response.status === 200 ? null : response.body.error;
@@ -385,7 +391,7 @@ function resolveUrl(path) {
 }
 
 async function fetchJson(url) {
-  const response = await fetch(url);
+  const response = await fetchWithTimeout(url);
   if (!response.ok) {
     throw new Error(`Could not fetch ${url}: ${response.status}`);
   }
@@ -394,7 +400,7 @@ async function fetchJson(url) {
 }
 
 async function fetchBytes(url) {
-  const response = await fetch(url);
+  const response = await fetchWithTimeout(url);
   if (!response.ok) {
     throw new Error(`Could not fetch ${url}: ${response.status}`);
   }
@@ -404,6 +410,15 @@ async function fetchBytes(url) {
     bytes: Buffer.from(await response.arrayBuffer()),
     contentType,
   };
+}
+
+async function fetchWithTimeout(url) {
+  try {
+    return await fetch(url, { signal: AbortSignal.timeout(DATASET_FETCH_TIMEOUT_MS) });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Could not fetch ${url} within ${Math.round(DATASET_FETCH_TIMEOUT_MS / 1000)}s: ${reason}`, { cause: error });
+  }
 }
 
 function toDataUrl(bytes, contentType) {
@@ -487,6 +502,22 @@ function isTooVague(result) {
   );
 
   return genericName || result.confidence === "low" || result.needsBetterPhoto || result.safetyTriage === "needs_better_photo";
+}
+
+function formatCandidateForScoring(candidate) {
+  if (!candidate || typeof candidate !== "object") {
+    return "";
+  }
+
+  return [candidate.partName, candidate.scanCategory, candidate.reason].filter(Boolean).join(" ");
+}
+
+function formatEvidenceRegionForScoring(region) {
+  if (!region || typeof region !== "object") {
+    return "";
+  }
+
+  return [region.label, region.observation, region.regionLabel].filter(Boolean).join(" ");
 }
 
 function categorizeExpectedLabels(labels) {
