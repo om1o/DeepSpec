@@ -26,8 +26,9 @@ Use a 900-check audit grid instead: 9 production tracks x 100 checks each. Every
 - `npm run eval:identify:release` passed 50/50 fixed Hugging Face samples with provider available, 0 provider failures, and 0 failure review rows.
 - `npm run verify:identify-eval` passed with `Identify eval passed: 50/50 samples passed with provider available.`
 - Provider hang guards are now covered: browser AI requests abort after 60s, and release eval samples have a 240s per-sample budget including retries.
+- Local saved-scan retention now keeps up to 300 records and `/history` exports dataset JSON with photo, result, correction, notes, chat, OCR/model metadata, prompt versions, latency, and sync events.
 - A configured `npm run verify:supabase` run still failed after confirming anonymous sign-ins were enabled: anonymous signup returned `Database error creating anonymous user (unexpected_failure), HTTP 500`.
-- Latest captured configured-run Supabase request/error id: `019e4fe3-b54a-7f13-82d3-d489825029b9`.
+- Latest captured configured-run Supabase request/error id: `019e4fe8-4742-78e0-a95b-202346a97fbf`.
 - A bare checkout-local `npm run verify:supabase` also needs `.env.local` copied in; without `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`, it stops before the Auth preflight.
 - Supabase Preview check on PR #50 failed with `Failed to fetch existing branch project`.
 - GitHub Actions release gate is failing because repository secrets `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` are not configured.
@@ -53,14 +54,14 @@ Use a 900-check audit grid instead: 9 production tracks x 100 checks each. Every
 | P1-008 | High | Cloud UI | UI can say cloud sync is ready even when end-to-end verification fails. | Early Access showed cloud ready; verifier failed anonymous sign-in. | Add runtime cloud health state: configured, auth-ok, storage-ok, RLS-ok, last verified. |
 | P1-009 | High | Copy/content | Early Access says cloud sync is ready but form copy says backend sync comes later/local-only. | Browser snapshot. | Make cloud copy state-driven and non-contradictory. |
 | P1-010 | High | Database shape | `scan_lookups` stores result JSON but no separate model-run metadata table. | Migration inspection. | Add model run metadata after P0 cloud auth is fixed: provider, model, latency, prompt version, error code, OCR used. |
-| P1-011 | High | Dataset quality | Local storage caps saved scans at 50. | `MAX_SAVED_LOOKUPS = 50`. | Keep local cap, but cloud dataset must preserve all synced scans with retention/export policy. |
+| P1-011 | High | Dataset quality | Cloud dataset persistence is still blocked even though local retention/export improved. | `MAX_SAVED_LOOKUPS = 300`, `getDatasetExport()`, and `/history` export button now preserve local dataset records; `npm run verify:supabase` still fails. | Keep the local export as a fallback, but cloud dataset must preserve all synced scans with retention/export policy. |
 | P1-012 | High | Corrections | Correction is plain text only, not structured enough for training. | `correction: string`. | Add corrected part/category/damage severity/region fields in cloud review layer. |
 | P1-013 | High | Visual search | No upload-from-gallery path is visible in scanner. | Live scanner only camera/test mode. | Add gallery/file input because Lens supports camera, image, and screenshot flows. |
 | P1-014 | High | OCR | OCR is label-rescue only and invisible to the user. | Code path appends OCR text as evidence. | Show extracted label text as a source/evidence item and allow correction. |
-| P1-015 | High | Eval | Eval sample size is too small for production confidence. | Current run sampled 6. | Build a fixed release eval set with accuracy, invalid response rate, latency, safety false-positive rate. |
+| P1-015 | High | Eval | Beta release eval is fixed at 50 cases, but public-launch confidence still needs a larger 300-case set. | `npm run eval:identify:release` passed 50 fixed samples. | Expand the release eval set to 300 with accuracy, invalid response rate, latency, safety false-positive rate. |
 | P2-001 | Medium | Desktop layout | App is mobile-width centered on desktop with large empty side gutters. | Browser screenshot. | Keep mobile-first but add useful desktop panel layout: image left, result sheet right. |
 | P2-002 | Medium | Screenshot/render | Full-page screenshot repeats fixed header and image sections awkwardly. | Browser full-page capture. | Review fixed positioning and print/export capture behavior. |
-| P2-003 | Medium | History | Empty history has no filter/search/import/export controls. | Browser snapshot. | Add filters by category/status/confidence and export dataset controls after cloud baseline. |
+| P2-003 | Medium | History | History has dataset export but no filter/search/import controls. | `/history` exports dataset JSON from local saved scans. | Add filters by category/status/confidence and an import path after cloud baseline. |
 | P2-004 | Medium | Sources | References are generic Google/NHTSA links, not result-ranked sources. | Live result links. | Add source groups: similar dataset examples, OEM/manual search, recall search, nearby help. |
 | P2-005 | Medium | User trust | No "why this might be wrong" section. | Result only shows evidence and concerns. | Add uncertainty reasons and retake guidance next to primary answer. |
 | P2-006 | Medium | Saved scan grouping | Saved scan controls mix dataset metadata, chat, rating, cloud sync, report export, and deletion in one long card. | Code inspection. | Group as tabs or sections: Review, Actions, Cloud, Export, Danger zone. |
@@ -174,7 +175,7 @@ Exit criteria:
 - Every real scan can sync to Supabase.
 - Cloud data preserves photo, result, candidates, corrections, notes, chat, OCR, model run, and review status.
 - Internal review queue exists for wrong/low-confidence/failed scans.
-- Export path exists for evaluation/training without leaking private user data.
+- Local export path exists for evaluation/training while Supabase is blocked; public launch still needs the cloud verifier and privacy-reviewed export policy.
 
 ### Milestone 5: Full App Production QA
 

@@ -1,11 +1,21 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import Button from "../components/ui/Button";
-import { getLookups } from "../services/storage";
+import { getDatasetExport, getLookups } from "../services/storage";
 import type { Lookup } from "../types";
 
 export default function History() {
   const lookups = useMemo(() => getLookups(), []);
+
+  function handleExportDataset() {
+    const exportJson = JSON.stringify(getDatasetExport(lookups), null, 2);
+    const url = URL.createObjectURL(new Blob([exportJson], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `deep-spec-dataset-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
 
   return (
     <main className="min-h-dvh bg-[var(--ds-page)] px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-slate-950">
@@ -26,11 +36,16 @@ export default function History() {
         </header>
 
         {lookups.length > 0 ? (
-          <div className="mt-6 space-y-3">
-            {lookups.map((lookup) => (
-              <LookupCard key={lookup.id} lookup={lookup} />
-            ))}
-          </div>
+          <>
+            <Button className="mt-5 w-full" onClick={handleExportDataset}>
+              Export dataset
+            </Button>
+            <div className="mt-4 space-y-3">
+              {lookups.map((lookup) => (
+                <LookupCard key={lookup.id} lookup={lookup} />
+              ))}
+            </div>
+          </>
         ) : (
           <section className="mt-8 rounded-[24px] border border-dashed border-slate-200 bg-white p-6 text-center shadow-sm">
             <p className="text-sm font-bold text-[var(--ds-accent)]">No saved scans yet</p>

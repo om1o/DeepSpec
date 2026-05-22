@@ -1,7 +1,8 @@
 import type { AIModelRun, CandidateMatch, ChatMessage, CloudSyncEvent, Confidence, EvidenceRegion, IdentificationResult, Lookup, Rating, ScanAnalysisState, ScanCategory, SourceLink, TrainingStatus } from "../types";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
-export const MAX_SAVED_LOOKUPS = 50;
+export const DATASET_EXPORT_SCHEMA_VERSION = 1;
+export const MAX_SAVED_LOOKUPS = 300;
 const MAX_CHAT_MESSAGES = 40;
 const CHAT_KEY = (id: string) => `deep-spec:chat:${id}`;
 
@@ -222,7 +223,7 @@ export function appendLookupSyncEvent(
 
 export function getLookupDatasetMetadata(lookup: Lookup, imagePath?: string) {
   return {
-    schemaVersion: 1,
+    schemaVersion: DATASET_EXPORT_SCHEMA_VERSION,
     chatMessageCount: lookup.chatHistory.length,
     imagePath: imagePath ?? null,
     modelRuns: lookup.modelRuns,
@@ -230,6 +231,36 @@ export function getLookupDatasetMetadata(lookup: Lookup, imagePath?: string) {
     promptVersions: [...new Set(lookup.modelRuns.map((run) => run.promptVersion))],
     sourceUrls: getLookupSourceUrls(lookup),
     syncEvents: lookup.syncEvents,
+  };
+}
+
+export function getDatasetExport(lookups: Lookup[] = getLookups(), exportedAt = new Date().toISOString()) {
+  const normalizedLookups = lookups.map(mergeLookupChatHistory);
+
+  return {
+    schemaVersion: DATASET_EXPORT_SCHEMA_VERSION,
+    exportedAt,
+    scanCount: normalizedLookups.length,
+    scans: normalizedLookups.map((lookup) => ({
+      id: lookup.id,
+      createdAt: lookup.createdAt,
+      capturedAt: lookup.frame.capturedAt,
+      analyzedAt: lookup.analyzedAt ?? null,
+      imageBase64: lookup.frame.imageBase64,
+      result: lookup.result ?? null,
+      errorCode: lookup.errorCode ?? null,
+      errorMessage: lookup.errorMessage ?? null,
+      rating: lookup.rating,
+      correction: lookup.correction,
+      notes: lookup.notes,
+      scanCategory: lookup.scanCategory,
+      trainingLabel: lookup.trainingLabel,
+      trainingStatus: lookup.trainingStatus,
+      chatHistory: lookup.chatHistory,
+      modelRuns: lookup.modelRuns,
+      syncEvents: lookup.syncEvents,
+      metadata: getLookupDatasetMetadata(lookup),
+    })),
   };
 }
 

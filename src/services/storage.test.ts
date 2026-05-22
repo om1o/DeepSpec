@@ -3,8 +3,10 @@ import {
   appendLookupModelRun,
   appendLookupSyncEvent,
   createChatMessage,
+  DATASET_EXPORT_SCHEMA_VERSION,
   createLookup,
   deleteLookup,
+  getDatasetExport,
   getLookupDatasetMetadata,
   getLookup,
   getLookups,
@@ -184,6 +186,73 @@ describe("storage", () => {
           status: "success",
         }),
       ],
+    });
+  });
+
+  it("exports saved scans as dataset-ready JSON records", () => {
+    const lookup = createLookup(scanState).value;
+    appendChatMessages(lookup.id, [
+      createChatMessage("user", "Is this urgent?"),
+      createChatMessage("assistant", "No urgent damage is visible."),
+    ]);
+    appendLookupModelRun(lookup.id, chatModelRun);
+    appendLookupSyncEvent(lookup.id, {
+      message: "Cloud sync failed: Database error creating anonymous user.",
+      status: "failure",
+    });
+    updateLookup(lookup.id, {
+      correction: "Denso alternator",
+      notes: "Driver side of engine bay.",
+      rating: "down",
+    });
+
+    const savedLookup = getLookup(lookup.id);
+    const datasetExport = getDatasetExport(savedLookup ? [savedLookup] : [], "2026-05-22T12:00:00.000Z");
+
+    expect(datasetExport).toMatchObject({
+      exportedAt: "2026-05-22T12:00:00.000Z",
+      scanCount: 1,
+      schemaVersion: DATASET_EXPORT_SCHEMA_VERSION,
+    });
+    const scan = datasetExport.scans[0];
+    expect(scan).toMatchObject({
+      analyzedAt: "2026-05-16T00:00:05.000Z",
+      correction: "Denso alternator",
+      imageBase64: "data:image/jpeg;base64,test",
+      notes: "Driver side of engine bay.",
+      rating: "down",
+      result: expect.objectContaining({ partName: "Alternator" }),
+      trainingLabel: "Denso alternator",
+      trainingStatus: "user_corrected",
+    });
+    expect(scan.chatHistory).toEqual(expect.arrayContaining([
+      expect.objectContaining({ content: "Is this urgent?", role: "user" }),
+      expect.objectContaining({ content: "No urgent damage is visible.", role: "assistant" }),
+    ]));
+    expect(scan.metadata).toMatchObject({
+      chatMessageCount: 2,
+      modelRuns: [identifyModelRun, chatModelRun],
+      ocrText: "DENSO 104210",
+      promptVersions: ["identify-v1", "followup-v1"],
+      syncEvents: [expect.objectContaining({ status: "failure" })],
+    });
+    expect(scan.modelRuns).toEqual([identifyModelRun, chatModelRun]);
+    expect(scan.syncEvents).toEqual([expect.objectContaining({ status: "failure" })]);
+  });
+
+  it("exports mirrored per-scan chat when the saved lookup index is stale", () => {
+    const lookup = createLookup(scanState).value;
+    const mirroredMessage = createChatMessage("user", "What is the part number?");
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([{ ...lookup, chatHistory: [] }]));
+    localStorage.setItem(`deep-spec:chat:${lookup.id}`, JSON.stringify([mirroredMessage]));
+
+    const datasetExport = getDatasetExport(undefined, "2026-05-22T12:00:00.000Z");
+
+    expect(datasetExport.scans[0].chatHistory).toEqual([
+      expect.objectContaining({ content: "What is the part number?", role: "user" }),
+    ]);
+    expect(datasetExport.scans[0].metadata).toMatchObject({
+      chatMessageCount: 1,
     });
   });
 
