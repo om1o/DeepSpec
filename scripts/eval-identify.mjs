@@ -317,16 +317,20 @@ async function createIdentifyResponseWithRetry(identify, dataUrl, env) {
     const response = await identify.createIdentifyResponse(payload, env);
     const code = response.status === 200 ? null : response.body.error.code;
 
-    if (code !== "rate_limited" || attempt === RATE_LIMIT_RETRY_DELAYS_MS.length) {
+    if (!isRetryableProviderAvailabilityResponse(response, code) || attempt === RATE_LIMIT_RETRY_DELAYS_MS.length) {
       return response;
     }
 
     const delayMs = RATE_LIMIT_RETRY_DELAYS_MS[attempt];
-    console.log(`rate_limited; retrying in ${Math.round(delayMs / 1000)}s`);
+    console.log(`${code ?? response.status}; retrying in ${Math.round(delayMs / 1000)}s`);
     await sleep(delayMs);
   }
 
   throw new Error("Unreachable identify retry state.");
+}
+
+function isRetryableProviderAvailabilityResponse(response, code) {
+  return code === "rate_limited" || response.status === 503 || code === "network";
 }
 
 function parseArgs(args) {
@@ -596,14 +600,80 @@ function labelAliases(label) {
     aliases.add("broken");
     aliases.add("cracked");
     aliases.add("crack");
+    aliases.add("fractured");
+    aliases.add("shattered");
+    aliases.add("split");
+    aliases.add("torn");
+    aliases.add("jagged");
+    aliases.add("missing");
+    aliases.add("destroyed");
+    aliases.add("crushing");
+    aliases.add("crushed");
+    aliases.add("deformation");
+    aliases.add("deformed");
+    aliases.add("misalignment");
+    aliases.add("misaligned");
+    aliases.add("impact damage");
+    aliases.add("structural damage");
   }
 
   if (normalized === "scratch") {
     aliases.add("scratched");
+    aliases.add("scuff");
+    aliases.add("scuffs");
+    aliases.add("scuffed");
+    aliases.add("scuffing");
+    aliases.add("abrasion");
+    aliases.add("abrasions");
+    aliases.add("scrape");
+    aliases.add("scraped");
+    aliases.add("paint transfer");
   }
 
   if (normalized === "dent") {
     aliases.add("dented");
+    aliases.add("denting");
+    aliases.add("deformation");
+    aliases.add("deformed");
+    aliases.add("buckling");
+    aliases.add("buckled");
+    aliases.add("crushing");
+    aliases.add("crushed");
+  }
+
+  if (normalized === "paint chip") {
+    aliases.add("paint chips");
+    aliases.add("chipped paint");
+    aliases.add("paint chipping");
+    aliases.add("paint damage");
+    aliases.add("paint loss");
+    aliases.add("paint scuff");
+    aliases.add("paint scuffs");
+  }
+
+  if (normalized === "missing part") {
+    aliases.add("missing");
+    aliases.add("absent");
+    aliases.add("removed");
+    aliases.add("missing assembly");
+    aliases.add("missing headlight");
+    aliases.add("exposed wiring");
+    aliases.add("exposed internal");
+  }
+
+  if (normalized === "corrosion") {
+    aliases.add("rust");
+    aliases.add("rusted");
+    aliases.add("rusty");
+    aliases.add("oxidation");
+  }
+
+  if (normalized === "flaking") {
+    aliases.add("flaking paint");
+    aliases.add("paint flaking");
+    aliases.add("peeling");
+    aliases.add("peeling paint");
+    aliases.add("delamination");
   }
 
   return [...aliases].filter((alias) => alias.length >= 4);

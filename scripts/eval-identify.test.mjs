@@ -142,6 +142,49 @@ describe("identify eval scoring", () => {
     });
   });
 
+  it("scores common visible damage wording as canonical damage labels", () => {
+    const damageResult = {
+      ...result,
+      partName: "Front bumper cover",
+      concerns: [
+        "Plastic deformation and buckling near the corner.",
+        "Scuffing, paint transfer, and chipped paint across the bumper.",
+        "Missing headlight with exposed wiring.",
+        "Panel misalignment and impact damage around the edge.",
+        "Rust and peeling paint around the damaged edge.",
+      ],
+      evidence: [
+        "The jagged edge and cracked plastic indicate a broken part.",
+        "Surface abrasions are visible on the painted cover.",
+      ],
+      visibleObservations: ["Crushed bumper plastic and rusted exposed metal are visible."],
+    };
+
+    expect(
+      scoreIdentificationResult(damageResult, [
+        "Dent",
+        "Scratch",
+        "Paint chip",
+        "Missing part",
+        "Corrosion",
+        "Flaking",
+        "Broken part",
+      ]),
+    ).toMatchObject({
+      ok: true,
+      matchedLabels: [
+        "Dent",
+        "Scratch",
+        "Paint chip",
+        "Missing part",
+        "Corrosion",
+        "Flaking",
+        "Broken part",
+      ],
+      failureReasons: [],
+    });
+  });
+
   it("keeps provider availability failures out of training review rows", () => {
     expect(isReviewableEvalFailure({ code: "rate_limited" })).toBe(false);
     expect(isReviewableEvalFailure({ code: "network" })).toBe(false);

@@ -327,8 +327,8 @@ function parseIdentifyRequest(body: unknown):
       typeof body.userMessage === "string" && body.userMessage.trim()
         ? body.userMessage.trim().slice(0, 500)
         : hasSecond
-          ? "Identify this car part from two photos taken from slightly different angles."
-          : "Identify this car part from the captured photo.",
+          ? "Identify this car part or visible damage from two photos taken from slightly different angles."
+          : "Identify this car part or visible damage from the captured photo.",
     labelRescueTrigger: body.labelRescueTrigger === "too_blurry" ? "too_blurry" : null,
   };
 }

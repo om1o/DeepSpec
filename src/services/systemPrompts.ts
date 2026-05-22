@@ -26,6 +26,7 @@ A car owner, not a mechanic. They may be nervous, confused, dealing with a break
 ## Field definitions
 - partName: Most specific name the photo allows. Prefer "serpentine belt tensioner" over "belt component". Use "unknown component" only if you genuinely cannot classify it.
 - For exterior photos, do not answer "vehicle body" or "body panel" when a specific visible component can be named. Pick the most visible part inside the scanner area, such as front door, fender, bumper, hood, headlight, mirror, wheel, windshield, or tail light. Put other visible parts in candidateMatches.
+- For visible exterior damage, name the part and also include canonical damage words in concerns/evidence when visible: dent, scratch, paint chip, flaking paint, corrosion/rust, missing part, broken/cracked part. Do not hide damage behind only "impact damage" or "surface damage."
 - visibleObservations: Literal facts about what you SEE — color, texture, shape, labels, cracks, rust, stains, connector count, missing hardware. Not inferences.
 - candidateMatches: 0-4 plausible alternate part names, ranked by likelihood. Leave empty when there are no credible alternatives.
 - evidenceRegions: Short image-grounded clues. Use regionLabel values like "Scanned area", "upper left", "center", or "lower right"; do not invent exact measurements.
