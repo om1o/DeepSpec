@@ -1,16 +1,46 @@
 import { describe, expect, it } from "vitest";
 import { classifyIdentifyEvalSummary } from "./verify-identify-eval-summary.mjs";
 
+const qualityMetrics = {
+  accuracy: 1,
+  failureRate: 0,
+  invalidResponseCount: 0,
+  invalidResponseRate: 0,
+  latencyMs: {
+    average: 100,
+    max: 100,
+    median: 100,
+    min: 100,
+    p95: 100,
+  },
+  ocrUsageCount: 0,
+  ocrUsageRate: 0,
+  providerFailureRate: 0,
+  retryCount: 0,
+  retryRate: 0,
+  safetyEscalationCount: 0,
+  safetyFalseNegativeCount: 0,
+  safetyFalseNegativeRate: 0,
+  safetyFalsePositiveCount: 0,
+  safetyFalsePositiveRate: 0,
+};
+
+function makePassingSummary(overrides = {}) {
+  return {
+    attemptedCount: 6,
+    failureCount: 0,
+    passCount: 6,
+    providerFailureCount: 0,
+    providerStatus: "available",
+    qualityMetrics,
+    ...overrides,
+  };
+}
+
 describe("identify eval summary gate", () => {
   it("passes when all attempted samples pass and provider is available", () => {
     expect(
-      classifyIdentifyEvalSummary({
-        attemptedCount: 6,
-        failureCount: 0,
-        passCount: 6,
-        providerFailureCount: 0,
-        providerStatus: "available",
-      }),
+      classifyIdentifyEvalSummary(makePassingSummary()),
     ).toMatchObject({
       ok: true,
       kind: "passed",
@@ -37,13 +67,11 @@ describe("identify eval summary gate", () => {
 
   it("fails model quality separately from provider health", () => {
     expect(
-      classifyIdentifyEvalSummary({
+      classifyIdentifyEvalSummary(makePassingSummary({
         attemptedCount: 6,
         failureCount: 2,
         passCount: 4,
-        providerFailureCount: 0,
-        providerStatus: "available",
-      }),
+      })),
     ).toMatchObject({
       ok: false,
       kind: "model_quality",
@@ -54,13 +82,11 @@ describe("identify eval summary gate", () => {
   it("requires the configured minimum sample size for public launch gates", () => {
     expect(
       classifyIdentifyEvalSummary(
-        {
+        makePassingSummary({
           attemptedCount: 50,
           failureCount: 0,
           passCount: 50,
-          providerFailureCount: 0,
-          providerStatus: "available",
-        },
+        }),
         { minSampleSize: 300 },
       ),
     ).toMatchObject({
@@ -71,19 +97,48 @@ describe("identify eval summary gate", () => {
 
     expect(
       classifyIdentifyEvalSummary(
-        {
+        makePassingSummary({
           attemptedCount: 300,
           failureCount: 0,
           passCount: 300,
-          providerFailureCount: 0,
-          providerStatus: "available",
-        },
+        }),
         { minSampleSize: 300 },
       ),
     ).toMatchObject({
       ok: true,
       kind: "passed",
       exitCode: 0,
+    });
+  });
+
+  it("fails all-passing summaries that are missing launch quality metrics", () => {
+    expect(
+      classifyIdentifyEvalSummary({
+        attemptedCount: 300,
+        failureCount: 0,
+        passCount: 300,
+        providerFailureCount: 0,
+        providerStatus: "available",
+      }),
+    ).toMatchObject({
+      ok: false,
+      kind: "missing_quality_metrics",
+      exitCode: 1,
+    });
+
+    expect(
+      classifyIdentifyEvalSummary(makePassingSummary({
+        attemptedCount: 300,
+        passCount: 300,
+        qualityMetrics: {
+          ...qualityMetrics,
+          safetyFalseNegativeRate: undefined,
+        },
+      })),
+    ).toMatchObject({
+      ok: false,
+      kind: "missing_quality_metrics",
+      message: expect.stringContaining("qualityMetrics.safetyFalseNegativeRate"),
     });
   });
 });
