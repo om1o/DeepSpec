@@ -154,6 +154,20 @@ export function isReviewableEvalFailure(error) {
   return !error || !PROVIDER_AVAILABILITY_ERROR_CODES.has(error.code);
 }
 
+export function getEvalExitCode(summary) {
+  if (
+    summary.providerStatus === "blocked" ||
+    summary.providerFailureCount > 0 ||
+    summary.failureCount > 0 ||
+    summary.passCount !== summary.attemptedCount ||
+    summary.attemptedCount !== summary.sampleSize
+  ) {
+    return 1;
+  }
+
+  return 0;
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const env = await loadEnv();
@@ -239,8 +253,7 @@ async function main() {
     await identify.close();
   }
 
-  await writeJsonl(options.output, failures);
-  await writeSummary(options.summary, {
+  const summary = {
     datasetId: DATASET_ID,
     datasetUrl: DATASET_URL,
     generatedAt: new Date().toISOString(),
@@ -255,10 +268,19 @@ async function main() {
     throttleDelayMs: options.delayMs,
     output: options.output,
     results,
-  });
+  };
+
+  await writeJsonl(options.output, failures);
+  await writeSummary(options.summary, summary);
 
   console.log(`Saved ${failures.length} failure review row(s) to ${options.output}`);
   console.log(`Saved summary to ${options.summary}`);
+
+  const exitCode = getEvalExitCode(summary);
+  if (exitCode !== 0) {
+    console.error("Identify eval did not meet the release gate. Inspect the summary before shipping.");
+    process.exitCode = exitCode;
+  }
 }
 
 async function createIdentifyResponseWithRetry(identify, dataUrl, env) {
@@ -367,6 +389,9 @@ Options:
                      Stop after this many provider availability failures. Default: 1
   --output <path>    JSONL failure review rows. Default: ${DEFAULT_OUTPUT}
   --summary <path>   JSON summary. Default: ${DEFAULT_SUMMARY}
+
+The command exits nonzero when provider availability is blocked, any sample fails
+scoring, or the requested sample set is not fully attempted and passed.
 `);
 }
 
@@ -412,17 +437,25 @@ function unquoteEnvValue(value) {
 
 async function loadIdentifyPipeline() {
   const { createServer } = await import("vite");
-  const server = await createServer({
-    appType: "custom",
-    configFile: false,
-    logLevel: "error",
-    server: { middlewareMode: true },
-  });
+  const server = await createServer(buildEvalViteServerOptions());
   const module = await server.ssrLoadModule("/api/identify.shared.ts");
 
   return {
     createIdentifyResponse: module.createIdentifyResponse,
     close: () => server.close(),
+  };
+}
+
+export function buildEvalViteServerOptions() {
+  return {
+    appType: "custom",
+    configFile: false,
+    logLevel: "error",
+    server: {
+      hmr: false,
+      middlewareMode: true,
+      ws: false,
+    },
   };
 }
 

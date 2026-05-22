@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { RELEASE_SAMPLE_IMAGES, buildReviewLookup, isReviewableEvalFailure, scoreIdentificationResult } from "./eval-identify.mjs";
+import {
+  RELEASE_SAMPLE_IMAGES,
+  buildEvalViteServerOptions,
+  buildReviewLookup,
+  getEvalExitCode,
+  isReviewableEvalFailure,
+  scoreIdentificationResult,
+} from "./eval-identify.mjs";
 
 const result = {
   partName: "Rear bumper",
@@ -138,5 +145,50 @@ describe("identify eval scoring", () => {
     expect(isReviewableEvalFailure({ code: "network" })).toBe(false);
     expect(isReviewableEvalFailure({ code: "invalid_response" })).toBe(true);
     expect(isReviewableEvalFailure(null)).toBe(true);
+  });
+
+  it("fails the release gate when provider availability or scoring blocks the eval", () => {
+    expect(
+      getEvalExitCode({
+        attemptedCount: 6,
+        failureCount: 0,
+        passCount: 6,
+        providerFailureCount: 0,
+        providerStatus: "available",
+        sampleSize: 6,
+      }),
+    ).toBe(0);
+
+    expect(
+      getEvalExitCode({
+        attemptedCount: 1,
+        failureCount: 0,
+        passCount: 0,
+        providerFailureCount: 1,
+        providerStatus: "blocked",
+        sampleSize: 6,
+      }),
+    ).toBe(1);
+
+    expect(
+      getEvalExitCode({
+        attemptedCount: 6,
+        failureCount: 1,
+        passCount: 5,
+        providerFailureCount: 0,
+        providerStatus: "available",
+        sampleSize: 6,
+      }),
+    ).toBe(1);
+  });
+
+  it("does not open a Vite HMR websocket during eval SSR loading", () => {
+    expect(buildEvalViteServerOptions()).toMatchObject({
+      server: {
+        hmr: false,
+        middlewareMode: true,
+        ws: false,
+      },
+    });
   });
 });
