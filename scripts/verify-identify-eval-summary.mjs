@@ -2,6 +2,27 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_SUMMARY = ".deepspec-eval/identify-summary.json";
+const REQUIRED_QUALITY_METRIC_PATHS = [
+  "qualityMetrics.accuracy",
+  "qualityMetrics.failureRate",
+  "qualityMetrics.invalidResponseCount",
+  "qualityMetrics.invalidResponseRate",
+  "qualityMetrics.latencyMs.average",
+  "qualityMetrics.latencyMs.max",
+  "qualityMetrics.latencyMs.median",
+  "qualityMetrics.latencyMs.min",
+  "qualityMetrics.latencyMs.p95",
+  "qualityMetrics.ocrUsageCount",
+  "qualityMetrics.ocrUsageRate",
+  "qualityMetrics.providerFailureRate",
+  "qualityMetrics.retryCount",
+  "qualityMetrics.retryRate",
+  "qualityMetrics.safetyEscalationCount",
+  "qualityMetrics.safetyFalseNegativeCount",
+  "qualityMetrics.safetyFalseNegativeRate",
+  "qualityMetrics.safetyFalsePositiveCount",
+  "qualityMetrics.safetyFalsePositiveRate",
+];
 
 export function classifyIdentifyEvalSummary(summary, options = {}) {
   if (!summary || typeof summary !== "object") {
@@ -52,12 +73,38 @@ export function classifyIdentifyEvalSummary(summary, options = {}) {
     };
   }
 
+  const missingMetricPaths = getMissingQualityMetricPaths(summary);
+  if (missingMetricPaths.length > 0) {
+    return {
+      ok: false,
+      exitCode: 1,
+      kind: "missing_quality_metrics",
+      message: `Identify eval summary is missing launch metric(s): ${missingMetricPaths.join(", ")}.`,
+    };
+  }
+
   return {
     ok: true,
     exitCode: 0,
     kind: "passed",
     message: `Identify eval passed: ${passCount}/${attemptedCount} samples passed with provider available.`,
   };
+}
+
+function getMissingQualityMetricPaths(summary) {
+  return REQUIRED_QUALITY_METRIC_PATHS.filter((path) => {
+    const value = getPathValue(summary, path);
+    return typeof value !== "number" || !Number.isFinite(value);
+  });
+}
+
+function getPathValue(value, path) {
+  return path.split(".").reduce((current, key) => {
+    if (!current || typeof current !== "object") {
+      return undefined;
+    }
+    return current[key];
+  }, value);
 }
 
 async function main() {
