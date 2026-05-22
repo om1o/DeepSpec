@@ -19,21 +19,22 @@ Use a 900-check audit grid instead: 9 production tracks x 100 checks each. Every
 
 ## Evidence From This Audit
 
-- `npm run check` passed locally on May 22, 2026: lint, 29 test files, 206 tests, and production build.
-- GitHub Quality gate also passed `npm ci`, `npm run check`, 28 test files / 191 tests, and production build before intentionally failing the release cloud gate because Actions secrets are missing.
+- `npm run check` passed locally on May 22, 2026: lint, 30 test files, 219 tests, and production build.
+- GitHub Quality gate also passed `npm ci`, `npm run check`, and production build before intentionally failing the release cloud gate because Actions secrets are missing.
 - Browser QA passed for `/scan?test=1` on the current release branch: the test engine photo opened `/result`, identified `Alternator`, rendered evidence/sources/actions, and produced 0 local app console errors.
 - Browser QA on `/early-access` passed the failure-state check: cloud health reports the Supabase Auth/database blocker without hiding storage/RLS as verified.
 - `npm run eval:identify:release` passed 50/50 fixed Hugging Face samples with provider available, 0 provider failures, and 0 failure review rows.
 - `npm run verify:identify-eval` passed with `Identify eval passed: 50/50 samples passed with provider available.`
 - Provider hang guards are now covered: browser AI requests abort after 60s, and release eval samples have a 240s per-sample budget including retries.
 - Provider quota handling now preserves sanitized `Retry-After` timing for identify/chat `429` responses, surfaces it through the client error type, and lets the eval harness use it when shorter than the default retry backoff.
+- Browser QA passed for `/scan?test=1&save=1`: the fixture saved one local-only `testRun` lookup, kept the training label as `Alternator`, disabled cloud sync, and produced 0 browser console/runtime errors.
 - Result evidence regions now carry typed anchors (`scanned_area`, `upper_left`, `center`, `lower_right`, etc.) so API output, saved scans, and the image overlay can agree on where each clue belongs. Old free-text region labels are still inferred into anchors for backward compatibility.
 - Result follow-up now has a typed `Ask about this result` form that saves unsaved real scans before opening chat, while saved scans open chat directly with the typed question.
 - Alternate matches can now be promoted into the correction/training-label path from the result screen, including unsaved real scans that need to be saved before review.
 - Auto scan now tracks whether a detected object is actually inside the visible scanner reticle, gives "Move part into box" feedback when it is outside, and only accrues the 5-second hold while the target stays inside the reticle.
 - Local saved-scan retention now keeps up to 300 records and `/history` exports dataset JSON with photo, result, correction, notes, chat, OCR/model metadata, prompt versions, latency, and sync events.
 - A configured `npm run verify:supabase` run still failed after confirming anonymous sign-ins were enabled: anonymous signup returned `Database error creating anonymous user (unexpected_failure), HTTP 500`.
-- Latest captured configured-run Supabase request/error id: `019e500e-52bb-769e-91e8-6df0646c3320`.
+- Latest captured configured-run Supabase request/error id: `019e5026-0603-7039-b1c9-83e42e2c4924`.
 - A bare checkout-local `npm run verify:supabase` also needs `.env.local` copied in; without `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`, it stops before the Auth preflight.
 - Supabase Preview check on PR #50 failed with `Failed to fetch existing branch project`.
 - GitHub Actions release gate is failing because repository secrets `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` are not configured.
