@@ -124,7 +124,7 @@ describe("Result", () => {
     expect(within(callout).getByText("Pulley edge")).toBeInTheDocument();
   });
 
-  it("groups OCR label text into a Lens-style text section", () => {
+  it("groups OCR label text into an organized Lens-style sheet", () => {
     renderResult({
       ...successfulScan,
       result: {
@@ -136,10 +136,18 @@ describe("Result", () => {
       },
     });
 
-    const textFound = screen.getByRole("region", { name: "Text found" });
-    expect(within(textFound).getByText("DENSO 104210-1230")).toBeInTheDocument();
-    expect(within(textFound).getByText("104210-1230")).toBeInTheDocument();
-    expect(within(textFound).getByRole("link", { name: "Search text" })).toHaveAttribute(
+    const textOutput = screen.getByRole("region", { name: "Text output" });
+    expect(within(textOutput).getByText("Detected label")).toBeInTheDocument();
+    expect(within(textOutput).getByText("DENSO 104210-1230")).toBeInTheDocument();
+    expect(within(textOutput).getByText("Likely part number")).toBeInTheDocument();
+    expect(within(textOutput).getByText("Candidate code")).toBeInTheDocument();
+    expect(within(textOutput).getByText("104210-1230")).toBeInTheDocument();
+    expect(within(textOutput).getByRole("button", { name: "Copy text" })).toBeInTheDocument();
+    expect(within(textOutput).getByRole("link", { name: "Search exact" })).toHaveAttribute(
+      "href",
+      "https://www.google.com/search?q=DENSO%20104210-1230",
+    );
+    expect(within(textOutput).getByRole("link", { name: "Search with part" })).toHaveAttribute(
       "href",
       "https://www.google.com/search?q=DENSO%20104210-1230%20Alternator%20car%20part",
     );
