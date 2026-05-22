@@ -47,15 +47,25 @@ If any step fails, Phase 8 is not complete yet. Fix the Supabase config, migrati
 ## If Anonymous Sign-In Returns A Database Error
 
 If `npm run verify:supabase` says `Database error creating anonymous user`, the app reached Supabase Auth but Supabase failed while inserting the anonymous user.
+The verifier now confirms `external.anonymous_users` before sign-in, so a failure after that preflight is not a React/browser bug and is not fixed by changing the publishable key.
 
 Check this before changing app code:
 
 1. Supabase Dashboard -> Authentication -> Sign In / Providers -> Anonymous sign-ins is enabled.
-2. Supabase Dashboard -> Auth logs: open the failed `/signup` event and read the database error.
+2. Supabase Dashboard -> Auth logs: open the failed `/signup` event and read the database error. The verifier prints the project-specific Auth logs link when it can derive the project ref from `VITE_SUPABASE_URL`.
 3. Database triggers on `auth.users`: make sure there is no trigger writing to a missing `profiles` table or required column.
 4. Run `npm run supabase:print-auth-diagnostics`, paste the printed read-only SQL into Supabase SQL Editor, and inspect any `auth.users` triggers/functions it returns.
 5. Apply this repo's migration if it has not been applied yet.
 6. Rerun `npm run verify:supabase`.
+
+## GitHub Actions
+
+The GitHub CI workflow runs `npm run check` on pushes and pull requests. It also runs `npm run verify:supabase` when these repository secrets are configured:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
+
+If those secrets are missing, CI skips the cloud verifier instead of pretending Supabase was proven.
 
 Do not start Phase 9 until anonymous sign-in can create a user and the verifier passes.
 

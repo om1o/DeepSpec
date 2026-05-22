@@ -61,14 +61,17 @@ describe("latest captured frame storage", () => {
         partName: "Alternator",
         confidence: "high" as const,
         scanCategory: "electrical" as const,
+        candidateMatches: [],
         whatItDoes: "It charges the battery while the engine runs.",
         visibleObservations: ["Belt-driven housing is visible."],
+        evidenceRegions: [],
         concerns: [],
         safetyTriage: "can_help" as const,
         isSafetyCritical: false,
         nextAction: "Take another photo if you need more detail.",
         needsBetterPhoto: false,
         evidence: ["The pulley and housing match an alternator."],
+        sourceLinks: [],
       },
     };
 

@@ -1,4 +1,4 @@
-import type { Lookup } from "../types";
+import type { CandidateMatch, EvidenceRegion, Lookup, SourceLink } from "../types";
 
 export function buildScanReport(lookup: Lookup) {
   const result = lookup.result;
@@ -9,7 +9,7 @@ export function buildScanReport(lookup: Lookup) {
     `Captured: ${formatDate(lookup.frame.capturedAt)}`,
     "",
     "Mechanic summary:",
-    `${result?.partName ?? "Unidentified part"} · ${result?.confidence ?? "unknown"} confidence · ${lookup.scanCategory}`,
+    `${result?.partName ?? "Unidentified part"} - ${result?.confidence ?? "unknown"} confidence - ${lookup.scanCategory}`,
     result?.safetyTriage === "needs_professional" || result?.isSafetyCritical
       ? "Safety: verify with a qualified mechanic before driving or repairing."
       : "Safety: no immediate safety-critical flag from the scan.",
@@ -27,11 +27,20 @@ export function buildScanReport(lookup: Lookup) {
     "Visible observations:",
     formatList(result?.visibleObservations),
     "",
+    "Other possible matches:",
+    formatCandidateMatches(result?.candidateMatches),
+    "",
+    "Image evidence:",
+    formatEvidenceRegions(result?.evidenceRegions),
+    "",
     "Concerns:",
     formatList(result?.concerns, "Nothing concerning visible."),
     "",
     "Dataset evidence:",
     formatList(datasetEvidence, "No local labeled dataset evidence matched this result."),
+    "",
+    "Ranked sources:",
+    formatSourceLinks(result?.sourceLinks),
     "",
     "Next action:",
     result?.nextAction ?? "Scan again or ask a professional if this looks unsafe.",
@@ -86,6 +95,36 @@ function formatDate(value: string) {
 function formatList(items: string[] | undefined, emptyText = "None") {
   const visibleItems = items?.filter(Boolean) ?? [];
   return visibleItems.length > 0 ? visibleItems.slice(0, 8).map((item) => `- ${trimReportLine(item)}`).join("\n") : emptyText;
+}
+
+function formatCandidateMatches(candidates: CandidateMatch[] | undefined) {
+  const visibleCandidates = candidates?.filter((candidate) => candidate.partName && candidate.reason) ?? [];
+  return visibleCandidates.length > 0
+    ? visibleCandidates
+        .slice(0, 4)
+        .map((candidate) => `- ${trimReportLine(`${candidate.partName} (${candidate.confidence}): ${candidate.reason}`)}`)
+        .join("\n")
+    : "None";
+}
+
+function formatEvidenceRegions(regions: EvidenceRegion[] | undefined) {
+  const visibleRegions = regions?.filter((region) => region.label && region.observation) ?? [];
+  return visibleRegions.length > 0
+    ? visibleRegions
+        .slice(0, 4)
+        .map((region) => `- ${trimReportLine(`${region.regionLabel}: ${region.label} - ${region.observation}`)}`)
+        .join("\n")
+    : "None";
+}
+
+function formatSourceLinks(links: SourceLink[] | undefined) {
+  const visibleLinks = links?.filter((link) => link.label && link.url) ?? [];
+  return visibleLinks.length > 0
+    ? visibleLinks
+        .slice(0, 6)
+        .map((link) => `- ${trimReportLine(`${link.label} (${link.sourceType}): ${link.url}`)}`)
+        .join("\n")
+    : "None";
 }
 
 function getDatasetEvidence(evidence: string[]) {

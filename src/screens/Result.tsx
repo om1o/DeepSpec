@@ -7,7 +7,7 @@ import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } fro
 import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
 import { buildScanReport, downloadTextFile, getMechanicSearchUrl, getScanReportFilename } from "../services/report";
 import { deleteLookup, getLookup, scanStateFromLookup, updateLookup, updateLookupResult } from "../services/storage";
-import type { CapturedFrame, Confidence, IdentificationResult, Lookup, Rating, ScanAnalysisState } from "../types";
+import type { CandidateMatch, CapturedFrame, Confidence, EvidenceRegion, IdentificationResult, Lookup, Rating, ScanAnalysisState, SourceLink } from "../types";
 
 export default function Result() {
   const location = useLocation();
@@ -94,6 +94,7 @@ export default function Result() {
             </div>
           )}
           <FocusFrame isVisible={Boolean(frame?.imageBase64)} />
+          <ImageEvidenceCallouts regions={scanState?.result?.evidenceRegions} />
           <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(2,6,23,0.68),rgba(2,6,23,0.04)_38%,rgba(2,6,23,0.82))]" />
           <header className="absolute left-0 right-0 top-0 z-10 flex items-center justify-between px-4 pt-[max(18px,env(safe-area-inset-top))]">
             <img src="/brand/deepspec-logo.png" alt="Deep Spec" className="h-11 w-32 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-white/30" />
@@ -172,6 +173,40 @@ function FocusFrame({ isVisible }: { isVisible: boolean }) {
       </span>
     </div>
   );
+}
+
+function ImageEvidenceCallouts({ regions }: { regions: EvidenceRegion[] | undefined }) {
+  const callouts = regions?.slice(0, 3) ?? [];
+  if (!callouts.length) {
+    return null;
+  }
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-10">
+      {callouts.map((region) => (
+        <div
+          key={`${region.regionLabel}-${region.label}`}
+          className={`absolute max-w-[190px] rounded-2xl border border-white/30 bg-slate-950/72 px-3 py-2 text-white shadow-[0_14px_34px_rgba(0,0,0,0.28)] backdrop-blur-md ${getEvidenceCalloutPosition(region.regionLabel)}`}
+        >
+          <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-white/62">{region.regionLabel}</p>
+          <p className="mt-1 truncate text-xs font-extrabold">{region.label}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function getEvidenceCalloutPosition(regionLabel: string) {
+  const label = regionLabel.toLowerCase();
+  if (/upper|top/.test(label) && /left/.test(label)) return "left-[8%] top-[22%]";
+  if (/upper|top/.test(label) && /right/.test(label)) return "right-[8%] top-[22%]";
+  if (/lower|bottom/.test(label) && /left/.test(label)) return "bottom-[24%] left-[8%]";
+  if (/lower|bottom/.test(label) && /right/.test(label)) return "bottom-[24%] right-[8%]";
+  if (/left/.test(label)) return "left-[8%] top-1/2 -translate-y-1/2";
+  if (/right/.test(label)) return "right-[8%] top-1/2 -translate-y-1/2";
+  if (/lower|bottom/.test(label)) return "bottom-[24%] left-1/2 -translate-x-1/2";
+  if (/upper|top/.test(label)) return "left-1/2 top-[22%] -translate-x-1/2";
+  return "left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2";
 }
 
 function TestRunNotice({ label }: { label?: string }) {
@@ -408,13 +443,41 @@ function AnalysisResult({
         </section>
       ) : null}
 
+      <CandidateMatchesSection candidates={result.candidateMatches ?? []} />
       <ResultSection title="Match" items={[result.whatItDoes]} />
+      <EvidenceRegionsSection regions={result.evidenceRegions ?? []} />
       <EvidenceSection items={result.evidence} />
       <ResultSection title="Concerns" items={result.concerns} emptyText="Nothing concerning visible." />
       <ResultSection title="Next action" items={[result.nextAction]} />
       <FollowUpSuggestions lookupId={lookupId} result={result} />
       <ReferenceLinksSection links={getReferenceLinks(result)} />
     </>
+  );
+}
+
+function CandidateMatchesSection({ candidates }: { candidates: CandidateMatch[] }) {
+  if (!candidates.length) {
+    return null;
+  }
+
+  return (
+    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
+      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Other possible matches</h2>
+      <div className="mt-3 grid grid-cols-1 gap-2">
+        {candidates.map((candidate) => (
+          <div key={`${candidate.partName}-${candidate.reason}`} className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-extrabold text-neutral-900">{candidate.partName}</p>
+              <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[11px] font-extrabold capitalize text-neutral-500 ring-1 ring-neutral-200">
+                {candidate.confidence}
+              </span>
+            </div>
+            <p className="mt-1 text-xs font-semibold capitalize text-neutral-400">{candidate.scanCategory}</p>
+            <p className="mt-2 text-sm leading-5 text-neutral-600">{candidate.reason}</p>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -437,7 +500,7 @@ function QuickActions({ lookupId, result }: { lookupId: string | null; result: I
   return (
     <div className="mt-4 grid grid-cols-3 gap-2">
       <Link className="rounded-full bg-neutral-100 px-3 py-2 text-center text-xs font-extrabold text-neutral-900" to="/scan">
-        Retake
+        Refine
       </Link>
       {lookupId ? (
         <Link className="rounded-full bg-[var(--ds-accent)] px-3 py-2 text-center text-xs font-extrabold text-white" to={`/result/${lookupId}/chat`}>
@@ -520,6 +583,27 @@ function EvidenceSection({ items }: { items: string[] }) {
   );
 }
 
+function EvidenceRegionsSection({ regions }: { regions: EvidenceRegion[] }) {
+  if (!regions.length) {
+    return null;
+  }
+
+  return (
+    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
+      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Image evidence</h2>
+      <div className="mt-3 grid grid-cols-1 gap-2">
+        {regions.map((region) => (
+          <div key={`${region.label}-${region.observation}`} className="rounded-2xl border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 py-3">
+            <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--ds-evidence-ink)]">{region.regionLabel}</p>
+            <p className="mt-1 text-sm font-extrabold text-neutral-900">{region.label}</p>
+            <p className="mt-1 text-sm leading-5 text-neutral-700">{region.observation}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function formatEvidenceItem(item: string) {
   const cleaned = item.trim();
   if (!cleaned || /^Dataset source:/i.test(cleaned)) {
@@ -531,15 +615,12 @@ function formatEvidenceItem(item: string) {
     .replace(/^OCR label text:\s*/i, "Visible label text: ");
 }
 
-type ReferenceLink = {
-  label: string;
-  url: string;
-};
+type ReferenceLink = Pick<SourceLink, "label" | "sourceType" | "url">;
 
 function ReferenceLinksSection({ links }: { links: ReferenceLink[] }) {
   return (
     <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
-      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Useful links</h2>
+      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Ranked sources</h2>
       <div className="mt-3 grid grid-cols-2 gap-2">
         {links.map((link) => (
           <a
@@ -550,6 +631,9 @@ function ReferenceLinksSection({ links }: { links: ReferenceLink[] }) {
             target="_blank"
           >
             {link.label}
+            <span aria-hidden="true" className="mt-1 block text-[11px] font-extrabold uppercase tracking-[0.12em] text-neutral-400">
+              {link.sourceType}
+            </span>
           </a>
         ))}
       </div>
@@ -727,25 +811,35 @@ function ConfidenceBadge({ confidence }: { confidence: Confidence }) {
 }
 
 function getReferenceLinks(result: IdentificationResult): ReferenceLink[] {
-  const partQuery = encodeURIComponent(`${result.partName} car part`);
-  return [
-    {
-      label: "Search this part",
-      url: `https://www.google.com/search?q=${partQuery}`,
-    },
+  const sourceLinks = (result.sourceLinks ?? []).filter((link) => /^https:\/\//.test(link.url));
+  const defaults: ReferenceLink[] = [
     {
       label: "Nearby help",
+      sourceType: "search",
       url: getMapsSearchUrl(result),
     },
     {
-      label: "NHTSA recalls",
-      url: "https://www.nhtsa.gov/recalls",
-    },
-    {
       label: "Report safety issue",
+      sourceType: "safety",
       url: "https://www.nhtsa.gov/report-a-safety-problem",
     },
   ];
+
+  return uniqueReferenceLinks([...sourceLinks, ...defaults]).slice(0, 6);
+}
+
+function uniqueReferenceLinks(links: ReferenceLink[]) {
+  const seen = new Set<string>();
+  const unique: ReferenceLink[] = [];
+
+  for (const link of links) {
+    const key = link.url.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(link);
+  }
+
+  return unique;
 }
 
 function getFollowUpPrompts(result: IdentificationResult) {

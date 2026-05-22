@@ -35,6 +35,7 @@ let failureMessage;
 try {
   console.log("[0/6] Checking Supabase Auth settings...");
   await runPreflight(config);
+  console.log("      Anonymous sign-ins are enabled in Supabase Auth settings.");
 
   ownerClient = createClient(config.url, config.key, {
     auth: {
@@ -45,7 +46,7 @@ try {
   });
 
   console.log("[1/6] Signing in as an anonymous Supabase user...");
-  const firstUser = await signInAnonymously(ownerClient);
+  const firstUser = await signInAnonymously(ownerClient, config);
   userId = firstUser.id;
   imagePath = `${userId}/${testId}.jpg`;
 
@@ -108,7 +109,7 @@ try {
       persistSession: false,
     },
   });
-  await signInAnonymously(otherClient);
+  await signInAnonymously(otherClient, config);
   const crossRead = await otherClient.from("scan_lookups").select("local_id").eq("local_id", testId);
   await assertNoError(crossRead, "Cross-user RLS check failed");
 
@@ -132,22 +133,48 @@ try {
   }
 }
 
-async function signInAnonymously(supabase) {
+async function signInAnonymously(supabase, config) {
   const { data, error } = await supabase.auth.signInAnonymously();
   if (error || !data.user) {
     const code = error?.code ? ` (${error.code})` : "";
     const status = error?.status ? `HTTP ${error.status}` : "unknown status";
+    const dashboardLinks = getDashboardLinks(config.url);
     throw new Error(
       [
         `Anonymous sign-in failed: ${error?.message ?? "No user returned"}${code}, ${status}.`,
-        "Check Supabase Auth logs for the database error behind /signup.",
-        "Common causes: anonymous sign-ins not fully enabled, Auth schema not upgraded, or a database trigger on auth.users failing.",
+        "The verifier already confirmed anonymous sign-ins are enabled, so this is a Supabase Auth/database problem instead of a browser app problem.",
+        dashboardLinks
+          ? `Open Auth logs for the failed /signup event: ${dashboardLinks.authLogs}`
+          : "Open Supabase Dashboard -> Auth logs for the failed /signup event.",
+        "Then run `npm run supabase:print-auth-diagnostics` and paste the SQL into Supabase SQL Editor.",
+        dashboardLinks ? `SQL Editor: ${dashboardLinks.sqlEditor}` : "Look for triggers or functions on auth.users that write to missing or constrained profile tables.",
+        "Common causes: an outdated Auth schema, or a database trigger on auth.users failing while inserting into public.profiles or another required table.",
         "The private scan table and storage checks cannot run until Auth can create an anonymous user.",
       ].join(" "),
     );
   }
 
   return data.user;
+}
+
+function getDashboardLinks(projectUrl) {
+  let hostname;
+
+  try {
+    hostname = new URL(projectUrl).hostname;
+  } catch {
+    return null;
+  }
+
+  const projectRef = hostname.endsWith(".supabase.co") ? hostname.replace(".supabase.co", "") : "";
+  if (!projectRef) {
+    return null;
+  }
+
+  return {
+    authLogs: `https://supabase.com/dashboard/project/${projectRef}/logs/auth-logs`,
+    sqlEditor: `https://supabase.com/dashboard/project/${projectRef}/sql/new`,
+  };
 }
 
 async function runPreflight(config) {

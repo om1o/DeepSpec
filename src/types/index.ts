@@ -26,18 +26,40 @@ export const SCAN_CATEGORIES = [
 
 export type ScanCategory = (typeof SCAN_CATEGORIES)[number];
 
+export type CandidateMatch = {
+  partName: string;
+  confidence: Confidence;
+  scanCategory: ScanCategory;
+  reason: string;
+};
+
+export type EvidenceRegion = {
+  label: string;
+  observation: string;
+  regionLabel: string;
+};
+
+export type SourceLink = {
+  label: string;
+  url: string;
+  sourceType: "dataset" | "reference" | "search" | "safety";
+};
+
 export type IdentificationResult = {
   partName: string;
   confidence: Confidence;
   scanCategory: ScanCategory;
+  candidateMatches: CandidateMatch[];
   whatItDoes: string;
   visibleObservations: string[];
+  evidenceRegions: EvidenceRegion[];
   concerns: string[];
   safetyTriage: SafetyTriage;
   isSafetyCritical: boolean;
   nextAction: string;
   needsBetterPhoto: boolean;
   evidence: string[];
+  sourceLinks: SourceLink[];
 };
 
 export type ScanAnalysisState = {

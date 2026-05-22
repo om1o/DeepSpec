@@ -18,7 +18,7 @@ describe("Phase 8 Supabase validation tooling", () => {
   it("checks private image upload, scan row write, owner read, cross-user block, and cleanup", () => {
     expect(verifier).toContain("/auth/v1/settings");
     expect(verifier).toContain("PGRST205");
-    expect(verifier.indexOf("signInAnonymously(ownerClient)")).toBeLessThan(
+    expect(verifier.indexOf("signInAnonymously(ownerClient, config)")).toBeLessThan(
       verifier.indexOf('from("scan_lookups").upsert'),
     );
     expect(verifier).toContain("storage.from(SCAN_BUCKET).upload");
@@ -27,6 +27,13 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(verifier).toContain("another anonymous user cannot read");
     expect(verifier).toContain('from("scan_lookups").delete()');
     expect(verifier).toContain("storage.from(SCAN_BUCKET).remove");
+  });
+
+  it("prints actionable Supabase Auth diagnostics when anonymous sign-in fails", () => {
+    expect(verifier).toContain("Anonymous sign-ins are enabled in Supabase Auth settings.");
+    expect(verifier).toContain("logs/auth-logs");
+    expect(verifier).toContain("supabase:print-auth-diagnostics");
+    expect(verifier).toContain("auth.users");
   });
 
   it("documents that parent setup and non-service-role keys are required", () => {
