@@ -11,13 +11,57 @@ const DATASET_FETCH_TIMEOUT_MS = 30_000;
 const RATE_LIMIT_RETRY_DELAYS_MS = [60_000, 120_000];
 const PROVIDER_AVAILABILITY_ERROR_CODES = new Set(["network", "provider_error", "rate_limited"]);
 
-const SAMPLE_IMAGES = [
-  "Car damages dataset/File1/img/Car damages 100.png",
-  "Car damages dataset/File1/img/Car damages 101.png",
-  "Car damages dataset/File1/img/Car damages 102.jpg",
+export const RELEASE_SAMPLE_IMAGES = [
+  "Car damages dataset/File1/img/Car damages 2.jpg",
+  "Car damages dataset/File1/img/Car damages 119.png",
+  "Car damages dataset/File1/img/Car damages 162.png",
+  "Car damages dataset/File1/img/Car damages 230.png",
+  "Car damages dataset/File1/img/Car damages 273.png",
+  "Car damages dataset/File1/img/Car damages 314.png",
+  "Car damages dataset/File1/img/Car damages 648.jpg",
+  "Car damages dataset/File1/img/Car damages 689.png",
+  "Car damages dataset/File1/img/Car damages 731.png",
+  "Car damages dataset/File1/img/Car damages 773.jpg",
+  "Car damages dataset/File1/img/Car damages 875.png",
+  "Car damages dataset/File1/img/Car damages 947.png",
+  "Car damages dataset/File1/img/Car damages 1050.png",
+  "Car damages dataset/File1/img/Car damages 1092.png",
+  "Car damages dataset/File1/img/Car damages 1133.png",
+  "Car damages dataset/File1/img/Car damages 1177.png",
+  "Car damages dataset/File1/img/Car damages 1336.png",
+  "Car damages dataset/File1/img/Car damages 1378.png",
+  "Car damages dataset/File1/img/Car damages 1451.jpg",
+  "Car damages dataset/File1/img/Car damages 1493.png",
+  "Car damages dataset/File1/img/Car damages 1585.png",
+  "Car damages dataset/File1/img/Car damages 1627.png",
+  "Car damages dataset/File1/img/Car damages 1669.png",
+  "Car damages dataset/File1/img/Car damages 1711.png",
+  "Car damages dataset/File1/img/Car damages 1753.png",
   "Car parts dataset/File1/img/Car damages 101.png",
-  "Car parts dataset/File1/img/Car damages 102.jpg",
-  "Car parts dataset/File1/img/Car damages 103.png",
+  "Car parts dataset/File1/img/Car damages 136.png",
+  "Car parts dataset/File1/img/Car damages 180.png",
+  "Car parts dataset/File1/img/Car damages 214.png",
+  "Car parts dataset/File1/img/Car damages 249.png",
+  "Car parts dataset/File1/img/Car damages 283.png",
+  "Car parts dataset/File1/img/Car damages 318.jpg",
+  "Car parts dataset/File1/img/Car damages 413.jpg",
+  "Car parts dataset/File1/img/Car damages 447.png",
+  "Car parts dataset/File1/img/Car damages 480.png",
+  "Car parts dataset/File1/img/Car damages 605.png",
+  "Car parts dataset/File1/img/Car damages 639.png",
+  "Car parts dataset/File1/img/Car damages 703.png",
+  "Car parts dataset/File1/img/Car damages 778.png",
+  "Car parts dataset/File1/img/Car damages 812.png",
+  "Car parts dataset/File1/img/Car damages 876.png",
+  "Car parts dataset/File1/img/Car damages 911.png",
+  "Car parts dataset/File1/img/Car damages 974.png",
+  "Car parts dataset/File1/img/Car damages 1069.png",
+  "Car parts dataset/File1/img/Car damages 1151.png",
+  "Car parts dataset/File1/img/Car damages 1185.png",
+  "Car parts dataset/File1/img/Car damages 1219.png",
+  "Car parts dataset/File1/img/Car damages 1253.jpg",
+  "Car parts dataset/File1/img/Car damages 1288.png",
+  "Car parts dataset/File1/img/Car damages 1352.jpg",
 ];
 
 export function scoreIdentificationResult(result, expectedLabels) {
@@ -118,7 +162,7 @@ async function main() {
     throw new Error("GEMINI_API_KEY is missing. Add it to .env or the process environment before running the eval.");
   }
 
-  const selectedSamples = SAMPLE_IMAGES.slice(0, options.sampleSize);
+  const selectedSamples = RELEASE_SAMPLE_IMAGES.slice(0, options.sampleSize);
   const identify = await loadIdentifyPipeline();
   const failures = [];
   const results = [];
@@ -244,7 +288,7 @@ function parseArgs(args) {
     delayMs: parseDelayMs(process.env.DEEPSPEC_EVAL_DELAY_MS, DEFAULT_EVAL_DELAY_MS),
     maxProviderFailures: parseMaxProviderFailures(process.env.DEEPSPEC_EVAL_MAX_PROVIDER_FAILURES, 1),
     output: DEFAULT_OUTPUT,
-    sampleSize: SAMPLE_IMAGES.length,
+    sampleSize: 6,
     summary: DEFAULT_SUMMARY,
   };
 
@@ -298,16 +342,16 @@ function parseMaxProviderFailures(value, fallback) {
   }
 
   const failures = Number(value);
-  if (!Number.isInteger(failures) || failures < 1 || failures > SAMPLE_IMAGES.length) {
-    throw new Error(`--max-provider-failures must be an integer from 1 to ${SAMPLE_IMAGES.length}.`);
+  if (!Number.isInteger(failures) || failures < 1 || failures > RELEASE_SAMPLE_IMAGES.length) {
+    throw new Error(`--max-provider-failures must be an integer from 1 to ${RELEASE_SAMPLE_IMAGES.length}.`);
   }
 
   return failures;
 }
 
 function clampSampleSize(value) {
-  if (!Number.isInteger(value) || value < 1 || value > SAMPLE_IMAGES.length) {
-    throw new Error(`--sample-size must be an integer from 1 to ${SAMPLE_IMAGES.length}.`);
+  if (!Number.isInteger(value) || value < 1 || value > RELEASE_SAMPLE_IMAGES.length) {
+    throw new Error(`--sample-size must be an integer from 1 to ${RELEASE_SAMPLE_IMAGES.length}.`);
   }
 
   return value;
@@ -317,7 +361,7 @@ function printHelp() {
   console.log(`Run a local Deep Spec identify eval against ${DATASET_ID}.
 
 Options:
-  --sample-size <n>  Number of curated HF samples to run, 1-${SAMPLE_IMAGES.length}. Default: ${SAMPLE_IMAGES.length}
+  --sample-size <n>  Number of curated HF samples to run, 1-${RELEASE_SAMPLE_IMAGES.length}. Default: 6
   --delay-ms <n>     Delay between provider calls. Default: ${DEFAULT_EVAL_DELAY_MS}
   --max-provider-failures <n>
                      Stop after this many provider availability failures. Default: 1
