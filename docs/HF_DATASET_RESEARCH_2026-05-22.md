@@ -19,6 +19,8 @@ Deep Spec needs a repeatable car-part and damage dataset path for three jobs:
 - Shape: 1,812 high-resolution images with polygon segmentation for car parts and damages.
 - Current use: `scripts/eval-identify.mjs`, `scripts/sort-drbimmer-dataset.mjs`, and local dataset evidence lookup.
 - Release value: stable enough for fixed 50-case evals and already covered by tests.
+- May 22 release proof: `npm run eval:identify:release` passed 50/50 fixed samples with provider available, 0 provider failures, and 0 failure review rows.
+- Connector proof: Hugging Face metadata confirmed the dataset tags include object detection and image segmentation.
 
 ## Candidate Expansion Sources
 

@@ -59,6 +59,8 @@ type AIApiFailure = {
   };
 };
 
+export const AI_REQUEST_TIMEOUT_MS = 60_000;
+
 export class AIServiceError extends Error {
   code: AIErrorCode | string;
 
@@ -104,15 +106,24 @@ export async function runAI(input: AIInput): Promise<string | object> {
 }
 
 async function postAI<TSuccess extends object>(path: string, payload: object): Promise<TSuccess> {
-  const response = await fetch(path, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  }).catch(() => {
-    throw new AIServiceError("network", "Could not reach the Deep Spec AI service.");
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT_MS);
+  let response: Response;
+
+  try {
+    response = await fetch(path, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    throw new AIServiceError("network", "Could not reach the Deep Spec AI service within the scan timeout.");
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   const body = (await response.json().catch(() => null)) as TSuccess | AIApiFailure | null;
 

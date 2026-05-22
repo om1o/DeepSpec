@@ -1,6 +1,6 @@
 # Deep Spec Production Readiness Goal Plan
 
-Audit date: May 21, 2026
+Audit date: May 22, 2026
 
 ## Goal
 
@@ -19,13 +19,18 @@ Use a 900-check audit grid instead: 9 production tracks x 100 checks each. Every
 
 ## Evidence From This Audit
 
-- `npm run check` passed: lint, 24 test files, 134 tests, and production build.
-- Browser QA passed for local auth continue and `/scan?test=1` fixture scan.
-- Live QA scan identified the engine fixture as `Alternator` with high confidence and no browser console errors.
-- `npm run verify:supabase` failed at anonymous Supabase sign-in: `Database error creating anonymous user (unexpected_failure), HTTP 500`.
-- `npm run eval:identify` passed 5 of 6 sampled dataset cases and failed 1 with `invalid_response`.
-- GitHub connector found no open standalone issues in `om1o/DeepSpec`, but multiple open PRs, with #13 the latest visible PR.
-- Hugging Face context: `microsoft/trocr-large-printed` is the current OCR fallback model, and `DrBimmer/car-parts-and-damage-dataset` is the current local/eval dataset source.
+- `npm run check` passed locally on May 22, 2026: lint, 28 test files, 194 tests, and production build.
+- GitHub Quality gate also passed `npm ci`, `npm run check`, 28 test files / 191 tests, and production build before intentionally failing the release cloud gate because Actions secrets are missing.
+- Browser QA passed for `/scan?test=1` on the current release branch: the test engine photo opened `/result`, identified `Alternator`, rendered evidence/sources/actions, and produced 0 local app console errors.
+- Browser QA on `/early-access` passed the failure-state check: cloud health reports the Supabase Auth/database blocker without hiding storage/RLS as verified.
+- `npm run eval:identify:release` passed 50/50 fixed Hugging Face samples with provider available, 0 provider failures, and 0 failure review rows.
+- `npm run verify:identify-eval` passed with `Identify eval passed: 50/50 samples passed with provider available.`
+- Client scan requests and identify release eval samples now have explicit timeout coverage so a stuck provider call cannot leave the app or release gate hanging indefinitely.
+- `npm run verify:supabase` still fails after confirming anonymous sign-ins are enabled: anonymous signup returns `Database error creating anonymous user (unexpected_failure), HTTP 500`.
+- Latest captured Supabase request/error id: `019e4fa3-b641-7605-82cb-2a36e2d694c6`.
+- Supabase Preview check on PR #50 failed with `Failed to fetch existing branch project`.
+- GitHub Actions release gate is failing because repository secrets `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` are not configured.
+- Hugging Face connector confirmed `DrBimmer/car-parts-and-damage-dataset` as the current fixed release dataset source: 1,812 high-resolution polygon-annotated car part/damage images, MIT license, object-detection and image-segmentation tags.
 - Google Lens reference behavior from official Google pages: camera/image/screenshot input, multiple result modes, ranked visual results, text copy/translate, visual matches, shopping/context actions, and ask/refine flows.
 
 ## Verified Production Gaps
@@ -33,9 +38,10 @@ Use a 900-check audit grid instead: 9 production tracks x 100 checks each. Every
 | ID | Severity | Area | Finding | Evidence | Fix Direction |
 | --- | --- | --- | --- | --- | --- |
 | P0-001 | Blocker | Database | Cloud sync is not production ready because Supabase anonymous sign-in fails before storage or RLS can be proven. | `npm run verify:supabase` failed at step 1. | Fix Supabase Auth logs/triggers/config, rerun verifier until all 6 steps pass. |
-| P0-002 | Blocker | Output reliability | Identify eval has a real `invalid_response` failure. | `npm run eval:identify` failed 1 of 6 sampled cases. | Capture provider payload, harden schema response, add regression fixture. |
+| P0-002 | Blocker | Release integration | Supabase Preview is failing before migration proof. | PR #50 check run `Supabase Preview` failed with `Failed to fetch existing branch project`. | Repair Supabase GitHub Integration/branch state in the Supabase dashboard, then push or rerun the preview check. |
 | P0-003 | Blocker | Backlog hygiene | There are no open standalone GitHub issues for production readiness. | GitHub issue search returned empty. | Convert this plan into milestones and issues instead of hiding work in PRs. |
-| P0-004 | Blocker | Release quality | Open PR stack is large and overlapping. | GitHub returned open PRs #4-#13. | Merge/close/rebase PRs into a clean production branch before broad changes. |
+| P0-004 | Blocker | Release quality | The active release PR is still large and draft. | PR #50 changes 91 files and CodeRabbit skipped review because it is draft. | Keep review honest, close superseded PRs, and make PR #50 ready only after cloud gates pass. |
+| P0-005 | Blocker | CI secrets | Release CI cannot prove cloud sync because public Supabase Actions secrets are missing. | Quality gate prints empty `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`, then exits 1 for the production-readiness PR title. | Add those two repository secrets, rerun CI, and require `npm run verify:supabase` to pass in Actions. |
 | P1-001 | High | Scanner UX | `/scan?test=1` shows camera-denied UI and test panel at the same time. | Browser snapshot shows "Camera access needed" plus "Test engine photo". | Test/upload mode should bypass camera-blocking copy and render a clean non-camera scanner state. |
 | P1-002 | High | Result UX | Result output is grouped like a report, not Google Lens. | Live result stacks `AI identification`, `Trust check`, `Safety-critical`, `What it does`, `What I see`, `Concerns`, `Evidence`, `Next action`, `Reference links`. | Replace with image-first Lens result sheet: primary match, alternatives, evidence chips, action tabs, sources. |
 | P1-003 | High | Result accuracy | The fixture alternator was treated as professional verification needed. | Live QA result showed high confidence alternator plus safety-critical/pro verification warning. | Recalibrate safety triage so ordinary electrical parts are not escalated unless visible risk exists. |
@@ -155,7 +161,7 @@ Exit criteria:
 
 Exit criteria:
 
-- Fix the `invalid_response` eval failure and add it as a regression test.
+- Keep the fixed `invalid_response` / provider-availability regressions covered by tests.
 - Release eval set has at least 50 fixed cases before beta and 300 before public launch.
 - Metrics include accuracy, invalid response rate, latency, safety false positives, safety false negatives, OCR usage, and cloud sync success.
 - Confidence and safety triage are calibrated; an ordinary alternator should not be escalated unless visible risk exists.
@@ -184,7 +190,7 @@ Exit criteria:
 Deep Spec is not production ready until all of these are true:
 
 - `npm run check` passes.
-- `npm run eval:identify` meets the release threshold.
+- `npm run eval:identify:release` meets the release threshold.
 - `npm run verify:supabase` passes.
 - Browser QA passes on `/auth`, `/scan`, `/scan?test=1`, `/result`, `/history`, `/early-access`, and chat.
 - The output is Lens-like: image-first, ranked, visual, actionable, and easy to correct.

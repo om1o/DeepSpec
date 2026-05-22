@@ -1,4 +1,4 @@
-import { getAIErrorDetails, identifyCapturedFrame, runAI, sendFollowUp } from "./aiService";
+import { AI_REQUEST_TIMEOUT_MS, getAIErrorDetails, identifyCapturedFrame, runAI, sendFollowUp } from "./aiService";
 
 const result = {
   partName: "Alternator",
@@ -39,6 +39,7 @@ const result = {
 describe("aiService", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it("routes vision calls through the identify API", async () => {
@@ -111,6 +112,30 @@ describe("aiService", () => {
       code: "rate_limited",
       message: "Too many AI lookups right now. Try again in a few minutes.",
     });
+  });
+
+  it("aborts scan requests that exceed the client timeout", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      (_path, init) =>
+        new Promise((_resolve, reject) => {
+          const signal = init?.signal;
+          signal?.addEventListener("abort", () => reject(new DOMException("The operation was aborted.", "AbortError")));
+        }),
+    );
+
+    const scanPromise = identifyCapturedFrame({
+      imageBase64: "data:image/jpeg;base64,test",
+      capturedAt: "2026-05-16T00:00:00.000Z",
+    });
+    const expectation = expect(scanPromise).rejects.toMatchObject({
+      code: "network",
+      message: "Could not reach the Deep Spec AI service within the scan timeout.",
+    });
+
+    await vi.advanceTimersByTimeAsync(AI_REQUEST_TIMEOUT_MS);
+
+    await expectation;
   });
 
   it("classifies provider availability errors separately from model output errors", () => {

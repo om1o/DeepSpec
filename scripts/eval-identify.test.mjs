@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   DATASET_FETCH_TIMEOUT_MS,
   RELEASE_SAMPLE_IMAGES,
   buildEvalResultRow,
   buildEvalViteServerOptions,
   buildReviewLookup,
+  createIdentifyResponseWithRetry,
   getEvalExitCode,
   isReviewableEvalFailure,
   isRetryableProviderAvailabilityResponse,
@@ -198,6 +199,69 @@ describe("identify eval scoring", () => {
     expect(isRetryableProviderAvailabilityResponse({ status: 503 }, "provider_error")).toBe(true);
     expect(isRetryableProviderAvailabilityResponse({ status: 500 }, "network")).toBe(true);
     expect(isRetryableProviderAvailabilityResponse({ status: 400 }, "provider_error")).toBe(false);
+  });
+
+  it("stops eval retries before the per-sample retry budget is exhausted", async () => {
+    let now = 1_000;
+    const identify = {
+      createIdentifyResponse: vi.fn(async () => ({
+        status: 429,
+        body: {
+          error: {
+            code: "rate_limited",
+            message: "Too many AI lookups right now.",
+          },
+        },
+      })),
+    };
+
+    const response = await createIdentifyResponseWithRetry(identify, "data:image/jpeg;base64,test", {}, {
+      now: () => now,
+      retryDelaysMs: [60_000],
+      sampleTimeoutMs: 30_000,
+      sleepFn: async (delayMs) => {
+        now += delayMs;
+      },
+    });
+
+    expect(response).toMatchObject({
+      status: 504,
+      body: {
+        error: {
+          code: "network",
+          message: "Deep Spec provider retry budget expired after 30s.",
+        },
+      },
+    });
+    expect(identify.createIdentifyResponse).toHaveBeenCalledTimes(1);
+  });
+
+  it("times out a hung provider call inside the per-sample retry budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const identify = {
+        createIdentifyResponse: vi.fn(() => new Promise(() => undefined)),
+      };
+
+      const responsePromise = createIdentifyResponseWithRetry(identify, "data:image/jpeg;base64,test", {}, {
+        retryDelaysMs: [],
+        sampleTimeoutMs: 30_000,
+      });
+
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      await expect(responsePromise).resolves.toMatchObject({
+        status: 504,
+        body: {
+          error: {
+            code: "network",
+            message: "Deep Spec provider retry budget expired after 30s.",
+          },
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("fails the release gate when provider availability or scoring blocks the eval", () => {

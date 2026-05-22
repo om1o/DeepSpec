@@ -7,6 +7,7 @@ const DATASET_URL = `https://huggingface.co/datasets/${DATASET_ID}`;
 const DEFAULT_OUTPUT = ".deepspec-eval/identify-failures.jsonl";
 const DEFAULT_SUMMARY = ".deepspec-eval/identify-summary.json";
 const DEFAULT_EVAL_DELAY_MS = 20_000;
+const DEFAULT_EVAL_SAMPLE_TIMEOUT_MS = 240_000;
 export const DATASET_FETCH_TIMEOUT_MS = 60_000;
 const RATE_LIMIT_RETRY_DELAYS_MS = [60_000, 120_000];
 const PROVIDER_AVAILABILITY_ERROR_CODES = new Set(["network", "provider_error", "rate_limited"]);
@@ -220,7 +221,9 @@ async function main() {
       const dataUrl = toDataUrl(image.bytes, image.contentType);
       const analyzedAt = new Date().toISOString();
       console.log(`[${index + 1}/${selectedSamples.length}] Identifying image with provider`);
-      const response = await createIdentifyResponseWithRetry(identify, dataUrl, env);
+      const response = await createIdentifyResponseWithRetry(identify, dataUrl, env, {
+        sampleTimeoutMs: options.sampleTimeoutMs,
+      });
       const result = response.status === 200 ? response.body.result : null;
       const error = response.status === 200 ? null : response.body.error;
       const score = scoreIdentificationResult(result, expectedLabels);
@@ -288,6 +291,7 @@ async function main() {
     providerFailureCount,
     passCount: results.filter((result) => result.status === 200 && result.failureReasons.length === 0).length,
     providerStatus: providerFailureCount > 0 ? "blocked" : "available",
+    sampleTimeoutMs: options.sampleTimeoutMs,
     stoppedEarlyReason,
     throttleDelayMs: options.delayMs,
     output: options.output,
@@ -307,26 +311,64 @@ async function main() {
   }
 }
 
-async function createIdentifyResponseWithRetry(identify, dataUrl, env) {
+export async function createIdentifyResponseWithRetry(identify, dataUrl, env, options = {}) {
   const payload = {
     imageBase64: dataUrl,
     userMessage: "Identify this car part or visible damage from the captured photo.",
   };
+  const retryDelaysMs = options.retryDelaysMs ?? RATE_LIMIT_RETRY_DELAYS_MS;
+  const sampleTimeoutMs = options.sampleTimeoutMs ?? DEFAULT_EVAL_SAMPLE_TIMEOUT_MS;
+  const now = options.now ?? Date.now;
+  const sleepFn = options.sleepFn ?? sleep;
+  const deadlineMs = now() + sampleTimeoutMs;
 
-  for (let attempt = 0; attempt <= RATE_LIMIT_RETRY_DELAYS_MS.length; attempt += 1) {
-    const response = await identify.createIdentifyResponse(payload, env);
+  for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+    const remainingMs = deadlineMs - now();
+    if (remainingMs <= 0) {
+      return providerRetryBudgetResponse(sampleTimeoutMs);
+    }
+
+    const response = await createIdentifyResponseWithinBudget(identify, payload, env, remainingMs, sampleTimeoutMs);
     const code = response.status === 200 ? null : response.body.error.code;
 
-    if (!isRetryableProviderAvailabilityResponse(response, code) || attempt === RATE_LIMIT_RETRY_DELAYS_MS.length) {
+    if (!isRetryableProviderAvailabilityResponse(response, code) || attempt === retryDelaysMs.length) {
       return response;
     }
 
-    const delayMs = RATE_LIMIT_RETRY_DELAYS_MS[attempt];
+    const delayMs = retryDelaysMs[attempt];
+    if (deadlineMs - now() <= delayMs) {
+      console.log(`${code ?? response.status}; sample retry budget exhausted before ${Math.round(delayMs / 1000)}s retry`);
+      return providerRetryBudgetResponse(sampleTimeoutMs);
+    }
+
     console.log(`${code ?? response.status}; retrying in ${Math.round(delayMs / 1000)}s`);
-    await sleep(delayMs);
+    await sleepFn(delayMs);
   }
 
   throw new Error("Unreachable identify retry state.");
+}
+
+function createIdentifyResponseWithinBudget(identify, payload, env, remainingMs, sampleTimeoutMs) {
+  let timeoutId;
+  const timeout = new Promise((resolve) => {
+    timeoutId = setTimeout(() => resolve(providerRetryBudgetResponse(sampleTimeoutMs)), remainingMs);
+  });
+
+  return Promise.race([identify.createIdentifyResponse(payload, env), timeout]).finally(() => {
+    clearTimeout(timeoutId);
+  });
+}
+
+function providerRetryBudgetResponse(sampleTimeoutMs) {
+  return {
+    status: 504,
+    body: {
+      error: {
+        code: "network",
+        message: `Deep Spec provider retry budget expired after ${Math.round(sampleTimeoutMs / 1000)}s.`,
+      },
+    },
+  };
 }
 
 export function isRetryableProviderAvailabilityResponse(response, code) {
@@ -338,6 +380,7 @@ function parseArgs(args) {
     delayMs: parseDelayMs(process.env.DEEPSPEC_EVAL_DELAY_MS, DEFAULT_EVAL_DELAY_MS),
     maxProviderFailures: parseMaxProviderFailures(process.env.DEEPSPEC_EVAL_MAX_PROVIDER_FAILURES, 1),
     output: DEFAULT_OUTPUT,
+    sampleTimeoutMs: parseSampleTimeoutMs(process.env.DEEPSPEC_EVAL_SAMPLE_TIMEOUT_MS, DEFAULT_EVAL_SAMPLE_TIMEOUT_MS),
     sampleSize: 6,
     summary: DEFAULT_SUMMARY,
   };
@@ -355,6 +398,9 @@ function parseArgs(args) {
       if (!inlineValue) index += 1;
     } else if (name === "--max-provider-failures") {
       options.maxProviderFailures = parseMaxProviderFailures(value, options.maxProviderFailures);
+      if (!inlineValue) index += 1;
+    } else if (name === "--sample-timeout-ms") {
+      options.sampleTimeoutMs = parseSampleTimeoutMs(value, options.sampleTimeoutMs);
       if (!inlineValue) index += 1;
     } else if (name === "--output") {
       options.output = value;
@@ -399,6 +445,19 @@ function parseMaxProviderFailures(value, fallback) {
   return failures;
 }
 
+function parseSampleTimeoutMs(value, fallback) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+
+  const timeoutMs = Number(value);
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 30_000 || timeoutMs > 600_000) {
+    throw new Error("--sample-timeout-ms must be an integer from 30000 to 600000.");
+  }
+
+  return timeoutMs;
+}
+
 function clampSampleSize(value) {
   if (!Number.isInteger(value) || value < 1 || value > RELEASE_SAMPLE_IMAGES.length) {
     throw new Error(`--sample-size must be an integer from 1 to ${RELEASE_SAMPLE_IMAGES.length}.`);
@@ -415,6 +474,8 @@ Options:
   --delay-ms <n>     Delay between provider calls. Default: ${DEFAULT_EVAL_DELAY_MS}
   --max-provider-failures <n>
                      Stop after this many provider availability failures. Default: 1
+  --sample-timeout-ms <n>
+                     Hard timeout per sample, including provider retries. Default: ${DEFAULT_EVAL_SAMPLE_TIMEOUT_MS}
   --output <path>    JSONL failure review rows. Default: ${DEFAULT_OUTPUT}
   --summary <path>   JSON summary. Default: ${DEFAULT_SUMMARY}
 
