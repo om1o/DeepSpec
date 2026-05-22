@@ -7,6 +7,7 @@ export type CameraObjectTarget = {
   confidence: number;
   height: number;
   holdProgress: number;
+  isInScannerBox: boolean;
   isLocked: boolean;
   left: number;
   top: number;
@@ -56,7 +57,13 @@ export function useObjectTarget(
       const scannerBox = getScannerReticleBounds(window.innerWidth, window.innerHeight);
       if (!isTargetInsideScannerBox(viewportTarget, scannerBox)) {
         lockRef.current = null;
-        setTarget(null);
+        setTarget({
+          ...viewportTarget,
+          confidence: detected.confidence,
+          holdProgress: 0,
+          isInScannerBox: false,
+          isLocked: false,
+        });
         return;
       }
 
@@ -71,6 +78,7 @@ export function useObjectTarget(
         ...viewportTarget,
         confidence: detected.confidence,
         holdProgress,
+        isInScannerBox: true,
         isLocked: holdProgress >= 1,
       });
     }, SAMPLE_INTERVAL_MS);

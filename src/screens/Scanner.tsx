@@ -49,6 +49,7 @@ export default function Scanner() {
   });
   const targetProgress = objectTarget?.holdProgress ?? 0;
   const hasTargetLock = Boolean(objectTarget?.isLocked);
+  const hasTargetInScannerBox = Boolean(objectTarget?.isInScannerBox);
   const autoScanSeconds = Math.max(1, Math.ceil((1 - targetProgress) * (AUTO_SCAN_HOLD_MS / 1000)));
   const scannerStatus = qaTestMode
     ? "Test scan ready"
@@ -58,6 +59,7 @@ export default function Scanner() {
         cameraState,
         hasTarget: Boolean(objectTarget),
         hasTargetLock,
+        hasTargetInScannerBox,
         isStable,
         usesFallback,
       });
@@ -310,7 +312,7 @@ export default function Scanner() {
           <Reticle
             isLocked={hasTargetLock}
             isVisible={cameraState === "ready"}
-            label={getReticleLabel(Boolean(objectTarget), hasTargetLock, autoScanSeconds)}
+            label={getReticleLabel(Boolean(objectTarget), hasTargetInScannerBox, hasTargetLock, autoScanSeconds)}
             progress={targetProgress}
           />
 
@@ -345,6 +347,7 @@ function getScannerStatus({
   cameraState,
   hasTarget,
   hasTargetLock,
+  hasTargetInScannerBox,
   isStable,
   usesFallback,
 }: {
@@ -353,6 +356,7 @@ function getScannerStatus({
   cameraState: string;
   hasTarget: boolean;
   hasTargetLock: boolean;
+  hasTargetInScannerBox: boolean;
   isStable: boolean;
   usesFallback: boolean;
 }) {
@@ -368,6 +372,10 @@ function getScannerStatus({
     return "Capturing";
   }
 
+  if (hasTarget && !hasTargetInScannerBox) {
+    return "Move part into box";
+  }
+
   if (hasTarget) {
     return `Auto scan in ${autoScanSeconds}s`;
   }
@@ -379,9 +387,18 @@ function getScannerStatus({
   return "Lens ready";
 }
 
-function getReticleLabel(hasTarget: boolean, hasTargetLock: boolean, autoScanSeconds: number) {
+function getReticleLabel(
+  hasTarget: boolean,
+  hasTargetInScannerBox: boolean,
+  hasTargetLock: boolean,
+  autoScanSeconds: number,
+) {
   if (hasTargetLock) {
     return "Scanning";
+  }
+
+  if (hasTarget && !hasTargetInScannerBox) {
+    return "Place part in box";
   }
 
   if (hasTarget) {

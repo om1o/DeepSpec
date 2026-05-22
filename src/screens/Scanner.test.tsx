@@ -48,6 +48,7 @@ const objectTargetState = vi.hoisted(() => ({
     confidence: 0.82,
     height: 180,
     holdProgress: 1,
+    isInScannerBox: true,
     isLocked: true,
     left: 80,
     top: 160,
@@ -56,6 +57,7 @@ const objectTargetState = vi.hoisted(() => ({
     confidence: number;
     height: number;
     holdProgress: number;
+    isInScannerBox: boolean;
     isLocked: boolean;
     left: number;
     top: number;
@@ -163,6 +165,7 @@ describe("Scanner", () => {
       confidence: 0.82,
       height: 180,
       holdProgress: 1,
+      isInScannerBox: true,
       isLocked: true,
       left: 80,
       top: 160,
@@ -260,6 +263,7 @@ describe("Scanner", () => {
       confidence: 0.82,
       height: 180,
       holdProgress: 0,
+      isInScannerBox: true,
       isLocked: false,
       left: 80,
       top: 160,
@@ -277,6 +281,31 @@ describe("Scanner", () => {
     expect(screen.getByText("Auto scan in 5s")).toBeInTheDocument();
     expect(screen.getByText("Hold still 5s")).toBeInTheDocument();
     expect(objectTargetOptions.latest?.holdDurationMs).toBe(5000);
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+  });
+
+  it("does not auto capture when the detected target is outside the scanner box", () => {
+    objectTargetState.current = {
+      confidence: 0.82,
+      height: 180,
+      holdProgress: 0,
+      isInScannerBox: false,
+      isLocked: false,
+      left: 12,
+      top: 160,
+      width: 240,
+    };
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("Move part into box")).toBeInTheDocument();
+    expect(screen.getByText("Place part in box")).toBeInTheDocument();
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
   });
 
