@@ -10,7 +10,7 @@
     "dataset:sort": "node scripts/sort-drbimmer-dataset.mjs",
     "eval:identify": "node scripts/eval-identify.mjs",
     "lint": "eslint .",
-    "test": "vitest run --configLoader native --pool threads",
+    "test": "vitest run --configLoader native --pool forks",
     "supabase:print-migration": "node scripts/print-supabase-migration.mjs",
     "supabase:print-auth-diagnostics": "node scripts/print-supabase-auth-diagnostics.mjs",
     "verify:supabase": "node scripts/verify-supabase-sync.mjs",
