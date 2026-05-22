@@ -12,7 +12,8 @@ import type { CandidateMatch, CapturedFrame, Confidence, EvidenceRegion, Identif
 
 type DetectedTextFinding = {
   codes: string[];
-  searchUrl: string;
+  exactSearchUrl: string;
+  partSearchUrl: string;
   text: string;
 };
 
@@ -597,35 +598,82 @@ function QuickActions({
 }
 
 function DetectedTextSection({ findings }: { findings: DetectedTextFinding[] }) {
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
   if (!findings.length) {
     return null;
   }
 
+  const codeCount = findings.reduce((sum, finding) => sum + finding.codes.length, 0);
+
+  async function copyText(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyStatus("Copied");
+    } catch {
+      setCopyStatus("Copy failed");
+    }
+  }
+
   return (
-    <section aria-labelledby="detected-text-heading" className="rounded-[22px] border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] p-4">
-      <h2 id="detected-text-heading" className="text-sm font-extrabold uppercase tracking-[0.14em] text-[var(--ds-evidence-ink)]">Text found</h2>
-      <div className="mt-3 grid grid-cols-1 gap-3">
+    <section aria-labelledby="detected-text-heading" className="overflow-hidden rounded-[28px] border border-neutral-200 bg-white shadow-[0_18px_48px_rgba(15,23,42,0.14)]">
+      <div className="grid place-items-center bg-neutral-50 pt-3">
+        <div className="h-1.5 w-12 rounded-full bg-neutral-300" />
+      </div>
+      <header className="border-b border-neutral-200 bg-neutral-50 px-4 pb-4 pt-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--ds-evidence-ink)]">Image text</p>
+            <h2 id="detected-text-heading" className="mt-1 text-xl font-extrabold tracking-tight text-neutral-950">Text output</h2>
+          </div>
+          <span className="shrink-0 rounded-full border border-neutral-200 bg-white px-3 py-1 text-[11px] font-extrabold text-neutral-500">
+            {codeCount ? `${codeCount} code${codeCount === 1 ? "" : "s"}` : "label"}
+          </span>
+        </div>
+        {copyStatus ? <p className="mt-3 text-xs font-extrabold text-[var(--ds-evidence-ink)]">{copyStatus}</p> : null}
+      </header>
+      <div className="divide-y divide-neutral-200">
         {findings.map((finding) => (
-          <article key={finding.text} className="rounded-2xl border border-[var(--ds-evidence-line)] bg-white px-3 py-3">
-            <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-neutral-400">Visible label</p>
-            <p className="mt-2 break-words font-mono text-base font-extrabold leading-6 text-neutral-950">{finding.text}</p>
+          <article key={finding.text} className="p-4">
+            <div className="rounded-[18px] bg-slate-950 px-4 py-4 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.10)]">
+              <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-white/54">Detected label</p>
+              <p className="mt-2 break-words font-mono text-lg font-extrabold leading-7 text-white">{finding.text}</p>
+            </div>
             {finding.codes.length ? (
-              <div className="mt-3 flex flex-wrap gap-2">
+              <div className="mt-3 overflow-hidden rounded-[16px] border border-neutral-200 bg-neutral-50">
+                <p className="border-b border-neutral-200 px-3 py-2 text-[11px] font-extrabold uppercase tracking-[0.14em] text-neutral-400">Likely part number</p>
                 {finding.codes.map((code) => (
-                  <span key={code} className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-xs font-extrabold text-neutral-700">
-                    {code}
-                  </span>
+                  <div key={code} className="flex items-center justify-between gap-3 px-3 py-3">
+                    <span className="text-sm font-semibold text-neutral-500">Candidate code</span>
+                    <span className="break-all text-right font-mono text-sm font-extrabold text-neutral-950">{code}</span>
+                  </div>
                 ))}
               </div>
             ) : null}
-            <a
-              className="mt-3 inline-flex rounded-full bg-[var(--ds-accent)] px-4 py-2 text-xs font-extrabold text-white"
-              href={finding.searchUrl}
-              rel="noreferrer"
-              target="_blank"
-            >
-              Search text
-            </a>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <button
+                className="min-h-11 rounded-[14px] border border-neutral-200 bg-neutral-50 px-3 text-sm font-extrabold text-neutral-900"
+                onClick={() => void copyText(finding.text)}
+                type="button"
+              >
+                Copy text
+              </button>
+              <a
+                className="grid min-h-11 place-items-center rounded-[14px] bg-[var(--ds-accent)] px-3 text-center text-sm font-extrabold text-white"
+                href={finding.exactSearchUrl}
+                rel="noreferrer"
+                target="_blank"
+              >
+                Search exact
+              </a>
+              <a
+                className="col-span-2 grid min-h-11 place-items-center rounded-[14px] border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 text-center text-sm font-extrabold text-[var(--ds-evidence-ink)]"
+                href={finding.partSearchUrl}
+                rel="noreferrer"
+                target="_blank"
+              >
+                Search with part
+              </a>
+            </div>
           </article>
         ))}
       </div>
@@ -1034,7 +1082,8 @@ function getDetectedTextFindings(result: IdentificationResult): DetectedTextFind
 
     findings.push({
       codes: getLikelyCodeTokens(text),
-      searchUrl: getTextSearchUrl(text, result.partName),
+      exactSearchUrl: getExactTextSearchUrl(text),
+      partSearchUrl: getPartTextSearchUrl(text, result.partName),
       text,
     });
   }
@@ -1064,7 +1113,11 @@ function getLikelyCodeTokens(text: string) {
   return codes.slice(0, 4);
 }
 
-function getTextSearchUrl(text: string, partName: string) {
+function getExactTextSearchUrl(text: string) {
+  return `https://www.google.com/search?q=${encodeURIComponent(text)}`;
+}
+
+function getPartTextSearchUrl(text: string, partName: string) {
   const query = encodeURIComponent(`${text} ${partName} car part`);
   return `https://www.google.com/search?q=${query}`;
 }
