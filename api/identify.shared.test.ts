@@ -449,6 +449,50 @@ describe("createIdentifyResponse", () => {
     });
   });
 
+  it("refines generic exterior body names from the model's visible evidence", async () => {
+    const genericBodyResult = {
+      ...result,
+      partName: "Vehicle body",
+      confidence: "medium",
+      scanCategory: "body",
+      candidateMatches: [],
+      whatItDoes: "It is an exterior body section on the side of the vehicle.",
+      visibleObservations: ["The front door seam and side mirror are centered in the scanner box."],
+      evidenceRegions: [
+        {
+          label: "Front door seam",
+          observation: "The door outline and handle are visible in the scanned area.",
+          regionLabel: "Scanned area",
+        },
+      ],
+      evidence: ["The front door outline is more specific than the whole vehicle body."],
+    };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(genericBodyResult) }] } }],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          partName: "Front door",
+          confidence: "medium",
+          scanCategory: "body",
+          needsBetterPhoto: false,
+        },
+      },
+    });
+  });
+
   it("returns a provider_error and preserves HTTP status when Gemini responds with non-JSON", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("<html>Service Unavailable</html>", {

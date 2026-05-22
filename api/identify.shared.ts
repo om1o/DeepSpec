@@ -405,8 +405,9 @@ function normalizeIdentificationResult(
   const needsBetterPhoto = result.needsBetterPhoto || safetyTriage === "needs_better_photo";
   const datasetMatches = findDatasetMatches(result, env);
   const cleanEvidence = appendDatasetEvidence(appendOcrEvidence(cleanList(result.evidence), ocrText), datasetMatches);
-  const partName = cleanText(result.partName, "Unidentified car part");
-  const scanCategory = getTrustedCategory(result);
+  const originalPartName = cleanText(result.partName, "Unidentified car part");
+  const partName = refineGenericPartName(result, originalPartName);
+  const scanCategory = getTrustedCategory({ ...result, partName });
   const visibleObservations = cleanList(result.visibleObservations);
 
   return {
@@ -427,6 +428,73 @@ function normalizeIdentificationResult(
     safetyTriage,
     needsBetterPhoto,
   };
+}
+
+function refineGenericPartName(result: IdentificationResult, partName: string) {
+  if (!isGenericPartName(partName)) {
+    return partName;
+  }
+
+  const specificCandidate = result.candidateMatches
+    .map((candidate) => cleanText(candidate.partName, ""))
+    .find((candidatePartName) => candidatePartName && !isGenericPartName(candidatePartName));
+
+  if (specificCandidate) {
+    return specificCandidate;
+  }
+
+  return findSpecificBodyPartName(result) ?? partName;
+}
+
+function isGenericPartName(partName: string) {
+  return /^(unknown|unknown component|unidentified|unidentified car part|car part|vehicle component|vehicle part|damaged area|car body|vehicle body|body panel|exterior body|vehicle exterior)$/i.test(
+    partName.trim(),
+  );
+}
+
+const SPECIFIC_BODY_PART_PATTERNS: Array<{ partName: string; pattern: RegExp }> = [
+  { partName: "Front bumper", pattern: /\bfront bumpers?\b|\bfront bumper covers?\b/ },
+  { partName: "Rear bumper", pattern: /\b(rear|back) bumpers?\b|\b(rear|back) bumper covers?\b/ },
+  { partName: "Front door", pattern: /\bfront doors?\b|\bdriver s doors?\b|\bdrivers? doors?\b|\bpassenger doors?\b/ },
+  { partName: "Rear door", pattern: /\b(rear|back) doors?\b/ },
+  { partName: "Front fender", pattern: /\bfront fenders?\b/ },
+  { partName: "Quarter panel", pattern: /\bquarter panels?\b/ },
+  { partName: "Rocker panel", pattern: /\brocker panels?\b/ },
+  { partName: "Front window", pattern: /\bfront windows?\b/ },
+  { partName: "Rear window", pattern: /\b(rear|back) windows?\b/ },
+  { partName: "Tail light", pattern: /\btail ?lights?\b|\btaillights?\b/ },
+  { partName: "Headlight", pattern: /\bhead ?lights?\b|\bheadlamps?\b/ },
+  { partName: "Windshield", pattern: /\bwindshields?\b|\bwindscreens?\b/ },
+  { partName: "Side mirror", pattern: /\bside mirrors?\b|\bmirrors?\b/ },
+  { partName: "License plate", pattern: /\blicen[cs]e plates?\b/ },
+  { partName: "Front wheel", pattern: /\bfront wheels?\b/ },
+  { partName: "Rear wheel", pattern: /\b(rear|back) wheels?\b/ },
+  { partName: "Grille", pattern: /\bgrilles?\b|\bgrills?\b/ },
+  { partName: "Fender", pattern: /\bfenders?\b/ },
+  { partName: "Bumper", pattern: /\bbumpers?\b|\bbumper covers?\b/ },
+  { partName: "Door", pattern: /\bdoors?\b/ },
+  { partName: "Window", pattern: /\bwindows?\b/ },
+  { partName: "Hood", pattern: /\bhoods?\b|\bbonnets?\b/ },
+  { partName: "Trunk", pattern: /\btrunks?\b|\bboot lids?\b/ },
+  { partName: "Roof", pattern: /\broofs?\b/ },
+  { partName: "Dent", pattern: /\bdents?\b|\bdented\b/ },
+  { partName: "Scratch", pattern: /\bscratches?\b|\bscratched\b/ },
+  { partName: "Crack", pattern: /\bcracks?\b|\bcracked\b/ },
+  { partName: "Corrosion", pattern: /\bcorrosion\b|\brust\b|\brusted\b/ },
+];
+
+function findSpecificBodyPartName(result: IdentificationResult) {
+  const text = normalizeMatchText(
+    [
+      result.whatItDoes,
+      ...result.visibleObservations,
+      ...result.evidenceRegions.flatMap((region) => [region.label, region.observation, region.regionLabel]),
+      ...result.concerns,
+      ...result.evidence,
+    ].join(" "),
+  );
+
+  return SPECIFIC_BODY_PART_PATTERNS.find(({ pattern }) => pattern.test(text))?.partName ?? null;
 }
 
 function appendDatasetEvidence(evidence: string[], matches: DatasetMatch[]) {
