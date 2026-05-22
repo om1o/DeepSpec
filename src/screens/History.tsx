@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import Button from "../components/ui/Button";
-import { getDatasetExport, getLookups } from "../services/storage";
+import { getDatasetExport, getLookups, getReviewQueueExport } from "../services/storage";
 import { SCAN_CATEGORIES, type Confidence, type Lookup, type ScanCategory, type TrainingStatus } from "../types";
 
 type CategoryFilter = "all" | ScanCategory;
@@ -22,11 +22,19 @@ export default function History() {
   }), [categoryFilter, confidenceFilter, lookups, query, statusFilter]);
 
   function handleExportDataset() {
-    const exportJson = JSON.stringify(getDatasetExport(lookups), null, 2);
+    downloadJson(`deep-spec-dataset-${new Date().toISOString().slice(0, 10)}.json`, getDatasetExport(lookups));
+  }
+
+  function handleExportReviewQueue() {
+    downloadJson(`deep-spec-review-queue-${new Date().toISOString().slice(0, 10)}.json`, getReviewQueueExport(lookups));
+  }
+
+  function downloadJson(filename: string, payload: unknown) {
+    const exportJson = JSON.stringify(payload, null, 2);
     const url = URL.createObjectURL(new Blob([exportJson], { type: "application/json" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = `deep-spec-dataset-${new Date().toISOString().slice(0, 10)}.json`;
+    link.download = filename;
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -51,9 +59,14 @@ export default function History() {
 
         {lookups.length > 0 ? (
           <>
-            <Button className="mt-5 w-full" onClick={handleExportDataset}>
-              Export dataset
-            </Button>
+            <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <Button className="w-full" onClick={handleExportDataset}>
+                Export dataset
+              </Button>
+              <Button className="w-full bg-neutral-900 shadow-none active:bg-neutral-800" onClick={handleExportReviewQueue}>
+                Export review queue
+              </Button>
+            </div>
             <HistoryFilters
               category={categoryFilter}
               confidence={confidenceFilter}

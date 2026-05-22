@@ -171,6 +171,7 @@ describe("Result", () => {
     expect(within(textOutput).getByText("Candidate code")).toBeInTheDocument();
     expect(within(textOutput).getByText("104210-1230")).toBeInTheDocument();
     expect(within(textOutput).getByRole("button", { name: "Copy text" })).toBeInTheDocument();
+    expect(within(textOutput).getByRole("button", { name: "Use as correction" })).toBeInTheDocument();
     expect(within(textOutput).getByRole("link", { name: "Search exact" })).toHaveAttribute(
       "href",
       "https://www.google.com/search?q=DENSO%20104210-1230",
@@ -444,6 +445,33 @@ describe("Result", () => {
     });
     expect(screen.getByLabelText("What was it actually?")).toHaveValue("Starter motor");
     expect(screen.getByRole("button", { name: "Marked Starter motor correct" })).toBeDisabled();
+  });
+
+  it("uses detected OCR label text as the saved scan correction", async () => {
+    const lookup = makeLookup({
+      result: {
+        ...successfulScan.result!,
+        evidence: [
+          ...successfulScan.result!.evidence,
+          "OCR label text: DENSO 104210-1230",
+        ],
+      },
+    });
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+
+    renderResult(null, `/result/${lookup.id}`);
+
+    await userEvent.click(screen.getByRole("tab", { name: "Evidence" }));
+    await userEvent.click(screen.getByRole("button", { name: "Use as correction" }));
+
+    const savedLookup = JSON.parse(localStorage.getItem(LOOKUPS_STORAGE_KEY) ?? "[]")[0] as Lookup;
+    expect(savedLookup).toMatchObject({
+      correction: "DENSO 104210-1230",
+      rating: "down",
+      trainingLabel: "DENSO 104210-1230",
+      trainingStatus: "user_corrected",
+    });
+    expect(screen.getByLabelText("What was it actually?")).toHaveValue("DENSO 104210-1230");
   });
 
   it("shows scan report actions for saved scans", async () => {

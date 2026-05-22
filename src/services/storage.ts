@@ -273,6 +273,52 @@ export function getDatasetExport(lookups: Lookup[] = getLookups(), exportedAt = 
   };
 }
 
+export function getReviewQueueExport(lookups: Lookup[] = getLookups(), exportedAt = new Date().toISOString()) {
+  const items = lookups
+    .map(mergeLookupChatHistory)
+    .filter((lookup) => !lookup.testRun)
+    .map((lookup) => {
+      const reasons = getLookupReviewReasons(lookup);
+      if (reasons.length === 0) return null;
+      const lastSyncEvent = lookup.syncEvents[lookup.syncEvents.length - 1];
+
+      return {
+        id: lookup.id,
+        createdAt: lookup.createdAt,
+        capturedAt: lookup.frame.capturedAt,
+        analyzedAt: lookup.analyzedAt ?? null,
+        imageBase64: lookup.frame.imageBase64,
+        priority: getReviewPriority(reasons),
+        reasons,
+        result: lookup.result
+          ? {
+              confidence: lookup.result.confidence,
+              isSafetyCritical: lookup.result.isSafetyCritical,
+              needsBetterPhoto: lookup.result.needsBetterPhoto,
+              partName: lookup.result.partName,
+              safetyTriage: lookup.result.safetyTriage,
+              scanCategory: lookup.result.scanCategory,
+            }
+          : null,
+        errorCode: lookup.errorCode ?? null,
+        errorMessage: lookup.errorMessage ?? null,
+        review: getLookupReviewMetadata(lookup),
+        notes: lookup.notes,
+        chatMessageCount: lookup.chatHistory.length,
+        latestSyncStatus: lastSyncEvent?.status ?? null,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item))
+    .sort((a, b) => getReviewPriorityRank(a.priority) - getReviewPriorityRank(b.priority) || b.createdAt.localeCompare(a.createdAt));
+
+  return {
+    schemaVersion: DATASET_EXPORT_SCHEMA_VERSION,
+    exportedAt,
+    queueCount: items.length,
+    items,
+  };
+}
+
 export function deleteLookup(id: string): StorageResult<boolean> {
   const existing = getLookups();
   const next = existing.filter((lookup) => lookup.id !== id);
@@ -314,6 +360,43 @@ function getLookupReviewMetadata(lookup: Lookup) {
     trainingCategory: lookup.scanCategory,
     trainingLabel: lookup.trainingLabel,
   };
+}
+
+function getLookupReviewReasons(lookup: Lookup) {
+  const reasons: string[] = [];
+
+  if (lookup.errorMessage || lookup.errorCode) reasons.push("failed_scan");
+  if (!lookup.result && !lookup.errorMessage) reasons.push("not_analyzed");
+  if (lookup.rating === "down") reasons.push("marked_wrong");
+  if (lookup.correction?.trim()) reasons.push("user_correction");
+  if (lookup.trainingStatus === "raw_unreviewed") reasons.push("raw_unreviewed");
+
+  if (lookup.result?.confidence === "low") reasons.push("low_confidence");
+  if (lookup.result?.confidence === "medium") reasons.push("medium_confidence");
+  if (lookup.result?.needsBetterPhoto || lookup.result?.safetyTriage === "needs_better_photo") {
+    reasons.push("better_photo_needed");
+  }
+  if (lookup.result?.isSafetyCritical || lookup.result?.safetyTriage === "needs_professional") {
+    reasons.push("safety_review");
+  }
+
+  return reasons;
+}
+
+function getReviewPriority(reasons: string[]) {
+  if (reasons.some((reason) => ["failed_scan", "marked_wrong", "user_correction"].includes(reason))) {
+    return "high";
+  }
+  if (reasons.some((reason) => ["better_photo_needed", "low_confidence", "not_analyzed", "safety_review"].includes(reason))) {
+    return "medium";
+  }
+  return "low";
+}
+
+function getReviewPriorityRank(priority: string) {
+  if (priority === "high") return 0;
+  if (priority === "medium") return 1;
+  return 2;
 }
 
 function mergeLookupChatHistory(lookup: Lookup): Lookup {

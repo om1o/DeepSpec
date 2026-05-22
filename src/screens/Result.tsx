@@ -100,6 +100,48 @@ export default function Result() {
     handleLookupUpdate(updated);
   }
 
+  function handleDetectedTextCorrection(text: string) {
+    const correction = text.trim();
+    if (!correction) {
+      return;
+    }
+
+    if (isQaTestRun) {
+      setSaveError("QA test scans are not saved. Exit test mode or take a real scan to correct this result.");
+      return;
+    }
+
+    if (lookup) {
+      handleLookupUpdate(updateLookup(lookup.id, { rating: "down", correction }));
+      return;
+    }
+
+    if (!scanState?.frame || !scanState.result) {
+      return;
+    }
+
+    const saved = createLookup({
+      frame: scanState.frame,
+      result: scanState.result,
+      analyzedAt: scanState.analyzedAt ?? new Date().toISOString(),
+    });
+
+    if (!saved.ok) {
+      setSaveError(saved.message);
+      return;
+    }
+
+    const updated = updateLookup(saved.value.id, { rating: "down", correction });
+    if (updated.ok) {
+      setLookup(updated.value);
+      setSaveError(null);
+      navigate(`/result/${saved.value.id}`, { replace: true, state: scanState });
+      return;
+    }
+
+    handleLookupUpdate(updated);
+  }
+
   function handleDelete() {
     if (!lookup) {
       return;
@@ -205,6 +247,7 @@ export default function Result() {
               lookupId={lookup?.id ?? null}
               onPromoteCandidate={lookup || canSaveForChat ? handlePromoteCandidate : undefined}
               onSaveAndAsk={handleSaveAndAsk}
+              onUseDetectedTextCorrection={lookup || canSaveForChat ? handleDetectedTextCorrection : undefined}
               promotedPartName={lookup?.correction ?? null}
             />
           ) : null}
@@ -521,6 +564,7 @@ function AnalysisResult({
   lookupId,
   onPromoteCandidate,
   onSaveAndAsk,
+  onUseDetectedTextCorrection,
   promotedPartName,
   result,
 }: {
@@ -529,6 +573,7 @@ function AnalysisResult({
   lookupId: string | null;
   onPromoteCandidate?: (candidate: CandidateMatch) => void;
   onSaveAndAsk: (question?: string) => void;
+  onUseDetectedTextCorrection?: (text: string) => void;
   promotedPartName?: string | null;
   result: IdentificationResult;
 }) {
@@ -580,7 +625,7 @@ function AnalysisResult({
           aria-labelledby="result-tab-evidence"
           className="space-y-3"
         >
-          <DetectedTextSection findings={getDetectedTextFindings(result)} />
+          <DetectedTextSection findings={getDetectedTextFindings(result)} onUseAsCorrection={onUseDetectedTextCorrection} />
           <EvidenceRegionsSection regions={result.evidenceRegions ?? []} />
           <EvidenceSection items={result.evidence} />
           <ResultSection title="Concerns" items={result.concerns} emptyText="Nothing concerning visible." />
@@ -807,7 +852,13 @@ function QuickActions({
   );
 }
 
-function DetectedTextSection({ findings }: { findings: DetectedTextFinding[] }) {
+function DetectedTextSection({
+  findings,
+  onUseAsCorrection,
+}: {
+  findings: DetectedTextFinding[];
+  onUseAsCorrection?: (text: string) => void;
+}) {
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   if (!findings.length) {
     return null;
@@ -867,6 +918,15 @@ function DetectedTextSection({ findings }: { findings: DetectedTextFinding[] }) 
               >
                 Copy text
               </button>
+              {onUseAsCorrection ? (
+                <button
+                  className="min-h-11 rounded-[14px] border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 text-sm font-extrabold text-[var(--ds-evidence-ink)]"
+                  onClick={() => onUseAsCorrection(finding.text)}
+                  type="button"
+                >
+                  Use as correction
+                </button>
+              ) : null}
               <a
                 className="grid min-h-11 place-items-center rounded-[14px] bg-[var(--ds-accent)] px-3 text-center text-sm font-extrabold text-white"
                 href={finding.exactSearchUrl}

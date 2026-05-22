@@ -137,6 +137,37 @@ describe("History", () => {
       trainingStatus: "user_confirmed",
     });
   });
+
+  it("exports a review queue for saved scans that need triage", async () => {
+    const createObjectURL = vi.fn(() => "blob:deep-spec-review-queue");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup, correctedBrakeLookup]));
+
+    renderHistory();
+
+    await userEvent.click(screen.getByRole("button", { name: "Export review queue" }));
+
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:deep-spec-review-queue");
+    const blob = createObjectURL.mock.calls[0]?.[0] as Blob;
+    const payload = JSON.parse(await blob.text()) as {
+      queueCount: number;
+      items: Array<Record<string, unknown>>;
+    };
+    expect(payload.queueCount).toBe(1);
+    expect(payload.items[0]).toMatchObject({
+      id: "lookup-2",
+      priority: "high",
+      reasons: expect.arrayContaining(["marked_wrong", "user_correction", "low_confidence"]),
+      review: expect.objectContaining({
+        correctionText: "Brake caliper",
+        reviewStatus: "user_corrected",
+      }),
+    });
+  });
 });
 
 function renderHistory() {

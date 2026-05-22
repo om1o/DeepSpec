@@ -8,6 +8,7 @@ import {
   deleteLookup,
   getDatasetExport,
   getLookupDatasetMetadata,
+  getReviewQueueExport,
   getLookup,
   getLookups,
   LOOKUPS_STORAGE_KEY,
@@ -356,6 +357,59 @@ describe("storage", () => {
     ]);
     expect(datasetExport.scans[0].metadata).toMatchObject({
       chatMessageCount: 1,
+    });
+  });
+
+  it("exports a focused review queue for local dataset triage", () => {
+    const failedLookup = createLookup({
+      frame: {
+        imageBase64: "data:image/jpeg;base64,failed",
+        capturedAt: "2026-05-16T00:03:00.000Z",
+      },
+      analyzedAt: "2026-05-16T00:03:05.000Z",
+      errorCode: "network",
+      errorMessage: "Connection timed out",
+    }).value;
+    const correctedLookup = createLookup(scanState).value;
+    updateLookup(correctedLookup.id, {
+      correction: "Denso alternator",
+      rating: "down",
+    });
+    const confirmedLookup = createLookup(scanState).value;
+    updateLookup(confirmedLookup.id, { rating: "up" });
+    const testLookup = createLookup({
+      ...scanState,
+      testRun: true,
+    }).value;
+
+    const queue = getReviewQueueExport(getLookups(), "2026-05-22T12:00:00.000Z");
+
+    expect(queue).toMatchObject({
+      exportedAt: "2026-05-22T12:00:00.000Z",
+      queueCount: 2,
+      schemaVersion: DATASET_EXPORT_SCHEMA_VERSION,
+    });
+    expect(queue.items.map((item) => item.id).sort()).toEqual([correctedLookup.id, failedLookup.id].sort());
+    expect(queue.items.some((item) => item.id === confirmedLookup.id || item.id === testLookup.id)).toBe(false);
+    expect(queue.items.find((item) => item.id === failedLookup.id)).toMatchObject({
+      errorCode: "network",
+      errorMessage: "Connection timed out",
+      imageBase64: "data:image/jpeg;base64,failed",
+      priority: "high",
+      reasons: expect.arrayContaining(["failed_scan", "raw_unreviewed"]),
+      result: null,
+    });
+    expect(queue.items.find((item) => item.id === correctedLookup.id)).toMatchObject({
+      priority: "high",
+      reasons: expect.arrayContaining(["marked_wrong", "user_correction"]),
+      review: {
+        correctionText: "Denso alternator",
+        hasCorrection: true,
+        originalPartName: "Alternator",
+        rating: "down",
+        reviewStatus: "user_corrected",
+        trainingLabel: "Denso alternator",
+      },
     });
   });
 
