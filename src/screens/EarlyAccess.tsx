@@ -2,7 +2,7 @@ import { FormEvent, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import CloudHealthCard from "../components/CloudHealthCard";
 import Button from "../components/ui/Button";
-import { getCloudSyncStatus } from "../services/cloudSync";
+import { getCloudHealthSnapshot, getCloudSyncStatus, type CloudHealthReport } from "../services/cloudSync";
 import { getEngagementData, saveFeedbackSubmission, saveWaitlistSignup } from "../services/engagement";
 import type { FeedbackSubmission, WaitlistSignup } from "../types";
 
@@ -17,16 +17,15 @@ export default function EarlyAccess() {
   const [waitlistStatus, setWaitlistStatus] = useState<string | null>(null);
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
   const cloudSync = getCloudSyncStatus();
-  const cloudStatusMessage = cloudSync.configured
-    ? "Cloud sync is configured, but production readiness still depends on the Supabase verifier passing."
-    : cloudSync.message;
+  const cloudHealth = getCloudHealthSnapshot();
+  const cloudCopy = getEarlyAccessCloudCopy(cloudSync.configured, cloudHealth.overall, cloudSync.message);
   const demandSignals = useMemo(
     () => [
       { label: "Local waitlist entries", value: String(stats.waitlist.length) },
       { label: "Feedback notes", value: String(stats.feedback.length) },
-      { label: "Cloud sync", value: cloudSync.configured ? "Verify" : "Off" },
+      { label: "Cloud sync", value: cloudCopy.signal },
     ],
-    [cloudSync.configured, stats],
+    [cloudCopy.signal, stats],
   );
 
   async function handleWaitlistSubmit(event: FormEvent<HTMLFormElement>) {
@@ -42,7 +41,7 @@ export default function EarlyAccess() {
     setMainProblem("");
     setStats(getEngagementData());
 
-    setWaitlistStatus("Saved on this device. Backend sync comes after privacy review.");
+    setWaitlistStatus(cloudCopy.waitlistSaved);
   }
 
   async function handleFeedbackSubmit(event: FormEvent<HTMLFormElement>) {
@@ -61,7 +60,7 @@ export default function EarlyAccess() {
     setFeedbackMessage("");
     setStats(getEngagementData());
 
-    setFeedbackStatus("Feedback saved locally.");
+    setFeedbackStatus(cloudCopy.feedbackSaved);
   }
 
   return (
@@ -85,7 +84,7 @@ export default function EarlyAccess() {
             Payments, accounts, domains, and legal docs need parent review later.
           </p>
           <p className="mt-3 rounded-2xl border border-neutral-100 bg-neutral-50 p-3 text-sm leading-6 text-neutral-500">
-            {cloudStatusMessage}
+            {cloudCopy.status}
           </p>
           <div className="mt-4 grid grid-cols-1 gap-3">
             {demandSignals.map((item) => (
@@ -101,7 +100,7 @@ export default function EarlyAccess() {
         <form className="mt-4 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm" onSubmit={handleWaitlistSubmit}>
           <h2 className="text-lg font-extrabold tracking-tight">Join the waitlist</h2>
           <p className="mt-2 text-sm leading-6 text-neutral-500">
-            This saves locally right now. A real launch waitlist needs parent-approved privacy terms and backend storage.
+            {cloudCopy.waitlistDescription}
           </p>
           <label className="mt-4 block">
             <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Email</span>
@@ -147,7 +146,7 @@ export default function EarlyAccess() {
         <form className="mt-4 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm" onSubmit={handleFeedbackSubmit}>
           <h2 className="text-lg font-extrabold tracking-tight">Send product feedback</h2>
           <p className="mt-2 text-sm leading-6 text-neutral-500">
-            Tell us what would make Deep Spec worth coming back to. This is local-only until backend sync exists.
+            {cloudCopy.feedbackDescription}
           </p>
           <label className="mt-4 block">
             <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Topic</span>
@@ -192,4 +191,58 @@ export default function EarlyAccess() {
       </div>
     </main>
   );
+}
+
+function getEarlyAccessCloudCopy(
+  configured: boolean,
+  overall: CloudHealthReport["overall"],
+  fallbackStatus: string,
+) {
+  if (!configured) {
+    return {
+      feedbackDescription: "Tell us what would make Deep Spec worth coming back to. This is local-only until backend sync exists.",
+      feedbackSaved: "Feedback saved locally.",
+      signal: "Off",
+      status: fallbackStatus,
+      waitlistDescription: "This saves locally right now. A real launch waitlist needs parent-approved privacy terms and backend storage.",
+      waitlistSaved: "Saved on this device. Backend sync comes after privacy review.",
+    };
+  }
+
+  if (overall === "ready") {
+    return {
+      feedbackDescription:
+        "Tell us what would make Deep Spec worth coming back to. Cloud health is verified, but feedback still saves locally until privacy-approved engagement sync is enabled.",
+      feedbackSaved: "Feedback saved locally. Cloud health is verified; feedback sync still waits for privacy-approved engagement storage.",
+      signal: "Ready",
+      status: "Cloud health is verified, but early-access contact data still saves locally until privacy-approved engagement sync is enabled.",
+      waitlistDescription:
+        "This saves locally right now. Cloud health is verified, but waitlist sync stays off until parent-approved privacy terms enable engagement storage.",
+      waitlistSaved: "Saved on this device. Cloud health is verified; waitlist sync still waits for privacy-approved engagement storage.",
+    };
+  }
+
+  if (overall === "blocked") {
+    return {
+      feedbackDescription:
+        "Tell us what would make Deep Spec worth coming back to. Feedback stays local because cloud health is blocked and privacy-approved engagement sync is not ready.",
+      feedbackSaved: "Feedback saved locally. Cloud feedback sync is blocked until Supabase health and privacy review pass.",
+      signal: "Blocked",
+      status: "Cloud sync is configured but blocked. Do not treat waitlist, feedback, storage, or RLS as production ready.",
+      waitlistDescription:
+        "This saves locally right now. Cloud waitlist sync is blocked until Supabase health and parent-approved privacy terms pass.",
+      waitlistSaved: "Saved on this device. Cloud waitlist sync is blocked until Supabase health and privacy review pass.",
+    };
+  }
+
+  return {
+    feedbackDescription:
+      "Tell us what would make Deep Spec worth coming back to. Feedback stays local until cloud health, privacy terms, and backend sync are verified.",
+    feedbackSaved: "Feedback saved locally. Cloud feedback sync waits for Supabase verifier and privacy review.",
+    signal: "Verify",
+    status: "Cloud sync is configured, but production readiness still depends on the Supabase verifier passing.",
+    waitlistDescription:
+      "This saves locally right now. Cloud waitlist sync stays off until parent-approved privacy terms and the Supabase verifier pass.",
+    waitlistSaved: "Saved on this device. Cloud waitlist sync waits for Supabase verifier and privacy review.",
+  };
 }
