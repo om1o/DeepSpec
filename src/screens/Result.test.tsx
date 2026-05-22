@@ -93,6 +93,9 @@ describe("Result", () => {
     expect(screen.getByText("Image evidence")).toBeInTheDocument();
     expect(screen.getByText("Useful match")).toBeInTheDocument();
     expect(screen.getByText("The pulley and vented housing match common alternator shapes.")).toBeInTheDocument();
+    expect(screen.getByText("Why it might be wrong")).toBeInTheDocument();
+    expect(screen.getByText(/Other plausible matches remain: Starter motor/)).toBeInTheDocument();
+    expect(screen.getByText(/Take one wider context photo and one close label photo/)).toBeInTheDocument();
     expect(screen.getByText("Ranked sources")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Research" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Nearby help" })).toBeInTheDocument();
@@ -209,6 +212,9 @@ describe("Result", () => {
     expect(screen.getByText("Incomplete data")).toBeInTheDocument();
     expect(screen.getByText("Better photo needed")).toBeInTheDocument();
     expect(screen.getByText("Move closer, add light, and center any label, connector, hose, or damaged area in the lens frame.")).toBeInTheDocument();
+    expect(screen.getByText("Why it might be wrong")).toBeInTheDocument();
+    expect(screen.getByText("The current photo does not show enough detail for a strong match.")).toBeInTheDocument();
+    expect(screen.getByText("Move closer, add light, and include any label, connector, hose path, or mounting bolts in the frame.")).toBeInTheDocument();
   });
 
   it("shows low-confidence uncertainty separately from better-photo cases", () => {
@@ -223,6 +229,22 @@ describe("Result", () => {
     });
 
     expect(screen.getByText("Low-confidence result")).toBeInTheDocument();
+    expect(screen.getByText(/Confidence is low/)).toBeInTheDocument();
+    expect(screen.getByText(/Retake from a second angle/)).toBeInTheDocument();
+  });
+
+  it("shows a fallback uncertainty note for otherwise strong results", () => {
+    renderResult({
+      ...successfulScan,
+      result: {
+        ...successfulScan.result!,
+        candidateMatches: [],
+      },
+    });
+
+    expect(screen.getByText("Why it might be wrong")).toBeInTheDocument();
+    expect(screen.getByText("No major uncertainty flags were returned, but part labels and vehicle fitment still need real-world verification.")).toBeInTheDocument();
+    expect(screen.getByText("Take a second angle if you need buying, fitment, or repair confidence.")).toBeInTheDocument();
   });
 
   it("shows a friendly AI error while keeping the captured image", () => {

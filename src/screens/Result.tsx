@@ -570,6 +570,7 @@ function AnalysisResult({
       <ResultSection title="Match" items={[result.whatItDoes]} />
       <EvidenceRegionsSection regions={result.evidenceRegions ?? []} />
       <EvidenceSection items={result.evidence} />
+      <UncertaintySection result={result} />
       <ResultSection title="Concerns" items={result.concerns} emptyText="Nothing concerning visible." />
       <ResultSection title="Next action" items={[result.nextAction]} />
       <ResultAskBox canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
@@ -943,6 +944,26 @@ function EvidenceRegionsSection({ regions }: { regions: EvidenceRegion[] }) {
   );
 }
 
+function UncertaintySection({ result }: { result: IdentificationResult }) {
+  const reasons = getUncertaintyReasons(result);
+  const retakeGuidance = getRetakeGuidance(result);
+
+  return (
+    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
+      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Why it might be wrong</h2>
+      <div className="mt-3 space-y-2 text-sm leading-6 text-neutral-700">
+        {reasons.map((reason) => (
+          <p key={reason}>{reason}</p>
+        ))}
+      </div>
+      <div className="mt-4 rounded-2xl border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 py-3">
+        <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--ds-evidence-ink)]">Retake guidance</p>
+        <p className="mt-1 text-sm leading-5 text-neutral-700">{retakeGuidance}</p>
+      </div>
+    </section>
+  );
+}
+
 function formatEvidenceItem(item: string) {
   const cleaned = item.trim();
   if (!cleaned || /^Dataset source:|^OCR label text:/i.test(cleaned)) {
@@ -1280,6 +1301,53 @@ function getReferenceGroupId(link: ReferenceLink): ReferenceGroup["id"] {
   }
 
   return "research";
+}
+
+function getUncertaintyReasons(result: IdentificationResult) {
+  const reasons: string[] = [];
+
+  if (result.confidence !== "high") {
+    reasons.push(`Confidence is ${result.confidence}, so treat this as a likely direction rather than a final part call.`);
+  }
+
+  if (result.candidateMatches.length > 0) {
+    const candidateNames = result.candidateMatches.slice(0, 2).map((candidate) => candidate.partName).join(", ");
+    reasons.push(`Other plausible matches remain: ${candidateNames}. Compare labels, connectors, and mounting points before acting.`);
+  }
+
+  if (result.needsBetterPhoto || result.safetyTriage === "needs_better_photo") {
+    reasons.push("The current photo does not show enough detail for a strong match.");
+  }
+
+  if (!result.evidenceRegions.length) {
+    reasons.push("The model did not return image-region evidence, so the visual reasoning is less auditable.");
+  }
+
+  if (!result.sourceLinks.length && !getDatasetSourceUrls(result.evidence).length) {
+    reasons.push("No external or dataset source was returned for this result.");
+  }
+
+  if (!reasons.length) {
+    reasons.push("No major uncertainty flags were returned, but part labels and vehicle fitment still need real-world verification.");
+  }
+
+  return reasons;
+}
+
+function getRetakeGuidance(result: IdentificationResult) {
+  if (result.needsBetterPhoto || result.safetyTriage === "needs_better_photo") {
+    return "Move closer, add light, and include any label, connector, hose path, or mounting bolts in the frame.";
+  }
+
+  if (result.confidence === "low") {
+    return "Retake from a second angle and center the most distinctive shape or printed label.";
+  }
+
+  if (result.candidateMatches.length > 0) {
+    return "Take one wider context photo and one close label photo to separate the best match from alternatives.";
+  }
+
+  return "Take a second angle if you need buying, fitment, or repair confidence.";
 }
 
 function getFollowUpPrompts(result: IdentificationResult) {
