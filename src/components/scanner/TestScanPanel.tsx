@@ -7,6 +7,7 @@ import type { CapturedFrame, ScanAnalysisState } from "../../types";
 
 type Props = {
   onBusyChange: (busy: boolean) => void;
+  onScanComplete: (scanState: ScanAnalysisState) => void;
 };
 
 async function responseToDataUrl(response: Response): Promise<string> {
@@ -33,7 +34,7 @@ async function loadTestFrame(): Promise<CapturedFrame> {
   };
 }
 
-export default function TestScanPanel({ onBusyChange }: Props) {
+export default function TestScanPanel({ onBusyChange, onScanComplete }: Props) {
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
 
@@ -48,14 +49,10 @@ export default function TestScanPanel({ onBusyChange }: Props) {
         result: TEST_ENGINE_IDENTIFICATION,
         analyzedAt: new Date().toISOString(),
         testRun: true,
+        testVehicleLabel: TEST_VEHICLE_LABEL,
       };
 
-      navigate("/result", {
-        state: {
-          ...scanState,
-          testVehicleLabel: TEST_VEHICLE_LABEL,
-        },
-      });
+      onScanComplete(scanState);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Test scan failed.");
     } finally {

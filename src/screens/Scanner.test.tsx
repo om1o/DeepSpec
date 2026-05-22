@@ -1,8 +1,7 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, vi } from "vitest";
-import Result from "./Result";
 import Scanner from "./Scanner";
 
 const captureFrame = vi.fn(async () => "data:image/jpeg;base64,compressed-frame");
@@ -161,13 +160,11 @@ describe("Scanner", () => {
     sessionStorage.clear();
   });
 
-  it("auto captures a held target, identifies, saves it, and opens the saved result", async () => {
+  it("auto captures a held target, identifies, saves it, and opens an in-place review", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <Routes>
           <Route path="/" element={<Scanner />} />
-          <Route path="/result" element={<Result />} />
-          <Route path="/result/:id" element={<Result />} />
         </Routes>
       </MemoryRouter>,
     );
@@ -178,13 +175,15 @@ describe("Scanner", () => {
 
     await waitFor(() => expect(captureFrame).toHaveBeenCalled());
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
-    expect(await screen.findByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute(
+    const review = await screen.findByRole("dialog", { name: "Alternator" });
+    expect(screen.getByTestId("webcam-preview")).toBeInTheDocument();
+    expect(within(review).getByRole("img", { name: "Captured car part" })).toHaveAttribute(
       "src",
       "data:image/jpeg;base64,compressed-frame",
     );
-    expect(screen.getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
-    expect(screen.getByText("Saved scan")).toBeInTheDocument();
+    expect(within(review).getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
+    expect(within(review).getByText("Saved scan")).toBeInTheDocument();
+    expect(within(review).getByText("Saved data")).toBeInTheDocument();
     const savedLookups = JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]");
     expect(savedLookups).toHaveLength(1);
     expect(savedLookups[0]).toMatchObject({
@@ -201,8 +200,6 @@ describe("Scanner", () => {
       <MemoryRouter initialEntries={["/"]}>
         <Routes>
           <Route path="/" element={<Scanner />} />
-          <Route path="/result" element={<Result />} />
-          <Route path="/result/:id" element={<Result />} />
         </Routes>
       </MemoryRouter>,
     );
@@ -211,8 +208,9 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
 
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
-    expect(await screen.findByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
-    expect(screen.getByText("Saved scan")).toBeInTheDocument();
+    const review = await screen.findByRole("dialog", { name: "Alternator" });
+    expect(screen.getByTestId("webcam-preview")).toBeInTheDocument();
+    expect(within(review).getByText("Saved scan")).toBeInTheDocument();
   }, 10000);
 
   it("identifies an uploaded photo when the camera is blocked", async () => {
@@ -227,8 +225,6 @@ describe("Scanner", () => {
       <MemoryRouter initialEntries={["/"]}>
         <Routes>
           <Route path="/" element={<Scanner />} />
-          <Route path="/result" element={<Result />} />
-          <Route path="/result/:id" element={<Result />} />
         </Routes>
       </MemoryRouter>,
     );
@@ -239,8 +235,9 @@ describe("Scanner", () => {
     );
 
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
-    expect(await screen.findByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
-    expect(screen.getByText("Saved scan")).toBeInTheDocument();
+    const review = await screen.findByRole("dialog", { name: "Alternator" });
+    expect(screen.getByTestId("webcam-preview")).toBeInTheDocument();
+    expect(within(review).getByText("Saved scan")).toBeInTheDocument();
   }, 10000);
 
   it("requires a five-second hold before auto capture locks", () => {
@@ -345,17 +342,16 @@ describe("Scanner", () => {
       <MemoryRouter initialEntries={["/scan?test=1"]}>
         <Routes>
           <Route path="/scan" element={<Scanner />} />
-          <Route path="/result" element={<Result />} />
         </Routes>
       </MemoryRouter>,
     );
 
     await userEvent.click(screen.getByRole("button", { name: "Test engine photo" }));
 
-    expect(await screen.findByText("QA test result")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
+    const review = await screen.findByRole("dialog", { name: "Alternator" });
+    expect(within(review).getByText("QA test result")).toBeInTheDocument();
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
-    expect(screen.getByText(/not saved to history, cloud sync, or training review/i)).toBeInTheDocument();
+    expect(within(review).getByText("test run only")).toBeInTheDocument();
     expect(localStorage.getItem("deep-spec:lookups")).toBeNull();
     expect(sessionStorage.getItem("deep-spec:latest-scan-state")).toBeNull();
   }, 10000);
@@ -411,7 +407,6 @@ describe("Scanner", () => {
       <MemoryRouter initialEntries={["/"]}>
         <Routes>
           <Route path="/" element={<Scanner />} />
-          <Route path="/result" element={<Result />} />
         </Routes>
       </MemoryRouter>,
     );
@@ -433,8 +428,6 @@ describe("Scanner", () => {
       <MemoryRouter initialEntries={["/"]}>
         <Routes>
           <Route path="/" element={<Scanner />} />
-          <Route path="/result" element={<Result />} />
-          <Route path="/result/:id" element={<Result />} />
         </Routes>
       </MemoryRouter>,
     );
@@ -463,14 +456,13 @@ describe("Scanner", () => {
       <MemoryRouter initialEntries={["/"]}>
         <Routes>
           <Route path="/" element={<Scanner />} />
-          <Route path="/result" element={<Result />} />
-          <Route path="/result/:id" element={<Result />} />
         </Routes>
       </MemoryRouter>,
     );
 
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
     expect(identifyCapturedFrame.mock.calls[0][2]).toBe("too_blurry");
+    expect(await screen.findByRole("dialog", { name: "Alternator" })).toBeInTheDocument();
     expect(screen.queryByText(/Move closer and hold steady/)).not.toBeInTheDocument();
   }, 10000);
 });
