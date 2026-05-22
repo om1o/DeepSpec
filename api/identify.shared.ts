@@ -42,6 +42,16 @@ const IDENTIFY_MAX_OUTPUT_TOKENS = 2048;
 const DEFAULT_DATASET_ROOT = "datasets/raw/drbimmer-car-parts-and-damage-dataset";
 const DEFAULT_DATASET_INDEX_PATH = "datasets/derived/drbimmer-car-parts-and-damage-dataset/records.jsonl";
 
+const SOURCE_LINK_RESPONSE_SCHEMA = {
+  type: "object",
+  properties: {
+    label: { type: "string" },
+    url: { type: "string" },
+    sourceType: { type: "string", enum: ["dataset", "reference", "search", "safety"] },
+  },
+  required: ["label", "url", "sourceType"],
+};
+
 const IDENTIFICATION_RESPONSE_SCHEMA = {
   type: "object",
   properties: {
@@ -57,6 +67,10 @@ const IDENTIFICATION_RESPONSE_SCHEMA = {
           confidence: { type: "string", enum: ["high", "medium", "low"] },
           scanCategory: { type: "string", enum: [...SCAN_CATEGORIES] },
           reason: { type: "string" },
+          sourceLinks: {
+            type: "array",
+            items: SOURCE_LINK_RESPONSE_SCHEMA,
+          },
         },
         required: ["partName", "confidence", "scanCategory", "reason"],
       },
@@ -93,15 +107,7 @@ const IDENTIFICATION_RESPONSE_SCHEMA = {
     },
     sourceLinks: {
       type: "array",
-      items: {
-        type: "object",
-        properties: {
-          label: { type: "string" },
-          url: { type: "string" },
-          sourceType: { type: "string", enum: ["dataset", "reference", "search", "safety"] },
-        },
-        required: ["label", "url", "sourceType"],
-      },
+      items: SOURCE_LINK_RESPONSE_SCHEMA,
     },
   },
   required: [
@@ -524,6 +530,7 @@ function normalizeCandidateMatches(
       confidence: candidate.confidence,
       scanCategory: getTrustedCandidateCategory(candidate.scanCategory, candidate.partName),
       reason: cleanText(candidate.reason, ""),
+      sourceLinks: normalizeCandidateSourceLinks(candidate.sourceLinks, candidate.partName),
     }))
     .filter((candidate) => candidate.partName && candidate.reason)
     .filter((candidate) => candidate.partName.toLowerCase() !== primaryPartName.toLowerCase());
@@ -535,9 +542,38 @@ function normalizeCandidateMatches(
       confidence: match.score >= 5 ? "medium" as const : "low" as const,
       scanCategory: getTrustedCandidateCategory(primaryCategory, match.label),
       reason: `Similar local dataset label with ${match.sampleCount ?? 1} sample${match.sampleCount === 1 ? "" : "s"}.`,
+      sourceLinks: normalizeCandidateSourceLinks([], match.label, match),
     }));
 
   return uniqueCandidates([...cleanCandidates, ...datasetCandidates]).slice(0, 4);
+}
+
+function normalizeCandidateSourceLinks(
+  sourceLinks: SourceLink[] | undefined,
+  partName: string,
+  datasetMatch?: DatasetMatch,
+): SourceLink[] {
+  const cleanLinks = Array.isArray(sourceLinks)
+    ? sourceLinks
+        .map((link) => ({
+          label: cleanText(link.label, ""),
+          url: cleanUrl(link.url),
+          sourceType: link.sourceType,
+        }))
+        .filter((link): link is SourceLink => Boolean(link.label && link.url && isSourceType(link.sourceType)))
+    : [];
+
+  const datasetLinks: SourceLink[] = datasetMatch?.sourceUrl
+    ? [
+        {
+          label: `Dataset sample: ${datasetMatch.label}`,
+          url: datasetMatch.sourceUrl,
+          sourceType: "dataset",
+        },
+      ]
+    : [];
+
+  return uniqueSourceLinks([...datasetLinks, ...cleanLinks, getPartSearchLink(partName, "Research candidate")]).slice(0, 3);
 }
 
 function uniqueCandidates(candidates: CandidateMatch[]) {
@@ -599,11 +635,7 @@ function normalizeSourceLinks(sourceLinks: SourceLink[], datasetMatches: Dataset
     }));
 
   const defaultLinks: SourceLink[] = [
-    {
-      label: "Search this part",
-      url: `https://www.google.com/search?q=${encodeURIComponent(`${partName} car part`)}`,
-      sourceType: "search",
-    },
+    getPartSearchLink(partName, "Search this part"),
     {
       label: "NHTSA recalls",
       url: "https://www.nhtsa.gov/recalls",
@@ -612,6 +644,14 @@ function normalizeSourceLinks(sourceLinks: SourceLink[], datasetMatches: Dataset
   ];
 
   return uniqueSourceLinks([...datasetLinks, ...cleanLinks, ...defaultLinks]).slice(0, 6);
+}
+
+function getPartSearchLink(partName: string, label: string): SourceLink {
+  return {
+    label,
+    url: `https://www.google.com/search?q=${encodeURIComponent(`${partName} car part`)}`,
+    sourceType: "search",
+  };
 }
 
 function uniqueSourceLinks(links: SourceLink[]) {
@@ -1034,7 +1074,8 @@ function isCandidateMatchArray(value: unknown): value is CandidateMatch[] {
     typeof item.partName === "string" &&
     isConfidence(item.confidence) &&
     isScanCategory(item.scanCategory) &&
-    typeof item.reason === "string"
+    typeof item.reason === "string" &&
+    (item.sourceLinks === undefined || isSourceLinkArray(item.sourceLinks))
   ));
 }
 

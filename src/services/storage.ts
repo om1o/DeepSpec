@@ -570,6 +570,7 @@ function normalizeCandidateMatches(value: unknown): CandidateMatch[] {
       confidence: isConfidence(candidate.confidence) ? candidate.confidence : "low",
       scanCategory: isScanCategory(candidate.scanCategory) ? candidate.scanCategory : categorizeText(candidate.partName ?? ""),
       reason: typeof candidate.reason === "string" ? cleanText(candidate.reason, 180) : "",
+      sourceLinks: normalizeSourceLinks(candidate.sourceLinks),
     }))
     .filter((candidate) => candidate.partName && candidate.reason)
     .slice(0, 4);
@@ -747,6 +748,14 @@ function getLookupSourceUrls(lookup: Lookup) {
   for (const link of lookup.result?.sourceLinks ?? []) {
     if (/^https:\/\//.test(link.url)) {
       urls.add(link.url);
+    }
+  }
+
+  for (const candidate of lookup.result?.candidateMatches ?? []) {
+    for (const link of candidate.sourceLinks ?? []) {
+      if (/^https:\/\//.test(link.url)) {
+        urls.add(link.url);
+      }
     }
   }
 

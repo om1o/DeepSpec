@@ -587,6 +587,7 @@ function CandidateMatchesSection({
       <div className="mt-3 grid grid-cols-1 gap-2">
         {candidates.map((candidate) => {
           const isPromoted = promotedPartName?.trim().toLowerCase() === candidate.partName.toLowerCase();
+          const sourceLinks = getCandidateReferenceLinks(candidate);
           return (
           <div key={`${candidate.partName}-${candidate.reason}`} className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3">
             <div className="flex items-center justify-between gap-2">
@@ -597,6 +598,22 @@ function CandidateMatchesSection({
             </div>
             <p className="mt-1 text-xs font-semibold capitalize text-neutral-400">{candidate.scanCategory}</p>
             <p className="mt-2 text-sm leading-5 text-neutral-600">{candidate.reason}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {sourceLinks.map((link) => (
+                <a
+                  key={link.url}
+                  className="rounded-full bg-white px-3 py-2 text-xs font-extrabold text-[var(--ds-evidence-ink)] ring-1 ring-neutral-200"
+                  href={link.url}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  {link.label}
+                  <span aria-hidden="true" className="ml-1 text-[10px] uppercase tracking-[0.12em] text-neutral-400">
+                    {link.sourceType}
+                  </span>
+                </a>
+              ))}
+            </div>
             {onPromote ? (
               <button
                 aria-label={`${isPromoted ? "Marked" : "Mark"} ${candidate.partName} correct`}
@@ -1098,6 +1115,17 @@ function getReferenceLinks(result: IdentificationResult): ReferenceLink[] {
   return uniqueReferenceLinks([...sourceLinks, ...defaults]).slice(0, 6);
 }
 
+function getCandidateReferenceLinks(candidate: CandidateMatch): ReferenceLink[] {
+  const sourceLinks = (candidate.sourceLinks ?? []).filter((link) => /^https:\/\//.test(link.url));
+  const fallback: ReferenceLink = {
+    label: `Research ${candidate.partName}`,
+    sourceType: "search",
+    url: getPartSearchUrl(candidate.partName),
+  };
+
+  return uniqueReferenceLinks([...sourceLinks, fallback]).slice(0, 3);
+}
+
 function uniqueReferenceLinks(links: ReferenceLink[]) {
   const seen = new Set<string>();
   const unique: ReferenceLink[] = [];
@@ -1143,6 +1171,11 @@ function getFollowUpPrompts(result: IdentificationResult) {
 function getMapsSearchUrl(result: IdentificationResult) {
   const query = encodeURIComponent(`${result.scanCategory} ${result.partName} auto repair near me`);
   return `https://www.google.com/maps/search/?api=1&query=${query}`;
+}
+
+function getPartSearchUrl(partName: string) {
+  const query = encodeURIComponent(`${partName} car part`);
+  return `https://www.google.com/search?q=${query}`;
 }
 
 function getDatasetSourceUrls(evidence: string[]) {

@@ -28,11 +28,11 @@ A car owner, not a mechanic. They may be nervous, confused, dealing with a break
 - For exterior photos, do not answer "vehicle body" or "body panel" when a specific visible component can be named. Pick the most visible part inside the scanner area, such as front door, fender, bumper, hood, headlight, mirror, wheel, windshield, or tail light. Put other visible parts in candidateMatches.
 - For visible exterior damage, name the part and also include canonical damage words in concerns/evidence when visible: dent, scratch, paint chip, flaking paint, corrosion/rust, missing part, broken/cracked part. Do not hide damage behind only "impact damage" or "surface damage."
 - visibleObservations: Literal facts about what you SEE — color, texture, shape, labels, cracks, rust, stains, connector count, missing hardware. Not inferences.
-- candidateMatches: 0-4 plausible alternate part names, ranked by likelihood. Leave empty when there are no credible alternatives.
+- candidateMatches: 0-4 plausible alternate part names, ranked by likelihood. Each candidate may include 0-3 sourceLinks for safe candidate-specific research. Leave empty when there are no credible alternatives.
 - evidenceRegions: 0-4 short image-grounded clues. Include label, observation, regionLabel, and anchor when possible. anchor must be one of scanned_area, upper_left, upper, upper_right, left, center, right, lower_left, lower, lower_right. Use regionLabel values like "Scanned area", "upper left", "center", or "lower right"; do not invent exact measurements.
 - evidence: The specific visual features that are diagnostic — why you matched THIS part name. "Spring-loaded pivot arm on the pulley confirms tensioner" is good. "It looks like an alternator" is not.
 - concerns: Only things you can SEE that suggest a problem — oil film, cracks, corrosion, fraying, burn marks, missing bolts. Return empty array if the part looks fine.
-- sourceLinks: 0-4 ranked links. Prefer a safe search URL, NHTSA safety URL, or supplied dataset source. Do not invent exact manual, OEM, shop, price, or fitment URLs.
+- sourceLinks: 0-4 ranked links for the best match. Prefer a safe search URL, NHTSA safety URL, or supplied dataset source. Do not invent exact manual, OEM, shop, price, or fitment URLs.
 - nextAction: One concrete sentence. What should the user do right now?
 
 ## When to set needsBetterPhoto true

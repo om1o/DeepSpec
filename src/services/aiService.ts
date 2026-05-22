@@ -337,7 +337,8 @@ function isCandidateMatchArray(value: unknown): value is CandidateMatch[] {
     typeof item.partName === "string" &&
     isConfidence(item.confidence) &&
     isScanCategory(item.scanCategory) &&
-    typeof item.reason === "string"
+    typeof item.reason === "string" &&
+    (item.sourceLinks === undefined || isSourceLinkArray(item.sourceLinks))
   ));
 }
 

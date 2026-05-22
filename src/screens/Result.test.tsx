@@ -26,6 +26,13 @@ const successfulScan: ScanAnalysisState = {
         confidence: "low",
         scanCategory: "electrical",
         reason: "Also an engine-bay electrical part, but the pulley and housing favor alternator.",
+        sourceLinks: [
+          {
+            label: "Starter research",
+            url: "https://www.google.com/search?q=Starter%20motor%20car%20part",
+            sourceType: "search",
+          },
+        ],
       },
     ],
     whatItDoes: "It charges the battery while the engine runs.",
@@ -79,6 +86,10 @@ describe("Result", () => {
     expect(screen.getByText("Best match")).toBeInTheDocument();
     expect(screen.getByText("Other possible matches")).toBeInTheDocument();
     expect(screen.getByText("Starter motor")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Starter research" })).toHaveAttribute(
+      "href",
+      "https://www.google.com/search?q=Starter%20motor%20car%20part",
+    );
     expect(screen.getByText("Image evidence")).toBeInTheDocument();
     expect(screen.getByText("Useful match")).toBeInTheDocument();
     expect(screen.getByText("The pulley and vented housing match common alternator shapes.")).toBeInTheDocument();

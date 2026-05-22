@@ -10,6 +10,13 @@ const result = {
       confidence: "low",
       scanCategory: "electrical",
       reason: "Also mounted nearby, but the visible pulley favors alternator.",
+      sourceLinks: [
+        {
+          label: "Starter research",
+          url: "https://www.google.com/search?q=Starter%20motor%20car%20part",
+          sourceType: "search",
+        },
+      ],
     },
   ],
   whatItDoes: "It charges the battery while the engine runs.",

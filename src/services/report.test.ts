@@ -18,6 +18,13 @@ const lookup: Lookup = {
         confidence: "low",
         scanCategory: "brakes",
         reason: "Nearby wheel-well part, but caliper body is more visible.",
+        sourceLinks: [
+          {
+            label: "Rotor research",
+            url: "https://www.google.com/search?q=Brake%20rotor%20car%20part",
+            sourceType: "search",
+          },
+        ],
       },
     ],
     whatItDoes: "It helps squeeze the brake pads against the rotor.",
@@ -70,6 +77,7 @@ describe("report", () => {
     expect(report).toContain("Safety triage: needs_professional");
     expect(report).toContain("Other possible matches:");
     expect(report).toContain("Brake rotor (low): Nearby wheel-well part");
+    expect(report).toContain("source: Rotor research (search): https://www.google.com/search?q=Brake%20rotor%20car%20part");
     expect(report).toContain("Image evidence:");
     expect(report).toContain("Scanned area: Caliper body");
     expect(report).toContain("Detected text:");

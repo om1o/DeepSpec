@@ -13,6 +13,13 @@ export const TEST_ENGINE_IDENTIFICATION: IdentificationResult = {
       confidence: "low",
       scanCategory: "electrical",
       reason: "Also found in the engine bay, but the visible pulley favors alternator.",
+      sourceLinks: [
+        {
+          label: "Starter research",
+          sourceType: "search",
+          url: "https://www.google.com/search?q=Starter%20motor%20car%20part",
+        },
+      ],
     },
   ],
   whatItDoes: "It charges the battery and helps power electrical systems while the engine is running.",

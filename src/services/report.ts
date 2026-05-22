@@ -106,9 +106,20 @@ function formatCandidateMatches(candidates: CandidateMatch[] | undefined) {
   return visibleCandidates.length > 0
     ? visibleCandidates
         .slice(0, 4)
-        .map((candidate) => `- ${trimReportLine(`${candidate.partName} (${candidate.confidence}): ${candidate.reason}`)}`)
+        .map((candidate) => {
+          const lines = [`- ${trimReportLine(`${candidate.partName} (${candidate.confidence}): ${candidate.reason}`)}`];
+          const sources = formatCandidateSourceLinks(candidate.sourceLinks);
+          return sources.length ? [...lines, ...sources].join("\n") : lines.join("\n");
+        })
         .join("\n")
     : "None";
+}
+
+function formatCandidateSourceLinks(links: SourceLink[] | undefined) {
+  const visibleLinks = links?.filter((link) => link.label && link.url) ?? [];
+  return visibleLinks
+    .slice(0, 3)
+    .map((link) => `  source: ${trimReportLine(`${link.label} (${link.sourceType}): ${link.url}`)}`);
 }
 
 function formatEvidenceRegions(regions: EvidenceRegion[] | undefined) {

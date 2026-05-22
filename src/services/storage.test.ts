@@ -57,6 +57,13 @@ const scanState: ScanAnalysisState = {
         confidence: "low",
         scanCategory: "electrical",
         reason: "Also mounted nearby, but the pulley favors alternator.",
+        sourceLinks: [
+          {
+            label: "Starter research",
+            url: "https://www.google.com/search?q=Starter%20motor%20car%20part",
+            sourceType: "search",
+          },
+        ],
       },
     ],
     whatItDoes: "It charges the battery while the engine runs.",
@@ -98,6 +105,9 @@ describe("storage", () => {
     expect(getLookups()).toHaveLength(1);
     expect(getLookup(result.value.id)?.result?.partName).toBe("Alternator");
     expect(getLookup(result.value.id)?.result?.evidenceRegions[0]?.anchor).toBe("scanned_area");
+    expect(getLookup(result.value.id)?.result?.candidateMatches[0]?.sourceLinks?.[0]?.url).toBe(
+      "https://www.google.com/search?q=Starter%20motor%20car%20part",
+    );
     expect(getLookup(result.value.id)).toMatchObject({
       modelRuns: [identifyModelRun],
       syncEvents: [],
@@ -209,7 +219,10 @@ describe("storage", () => {
       ocrText: "DENSO 104210",
       promptVersions: ["identify-v1", "followup-v1"],
       schemaVersion: 1,
-      sourceUrls: ["https://www.google.com/search?q=Alternator%20car%20part"],
+      sourceUrls: [
+        "https://www.google.com/search?q=Alternator%20car%20part",
+        "https://www.google.com/search?q=Starter%20motor%20car%20part",
+      ],
       syncEvents: [
         expect.objectContaining({
           imagePath: "user-1/lookup-1.jpg",

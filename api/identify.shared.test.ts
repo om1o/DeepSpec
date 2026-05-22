@@ -16,6 +16,13 @@ const result = {
       confidence: "low",
       scanCategory: "electrical",
       reason: "Also mounted in the engine bay, but the belt pulley points to alternator.",
+      sourceLinks: [
+        {
+          label: "Starter research",
+          url: "https://www.google.com/search?q=Starter%20motor%20car%20part",
+          sourceType: "search",
+        },
+      ],
     },
   ],
   whatItDoes: "It charges the battery while the engine runs.",
