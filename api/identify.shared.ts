@@ -361,14 +361,39 @@ function extractGeminiText(responseBody: JsonObject | null) {
 function parseIdentificationResult(text: string): IdentificationResult | null {
   try {
     const parsed = JSON.parse(text) as unknown;
-    if (!isIdentificationResult(parsed)) {
-      return null;
-    }
-
-    return parsed;
+    return coerceIdentificationResult(parsed);
   } catch {
     return null;
   }
+}
+
+function coerceIdentificationResult(value: unknown): IdentificationResult | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const partName = typeof value.partName === "string" ? cleanText(value.partName, "") : "";
+  if (!partName) {
+    return null;
+  }
+
+  const isSafetyCritical = typeof value.isSafetyCritical === "boolean" ? value.isSafetyCritical : false;
+  return {
+    partName,
+    confidence: isConfidence(value.confidence) ? value.confidence : "medium",
+    scanCategory: isScanCategory(value.scanCategory) ? value.scanCategory : "unknown",
+    candidateMatches: isCandidateMatchArray(value.candidateMatches) ? value.candidateMatches : [],
+    whatItDoes: typeof value.whatItDoes === "string" ? value.whatItDoes : "",
+    visibleObservations: isStringArray(value.visibleObservations) ? value.visibleObservations : [],
+    evidenceRegions: isEvidenceRegionArray(value.evidenceRegions) ? value.evidenceRegions : [],
+    concerns: isStringArray(value.concerns) ? value.concerns : [],
+    safetyTriage: isSafetyTriage(value.safetyTriage) ? value.safetyTriage : isSafetyCritical ? "needs_professional" : "can_help",
+    isSafetyCritical,
+    nextAction: typeof value.nextAction === "string" ? value.nextAction : "",
+    needsBetterPhoto: typeof value.needsBetterPhoto === "boolean" ? value.needsBetterPhoto : false,
+    evidence: isStringArray(value.evidence) ? value.evidence : [],
+    sourceLinks: isSourceLinkArray(value.sourceLinks) ? value.sourceLinks : [],
+  };
 }
 
 function normalizeIdentificationResult(
@@ -896,29 +921,6 @@ function cleanUrl(value: string) {
   } catch {
     return "";
   }
-}
-
-function isIdentificationResult(value: unknown): value is IdentificationResult {
-  if (!isRecord(value)) {
-    return false;
-  }
-
-  return (
-    typeof value.partName === "string" &&
-    isConfidence(value.confidence) &&
-    isScanCategory(value.scanCategory) &&
-    isCandidateMatchArray(value.candidateMatches) &&
-    typeof value.whatItDoes === "string" &&
-    isStringArray(value.visibleObservations) &&
-    isEvidenceRegionArray(value.evidenceRegions) &&
-    isStringArray(value.concerns) &&
-    isSafetyTriage(value.safetyTriage) &&
-    typeof value.isSafetyCritical === "boolean" &&
-    typeof value.nextAction === "string" &&
-    typeof value.needsBetterPhoto === "boolean" &&
-    isStringArray(value.evidence) &&
-    isSourceLinkArray(value.sourceLinks)
-  );
 }
 
 function getProviderErrorMessage(responseBody: JsonObject | null) {

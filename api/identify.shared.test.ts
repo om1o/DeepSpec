@@ -422,6 +422,33 @@ describe("createIdentifyResponse", () => {
     });
   });
 
+  it("normalizes partial but parseable Gemini JSON instead of failing the pipeline", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify({ partName: "Front bumper" }) }] } }],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          candidateMatches: [],
+          confidence: "medium",
+          partName: "Front bumper",
+          scanCategory: "body",
+          safetyTriage: "can_help",
+        },
+      },
+    });
+  });
+
   it("returns a provider_error and preserves HTTP status when Gemini responds with non-JSON", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("<html>Service Unavailable</html>", {
