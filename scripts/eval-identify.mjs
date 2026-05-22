@@ -7,7 +7,7 @@ const DATASET_URL = `https://huggingface.co/datasets/${DATASET_ID}`;
 const DEFAULT_OUTPUT = ".deepspec-eval/identify-failures.jsonl";
 const DEFAULT_SUMMARY = ".deepspec-eval/identify-summary.json";
 const DEFAULT_EVAL_DELAY_MS = 20_000;
-const DATASET_FETCH_TIMEOUT_MS = 30_000;
+export const DATASET_FETCH_TIMEOUT_MS = 60_000;
 const RATE_LIMIT_RETRY_DELAYS_MS = [60_000, 120_000];
 const PROVIDER_AVAILABILITY_ERROR_CODES = new Set(["network", "provider_error", "rate_limited"]);
 
@@ -473,7 +473,11 @@ async function fetchJson(url) {
     throw new Error(`Could not fetch ${url}: ${response.status}`);
   }
 
-  return response.json();
+  try {
+    return await response.json();
+  } catch (error) {
+    throw datasetReadError(url, error);
+  }
 }
 
 async function fetchBytes(url) {
@@ -482,11 +486,15 @@ async function fetchBytes(url) {
     throw new Error(`Could not fetch ${url}: ${response.status}`);
   }
 
-  const contentType = response.headers.get("content-type")?.split(";")[0] || "image/jpeg";
-  return {
-    bytes: Buffer.from(await response.arrayBuffer()),
-    contentType,
-  };
+  try {
+    const contentType = response.headers.get("content-type")?.split(";")[0] || "image/jpeg";
+    return {
+      bytes: Buffer.from(await response.arrayBuffer()),
+      contentType,
+    };
+  } catch (error) {
+    throw datasetReadError(url, error);
+  }
 }
 
 async function fetchWithTimeout(url) {
@@ -496,6 +504,11 @@ async function fetchWithTimeout(url) {
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(`Could not fetch ${url} within ${Math.round(DATASET_FETCH_TIMEOUT_MS / 1000)}s: ${reason}`, { cause: error });
   }
+}
+
+function datasetReadError(url, error) {
+  const reason = error instanceof Error ? error.message : String(error);
+  return new Error(`Could not read ${url} within ${Math.round(DATASET_FETCH_TIMEOUT_MS / 1000)}s: ${reason}`, { cause: error });
 }
 
 function toDataUrl(bytes, contentType) {

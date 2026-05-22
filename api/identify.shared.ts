@@ -31,6 +31,7 @@ export type IdentifyResponse =
     };
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
+const DEFAULT_FALLBACK_MODELS = ["gemini-flash-lite-latest"];
 const DEFAULT_OCR_MODEL = "microsoft/trocr-large-printed";
 const IDENTIFY_MAX_OUTPUT_TOKENS = 2048;
 const DEFAULT_DATASET_ROOT = "datasets/raw/drbimmer-car-parts-and-damage-dataset";
@@ -126,12 +127,97 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
     return parsed.error;
   }
 
-  const model = env.GEMINI_MODEL || DEFAULT_MODEL;
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const ocr = shouldRunOcr(parsed) ? await runOcrFallback(parsed, env) : null;
+  const models = getIdentifyModels(env);
+  let rateLimited = false;
 
-  const startedAt = Date.now();
-  const response = await fetch(endpoint, {
+  for (const model of models) {
+    const startedAt = Date.now();
+    const response = await fetchGeminiIdentify(model, parsed, ocr, apiKey);
+
+    if (!response) {
+      return errorResponse(502, "network", "Deep Spec could not reach Gemini.");
+    }
+
+    if (response.status === 429) {
+      rateLimited = true;
+      continue;
+    }
+
+    const isJson = (response.headers.get("content-type") ?? "").includes("application/json");
+    const responseBody = isJson ? ((await response.json().catch(() => null)) as JsonObject | null) : null;
+
+    if (!response.ok) {
+      return errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
+    }
+
+    const text = extractGeminiText(responseBody);
+    if (!text) {
+      return errorResponse(502, "invalid_response", "Gemini did not return a usable answer.");
+    }
+
+    const result = parseIdentificationResult(text);
+    if (!result) {
+      return errorResponse(502, "invalid_response", "Gemini returned JSON that Deep Spec could not read.");
+    }
+
+    const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env);
+
+    console.info("[DeepSpec AI]", {
+      model,
+      latencyMs: Date.now() - startedAt,
+      success: true,
+      confidence: normalizedResult.confidence,
+      scanCategory: normalizedResult.scanCategory,
+      safetyTriage: normalizedResult.safetyTriage,
+      ocrUsed: Boolean(ocr?.text),
+    });
+
+    return {
+      status: 200,
+      body: {
+        result: normalizedResult,
+      },
+    };
+  }
+
+  return rateLimited
+    ? errorResponse(429, "rate_limited", "Too many AI lookups right now. Try again in a few minutes.")
+    : errorResponse(502, "provider_error", "The AI provider rejected this request.");
+}
+
+function getIdentifyModels(env: Record<string, string | undefined>) {
+  return uniqueStrings([env.GEMINI_MODEL || DEFAULT_MODEL, ...DEFAULT_FALLBACK_MODELS]);
+}
+
+function uniqueStrings(values: string[]) {
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      return false;
+    }
+
+    seen.add(trimmed);
+    return true;
+  });
+}
+
+function fetchGeminiIdentify(
+  model: string,
+  parsed: {
+    base64: string;
+    mimeType: string;
+    base64_2: string | null;
+    mimeType_2: string | null;
+    userMessage: string;
+  },
+  ocr: { text: string; model: string } | null,
+  apiKey: string,
+) {
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+
+  return fetch(endpoint, {
     method: "POST",
     signal: AbortSignal.timeout(25_000),
     headers: {
@@ -168,50 +254,6 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
       },
     }),
   }).catch(() => null);
-
-  if (!response) {
-    return errorResponse(502, "network", "Deep Spec could not reach Gemini.");
-  }
-
-  if (response.status === 429) {
-    return errorResponse(429, "rate_limited", "Too many AI lookups right now. Try again in a few minutes.");
-  }
-
-  const isJson = (response.headers.get("content-type") ?? "").includes("application/json");
-  const responseBody = isJson ? ((await response.json().catch(() => null)) as JsonObject | null) : null;
-
-  if (!response.ok) {
-    return errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
-  }
-
-  const text = extractGeminiText(responseBody);
-  if (!text) {
-    return errorResponse(502, "invalid_response", "Gemini did not return a usable answer.");
-  }
-
-  const result = parseIdentificationResult(text);
-  if (!result) {
-    return errorResponse(502, "invalid_response", "Gemini returned JSON that Deep Spec could not read.");
-  }
-
-  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env);
-
-  console.info("[DeepSpec AI]", {
-    model,
-    latencyMs: Date.now() - startedAt,
-    success: true,
-    confidence: normalizedResult.confidence,
-    scanCategory: normalizedResult.scanCategory,
-    safetyTriage: normalizedResult.safetyTriage,
-    ocrUsed: Boolean(ocr?.text),
-  });
-
-  return {
-    status: 200,
-    body: {
-      result: normalizedResult,
-    },
-  };
 }
 
 function parseIdentifyRequest(body: unknown):
