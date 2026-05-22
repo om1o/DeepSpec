@@ -82,7 +82,7 @@ export async function verifyEmailCode(email: string, token: string) {
     throw new Error(result.error.message);
   }
 
-  const user = await getVerifiedAuthUser();
+  const user = result.data.user ?? result.data.session?.user ?? null;
   if (!user) {
     throw new Error("Could not verify this session. Request a new code and try again.");
   }

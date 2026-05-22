@@ -1,9 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { hasLocalAuthBypass, markLocalAuthBypass } from "./auth";
+import { createClient } from "@supabase/supabase-js";
+import { hasLocalAuthBypass, markLocalAuthBypass, verifyEmailCode } from "./auth";
+
+vi.mock("@supabase/supabase-js", () => ({
+  createClient: vi.fn(),
+}));
 
 describe("auth local bypass", () => {
   beforeEach(() => {
     localStorage.clear();
+    vi.mocked(createClient).mockReset();
     vi.restoreAllMocks();
   });
 
@@ -35,5 +41,33 @@ describe("auth local bypass", () => {
     });
 
     expect(markLocalAuthBypass()).toBe(false);
+  });
+
+  it("trusts the user returned by a successful email code verification", async () => {
+    const user = { id: "user-1" };
+    const verifyOtp = vi.fn().mockResolvedValue({
+      data: {
+        session: { user },
+        user,
+      },
+      error: null,
+    });
+    const getUser = vi.fn();
+    vi.mocked(createClient).mockReturnValue({
+      auth: {
+        getUser,
+        verifyOtp,
+      },
+    } as never);
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "public-key");
+
+    await expect(verifyEmailCode("driver@example.com", "123456")).resolves.toBe(user);
+    expect(verifyOtp).toHaveBeenCalledWith({
+      email: "driver@example.com",
+      token: "123456",
+      type: "email",
+    });
+    expect(getUser).not.toHaveBeenCalled();
   });
 });

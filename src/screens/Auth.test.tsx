@@ -56,9 +56,8 @@ describe("Auth", () => {
 
   it("sends and verifies a Supabase email verification code", async () => {
     const user = userEvent.setup();
-    supabaseMock.auth.getUser
-      .mockResolvedValueOnce({ data: { user: null }, error: null })
-      .mockResolvedValueOnce({ data: { user: makeUser("user-1") }, error: null });
+    supabaseMock.auth.getUser.mockResolvedValueOnce({ data: { user: null }, error: null });
+    supabaseMock.auth.verifyOtp.mockResolvedValueOnce({ data: { user: makeUser("user-1") }, error: null });
 
     await renderAuth();
 
@@ -85,6 +84,30 @@ describe("Auth", () => {
       });
     });
     expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
+  });
+
+  it("uses the verified OTP user without re-querying the auth user endpoint", async () => {
+    const user = userEvent.setup();
+    supabaseMock.auth.getUser
+      .mockResolvedValueOnce({ data: { user: null }, error: null })
+      .mockRejectedValue(new Error("transient auth server failure"));
+    supabaseMock.auth.verifyOtp.mockResolvedValueOnce({
+      data: {
+        session: {
+          user: makeUser("session-user"),
+        },
+      },
+      error: null,
+    });
+
+    await renderAuth();
+
+    await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
+    await user.click(screen.getByRole("button", { name: "Send verification code" }));
+    await user.type(await screen.findByLabelText("Verification code"), "123456");
+
+    expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
+    expect(supabaseMock.auth.getUser).toHaveBeenCalledTimes(1);
   });
 
   it("starts Google auth only when explicitly enabled", async () => {
