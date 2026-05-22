@@ -308,7 +308,7 @@ function TestRunNotice({ label }: { label?: string }) {
     <section className="rounded-[24px] border border-[var(--ds-accent-line)] bg-[var(--ds-accent-soft)] p-5">
       <p className="text-sm font-bold text-[var(--ds-accent)]">QA test result</p>
       <p className="mt-2 text-sm leading-6 text-neutral-700">
-        This scan used {label ?? "a generated test photo"} and was not saved to history, cloud sync, or training review automatically.
+        This scan used {label ?? "a generated test photo"} and is not sent to provider or cloud services. Saved QA seeds stay local for review testing.
       </p>
     </section>
   );
@@ -342,6 +342,7 @@ function SavedScanControls({
   const [cloudStatusMessage, setCloudStatusMessage] = useState<string | null>(null);
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
   const cloudSync = getCloudSyncStatus();
+  const isQaSeed = Boolean(lookup.testRun);
   const needsProfessional = lookup.result?.isSafetyCritical || lookup.result?.safetyTriage === "needs_professional";
 
   async function handleShareReport() {
@@ -369,6 +370,11 @@ function SavedScanControls({
   }
 
   async function handleCloudSync() {
+    if (isQaSeed) {
+      setCloudStatusMessage("QA seed scans stay local and are not synced to the cloud dataset.");
+      return;
+    }
+
     setIsSyncingCloud(true);
     setCloudStatusMessage("Syncing scan...");
     try {
@@ -385,7 +391,9 @@ function SavedScanControls({
     <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
       <p className="text-sm font-extrabold text-neutral-900">Saved scan</p>
       <p className="mt-2 text-sm leading-6 text-neutral-500">
-        Your rating, correction, and notes stay on this device and help improve future results.
+        {isQaSeed
+          ? "This QA seed is saved locally so review controls can be tested without provider quota or cloud writes."
+          : "Your rating, correction, and notes stay on this device and help improve future results."}
       </p>
       <div className="mt-4 grid grid-cols-1 gap-3">
         <TrustRow label="Dataset category" value={lookup.scanCategory} />
@@ -393,7 +401,7 @@ function SavedScanControls({
         <TrustRow label="Review status" value={lookup.trainingStatus.replaceAll("_", " ")} />
       </div>
 
-      {lookup.result ? (
+      {lookup.result && !isQaSeed ? (
         <div className="mt-4 grid grid-cols-1 gap-3">
           <Link
             className="block rounded-full bg-[var(--ds-accent)] px-5 py-3 text-center text-sm font-bold text-white shadow-sm"
@@ -459,10 +467,12 @@ function SavedScanControls({
 
       <div className="mt-4 rounded-[20px] border border-neutral-200 bg-neutral-50 p-4">
         <p className="text-sm font-extrabold text-neutral-900">Cloud dataset sync</p>
-        <p className="mt-2 text-sm leading-6 text-neutral-500">{cloudSync.message}</p>
+        <p className="mt-2 text-sm leading-6 text-neutral-500">
+          {isQaSeed ? "QA seed scans are local-only fixtures and cannot be synced to the cloud dataset." : cloudSync.message}
+        </p>
         <Button
           className="mt-3 w-full !bg-neutral-100 !text-neutral-900 shadow-none"
-          disabled={!cloudSync.configured || isSyncingCloud}
+          disabled={isQaSeed || !cloudSync.configured || isSyncingCloud}
           onClick={handleCloudSync}
         >
           {isSyncingCloud ? "Syncing..." : "Sync this scan"}

@@ -45,6 +45,18 @@ describe("cloudSync", () => {
     expect(mocks.createClient).not.toHaveBeenCalled();
   });
 
+  it("keeps saved QA seed scans local even when cloud config exists", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const { syncLookupToCloud } = await import("./cloudSync");
+
+    await expect(syncLookupToCloud({ ...makeLookup(), testRun: true })).resolves.toEqual({
+      ok: false,
+      message: "QA seed scans stay local and are not synced to the cloud dataset.",
+    });
+    expect(mocks.createClient).not.toHaveBeenCalled();
+  });
+
   it("uploads the scan image and upserts the dataset row for the current user", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");

@@ -101,6 +101,7 @@ describe("aiService", () => {
           error: {
             code: "rate_limited",
             message: "Too many AI lookups right now. Try again in a few minutes.",
+            retryAfterSeconds: 120,
           },
         }),
         {
@@ -118,6 +119,7 @@ describe("aiService", () => {
     ).rejects.toMatchObject({
       code: "rate_limited",
       message: "Too many AI lookups right now. Try again in a few minutes.",
+      retryAfterSeconds: 120,
     });
   });
 

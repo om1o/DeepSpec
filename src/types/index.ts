@@ -152,6 +152,8 @@ export type Lookup = {
   chatHistory: ChatMessage[];
   modelRuns: AIModelRun[];
   syncEvents: CloudSyncEvent[];
+  testRun?: boolean;
+  testVehicleLabel?: string;
 };
 
 export type WaitlistSignup = {

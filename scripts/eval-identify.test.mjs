@@ -7,6 +7,7 @@ import {
   buildReviewLookup,
   createIdentifyResponseWithRetry,
   getEvalExitCode,
+  getRetryDelayMs,
   isReviewableEvalFailure,
   isRetryableProviderAvailabilityResponse,
   scoreIdentificationResult,
@@ -199,6 +200,38 @@ describe("identify eval scoring", () => {
     expect(isRetryableProviderAvailabilityResponse({ status: 503 }, "provider_error")).toBe(true);
     expect(isRetryableProviderAvailabilityResponse({ status: 500 }, "network")).toBe(true);
     expect(isRetryableProviderAvailabilityResponse({ status: 400 }, "provider_error")).toBe(false);
+  });
+
+  it("uses provider retry-after timing when it is shorter than the default eval backoff", () => {
+    expect(
+      getRetryDelayMs(
+        {
+          status: 429,
+          body: {
+            error: {
+              code: "rate_limited",
+              retryAfterSeconds: 15,
+            },
+          },
+        },
+        60_000,
+      ),
+    ).toBe(15_000);
+
+    expect(
+      getRetryDelayMs(
+        {
+          status: 429,
+          body: {
+            error: {
+              code: "rate_limited",
+              retryAfterSeconds: 120,
+            },
+          },
+        },
+        60_000,
+      ),
+    ).toBe(60_000);
   });
 
   it("stops eval retries before the per-sample retry budget is exhausted", async () => {

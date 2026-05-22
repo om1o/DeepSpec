@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import Button from "../ui/Button";
-import { clearTestMode } from "../../lib/testMode";
+import { clearTestMode, isTestSaveMode } from "../../lib/testMode";
 import { TEST_ENGINE_IDENTIFICATION, TEST_ENGINE_IMAGE_URL, TEST_VEHICLE_LABEL } from "../../services/testScanFixture";
+import { createLookup } from "../../services/storage";
 import type { CapturedFrame, ScanAnalysisState } from "../../types";
 
 type Props = {
@@ -34,8 +35,10 @@ async function loadTestFrame(): Promise<CapturedFrame> {
 }
 
 export default function TestScanPanel({ onBusyChange }: Props) {
+  const location = useLocation();
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
+  const shouldSaveTestScan = isTestSaveMode(location.search);
 
   async function runTestScan() {
     setError(null);
@@ -48,12 +51,29 @@ export default function TestScanPanel({ onBusyChange }: Props) {
         result: TEST_ENGINE_IDENTIFICATION,
         analyzedAt: new Date().toISOString(),
         testRun: true,
+        testVehicleLabel: TEST_VEHICLE_LABEL,
       };
+
+      if (shouldSaveTestScan) {
+        const saved = createLookup(scanState);
+        if (!saved.ok) {
+          setError(saved.message);
+          navigate("/result", {
+            state: {
+              ...scanState,
+              storageWarning: saved.message,
+            },
+          });
+          return;
+        }
+
+        navigate(`/result/${saved.value.id}`, { state: scanState });
+        return;
+      }
 
       navigate("/result", {
         state: {
           ...scanState,
-          testVehicleLabel: TEST_VEHICLE_LABEL,
         },
       });
     } catch (e) {
@@ -71,9 +91,13 @@ export default function TestScanPanel({ onBusyChange }: Props) {
   return (
     <div className="fixed bottom-[120px] left-4 right-4 z-30 rounded-2xl border border-[var(--ds-accent-line)] bg-slate-950/78 p-4 backdrop-blur-xl">
       <p className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Test mode</p>
-      <p className="mt-1 text-xs leading-5 text-white/72">Runs in memory only. No history, cloud save, or provider quota.</p>
+      <p className="mt-1 text-xs leading-5 text-white/72">
+        {shouldSaveTestScan
+          ? "Saves one local QA seed. No cloud sync or provider quota."
+          : "Runs in memory only. No history, cloud save, or provider quota."}
+      </p>
       <Button className="mt-3 w-full" type="button" onClick={() => void runTestScan()}>
-        Test engine photo
+        {shouldSaveTestScan ? "Save QA seed scan" : "Test engine photo"}
       </Button>
       <Button className="mt-2 w-full" type="button" variant="ghost" onClick={exitTestMode}>
         Exit test mode

@@ -191,7 +191,7 @@ describe("createChatResponse", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ error: { message: "quota exhausted" } }), {
         status: 429,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Retry-After": "45" },
       }),
     );
 
@@ -200,6 +200,8 @@ describe("createChatResponse", () => {
       body: {
         error: {
           code: "rate_limited",
+          message: "Too many AI chat requests right now. Try again in about 45 seconds.",
+          retryAfterSeconds: 45,
         },
       },
     });

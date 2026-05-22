@@ -208,7 +208,7 @@ export default function Scanner() {
     }
   }, [analyzeImageBase64, beginScanRequest, captureFrame, isAnalyzing, isScanRequestActive, pauseAutoScan]);
 
-  const handleGalleryFile = useCallback(async (file: File) => {
+  const handleImageBlob = useCallback(async (blob: Blob, loadingStep = "Loading photo") => {
     if (isAnalyzing) {
       return;
     }
@@ -217,9 +217,9 @@ export default function Scanner() {
     try {
       autoScanStartedRef.current = false;
       setIsAnalyzing(true);
-      setAnalysisStep("Loading photo");
+      setAnalysisStep(loadingStep);
       setCaptureError(null);
-      const imageBase64 = await readImageFileAsDataUrl(file);
+      const imageBase64 = await readImageBlobAsDataUrl(blob);
       if (!isScanRequestActive(requestId)) return;
       await analyzeImageBase64(imageBase64, requestId);
     } catch (error) {
@@ -233,6 +233,47 @@ export default function Scanner() {
       }
     }
   }, [analyzeImageBase64, beginScanRequest, isAnalyzing, isScanRequestActive, pauseAutoScan]);
+
+  const handleClipboardImage = useCallback(async () => {
+    if (!navigator.clipboard?.read) {
+      pauseAutoScan("Paste is not available in this browser. Use upload instead.");
+      return;
+    }
+
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const imageType = item.types.find((type) => type.startsWith("image/"));
+        if (imageType) {
+          await handleImageBlob(await item.getType(imageType), "Loading pasted image");
+          return;
+        }
+      }
+
+      pauseAutoScan("Clipboard does not contain an image.");
+    } catch {
+      pauseAutoScan("Could not read an image from the clipboard.");
+    }
+  }, [handleImageBlob, pauseAutoScan]);
+
+  useEffect(() => {
+    if (qaTestMode) {
+      return;
+    }
+
+    function handlePaste(event: ClipboardEvent) {
+      const file = [...(event.clipboardData?.files ?? [])].find((item) => item.type.startsWith("image/"));
+      if (!file) {
+        return;
+      }
+
+      event.preventDefault();
+      void handleImageBlob(file, "Loading pasted image");
+    }
+
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [handleImageBlob, qaTestMode]);
 
   useEffect(() => {
     if (!hasTargetLock || cameraState !== "ready" || isAnalyzing || autoScanPaused) {
@@ -321,9 +362,10 @@ export default function Scanner() {
         </>
       ) : null}
       {!qaTestMode ? (
-        <GalleryScanButton
+        <ImageInputActions
           isDisabled={isAnalyzing}
-          onFileSelected={(file) => void handleGalleryFile(file)}
+          onFileSelected={(file) => void handleImageBlob(file)}
+          onPasteImage={() => void handleClipboardImage()}
         />
       ) : null}
       {isAnalyzing ? <AnalyzingOverlay onCancel={cancelCurrentScan} step={analysisStep} /> : null}
@@ -444,35 +486,47 @@ function CameraBlocked({ message, onRetry }: { message: string | null; onRetry: 
   );
 }
 
-function GalleryScanButton({
+function ImageInputActions({
   isDisabled,
   onFileSelected,
+  onPasteImage,
 }: {
   isDisabled: boolean;
   onFileSelected: (file: File) => void;
+  onPasteImage: () => void;
 }) {
   return (
-    <label
-      className={`fixed bottom-[112px] left-1/2 z-40 -translate-x-1/2 rounded-full bg-slate-950/62 px-4 py-2 text-xs font-extrabold text-white ring-1 ring-white/14 backdrop-blur-xl transition ${
-        isDisabled ? "pointer-events-none opacity-45" : "cursor-pointer opacity-100"
+    <div
+      className={`fixed bottom-[112px] left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full bg-slate-950/62 p-1.5 ring-1 ring-white/14 backdrop-blur-xl transition ${
+        isDisabled ? "pointer-events-none opacity-45" : "opacity-100"
       }`}
     >
-      Upload photo
-      <input
-        aria-label="Upload photo"
-        accept="image/jpeg,image/png,image/webp"
-        className="sr-only"
+      <label className="cursor-pointer rounded-full bg-white/10 px-4 py-2 text-xs font-extrabold text-white">
+        Upload photo
+        <input
+          aria-label="Upload photo"
+          accept="image/jpeg,image/png,image/webp"
+          className="sr-only"
+          disabled={isDisabled}
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            event.currentTarget.value = "";
+            if (file) {
+              onFileSelected(file);
+            }
+          }}
+          type="file"
+        />
+      </label>
+      <button
+        className="rounded-full px-4 py-2 text-xs font-extrabold text-white"
         disabled={isDisabled}
-        onChange={(event) => {
-          const file = event.currentTarget.files?.[0];
-          event.currentTarget.value = "";
-          if (file) {
-            onFileSelected(file);
-          }
-        }}
-        type="file"
-      />
-    </label>
+        type="button"
+        onClick={onPasteImage}
+      >
+        Paste image
+      </button>
+    </div>
   );
 }
 
@@ -496,12 +550,12 @@ function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; step: stri
   );
 }
 
-function readImageFileAsDataUrl(file: File) {
-  if (!file.type.startsWith("image/")) {
+function readImageBlobAsDataUrl(blob: Blob) {
+  if (!blob.type.startsWith("image/")) {
     return Promise.reject(new Error("Choose a JPEG, PNG, or WebP photo."));
   }
 
-  if (file.size > MAX_UPLOAD_BYTES) {
+  if (blob.size > MAX_UPLOAD_BYTES) {
     return Promise.reject(new Error("Choose a photo under 12 MB."));
   }
 
@@ -517,7 +571,7 @@ function readImageFileAsDataUrl(file: File) {
       reject(new Error("Could not read that photo."));
     };
     reader.onerror = () => reject(new Error("Could not read that photo."));
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(blob);
   });
 }
 

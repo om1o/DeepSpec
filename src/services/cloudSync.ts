@@ -167,6 +167,13 @@ export async function verifyCloudHealth(): Promise<CloudHealthReport> {
 }
 
 export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult> {
+  if (lookup.testRun) {
+    return {
+      ok: false,
+      message: "QA seed scans stay local and are not synced to the cloud dataset.",
+    };
+  }
+
   const config = getCloudSyncConfig();
   if (!config) {
     return {

@@ -239,7 +239,7 @@ describe("Result", () => {
     expect(screen.getByRole("button", { name: "Try again later" })).toBeInTheDocument();
   });
 
-  it("labels QA test results as unsaved", () => {
+  it("labels QA test results as local-only", () => {
     renderResult({
       ...successfulScan,
       testRun: true,
@@ -248,7 +248,7 @@ describe("Result", () => {
 
     expect(screen.getByText("QA test result")).toBeInTheDocument();
     expect(screen.getByText(/Generated engine bay QA photo/)).toBeInTheDocument();
-    expect(screen.getByText(/not saved to history, cloud sync, or training review/i)).toBeInTheDocument();
+    expect(screen.getByText(/not sent to provider or cloud services/i)).toBeInTheDocument();
     expect(screen.queryByText("Saved scan")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Ask" })).not.toBeInTheDocument();
     expect(screen.queryByText("Ask next")).not.toBeInTheDocument();

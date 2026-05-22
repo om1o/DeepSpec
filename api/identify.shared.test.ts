@@ -176,6 +176,31 @@ describe("createIdentifyResponse", () => {
     expect(fetchSpy.mock.calls[1][0]).toEqual(expect.stringContaining("/models/gemini-flash-lite-latest:generateContent"));
   });
 
+  it("returns retry timing after all identify models are quota limited", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: "quota exhausted" } }), {
+        status: 429,
+        headers: {
+          "Content-Type": "application/json",
+          "Retry-After": "90",
+        },
+      }),
+    );
+
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 429,
+      body: {
+        error: {
+          code: "rate_limited",
+          message: "Too many AI lookups right now. Try again in about 2 minutes.",
+          retryAfterSeconds: 90,
+        },
+      },
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
   it("falls back to flash lite when the default Gemini model is temporarily overloaded", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")

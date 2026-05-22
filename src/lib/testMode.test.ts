@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { clearTestMode, isTestMode } from "./testMode";
+import { clearTestMode, isTestMode, isTestSaveMode } from "./testMode";
 
 describe("test mode storage", () => {
   beforeEach(() => {
@@ -21,5 +21,11 @@ describe("test mode storage", () => {
     });
 
     expect(() => clearTestMode()).not.toThrow();
+  });
+
+  it("only enables local QA seeding from the explicit save flag", () => {
+    expect(isTestSaveMode("?test=1")).toBe(false);
+    expect(isTestSaveMode("?test=1&save=1")).toBe(true);
+    expect(isTestSaveMode("?save=1")).toBe(false);
   });
 });

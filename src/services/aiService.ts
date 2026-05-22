@@ -56,6 +56,7 @@ type AIApiFailure = {
   error: {
     code: AIErrorCode | string;
     message: string;
+    retryAfterSeconds?: number;
   };
 };
 
@@ -63,11 +64,13 @@ export const AI_REQUEST_TIMEOUT_MS = 60_000;
 
 export class AIServiceError extends Error {
   code: AIErrorCode | string;
+  retryAfterSeconds?: number;
 
-  constructor(code: AIErrorCode | string, message: string) {
+  constructor(code: AIErrorCode | string, message: string, retryAfterSeconds?: number) {
     super(message);
     this.name = "AIServiceError";
     this.code = code;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -129,10 +132,20 @@ async function postAI<TSuccess extends object>(path: string, payload: object): P
 
   if (!response.ok || !body || "error" in body) {
     const error = body && "error" in body ? body.error : null;
-    throw new AIServiceError(error?.code ?? "network", error?.message ?? "Deep Spec could not complete that AI request.");
+    throw new AIServiceError(
+      error?.code ?? "network",
+      error?.message ?? "Deep Spec could not complete that AI request.",
+      normalizeRetryAfterSeconds(error?.retryAfterSeconds),
+    );
   }
 
   return body;
+}
+
+function normalizeRetryAfterSeconds(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.min(3600, Math.ceil(value))
+    : undefined;
 }
 
 export async function identifyCapturedFrame(

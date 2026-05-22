@@ -6,7 +6,9 @@ dist-ssr/
 .vercel/
 supabase/.temp/
 .deepspec-eval/
+.playwright-cli/
 .playwright-mcp/
+test-results/
 datasets/raw/
 datasets/derived/
 design-extract/

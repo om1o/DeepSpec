@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, vi } from "vitest";
@@ -258,6 +258,40 @@ describe("Scanner", () => {
     expect(screen.getByText("Saved scan")).toBeInTheDocument();
   }, 10000);
 
+  it("identifies a pasted screenshot when the camera is blocked", async () => {
+    cameraHookState.current = {
+      cameraError: "Permission denied",
+      cameraRequestId: 8,
+      cameraState: "blocked",
+    };
+    objectTargetState.current = null;
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+          <Route path="/result" element={<Result />} />
+          <Route path="/result/:id" element={<Result />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("button", { name: "Paste image" })).toBeInTheDocument();
+
+    fireEvent.paste(window, {
+      clipboardData: {
+        files: [new File(["screenshot"], "engine-screenshot.png", { type: "image/png" })],
+      },
+    });
+
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    expect(identifyCapturedFrame.mock.calls[0][0]).toMatchObject({
+      imageBase64: "data:image/png;base64,c2NyZWVuc2hvdA==",
+    });
+    expect(await screen.findByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
+    expect(screen.getByText("Saved scan")).toBeInTheDocument();
+  }, 10000);
+
   it("requires a five-second hold before auto capture locks", () => {
     objectTargetState.current = {
       confidence: 0.82,
@@ -396,9 +430,51 @@ describe("Scanner", () => {
     expect(await screen.findByText("QA test result")).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
-    expect(screen.getByText(/not saved to history, cloud sync, or training review/i)).toBeInTheDocument();
+    expect(screen.getByText(/not sent to provider or cloud services/i)).toBeInTheDocument();
     expect(localStorage.getItem("deep-spec:lookups")).toBeNull();
     expect(sessionStorage.getItem("deep-spec:latest-scan-state")).toBeNull();
+  }, 10000);
+
+  it("can seed the generated engine test scan as a local-only saved QA fixture", async () => {
+    window.history.pushState({}, "", "/scan?test=1&save=1");
+    objectTargetState.current = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        headers: {
+          get: (name: string) => (name.toLowerCase() === "content-type" ? "image/jpeg" : null),
+        },
+        arrayBuffer: async () => new TextEncoder().encode("test-engine-image").buffer,
+      })),
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/scan?test=1&save=1"]}>
+        <Routes>
+          <Route path="/scan" element={<Scanner />} />
+          <Route path="/result/:id" element={<Result />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Save QA seed scan" }));
+
+    expect(await screen.findByText("QA test result")).toBeInTheDocument();
+    expect(screen.getByText("Saved scan")).toBeInTheDocument();
+    expect(screen.getByText(/review controls can be tested without provider quota or cloud writes/i)).toBeInTheDocument();
+    expect(screen.getByText(/QA seed scans are local-only fixtures/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sync this scan" })).toBeDisabled();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    const savedLookups = JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]");
+    expect(savedLookups).toHaveLength(1);
+    expect(savedLookups[0]).toMatchObject({
+      testRun: true,
+      testVehicleLabel: "Generated engine bay QA photo",
+      trainingLabel: "Alternator",
+      trainingStatus: "raw_unreviewed",
+    });
   }, 10000);
 
   it("keeps test scan mode clean when camera access is blocked", () => {

@@ -12,6 +12,7 @@ import {
   getLookups,
   LOOKUPS_STORAGE_KEY,
   MAX_SAVED_LOOKUPS,
+  scanStateFromLookup,
   updateLookup,
   updateLookupResult,
 } from "./storage";
@@ -114,6 +115,32 @@ describe("storage", () => {
       scanCategory: "electrical",
       trainingLabel: "Alternator",
       trainingStatus: "raw_unreviewed",
+    });
+  });
+
+  it("marks saved QA seed scans so dataset exports can filter them out", () => {
+    const result = createLookup({
+      ...scanState,
+      testRun: true,
+      testVehicleLabel: "QA engine fixture",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(getLookup(result.value.id)).toMatchObject({
+      testRun: true,
+      testVehicleLabel: "QA engine fixture",
+    });
+    expect(scanStateFromLookup(result.value)).toMatchObject({
+      testRun: true,
+      testVehicleLabel: "QA engine fixture",
+    });
+    expect(getDatasetExport([result.value]).scans[0]).toMatchObject({
+      testRun: true,
+      testVehicleLabel: "QA engine fixture",
+      metadata: {
+        testRun: true,
+        testVehicleLabel: "QA engine fixture",
+      },
     });
   });
 

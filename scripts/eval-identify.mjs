@@ -335,7 +335,7 @@ export async function createIdentifyResponseWithRetry(identify, dataUrl, env, op
       return response;
     }
 
-    const delayMs = retryDelaysMs[attempt];
+    const delayMs = getRetryDelayMs(response, retryDelaysMs[attempt]);
     if (deadlineMs - now() <= delayMs) {
       console.log(`${code ?? response.status}; sample retry budget exhausted before ${Math.round(delayMs / 1000)}s retry`);
       return providerRetryBudgetResponse(sampleTimeoutMs);
@@ -373,6 +373,15 @@ function providerRetryBudgetResponse(sampleTimeoutMs) {
 
 export function isRetryableProviderAvailabilityResponse(response, code) {
   return code === "rate_limited" || response.status === 503 || code === "network";
+}
+
+export function getRetryDelayMs(response, fallbackDelayMs) {
+  const retryAfterSeconds = response?.body?.error?.retryAfterSeconds;
+  if (typeof retryAfterSeconds !== "number" || !Number.isFinite(retryAfterSeconds) || retryAfterSeconds <= 0) {
+    return fallbackDelayMs;
+  }
+
+  return Math.min(fallbackDelayMs, Math.ceil(retryAfterSeconds) * 1000);
 }
 
 function parseArgs(args) {

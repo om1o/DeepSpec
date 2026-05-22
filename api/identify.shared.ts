@@ -30,6 +30,7 @@ export type IdentifyResponse =
         error: {
           code: string;
           message: string;
+          retryAfterSeconds?: number;
         };
       };
     };
@@ -142,6 +143,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
   const ocr = shouldRunOcr(parsed) ? await runOcrFallback(parsed, env) : null;
   const models = getIdentifyModels(env);
   let rateLimited = false;
+  let retryAfterSeconds: number | undefined;
 
   for (let index = 0; index < models.length; index += 1) {
     const model = models[index];
@@ -155,6 +157,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
 
     if (response.status === 429) {
       rateLimited = true;
+      retryAfterSeconds = chooseRetryAfterSeconds(retryAfterSeconds, parseRetryAfterSeconds(response.headers.get("retry-after")));
       continue;
     }
 
@@ -217,8 +220,59 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
   }
 
   return rateLimited
-    ? errorResponse(429, "rate_limited", "Too many AI lookups right now. Try again in a few minutes.")
+    ? errorResponse(429, "rate_limited", getRateLimitMessage("AI lookups", retryAfterSeconds), retryAfterSeconds)
     : errorResponse(502, "provider_error", "The AI provider rejected this request.");
+}
+
+function getRateLimitMessage(label: string, retryAfterSeconds: number | undefined) {
+  if (!retryAfterSeconds) {
+    return `Too many ${label} right now. Try again in a few minutes.`;
+  }
+
+  return `Too many ${label} right now. Try again in about ${formatRetryAfter(retryAfterSeconds)}.`;
+}
+
+function formatRetryAfter(retryAfterSeconds: number) {
+  if (retryAfterSeconds < 60) {
+    return `${retryAfterSeconds} second${retryAfterSeconds === 1 ? "" : "s"}`;
+  }
+
+  const minutes = Math.ceil(retryAfterSeconds / 60);
+  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+}
+
+function chooseRetryAfterSeconds(current: number | undefined, next: number | undefined) {
+  if (!next) {
+    return current;
+  }
+
+  return current ? Math.max(current, next) : next;
+}
+
+function parseRetryAfterSeconds(value: string | null) {
+  if (!value) {
+    return undefined;
+  }
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) {
+    return clampRetryAfterSeconds(Math.ceil(seconds));
+  }
+
+  const retryAt = Date.parse(value);
+  if (!Number.isNaN(retryAt)) {
+    return clampRetryAfterSeconds(Math.ceil((retryAt - Date.now()) / 1000));
+  }
+
+  return undefined;
+}
+
+function clampRetryAfterSeconds(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return undefined;
+  }
+
+  return Math.min(3600, Math.max(1, seconds));
 }
 
 function getIdentifyModels(env: Record<string, string | undefined>) {
@@ -1048,13 +1102,14 @@ function getProviderErrorMessage(responseBody: JsonObject | null) {
   return "The AI provider rejected this request.";
 }
 
-function errorResponse(status: number, code: string, message: string): IdentifyResponse {
+function errorResponse(status: number, code: string, message: string, retryAfterSeconds?: number): IdentifyResponse {
   return {
     status,
     body: {
       error: {
         code,
         message,
+        ...(retryAfterSeconds ? { retryAfterSeconds } : {}),
       },
     },
   };

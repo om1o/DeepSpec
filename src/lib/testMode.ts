@@ -19,6 +19,20 @@ export function isTestMode(search?: string): boolean {
   }
 }
 
+/** Dev / QA: `?test=1&save=1` seeds a local saved fixture for review testing. */
+export function isTestSaveMode(search?: string): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  try {
+    const params = new URLSearchParams(search ?? window.location.search);
+    return params.get("test") === "1" && params.get("save") === "1";
+  } catch {
+    return false;
+  }
+}
+
 export function clearTestMode() {
   try {
     if (typeof sessionStorage !== "undefined") {

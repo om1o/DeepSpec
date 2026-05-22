@@ -36,6 +36,8 @@ export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup
     chatHistory: [],
     modelRuns: scanState.modelRun ? [scanState.modelRun] : [],
     syncEvents: [],
+    testRun: scanState.testRun || undefined,
+    testVehicleLabel: scanState.testVehicleLabel,
   };
 
   const lookups = [lookup, ...getLookups()];
@@ -232,6 +234,8 @@ export function getLookupDatasetMetadata(lookup: Lookup, imagePath?: string) {
     promptVersions: [...new Set(lookup.modelRuns.map((run) => run.promptVersion))],
     sourceUrls: getLookupSourceUrls(lookup),
     syncEvents: lookup.syncEvents,
+    testRun: Boolean(lookup.testRun),
+    testVehicleLabel: lookup.testVehicleLabel ?? null,
   };
 }
 
@@ -260,6 +264,8 @@ export function getDatasetExport(lookups: Lookup[] = getLookups(), exportedAt = 
       chatHistory: lookup.chatHistory,
       modelRuns: lookup.modelRuns,
       syncEvents: lookup.syncEvents,
+      testRun: Boolean(lookup.testRun),
+      testVehicleLabel: lookup.testVehicleLabel ?? null,
       metadata: getLookupDatasetMetadata(lookup),
     })),
   };
@@ -287,6 +293,8 @@ export function scanStateFromLookup(lookup: Lookup): ScanAnalysisState {
     errorMessage: lookup.errorMessage,
     errorCode: lookup.errorCode,
     analyzedAt: lookup.analyzedAt,
+    testRun: lookup.testRun,
+    testVehicleLabel: lookup.testVehicleLabel,
   };
 }
 
@@ -434,6 +442,8 @@ function normalizeLookup(value: unknown): Lookup | null {
     chatHistory: normalizeChatHistory(lookup.chatHistory),
     modelRuns: normalizeModelRuns(lookup.modelRuns),
     syncEvents: normalizeSyncEvents(lookup.syncEvents),
+    testRun: lookup.testRun === true || undefined,
+    testVehicleLabel: typeof lookup.testVehicleLabel === "string" ? cleanText(lookup.testVehicleLabel, 120) : undefined,
   };
 }
 
