@@ -53,10 +53,11 @@ Check this before changing app code:
 
 1. Supabase Dashboard -> Authentication -> Sign In / Providers -> Anonymous sign-ins is enabled.
 2. Supabase Dashboard -> Auth logs: open the failed `/signup` event and read the database error. The verifier prints the project-specific Auth logs link when it can derive the project ref from `VITE_SUPABASE_URL`.
-3. Database triggers on `auth.users`: make sure there is no trigger writing to a missing `profiles` table or required column.
-4. Run `npm run supabase:print-auth-diagnostics`, paste the printed read-only SQL into Supabase SQL Editor, and inspect any `auth.users` triggers/functions it returns.
-5. Apply this repo's migration if it has not been applied yet.
-6. Rerun `npm run verify:supabase`.
+3. Run `npm run supabase:print-auth-diagnostics`, paste the printed read-only SQL into Supabase SQL Editor, and inspect every result set.
+4. If SQL shows non-internal triggers on `auth.users`, inspect the matching function body, `security_type`, owner, and `function_config`. A trigger function writing to `public.profiles` or `public.users` must be `security definer` and should pin `search_path`.
+5. If SQL shows `public.profiles` / `public.users` constraints, make sure they allow anonymous users or remove the trigger that writes to them. Do not run the generated drop-trigger statements until the Auth log or function body proves that trigger is the failing object.
+6. Apply this repo's migration if it has not been applied yet.
+7. Rerun `npm run verify:supabase`.
 
 ## GitHub Actions
 
