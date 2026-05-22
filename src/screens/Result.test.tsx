@@ -73,7 +73,7 @@ describe("Result", () => {
     vi.unstubAllEnvs();
   });
 
-  it("shows the AI identification result", () => {
+  it("shows the AI identification result in a tabbed result sheet", async () => {
     renderResult(successfulScan);
 
     expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
@@ -82,7 +82,6 @@ describe("Result", () => {
       "data:image/jpeg;base64,test-image",
     );
     expect(screen.getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
-    expect(screen.getByText("Nothing concerning visible.")).toBeInTheDocument();
     expect(screen.getByText("Best match")).toBeInTheDocument();
     expect(screen.getByText("Other possible matches")).toBeInTheDocument();
     expect(screen.getByText("Starter motor")).toBeInTheDocument();
@@ -90,12 +89,24 @@ describe("Result", () => {
       "href",
       "https://www.google.com/search?q=Starter%20motor%20car%20part",
     );
-    expect(screen.getByText("Image evidence")).toBeInTheDocument();
-    expect(screen.getByText("Useful match")).toBeInTheDocument();
-    expect(screen.getByText("The pulley and vented housing match common alternator shapes.")).toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "Result sections" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Match" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("Why it might be wrong")).toBeInTheDocument();
     expect(screen.getByText(/Other plausible matches remain: Starter motor/)).toBeInTheDocument();
     expect(screen.getByText(/Take one wider context photo and one close label photo/)).toBeInTheDocument();
+    expect(screen.queryByText("Ranked sources")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: "Evidence" }));
+
+    expect(screen.getByRole("tab", { name: "Evidence" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("Image evidence")).toBeInTheDocument();
+    expect(screen.getByText("Useful match")).toBeInTheDocument();
+    expect(screen.getByText("The pulley and vented housing match common alternator shapes.")).toBeInTheDocument();
+    expect(screen.getByText("Nothing concerning visible.")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: "Sources" }));
+
+    expect(screen.getByRole("tab", { name: "Sources" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("Ranked sources")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Research" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Nearby help" })).toBeInTheDocument();
@@ -108,6 +119,12 @@ describe("Result", () => {
       "href",
       "https://www.google.com/search?q=Alternator%20car%20part",
     );
+
+    await userEvent.click(screen.getByRole("tab", { name: "Ask" }));
+
+    expect(screen.getByRole("tab", { name: "Ask" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByLabelText("Ask about this result")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "What should I check next?" })).toBeInTheDocument();
   });
 
   it("positions image evidence callouts from structured anchors", () => {
@@ -133,7 +150,7 @@ describe("Result", () => {
     expect(within(callout).getByText("Pulley edge")).toBeInTheDocument();
   });
 
-  it("groups OCR label text into an organized Lens-style sheet", () => {
+  it("groups OCR label text into the evidence tab", async () => {
     renderResult({
       ...successfulScan,
       result: {
@@ -144,6 +161,8 @@ describe("Result", () => {
         ],
       },
     });
+
+    await userEvent.click(screen.getByRole("tab", { name: "Evidence" }));
 
     const textOutput = screen.getByRole("region", { name: "Text output" });
     expect(within(textOutput).getByText("Detected label")).toBeInTheDocument();
@@ -163,7 +182,7 @@ describe("Result", () => {
     expect(screen.queryByText("Visible label text: DENSO 104210-1230")).not.toBeInTheDocument();
   });
 
-  it("turns matched dataset source evidence into a reference link", () => {
+  it("turns matched dataset source evidence into a reference link", async () => {
     const sourceUrl =
       "https://huggingface.co/datasets/DrBimmer/car-parts-and-damage-dataset/resolve/main/Car%20damages%20dataset/File1/img/Car%20damages%20100.png";
 
@@ -177,6 +196,8 @@ describe("Result", () => {
         ],
       },
     });
+
+    await userEvent.click(screen.getByRole("tab", { name: "Sources" }));
 
     expect(screen.getByRole("heading", { name: "Visual dataset matches" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Dataset match 1" })).toHaveAttribute("href", sourceUrl);
@@ -304,6 +325,7 @@ describe("Result", () => {
       </MemoryRouter>,
     );
 
+    await userEvent.click(screen.getByRole("tab", { name: "Ask" }));
     await userEvent.click(screen.getByRole("button", { name: "What should I check next?" }));
 
     expect(screen.getByText("Chat page")).toBeInTheDocument();
@@ -330,6 +352,7 @@ describe("Result", () => {
       </MemoryRouter>,
     );
 
+    await userEvent.click(screen.getByRole("tab", { name: "Ask" }));
     await userEvent.type(screen.getByLabelText("Ask about this result"), "Can I drive with this noise?");
     await userEvent.click(screen.getByRole("button", { name: "Ask follow-up" }));
 
@@ -423,7 +446,7 @@ describe("Result", () => {
     expect(screen.getByRole("button", { name: "Marked Starter motor correct" })).toBeDisabled();
   });
 
-  it("shows scan report actions for saved scans", () => {
+  it("shows scan report actions for saved scans", async () => {
     const lookup = makeLookup();
     localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
 
@@ -440,6 +463,7 @@ describe("Result", () => {
     expect(screen.getByRole("button", { name: "Share" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Export" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Tell me more" })).toHaveAttribute("href", `/result/${lookup.id}/chat`);
+    await userEvent.click(screen.getByRole("tab", { name: "Ask" }));
     expect(screen.getByLabelText("Ask about this result")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "What should I check next?" })).toHaveAttribute(
       "href",
@@ -460,6 +484,7 @@ describe("Result", () => {
       </MemoryRouter>,
     );
 
+    await userEvent.click(screen.getByRole("tab", { name: "Ask" }));
     await userEvent.type(screen.getByLabelText("Ask about this result"), "What symptoms match this?");
     await userEvent.click(screen.getByRole("button", { name: "Ask follow-up" }));
 

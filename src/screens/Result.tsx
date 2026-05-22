@@ -18,6 +18,8 @@ type DetectedTextFinding = {
   text: string;
 };
 
+type ResultSheetTab = "match" | "evidence" | "sources" | "ask";
+
 export default function Result() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -531,6 +533,9 @@ function AnalysisResult({
   result: IdentificationResult;
 }) {
   const safetyState = getSafetyState(result);
+  const canAskAboutResult = Boolean(lookupId || canSaveForChat);
+  const [activeTab, setActiveTab] = useState<ResultSheetTab>("match");
+  const visibleTab = canAskAboutResult || activeTab !== "ask" ? activeTab : "match";
 
   return (
     <>
@@ -551,21 +556,103 @@ function AnalysisResult({
 
       <SafetyStateSection state={safetyState} />
 
-      <CandidateMatchesSection
-        candidates={result.candidateMatches ?? []}
-        onPromote={onPromoteCandidate}
-        promotedPartName={promotedPartName}
-      />
-      <DetectedTextSection findings={getDetectedTextFindings(result)} />
-      <ResultSection title="Match" items={[result.whatItDoes]} />
-      <EvidenceRegionsSection regions={result.evidenceRegions ?? []} />
-      <EvidenceSection items={result.evidence} />
-      <UncertaintySection result={result} />
-      <ResultSection title="Concerns" items={result.concerns} emptyText="Nothing concerning visible." />
-      <ResultAskBox canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
-      <FollowUpSuggestions canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
-      <ReferenceLinksSection links={getReferenceLinks(result)} />
+      <ResultSheetTabs activeTab={visibleTab} canAsk={canAskAboutResult} onChange={setActiveTab} />
+      {visibleTab === "match" ? (
+        <div
+          id="result-tabpanel-match"
+          role="tabpanel"
+          aria-labelledby="result-tab-match"
+          className="space-y-3"
+        >
+          <CandidateMatchesSection
+            candidates={result.candidateMatches ?? []}
+            onPromote={onPromoteCandidate}
+            promotedPartName={promotedPartName}
+          />
+          <ResultSection title="Match" items={[result.whatItDoes]} />
+          <UncertaintySection result={result} />
+        </div>
+      ) : null}
+      {visibleTab === "evidence" ? (
+        <div
+          id="result-tabpanel-evidence"
+          role="tabpanel"
+          aria-labelledby="result-tab-evidence"
+          className="space-y-3"
+        >
+          <DetectedTextSection findings={getDetectedTextFindings(result)} />
+          <EvidenceRegionsSection regions={result.evidenceRegions ?? []} />
+          <EvidenceSection items={result.evidence} />
+          <ResultSection title="Concerns" items={result.concerns} emptyText="Nothing concerning visible." />
+        </div>
+      ) : null}
+      {visibleTab === "sources" ? (
+        <div
+          id="result-tabpanel-sources"
+          role="tabpanel"
+          aria-labelledby="result-tab-sources"
+          className="space-y-3"
+        >
+          <ReferenceLinksSection links={getReferenceLinks(result)} />
+        </div>
+      ) : null}
+      {canAskAboutResult && visibleTab === "ask" ? (
+        <div
+          id="result-tabpanel-ask"
+          role="tabpanel"
+          aria-labelledby="result-tab-ask"
+          className="space-y-3"
+        >
+          <ResultAskBox canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
+          <FollowUpSuggestions canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
+        </div>
+      ) : null}
     </>
+  );
+}
+
+function ResultSheetTabs({
+  activeTab,
+  canAsk,
+  onChange,
+}: {
+  activeTab: ResultSheetTab;
+  canAsk: boolean;
+  onChange: (tab: ResultSheetTab) => void;
+}) {
+  const tabs: Array<{ id: ResultSheetTab; label: string }> = [
+    { id: "match", label: "Match" },
+    { id: "evidence", label: "Evidence" },
+    { id: "sources", label: "Sources" },
+    ...(canAsk ? [{ id: "ask" as const, label: "Ask" }] : []),
+  ];
+
+  return (
+    <div className="rounded-[18px] border border-neutral-200 bg-white p-1" role="tablist" aria-label="Result sections">
+      <div className={`grid ${canAsk ? "grid-cols-4" : "grid-cols-3"} gap-1`}>
+        {tabs.map((tab) => {
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              id={`result-tab-${tab.id}`}
+              aria-controls={`result-tabpanel-${tab.id}`}
+              aria-selected={isActive}
+              className={`min-h-11 rounded-[14px] px-2 text-sm font-extrabold transition ${
+                isActive
+                  ? "bg-[var(--ds-accent)] text-white shadow-sm"
+                  : "bg-transparent text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900"
+              }`}
+              role="tab"
+              type="button"
+              onClick={() => onChange(tab.id)}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
