@@ -27,6 +27,7 @@ const makeResult = (partName: string): IdentificationResult => ({
 });
 
 beforeEach(() => {
+  vi.restoreAllMocks();
   localStorage.clear();
 });
 
