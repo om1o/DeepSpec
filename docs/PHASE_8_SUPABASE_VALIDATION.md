@@ -53,8 +53,9 @@ Check this before changing app code:
 1. Supabase Dashboard -> Authentication -> Sign In / Providers -> Anonymous sign-ins is enabled.
 2. Supabase Dashboard -> Auth logs: open the failed `/signup` event and read the database error.
 3. Database triggers on `auth.users`: make sure there is no trigger writing to a missing `profiles` table or required column.
-4. Apply this repo's migration if it has not been applied yet.
-5. Rerun `npm run verify:supabase`.
+4. Run `npm run supabase:print-auth-diagnostics`, paste the printed read-only SQL into Supabase SQL Editor, and inspect any `auth.users` triggers/functions it returns.
+5. Apply this repo's migration if it has not been applied yet.
+6. Rerun `npm run verify:supabase`.
 
 Do not start Phase 9 until anonymous sign-in can create a user and the verifier passes.
 

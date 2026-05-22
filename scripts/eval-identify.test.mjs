@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildReviewLookup, scoreIdentificationResult } from "./eval-identify.mjs";
+import { buildReviewLookup, isReviewableEvalFailure, scoreIdentificationResult } from "./eval-identify.mjs";
 
 const result = {
   partName: "Rear bumper",
@@ -99,5 +99,12 @@ describe("identify eval scoring", () => {
     });
 
     expect(lookup.scanCategory).toBe("body");
+  });
+
+  it("keeps provider availability failures out of training review rows", () => {
+    expect(isReviewableEvalFailure({ code: "rate_limited" })).toBe(false);
+    expect(isReviewableEvalFailure({ code: "network" })).toBe(false);
+    expect(isReviewableEvalFailure({ code: "invalid_response" })).toBe(true);
+    expect(isReviewableEvalFailure(null)).toBe(true);
   });
 });
