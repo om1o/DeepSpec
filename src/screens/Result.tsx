@@ -60,6 +60,43 @@ export default function Result() {
     handleLookupUpdate(updateLookup(lookup.id, { notes }));
   }
 
+  function handlePromoteCandidate(candidate: CandidateMatch) {
+    if (isQaTestRun) {
+      setSaveError("QA test scans are not saved. Exit test mode or take a real scan to correct this result.");
+      return;
+    }
+
+    if (lookup) {
+      handleLookupUpdate(updateLookup(lookup.id, { rating: "down", correction: candidate.partName }));
+      return;
+    }
+
+    if (!scanState?.frame || !scanState.result) {
+      return;
+    }
+
+    const saved = createLookup({
+      frame: scanState.frame,
+      result: scanState.result,
+      analyzedAt: scanState.analyzedAt ?? new Date().toISOString(),
+    });
+
+    if (!saved.ok) {
+      setSaveError(saved.message);
+      return;
+    }
+
+    const updated = updateLookup(saved.value.id, { rating: "down", correction: candidate.partName });
+    if (updated.ok) {
+      setLookup(updated.value);
+      setSaveError(null);
+      navigate(`/result/${saved.value.id}`, { replace: true, state: scanState });
+      return;
+    }
+
+    handleLookupUpdate(updated);
+  }
+
   function handleDelete() {
     if (!lookup) {
       return;
@@ -163,7 +200,9 @@ export default function Result() {
               capturedAt={capturedAt}
               canSaveForChat={canSaveForChat}
               lookupId={lookup?.id ?? null}
+              onPromoteCandidate={lookup || canSaveForChat ? handlePromoteCandidate : undefined}
               onSaveAndAsk={handleSaveAndAsk}
+              promotedPartName={lookup?.correction ?? null}
             />
           ) : null}
           {scanState?.errorMessage ? (
@@ -457,13 +496,17 @@ function AnalysisResult({
   canSaveForChat,
   capturedAt,
   lookupId,
+  onPromoteCandidate,
   onSaveAndAsk,
+  promotedPartName,
   result,
 }: {
   canSaveForChat: boolean;
   capturedAt: string | null;
   lookupId: string | null;
+  onPromoteCandidate?: (candidate: CandidateMatch) => void;
   onSaveAndAsk: (question?: string) => void;
+  promotedPartName?: string | null;
   result: IdentificationResult;
 }) {
   const showSafetyWarning = result.isSafetyCritical || result.safetyTriage === "needs_professional";
@@ -507,7 +550,11 @@ function AnalysisResult({
         </section>
       ) : null}
 
-      <CandidateMatchesSection candidates={result.candidateMatches ?? []} />
+      <CandidateMatchesSection
+        candidates={result.candidateMatches ?? []}
+        onPromote={onPromoteCandidate}
+        promotedPartName={promotedPartName}
+      />
       <DetectedTextSection findings={getDetectedTextFindings(result)} />
       <ResultSection title="Match" items={[result.whatItDoes]} />
       <EvidenceRegionsSection regions={result.evidenceRegions ?? []} />
@@ -521,7 +568,15 @@ function AnalysisResult({
   );
 }
 
-function CandidateMatchesSection({ candidates }: { candidates: CandidateMatch[] }) {
+function CandidateMatchesSection({
+  candidates,
+  onPromote,
+  promotedPartName,
+}: {
+  candidates: CandidateMatch[];
+  onPromote?: (candidate: CandidateMatch) => void;
+  promotedPartName?: string | null;
+}) {
   if (!candidates.length) {
     return null;
   }
@@ -530,7 +585,9 @@ function CandidateMatchesSection({ candidates }: { candidates: CandidateMatch[] 
     <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
       <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Other possible matches</h2>
       <div className="mt-3 grid grid-cols-1 gap-2">
-        {candidates.map((candidate) => (
+        {candidates.map((candidate) => {
+          const isPromoted = promotedPartName?.trim().toLowerCase() === candidate.partName.toLowerCase();
+          return (
           <div key={`${candidate.partName}-${candidate.reason}`} className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3">
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-extrabold text-neutral-900">{candidate.partName}</p>
@@ -540,8 +597,24 @@ function CandidateMatchesSection({ candidates }: { candidates: CandidateMatch[] 
             </div>
             <p className="mt-1 text-xs font-semibold capitalize text-neutral-400">{candidate.scanCategory}</p>
             <p className="mt-2 text-sm leading-5 text-neutral-600">{candidate.reason}</p>
+            {onPromote ? (
+              <button
+                aria-label={`${isPromoted ? "Marked" : "Mark"} ${candidate.partName} correct`}
+                className={`mt-3 rounded-full px-3 py-2 text-xs font-extrabold ${
+                  isPromoted
+                    ? "bg-[var(--ds-success-soft)] text-[var(--ds-success-ink)] ring-1 ring-[var(--ds-success-line)]"
+                    : "bg-white text-[var(--ds-evidence-ink)] ring-1 ring-neutral-200"
+                }`}
+                disabled={isPromoted}
+                type="button"
+                onClick={() => onPromote(candidate)}
+              >
+                {isPromoted ? "Marked correct" : "Mark correct"}
+              </button>
+            ) : null}
           </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );

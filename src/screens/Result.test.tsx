@@ -289,6 +289,37 @@ describe("Result", () => {
     expect(savedLookups[0].result?.partName).toBe("Alternator");
   });
 
+  it("saves an unsaved result when marking an alternate match correct", async () => {
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: "/result",
+            state: successfulScan,
+          },
+        ]}
+      >
+        <Routes>
+          <Route path="/result" element={<Result />} />
+          <Route path="/result/:id" element={<Result />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Mark Starter motor correct" }));
+
+    expect(await screen.findByText("Saved scan")).toBeInTheDocument();
+    const savedLookups = JSON.parse(localStorage.getItem(LOOKUPS_STORAGE_KEY) ?? "[]") as Lookup[];
+    expect(savedLookups).toHaveLength(1);
+    expect(savedLookups[0]).toMatchObject({
+      correction: "Starter motor",
+      rating: "down",
+      trainingLabel: "Starter motor",
+      trainingStatus: "user_corrected",
+    });
+    expect(screen.getByRole("button", { name: "Marked Starter motor correct" })).toBeDisabled();
+  });
+
   it("restores the latest successful scan after a refresh", () => {
     sessionStorage.setItem("deep-spec:latest-scan-state", JSON.stringify(successfulScan));
 
@@ -320,6 +351,25 @@ describe("Result", () => {
     expect(savedLookup.notes).toBe("Near the lower engine bay.");
     expect(savedLookup.trainingLabel).toBe("It was the starter.");
     expect(savedLookup.trainingStatus).toBe("user_corrected");
+  });
+
+  it("promotes an alternate match into the saved scan correction", async () => {
+    const lookup = makeLookup();
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+
+    renderResult(null, `/result/${lookup.id}`);
+
+    await userEvent.click(screen.getByRole("button", { name: "Mark Starter motor correct" }));
+
+    const savedLookup = JSON.parse(localStorage.getItem(LOOKUPS_STORAGE_KEY) ?? "[]")[0] as Lookup;
+    expect(savedLookup).toMatchObject({
+      correction: "Starter motor",
+      rating: "down",
+      trainingLabel: "Starter motor",
+      trainingStatus: "user_corrected",
+    });
+    expect(screen.getByLabelText("What was it actually?")).toHaveValue("Starter motor");
+    expect(screen.getByRole("button", { name: "Marked Starter motor correct" })).toBeDisabled();
   });
 
   it("shows scan report actions for saved scans", () => {
