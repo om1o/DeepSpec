@@ -22,11 +22,20 @@ describe("cloudSync", () => {
   });
 
   it("stays disabled when Supabase public config is missing", async () => {
-    const { getCloudSyncStatus, syncLookupToCloud } = await import("./cloudSync");
+    const { getCloudHealthSnapshot, getCloudSyncStatus, syncLookupToCloud } = await import("./cloudSync");
 
     expect(getCloudSyncStatus()).toEqual({
       configured: false,
       message: "Cloud sync is off. Add Supabase public config after parent-approved privacy setup.",
+    });
+    expect(getCloudHealthSnapshot()).toMatchObject({
+      configured: false,
+      overall: "unconfigured",
+      checks: {
+        configured: {
+          status: "fail",
+        },
+      },
     });
 
     await expect(syncLookupToCloud(makeLookup())).resolves.toEqual({
@@ -171,7 +180,101 @@ describe("cloudSync", () => {
     ).resolves.toEqual({ ok: true, message: "Feedback synced." });
     expect(insert).toHaveBeenCalledTimes(2);
   });
+
+  it("checks runtime cloud health across auth, storage, row write, and RLS isolation", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    const remove = vi.fn().mockResolvedValue({ error: null });
+    const upsert = vi.fn().mockResolvedValue({ error: null });
+    const ownerDeleteQuery = makeDeleteQuery();
+    const crossReadEq = vi.fn().mockResolvedValue({ data: [], error: null });
+    mocks.createClient
+      .mockReturnValueOnce({
+        auth: {
+          signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "owner-1" } }, error: null }),
+        },
+        from: vi.fn().mockReturnValue({
+          delete: vi.fn().mockReturnValue(ownerDeleteQuery),
+          upsert,
+        }),
+        storage: {
+          from: vi.fn().mockReturnValue({ remove, upload }),
+        },
+      })
+      .mockReturnValueOnce({
+        auth: {
+          signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "other-1" } }, error: null }),
+        },
+        from: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({ eq: crossReadEq }),
+        }),
+        storage: {
+          from: vi.fn(),
+        },
+      });
+    const { getCloudHealthSnapshot, verifyCloudHealth } = await import("./cloudSync");
+
+    const report = await verifyCloudHealth();
+
+    expect(report.overall).toBe("ready");
+    expect(report.lastVerifiedAt).toBe(report.checkedAt);
+    expect(report.checks.configured.status).toBe("pass");
+    expect(report.checks.anonymousAuth.status).toBe("pass");
+    expect(report.checks.storageUpload.status).toBe("pass");
+    expect(report.checks.rowUpsert.status).toBe("pass");
+    expect(report.checks.rlsIsolation.status).toBe("pass");
+    expect(upload).toHaveBeenCalledWith(
+      expect.stringMatching(/^owner-1\/health-.+\.jpg$/),
+      expect.any(Blob),
+      expect.objectContaining({ contentType: "image/jpeg", upsert: false }),
+    );
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        image_path: expect.stringMatching(/^owner-1\/health-.+\.jpg$/),
+        scan_category: "unknown",
+        training_label: "Runtime Health Check",
+        training_status: "raw_unreviewed",
+        user_id: "owner-1",
+      }),
+      { onConflict: "user_id,local_id" },
+    );
+    expect(crossReadEq).toHaveBeenCalledWith("local_id", expect.stringMatching(/^health-/));
+    expect(remove).toHaveBeenCalledWith([expect.stringMatching(/^owner-1\/health-.+\.jpg$/)]);
+    expect(getCloudHealthSnapshot().overall).toBe("ready");
+  });
+
+  it("reports the anonymous auth step as blocked before storage checks run", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const upload = vi.fn();
+    mocks.createClient.mockReturnValue({
+      auth: {
+        signInAnonymously: vi.fn().mockResolvedValue({ data: { user: null }, error: { message: "Database error creating anonymous user" } }),
+      },
+      from: vi.fn(),
+      storage: {
+        from: vi.fn().mockReturnValue({ upload }),
+      },
+    });
+    const { verifyCloudHealth } = await import("./cloudSync");
+
+    const report = await verifyCloudHealth();
+
+    expect(report.overall).toBe("blocked");
+    expect(report.checks.configured.status).toBe("pass");
+    expect(report.checks.anonymousAuth.status).toBe("fail");
+    expect(report.checks.storageUpload.status).toBe("unknown");
+    expect(report.lastVerifiedAt).toBeNull();
+    expect(upload).not.toHaveBeenCalled();
+  });
 });
+
+function makeDeleteQuery() {
+  const secondEq = vi.fn().mockResolvedValue({ error: null });
+  const firstEq = vi.fn().mockReturnValue({ eq: secondEq });
+  return { eq: firstEq };
+}
 
 function makeLookup(): Lookup {
   return {

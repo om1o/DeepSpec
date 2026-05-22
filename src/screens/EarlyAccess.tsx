@@ -1,5 +1,6 @@
 import { FormEvent, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import CloudHealthCard from "../components/CloudHealthCard";
 import Button from "../components/ui/Button";
 import { getCloudSyncStatus } from "../services/cloudSync";
 import { getEngagementData, saveFeedbackSubmission, saveWaitlistSignup } from "../services/engagement";
@@ -94,6 +95,7 @@ export default function EarlyAccess() {
               </div>
             ))}
           </div>
+          <CloudHealthCard className="mt-4" />
         </section>
 
         <form className="mt-4 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm" onSubmit={handleWaitlistSubmit}>
