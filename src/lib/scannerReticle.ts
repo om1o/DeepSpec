@@ -5,8 +5,8 @@ export type RectLike = {
   width: number;
 };
 
-export const SCANNER_RETICLE_WIDTH_RATIO = 0.76;
-export const SCANNER_RETICLE_MAX_WIDTH_PX = 390;
+export const SCANNER_RETICLE_WIDTH_RATIO = 0.64;
+export const SCANNER_RETICLE_MAX_WIDTH_PX = 330;
 export const SCANNER_RETICLE_CENTER_Y_RATIO = 0.45;
 export const SCANNER_RETICLE_ASPECT_RATIO = 3 / 4;
 
