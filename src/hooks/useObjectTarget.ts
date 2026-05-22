@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type MutableRefObject, type RefObject } from "react";
 import Webcam from "react-webcam";
 import { detectObjectTargetFromImageData, type ObjectTargetBox } from "../lib/objectTargeting";
+import { getScannerReticleBounds, isTargetInsideScannerBox } from "../lib/scannerReticle";
 
 export type CameraObjectTarget = {
   confidence: number;
@@ -51,6 +52,14 @@ export function useObjectTarget(
         return;
       }
 
+      const viewportTarget = toViewportTarget(detected, video);
+      const scannerBox = getScannerReticleBounds(window.innerWidth, window.innerHeight);
+      if (!isTargetInsideScannerBox(viewportTarget, scannerBox)) {
+        lockRef.current = null;
+        setTarget(null);
+        return;
+      }
+
       const now = Date.now();
       const previousLock = lockRef.current;
       const isSameTarget = Boolean(previousLock && getTargetShift(previousLock.box, detected) < TARGET_SHIFT_TOLERANCE);
@@ -59,7 +68,7 @@ export function useObjectTarget(
 
       const holdProgress = holdEnabled ? Math.min(1, (now - startedAt) / holdDurationMs) : 0;
       setTarget({
-        ...toViewportTarget(detected, video),
+        ...viewportTarget,
         confidence: detected.confidence,
         holdProgress,
         isLocked: holdProgress >= 1,
