@@ -4,6 +4,7 @@ import {
   PUBLIC_LAUNCH_SAMPLE_SIZE,
   RELEASE_SAMPLE_IMAGES,
   buildEvalResultRow,
+  buildEvalSummary,
   buildEvalViteServerOptions,
   buildReviewLookup,
   createIdentifyResponseWithRetry,
@@ -393,6 +394,141 @@ describe("identify eval scoring", () => {
       errorMessage: "API key not valid. Please pass a valid API key.",
       failureReasons: ["provider_error"],
       status: 400,
+    });
+  });
+
+  it("adds launch quality metrics to eval summaries", () => {
+    const rows = [
+      buildEvalResultRow({
+        elapsedMs: 100,
+        error: null,
+        expectedLabels: ["Alternator"],
+        imagePath: "Car parts dataset/File1/img/Car damages 101.png",
+        providerAvailabilityFailure: false,
+        responseStatus: 200,
+        retryCount: 0,
+        result,
+        score: {
+          ok: true,
+          matchedLabels: ["Alternator"],
+          failureReasons: [],
+        },
+      }),
+      buildEvalResultRow({
+        elapsedMs: 300,
+        error: {
+          code: "invalid_response",
+          message: "Gemini returned JSON that Deep Spec could not read.",
+        },
+        expectedLabels: ["Hood"],
+        imagePath: "Car damages dataset/File1/img/Car damages 2.jpg",
+        providerAvailabilityFailure: false,
+        responseStatus: 502,
+        retryCount: 1,
+        result: null,
+        score: {
+          ok: false,
+          matchedLabels: [],
+          failureReasons: ["pipeline_error"],
+        },
+      }),
+      buildEvalResultRow({
+        elapsedMs: 500,
+        error: null,
+        expectedLabels: ["Alternator"],
+        imagePath: "Car parts dataset/File1/img/Car damages 136.png",
+        providerAvailabilityFailure: false,
+        responseStatus: 200,
+        retryCount: 0,
+        result: {
+          ...result,
+          isSafetyCritical: true,
+          safetyTriage: "needs_professional",
+        },
+        score: {
+          ok: true,
+          matchedLabels: ["Alternator"],
+          failureReasons: [],
+        },
+      }),
+    ];
+
+    const summary = buildEvalSummary({
+      failures: [{}],
+      generatedAt: "2026-05-22T12:00:00.000Z",
+      options: {
+        delayMs: 20_000,
+        output: ".deepspec-eval/identify-public-failures.jsonl",
+        sampleSet: "public",
+        sampleTimeoutMs: 240_000,
+      },
+      providerFailureCount: 0,
+      results: rows,
+      selectedSamples: ["sample-1", "sample-2", "sample-3"],
+    });
+
+    expect(summary).toMatchObject({
+      attemptedCount: 3,
+      failureCount: 1,
+      passCount: 2,
+      qualityMetrics: {
+        accuracy: 0.6667,
+        failureRate: 0.3333,
+        invalidResponseCount: 1,
+        invalidResponseRate: 0.3333,
+        latencyMs: {
+          average: 300,
+          max: 500,
+          median: 300,
+          min: 100,
+          p95: 500,
+        },
+        providerFailureRate: 0,
+        retryCount: 1,
+        retryRate: 0.3333,
+        safetyEscalationCount: 1,
+        safetyFalsePositiveCount: 1,
+        safetyFalsePositiveRate: 0.3333,
+      },
+      sampleSet: "public",
+    });
+  });
+
+  it("tracks provider retry count on retryable identify responses", async () => {
+    let now = 1_000;
+    const identify = {
+      createIdentifyResponse: vi
+        .fn()
+        .mockResolvedValueOnce({
+          status: 429,
+          body: {
+            error: {
+              code: "rate_limited",
+              message: "Too many AI lookups right now.",
+              retryAfterSeconds: 1,
+            },
+          },
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          body: {
+            result,
+          },
+        }),
+    };
+
+    const response = await createIdentifyResponseWithRetry(identify, "data:image/jpeg;base64,test", {}, {
+      now: () => now,
+      retryDelaysMs: [60_000],
+      sampleTimeoutMs: 30_000,
+      sleepFn: async (delayMs) => {
+        now += delayMs;
+      },
+    });
+
+    expect(response).toMatchObject({
+      evalRetryCount: 1,
+      status: 200,
     });
   });
 

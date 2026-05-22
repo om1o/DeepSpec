@@ -9,8 +9,9 @@ Deep Spec should not depend on a live provider call for every QA check. Provider
 3. `npm run eval:identify:public` is the public-launch confidence gate. It builds a deterministic 300-sample set from the verified DrBimmer Hugging Face tree, balanced across 150 damage images and 150 part images, then verifies that at least 300 samples were attempted and passed.
 4. Provider availability failures such as `rate_limited`, `network`, and `provider_error` are summarized as provider health failures. They are not written as training review rows because they do not prove the model was wrong.
 5. API `429` responses preserve sanitized retry timing as `retryAfterSeconds` when the provider sends a valid `Retry-After` header, so scan/chat UX can tell users when to retry instead of showing a generic quota message.
-6. Model-quality failures such as `invalid_response`, wrong results, or vague results are still written to `.deepspec-eval/identify-failures.jsonl` in the saved-scan review shape.
-7. Scanner production readiness requires the QA fixture, the beta eval, the public-launch eval, and the cloud verifier to pass without provider or Supabase availability blockers.
+6. Eval summaries must include launch metrics: accuracy, invalid response rate, provider failure rate, retry count/rate, latency distribution, and rule-derived safety false positives.
+7. Model-quality failures such as `invalid_response`, wrong results, or vague results are still written to `.deepspec-eval/identify-failures.jsonl` in the saved-scan review shape.
+8. Scanner production readiness requires the QA fixture, the beta eval, the public-launch eval, and the cloud verifier to pass without provider or Supabase availability blockers.
 
 ## Commands
 

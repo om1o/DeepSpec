@@ -184,6 +184,7 @@ export function buildEvalResultRow({
   imagePath,
   providerAvailabilityFailure,
   responseStatus,
+  retryCount = 0,
   result,
   score,
 }) {
@@ -195,6 +196,11 @@ export function buildEvalResultRow({
     errorMessage: error?.message ?? null,
     partName: result?.partName ?? null,
     confidence: result?.confidence ?? null,
+    isSafetyCritical: result?.isSafetyCritical ?? null,
+    needsBetterPhoto: result?.needsBetterPhoto ?? null,
+    providerAvailabilityFailure: Boolean(providerAvailabilityFailure),
+    retryCount,
+    safetyTriage: result?.safetyTriage ?? null,
     scanCategory: result?.scanCategory ?? null,
     matchedLabels: score.matchedLabels,
     failureReasons: providerAvailabilityFailure && error ? [error.code] : score.failureReasons,
@@ -249,6 +255,7 @@ async function main() {
         expectedLabels,
         providerAvailabilityFailure,
         responseStatus: response.status,
+        retryCount: response.evalRetryCount ?? 0,
         result,
         score,
       }));
@@ -288,24 +295,14 @@ async function main() {
     await identify.close();
   }
 
-  const summary = {
-    datasetId: DATASET_ID,
-    datasetUrl: DATASET_URL,
-    generatedAt: new Date().toISOString(),
-    sampleSet: options.sampleSet,
-    sampleSize: selectedSamples.length,
-    attemptedCount: results.length,
-    skippedCount: Math.max(0, selectedSamples.length - results.length),
-    failureCount: failures.length,
+  const summary = buildEvalSummary({
+    failures,
+    options,
     providerFailureCount,
-    passCount: results.filter((result) => result.status === 200 && result.failureReasons.length === 0).length,
-    providerStatus: providerFailureCount > 0 ? "blocked" : "available",
-    sampleTimeoutMs: options.sampleTimeoutMs,
-    stoppedEarlyReason,
-    throttleDelayMs: options.delayMs,
-    output: options.output,
     results,
-  };
+    selectedSamples,
+    stoppedEarlyReason,
+  });
 
   await writeJsonl(options.output, failures);
   await writeSummary(options.summary, summary);
@@ -318,6 +315,71 @@ async function main() {
     console.error("Identify eval did not meet the release gate. Inspect the summary before shipping.");
     process.exitCode = exitCode;
   }
+}
+
+export function buildEvalSummary({
+  failures,
+  generatedAt = new Date().toISOString(),
+  options,
+  providerFailureCount,
+  results,
+  selectedSamples,
+  stoppedEarlyReason = null,
+}) {
+  const passCount = results.filter((result) => result.status === 200 && result.failureReasons.length === 0).length;
+
+  return {
+    datasetId: DATASET_ID,
+    datasetUrl: DATASET_URL,
+    generatedAt,
+    sampleSet: options.sampleSet,
+    sampleSize: selectedSamples.length,
+    attemptedCount: results.length,
+    skippedCount: Math.max(0, selectedSamples.length - results.length),
+    failureCount: failures.length,
+    providerFailureCount,
+    passCount,
+    providerStatus: providerFailureCount > 0 ? "blocked" : "available",
+    qualityMetrics: buildEvalQualityMetrics({
+      attemptedCount: results.length,
+      failureCount: failures.length,
+      passCount,
+      providerFailureCount,
+      results,
+    }),
+    sampleTimeoutMs: options.sampleTimeoutMs,
+    stoppedEarlyReason,
+    throttleDelayMs: options.delayMs,
+    output: options.output,
+    results,
+  };
+}
+
+export function buildEvalQualityMetrics({
+  attemptedCount,
+  failureCount,
+  passCount,
+  providerFailureCount,
+  results,
+}) {
+  const invalidResponseCount = results.filter((result) => result.errorCode === "invalid_response").length;
+  const retryCount = results.reduce((sum, result) => sum + (Number(result.retryCount) || 0), 0);
+  const safetyEscalationCount = results.filter(isSafetyEscalatedEvalRow).length;
+  const safetyFalsePositiveCount = results.filter(isSafetyFalsePositiveEvalRow).length;
+
+  return {
+    accuracy: ratio(passCount, attemptedCount),
+    failureRate: ratio(failureCount, attemptedCount),
+    invalidResponseCount,
+    invalidResponseRate: ratio(invalidResponseCount, attemptedCount),
+    latencyMs: summarizeLatency(results.map((result) => result.elapsedMs)),
+    providerFailureRate: ratio(providerFailureCount, attemptedCount),
+    retryCount,
+    retryRate: ratio(retryCount, attemptedCount),
+    safetyEscalationCount,
+    safetyFalsePositiveCount,
+    safetyFalsePositiveRate: ratio(safetyFalsePositiveCount, attemptedCount),
+  };
 }
 
 async function getSelectedSamples(options) {
@@ -421,27 +483,38 @@ export async function createIdentifyResponseWithRetry(identify, dataUrl, env, op
   const now = options.now ?? Date.now;
   const sleepFn = options.sleepFn ?? sleep;
   const deadlineMs = now() + sampleTimeoutMs;
+  let retryCount = 0;
 
   for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
     const remainingMs = deadlineMs - now();
     if (remainingMs <= 0) {
-      return providerRetryBudgetResponse(sampleTimeoutMs);
+      return {
+        ...providerRetryBudgetResponse(sampleTimeoutMs),
+        evalRetryCount: retryCount,
+      };
     }
 
     const response = await createIdentifyResponseWithinBudget(identify, payload, env, remainingMs, sampleTimeoutMs);
     const code = response.status === 200 ? null : response.body.error.code;
 
     if (!isRetryableProviderAvailabilityResponse(response, code) || attempt === retryDelaysMs.length) {
-      return response;
+      return {
+        ...response,
+        evalRetryCount: retryCount,
+      };
     }
 
     const delayMs = getRetryDelayMs(response, retryDelaysMs[attempt]);
     if (deadlineMs - now() <= delayMs) {
       console.log(`${code ?? response.status}; sample retry budget exhausted before ${Math.round(delayMs / 1000)}s retry`);
-      return providerRetryBudgetResponse(sampleTimeoutMs);
+      return {
+        ...providerRetryBudgetResponse(sampleTimeoutMs),
+        evalRetryCount: retryCount,
+      };
     }
 
     console.log(`${code ?? response.status}; retrying in ${Math.round(delayMs / 1000)}s`);
+    retryCount += 1;
     await sleepFn(delayMs);
   }
 
@@ -871,6 +944,50 @@ function isTooVague(result) {
   );
 
   return genericName || result.confidence === "low" || result.needsBetterPhoto || result.safetyTriage === "needs_better_photo";
+}
+
+function isSafetyEscalatedEvalRow(row) {
+  return row.isSafetyCritical === true || row.safetyTriage === "needs_professional";
+}
+
+function isSafetyFalsePositiveEvalRow(row) {
+  return isSafetyEscalatedEvalRow(row) && !hasExpectedSafetySensitiveLabel(row.expectedLabels);
+}
+
+function hasExpectedSafetySensitiveLabel(labels) {
+  const text = normalizeText(labels.join(" "));
+  return /airbag|seat belt|brake|caliper|rotor|pad|fuel|gas|leak|oil|coolant|steering|tie rod|rack and pinion|suspension|control arm|strut|shock|ball joint|wheel|tire|tyre|windshield/.test(text);
+}
+
+function ratio(numerator, denominator) {
+  return denominator > 0 ? Number((numerator / denominator).toFixed(4)) : 0;
+}
+
+function summarizeLatency(values) {
+  const latencies = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+  if (latencies.length === 0) {
+    return {
+      average: 0,
+      max: 0,
+      median: 0,
+      min: 0,
+      p95: 0,
+    };
+  }
+
+  const total = latencies.reduce((sum, value) => sum + value, 0);
+  return {
+    average: Math.round(total / latencies.length),
+    max: latencies[latencies.length - 1],
+    median: percentile(latencies, 0.5),
+    min: latencies[0],
+    p95: percentile(latencies, 0.95),
+  };
+}
+
+function percentile(sortedValues, percentileValue) {
+  const index = Math.min(sortedValues.length - 1, Math.ceil(sortedValues.length * percentileValue) - 1);
+  return sortedValues[Math.max(0, index)];
 }
 
 function formatCandidateForScoring(candidate) {
