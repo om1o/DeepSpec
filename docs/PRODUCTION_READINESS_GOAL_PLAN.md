@@ -27,8 +27,8 @@ Use a 900-check audit grid instead: 9 production tracks x 100 checks each. Every
 - `npm run verify:identify-eval` passed with `Identify eval passed: 50/50 samples passed with provider available.`
 - Provider hang guards are now covered: browser AI requests abort after 60s, and release eval samples have a 240s per-sample budget including retries.
 - A configured `npm run verify:supabase` run still failed after confirming anonymous sign-ins were enabled: anonymous signup returned `Database error creating anonymous user (unexpected_failure), HTTP 500`.
-- Latest captured configured-run Supabase request/error id: `019e4fa3-b641-7605-82cb-2a36e2d694c6`.
-- Current checkout refresh of `npm run verify:supabase` is blocked before Auth because `.env.local` is missing `VITE_SUPABASE_URL` or `VITE_SUPABASE_PUBLISHABLE_KEY`.
+- Latest captured configured-run Supabase request/error id: `019e4fde-78fc-7ede-81c1-bbb7ccfa1026`.
+- A bare checkout-local `npm run verify:supabase` also needs `.env.local` copied in; without `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`, it stops before the Auth preflight.
 - Supabase Preview check on PR #50 failed with `Failed to fetch existing branch project`.
 - GitHub Actions release gate is failing because repository secrets `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` are not configured.
 - Hugging Face connector confirmed `DrBimmer/car-parts-and-damage-dataset` as the current fixed release dataset source: 1,812 high-resolution polygon-annotated car part/damage images, MIT license, object-detection and image-segmentation tags.
