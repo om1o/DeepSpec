@@ -1,5 +1,5 @@
 import type { SupabaseClient, User } from "@supabase/supabase-js";
-import type { FeedbackSubmission, Lookup, WaitlistSignup } from "../types";
+import type { CloudSyncEvent, FeedbackSubmission, Lookup, WaitlistSignup } from "../types";
 import { appendLookupSyncEvent, getLookupDatasetMetadata } from "./storage";
 
 const SCAN_BUCKET = "scan-images";
@@ -189,6 +189,13 @@ export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult
       throw new Error(uploaded.error.message);
     }
 
+    const message = "Scan synced to the private Deep Spec dataset.";
+    const syncEvent = createSyncEvent({ imagePath, message, status: "success" });
+    const lookupForCloud: Lookup = {
+      ...lookup,
+      syncEvents: [...lookup.syncEvents, syncEvent].slice(-20),
+    };
+
     const saved = await supabase.from("scan_lookups").upsert(
       {
         analyzed_at: lookup.analyzedAt ?? null,
@@ -200,7 +207,7 @@ export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult
         error_message: lookup.errorMessage ?? null,
         image_path: imagePath,
         local_id: lookup.id,
-        metadata_json: getLookupDatasetMetadata(lookup, imagePath),
+        metadata_json: getLookupDatasetMetadata(lookupForCloud, imagePath),
         notes: lookup.notes,
         rating: lookup.rating,
         result_json: lookup.result ?? null,
@@ -216,8 +223,7 @@ export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult
       throw new Error(saved.error.message);
     }
 
-    const message = "Scan synced to the private Deep Spec dataset.";
-    appendLookupSyncEvent(lookup.id, { imagePath, message, status: "success" });
+    appendLookupSyncEvent(lookup.id, syncEvent);
 
     return {
       ok: true,
@@ -400,6 +406,14 @@ function createRuntimeId() {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function createSyncEvent(event: Omit<CloudSyncEvent, "createdAt" | "id">): CloudSyncEvent {
+  return {
+    ...event,
+    createdAt: new Date().toISOString(),
+    id: createRuntimeId(),
+  };
 }
 
 function getImageExtension(contentType: string) {

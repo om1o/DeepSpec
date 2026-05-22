@@ -198,23 +198,25 @@ export function appendLookupModelRun(id: string, modelRun: AIModelRun): StorageR
 
 export function appendLookupSyncEvent(
   id: string,
-  event: Omit<CloudSyncEvent, "createdAt" | "id">,
+  event: CloudSyncEvent | Omit<CloudSyncEvent, "createdAt" | "id">,
 ): StorageResult<Lookup | null> {
   const lookup = getLookup(id);
   if (!lookup) {
     return { ok: false, message: "This saved scan was not found.", value: null };
   }
 
+  const syncEvent =
+    "createdAt" in event && "id" in event
+      ? event
+      : {
+          ...event,
+          createdAt: new Date().toISOString(),
+          id: createId(),
+        };
+
   return replaceLookup({
     ...lookup,
-    syncEvents: [
-      ...lookup.syncEvents,
-      {
-        ...event,
-        createdAt: new Date().toISOString(),
-        id: createId(),
-      },
-    ].slice(-20),
+    syncEvents: [...lookup.syncEvents, syncEvent].slice(-20),
   });
 }
 

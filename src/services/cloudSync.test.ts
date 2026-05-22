@@ -84,7 +84,13 @@ describe("cloudSync", () => {
           modelRuns: [],
           promptVersions: [],
           schemaVersion: 1,
-          syncEvents: [],
+          syncEvents: [
+            expect.objectContaining({
+              imagePath: "user-1/lookup-1.jpg",
+              message: "Scan synced to the private Deep Spec dataset.",
+              status: "success",
+            }),
+          ],
         }),
         scan_category: "electrical",
         training_label: "Alternator",
