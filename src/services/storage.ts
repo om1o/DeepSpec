@@ -250,6 +250,7 @@ function writeLookups(lookups: Lookup[]): StorageResult<Lookup[]> {
 
   try {
     localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify(cappedLookups));
+    pruneChatHistory(lookups.slice(MAX_SAVED_LOOKUPS));
     return { ok: true, value: cappedLookups };
   } catch (error) {
     return {
@@ -259,6 +260,16 @@ function writeLookups(lookups: Lookup[]): StorageResult<Lookup[]> {
         : "Deep Spec could not save this scan on this device.",
       value: cappedLookups,
     };
+  }
+}
+
+function pruneChatHistory(droppedLookups: Lookup[]) {
+  for (const lookup of droppedLookups) {
+    try {
+      localStorage.removeItem(CHAT_KEY(lookup.id));
+    } catch {
+      // Best-effort cleanup after the bounded lookup index is already saved.
+    }
   }
 }
 
