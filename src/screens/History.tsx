@@ -1,11 +1,25 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import Button from "../components/ui/Button";
 import { getDatasetExport, getLookups } from "../services/storage";
-import type { Lookup } from "../types";
+import { SCAN_CATEGORIES, type Confidence, type Lookup, type ScanCategory, type TrainingStatus } from "../types";
+
+type CategoryFilter = "all" | ScanCategory;
+type ConfidenceFilter = "all" | Confidence;
+type StatusFilter = "all" | TrainingStatus | "error" | "not_analyzed";
 
 export default function History() {
   const lookups = useMemo(() => getLookups(), []);
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all");
+  const [confidenceFilter, setConfidenceFilter] = useState<ConfidenceFilter>("all");
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const visibleLookups = useMemo(() => filterLookups(lookups, {
+    category: categoryFilter,
+    confidence: confidenceFilter,
+    query,
+    status: statusFilter,
+  }), [categoryFilter, confidenceFilter, lookups, query, statusFilter]);
 
   function handleExportDataset() {
     const exportJson = JSON.stringify(getDatasetExport(lookups), null, 2);
@@ -40,11 +54,32 @@ export default function History() {
             <Button className="mt-5 w-full" onClick={handleExportDataset}>
               Export dataset
             </Button>
-            <div className="mt-4 space-y-3">
-              {lookups.map((lookup) => (
-                <LookupCard key={lookup.id} lookup={lookup} />
-              ))}
-            </div>
+            <HistoryFilters
+              category={categoryFilter}
+              confidence={confidenceFilter}
+              query={query}
+              status={statusFilter}
+              visibleCount={visibleLookups.length}
+              totalCount={lookups.length}
+              onCategoryChange={setCategoryFilter}
+              onConfidenceChange={setConfidenceFilter}
+              onQueryChange={setQuery}
+              onStatusChange={setStatusFilter}
+            />
+            {visibleLookups.length > 0 ? (
+              <div className="mt-4 space-y-3">
+                {visibleLookups.map((lookup) => (
+                  <LookupCard key={lookup.id} lookup={lookup} />
+                ))}
+              </div>
+            ) : (
+              <section className="mt-4 rounded-[24px] border border-dashed border-slate-200 bg-white p-6 text-center shadow-sm">
+                <p className="text-sm font-bold text-[var(--ds-accent)]">No scans match those filters</p>
+                <p className="mt-2 text-sm leading-6 text-neutral-500">
+                  Clear one filter or search a different part, label, category, or note.
+                </p>
+              </section>
+            )}
           </>
         ) : (
           <section className="mt-8 rounded-[24px] border border-dashed border-slate-200 bg-white p-6 text-center shadow-sm">
@@ -60,6 +95,114 @@ export default function History() {
         )}
       </div>
     </main>
+  );
+}
+
+function HistoryFilters({
+  category,
+  confidence,
+  onCategoryChange,
+  onConfidenceChange,
+  onQueryChange,
+  onStatusChange,
+  query,
+  status,
+  totalCount,
+  visibleCount,
+}: {
+  category: CategoryFilter;
+  confidence: ConfidenceFilter;
+  onCategoryChange: (value: CategoryFilter) => void;
+  onConfidenceChange: (value: ConfidenceFilter) => void;
+  onQueryChange: (value: string) => void;
+  onStatusChange: (value: StatusFilter) => void;
+  query: string;
+  status: StatusFilter;
+  totalCount: number;
+  visibleCount: number;
+}) {
+  return (
+    <section className="mt-4 rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-extrabold text-neutral-900">Review filters</h2>
+        <p className="text-xs font-bold text-neutral-400">
+          {visibleCount} of {totalCount}
+        </p>
+      </div>
+      <label className="mt-3 block">
+        <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Search scans</span>
+        <input
+          className="mt-2 h-11 w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-3 text-sm font-semibold text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[var(--ds-accent)]"
+          onChange={(event) => onQueryChange(event.target.value)}
+          placeholder="Part, label, note, category"
+          value={query}
+        />
+      </label>
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <FilterSelect
+          label="Category"
+          value={category}
+          onChange={(value) => onCategoryChange(value as CategoryFilter)}
+          options={[
+            ["all", "All categories"],
+            ...SCAN_CATEGORIES.map((categoryName) => [categoryName, categoryName] as const),
+          ]}
+        />
+        <FilterSelect
+          label="Review status"
+          value={status}
+          onChange={(value) => onStatusChange(value as StatusFilter)}
+          options={[
+            ["all", "All statuses"],
+            ["raw_unreviewed", "Raw"],
+            ["user_confirmed", "Confirmed"],
+            ["user_corrected", "Corrected"],
+            ["error", "AI error"],
+            ["not_analyzed", "Not analyzed"],
+          ]}
+        />
+        <FilterSelect
+          label="Confidence"
+          value={confidence}
+          onChange={(value) => onConfidenceChange(value as ConfidenceFilter)}
+          options={[
+            ["all", "Any confidence"],
+            ["high", "High"],
+            ["medium", "Medium"],
+            ["low", "Low"],
+          ]}
+        />
+      </div>
+    </section>
+  );
+}
+
+function FilterSelect({
+  label,
+  onChange,
+  options,
+  value,
+}: {
+  label: string;
+  onChange: (value: string) => void;
+  options: ReadonlyArray<readonly [string, string]>;
+  value: string;
+}) {
+  return (
+    <label className="block">
+      <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">{label}</span>
+      <select
+        className="mt-2 h-11 w-full rounded-2xl border border-neutral-200 bg-neutral-50 px-3 text-sm font-semibold capitalize text-neutral-900 outline-none focus:border-[var(--ds-accent)]"
+        onChange={(event) => onChange(event.target.value)}
+        value={value}
+      >
+        {options.map(([optionValue, labelText]) => (
+          <option key={optionValue} value={optionValue}>
+            {labelText}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -89,6 +232,56 @@ function LookupCard({ lookup }: { lookup: Lookup }) {
       </div>
     </Link>
   );
+}
+
+function filterLookups(
+  lookups: Lookup[],
+  filters: {
+    category: CategoryFilter;
+    confidence: ConfidenceFilter;
+    query: string;
+    status: StatusFilter;
+  },
+) {
+  const normalizedQuery = filters.query.trim().toLowerCase();
+
+  return lookups.filter((lookup) => (
+    matchesCategory(lookup, filters.category) &&
+    matchesConfidence(lookup, filters.confidence) &&
+    matchesStatus(lookup, filters.status) &&
+    matchesQuery(lookup, normalizedQuery)
+  ));
+}
+
+function matchesCategory(lookup: Lookup, category: CategoryFilter) {
+  return category === "all" || lookup.scanCategory === category;
+}
+
+function matchesConfidence(lookup: Lookup, confidence: ConfidenceFilter) {
+  return confidence === "all" || lookup.result?.confidence === confidence;
+}
+
+function matchesStatus(lookup: Lookup, status: StatusFilter) {
+  if (status === "all") return true;
+  if (status === "error") return Boolean(lookup.errorMessage);
+  if (status === "not_analyzed") return !lookup.result && !lookup.errorMessage;
+  return lookup.trainingStatus === status;
+}
+
+function matchesQuery(lookup: Lookup, query: string) {
+  if (!query) return true;
+
+  return [
+    lookup.result?.partName,
+    lookup.trainingLabel,
+    lookup.scanCategory,
+    lookup.trainingStatus.replaceAll("_", " "),
+    lookup.notes,
+    lookup.correction,
+    lookup.errorMessage,
+  ]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .some((value) => value.toLowerCase().includes(query));
 }
 
 function getStatusLabel(lookup: Lookup) {
