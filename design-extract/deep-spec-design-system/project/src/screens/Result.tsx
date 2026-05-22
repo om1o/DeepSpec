@@ -182,10 +182,14 @@ function SavedScanControls({
   async function handleCloudSync() {
     setIsSyncingCloud(true);
     setCloudStatusMessage("Syncing scan...");
-
-    const result = await syncLookupToCloud(lookup);
-    setCloudStatusMessage(result.message);
-    setIsSyncingCloud(false);
+    try {
+      const result = await syncLookupToCloud(lookup);
+      setCloudStatusMessage(result.message);
+    } catch (error) {
+      setCloudStatusMessage(error instanceof Error ? `Cloud sync failed. ${error.message}` : "Cloud sync failed. Please try again.");
+    } finally {
+      setIsSyncingCloud(false);
+    }
   }
 
   return (

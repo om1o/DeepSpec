@@ -6,6 +6,22 @@ function EarlyAccessScreen({ go }) {
   const [email, setEmail] = useStateEA("");
   const [userType, setUserType] = useStateEA("car_owner");
   const [mainProblem, setMainProblem] = useStateEA("");
+  const [waitlistStatus, setWaitlistStatus] = useStateEA("");
+
+  function saveWaitlistEntry(e) {
+    e.preventDefault();
+    const entry = { email, mainProblem, savedAt: new Date().toISOString(), userType };
+    try {
+      const existing = JSON.parse(localStorage.getItem("deepSpecWaitlist") || "[]");
+      const waitlist = Array.isArray(existing) ? existing : [];
+      localStorage.setItem("deepSpecWaitlist", JSON.stringify([...waitlist, entry]));
+      setEmail("");
+      setMainProblem("");
+      setWaitlistStatus("Saved locally.");
+    } catch {
+      setWaitlistStatus("Could not save locally in this browser.");
+    }
+  }
 
   return (
     <main
@@ -32,7 +48,7 @@ function EarlyAccessScreen({ go }) {
           </div>
         </section>
 
-        <form className="mt-4 rounded-[24px] border border-white/10 bg-[#171717] p-5" onSubmit={(e) => e.preventDefault()}>
+        <form className="mt-4 rounded-[24px] border border-white/10 bg-[#171717] p-5" onSubmit={saveWaitlistEntry}>
           <h2 className="text-lg font-extrabold tracking-tight">Join the waitlist</h2>
           <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">
             This saves locally right now. A real launch waitlist needs parent-approved privacy terms and backend storage.
@@ -67,6 +83,7 @@ function EarlyAccessScreen({ go }) {
             />
           </label>
           <Button className="mt-4 w-full" type="submit">Save waitlist entry</Button>
+          {waitlistStatus ? <p className="mt-3 text-sm font-semibold text-[#FACC15]">{waitlistStatus}</p> : null}
         </form>
 
         <button
