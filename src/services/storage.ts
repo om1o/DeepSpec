@@ -151,12 +151,33 @@ export function appendChatMessages(id: string, messages: ChatMessage[]): Storage
   }
 
   const updatedHistory = [...lookup.chatHistory, ...cleanMessages].slice(-MAX_CHAT_MESSAGES);
-  const writeResult = writeChatHistory(id, updatedHistory);
   const updatedLookup: Lookup = { ...lookup, chatHistory: updatedHistory };
+  const lookups = getLookups();
+  const index = lookups.findIndex((storedLookup) => storedLookup.id === id);
 
-  return writeResult.ok
-    ? { ok: true, value: updatedLookup }
-    : { ok: false, message: writeResult.message, value: updatedLookup };
+  if (index === -1) {
+    return { ok: false, message: "This saved scan was not found.", value: null };
+  }
+
+  const updatedLookups = [...lookups];
+  updatedLookups[index] = updatedLookup;
+
+  const lookupWriteResult = writeLookups(updatedLookups);
+  if (!lookupWriteResult.ok) {
+    return { ok: false, message: lookupWriteResult.message, value: updatedLookup };
+  }
+
+  const chatWriteResult = writeChatHistory(id, updatedHistory);
+  if (!chatWriteResult.ok) {
+    try {
+      localStorage.removeItem(CHAT_KEY(id));
+    } catch {
+      // Fall back to the parent lookup record if the per-scan chat key cannot be updated.
+    }
+    return { ok: false, message: chatWriteResult.message, value: updatedLookup };
+  }
+
+  return { ok: true, value: updatedLookup };
 }
 
 export function deleteLookup(id: string): StorageResult<boolean> {

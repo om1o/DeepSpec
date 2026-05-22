@@ -121,11 +121,20 @@ describe("storage", () => {
 
     expect(result.ok).toBe(true);
     expect(getLookup(lookup.id)?.chatHistory).toHaveLength(2);
+    expect(getLookups()[0].chatHistory).toHaveLength(2);
     expect(getLookup(lookup.id)?.chatHistory[0]).toMatchObject({
       role: "user",
       content: expect.stringMatching(/^What does it do/),
     });
     expect(getLookup(lookup.id)?.chatHistory[0].content.length).toBeLessThanOrEqual(500);
+
+    updateLookupResult(lookup.id, {
+      ...scanState.result!,
+      partName: "Serpentine belt",
+    });
+
+    expect(getLookups()[0].chatHistory).toHaveLength(2);
+    expect(getLookup(lookup.id)?.chatHistory).toHaveLength(2);
   });
 
   it("caps saved scans so the local database stays bounded", () => {
