@@ -128,12 +128,13 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
   }
 
   const ocr = shouldRunOcr(parsed) ? await runOcrFallback(parsed, env) : null;
+  const sourceContext = buildDatasetSourceContext(env);
   const models = getIdentifyModels(env);
   let rateLimited = false;
 
   for (const model of models) {
     const startedAt = Date.now();
-    const response = await fetchGeminiIdentify(model, parsed, ocr, apiKey);
+    const response = await fetchGeminiIdentify(model, parsed, ocr, sourceContext, apiKey);
 
     if (!response) {
       return errorResponse(502, "network", "Deep Spec could not reach Gemini.");
@@ -213,6 +214,7 @@ function fetchGeminiIdentify(
     userMessage: string;
   },
   ocr: { text: string; model: string } | null,
+  sourceContext: string | null,
   apiKey: string,
 ) {
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
@@ -242,6 +244,7 @@ function fetchGeminiIdentify(
               ? [{ inline_data: { mime_type: parsed.mimeType_2, data: parsed.base64_2 } }]
               : []),
             ...(ocr?.text ? [{ text: buildOcrContext(ocr.text) }] : []),
+            ...(sourceContext ? [{ text: sourceContext }] : []),
             { text: parsed.userMessage },
           ],
         },
@@ -499,6 +502,68 @@ function uniqueSourceLinks(links: SourceLink[]) {
   }
 
   return unique;
+}
+
+function buildDatasetSourceContext(env: Record<string, string | undefined>) {
+  const datasetIndexPath = resolve(process.cwd(), env.DEEPSPEC_DATASET_INDEX_PATH || DEFAULT_DATASET_INDEX_PATH);
+  const datasetRecords = readDatasetRecords(datasetIndexPath);
+  const sourceSummaries = datasetRecords.length
+    ? summarizeDatasetRecords(datasetRecords)
+    : summarizeRawDatasetLabels(resolve(process.cwd(), env.DEEPSPEC_DATASET_ROOT || DEFAULT_DATASET_ROOT));
+
+  if (!sourceSummaries.length) {
+    return null;
+  }
+
+  return [
+    "Deep Spec local source context:",
+    "Use these project dataset labels and source URLs as supporting context only when the photo evidence agrees. Do not treat source labels as visual evidence by themselves.",
+    ...sourceSummaries.slice(0, 24).map((source) => {
+      const sampleText = source.sampleCount ? `, ${source.sampleCount} labeled sample${source.sampleCount === 1 ? "" : "s"}` : "";
+      const sourceText = source.sourceUrl ? ` Source: ${source.sourceUrl}` : "";
+      return `- ${source.label} (${source.kind}${sampleText}).${sourceText}`;
+    }),
+  ].join("\n");
+}
+
+function summarizeDatasetRecords(records: DatasetRecord[]): DatasetMatch[] {
+  const labelGroups = new Map<string, DatasetMatch>();
+
+  for (const record of records) {
+    const kind = record.canonicalKind === "damage" ? "damage" : record.canonicalKind === "part" ? "part" : null;
+    if (!kind) {
+      continue;
+    }
+
+    for (const label of getRecordLabels(record)) {
+      const key = `${kind}:${label.toLowerCase()}`;
+      const existing = labelGroups.get(key);
+      labelGroups.set(key, {
+        kind,
+        label,
+        score: 0,
+        sampleCount: (existing?.sampleCount ?? 0) + 1,
+        sourceUrl: existing?.sourceUrl ?? getRecordSourceUrl(record),
+      });
+    }
+  }
+
+  return [...labelGroups.values()].sort((a, b) => (b.sampleCount ?? 0) - (a.sampleCount ?? 0) || a.label.localeCompare(b.label));
+}
+
+function summarizeRawDatasetLabels(datasetRoot: string): DatasetMatch[] {
+  return [
+    ...readDatasetClassTitles(resolve(datasetRoot, "Car parts dataset", "meta.json")).map((label) => ({
+      kind: "part" as const,
+      label,
+      score: 0,
+    })),
+    ...readDatasetClassTitles(resolve(datasetRoot, "Car damages dataset", "meta.json")).map((label) => ({
+      kind: "damage" as const,
+      label,
+      score: 0,
+    })),
+  ].sort((a, b) => a.label.localeCompare(b.label));
 }
 
 type DatasetMatch = {
