@@ -208,6 +208,9 @@ describe("Result", () => {
     expect(screen.getByText(/Generated engine bay QA photo/)).toBeInTheDocument();
     expect(screen.getByText(/not saved to history, cloud sync, or training review/i)).toBeInTheDocument();
     expect(screen.queryByText("Saved scan")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Ask" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Ask next")).not.toBeInTheDocument();
+    expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBeNull();
   });
 
   it("saves an unsaved result before opening a suggested follow-up", async () => {
