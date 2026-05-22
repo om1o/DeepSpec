@@ -131,6 +131,44 @@ describe("createIdentifyResponse", () => {
     );
   });
 
+  it("falls back to flash lite when the default Gemini model is quota limited", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "quota exhausted" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 200,
+      body: {
+        modelRun: {
+          kind: "identify",
+          model: "gemini-flash-lite-latest",
+          promptVersion: "identify-v1",
+        },
+        result,
+      },
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy.mock.calls[0][0]).toEqual(expect.stringContaining("/models/gemini-2.5-flash:generateContent"));
+    expect(fetchSpy.mock.calls[1][0]).toEqual(expect.stringContaining("/models/gemini-flash-lite-latest:generateContent"));
+  });
+
   it("keeps the current engine QA fixture on the normal Gemini path", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
