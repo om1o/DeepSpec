@@ -25,9 +25,10 @@ Use a 900-check audit grid instead: 9 production tracks x 100 checks each. Every
 - Browser QA on `/early-access` passed the failure-state check: cloud health reports the Supabase Auth/database blocker without hiding storage/RLS as verified.
 - `npm run eval:identify:release` passed 50/50 fixed Hugging Face samples with provider available, 0 provider failures, and 0 failure review rows.
 - `npm run verify:identify-eval` passed with `Identify eval passed: 50/50 samples passed with provider available.`
-- Client scan requests and identify release eval samples now have explicit timeout coverage so a stuck provider call cannot leave the app or release gate hanging indefinitely.
-- `npm run verify:supabase` still fails after confirming anonymous sign-ins are enabled: anonymous signup returns `Database error creating anonymous user (unexpected_failure), HTTP 500`.
-- Latest captured Supabase request/error id: `019e4fa3-b641-7605-82cb-2a36e2d694c6`.
+- Provider hang guards are now covered: browser AI requests abort after 60s, and release eval samples have a 240s per-sample budget including retries.
+- A configured `npm run verify:supabase` run still failed after confirming anonymous sign-ins were enabled: anonymous signup returned `Database error creating anonymous user (unexpected_failure), HTTP 500`.
+- Latest captured configured-run Supabase request/error id: `019e4fa3-b641-7605-82cb-2a36e2d694c6`.
+- Current checkout refresh of `npm run verify:supabase` is blocked before Auth because `.env.local` is missing `VITE_SUPABASE_URL` or `VITE_SUPABASE_PUBLISHABLE_KEY`.
 - Supabase Preview check on PR #50 failed with `Failed to fetch existing branch project`.
 - GitHub Actions release gate is failing because repository secrets `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` are not configured.
 - Hugging Face connector confirmed `DrBimmer/car-parts-and-damage-dataset` as the current fixed release dataset source: 1,812 high-resolution polygon-annotated car part/damage images, MIT license, object-detection and image-segmentation tags.
