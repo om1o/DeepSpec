@@ -19,13 +19,14 @@ Use a 900-check audit grid instead: 9 production tracks x 100 checks each. Every
 
 ## Evidence From This Audit
 
-- `npm run check` passed locally on May 22, 2026: lint, 28 test files, 194 tests, and production build.
+- `npm run check` passed locally on May 22, 2026: lint, 29 test files, 206 tests, and production build.
 - GitHub Quality gate also passed `npm ci`, `npm run check`, 28 test files / 191 tests, and production build before intentionally failing the release cloud gate because Actions secrets are missing.
 - Browser QA passed for `/scan?test=1` on the current release branch: the test engine photo opened `/result`, identified `Alternator`, rendered evidence/sources/actions, and produced 0 local app console errors.
 - Browser QA on `/early-access` passed the failure-state check: cloud health reports the Supabase Auth/database blocker without hiding storage/RLS as verified.
 - `npm run eval:identify:release` passed 50/50 fixed Hugging Face samples with provider available, 0 provider failures, and 0 failure review rows.
 - `npm run verify:identify-eval` passed with `Identify eval passed: 50/50 samples passed with provider available.`
 - Provider hang guards are now covered: browser AI requests abort after 60s, and release eval samples have a 240s per-sample budget including retries.
+- Result evidence regions now carry typed anchors (`scanned_area`, `upper_left`, `center`, `lower_right`, etc.) so API output, saved scans, and the image overlay can agree on where each clue belongs. Old free-text region labels are still inferred into anchors for backward compatibility.
 - Result follow-up now has a typed `Ask about this result` form that saves unsaved real scans before opening chat, while saved scans open chat directly with the typed question.
 - Local saved-scan retention now keeps up to 300 records and `/history` exports dataset JSON with photo, result, correction, notes, chat, OCR/model metadata, prompt versions, latency, and sync events.
 - A configured `npm run verify:supabase` run still failed after confirming anonymous sign-ins were enabled: anonymous signup returned `Database error creating anonymous user (unexpected_failure), HTTP 500`.
@@ -48,8 +49,8 @@ Use a 900-check audit grid instead: 9 production tracks x 100 checks each. Every
 | P1-001 | High | Scanner UX | `/scan?test=1` shows camera-denied UI and test panel at the same time. | Browser snapshot shows "Camera access needed" plus "Test engine photo". | Test/upload mode should bypass camera-blocking copy and render a clean non-camera scanner state. |
 | P1-002 | High | Result UX | Result output is grouped like a report, not Google Lens. | Live result stacks `AI identification`, `Trust check`, `Safety-critical`, `What it does`, `What I see`, `Concerns`, `Evidence`, `Next action`, `Reference links`. | Replace with image-first Lens result sheet: primary match, alternatives, evidence chips, action tabs, sources. |
 | P1-003 | High | Result accuracy | The fixture alternator was treated as professional verification needed. | Live QA result showed high confidence alternator plus safety-critical/pro verification warning. | Recalibrate safety triage so ordinary electrical parts are not escalated unless visible risk exists. |
-| P1-004 | High | Evidence UX | Evidence is displayed as text chips disconnected from image regions. | Live result has evidence chips below the fold only. | Add image callouts/regions and map evidence to visible observations. |
-| P1-005 | High | Alternatives | App returns one answer only; Lens often ranks possible results and may show alternatives. | Current `IdentificationResult` has no alternatives. | Add `candidateMatches[]` with confidence/reason/source. |
+| P1-004 | High | Evidence UX | Evidence can now anchor to coarse image regions, but not exact boxes or masks. | `EvidenceRegion.anchor` is preserved and rendered in image callouts; there are no pixel coordinates. | Keep coarse anchors for model safety, then add optional detector/manual region boxes only when image-coordinate evidence is trustworthy. |
+| P1-005 | High | Alternatives | Candidate matches exist, but result ranking is still lightweight. | `candidateMatches[]` carries ranked part/confidence/reason, but no per-candidate sources or user selection flow. | Add candidate source evidence and a correction path that can promote an alternate match. |
 | P1-006 | High | Follow-up | QA test scans intentionally cannot chat, but real unsaved and saved result follow-up now works from the result screen. | `ResultAskBox` saves unsaved real scans before chat and opens saved scans directly with typed `?q=` context. | Keep QA test scans unsaved; continue improving chat reliability after provider quota and Supabase gates are fixed. |
 | P1-007 | High | Persistence | QA scan intentionally does not save, so browser QA cannot verify saved controls from the fixture. | Result shows "not saved to history, cloud sync, or training review." | Add a local QA seed route or test-only save toggle for production QA. |
 | P1-008 | High | Cloud UI | UI can say cloud sync is ready even when end-to-end verification fails. | Early Access showed cloud ready; verifier failed anonymous sign-in. | Add runtime cloud health state: configured, auth-ok, storage-ok, RLS-ok, last verified. |

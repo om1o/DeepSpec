@@ -493,6 +493,103 @@ describe("createIdentifyResponse", () => {
     });
   });
 
+  it("normalizes evidence region anchors from model region labels", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: JSON.stringify({
+                      ...result,
+                      evidenceRegions: [
+                        {
+                          label: "Lower connector",
+                          observation: "The connector is visible in the lower right of the scanned area.",
+                          regionLabel: "Lower right",
+                        },
+                      ],
+                    }),
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          evidenceRegions: [
+            {
+              anchor: "lower_right",
+              label: "Lower connector",
+              regionLabel: "Lower right",
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it("infers evidence anchors when the model returns an unsupported anchor string", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: JSON.stringify({
+                      ...result,
+                      evidenceRegions: [
+                        {
+                          anchor: "bottom_corner",
+                          label: "Lower connector",
+                          observation: "The connector is visible in the lower right of the scanned area.",
+                          regionLabel: "Lower right",
+                        },
+                      ],
+                    }),
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          evidenceRegions: [
+            {
+              anchor: "lower_right",
+              label: "Lower connector",
+              regionLabel: "Lower right",
+            },
+          ],
+        },
+      },
+    });
+  });
+
   it("returns a provider_error and preserves HTTP status when Gemini responds with non-JSON", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("<html>Service Unavailable</html>", {

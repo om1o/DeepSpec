@@ -90,6 +90,29 @@ describe("Result", () => {
     );
   });
 
+  it("positions image evidence callouts from structured anchors", () => {
+    renderResult({
+      ...successfulScan,
+      result: {
+        ...successfulScan.result!,
+        evidenceRegions: [
+          {
+            anchor: "upper_left",
+            label: "Pulley edge",
+            observation: "The pulley edge is visible in the scan overlay.",
+            regionLabel: "Scanned area",
+          },
+        ],
+      },
+    });
+
+    const callout = screen.getByTestId("evidence-callout-upper_left");
+    expect(callout.className).toContain("left-[8%]");
+    expect(callout.className).toContain("top-[22%]");
+    expect(within(callout).getByText("Clue 1 / Scanned area")).toBeInTheDocument();
+    expect(within(callout).getByText("Pulley edge")).toBeInTheDocument();
+  });
+
   it("groups OCR label text into a Lens-style text section", () => {
     renderResult({
       ...successfulScan,

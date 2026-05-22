@@ -3,6 +3,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { getAIErrorDetails, getAIErrorMessage, identifyCapturedFrameWithRun } from "../services/aiService";
 import CloudHealthCard from "../components/CloudHealthCard";
 import Button from "../components/ui/Button";
+import { getEvidenceRegionAnchor } from "../lib/evidenceAnchors";
 import { isTestMode } from "../lib/testMode";
 import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } from "../lib/utils";
 import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
@@ -228,30 +229,38 @@ function ImageEvidenceCallouts({ regions }: { regions: EvidenceRegion[] | undefi
 
   return (
     <div className="pointer-events-none absolute inset-0 z-10">
-      {callouts.map((region) => (
-        <div
-          key={`${region.regionLabel}-${region.label}`}
-          className={`absolute max-w-[190px] rounded-2xl border border-white/30 bg-slate-950/72 px-3 py-2 text-white shadow-[0_14px_34px_rgba(0,0,0,0.28)] backdrop-blur-md ${getEvidenceCalloutPosition(region.regionLabel)}`}
-        >
-          <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-white/62">{region.regionLabel}</p>
-          <p className="mt-1 truncate text-xs font-extrabold">{region.label}</p>
-        </div>
-      ))}
+      {callouts.map((region, index) => {
+        const anchor = getEvidenceRegionAnchor(region);
+        return (
+          <div
+            key={`${region.regionLabel}-${region.label}`}
+            className={`absolute max-w-[190px] rounded-2xl border border-white/30 bg-slate-950/72 px-3 py-2 text-white shadow-[0_14px_34px_rgba(0,0,0,0.28)] backdrop-blur-md ${getEvidenceCalloutPosition(anchor)}`}
+            data-testid={`evidence-callout-${anchor}`}
+          >
+            <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-white/62">Clue {index + 1} / {region.regionLabel}</p>
+            <p className="mt-1 truncate text-xs font-extrabold">{region.label}</p>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-function getEvidenceCalloutPosition(regionLabel: string) {
-  const label = regionLabel.toLowerCase();
-  if (/upper|top/.test(label) && /left/.test(label)) return "left-[8%] top-[22%]";
-  if (/upper|top/.test(label) && /right/.test(label)) return "right-[8%] top-[22%]";
-  if (/lower|bottom/.test(label) && /left/.test(label)) return "bottom-[24%] left-[8%]";
-  if (/lower|bottom/.test(label) && /right/.test(label)) return "bottom-[24%] right-[8%]";
-  if (/left/.test(label)) return "left-[8%] top-1/2 -translate-y-1/2";
-  if (/right/.test(label)) return "right-[8%] top-1/2 -translate-y-1/2";
-  if (/lower|bottom/.test(label)) return "bottom-[24%] left-1/2 -translate-x-1/2";
-  if (/upper|top/.test(label)) return "left-1/2 top-[22%] -translate-x-1/2";
-  return "left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2";
+function getEvidenceCalloutPosition(anchor: ReturnType<typeof getEvidenceRegionAnchor>) {
+  const positions = {
+    center: "left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2",
+    left: "left-[8%] top-1/2 -translate-y-1/2",
+    lower: "bottom-[24%] left-1/2 -translate-x-1/2",
+    lower_left: "bottom-[24%] left-[8%]",
+    lower_right: "bottom-[24%] right-[8%]",
+    right: "right-[8%] top-1/2 -translate-y-1/2",
+    scanned_area: "left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2",
+    upper: "left-1/2 top-[22%] -translate-x-1/2",
+    upper_left: "left-[8%] top-[22%]",
+    upper_right: "right-[8%] top-[22%]",
+  };
+
+  return positions[anchor];
 }
 
 function TestRunNotice({ label }: { label?: string }) {

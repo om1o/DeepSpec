@@ -344,6 +344,7 @@ function isCandidateMatchArray(value: unknown): value is CandidateMatch[] {
 function isEvidenceRegionArray(value: unknown): value is EvidenceRegion[] {
   return Array.isArray(value) && value.every((item) => (
     isRecord(item) &&
+    (item.anchor === undefined || typeof item.anchor === "string") &&
     typeof item.label === "string" &&
     typeof item.observation === "string" &&
     typeof item.regionLabel === "string"

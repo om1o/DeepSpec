@@ -11,6 +11,21 @@ export type Confidence = "high" | "medium" | "low";
 
 export type LabelRescueTrigger = "too_blurry";
 
+export const EVIDENCE_ANCHORS = [
+  "scanned_area",
+  "upper_left",
+  "upper",
+  "upper_right",
+  "left",
+  "center",
+  "right",
+  "lower_left",
+  "lower",
+  "lower_right",
+] as const;
+
+export type EvidenceAnchor = (typeof EVIDENCE_ANCHORS)[number];
+
 export const SCAN_CATEGORIES = [
   "engine",
   "electrical",
@@ -34,6 +49,7 @@ export type CandidateMatch = {
 };
 
 export type EvidenceRegion = {
+  anchor?: EvidenceAnchor;
   label: string;
   observation: string;
   regionLabel: string;

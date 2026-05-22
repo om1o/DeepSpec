@@ -1,3 +1,4 @@
+import { getEvidenceRegionAnchor } from "../lib/evidenceAnchors";
 import type { AIModelRun, CandidateMatch, ChatMessage, CloudSyncEvent, Confidence, EvidenceRegion, IdentificationResult, Lookup, Rating, ScanAnalysisState, ScanCategory, SourceLink, TrainingStatus } from "../types";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
@@ -578,11 +579,15 @@ function normalizeEvidenceRegions(regions: unknown, observations: unknown[], evi
   if (Array.isArray(regions)) {
     const cleaned = regions
       .filter((item): item is Partial<EvidenceRegion> => typeof item === "object" && item !== null)
-      .map((region) => ({
-        label: typeof region.label === "string" ? cleanText(region.label, 80) : "",
-        observation: typeof region.observation === "string" ? cleanText(region.observation, 180) : "",
-        regionLabel: typeof region.regionLabel === "string" ? cleanText(region.regionLabel, 80) : "Scanned area",
-      }))
+      .map((region) => {
+        const regionLabel = typeof region.regionLabel === "string" ? cleanText(region.regionLabel, 80) : "Scanned area";
+        return {
+          anchor: getEvidenceRegionAnchor({ anchor: region.anchor, regionLabel }),
+          label: typeof region.label === "string" ? cleanText(region.label, 80) : "",
+          observation: typeof region.observation === "string" ? cleanText(region.observation, 180) : "",
+          regionLabel,
+        };
+      })
       .filter((region) => region.label && region.observation)
       .slice(0, 4);
 
@@ -592,6 +597,7 @@ function normalizeEvidenceRegions(regions: unknown, observations: unknown[], evi
   }
 
   return cleanStringArray([...observations, ...evidence], 3, 180).map((observation, index) => ({
+    anchor: "scanned_area",
     label: index === 0 ? "Primary clue" : `Clue ${index + 1}`,
     observation,
     regionLabel: "Scanned area",

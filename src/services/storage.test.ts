@@ -97,12 +97,42 @@ describe("storage", () => {
     expect(result.ok).toBe(true);
     expect(getLookups()).toHaveLength(1);
     expect(getLookup(result.value.id)?.result?.partName).toBe("Alternator");
+    expect(getLookup(result.value.id)?.result?.evidenceRegions[0]?.anchor).toBe("scanned_area");
     expect(getLookup(result.value.id)).toMatchObject({
       modelRuns: [identifyModelRun],
       syncEvents: [],
       scanCategory: "electrical",
       trainingLabel: "Alternator",
       trainingStatus: "raw_unreviewed",
+    });
+  });
+
+  it("normalizes stored evidence anchors from legacy or unsupported region data", () => {
+    const lookup = createLookup(scanState).value;
+    localStorage.setItem(
+      LOOKUPS_STORAGE_KEY,
+      JSON.stringify([
+        {
+          ...lookup,
+          result: {
+            ...lookup.result,
+            evidenceRegions: [
+              {
+                anchor: "bottom_corner",
+                label: "Lower connector",
+                observation: "The connector is visible in the lower right of the scanned area.",
+                regionLabel: "Lower right",
+              },
+            ],
+          },
+        },
+      ]),
+    );
+
+    expect(getLookup(lookup.id)?.result?.evidenceRegions[0]).toMatchObject({
+      anchor: "lower_right",
+      label: "Lower connector",
+      regionLabel: "Lower right",
     });
   });
 

@@ -1,5 +1,7 @@
 import { IDENTIFY_PROMPT } from "../src/services/systemPrompts";
+import { getEvidenceRegionAnchor } from "../src/lib/evidenceAnchors";
 import {
+  EVIDENCE_ANCHORS,
   SCAN_CATEGORIES,
   type CandidateMatch,
   type EvidenceRegion,
@@ -69,6 +71,7 @@ const IDENTIFICATION_RESPONSE_SCHEMA = {
       items: {
         type: "object",
         properties: {
+          anchor: { type: "string", enum: [...EVIDENCE_ANCHORS] },
           label: { type: "string" },
           observation: { type: "string" },
           regionLabel: { type: "string" },
@@ -553,11 +556,15 @@ function uniqueCandidates(candidates: CandidateMatch[]) {
 
 function normalizeEvidenceRegions(evidenceRegions: EvidenceRegion[], observations: string[], evidence: string[]) {
   const cleanRegions = evidenceRegions
-    .map((region) => ({
-      label: cleanText(region.label, ""),
-      observation: cleanText(region.observation, ""),
-      regionLabel: cleanText(region.regionLabel, "Scanned area"),
-    }))
+    .map((region) => {
+      const regionLabel = cleanText(region.regionLabel, "Scanned area");
+      return {
+        anchor: getEvidenceRegionAnchor({ anchor: region.anchor, regionLabel }),
+        label: cleanText(region.label, ""),
+        observation: cleanText(region.observation, ""),
+        regionLabel,
+      };
+    })
     .filter((region) => region.label && region.observation);
 
   if (cleanRegions.length) {
@@ -567,6 +574,7 @@ function normalizeEvidenceRegions(evidenceRegions: EvidenceRegion[], observation
   return [...observations, ...evidence]
     .slice(0, 3)
     .map((observation, index) => ({
+      anchor: "scanned_area" as const,
       label: index === 0 ? "Primary clue" : `Clue ${index + 1}`,
       observation,
       regionLabel: "Scanned area",
@@ -1033,6 +1041,7 @@ function isCandidateMatchArray(value: unknown): value is CandidateMatch[] {
 function isEvidenceRegionArray(value: unknown): value is EvidenceRegion[] {
   return Array.isArray(value) && value.every((item) => (
     isRecord(item) &&
+    (item.anchor === undefined || typeof item.anchor === "string") &&
     typeof item.label === "string" &&
     typeof item.observation === "string" &&
     typeof item.regionLabel === "string"
