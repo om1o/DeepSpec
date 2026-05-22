@@ -451,6 +451,26 @@ describe("identify eval scoring", () => {
           failureReasons: [],
         },
       }),
+      buildEvalResultRow({
+        elapsedMs: 700,
+        error: null,
+        expectedLabels: ["Brake rotor"],
+        imagePath: "Car parts dataset/File1/img/Car damages 137.png",
+        providerAvailabilityFailure: false,
+        responseStatus: 200,
+        retryCount: 0,
+        result: {
+          ...result,
+          partName: "Brake rotor",
+          isSafetyCritical: false,
+          safetyTriage: "can_help",
+        },
+        score: {
+          ok: true,
+          matchedLabels: ["Brake rotor"],
+          failureReasons: [],
+        },
+      }),
     ];
 
     const summary = buildEvalSummary({
@@ -464,31 +484,33 @@ describe("identify eval scoring", () => {
       },
       providerFailureCount: 0,
       results: rows,
-      selectedSamples: ["sample-1", "sample-2", "sample-3"],
+      selectedSamples: ["sample-1", "sample-2", "sample-3", "sample-4"],
     });
 
     expect(summary).toMatchObject({
-      attemptedCount: 3,
+      attemptedCount: 4,
       failureCount: 1,
-      passCount: 2,
+      passCount: 3,
       qualityMetrics: {
-        accuracy: 0.6667,
-        failureRate: 0.3333,
+        accuracy: 0.75,
+        failureRate: 0.25,
         invalidResponseCount: 1,
-        invalidResponseRate: 0.3333,
+        invalidResponseRate: 0.25,
         latencyMs: {
-          average: 300,
-          max: 500,
+          average: 400,
+          max: 700,
           median: 300,
           min: 100,
-          p95: 500,
+          p95: 700,
         },
         providerFailureRate: 0,
         retryCount: 1,
-        retryRate: 0.3333,
+        retryRate: 0.25,
         safetyEscalationCount: 1,
+        safetyFalseNegativeCount: 1,
+        safetyFalseNegativeRate: 0.25,
         safetyFalsePositiveCount: 1,
-        safetyFalsePositiveRate: 0.3333,
+        safetyFalsePositiveRate: 0.25,
       },
       sampleSet: "public",
     });

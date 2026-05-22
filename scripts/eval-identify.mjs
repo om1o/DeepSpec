@@ -366,6 +366,7 @@ export function buildEvalQualityMetrics({
   const retryCount = results.reduce((sum, result) => sum + (Number(result.retryCount) || 0), 0);
   const safetyEscalationCount = results.filter(isSafetyEscalatedEvalRow).length;
   const safetyFalsePositiveCount = results.filter(isSafetyFalsePositiveEvalRow).length;
+  const safetyFalseNegativeCount = results.filter(isSafetyFalseNegativeEvalRow).length;
 
   return {
     accuracy: ratio(passCount, attemptedCount),
@@ -377,6 +378,8 @@ export function buildEvalQualityMetrics({
     retryCount,
     retryRate: ratio(retryCount, attemptedCount),
     safetyEscalationCount,
+    safetyFalseNegativeCount,
+    safetyFalseNegativeRate: ratio(safetyFalseNegativeCount, attemptedCount),
     safetyFalsePositiveCount,
     safetyFalsePositiveRate: ratio(safetyFalsePositiveCount, attemptedCount),
   };
@@ -952,6 +955,10 @@ function isSafetyEscalatedEvalRow(row) {
 
 function isSafetyFalsePositiveEvalRow(row) {
   return isSafetyEscalatedEvalRow(row) && !hasExpectedSafetySensitiveLabel(row.expectedLabels);
+}
+
+function isSafetyFalseNegativeEvalRow(row) {
+  return Boolean(row.partName) && hasExpectedSafetySensitiveLabel(row.expectedLabels) && !isSafetyEscalatedEvalRow(row);
 }
 
 function hasExpectedSafetySensitiveLabel(labels) {
