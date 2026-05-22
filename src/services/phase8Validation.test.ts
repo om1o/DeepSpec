@@ -9,6 +9,7 @@ describe("Phase 8 Supabase validation tooling", () => {
   const verifier = readFileSync(join(process.cwd(), "scripts", "verify-supabase-sync.mjs"), "utf8");
   const authDiagnostics = readFileSync(join(process.cwd(), "scripts", "print-supabase-auth-diagnostics.mjs"), "utf8");
   const docs = readFileSync(join(process.cwd(), "docs", "PHASE_8_SUPABASE_VALIDATION.md"), "utf8");
+  const ciWorkflow = readFileSync(join(process.cwd(), ".github", "workflows", "ci.yml"), "utf8");
 
   it("exposes a dedicated Supabase verification command", () => {
     expect(packageJson.scripts["verify:supabase"]).toBe("node scripts/verify-supabase-sync.mjs");
@@ -46,5 +47,13 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(docs).toContain("Do not put a service-role key");
     expect(docs).toContain("VITE_SUPABASE_PUBLISHABLE_KEY");
     expect(docs).toContain("supabase:print-auth-diagnostics");
+    expect(docs).toContain("codex/production-readiness-release*");
+  });
+
+  it("does not let production-readiness CI silently skip Supabase verification", () => {
+    expect(ciWorkflow).toContain("Supabase public secrets are not configured; cloud sync verifier did not run.");
+    expect(ciWorkflow).toContain("GITHUB_STEP_SUMMARY");
+    expect(ciWorkflow).toContain("codex/production-readiness-release*");
+    expect(ciWorkflow).toContain("Production-readiness branches and main must prove Supabase cloud sync.");
   });
 });
