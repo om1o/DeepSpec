@@ -19,6 +19,7 @@ describe("Supabase secure foundation migration", () => {
 
   it("preserves dataset fields needed for future training and review", () => {
     expect(sql).toContain("scan_category text not null default 'unknown'");
+    expect(sql).toContain("metadata_json jsonb not null default '{}'::jsonb");
     expect(sql).toContain("training_label text not null default 'unlabeled'");
     expect(sql).toContain("training_status text not null default 'raw_unreviewed'");
     expect(sql).toContain("rating text check");

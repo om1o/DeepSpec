@@ -1,8 +1,11 @@
 import {
   appendChatMessages,
+  appendLookupModelRun,
+  appendLookupSyncEvent,
   createChatMessage,
   createLookup,
   deleteLookup,
+  getLookupDatasetMetadata,
   getLookup,
   getLookups,
   LOOKUPS_STORAGE_KEY,
@@ -10,7 +13,31 @@ import {
   updateLookup,
   updateLookupResult,
 } from "./storage";
-import type { ScanAnalysisState } from "../types";
+import type { AIModelRun, ScanAnalysisState } from "../types";
+
+const identifyModelRun: AIModelRun = {
+  id: "run-identify-1",
+  createdAt: "2026-05-16T00:00:05.000Z",
+  kind: "identify",
+  latencyMs: 1250,
+  model: "gemini-2.5-flash",
+  ocrModel: "gemini-2.5-flash",
+  ocrText: "DENSO 104210",
+  ocrUsed: true,
+  promptVersion: "identify-v1",
+  provider: "gemini",
+};
+
+const chatModelRun: AIModelRun = {
+  id: "run-chat-1",
+  createdAt: "2026-05-16T00:01:05.000Z",
+  kind: "chat",
+  latencyMs: 900,
+  model: "gemini-2.5-flash",
+  ocrUsed: false,
+  promptVersion: "followup-v1",
+  provider: "gemini",
+};
 
 const scanState: ScanAnalysisState = {
   frame: {
@@ -53,6 +80,7 @@ const scanState: ScanAnalysisState = {
       },
     ],
   },
+  modelRun: identifyModelRun,
 };
 
 describe("storage", () => {
@@ -68,6 +96,8 @@ describe("storage", () => {
     expect(getLookups()).toHaveLength(1);
     expect(getLookup(result.value.id)?.result?.partName).toBe("Alternator");
     expect(getLookup(result.value.id)).toMatchObject({
+      modelRuns: [identifyModelRun],
+      syncEvents: [],
       scanCategory: "electrical",
       trainingLabel: "Alternator",
       trainingStatus: "raw_unreviewed",
@@ -119,6 +149,42 @@ describe("storage", () => {
       trainingLabel: "Alternator",
     });
     expect(updated?.result?.partName).toBe("Alternator");
+  });
+
+  it("keeps model run and sync metadata for the training dataset", () => {
+    const lookup = createLookup(scanState).value;
+
+    appendLookupModelRun(lookup.id, chatModelRun);
+    appendLookupSyncEvent(lookup.id, {
+      imagePath: "user-1/lookup-1.jpg",
+      message: "Scan synced to the private Deep Spec dataset.",
+      status: "success",
+    });
+
+    const updated = getLookup(lookup.id);
+    expect(updated?.modelRuns).toEqual([identifyModelRun, chatModelRun]);
+    expect(updated?.syncEvents).toEqual([
+      expect.objectContaining({
+        imagePath: "user-1/lookup-1.jpg",
+        message: "Scan synced to the private Deep Spec dataset.",
+        status: "success",
+      }),
+    ]);
+    expect(updated ? getLookupDatasetMetadata(updated, "user-1/lookup-1.jpg") : null).toMatchObject({
+      chatMessageCount: 0,
+      imagePath: "user-1/lookup-1.jpg",
+      modelRuns: [identifyModelRun, chatModelRun],
+      ocrText: "DENSO 104210",
+      promptVersions: ["identify-v1", "followup-v1"],
+      schemaVersion: 1,
+      sourceUrls: ["https://www.google.com/search?q=Alternator%20car%20part"],
+      syncEvents: [
+        expect.objectContaining({
+          imagePath: "user-1/lookup-1.jpg",
+          status: "success",
+        }),
+      ],
+    });
   });
 
 

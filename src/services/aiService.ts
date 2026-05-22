@@ -1,7 +1,8 @@
-import { FOLLOWUP_PROMPT, IDENTIFY_PROMPT } from "./systemPrompts";
+import { FOLLOWUP_PROMPT } from "./systemPrompts";
 import {
   SCAN_CATEGORIES,
   type AIInput,
+  type AIModelRun,
   type CandidateMatch,
   type CapturedFrame,
   type EvidenceRegion,
@@ -32,11 +33,23 @@ export type AIErrorDetails = {
 };
 
 type IdentifyApiSuccess = {
+  modelRun?: AIModelRun;
   result: IdentificationResult;
 };
 
 type ChatApiSuccess = {
   message: string;
+  modelRun?: AIModelRun;
+};
+
+export type IdentifyFrameResponse = {
+  modelRun?: AIModelRun;
+  result: IdentificationResult;
+};
+
+export type FollowUpResponse = {
+  message: string;
+  modelRun?: AIModelRun;
 };
 
 type AIApiFailure = {
@@ -116,37 +129,52 @@ export async function identifyCapturedFrame(
   secondFrame?: CapturedFrame,
   labelRescueTrigger?: LabelRescueTrigger,
 ): Promise<IdentificationResult> {
-  const result = await runAI({
-    type: "vision",
+  return (await identifyCapturedFrameWithRun(frame, secondFrame, labelRescueTrigger)).result;
+}
+
+export async function identifyCapturedFrameWithRun(
+  frame: CapturedFrame,
+  secondFrame?: CapturedFrame,
+  labelRescueTrigger?: LabelRescueTrigger,
+): Promise<IdentifyFrameResponse> {
+  const body = await postAI<IdentifyApiSuccess>("/api/identify", {
     imageBase64: frame.imageBase64,
-    imageBase64_2: secondFrame?.imageBase64,
-    labelRescueTrigger,
+    ...(secondFrame?.imageBase64 ? { imageBase64_2: secondFrame.imageBase64 } : {}),
+    ...(labelRescueTrigger ? { labelRescueTrigger } : {}),
     userMessage: "Identify this car part from the captured photo.",
-    systemPrompt: IDENTIFY_PROMPT,
     responseAsJson: true,
   });
 
-  return assertIdentificationResult(result);
+  return {
+    modelRun: normalizeModelRun(body.modelRun),
+    result: assertIdentificationResult(body.result),
+  };
 }
 
 export async function sendFollowUp(lookup: Lookup, question: string): Promise<string> {
+  return (await sendFollowUpWithRun(lookup, question)).message;
+}
+
+export async function sendFollowUpWithRun(lookup: Lookup, question: string): Promise<FollowUpResponse> {
   const trimmedQuestion = question.trim().slice(0, 500);
   if (!trimmedQuestion) {
     throw new AIServiceError("invalid_input", "Ask a question first.");
   }
 
-  const result = await runAI({
-    type: "text",
+  const result = await postAI<ChatApiSuccess>("/api/chat", {
     userMessage: buildFollowUpContext(lookup, trimmedQuestion),
     systemPrompt: FOLLOWUP_PROMPT,
     responseAsJson: false,
   });
 
-  if (typeof result !== "string" || !result.trim()) {
+  if (typeof result.message !== "string" || !result.message.trim()) {
     throw new AIServiceError("invalid_response", "Deep Spec received an unreadable chat response.");
   }
 
-  return result.trim();
+  return {
+    message: result.message.trim(),
+    modelRun: normalizeModelRun(result.modelRun),
+  };
 }
 
 export function getAIErrorMessage(error: unknown) {
@@ -223,6 +251,42 @@ function assertIdentificationResult(value: unknown): IdentificationResult {
   }
 
   return value;
+}
+
+function normalizeModelRun(value: unknown): AIModelRun | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const kind = value.kind === "identify" || value.kind === "chat" ? value.kind : null;
+  if (
+    !kind ||
+    value.provider !== "gemini" ||
+    typeof value.model !== "string" ||
+    typeof value.promptVersion !== "string" ||
+    typeof value.latencyMs !== "number"
+  ) {
+    return undefined;
+  }
+
+  return {
+    id: typeof value.id === "string" ? value.id : createId("run"),
+    createdAt: typeof value.createdAt === "string" ? value.createdAt : new Date().toISOString(),
+    kind,
+    latencyMs: Math.max(0, Math.round(value.latencyMs)),
+    model: value.model.slice(0, 120),
+    ocrModel: typeof value.ocrModel === "string" ? value.ocrModel.slice(0, 160) : undefined,
+    ocrText: typeof value.ocrText === "string" ? value.ocrText.slice(0, 160) : undefined,
+    ocrUsed: Boolean(value.ocrUsed),
+    promptVersion: value.promptVersion.slice(0, 80),
+    provider: "gemini",
+  };
+}
+
+function createId(prefix: string) {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function isIdentificationResult(value: unknown): value is IdentificationResult {

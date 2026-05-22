@@ -173,6 +173,8 @@ describe("aiService", () => {
           trainingLabel: "Alternator",
           trainingStatus: "raw_unreviewed",
           chatHistory: [],
+          modelRuns: [],
+          syncEvents: [],
         },
         "What does it do?",
       ),

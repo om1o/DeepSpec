@@ -13,7 +13,7 @@ import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../l
 import { isTestMode } from "../lib/testMode";
 import { saveLatestScanState } from "../lib/utils";
 import TestScanPanel from "../components/scanner/TestScanPanel";
-import { AIServiceError, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
+import { AIServiceError, getAIErrorMessage, identifyCapturedFrameWithRun } from "../services/aiService";
 import { createLookup } from "../services/storage";
 import type { CapturedFrame, LabelRescueTrigger, ScanAnalysisState } from "../types";
 
@@ -159,12 +159,13 @@ export default function Scanner() {
 
     try {
       setAnalysisStep("Matching vehicle data");
-      const result = await identifyCapturedFrame(frame, secondFrame, labelRescueTrigger);
+      const { modelRun, result } = await identifyCapturedFrameWithRun(frame, secondFrame, labelRescueTrigger);
       if (!isScanRequestActive(requestId)) return;
       if (imageHash) setCachedScanResult(imageHash, result);
       setAnalysisStep("Saving result");
       persistAndNavigate({
         frame,
+        modelRun,
         result,
         analyzedAt: new Date().toISOString(),
       });

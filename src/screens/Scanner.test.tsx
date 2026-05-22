@@ -113,7 +113,19 @@ vi.mock("../services/aiService", () => ({
     code = "test";
   },
   getAIErrorMessage: (error: unknown) => (error instanceof Error ? error.message : "AI failed"),
-  identifyCapturedFrame: (...args: unknown[]) => identifyCapturedFrame(...args),
+  identifyCapturedFrameWithRun: async (...args: unknown[]) => ({
+    modelRun: {
+      id: "run-1",
+      createdAt: "2026-05-16T00:00:04.000Z",
+      kind: "identify",
+      latencyMs: 123,
+      model: "gemini-2.5-flash",
+      ocrUsed: false,
+      promptVersion: "identify-v1",
+      provider: "gemini",
+    },
+    result: await identifyCapturedFrame(...args),
+  }),
 }));
 
 // Pass all images as ok - quality logic is tested separately in imageQuality.test.ts

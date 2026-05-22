@@ -68,6 +68,7 @@ export type ScanAnalysisState = {
   errorMessage?: string;
   errorCode?: string;
   analyzedAt?: string;
+  modelRun?: AIModelRun;
   storageWarning?: string;
   /** Set when `?test=1`; result is in-memory only with no history or cloud save. */
   testRun?: boolean;
@@ -96,6 +97,27 @@ export type ChatMessage = {
   timestamp: string;
 };
 
+export type AIModelRun = {
+  id: string;
+  createdAt: string;
+  kind: "identify" | "chat";
+  provider: "gemini";
+  model: string;
+  promptVersion: string;
+  latencyMs: number;
+  ocrModel?: string;
+  ocrText?: string;
+  ocrUsed: boolean;
+};
+
+export type CloudSyncEvent = {
+  id: string;
+  createdAt: string;
+  imagePath?: string;
+  message: string;
+  status: "success" | "failure";
+};
+
 export type Lookup = {
   id: string;
   createdAt: string;
@@ -111,6 +133,8 @@ export type Lookup = {
   trainingLabel: string;
   trainingStatus: TrainingStatus;
   chatHistory: ChatMessage[];
+  modelRuns: AIModelRun[];
+  syncEvents: CloudSyncEvent[];
 };
 
 export type WaitlistSignup = {

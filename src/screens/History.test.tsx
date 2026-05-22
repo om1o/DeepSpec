@@ -35,6 +35,8 @@ const lookup: Lookup = {
   trainingLabel: "Alternator",
   trainingStatus: "user_confirmed",
   chatHistory: [],
+  modelRuns: [],
+  syncEvents: [],
 };
 
 describe("History", () => {

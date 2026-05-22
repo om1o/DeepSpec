@@ -17,6 +17,7 @@ create table if not exists public.scan_lookups (
   analyzed_at timestamptz,
   synced_at timestamptz not null default now(),
   image_path text,
+  metadata_json jsonb not null default '{}'::jsonb,
   result_json jsonb,
   error_message text,
   error_code text,
@@ -34,6 +35,7 @@ create table if not exists public.scan_lookups (
 
 comment on table public.scan_lookups is 'Private Deep Spec scan records used for user history and future model evaluation.';
 comment on column public.scan_lookups.result_json is 'Structured AI result as shown to the user; never treat as verified repair documentation.';
+comment on column public.scan_lookups.metadata_json is 'Dataset metadata such as model runs, prompt versions, OCR text, source URLs, and sync events.';
 comment on column public.scan_lookups.scan_category is 'Coarse category for filtering, review, and future dataset balancing.';
 comment on column public.scan_lookups.training_status is 'Human review signal derived from rating and correction flow.';
 

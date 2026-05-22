@@ -349,7 +349,7 @@ describe("Result", () => {
 
   it("allows retrying an unsaved failed scan when online", async () => {
     const onlineSpy = vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
-    const identifySpy = vi.spyOn(aiService, "identifyCapturedFrame").mockResolvedValue(successfulScan.result!);
+    const identifySpy = vi.spyOn(aiService, "identifyCapturedFrameWithRun").mockResolvedValue({ result: successfulScan.result! });
 
     renderResult({
       frame,
@@ -383,7 +383,7 @@ describe("Result", () => {
     localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([failedLookup]));
 
     const onlineSpy = vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
-    const identifySpy = vi.spyOn(aiService, "identifyCapturedFrame").mockResolvedValue(successfulScan.result!);
+    const identifySpy = vi.spyOn(aiService, "identifyCapturedFrameWithRun").mockResolvedValue({ result: successfulScan.result! });
 
     renderResult(null, `/result/${failedLookup.id}`);
 
@@ -461,6 +461,8 @@ function makeLookup(patch: Partial<Lookup> = {}): Lookup {
     trainingLabel: "Alternator",
     trainingStatus: "raw_unreviewed",
     chatHistory: [],
+    modelRuns: [],
+    syncEvents: [],
     ...patch,
   };
 }

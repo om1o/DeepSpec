@@ -109,9 +109,16 @@ describe("createIdentifyResponse", () => {
       ),
     );
 
-    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toEqual({
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
       status: 200,
       body: {
+        modelRun: {
+          kind: "identify",
+          model: "gemini-2.5-flash",
+          ocrUsed: false,
+          promptVersion: "identify-v1",
+          provider: "gemini",
+        },
         result,
       },
     });
@@ -137,9 +144,14 @@ describe("createIdentifyResponse", () => {
       ),
     );
 
-    await expect(createIdentifyResponse({ imageBase64: engineFixtureBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toEqual({
+    await expect(createIdentifyResponse({ imageBase64: engineFixtureBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
       status: 200,
       body: {
+        modelRun: {
+          kind: "identify",
+          model: "gemini-2.5-flash",
+          promptVersion: "identify-v1",
+        },
         result,
       },
     });
@@ -183,6 +195,11 @@ describe("createIdentifyResponse", () => {
     ).resolves.toMatchObject({
       status: 200,
       body: {
+        modelRun: {
+          ocrModel: "microsoft/trocr-large-printed",
+          ocrText: "DENSO 104210-1230",
+          ocrUsed: true,
+        },
         result: {
           evidence: expect.arrayContaining(["OCR label text: DENSO 104210-1230"]),
         },

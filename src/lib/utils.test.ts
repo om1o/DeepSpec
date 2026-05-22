@@ -73,6 +73,17 @@ describe("latest captured frame storage", () => {
         evidence: ["The pulley and housing match an alternator."],
         sourceLinks: [],
       },
+      modelRun: {
+        id: "run-identify-1",
+        createdAt: "2026-05-16T00:00:05.000Z",
+        kind: "identify" as const,
+        latencyMs: 1250,
+        model: "gemini-2.5-flash",
+        ocrText: "DENSO 104210",
+        ocrUsed: true,
+        promptVersion: "identify-v1",
+        provider: "gemini" as const,
+      },
     };
 
     saveLatestScanState(scanState);

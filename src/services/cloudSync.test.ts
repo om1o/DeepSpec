@@ -78,6 +78,14 @@ describe("cloudSync", () => {
       expect.objectContaining({
         image_path: "user-1/lookup-1.jpg",
         local_id: "lookup-1",
+        metadata_json: expect.objectContaining({
+          chatMessageCount: 0,
+          imagePath: "user-1/lookup-1.jpg",
+          modelRuns: [],
+          promptVersions: [],
+          schemaVersion: 1,
+          syncEvents: [],
+        }),
         scan_category: "electrical",
         training_label: "Alternator",
         training_status: "raw_unreviewed",
@@ -308,5 +316,7 @@ function makeLookup(): Lookup {
     scanCategory: "electrical",
     trainingLabel: "Alternator",
     trainingStatus: "raw_unreviewed",
+    modelRuns: [],
+    syncEvents: [],
   };
 }

@@ -50,10 +50,17 @@ describe("createChatResponse", () => {
       ),
     );
 
-    await expect(createChatResponse({ userMessage: "Part name: Alternator\nUser question: What does it do?" }, { GEMINI_API_KEY: "test-key" })).resolves.toEqual({
+    await expect(createChatResponse({ userMessage: "Part name: Alternator\nUser question: What does it do?" }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
       status: 200,
       body: {
         message: "The alternator charges the battery while the engine runs.",
+        modelRun: {
+          kind: "chat",
+          model: "gemini-2.5-flash",
+          ocrUsed: false,
+          promptVersion: "followup-v1",
+          provider: "gemini",
+        },
       },
     });
 

@@ -3,6 +3,7 @@ import {
   SCAN_CATEGORIES,
   type CandidateMatch,
   type EvidenceRegion,
+  type AIModelRun,
   type IdentificationResult,
   type ScanCategory,
   type SourceLink,
@@ -17,6 +18,7 @@ export type IdentifyResponse =
   | {
       status: 200;
       body: {
+        modelRun: AIModelRun;
         result: IdentificationResult;
       };
     }
@@ -32,6 +34,7 @@ export type IdentifyResponse =
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
 const DEFAULT_OCR_MODEL = "microsoft/trocr-large-printed";
+const IDENTIFY_PROMPT_VERSION = "identify-v1";
 const IDENTIFY_MAX_OUTPUT_TOKENS = 2048;
 const DEFAULT_DATASET_ROOT = "datasets/raw/drbimmer-car-parts-and-damage-dataset";
 const DEFAULT_DATASET_INDEX_PATH = "datasets/derived/drbimmer-car-parts-and-damage-dataset/records.jsonl";
@@ -195,10 +198,18 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
   }
 
   const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env);
+  const latencyMs = Date.now() - startedAt;
+  const modelRun = createModelRun({
+    kind: "identify",
+    latencyMs,
+    model,
+    ocr,
+    promptVersion: IDENTIFY_PROMPT_VERSION,
+  });
 
   console.info("[DeepSpec AI]", {
     model,
-    latencyMs: Date.now() - startedAt,
+    latencyMs,
     success: true,
     confidence: normalizedResult.confidence,
     scanCategory: normalizedResult.scanCategory,
@@ -209,6 +220,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
   return {
     status: 200,
     body: {
+      modelRun,
       result: normalizedResult,
     },
   };
@@ -683,6 +695,39 @@ function appendOcrEvidence(evidence: string[], ocrText: string | null) {
   }
 
   return [...evidence, ocrEvidence].slice(0, 6);
+}
+
+function createModelRun({
+  kind,
+  latencyMs,
+  model,
+  ocr,
+  promptVersion,
+}: {
+  kind: AIModelRun["kind"];
+  latencyMs: number;
+  model: string;
+  ocr: { text: string; model: string } | null;
+  promptVersion: string;
+}): AIModelRun {
+  return {
+    id: createRunId(),
+    createdAt: new Date().toISOString(),
+    kind,
+    latencyMs,
+    model,
+    ocrModel: ocr?.model,
+    ocrText: ocr?.text,
+    ocrUsed: Boolean(ocr?.text),
+    promptVersion,
+    provider: "gemini",
+  };
+}
+
+function createRunId() {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `run-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function shouldRunOcr(parsed: { userMessage: string; labelRescueTrigger: LabelRescueTrigger | null }) {

@@ -56,6 +56,8 @@ const lookup: Lookup = {
   trainingLabel: "Brake caliper",
   trainingStatus: "user_confirmed",
   chatHistory: [],
+  modelRuns: [],
+  syncEvents: [],
 };
 
 describe("report", () => {

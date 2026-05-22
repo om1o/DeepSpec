@@ -72,6 +72,14 @@ try {
         error_message: null,
         image_path: imagePath,
         local_id: testId,
+        metadata_json: {
+          modelRuns: [],
+          ocrText: null,
+          promptVersions: [],
+          schemaVersion: 1,
+          sourceUrls: [],
+          syncEvents: [],
+        },
         notes: "Phase 8 verification row. Safe to delete.",
         rating: null,
         result_json: {

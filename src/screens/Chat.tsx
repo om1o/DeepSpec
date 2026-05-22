@@ -1,8 +1,8 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import Button from "../components/ui/Button";
-import { AIServiceError, getAIErrorDetails, getAIErrorMessage, sendFollowUp } from "../services/aiService";
-import { appendChatMessages, createChatMessage, getLookup } from "../services/storage";
+import { AIServiceError, getAIErrorDetails, getAIErrorMessage, sendFollowUpWithRun } from "../services/aiService";
+import { appendChatMessages, appendLookupModelRun, createChatMessage, getLookup } from "../services/storage";
 import type { Lookup } from "../types";
 
 export default function Chat() {
@@ -56,8 +56,8 @@ export default function Chat() {
     setQuestion("");
 
     try {
-      const answer = await sendFollowUp(savedUserMessage.value, trimmedQuestion);
-      const assistantMessage = createChatMessage("assistant", answer);
+      const answer = await sendFollowUpWithRun(savedUserMessage.value, trimmedQuestion);
+      const assistantMessage = createChatMessage("assistant", answer.message);
       const savedAssistantMessage = appendChatMessages(lookup.id, [assistantMessage]);
       if (!savedAssistantMessage.ok) {
         setError(savedAssistantMessage.message);
@@ -69,7 +69,8 @@ export default function Chat() {
         return;
       }
 
-      setLookup(savedAssistantMessage.value);
+      const savedWithRun = answer.modelRun ? appendLookupModelRun(lookup.id, answer.modelRun) : savedAssistantMessage;
+      setLookup(savedWithRun.value ?? savedAssistantMessage.value);
     } catch (chatError) {
       setError(getAIErrorMessage(chatError));
       setErrorCode(chatError instanceof AIServiceError ? chatError.code : null);

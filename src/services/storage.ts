@@ -1,4 +1,4 @@
-import type { CandidateMatch, ChatMessage, Confidence, EvidenceRegion, IdentificationResult, Lookup, Rating, ScanAnalysisState, ScanCategory, SourceLink, TrainingStatus } from "../types";
+import type { AIModelRun, CandidateMatch, ChatMessage, CloudSyncEvent, Confidence, EvidenceRegion, IdentificationResult, Lookup, Rating, ScanAnalysisState, ScanCategory, SourceLink, TrainingStatus } from "../types";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
 export const MAX_SAVED_LOOKUPS = 50;
@@ -32,6 +32,8 @@ export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup
     trainingLabel: scanState.result?.partName ?? "unlabeled",
     trainingStatus: "raw_unreviewed",
     chatHistory: [],
+    modelRuns: scanState.modelRun ? [scanState.modelRun] : [],
+    syncEvents: [],
   };
 
   const lookups = [lookup, ...getLookups()];
@@ -100,6 +102,7 @@ export function updateLookup(
 export function updateLookupResult(
   id: string,
   result: IdentificationResult,
+  modelRun?: AIModelRun,
 ): StorageResult<Lookup | null> {
   const lookups = getLookups();
   const index = lookups.findIndex((lookup) => lookup.id === id);
@@ -118,6 +121,7 @@ export function updateLookupResult(
     scanCategory: categorizeScan(result, existing.correction ?? undefined),
     trainingLabel: getTrainingLabel(result, existing.correction),
     trainingStatus: getTrainingStatus(existing.rating, existing.correction),
+    modelRuns: appendModelRuns(existing.modelRuns, modelRun ? [modelRun] : []),
   };
 
   const updatedLookups = [...lookups];
@@ -178,6 +182,53 @@ export function appendChatMessages(id: string, messages: ChatMessage[]): Storage
   }
 
   return { ok: true, value: updatedLookup };
+}
+
+export function appendLookupModelRun(id: string, modelRun: AIModelRun): StorageResult<Lookup | null> {
+  const lookup = getLookup(id);
+  if (!lookup) {
+    return { ok: false, message: "This saved scan was not found.", value: null };
+  }
+
+  return replaceLookup({
+    ...lookup,
+    modelRuns: appendModelRuns(lookup.modelRuns, [modelRun]),
+  });
+}
+
+export function appendLookupSyncEvent(
+  id: string,
+  event: Omit<CloudSyncEvent, "createdAt" | "id">,
+): StorageResult<Lookup | null> {
+  const lookup = getLookup(id);
+  if (!lookup) {
+    return { ok: false, message: "This saved scan was not found.", value: null };
+  }
+
+  return replaceLookup({
+    ...lookup,
+    syncEvents: [
+      ...lookup.syncEvents,
+      {
+        ...event,
+        createdAt: new Date().toISOString(),
+        id: createId(),
+      },
+    ].slice(-20),
+  });
+}
+
+export function getLookupDatasetMetadata(lookup: Lookup, imagePath?: string) {
+  return {
+    schemaVersion: 1,
+    chatMessageCount: lookup.chatHistory.length,
+    imagePath: imagePath ?? null,
+    modelRuns: lookup.modelRuns,
+    ocrText: getLookupOcrText(lookup),
+    promptVersions: [...new Set(lookup.modelRuns.map((run) => run.promptVersion))],
+    sourceUrls: getLookupSourceUrls(lookup),
+    syncEvents: lookup.syncEvents,
+  };
 }
 
 export function deleteLookup(id: string): StorageResult<boolean> {
@@ -263,6 +314,23 @@ function writeLookups(lookups: Lookup[]): StorageResult<Lookup[]> {
   }
 }
 
+function replaceLookup(updatedLookup: Lookup): StorageResult<Lookup | null> {
+  const lookups = getLookups();
+  const index = lookups.findIndex((lookup) => lookup.id === updatedLookup.id);
+
+  if (index === -1) {
+    return { ok: false, message: "This saved scan was not found.", value: null };
+  }
+
+  const updatedLookups = [...lookups];
+  updatedLookups[index] = updatedLookup;
+  const writeResult = writeLookups(updatedLookups);
+
+  return writeResult.ok
+    ? { ok: true, value: updatedLookup }
+    : { ok: false, message: writeResult.message, value: updatedLookup };
+}
+
 function pruneChatHistory(droppedLookups: Lookup[]) {
   for (const lookup of droppedLookups) {
     try {
@@ -330,6 +398,8 @@ function normalizeLookup(value: unknown): Lookup | null {
     trainingLabel: typeof lookup.trainingLabel === "string" ? lookup.trainingLabel : getTrainingLabel(result, correction),
     trainingStatus,
     chatHistory: normalizeChatHistory(lookup.chatHistory),
+    modelRuns: normalizeModelRuns(lookup.modelRuns),
+    syncEvents: normalizeSyncEvents(lookup.syncEvents),
   };
 }
 
@@ -519,6 +589,22 @@ function normalizeChatHistory(value: unknown): ChatMessage[] {
   return value.map(normalizeChatMessage).filter((message): message is ChatMessage => Boolean(message)).slice(-MAX_CHAT_MESSAGES);
 }
 
+function normalizeModelRuns(value: unknown): AIModelRun[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map(normalizeModelRun).filter((run): run is AIModelRun => Boolean(run)).slice(-20);
+}
+
+function normalizeSyncEvents(value: unknown): CloudSyncEvent[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map(normalizeSyncEvent).filter((event): event is CloudSyncEvent => Boolean(event)).slice(-20);
+}
+
 function normalizeChatMessage(value: unknown): ChatMessage | null {
   if (typeof value !== "object" || value === null) {
     return null;
@@ -537,8 +623,102 @@ function normalizeChatMessage(value: unknown): ChatMessage | null {
   };
 }
 
+function normalizeModelRun(value: unknown): AIModelRun | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+
+  const run = value as Partial<AIModelRun>;
+  if (
+    typeof run.id !== "string" ||
+    typeof run.createdAt !== "string" ||
+    (run.kind !== "identify" && run.kind !== "chat") ||
+    run.provider !== "gemini" ||
+    typeof run.model !== "string" ||
+    typeof run.promptVersion !== "string" ||
+    typeof run.latencyMs !== "number"
+  ) {
+    return null;
+  }
+
+  return {
+    id: run.id,
+    createdAt: run.createdAt,
+    kind: run.kind,
+    latencyMs: Math.max(0, Math.round(run.latencyMs)),
+    model: cleanText(run.model, 120),
+    ocrModel: typeof run.ocrModel === "string" ? cleanText(run.ocrModel, 160) : undefined,
+    ocrText: typeof run.ocrText === "string" ? cleanText(run.ocrText, 160) : undefined,
+    ocrUsed: Boolean(run.ocrUsed),
+    promptVersion: cleanText(run.promptVersion, 80),
+    provider: "gemini",
+  };
+}
+
+function normalizeSyncEvent(value: unknown): CloudSyncEvent | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+
+  const event = value as Partial<CloudSyncEvent>;
+  if (
+    typeof event.id !== "string" ||
+    typeof event.createdAt !== "string" ||
+    (event.status !== "success" && event.status !== "failure") ||
+    typeof event.message !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    id: event.id,
+    createdAt: event.createdAt,
+    imagePath: typeof event.imagePath === "string" ? cleanText(event.imagePath, 300) : undefined,
+    message: cleanText(event.message, 300),
+    status: event.status,
+  };
+}
+
 function isChatRole(value: unknown): value is ChatMessage["role"] {
   return value === "user" || value === "assistant";
+}
+
+function appendModelRuns(existing: AIModelRun[], runs: AIModelRun[]) {
+  return [...existing, ...runs].map(normalizeModelRun).filter((run): run is AIModelRun => Boolean(run)).slice(-20);
+}
+
+function getLookupOcrText(lookup: Lookup) {
+  const runText = [...lookup.modelRuns].reverse().find((run) => run.ocrText)?.ocrText;
+  if (runText) {
+    return runText;
+  }
+
+  for (const item of lookup.result?.evidence ?? []) {
+    const match = item.match(/^OCR label text:\s*(.+)$/i);
+    const text = match?.[1]?.replace(/\s+/g, " ").trim();
+    if (text) return text.slice(0, 160);
+  }
+
+  return null;
+}
+
+function getLookupSourceUrls(lookup: Lookup) {
+  const urls = new Set<string>();
+
+  for (const link of lookup.result?.sourceLinks ?? []) {
+    if (/^https:\/\//.test(link.url)) {
+      urls.add(link.url);
+    }
+  }
+
+  for (const item of lookup.result?.evidence ?? []) {
+    const matches = item.match(/https:\/\/[^\s)]+/g) ?? [];
+    for (const match of matches) {
+      urls.add(match);
+    }
+  }
+
+  return [...urls].slice(0, 12);
 }
 
 function cleanText(value: string, maxLength: number) {

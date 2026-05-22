@@ -1,4 +1,5 @@
 import { FOLLOWUP_PROMPT } from "../src/services/systemPrompts";
+import type { AIModelRun } from "../src/types";
 
 type JsonObject = Record<string, unknown>;
 
@@ -7,6 +8,7 @@ export type ChatResponse =
       status: 200;
       body: {
         message: string;
+        modelRun: AIModelRun;
       };
     }
   | {
@@ -20,6 +22,7 @@ export type ChatResponse =
     };
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
+const FOLLOWUP_PROMPT_VERSION = "followup-v1";
 
 export async function createChatResponse(body: unknown, env: Record<string, string | undefined>): Promise<ChatResponse> {
   const apiKey = env.GEMINI_API_KEY;
@@ -80,9 +83,10 @@ export async function createChatResponse(body: unknown, env: Record<string, stri
     return errorResponse(502, "invalid_response", "Gemini did not return a usable chat answer.");
   }
 
+  const latencyMs = Date.now() - startedAt;
   console.info("[DeepSpec Chat]", {
     model,
-    latencyMs: Date.now() - startedAt,
+    latencyMs,
     success: true,
   });
 
@@ -90,8 +94,43 @@ export async function createChatResponse(body: unknown, env: Record<string, stri
     status: 200,
     body: {
       message,
+      modelRun: createModelRun({
+        kind: "chat",
+        latencyMs,
+        model,
+        promptVersion: FOLLOWUP_PROMPT_VERSION,
+      }),
     },
   };
+}
+
+function createModelRun({
+  kind,
+  latencyMs,
+  model,
+  promptVersion,
+}: {
+  kind: AIModelRun["kind"];
+  latencyMs: number;
+  model: string;
+  promptVersion: string;
+}): AIModelRun {
+  return {
+    id: createRunId(),
+    createdAt: new Date().toISOString(),
+    kind,
+    latencyMs,
+    model,
+    ocrUsed: false,
+    promptVersion,
+    provider: "gemini",
+  };
+}
+
+function createRunId() {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `run-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function parseChatRequest(body: unknown): { userMessage: string } | { error: ChatResponse } {

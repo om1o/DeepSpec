@@ -1,5 +1,6 @@
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import type { FeedbackSubmission, Lookup, WaitlistSignup } from "../types";
+import { appendLookupSyncEvent, getLookupDatasetMetadata } from "./storage";
 
 const SCAN_BUCKET = "scan-images";
 const CLOUD_HEALTH_STORAGE_KEY = "deep-spec:cloud-health";
@@ -199,6 +200,7 @@ export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult
         error_message: lookup.errorMessage ?? null,
         image_path: imagePath,
         local_id: lookup.id,
+        metadata_json: getLookupDatasetMetadata(lookup, imagePath),
         notes: lookup.notes,
         rating: lookup.rating,
         result_json: lookup.result ?? null,
@@ -214,15 +216,20 @@ export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult
       throw new Error(saved.error.message);
     }
 
+    const message = "Scan synced to the private Deep Spec dataset.";
+    appendLookupSyncEvent(lookup.id, { imagePath, message, status: "success" });
+
     return {
       ok: true,
       imagePath,
-      message: "Scan synced to the private Deep Spec dataset.",
+      message,
     };
   } catch (error) {
+    const message = getFriendlySyncError(error);
+    appendLookupSyncEvent(lookup.id, { message, status: "failure" });
     return {
       ok: false,
-      message: getFriendlySyncError(error),
+      message,
     };
   }
 }

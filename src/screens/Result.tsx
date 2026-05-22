@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
+import { getAIErrorDetails, getAIErrorMessage, identifyCapturedFrameWithRun } from "../services/aiService";
 import CloudHealthCard from "../components/CloudHealthCard";
 import Button from "../components/ui/Button";
 import { isTestMode } from "../lib/testMode";
@@ -829,9 +829,9 @@ function AnalysisError({
     setRetryError(null);
 
     try {
-      const result = await identifyCapturedFrame(retryFrame);
+      const { modelRun, result } = await identifyCapturedFrameWithRun(retryFrame);
       if (lookup) {
-        const updateResult = updateLookupResult(lookup.id, result);
+        const updateResult = updateLookupResult(lookup.id, result, modelRun);
         if (updateResult.ok) {
           if (updateResult.value) {
             onLookupRetrySuccess(updateResult.value);
@@ -844,6 +844,7 @@ function AnalysisError({
       } else {
         onScanRetrySuccess({
           frame: retryFrame,
+          modelRun,
           result,
           analyzedAt: new Date().toISOString(),
         });
