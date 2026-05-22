@@ -7,6 +7,7 @@ describe("Phase 8 Supabase validation tooling", () => {
     scripts: Record<string, string>;
   };
   const verifier = readFileSync(join(process.cwd(), "scripts", "verify-supabase-sync.mjs"), "utf8");
+  const authDiagnostics = readFileSync(join(process.cwd(), "scripts", "print-supabase-auth-diagnostics.mjs"), "utf8");
   const docs = readFileSync(join(process.cwd(), "docs", "PHASE_8_SUPABASE_VALIDATION.md"), "utf8");
 
   it("exposes a dedicated Supabase verification command", () => {
@@ -34,6 +35,10 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(verifier).toContain("logs/auth-logs");
     expect(verifier).toContain("supabase:print-auth-diagnostics");
     expect(verifier).toContain("auth.users");
+    expect(authDiagnostics).toContain("security_type");
+    expect(authDiagnostics).toContain("profiles_table");
+    expect(authDiagnostics).toContain("suggested_drop_trigger_sql");
+    expect(authDiagnostics).toContain("review before running");
   });
 
   it("documents that parent setup and non-service-role keys are required", () => {
