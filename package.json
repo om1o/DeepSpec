@@ -14,6 +14,7 @@
     "test": "vitest run --configLoader native --pool forks",
     "supabase:print-migration": "node scripts/print-supabase-migration.mjs",
     "supabase:print-auth-diagnostics": "node scripts/print-supabase-auth-diagnostics.mjs",
+    "supabase:print-auth-anonymous-repair": "node scripts/print-supabase-auth-anonymous-repair.mjs",
     "verify:identify-eval": "node scripts/verify-identify-eval-summary.mjs",
     "verify:supabase": "node scripts/verify-supabase-sync.mjs",
     "preview": "vite preview --host 0.0.0.0 --configLoader native"

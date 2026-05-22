@@ -144,17 +144,20 @@ try {
 async function signInAnonymously(supabase, config) {
   const { data, error } = await supabase.auth.signInAnonymously();
   if (error || !data.user) {
+    const signupProbe = await probeAnonymousSignup(config);
     const code = error?.code ? ` (${error.code})` : "";
     const status = error?.status ? `HTTP ${error.status}` : "unknown status";
     const dashboardLinks = getDashboardLinks(config.url);
     throw new Error(
       [
         `Anonymous sign-in failed: ${error?.message ?? "No user returned"}${code}, ${status}.`,
+        formatSignupProbe(signupProbe),
         "The verifier already confirmed anonymous sign-ins are enabled, so this is a Supabase Auth/database problem instead of a browser app problem.",
         dashboardLinks
           ? `Open Auth logs for the failed /signup event: ${dashboardLinks.authLogs}`
           : "Open Supabase Dashboard -> Auth logs for the failed /signup event.",
         "Then run `npm run supabase:print-auth-diagnostics` and paste the SQL into Supabase SQL Editor.",
+        "If diagnostics show the standard public.handle_new_user profile trigger is failing, run `npm run supabase:print-auth-anonymous-repair` and review that SQL.",
         dashboardLinks ? `SQL Editor: ${dashboardLinks.sqlEditor}` : "Look for triggers or functions on auth.users that write to missing or constrained profile tables.",
         "Common causes: an outdated Auth schema, or a database trigger on auth.users failing while inserting into public.profiles or another required table.",
         "The private scan table and storage checks cannot run until Auth can create an anonymous user.",
@@ -163,6 +166,64 @@ async function signInAnonymously(supabase, config) {
   }
 
   return data.user;
+}
+
+async function probeAnonymousSignup(config) {
+  try {
+    const response = await fetch(`${config.url}/auth/v1/signup`, {
+      method: "POST",
+      headers: {
+        apikey: config.key,
+        Authorization: `Bearer ${config.key}`,
+        "Content-Type": "application/json",
+        "X-Client-Info": "deepspec-supabase-verifier",
+      },
+      body: JSON.stringify({
+        data: {},
+        gotrue_meta_security: {},
+      }),
+    });
+    const bodyText = await response.text();
+    let body = null;
+
+    try {
+      body = bodyText ? JSON.parse(bodyText) : null;
+    } catch {
+      body = null;
+    }
+
+    return {
+      body,
+      errorCode: response.headers.get("x-sb-error-code"),
+      errorId: body?.error_id ?? null,
+      message: body?.msg ?? body?.message ?? null,
+      requestId: response.headers.get("sb-request-id"),
+      status: response.status,
+    };
+  } catch (probeError) {
+    return {
+      body: null,
+      errorCode: null,
+      errorId: null,
+      message: probeError instanceof Error ? probeError.message : "Raw /signup probe failed.",
+      requestId: null,
+      status: null,
+    };
+  }
+}
+
+function formatSignupProbe(probe) {
+  if (!probe) {
+    return "Raw /signup diagnostic was unavailable.";
+  }
+
+  return [
+    `status ${probe.status ?? "unknown"}`,
+    `x-sb-error-code ${probe.errorCode ?? "missing"}`,
+    `sb-request-id ${probe.requestId ?? "missing"}`,
+    `error_id ${probe.errorId ?? "missing"}`,
+    probe.message ? `message "${probe.message}"` : null,
+  ].filter(Boolean).join(", ").replace(/^/, "Raw /signup diagnostic: ") + ".";
 }
 
 function getDashboardLinks(projectUrl) {
@@ -281,5 +342,5 @@ function loadLocalEnv(filename) {
 
 function fail(message) {
   console.error(message);
-  process.exitCode = 1;
+  process.exit(1);
 }

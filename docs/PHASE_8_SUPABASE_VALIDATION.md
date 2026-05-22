@@ -52,12 +52,13 @@ The verifier now confirms `external.anonymous_users` before sign-in, so a failur
 Check this before changing app code:
 
 1. Supabase Dashboard -> Authentication -> Sign In / Providers -> Anonymous sign-ins is enabled.
-2. Supabase Dashboard -> Auth logs: open the failed `/signup` event and read the database error. The verifier prints the project-specific Auth logs link when it can derive the project ref from `VITE_SUPABASE_URL`.
+2. Supabase Dashboard -> Auth logs: open the failed `/signup` event and read the database error. The verifier prints the project-specific Auth logs link when it can derive the project ref from `VITE_SUPABASE_URL`. It also prints the raw `/signup` `sb-request-id`, `error_id`, and `x-sb-error-code` when Supabase returns them.
 3. Run `npm run supabase:print-auth-diagnostics`, paste the printed read-only SQL into Supabase SQL Editor, and inspect every result set.
 4. If SQL shows non-internal triggers on `auth.users`, inspect the matching function body, `security_type`, owner, and `function_config`. A trigger function writing to `public.profiles` or `public.users` must be `security definer` and should pin `search_path`.
 5. If SQL shows `public.profiles` / `public.users` constraints, make sure they allow anonymous users or remove the trigger that writes to them. Do not run the generated drop-trigger statements until the Auth log or function body proves that trigger is the failing object.
-6. Apply this repo's migration if it has not been applied yet.
-7. Rerun `npm run verify:supabase`.
+6. If diagnostics show the standard Supabase template path `auth.users -> public.handle_new_user() -> public.profiles`, run `npm run supabase:print-auth-anonymous-repair`, review the printed SQL, then paste it into Supabase SQL Editor. This repair does not drop triggers; it makes `public.handle_new_user()` return immediately for anonymous users so profile-row constraints cannot block DeepSpec cloud-sync auth.
+7. Apply this repo's migration if it has not been applied yet.
+8. Rerun `npm run verify:supabase`.
 
 ## GitHub Actions
 

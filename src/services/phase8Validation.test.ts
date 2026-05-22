@@ -15,6 +15,7 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(packageJson.scripts["verify:supabase"]).toBe("node scripts/verify-supabase-sync.mjs");
     expect(packageJson.scripts["supabase:print-migration"]).toBe("node scripts/print-supabase-migration.mjs");
     expect(packageJson.scripts["supabase:print-auth-diagnostics"]).toBe("node scripts/print-supabase-auth-diagnostics.mjs");
+    expect(packageJson.scripts["supabase:print-auth-anonymous-repair"]).toBe("node scripts/print-supabase-auth-anonymous-repair.mjs");
   });
 
   it("checks private image upload, scan row write, owner read, cross-user block, and cleanup", () => {
@@ -33,8 +34,11 @@ describe("Phase 8 Supabase validation tooling", () => {
 
   it("prints actionable Supabase Auth diagnostics when anonymous sign-in fails", () => {
     expect(verifier).toContain("Anonymous sign-ins are enabled in Supabase Auth settings.");
+    expect(verifier).toContain("sb-request-id");
+    expect(verifier).toContain("error_id");
     expect(verifier).toContain("logs/auth-logs");
     expect(verifier).toContain("supabase:print-auth-diagnostics");
+    expect(verifier).toContain("supabase:print-auth-anonymous-repair");
     expect(verifier).toContain("auth.users");
     expect(authDiagnostics).toContain("security_type");
     expect(authDiagnostics).toContain("profiles_table");
@@ -42,11 +46,23 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(authDiagnostics).toContain("review before running");
   });
 
+  it("prints a narrow anonymous Auth repair SQL for the standard profile trigger", () => {
+    const authRepair = readFileSync(join(process.cwd(), "scripts", "print-supabase-auth-anonymous-repair.mjs"), "utf8");
+
+    expect(authRepair).toContain("public.handle_new_user");
+    expect(authRepair).toContain("coalesce(new.is_anonymous, false)");
+    expect(authRepair).toContain("security definer");
+    expect(authRepair).toContain("set search_path = ''");
+    expect(authRepair).toContain("No auth.users trigger currently calls public.handle_new_user");
+    expect(authRepair).not.toContain("drop trigger if exists");
+  });
+
   it("documents that parent setup and non-service-role keys are required", () => {
     expect(docs).toContain("Parent-Required Setup");
     expect(docs).toContain("Do not put a service-role key");
     expect(docs).toContain("VITE_SUPABASE_PUBLISHABLE_KEY");
     expect(docs).toContain("supabase:print-auth-diagnostics");
+    expect(docs).toContain("supabase:print-auth-anonymous-repair");
     expect(docs).toContain("codex/production-readiness-release*");
   });
 
