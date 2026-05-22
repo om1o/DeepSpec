@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { getAIErrorDetails, getAIErrorMessage, identifyCapturedFrameWithRun } from "../services/aiService";
 import CloudHealthCard from "../components/CloudHealthCard";
 import Button from "../components/ui/Button";
@@ -505,6 +505,7 @@ function AnalysisResult({
       <EvidenceSection items={result.evidence} />
       <ResultSection title="Concerns" items={result.concerns} emptyText="Nothing concerning visible." />
       <ResultSection title="Next action" items={[result.nextAction]} />
+      <ResultAskBox canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
       <FollowUpSuggestions canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
       <ReferenceLinksSection links={getReferenceLinks(result)} />
     </>
@@ -674,6 +675,62 @@ function FollowUpSuggestions({
           )
         ))}
       </div>
+    </section>
+  );
+}
+
+function ResultAskBox({
+  canSaveForChat,
+  lookupId,
+  onSaveAndAsk,
+  result,
+}: {
+  canSaveForChat: boolean;
+  lookupId: string | null;
+  onSaveAndAsk: (question: string) => void;
+  result: IdentificationResult;
+}) {
+  const [question, setQuestion] = useState("");
+  const navigate = useNavigate();
+  const trimmedQuestion = question.trim().slice(0, 500);
+  if (!lookupId && !canSaveForChat) {
+    return null;
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!trimmedQuestion) {
+      return;
+    }
+
+    if (lookupId) {
+      navigate(`/result/${lookupId}/chat?q=${encodeURIComponent(trimmedQuestion)}`);
+      return;
+    }
+
+    onSaveAndAsk(trimmedQuestion);
+  }
+
+  return (
+    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
+      <form onSubmit={handleSubmit}>
+        <label className="block">
+          <span className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Ask about this result</span>
+          <textarea
+            className="mt-3 min-h-20 w-full resize-none rounded-2xl border border-neutral-200 bg-neutral-50 p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[var(--ds-accent)]"
+            maxLength={500}
+            onChange={(event) => setQuestion(event.target.value)}
+            placeholder={`Example: what should I inspect on this ${result.partName}?`}
+            value={question}
+          />
+        </label>
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <p className="text-xs font-semibold text-neutral-400">{question.length}/500</p>
+          <Button className="px-4 py-2" disabled={!trimmedQuestion} type="submit">
+            Ask follow-up
+          </Button>
+        </div>
+      </form>
     </section>
   );
 }

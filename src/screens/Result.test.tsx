@@ -1,6 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, vi } from "vitest";
 import Result from "./Result";
 import * as aiService from "../services/aiService";
@@ -239,6 +239,33 @@ describe("Result", () => {
     expect(savedLookups[0].trainingStatus).toBe("raw_unreviewed");
   });
 
+  it("saves an unsaved result before opening a typed follow-up", async () => {
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: "/result",
+            state: successfulScan,
+          },
+        ]}
+      >
+        <Routes>
+          <Route path="/result" element={<Result />} />
+          <Route path="/result/:id/chat" element={<ChatRouteProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await userEvent.type(screen.getByLabelText("Ask about this result"), "Can I drive with this noise?");
+    await userEvent.click(screen.getByRole("button", { name: "Ask follow-up" }));
+
+    expect(screen.getByText("Chat page")).toBeInTheDocument();
+    expect(screen.getByText("?q=Can%20I%20drive%20with%20this%20noise%3F")).toBeInTheDocument();
+    const savedLookups = JSON.parse(localStorage.getItem(LOOKUPS_STORAGE_KEY) ?? "[]") as Lookup[];
+    expect(savedLookups).toHaveLength(1);
+    expect(savedLookups[0].result?.partName).toBe("Alternator");
+  });
+
   it("restores the latest successful scan after a refresh", () => {
     sessionStorage.setItem("deep-spec:latest-scan-state", JSON.stringify(successfulScan));
 
@@ -284,10 +311,33 @@ describe("Result", () => {
     expect(screen.getByRole("button", { name: "Share" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Export" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Tell me more" })).toHaveAttribute("href", `/result/${lookup.id}/chat`);
+    expect(screen.getByLabelText("Ask about this result")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "What should I check next?" })).toHaveAttribute(
       "href",
       `/result/${lookup.id}/chat?q=What%20should%20I%20check%20next%20for%20this%20Alternator%3F`,
     );
+  });
+
+  it("opens a saved scan chat with a typed follow-up", async () => {
+    const lookup = makeLookup();
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+
+    render(
+      <MemoryRouter initialEntries={[`/result/${lookup.id}`]}>
+        <Routes>
+          <Route path="/result/:id" element={<Result />} />
+          <Route path="/result/:id/chat" element={<ChatRouteProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await userEvent.type(screen.getByLabelText("Ask about this result"), "What symptoms match this?");
+    await userEvent.click(screen.getByRole("button", { name: "Ask follow-up" }));
+
+    expect(screen.getByText("Chat page")).toBeInTheDocument();
+    expect(screen.getByText("?q=What%20symptoms%20match%20this%3F")).toBeInTheDocument();
+    const savedLookups = JSON.parse(localStorage.getItem(LOOKUPS_STORAGE_KEY) ?? "[]") as Lookup[];
+    expect(savedLookups).toHaveLength(1);
   });
 
   it("clears the cloud sync loading state when sync fails", async () => {
@@ -444,6 +494,16 @@ function renderResult(state: ScanAnalysisState | null, path = "/result") {
         <Route path="/result/:id" element={<Result />} />
       </Routes>
     </MemoryRouter>,
+  );
+}
+
+function ChatRouteProbe() {
+  const location = useLocation();
+  return (
+    <>
+      <p>Chat page</p>
+      <p>{location.search}</p>
+    </>
   );
 }
 
