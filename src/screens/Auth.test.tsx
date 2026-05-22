@@ -133,6 +133,38 @@ describe("Auth", () => {
     expect(localStorage.getItem("ds_auth_seen")).toBe("1");
     expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
   });
+
+  it("extracts a 6-digit code from a noisy paste like 'Your code is 123456'", async () => {
+    const user = userEvent.setup();
+    await renderAuth();
+
+    await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
+    await user.click(screen.getByRole("button", { name: "Send verification code" }));
+
+    const codeInput = await screen.findByLabelText("Verification code");
+    codeInput.focus();
+    await user.paste("Your verification code is: 123456 — do not share.");
+
+    await waitFor(() => {
+      expect(supabaseMock.auth.verifyOtp).toHaveBeenCalledWith({
+        email: "tester@example.com",
+        token: "123456",
+        type: "email",
+      });
+    });
+  });
+
+  it("disables the resend button with a live countdown after sending a code", async () => {
+    const user = userEvent.setup();
+    await renderAuth();
+
+    await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
+    await user.click(screen.getByRole("button", { name: "Send verification code" }));
+
+    const resendButton = await screen.findByRole("button", { name: /Resend in \d+s/ });
+    expect(resendButton).toBeDisabled();
+    expect(resendButton.textContent).toMatch(/Resend in 30s/);
+  });
 });
 
 async function renderAuth() {
