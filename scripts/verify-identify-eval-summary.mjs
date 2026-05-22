@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 const DEFAULT_SUMMARY = ".deepspec-eval/identify-summary.json";
 
-export function classifyIdentifyEvalSummary(summary) {
+export function classifyIdentifyEvalSummary(summary, options = {}) {
   if (!summary || typeof summary !== "object") {
     return {
       ok: false,
@@ -30,12 +30,16 @@ export function classifyIdentifyEvalSummary(summary) {
   const attemptedCount = Number(summary.attemptedCount ?? 0);
   const passCount = Number(summary.passCount ?? 0);
   const failureCount = Number(summary.failureCount ?? 0);
-  if (attemptedCount < 1) {
+  const minSampleSize = parseMinSampleSize(options.minSampleSize ?? 1);
+  if (attemptedCount < minSampleSize) {
     return {
       ok: false,
       exitCode: 1,
       kind: "incomplete_eval",
-      message: "Identify eval did not attempt any samples.",
+      message:
+        minSampleSize > 1
+          ? `Identify eval attempted ${attemptedCount}/${minSampleSize} required samples.`
+          : "Identify eval did not attempt any samples.",
     };
   }
 
@@ -57,13 +61,47 @@ export function classifyIdentifyEvalSummary(summary) {
 }
 
 async function main() {
-  const summaryPath = process.argv[2] || DEFAULT_SUMMARY;
+  const options = parseArgs(process.argv.slice(2));
+  const summaryPath = options.summaryPath || DEFAULT_SUMMARY;
   const text = await readFile(summaryPath, "utf8").catch(() => null);
   const summary = text ? JSON.parse(text) : null;
-  const result = classifyIdentifyEvalSummary(summary);
+  const result = classifyIdentifyEvalSummary(summary, { minSampleSize: options.minSampleSize });
   const write = result.ok ? console.log : console.error;
   write(result.message);
   process.exit(result.exitCode);
+}
+
+function parseArgs(args) {
+  const options = {
+    minSampleSize: 1,
+    summaryPath: null,
+  };
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    const [name, inlineValue] = arg.split("=");
+    const value = inlineValue ?? args[index + 1];
+
+    if (name === "--min-sample-size") {
+      options.minSampleSize = parseMinSampleSize(value);
+      if (!inlineValue) index += 1;
+    } else if (!options.summaryPath) {
+      options.summaryPath = arg;
+    } else {
+      throw new Error(`Unknown option: ${arg}`);
+    }
+  }
+
+  return options;
+}
+
+function parseMinSampleSize(value) {
+  const minSampleSize = Number(value);
+  if (!Number.isInteger(minSampleSize) || minSampleSize < 1 || minSampleSize > 10_000) {
+    throw new Error("--min-sample-size must be an integer from 1 to 10000.");
+  }
+
+  return minSampleSize;
 }
 
 function isDirectRun(url) {

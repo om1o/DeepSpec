@@ -9,8 +9,16 @@ const DEFAULT_SUMMARY = ".deepspec-eval/identify-summary.json";
 const DEFAULT_EVAL_DELAY_MS = 20_000;
 const DEFAULT_EVAL_SAMPLE_TIMEOUT_MS = 240_000;
 export const DATASET_FETCH_TIMEOUT_MS = 60_000;
+export const PUBLIC_LAUNCH_SAMPLE_SIZE = 300;
+const PUBLIC_LAUNCH_GROUP_SIZE = PUBLIC_LAUNCH_SAMPLE_SIZE / 2;
+const HF_TREE_LIMIT = 1000;
 const RATE_LIMIT_RETRY_DELAYS_MS = [60_000, 120_000];
 const PROVIDER_AVAILABILITY_ERROR_CODES = new Set(["network", "provider_error", "rate_limited"]);
+const SAMPLE_SETS = new Set(["beta", "public"]);
+const DATASET_IMAGE_DIRECTORIES = {
+  damage: "Car damages dataset/File1/img",
+  parts: "Car parts dataset/File1/img",
+};
 
 export const RELEASE_SAMPLE_IMAGES = [
   "Car damages dataset/File1/img/Car damages 2.jpg",
@@ -202,7 +210,7 @@ async function main() {
     throw new Error("GEMINI_API_KEY is missing. Add it to .env or the process environment before running the eval.");
   }
 
-  const selectedSamples = RELEASE_SAMPLE_IMAGES.slice(0, options.sampleSize);
+  const selectedSamples = await getSelectedSamples(options);
   const identify = await loadIdentifyPipeline();
   const failures = [];
   const results = [];
@@ -284,6 +292,7 @@ async function main() {
     datasetId: DATASET_ID,
     datasetUrl: DATASET_URL,
     generatedAt: new Date().toISOString(),
+    sampleSet: options.sampleSet,
     sampleSize: selectedSamples.length,
     attemptedCount: results.length,
     skippedCount: Math.max(0, selectedSamples.length - results.length),
@@ -309,6 +318,97 @@ async function main() {
     console.error("Identify eval did not meet the release gate. Inspect the summary before shipping.");
     process.exitCode = exitCode;
   }
+}
+
+async function getSelectedSamples(options) {
+  const samples =
+    options.sampleSet === "public"
+      ? await fetchPublicLaunchSampleImages()
+      : RELEASE_SAMPLE_IMAGES;
+
+  if (options.sampleSize > samples.length) {
+    throw new Error(`--sample-size must be an integer from 1 to ${samples.length} for the ${options.sampleSet} sample set.`);
+  }
+
+  return samples.slice(0, options.sampleSize);
+}
+
+export async function fetchPublicLaunchSampleImages(fetchTree = fetchDatasetTree) {
+  const [damageTree, partsTree] = await Promise.all([
+    fetchTree(DATASET_IMAGE_DIRECTORIES.damage),
+    fetchTree(DATASET_IMAGE_DIRECTORIES.parts),
+  ]);
+
+  return selectBalancedPublicLaunchSamples({
+    damageImages: getImagePathsFromTree(damageTree, DATASET_IMAGE_DIRECTORIES.damage),
+    partImages: getImagePathsFromTree(partsTree, DATASET_IMAGE_DIRECTORIES.parts),
+  });
+}
+
+export function selectBalancedPublicLaunchSamples({
+  damageImages,
+  partImages,
+  perGroup = PUBLIC_LAUNCH_GROUP_SIZE,
+}) {
+  return [
+    ...selectEvenlySpacedSamples(damageImages, perGroup),
+    ...selectEvenlySpacedSamples(partImages, perGroup),
+  ];
+}
+
+export function selectEvenlySpacedSamples(paths, count) {
+  const unique = [...new Set(paths)].sort(compareDatasetImagePaths);
+  if (!Number.isInteger(count) || count < 1 || count > unique.length) {
+    throw new Error(`Cannot select ${count} sample(s) from ${unique.length} path(s).`);
+  }
+
+  if (count === unique.length) {
+    return unique;
+  }
+
+  const selected = [];
+  const usedIndexes = new Set();
+  for (let index = 0; index < count; index += 1) {
+    const selectedIndex = Math.round((index * (unique.length - 1)) / (count - 1));
+    if (usedIndexes.has(selectedIndex)) {
+      throw new Error("Sample selector produced a duplicate index.");
+    }
+    usedIndexes.add(selectedIndex);
+    selected.push(unique[selectedIndex]);
+  }
+
+  return selected;
+}
+
+async function fetchDatasetTree(directory) {
+  return fetchJson(resolveDatasetTreeUrl(directory));
+}
+
+function resolveDatasetTreeUrl(directory) {
+  const encodedDirectory = directory.split("/").map(encodeURIComponent).join("/");
+  return `https://huggingface.co/api/datasets/${DATASET_ID}/tree/main/${encodedDirectory}?limit=${HF_TREE_LIMIT}`;
+}
+
+function getImagePathsFromTree(tree, directory) {
+  if (!Array.isArray(tree)) {
+    throw new Error(`Could not read Hugging Face tree for ${directory}.`);
+  }
+
+  return tree
+    .filter((entry) => entry?.type === "file" && typeof entry.path === "string")
+    .map((entry) => entry.path)
+    .filter((path) => path.startsWith(`${directory}/`) && /\.(png|jpg)$/i.test(path));
+}
+
+function compareDatasetImagePaths(a, b) {
+  const aNumber = getDatasetImageNumber(a);
+  const bNumber = getDatasetImageNumber(b);
+  return aNumber - bNumber || a.localeCompare(b);
+}
+
+function getDatasetImageNumber(path) {
+  const match = path.match(/Car damages (\d+)\.(?:png|jpg)$/i);
+  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
 }
 
 export async function createIdentifyResponseWithRetry(identify, dataUrl, env, options = {}) {
@@ -390,6 +490,7 @@ function parseArgs(args) {
     maxProviderFailures: parseMaxProviderFailures(process.env.DEEPSPEC_EVAL_MAX_PROVIDER_FAILURES, 1),
     output: DEFAULT_OUTPUT,
     sampleTimeoutMs: parseSampleTimeoutMs(process.env.DEEPSPEC_EVAL_SAMPLE_TIMEOUT_MS, DEFAULT_EVAL_SAMPLE_TIMEOUT_MS),
+    sampleSet: "beta",
     sampleSize: 6,
     summary: DEFAULT_SUMMARY,
   };
@@ -399,8 +500,11 @@ function parseArgs(args) {
     const [name, inlineValue] = arg.split("=");
     const value = inlineValue ?? args[index + 1];
 
-    if (name === "--sample-size") {
-      options.sampleSize = clampSampleSize(Number(value));
+    if (name === "--sample-set") {
+      options.sampleSet = parseSampleSet(value);
+      if (!inlineValue) index += 1;
+    } else if (name === "--sample-size") {
+      options.sampleSize = parseSampleSize(value);
       if (!inlineValue) index += 1;
     } else if (name === "--delay-ms") {
       options.delayMs = parseDelayMs(value, options.delayMs);
@@ -428,6 +532,14 @@ function parseArgs(args) {
   return options;
 }
 
+function parseSampleSet(value) {
+  if (!SAMPLE_SETS.has(value)) {
+    throw new Error(`--sample-set must be one of: ${[...SAMPLE_SETS].join(", ")}.`);
+  }
+
+  return value;
+}
+
 function parseDelayMs(value, fallback) {
   if (value === undefined || value === null || value === "") {
     return fallback;
@@ -447,8 +559,8 @@ function parseMaxProviderFailures(value, fallback) {
   }
 
   const failures = Number(value);
-  if (!Number.isInteger(failures) || failures < 1 || failures > RELEASE_SAMPLE_IMAGES.length) {
-    throw new Error(`--max-provider-failures must be an integer from 1 to ${RELEASE_SAMPLE_IMAGES.length}.`);
+  if (!Number.isInteger(failures) || failures < 1 || failures > PUBLIC_LAUNCH_SAMPLE_SIZE) {
+    throw new Error(`--max-provider-failures must be an integer from 1 to ${PUBLIC_LAUNCH_SAMPLE_SIZE}.`);
   }
 
   return failures;
@@ -467,19 +579,22 @@ function parseSampleTimeoutMs(value, fallback) {
   return timeoutMs;
 }
 
-function clampSampleSize(value) {
-  if (!Number.isInteger(value) || value < 1 || value > RELEASE_SAMPLE_IMAGES.length) {
-    throw new Error(`--sample-size must be an integer from 1 to ${RELEASE_SAMPLE_IMAGES.length}.`);
+function parseSampleSize(value) {
+  const sampleSize = Number(value);
+  if (!Number.isInteger(sampleSize) || sampleSize < 1 || sampleSize > PUBLIC_LAUNCH_SAMPLE_SIZE) {
+    throw new Error(`--sample-size must be an integer from 1 to ${PUBLIC_LAUNCH_SAMPLE_SIZE}.`);
   }
 
-  return value;
+  return sampleSize;
 }
 
 function printHelp() {
   console.log(`Run a local Deep Spec identify eval against ${DATASET_ID}.
 
 Options:
-  --sample-size <n>  Number of curated HF samples to run, 1-${RELEASE_SAMPLE_IMAGES.length}. Default: 6
+  --sample-set <name>
+                     Sample set to run: beta or public. Default: beta
+  --sample-size <n>  Number of curated HF samples to run. Default: 6
   --delay-ms <n>     Delay between provider calls. Default: ${DEFAULT_EVAL_DELAY_MS}
   --max-provider-failures <n>
                      Stop after this many provider availability failures. Default: 1

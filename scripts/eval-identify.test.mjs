@@ -1,15 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   DATASET_FETCH_TIMEOUT_MS,
+  PUBLIC_LAUNCH_SAMPLE_SIZE,
   RELEASE_SAMPLE_IMAGES,
   buildEvalResultRow,
   buildEvalViteServerOptions,
   buildReviewLookup,
   createIdentifyResponseWithRetry,
+  fetchPublicLaunchSampleImages,
   getEvalExitCode,
   getRetryDelayMs,
   isReviewableEvalFailure,
   isRetryableProviderAvailabilityResponse,
+  selectBalancedPublicLaunchSamples,
   scoreIdentificationResult,
 } from "./eval-identify.mjs";
 
@@ -50,6 +53,40 @@ describe("identify eval scoring", () => {
     expect(RELEASE_SAMPLE_IMAGES.filter((path) => path.startsWith("Car damages dataset/"))).toHaveLength(25);
     expect(RELEASE_SAMPLE_IMAGES.filter((path) => path.startsWith("Car parts dataset/"))).toHaveLength(25);
     expect(RELEASE_SAMPLE_IMAGES.every((path) => path.includes("/img/") && /\.(png|jpg)$/.test(path))).toBe(true);
+  });
+
+  it("builds a balanced 300-case public launch sample set from the Hugging Face tree", async () => {
+    const damageImages = Array.from({ length: 998 }, (_, index) => ({
+      path: `Car damages dataset/File1/img/Car damages ${index + 1}.png`,
+      type: "file",
+    }));
+    const partImages = Array.from({ length: 814 }, (_, index) => ({
+      path: `Car parts dataset/File1/img/Car damages ${index + 101}.png`,
+      type: "file",
+    }));
+    const fetchTree = vi.fn((directory) => {
+      if (directory === "Car damages dataset/File1/img") return damageImages;
+      if (directory === "Car parts dataset/File1/img") return partImages;
+      return [];
+    });
+
+    const samples = await fetchPublicLaunchSampleImages(fetchTree);
+
+    expect(samples).toHaveLength(PUBLIC_LAUNCH_SAMPLE_SIZE);
+    expect(new Set(samples).size).toBe(PUBLIC_LAUNCH_SAMPLE_SIZE);
+    expect(samples.filter((path) => path.startsWith("Car damages dataset/"))).toHaveLength(150);
+    expect(samples.filter((path) => path.startsWith("Car parts dataset/"))).toHaveLength(150);
+    expect(samples.every((path) => path.includes("/img/") && /\.(png|jpg)$/.test(path))).toBe(true);
+  });
+
+  it("selects public launch samples deterministically across each image pool", () => {
+    const samples = selectBalancedPublicLaunchSamples({
+      damageImages: ["damage/1.png", "damage/2.png", "damage/3.png", "damage/4.png", "damage/5.png"],
+      partImages: ["part/1.png", "part/2.png", "part/3.png", "part/4.png", "part/5.png"],
+      perGroup: 3,
+    });
+
+    expect(samples).toEqual(["damage/1.png", "damage/3.png", "damage/5.png", "part/1.png", "part/3.png", "part/5.png"]);
   });
 
   it("accepts directional label aliases", () => {

@@ -50,4 +50,40 @@ describe("identify eval summary gate", () => {
       exitCode: 1,
     });
   });
+
+  it("requires the configured minimum sample size for public launch gates", () => {
+    expect(
+      classifyIdentifyEvalSummary(
+        {
+          attemptedCount: 50,
+          failureCount: 0,
+          passCount: 50,
+          providerFailureCount: 0,
+          providerStatus: "available",
+        },
+        { minSampleSize: 300 },
+      ),
+    ).toMatchObject({
+      ok: false,
+      kind: "incomplete_eval",
+      exitCode: 1,
+    });
+
+    expect(
+      classifyIdentifyEvalSummary(
+        {
+          attemptedCount: 300,
+          failureCount: 0,
+          passCount: 300,
+          providerFailureCount: 0,
+          providerStatus: "available",
+        },
+        { minSampleSize: 300 },
+      ),
+    ).toMatchObject({
+      ok: true,
+      kind: "passed",
+      exitCode: 0,
+    });
+  });
 });
