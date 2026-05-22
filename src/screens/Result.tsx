@@ -27,6 +27,7 @@ export default function Result() {
   const capturedAt = frame?.capturedAt ? new Date(frame.capturedAt).toLocaleString() : null;
   const storageWarning = scanState?.storageWarning;
   const isQaTestRun = Boolean(scanState?.testRun);
+  const canSaveForChat = Boolean(!isQaTestRun && scanState?.frame && scanState.result);
   const datasetSourceUrls = scanState?.result ? getDatasetSourceUrls(scanState.result.evidence) : [];
 
   function handleRating(rating: Rating) {
@@ -72,6 +73,11 @@ export default function Result() {
   }
 
   function handleSaveAndAsk(question?: string) {
+    if (isQaTestRun) {
+      setSaveError("QA test scans are not saved. Exit test mode or take a real scan to ask follow-ups.");
+      return;
+    }
+
     if (!scanState?.frame || !scanState.result) {
       return;
     }
@@ -153,6 +159,7 @@ export default function Result() {
             <AnalysisResult
               result={scanState.result}
               capturedAt={capturedAt}
+              canSaveForChat={canSaveForChat}
               lookupId={lookup?.id ?? null}
               onSaveAndAsk={handleSaveAndAsk}
             />
@@ -435,11 +442,13 @@ function SavedScanControls({
 }
 
 function AnalysisResult({
+  canSaveForChat,
   capturedAt,
   lookupId,
   onSaveAndAsk,
   result,
 }: {
+  canSaveForChat: boolean;
   capturedAt: string | null;
   lookupId: string | null;
   onSaveAndAsk: (question?: string) => void;
@@ -465,7 +474,7 @@ function AnalysisResult({
         </div>
         <p className="mt-3 text-sm leading-6 text-neutral-600">{trustReview.description}</p>
         {capturedAt ? <p className="mt-3 text-xs font-semibold text-neutral-400">Captured {capturedAt}</p> : null}
-        <QuickActions lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
+        <QuickActions canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
       </section>
 
       {showSafetyWarning ? (
@@ -493,7 +502,7 @@ function AnalysisResult({
       <EvidenceSection items={result.evidence} />
       <ResultSection title="Concerns" items={result.concerns} emptyText="Nothing concerning visible." />
       <ResultSection title="Next action" items={[result.nextAction]} />
-      <FollowUpSuggestions lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
+      <FollowUpSuggestions canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
       <ReferenceLinksSection links={getReferenceLinks(result)} />
     </>
   );
@@ -539,30 +548,39 @@ function MiniPill({ label }: { label: string }) {
 }
 
 function QuickActions({
+  canSaveForChat,
   lookupId,
   onSaveAndAsk,
   result,
 }: {
+  canSaveForChat: boolean;
   lookupId: string | null;
   onSaveAndAsk: () => void;
   result: IdentificationResult;
 }) {
   const nearbyUrl = getMapsSearchUrl(result);
+  let askAction = null;
+  if (lookupId) {
+    askAction = (
+      <Link className="rounded-full bg-[var(--ds-accent)] px-3 py-2 text-center text-xs font-extrabold text-white" to={`/result/${lookupId}/chat`}>
+        Ask
+      </Link>
+    );
+  } else if (canSaveForChat) {
+    askAction = (
+      <button className="rounded-full bg-[var(--ds-accent)] px-3 py-2 text-center text-xs font-extrabold text-white" type="button" onClick={onSaveAndAsk}>
+        Ask
+      </button>
+    );
+  }
+  const canAsk = Boolean(askAction);
 
   return (
-    <div className="mt-4 grid grid-cols-3 gap-2">
+    <div className={`mt-4 grid ${canAsk ? "grid-cols-3" : "grid-cols-2"} gap-2`}>
       <Link className="rounded-full bg-neutral-100 px-3 py-2 text-center text-xs font-extrabold text-neutral-900" to="/scan">
         Refine
       </Link>
-      {lookupId ? (
-        <Link className="rounded-full bg-[var(--ds-accent)] px-3 py-2 text-center text-xs font-extrabold text-white" to={`/result/${lookupId}/chat`}>
-          Ask
-        </Link>
-      ) : (
-        <button className="rounded-full bg-[var(--ds-accent)] px-3 py-2 text-center text-xs font-extrabold text-white" type="button" onClick={onSaveAndAsk}>
-          Ask
-        </button>
-      )}
+      {askAction}
       <a
         className="rounded-full bg-neutral-100 px-3 py-2 text-center text-xs font-extrabold text-neutral-900"
         href={nearbyUrl}
@@ -613,15 +631,20 @@ function DetectedTextSection({ findings }: { findings: DetectedTextFinding[] }) 
 }
 
 function FollowUpSuggestions({
+  canSaveForChat,
   lookupId,
   onSaveAndAsk,
   result,
 }: {
+  canSaveForChat: boolean;
   lookupId: string | null;
   onSaveAndAsk: (question: string) => void;
   result: IdentificationResult;
 }) {
   const prompts = getFollowUpPrompts(result);
+  if (!lookupId && !canSaveForChat) {
+    return null;
+  }
 
   return (
     <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
