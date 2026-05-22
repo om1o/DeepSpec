@@ -22,6 +22,7 @@ export type ChatResponse =
     };
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
+const DEFAULT_FALLBACK_MODELS = ["gemini-flash-lite-latest"];
 const FOLLOWUP_PROMPT_VERSION = "followup-v1";
 
 export async function createChatResponse(body: unknown, env: Record<string, string | undefined>): Promise<ChatResponse> {
@@ -35,11 +36,81 @@ export async function createChatResponse(body: unknown, env: Record<string, stri
     return parsed.error;
   }
 
-  const model = env.GEMINI_CHAT_MODEL || env.GEMINI_TEXT_MODEL || DEFAULT_MODEL;
+  const models = getChatModels(env);
+  let rateLimited = false;
+
+  for (const model of models) {
+    const startedAt = Date.now();
+    const response = await fetchGeminiChat(model, parsed.userMessage, apiKey);
+
+    if (!response) {
+      return errorResponse(502, "network", "Deep Spec could not reach Gemini.");
+    }
+
+    if (response.status === 429) {
+      rateLimited = true;
+      continue;
+    }
+
+    const isJson = (response.headers.get("content-type") ?? "").includes("application/json");
+    const responseBody = isJson ? ((await response.json().catch(() => null)) as JsonObject | null) : null;
+
+    if (!response.ok) {
+      return errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
+    }
+
+    const message = cleanChatMessage(extractGeminiText(responseBody));
+    if (!message) {
+      return errorResponse(502, "invalid_response", "Gemini did not return a usable chat answer.");
+    }
+
+    const latencyMs = Date.now() - startedAt;
+    console.info("[DeepSpec Chat]", {
+      model,
+      latencyMs,
+      success: true,
+    });
+
+    return {
+      status: 200,
+      body: {
+        message,
+        modelRun: createModelRun({
+          kind: "chat",
+          latencyMs,
+          model,
+          promptVersion: FOLLOWUP_PROMPT_VERSION,
+        }),
+      },
+    };
+  }
+
+  return rateLimited
+    ? errorResponse(429, "rate_limited", "Too many AI chat requests right now. Try again in a few minutes.")
+    : errorResponse(502, "provider_error", "The AI provider rejected this request.");
+}
+
+function getChatModels(env: Record<string, string | undefined>) {
+  return uniqueStrings([env.GEMINI_CHAT_MODEL || env.GEMINI_TEXT_MODEL || DEFAULT_MODEL, ...DEFAULT_FALLBACK_MODELS]);
+}
+
+function uniqueStrings(values: string[]) {
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      return false;
+    }
+
+    seen.add(trimmed);
+    return true;
+  });
+}
+
+function fetchGeminiChat(model: string, userMessage: string, apiKey: string) {
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
-  const startedAt = Date.now();
-  const response = await fetch(endpoint, {
+  return fetch(endpoint, {
     method: "POST",
     signal: AbortSignal.timeout(20_000),
     headers: {
@@ -53,7 +124,7 @@ export async function createChatResponse(body: unknown, env: Record<string, stri
       contents: [
         {
           role: "user",
-          parts: [{ text: parsed.userMessage }],
+          parts: [{ text: userMessage }],
         },
       ],
       generationConfig: {
@@ -62,46 +133,6 @@ export async function createChatResponse(body: unknown, env: Record<string, stri
       },
     }),
   }).catch(() => null);
-
-  if (!response) {
-    return errorResponse(502, "network", "Deep Spec could not reach Gemini.");
-  }
-
-  if (response.status === 429) {
-    return errorResponse(429, "rate_limited", "Too many AI chat requests right now. Try again in a few minutes.");
-  }
-
-  const isJson = (response.headers.get("content-type") ?? "").includes("application/json");
-  const responseBody = isJson ? ((await response.json().catch(() => null)) as JsonObject | null) : null;
-
-  if (!response.ok) {
-    return errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
-  }
-
-  const message = cleanChatMessage(extractGeminiText(responseBody));
-  if (!message) {
-    return errorResponse(502, "invalid_response", "Gemini did not return a usable chat answer.");
-  }
-
-  const latencyMs = Date.now() - startedAt;
-  console.info("[DeepSpec Chat]", {
-    model,
-    latencyMs,
-    success: true,
-  });
-
-  return {
-    status: 200,
-    body: {
-      message,
-      modelRun: createModelRun({
-        kind: "chat",
-        latencyMs,
-        model,
-        promptVersion: FOLLOWUP_PROMPT_VERSION,
-      }),
-    },
-  };
 }
 
 function createModelRun({

@@ -71,4 +71,62 @@ describe("createChatResponse", () => {
       }),
     );
   });
+
+  it("falls back to flash lite when the default Gemini chat model is quota limited", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "quota exhausted" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: "Use a belt-routing diagram before loosening the tensioner." }] } }],
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+
+    await expect(createChatResponse({ userMessage: "How do I inspect this belt?" }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 200,
+      body: {
+        message: "Use a belt-routing diagram before loosening the tensioner.",
+        modelRun: {
+          kind: "chat",
+          model: "gemini-flash-lite-latest",
+          promptVersion: "followup-v1",
+        },
+      },
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy.mock.calls[0][0]).toEqual(expect.stringContaining("/models/gemini-2.5-flash:generateContent"));
+    expect(fetchSpy.mock.calls[1][0]).toEqual(expect.stringContaining("/models/gemini-flash-lite-latest:generateContent"));
+  });
+
+  it("returns rate_limited only after all chat models are quota limited", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: "quota exhausted" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(createChatResponse({ userMessage: "What should I do next?" }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 429,
+      body: {
+        error: {
+          code: "rate_limited",
+        },
+      },
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
 });
