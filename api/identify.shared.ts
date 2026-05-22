@@ -492,11 +492,11 @@ function findRawMetadataMatches(datasetRoot: string, text: string): DatasetMatch
   const labelSets = [
     {
       kind: "part" as const,
-      labels: readDatasetClassTitles(resolve(datasetRoot, "Car damages dataset", "meta.json")),
+      labels: readDatasetClassTitles(resolve(datasetRoot, "Car parts dataset", "meta.json")),
     },
     {
       kind: "damage" as const,
-      labels: readDatasetClassTitles(resolve(datasetRoot, "Car parts dataset", "meta.json")),
+      labels: readDatasetClassTitles(resolve(datasetRoot, "Car damages dataset", "meta.json")),
     },
   ];
 

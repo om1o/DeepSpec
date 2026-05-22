@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, vi } from "vitest";
 import Result from "./Result";
 import * as aiService from "../services/aiService";
+import * as cloudSync from "../services/cloudSync";
 import { LOOKUPS_STORAGE_KEY } from "../services/storage";
 import type { Lookup, ScanAnalysisState } from "../types";
 
@@ -61,6 +62,7 @@ describe("Result", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
 
@@ -208,6 +210,32 @@ describe("Result", () => {
     expect(screen.queryByText("Saved scan")).not.toBeInTheDocument();
   });
 
+  it("saves an unsaved result before opening a suggested follow-up", async () => {
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: "/result",
+            state: successfulScan,
+          },
+        ]}
+      >
+        <Routes>
+          <Route path="/result" element={<Result />} />
+          <Route path="/result/:id/chat" element={<p>Chat page</p>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "What should I check next?" }));
+
+    expect(screen.getByText("Chat page")).toBeInTheDocument();
+    const savedLookups = JSON.parse(localStorage.getItem(LOOKUPS_STORAGE_KEY) ?? "[]") as Lookup[];
+    expect(savedLookups).toHaveLength(1);
+    expect(savedLookups[0].result?.partName).toBe("Alternator");
+    expect(savedLookups[0].trainingStatus).toBe("raw_unreviewed");
+  });
+
   it("restores the latest successful scan after a refresh", () => {
     sessionStorage.setItem("deep-spec:latest-scan-state", JSON.stringify(successfulScan));
 
@@ -257,6 +285,22 @@ describe("Result", () => {
       "href",
       `/result/${lookup.id}/chat?q=What%20should%20I%20check%20next%20for%20this%20Alternator%3F`,
     );
+  });
+
+  it("clears the cloud sync loading state when sync fails", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://deep-spec.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "public-test-key");
+    vi.spyOn(cloudSync, "syncLookupToCloud").mockRejectedValue(new Error("Network unavailable"));
+    const lookup = makeLookup();
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+
+    renderResult(null, `/result/${lookup.id}`);
+
+    const syncButton = screen.getByRole("button", { name: "Sync this scan" });
+    await userEvent.click(syncButton);
+
+    expect(await screen.findByText("Cloud sync failed. Network unavailable")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sync this scan" })).not.toBeDisabled();
   });
 
   it("shows nearby options for professional verification cases", () => {

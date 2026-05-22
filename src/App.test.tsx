@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
@@ -56,6 +56,37 @@ describe("App auth guard", () => {
     renderApp("/scan");
 
     expect(await screen.findByText("Scanner screen")).toBeInTheDocument();
+  });
+
+  it("does not downgrade an allowed route when the auth listener setup fails later", async () => {
+    let resolveUser: (user: unknown) => void = () => undefined;
+    let rejectSubscription: (error: Error) => void = () => undefined;
+    authMock.getVerifiedAuthUser.mockReturnValue(new Promise((resolve) => {
+      resolveUser = resolve;
+    }));
+    authMock.subscribeToAuthChanges.mockReturnValue(new Promise((_resolve, reject) => {
+      rejectSubscription = reject;
+    }));
+
+    renderApp("/scan");
+
+    await act(async () => {
+      resolveUser({
+        app_metadata: {},
+        aud: "authenticated",
+        created_at: new Date(0).toISOString(),
+        id: "verified-user",
+        user_metadata: {},
+      });
+    });
+    expect(await screen.findByText("Scanner screen")).toBeInTheDocument();
+
+    await act(async () => {
+      rejectSubscription(new Error("listener failed"));
+    });
+
+    await waitFor(() => expect(screen.getByText("Scanner screen")).toBeInTheDocument());
+    expect(screen.queryByText("Auth screen")).not.toBeInTheDocument();
   });
 
   it("sends the app root to the scanner route", async () => {

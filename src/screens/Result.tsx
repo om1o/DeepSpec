@@ -6,7 +6,7 @@ import { isTestMode } from "../lib/testMode";
 import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } from "../lib/utils";
 import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
 import { buildScanReport, downloadTextFile, getMechanicSearchUrl, getScanReportFilename } from "../services/report";
-import { deleteLookup, getLookup, scanStateFromLookup, updateLookup, updateLookupResult } from "../services/storage";
+import { createLookup, deleteLookup, getLookup, scanStateFromLookup, updateLookup, updateLookupResult } from "../services/storage";
 import type { CandidateMatch, CapturedFrame, Confidence, EvidenceRegion, IdentificationResult, Lookup, Rating, ScanAnalysisState, SourceLink } from "../types";
 
 type DetectedTextFinding = {
@@ -71,6 +71,28 @@ export default function Result() {
     setSaveError(result.message);
   }
 
+  function handleSaveAndAsk(question?: string) {
+    if (!scanState?.frame || !scanState.result) {
+      return;
+    }
+
+    const saved = createLookup({
+      frame: scanState.frame,
+      result: scanState.result,
+      analyzedAt: scanState.analyzedAt ?? new Date().toISOString(),
+    });
+
+    if (!saved.ok) {
+      setSaveError(saved.message);
+      return;
+    }
+
+    setLookup(saved.value);
+    setSaveError(null);
+    const query = question ? `?q=${encodeURIComponent(question)}` : "";
+    navigate(`/result/${saved.value.id}/chat${query}`);
+  }
+
   function handleLookupUpdate(result: ReturnType<typeof updateLookup>) {
     if (result.ok) {
       setLookup(result.value);
@@ -126,7 +148,15 @@ export default function Result() {
           <div className="space-y-3">
           {isQaTestRun ? <TestRunNotice label={scanState?.testVehicleLabel} /> : null}
           {!isQaTestRun && storageWarning ? <StorageWarning message={storageWarning} /> : null}
-          {scanState?.result ? <AnalysisResult result={scanState.result} capturedAt={capturedAt} lookupId={lookup?.id ?? null} /> : null}
+          {!lookup && saveError ? <StorageWarning message={saveError} /> : null}
+          {scanState?.result ? (
+            <AnalysisResult
+              result={scanState.result}
+              capturedAt={capturedAt}
+              lookupId={lookup?.id ?? null}
+              onSaveAndAsk={handleSaveAndAsk}
+            />
+          ) : null}
           {scanState?.errorMessage ? (
             <AnalysisError 
               code={scanState.errorCode}
@@ -221,7 +251,7 @@ function TestRunNotice({ label }: { label?: string }) {
     <section className="rounded-[24px] border border-[var(--ds-accent-line)] bg-[var(--ds-accent-soft)] p-5">
       <p className="text-sm font-bold text-[var(--ds-accent)]">QA test result</p>
       <p className="mt-2 text-sm leading-6 text-neutral-700">
-        This scan used {label ?? "a generated test photo"} and was not saved to history, cloud sync, or training review.
+        This scan used {label ?? "a generated test photo"} and was not saved to history, cloud sync, or training review automatically.
       </p>
     </section>
   );
@@ -407,10 +437,12 @@ function SavedScanControls({
 function AnalysisResult({
   capturedAt,
   lookupId,
+  onSaveAndAsk,
   result,
 }: {
   capturedAt: string | null;
   lookupId: string | null;
+  onSaveAndAsk: (question?: string) => void;
   result: IdentificationResult;
 }) {
   const showSafetyWarning = result.isSafetyCritical || result.safetyTriage === "needs_professional";
@@ -433,7 +465,7 @@ function AnalysisResult({
         </div>
         <p className="mt-3 text-sm leading-6 text-neutral-600">{trustReview.description}</p>
         {capturedAt ? <p className="mt-3 text-xs font-semibold text-neutral-400">Captured {capturedAt}</p> : null}
-        <QuickActions lookupId={lookupId} result={result} />
+        <QuickActions lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
       </section>
 
       {showSafetyWarning ? (
@@ -461,7 +493,7 @@ function AnalysisResult({
       <EvidenceSection items={result.evidence} />
       <ResultSection title="Concerns" items={result.concerns} emptyText="Nothing concerning visible." />
       <ResultSection title="Next action" items={[result.nextAction]} />
-      <FollowUpSuggestions lookupId={lookupId} result={result} />
+      <FollowUpSuggestions lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
       <ReferenceLinksSection links={getReferenceLinks(result)} />
     </>
   );
@@ -506,7 +538,15 @@ function MiniPill({ label }: { label: string }) {
   );
 }
 
-function QuickActions({ lookupId, result }: { lookupId: string | null; result: IdentificationResult }) {
+function QuickActions({
+  lookupId,
+  onSaveAndAsk,
+  result,
+}: {
+  lookupId: string | null;
+  onSaveAndAsk: () => void;
+  result: IdentificationResult;
+}) {
   const nearbyUrl = getMapsSearchUrl(result);
 
   return (
@@ -519,9 +559,9 @@ function QuickActions({ lookupId, result }: { lookupId: string | null; result: I
           Ask
         </Link>
       ) : (
-        <Link className="rounded-full bg-[var(--ds-accent)] px-3 py-2 text-center text-xs font-extrabold text-white" to="/history">
-          History
-        </Link>
+        <button className="rounded-full bg-[var(--ds-accent)] px-3 py-2 text-center text-xs font-extrabold text-white" type="button" onClick={onSaveAndAsk}>
+          Ask
+        </button>
       )}
       <a
         className="rounded-full bg-neutral-100 px-3 py-2 text-center text-xs font-extrabold text-neutral-900"
@@ -572,7 +612,15 @@ function DetectedTextSection({ findings }: { findings: DetectedTextFinding[] }) 
   );
 }
 
-function FollowUpSuggestions({ lookupId, result }: { lookupId: string | null; result: IdentificationResult }) {
+function FollowUpSuggestions({
+  lookupId,
+  onSaveAndAsk,
+  result,
+}: {
+  lookupId: string | null;
+  onSaveAndAsk: (question: string) => void;
+  result: IdentificationResult;
+}) {
   const prompts = getFollowUpPrompts(result);
 
   return (
@@ -589,12 +637,14 @@ function FollowUpSuggestions({ lookupId, result }: { lookupId: string | null; re
               {prompt.label}
             </Link>
           ) : (
-            <span
+            <button
               key={prompt.question}
-              className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3 text-sm font-bold leading-5 text-neutral-400"
+              className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3 text-left text-sm font-bold leading-5 text-[var(--ds-evidence-ink)]"
+              type="button"
+              onClick={() => onSaveAndAsk(prompt.question)}
             >
               {prompt.label}
-            </span>
+            </button>
           )
         ))}
       </div>

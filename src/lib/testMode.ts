@@ -6,17 +6,25 @@ export function isTestMode(search?: string): boolean {
     return false;
   }
 
-  const params = new URLSearchParams(search ?? window.location.search);
-  if (params.get("test") === "1") {
-    sessionStorage.setItem(TEST_MODE_SESSION_KEY, "1");
-    return true;
-  }
+  try {
+    const params = new URLSearchParams(search ?? window.location.search);
+    if (params.get("test") === "1") {
+      sessionStorage.setItem(TEST_MODE_SESSION_KEY, "1");
+      return true;
+    }
 
-  return sessionStorage.getItem(TEST_MODE_SESSION_KEY) === "1";
+    return sessionStorage.getItem(TEST_MODE_SESSION_KEY) === "1";
+  } catch {
+    return false;
+  }
 }
 
 export function clearTestMode() {
-  if (typeof sessionStorage !== "undefined") {
-    sessionStorage.removeItem(TEST_MODE_SESSION_KEY);
+  try {
+    if (typeof sessionStorage !== "undefined") {
+      sessionStorage.removeItem(TEST_MODE_SESSION_KEY);
+    }
+  } catch {
+    // Test mode is optional; storage failures should not break the scanner.
   }
 }

@@ -406,11 +406,11 @@ describe("createIdentifyResponse", () => {
     mkdirSync(resolve(datasetRoot, "Car parts dataset"), { recursive: true });
     writeFileSync(
       resolve(datasetRoot, "Car damages dataset", "meta.json"),
-      JSON.stringify({ classes: [{ title: "Front-bumper" }, { title: "Fender" }] }),
+      JSON.stringify({ classes: [{ title: "Dent" }, { title: "Scratch" }] }),
     );
     writeFileSync(
       resolve(datasetRoot, "Car parts dataset", "meta.json"),
-      JSON.stringify({ classes: [{ title: "Dent" }, { title: "Scratch" }] }),
+      JSON.stringify({ classes: [{ title: "Front-bumper" }, { title: "Fender" }] }),
     );
     const bumperResult = {
       ...result,

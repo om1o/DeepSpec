@@ -10,11 +10,11 @@ const DATASET_URL = `https://huggingface.co/datasets/${DATASET_ID}`;
 
 const RAW_GROUPS = [
   {
-    canonicalKind: "part",
+    canonicalKind: "damage",
     rawName: "Car damages dataset",
   },
   {
-    canonicalKind: "damage",
+    canonicalKind: "part",
     rawName: "Car parts dataset",
   },
 ];
