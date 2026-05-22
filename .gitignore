@@ -9,6 +9,8 @@ supabase/.temp/
 .playwright-mcp/
 datasets/raw/
 datasets/derived/
+design-extract/
+design-import.html
 
 .DS_Store
 *.local
