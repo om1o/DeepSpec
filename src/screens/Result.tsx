@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
+import { getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
 import Button from "../components/ui/Button";
 import { isTestMode } from "../lib/testMode";
 import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } from "../lib/utils";
@@ -129,6 +129,7 @@ export default function Result() {
           {scanState?.result ? <AnalysisResult result={scanState.result} capturedAt={capturedAt} lookupId={lookup?.id ?? null} /> : null}
           {scanState?.errorMessage ? (
             <AnalysisError 
+              code={scanState.errorCode}
               message={scanState.errorMessage} 
               capturedAt={capturedAt} 
               frame={frame}
@@ -283,10 +284,14 @@ function SavedScanControls({
   async function handleCloudSync() {
     setIsSyncingCloud(true);
     setCloudStatusMessage("Syncing scan...");
-
-    const result = await syncLookupToCloud(lookup);
-    setCloudStatusMessage(result.message);
-    setIsSyncingCloud(false);
+    try {
+      const result = await syncLookupToCloud(lookup);
+      setCloudStatusMessage(result.message);
+    } catch (error) {
+      setCloudStatusMessage(error instanceof Error ? `Cloud sync failed. ${error.message}` : "Cloud sync failed. Please try again.");
+    } finally {
+      setIsSyncingCloud(false);
+    }
   }
 
   return (
@@ -707,6 +712,7 @@ function SourceFinePrint({ urls }: { urls: string[] }) {
 
 function AnalysisError({
   capturedAt,
+  code,
   frame,
   lookup,
   message,
@@ -714,6 +720,7 @@ function AnalysisError({
   onScanRetrySuccess,
 }: {
   capturedAt: string | null;
+  code?: string;
   frame: CapturedFrame | null | undefined;
   lookup: Lookup | null;
   message: string;
@@ -723,6 +730,7 @@ function AnalysisError({
   const [isOnline, setIsOnline] = useState(() => typeof navigator !== "undefined" ? navigator.onLine : true);
   const [isRetrying, setIsRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
+  const errorDetails = getAIErrorDetails(code);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -773,9 +781,12 @@ function AnalysisError({
 
   return (
     <section className="scanner-error-flash rounded-[24px] border border-[var(--ds-danger-line)] bg-[var(--ds-danger-soft)] p-5">
-      <p className="text-sm font-bold text-[var(--ds-danger-ink)]">AI identification failed</p>
-      <h2 className="mt-2 text-xl font-extrabold tracking-tight">Keep the photo and try again</h2>
+      <p className="text-sm font-bold text-[var(--ds-danger-ink)]">
+        {errorDetails.category === "provider_unavailable" ? "Provider unavailable" : "AI identification failed"}
+      </p>
+      <h2 className="mt-2 text-xl font-extrabold tracking-tight">{errorDetails.title}</h2>
       <p className="mt-3 text-sm leading-6 text-neutral-700">{message}</p>
+      <p className="mt-3 text-sm leading-6 text-neutral-700">{errorDetails.description}</p>
       {capturedAt ? <p className="mt-3 text-xs font-semibold text-neutral-400">Captured {capturedAt}</p> : null}
 
       {frame ? (
@@ -788,7 +799,7 @@ function AnalysisError({
             disabled={!isOnline || isRetrying}
             onClick={handleRetry}
           >
-            {isRetrying ? "Retrying..." : "Try again"}
+            {isRetrying ? "Retrying..." : errorDetails.retryLabel}
           </Button>
           {retryError ? (
             <p className="mt-3 text-sm font-semibold text-[var(--ds-danger-ink)]">{retryError}</p>

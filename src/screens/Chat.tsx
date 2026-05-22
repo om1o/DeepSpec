@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import Button from "../components/ui/Button";
-import { getAIErrorMessage, sendFollowUp } from "../services/aiService";
+import { AIServiceError, getAIErrorDetails, getAIErrorMessage, sendFollowUp } from "../services/aiService";
 import { appendChatMessages, createChatMessage, getLookup } from "../services/storage";
 import type { Lookup } from "../types";
 
@@ -11,6 +11,7 @@ export default function Chat() {
   const [lookup, setLookup] = useState<Lookup | null>(() => (id ? getLookup(id) : null));
   const [question, setQuestion] = useState(() => searchParams.get("q")?.trim().slice(0, 500) ?? "");
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -27,22 +28,26 @@ export default function Chat() {
     const trimmedQuestion = question.trim().slice(0, 500);
     if (!trimmedQuestion) {
       setError("Ask a question first.");
+      setErrorCode("invalid_input");
       return;
     }
 
     setError(null);
+    setErrorCode(null);
     setIsSending(true);
 
     const userMessage = createChatMessage("user", trimmedQuestion);
     const savedUserMessage = appendChatMessages(lookup.id, [userMessage]);
     if (!savedUserMessage.ok) {
       setError(savedUserMessage.message);
+      setErrorCode("storage");
       setIsSending(false);
       return;
     }
 
     if (!savedUserMessage.value) {
       setError("This saved scan was not found.");
+      setErrorCode("not_found");
       setIsSending(false);
       return;
     }
@@ -67,6 +72,7 @@ export default function Chat() {
       setLookup(savedAssistantMessage.value);
     } catch (chatError) {
       setError(getAIErrorMessage(chatError));
+      setErrorCode(chatError instanceof AIServiceError ? chatError.code : null);
     } finally {
       setIsSending(false);
     }
@@ -89,6 +95,7 @@ export default function Chat() {
 
   const partName = lookup.result?.partName ?? "Captured frame";
   const canChat = Boolean(lookup.result);
+  const errorDetails = error ? getAIErrorDetails(errorCode) : null;
   const showSafetyWarning = lookup.result?.isSafetyCritical || lookup.result?.safetyTriage === "needs_professional";
 
   return (
@@ -153,7 +160,15 @@ export default function Chat() {
             <div ref={messagesEndRef} aria-hidden="true" />
           </div>
 
-          {error ? <p className="mt-3 text-sm font-semibold text-[var(--ds-danger-ink)]">{error}</p> : null}
+          {error && errorDetails ? (
+            <section className="mt-3 rounded-2xl border border-[var(--ds-danger-line)] bg-[var(--ds-danger-soft)] p-3">
+              <p className="text-sm font-extrabold text-[var(--ds-danger-ink)]">{errorDetails.title}</p>
+              <p className="mt-1 text-sm leading-6 text-neutral-700">{error}</p>
+              {errorDetails.category === "provider_unavailable" ? (
+                <p className="mt-1 text-xs font-semibold leading-5 text-neutral-500">{errorDetails.description}</p>
+              ) : null}
+            </section>
+          ) : null}
 
           <form className="mt-4 space-y-3" onSubmit={handleSubmit}>
             <label className="block">

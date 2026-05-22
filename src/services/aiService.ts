@@ -12,7 +12,24 @@ import {
   type SourceLink,
 } from "../types";
 
-type AIErrorCode = "invalid_input" | "not_configured" | "rate_limited" | "invalid_response" | "network" | "unsupported";
+type AIErrorCode =
+  | "image_too_large"
+  | "invalid_input"
+  | "invalid_response"
+  | "network"
+  | "not_configured"
+  | "provider_error"
+  | "rate_limited"
+  | "unsupported";
+
+export type AIErrorCategory = "input" | "model_response" | "provider_unavailable" | "setup" | "unknown";
+
+export type AIErrorDetails = {
+  category: AIErrorCategory;
+  description: string;
+  retryLabel: string;
+  title: string;
+};
 
 type IdentifyApiSuccess = {
   result: IdentificationResult;
@@ -142,6 +159,62 @@ export function getAIErrorMessage(error: unknown) {
   }
 
   return "Deep Spec could not analyze this photo.";
+}
+
+export function getAIErrorDetails(code: string | undefined | null): AIErrorDetails {
+  switch (code) {
+    case "rate_limited":
+      return {
+        category: "provider_unavailable",
+        description: "This is a provider quota or traffic issue, not proof the model identified the part incorrectly.",
+        retryLabel: "Try again later",
+        title: "AI provider is rate-limited",
+      };
+    case "network":
+      return {
+        category: "provider_unavailable",
+        description: "The photo can be retried when the Deep Spec service can reach the AI provider again.",
+        retryLabel: "Try again",
+        title: "AI provider could not be reached",
+      };
+    case "provider_error":
+      return {
+        category: "provider_unavailable",
+        description: "Treat this as provider health, not model quality. Retry after the provider recovers.",
+        retryLabel: "Try again",
+        title: "AI provider is unavailable",
+      };
+    case "invalid_response":
+      return {
+        category: "model_response",
+        description: "The provider responded, but Deep Spec could not read the model output. This should count as a model or prompt failure.",
+        retryLabel: "Try again",
+        title: "AI response was unreadable",
+      };
+    case "not_configured":
+      return {
+        category: "setup",
+        description: "The server is missing its AI provider configuration. This needs a deployment fix before retries will work.",
+        retryLabel: "Try again",
+        title: "AI is not configured",
+      };
+    case "image_too_large":
+    case "invalid_input":
+    case "unsupported":
+      return {
+        category: "input",
+        description: "Change the request and try again.",
+        retryLabel: "Try again",
+        title: "Scan input needs attention",
+      };
+    default:
+      return {
+        category: "unknown",
+        description: "The captured photo is still available, so you can retry without taking another scan.",
+        retryLabel: "Try again",
+        title: "Keep the photo and try again",
+      };
+  }
 }
 
 function assertIdentificationResult(value: unknown): IdentificationResult {
