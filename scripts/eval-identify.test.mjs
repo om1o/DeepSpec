@@ -456,6 +456,9 @@ describe("identify eval scoring", () => {
         error: null,
         expectedLabels: ["Brake rotor"],
         imagePath: "Car parts dataset/File1/img/Car damages 137.png",
+        modelRun: {
+          ocrUsed: true,
+        },
         providerAvailabilityFailure: false,
         responseStatus: 200,
         retryCount: 0,
@@ -503,6 +506,8 @@ describe("identify eval scoring", () => {
           min: 100,
           p95: 700,
         },
+        ocrUsageCount: 1,
+        ocrUsageRate: 0.25,
         providerFailureRate: 0,
         retryCount: 1,
         retryRate: 0.25,
