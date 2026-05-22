@@ -9,6 +9,12 @@ import { buildScanReport, downloadTextFile, getMechanicSearchUrl, getScanReportF
 import { deleteLookup, getLookup, scanStateFromLookup, updateLookup, updateLookupResult } from "../services/storage";
 import type { CandidateMatch, CapturedFrame, Confidence, EvidenceRegion, IdentificationResult, Lookup, Rating, ScanAnalysisState, SourceLink } from "../types";
 
+type DetectedTextFinding = {
+  codes: string[];
+  searchUrl: string;
+  text: string;
+};
+
 export default function Result() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -444,6 +450,7 @@ function AnalysisResult({
       ) : null}
 
       <CandidateMatchesSection candidates={result.candidateMatches ?? []} />
+      <DetectedTextSection findings={getDetectedTextFindings(result)} />
       <ResultSection title="Match" items={[result.whatItDoes]} />
       <EvidenceRegionsSection regions={result.evidenceRegions ?? []} />
       <EvidenceSection items={result.evidence} />
@@ -520,6 +527,43 @@ function QuickActions({ lookupId, result }: { lookupId: string | null; result: I
         Nearby
       </a>
     </div>
+  );
+}
+
+function DetectedTextSection({ findings }: { findings: DetectedTextFinding[] }) {
+  if (!findings.length) {
+    return null;
+  }
+
+  return (
+    <section aria-labelledby="detected-text-heading" className="rounded-[22px] border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] p-4">
+      <h2 id="detected-text-heading" className="text-sm font-extrabold uppercase tracking-[0.14em] text-[var(--ds-evidence-ink)]">Text found</h2>
+      <div className="mt-3 grid grid-cols-1 gap-3">
+        {findings.map((finding) => (
+          <article key={finding.text} className="rounded-2xl border border-[var(--ds-evidence-line)] bg-white px-3 py-3">
+            <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-neutral-400">Visible label</p>
+            <p className="mt-2 break-words font-mono text-base font-extrabold leading-6 text-neutral-950">{finding.text}</p>
+            {finding.codes.length ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {finding.codes.map((code) => (
+                  <span key={code} className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-xs font-extrabold text-neutral-700">
+                    {code}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            <a
+              className="mt-3 inline-flex rounded-full bg-[var(--ds-accent)] px-4 py-2 text-xs font-extrabold text-white"
+              href={finding.searchUrl}
+              rel="noreferrer"
+              target="_blank"
+            >
+              Search text
+            </a>
+          </article>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -606,13 +650,12 @@ function EvidenceRegionsSection({ regions }: { regions: EvidenceRegion[] }) {
 
 function formatEvidenceItem(item: string) {
   const cleaned = item.trim();
-  if (!cleaned || /^Dataset source:/i.test(cleaned)) {
+  if (!cleaned || /^Dataset source:|^OCR label text:/i.test(cleaned)) {
     return "";
   }
 
   return cleaned
-    .replace(/^Local dataset match:\s*/i, "Similar dataset sample: ")
-    .replace(/^OCR label text:\s*/i, "Visible label text: ");
+    .replace(/^Local dataset match:\s*/i, "Similar dataset sample: ");
 }
 
 type ReferenceLink = Pick<SourceLink, "label" | "sourceType" | "url">;
@@ -888,6 +931,55 @@ function getDatasetSourceUrls(evidence: string[]) {
   }
 
   return [...urls].slice(0, 3);
+}
+
+function getDetectedTextFindings(result: IdentificationResult): DetectedTextFinding[] {
+  const seen = new Set<string>();
+  const findings: DetectedTextFinding[] = [];
+
+  for (const item of result.evidence) {
+    const text = getOcrEvidenceText(item);
+    if (!text) continue;
+
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    findings.push({
+      codes: getLikelyCodeTokens(text),
+      searchUrl: getTextSearchUrl(text, result.partName),
+      text,
+    });
+  }
+
+  return findings.slice(0, 3);
+}
+
+function getOcrEvidenceText(item: string) {
+  const match = item.match(/^OCR label text:\s*(.+)$/i);
+  const text = match?.[1]?.replace(/\s+/g, " ").trim();
+  return text || null;
+}
+
+function getLikelyCodeTokens(text: string) {
+  const tokens = text.match(/\b[A-Z0-9][A-Z0-9./#:-]{3,}[A-Z0-9]\b/gi) ?? [];
+  const seen = new Set<string>();
+  const codes: string[] = [];
+
+  for (const token of tokens) {
+    const normalized = token.toUpperCase();
+    if (seen.has(normalized)) continue;
+    if (!/\d/.test(normalized) || !/[A-Z./#:-]/.test(normalized)) continue;
+    seen.add(normalized);
+    codes.push(normalized);
+  }
+
+  return codes.slice(0, 4);
+}
+
+function getTextSearchUrl(text: string, partName: string) {
+  const query = encodeURIComponent(`${text} ${partName} car part`);
+  return `https://www.google.com/search?q=${query}`;
 }
 
 function getTrustReview(result: IdentificationResult): TrustReview {

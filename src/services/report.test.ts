@@ -36,6 +36,7 @@ const lookup: Lookup = {
     needsBetterPhoto: false,
     evidence: [
       "Caliper shape near wheel area.",
+      "OCR label text: ATE 60-12345",
       "Local dataset match: Brake caliper (part, 4 labeled samples)",
       "Dataset source: https://huggingface.co/datasets/DrBimmer/car-parts-and-damage-dataset/resolve/main/sample.jpg",
     ],
@@ -69,6 +70,8 @@ describe("report", () => {
     expect(report).toContain("Brake rotor (low): Nearby wheel-well part");
     expect(report).toContain("Image evidence:");
     expect(report).toContain("Scanned area: Caliper body");
+    expect(report).toContain("Detected text:");
+    expect(report).toContain("ATE 60-12345");
     expect(report).toContain("Ranked sources:");
     expect(report).toContain("Dataset sample: Brake caliper (dataset)");
     expect(report).toContain("Local dataset match: Brake caliper");
