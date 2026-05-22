@@ -424,6 +424,11 @@ describe("Result", () => {
 
     renderResult(null, `/result/${lookup.id}`);
 
+    expect(screen.getByRole("heading", { name: "Review" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Actions" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Cloud" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Export" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Danger zone" })).toBeInTheDocument();
     expect(screen.getByText("Scan report")).toBeInTheDocument();
     expect(screen.getByText("Cloud dataset sync")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sync this scan" })).toBeDisabled();

@@ -401,72 +401,78 @@ function SavedScanControls({
         <TrustRow label="Review status" value={lookup.trainingStatus.replaceAll("_", " ")} />
       </div>
 
-      {lookup.result && !isQaSeed ? (
-        <div className="mt-4 grid grid-cols-1 gap-3">
-          <Link
-            className="block rounded-full bg-[var(--ds-accent)] px-5 py-3 text-center text-sm font-bold text-white shadow-sm"
-            to={`/result/${lookup.id}/chat`}
+      <div className="mt-5 border-t border-neutral-200 pt-4">
+        <h3 className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Review</h3>
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <Button
+            className={lookup.rating === "up" ? "!bg-[var(--ds-ok)] !text-white shadow-none" : "!bg-neutral-100 !text-neutral-900 shadow-none"}
+            onClick={() => onRating("up")}
           >
-            Tell me more
-          </Link>
-          {needsProfessional ? (
-            <a
-              className="block rounded-full border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-5 py-3 text-center text-sm font-bold text-[var(--ds-warn-ink)]"
-              href={getMechanicSearchUrl(lookup)}
-              rel="noreferrer"
-              target="_blank"
+            Helpful
+          </Button>
+          <Button
+            className={lookup.rating === "down" ? "!bg-[var(--ds-danger)] !text-white shadow-none" : "!bg-neutral-100 !text-neutral-900 shadow-none"}
+            onClick={() => onRating("down")}
+          >
+            Wrong
+          </Button>
+        </div>
+
+        {lookup.rating === "down" ? (
+          <label className="mt-4 block">
+            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">What was it actually?</span>
+            <textarea
+              className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[var(--ds-accent)]"
+              maxLength={240}
+              onChange={(event) => onCorrectionChange(event.target.value)}
+              placeholder="Example: coolant reservoir cap, not brake fluid cap"
+              value={lookup.correction ?? ""}
+            />
+          </label>
+        ) : null}
+
+        <label className="mt-4 block">
+          <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Private notes</span>
+          <textarea
+            className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[var(--ds-accent)]"
+            maxLength={500}
+            onChange={(event) => onNotesChange(event.target.value)}
+            placeholder="Optional: where the part was, symptoms, what you checked next"
+            value={lookup.notes}
+          />
+        </label>
+
+        {saveError ? <p className="mt-3 text-sm font-semibold text-[var(--ds-danger-ink)]">{saveError}</p> : null}
+      </div>
+
+      {lookup.result && !isQaSeed ? (
+        <div className="mt-5 border-t border-neutral-200 pt-4">
+          <h3 className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Actions</h3>
+          <div className="mt-3 grid grid-cols-1 gap-3">
+            <Link
+              className="block rounded-full bg-[var(--ds-accent)] px-5 py-3 text-center text-sm font-bold text-white shadow-sm"
+              to={`/result/${lookup.id}/chat`}
             >
-              Find nearby options
-            </a>
-          ) : null}
+              Tell me more
+            </Link>
+            {needsProfessional ? (
+              <a
+                className="block rounded-full border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-5 py-3 text-center text-sm font-bold text-[var(--ds-warn-ink)]"
+                href={getMechanicSearchUrl(lookup)}
+                rel="noreferrer"
+                target="_blank"
+              >
+                Find nearby options
+              </a>
+            ) : null}
+          </div>
         </div>
       ) : null}
 
-      <div className="mt-4 grid grid-cols-2 gap-3">
-        <Button
-          className={lookup.rating === "up" ? "!bg-[var(--ds-ok)] !text-white shadow-none" : "!bg-neutral-100 !text-neutral-900 shadow-none"}
-          onClick={() => onRating("up")}
-        >
-          Helpful
-        </Button>
-        <Button
-          className={lookup.rating === "down" ? "!bg-[var(--ds-danger)] !text-white shadow-none" : "!bg-neutral-100 !text-neutral-900 shadow-none"}
-          onClick={() => onRating("down")}
-        >
-          Wrong
-        </Button>
-      </div>
-
-      {lookup.rating === "down" ? (
-        <label className="mt-4 block">
-          <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">What was it actually?</span>
-          <textarea
-            className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[var(--ds-accent)]"
-            maxLength={240}
-            onChange={(event) => onCorrectionChange(event.target.value)}
-            placeholder="Example: coolant reservoir cap, not brake fluid cap"
-            value={lookup.correction ?? ""}
-          />
-        </label>
-      ) : null}
-
-      <label className="mt-4 block">
-        <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Private notes</span>
-        <textarea
-          className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[var(--ds-accent)]"
-          maxLength={500}
-          onChange={(event) => onNotesChange(event.target.value)}
-          placeholder="Optional: where the part was, symptoms, what you checked next"
-          value={lookup.notes}
-        />
-      </label>
-
-      {saveError ? <p className="mt-3 text-sm font-semibold text-[var(--ds-danger-ink)]">{saveError}</p> : null}
-
-      <CloudHealthCard className="mt-4" />
-
-      <div className="mt-4 rounded-[20px] border border-neutral-200 bg-neutral-50 p-4">
-        <p className="text-sm font-extrabold text-neutral-900">Cloud dataset sync</p>
+      <div className="mt-5 border-t border-neutral-200 pt-4">
+        <h3 className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Cloud</h3>
+        <CloudHealthCard className="mt-3" />
+        <p className="mt-4 text-sm font-extrabold text-neutral-900">Cloud dataset sync</p>
         <p className="mt-2 text-sm leading-6 text-neutral-500">
           {isQaSeed ? "QA seed scans are local-only fixtures and cannot be synced to the cloud dataset." : cloudSync.message}
         </p>
@@ -480,8 +486,9 @@ function SavedScanControls({
         {cloudStatusMessage ? <p className="mt-3 text-sm font-semibold text-[var(--ds-accent)]">{cloudStatusMessage}</p> : null}
       </div>
 
-      <div className="mt-4 rounded-[20px] border border-neutral-200 bg-neutral-50 p-4">
-        <p className="text-sm font-extrabold text-neutral-900">Scan report</p>
+      <div className="mt-5 border-t border-neutral-200 pt-4">
+        <h3 className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Export</h3>
+        <p className="mt-2 text-sm font-extrabold text-neutral-900">Scan report</p>
         <p className="mt-2 text-sm leading-6 text-neutral-500">
           Export a plain-text summary for a mechanic, buyer, or your own records. This does not create a public link.
         </p>
@@ -496,9 +503,12 @@ function SavedScanControls({
         {reportStatus ? <p className="mt-3 text-sm font-semibold text-[var(--ds-accent)]">{reportStatus}</p> : null}
       </div>
 
-      <Button className="mt-4 w-full border border-[var(--ds-danger-line)] !bg-[var(--ds-danger-soft)] !text-[var(--ds-danger)] shadow-none" onClick={onDelete}>
-        Delete saved scan
-      </Button>
+      <div className="mt-5 border-t border-neutral-200 pt-4">
+        <h3 className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Danger zone</h3>
+        <Button className="mt-3 w-full border border-[var(--ds-danger-line)] !bg-[var(--ds-danger-soft)] !text-[var(--ds-danger)] shadow-none" onClick={onDelete}>
+          Delete saved scan
+        </Button>
+      </div>
     </section>
   );
 }
