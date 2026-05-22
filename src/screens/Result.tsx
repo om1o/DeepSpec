@@ -1,6 +1,7 @@
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
+import CloudHealthCard from "../components/CloudHealthCard";
 import Button from "../components/ui/Button";
 import { isTestMode } from "../lib/testMode";
 import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } from "../lib/utils";
@@ -404,6 +405,8 @@ function SavedScanControls({
       </label>
 
       {saveError ? <p className="mt-3 text-sm font-semibold text-[var(--ds-danger-ink)]">{saveError}</p> : null}
+
+      <CloudHealthCard className="mt-4" />
 
       <div className="mt-4 rounded-[20px] border border-neutral-200 bg-neutral-50 p-4">
         <p className="text-sm font-extrabold text-neutral-900">Cloud dataset sync</p>
