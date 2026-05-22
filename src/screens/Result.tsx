@@ -602,7 +602,7 @@ function CandidateMatchesSection({
                 aria-label={`${isPromoted ? "Marked" : "Mark"} ${candidate.partName} correct`}
                 className={`mt-3 rounded-full px-3 py-2 text-xs font-extrabold ${
                   isPromoted
-                    ? "bg-[var(--ds-success-soft)] text-[var(--ds-success-ink)] ring-1 ring-[var(--ds-success-line)]"
+                    ? "bg-[var(--ds-ok-soft)] text-[var(--ds-ok-ink)] ring-1 ring-[var(--ds-ok-line)]"
                     : "bg-white text-[var(--ds-evidence-ink)] ring-1 ring-neutral-200"
                 }`}
                 disabled={isPromoted}
