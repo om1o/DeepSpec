@@ -4,10 +4,10 @@ import { getScannerReticleBounds, isTargetInsideScannerBox } from "./scannerReti
 describe("scanner reticle target lock zone", () => {
   it("matches the visible scanner box geometry", () => {
     expect(getScannerReticleBounds(1000, 800)).toEqual({
-      height: 520,
-      left: 305,
-      top: 100,
-      width: 390,
+      height: 440,
+      left: 335,
+      top: 140,
+      width: 330,
     });
   });
 
