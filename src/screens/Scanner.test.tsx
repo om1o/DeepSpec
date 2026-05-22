@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, vi } from "vitest";
@@ -135,11 +135,13 @@ describe("Scanner", () => {
   });
 
   beforeEach(() => {
-    captureFrame.mockClear();
+    captureFrame.mockReset();
+    captureFrame.mockResolvedValue("data:image/jpeg;base64,compressed-frame");
     retryCamera.mockClear();
-    assessImageQuality.mockClear();
+    assessImageQuality.mockReset();
     assessImageQuality.mockResolvedValue({ ok: true });
-    identifyCapturedFrame.mockClear();
+    identifyCapturedFrame.mockReset();
+    identifyCapturedFrame.mockResolvedValue(makeScanResult("Alternator"));
     cameraHookState.current = {
       cameraError: null,
       cameraRequestId: 0,
@@ -420,6 +422,36 @@ describe("Scanner", () => {
     expect(screen.queryByRole("heading", { level: 1, name: "Alternator" })).not.toBeInTheDocument();
   }, 10000);
 
+  it("prevents a canceled provider response from saving after cancel", async () => {
+    objectTargetState.current = null;
+    let resolveScan: (value: ReturnType<typeof makeScanResult>) => void = () => undefined;
+    identifyCapturedFrame.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveScan = resolve;
+    }));
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+          <Route path="/result" element={<Result />} />
+          <Route path="/result/:id" element={<Result />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Cancel scan" }));
+    await waitFor(() => expect(screen.getByText("Scan canceled. Hold the right item steady to try again.")).toBeInTheDocument());
+
+    await act(async () => {
+      resolveScan(makeScanResult("Stale pump"));
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByRole("heading", { level: 1, name: "Stale pump" })).not.toBeInTheDocument();
+    expect(localStorage.getItem("deep-spec:lookups")).toBeNull();
+  }, 10000);
+
   it("rescues blurry captures by sending a label OCR hint to identify", async () => {
     assessImageQuality.mockResolvedValueOnce({
       ok: false,
@@ -442,3 +474,22 @@ describe("Scanner", () => {
     expect(screen.queryByText(/Move closer and hold steady/)).not.toBeInTheDocument();
   }, 10000);
 });
+
+function makeScanResult(partName: string) {
+  return {
+    partName,
+    confidence: "high" as const,
+    scanCategory: "electrical" as const,
+    candidateMatches: [],
+    whatItDoes: "It charges the battery while the engine runs.",
+    visibleObservations: ["Belt-driven metal housing is visible."],
+    evidenceRegions: [],
+    concerns: [],
+    safetyTriage: "can_help" as const,
+    isSafetyCritical: false,
+    nextAction: "Compare the scan with another angle if you need more detail.",
+    needsBetterPhoto: false,
+    evidence: ["The pulley and housing match common alternator shapes."],
+    sourceLinks: [],
+  };
+}

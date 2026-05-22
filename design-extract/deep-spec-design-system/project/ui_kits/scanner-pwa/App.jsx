@@ -6,9 +6,9 @@ const { useState: useAppState, useEffect: useAppEffect } = React;
 function parseRoute(hash) {
   const h = (hash || "").replace(/^#/, "") || "/";
   if (h === "/" || h === "")              return "scanner";
+  if (h === "/chat" || h.endsWith("/chat")) return "chat";
   if (h.startsWith("/result"))             return "result";
   if (h === "/history")                    return "history";
-  if (h === "/chat" || h.endsWith("/chat")) return "chat";
   if (h === "/early-access")               return "early-access";
   return "scanner";
 }

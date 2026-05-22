@@ -1,7 +1,7 @@
 import { FormEvent, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import Button from "../components/ui/Button";
-import { getCloudSyncStatus, syncFeedbackToCloud, syncWaitlistSignupToCloud } from "../services/cloudSync";
+import { getCloudSyncStatus } from "../services/cloudSync";
 import { getEngagementData, saveFeedbackSubmission, saveWaitlistSignup } from "../services/engagement";
 import type { FeedbackSubmission, WaitlistSignup } from "../types";
 
@@ -41,12 +41,6 @@ export default function EarlyAccess() {
     setMainProblem("");
     setStats(getEngagementData());
 
-    if (cloudSync.configured && result.value) {
-      const cloudResult = await syncWaitlistSignupToCloud(result.value);
-      setWaitlistStatus(`Saved on this device. ${cloudResult.message}`);
-      return;
-    }
-
     setWaitlistStatus("Saved on this device. Backend sync comes after privacy review.");
   }
 
@@ -65,12 +59,6 @@ export default function EarlyAccess() {
 
     setFeedbackMessage("");
     setStats(getEngagementData());
-
-    if (cloudSync.configured && result.value) {
-      const cloudResult = await syncFeedbackToCloud(result.value);
-      setFeedbackStatus(`Feedback saved locally. ${cloudResult.message}`);
-      return;
-    }
 
     setFeedbackStatus("Feedback saved locally.");
   }

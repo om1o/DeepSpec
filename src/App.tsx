@@ -43,7 +43,9 @@ function RequireAuth({ children }: { children: ReactNode }) {
       }
     }).catch(() => {
       if (isMounted) {
-        setStatus(hasLocalAuthBypass() ? "allowed" : "blocked");
+        setStatus((current) => (
+          current === "checking" ? (hasLocalAuthBypass() ? "allowed" : "blocked") : current
+        ));
       }
     });
 

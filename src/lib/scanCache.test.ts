@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   SCAN_CACHE_KEY,
   SCAN_CACHE_MAX,
@@ -27,6 +27,11 @@ const makeResult = (partName: string): IdentificationResult => ({
 });
 
 beforeEach(() => {
+  vi.restoreAllMocks();
+  localStorage.clear();
+});
+
+afterEach(() => {
   vi.restoreAllMocks();
   localStorage.clear();
 });

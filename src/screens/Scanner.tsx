@@ -36,6 +36,7 @@ export default function Scanner() {
   const [captureError, setCaptureError] = useState<string | null>(null);
   const autoScanStartedRef = useRef(false);
   const cancelScanRef = useRef(false);
+  const scanRequestIdRef = useRef(0);
   const { cameraError, cameraRequestId, cameraState, captureFrame, markError, markReady, retryCamera, webcamRef } =
     useCamera();
   const { error: motionError, isStable, needsPermission, requestPermission, usesFallback } =
@@ -71,6 +72,16 @@ export default function Scanner() {
     window.setTimeout(() => setAutoScanPaused(false), 1800);
   }, []);
 
+  const beginScanRequest = useCallback(() => {
+    cancelScanRef.current = false;
+    scanRequestIdRef.current += 1;
+    return scanRequestIdRef.current;
+  }, []);
+
+  const isScanRequestActive = useCallback((requestId: number) => (
+    scanRequestIdRef.current === requestId && !cancelScanRef.current
+  ), []);
+
   const persistAndNavigate = useCallback(
     (scanState: ScanAnalysisState) => {
       if (qaTestMode) {
@@ -97,10 +108,12 @@ export default function Scanner() {
 
   const analyzeImageBase64 = useCallback(async (
     imageBase64: string,
+    requestId: number,
     secondFrameProvider?: () => Promise<string>,
   ) => {
     setAnalysisStep("Checking photo quality");
     const quality = await assessImageQuality(imageBase64);
+    if (!isScanRequestActive(requestId)) return;
     let labelRescueTrigger: LabelRescueTrigger | undefined;
     if (!quality.ok && quality.issue === "too_blurry") {
       labelRescueTrigger = "too_blurry";
@@ -119,7 +132,7 @@ export default function Scanner() {
 
     setAnalysisStep("Checking saved matches");
     const imageHash = !qaTestMode ? await hashImageDataUrl(imageBase64) : null;
-    if (cancelScanRef.current) return;
+    if (!isScanRequestActive(requestId)) return;
     if (imageHash) {
       const cached = getCachedScanResult(imageHash);
       if (cached) {
@@ -132,7 +145,7 @@ export default function Scanner() {
     let secondFrame: CapturedFrame | undefined;
     if (!qaTestMode && secondFrameProvider) {
       await new Promise<void>((resolve) => setTimeout(resolve, SECOND_FRAME_DELAY_MS));
-      if (cancelScanRef.current) return;
+      if (!isScanRequestActive(requestId)) return;
       try {
         const second = await secondFrameProvider();
         const secondQuality = await assessImageQuality(second);
@@ -147,7 +160,7 @@ export default function Scanner() {
     try {
       setAnalysisStep("Matching vehicle data");
       const result = await identifyCapturedFrame(frame, secondFrame, labelRescueTrigger);
-      if (cancelScanRef.current) return;
+      if (!isScanRequestActive(requestId)) return;
       if (imageHash) setCachedScanResult(imageHash, result);
       setAnalysisStep("Saving result");
       persistAndNavigate({
@@ -156,7 +169,7 @@ export default function Scanner() {
         analyzedAt: new Date().toISOString(),
       });
     } catch (analysisError) {
-      if (cancelScanRef.current) return;
+      if (!isScanRequestActive(requestId)) return;
       persistAndNavigate({
         frame,
         errorMessage: getAIErrorMessage(analysisError),
@@ -164,51 +177,59 @@ export default function Scanner() {
         analyzedAt: new Date().toISOString(),
       });
     }
-  }, [pauseAutoScan, persistAndNavigate, qaTestMode]);
+  }, [isScanRequestActive, pauseAutoScan, persistAndNavigate, qaTestMode]);
 
   const handleIdentify = useCallback(async () => {
     if (isAnalyzing) {
       return;
     }
 
+    const requestId = beginScanRequest();
     try {
-      cancelScanRef.current = false;
       setIsAnalyzing(true);
       setAnalysisStep("Capturing photo");
       setCaptureError(null);
       const imageBase64 = await captureFrame();
-      if (cancelScanRef.current) return;
+      if (!isScanRequestActive(requestId)) return;
 
-      await analyzeImageBase64(imageBase64, captureFrame);
+      await analyzeImageBase64(imageBase64, requestId, captureFrame);
     } catch (error) {
-      pauseAutoScan(error instanceof Error ? error.message : "Capture failed. Try again.");
+      if (isScanRequestActive(requestId)) {
+        pauseAutoScan(error instanceof Error ? error.message : "Capture failed. Try again.");
+      }
     } finally {
-      setIsAnalyzing(false);
-      setAnalysisStep(null);
+      if (isScanRequestActive(requestId)) {
+        setIsAnalyzing(false);
+        setAnalysisStep(null);
+      }
     }
-  }, [analyzeImageBase64, captureFrame, isAnalyzing, pauseAutoScan]);
+  }, [analyzeImageBase64, beginScanRequest, captureFrame, isAnalyzing, isScanRequestActive, pauseAutoScan]);
 
   const handleGalleryFile = useCallback(async (file: File) => {
     if (isAnalyzing) {
       return;
     }
 
+    const requestId = beginScanRequest();
     try {
-      cancelScanRef.current = false;
       autoScanStartedRef.current = false;
       setIsAnalyzing(true);
       setAnalysisStep("Loading photo");
       setCaptureError(null);
       const imageBase64 = await readImageFileAsDataUrl(file);
-      if (cancelScanRef.current) return;
-      await analyzeImageBase64(imageBase64);
+      if (!isScanRequestActive(requestId)) return;
+      await analyzeImageBase64(imageBase64, requestId);
     } catch (error) {
-      pauseAutoScan(error instanceof Error ? error.message : "Could not read that photo.");
+      if (isScanRequestActive(requestId)) {
+        pauseAutoScan(error instanceof Error ? error.message : "Could not read that photo.");
+      }
     } finally {
-      setIsAnalyzing(false);
-      setAnalysisStep(null);
+      if (isScanRequestActive(requestId)) {
+        setIsAnalyzing(false);
+        setAnalysisStep(null);
+      }
     }
-  }, [analyzeImageBase64, isAnalyzing, pauseAutoScan]);
+  }, [analyzeImageBase64, beginScanRequest, isAnalyzing, isScanRequestActive, pauseAutoScan]);
 
   useEffect(() => {
     if (!hasTargetLock || cameraState !== "ready" || isAnalyzing || autoScanPaused) {
@@ -234,6 +255,7 @@ export default function Scanner() {
 
   function cancelCurrentScan() {
     cancelScanRef.current = true;
+    scanRequestIdRef.current += 1;
     setIsAnalyzing(false);
     setAnalysisStep(null);
     pauseAutoScan("Scan canceled. Hold the right item steady to try again.");

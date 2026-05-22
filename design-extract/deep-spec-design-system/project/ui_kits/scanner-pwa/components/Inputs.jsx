@@ -1,6 +1,14 @@
 // Deep Spec — Form input primitives
 
 function FieldLabel({ children, htmlFor }) {
+  if (htmlFor) {
+    return (
+      <label htmlFor={htmlFor} className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/42">
+        {children}
+      </label>
+    );
+  }
+
   return (
     <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/42">{children}</span>
   );

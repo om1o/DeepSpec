@@ -29,17 +29,17 @@ describe("sortDrBimmerDataset", () => {
       const rawDir = join(root, "raw");
       const outDir = join(root, "derived");
       await writeGroupFixture({
-        labels: ["Front-bumper", "Fender"],
-        rawDir,
-        rawName: "Car damages dataset",
-        secondaryTitle: "Fender",
-        title: "Front-bumper",
-      });
-      await writeGroupFixture({
         labels: ["Dent", "Scratch"],
         rawDir,
-        rawName: "Car parts dataset",
+        rawName: "Car damages dataset",
         title: "Dent",
+      });
+      await writeGroupFixture({
+        labels: ["Front-bumper", "Fender"],
+        rawDir,
+        rawName: "Car parts dataset",
+        secondaryTitle: "Fender",
+        title: "Front-bumper",
       });
 
       const result = await sortDrBimmerDataset({
@@ -52,8 +52,8 @@ describe("sortDrBimmerDataset", () => {
       expect(result.manifest.totalRecords).toBe(2);
       expect(result.manifest.groups).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ canonicalKind: "part", labels: ["Fender", "Front-bumper"], recordCount: 1 }),
           expect.objectContaining({ canonicalKind: "damage", labels: ["Dent", "Scratch"], recordCount: 1 }),
+          expect.objectContaining({ canonicalKind: "part", labels: ["Fender", "Front-bumper"], recordCount: 1 }),
         ]),
       );
 
@@ -64,21 +64,21 @@ describe("sortDrBimmerDataset", () => {
       expect(records).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            canonicalKind: "part",
-            labels: ["Front-bumper", "Fender"],
+            canonicalKind: "damage",
+            labels: ["Dent"],
             links: expect.objectContaining({
               image: expect.stringContaining("https://huggingface.co/datasets/DrBimmer/car-parts-and-damage-dataset/resolve/main/"),
             }),
-            primaryLabel: "Front-bumper",
-            reviewStatus: "source_labeled",
-            trainingLabel: "Front-bumper",
-          }),
-          expect.objectContaining({
-            canonicalKind: "damage",
-            labels: ["Dent"],
             primaryLabel: "Dent",
             reviewStatus: "source_labeled",
             trainingLabel: "Dent",
+          }),
+          expect.objectContaining({
+            canonicalKind: "part",
+            labels: ["Front-bumper", "Fender"],
+            primaryLabel: "Front-bumper",
+            reviewStatus: "source_labeled",
+            trainingLabel: "Front-bumper",
           }),
         ]),
       );
