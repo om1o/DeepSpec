@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildReviewLookup, isReviewableEvalFailure, scoreIdentificationResult } from "./eval-identify.mjs";
+import { RELEASE_SAMPLE_IMAGES, buildReviewLookup, isReviewableEvalFailure, scoreIdentificationResult } from "./eval-identify.mjs";
 
 const result = {
   partName: "Rear bumper",
@@ -32,6 +32,14 @@ const result = {
 };
 
 describe("identify eval scoring", () => {
+  it("uses a fixed 50-case release sample set split across damage and parts", () => {
+    expect(RELEASE_SAMPLE_IMAGES).toHaveLength(50);
+    expect(new Set(RELEASE_SAMPLE_IMAGES).size).toBe(50);
+    expect(RELEASE_SAMPLE_IMAGES.filter((path) => path.startsWith("Car damages dataset/"))).toHaveLength(25);
+    expect(RELEASE_SAMPLE_IMAGES.filter((path) => path.startsWith("Car parts dataset/"))).toHaveLength(25);
+    expect(RELEASE_SAMPLE_IMAGES.every((path) => path.includes("/img/") && /\.(png|jpg)$/.test(path))).toBe(true);
+  });
+
   it("accepts directional label aliases", () => {
     expect(scoreIdentificationResult(result, ["Back-bumper"])).toEqual({
       ok: true,
