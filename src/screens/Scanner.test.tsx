@@ -380,6 +380,28 @@ describe("Scanner", () => {
     expect(screen.queryByRole("heading", { level: 1, name: "Camera access needed" })).not.toBeInTheDocument();
   });
 
+  it("lets testers exit sticky test scan mode", async () => {
+    window.history.pushState({}, "", "/scan?test=1");
+    objectTargetState.current = null;
+
+    render(
+      <MemoryRouter initialEntries={["/scan?test=1"]}>
+        <Routes>
+          <Route path="/scan" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("button", { name: "Test engine photo" })).toBeInTheDocument();
+    expect(sessionStorage.getItem("deep-spec:test-mode")).toBe("1");
+
+    await userEvent.click(screen.getByRole("button", { name: "Exit test mode" }));
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Test engine photo" })).not.toBeInTheDocument());
+    expect(sessionStorage.getItem("deep-spec:test-mode")).toBeNull();
+    expect(screen.getByRole("button", { name: "Scan now" })).toBeInTheDocument();
+  });
+
   it("lets the user cancel an accidental auto scan before the result opens", async () => {
     identifyCapturedFrame.mockImplementationOnce(() => new Promise(() => undefined));
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Webcam from "react-webcam";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import IdentifyButton from "../components/scanner/IdentifyButton";
 import MotionPermissionModal from "../components/scanner/MotionPermissionModal";
 import Reticle from "../components/scanner/Reticle";
@@ -28,6 +28,7 @@ const videoConstraints: MediaTrackConstraints = {
 };
 
 export default function Scanner() {
+  const location = useLocation();
   const navigate = useNavigate();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisStep, setAnalysisStep] = useState<string | null>(null);
@@ -39,7 +40,7 @@ export default function Scanner() {
     useCamera();
   const { error: motionError, isStable, needsPermission, requestPermission, usesFallback } =
     useStillness();
-  const qaTestMode = isTestMode();
+  const qaTestMode = isTestMode(location.search);
   const objectTarget = useObjectTarget(webcamRef, {
     enabled: cameraState === "ready" && !qaTestMode && !isAnalyzing,
     holdDurationMs: AUTO_SCAN_HOLD_MS,

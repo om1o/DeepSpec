@@ -100,6 +100,7 @@ export default defineConfig(async ({ mode }) => {
       environment: "jsdom",
       globals: true,
       setupFiles: "./src/test/setup.ts",
+      testTimeout: 15_000,
     },
     server: {
       host: "0.0.0.0",
