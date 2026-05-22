@@ -143,14 +143,26 @@ describe("storage", () => {
 
     expect(result.ok).toBe(true);
     expect(getLookup(lookup.id)?.chatHistory).toHaveLength(2);
+    expect(getLookups()[0].chatHistory).toHaveLength(2);
     expect(getLookup(lookup.id)?.chatHistory[0]).toMatchObject({
       role: "user",
       content: expect.stringMatching(/^What does it do/),
     });
     expect(getLookup(lookup.id)?.chatHistory[0].content.length).toBeLessThanOrEqual(500);
+
+    updateLookupResult(lookup.id, {
+      ...scanState.result!,
+      partName: "Serpentine belt",
+    });
+
+    expect(getLookups()[0].chatHistory).toHaveLength(2);
+    expect(getLookup(lookup.id)?.chatHistory).toHaveLength(2);
   });
 
   it("caps saved scans so the local database stays bounded", () => {
+    const firstLookup = createLookup(scanState).value;
+    appendChatMessages(firstLookup.id, [createChatMessage("user", "Keep this with the first scan.")]);
+
     for (let index = 0; index < MAX_SAVED_LOOKUPS + 5; index += 1) {
       createLookup({
         ...scanState,
@@ -169,6 +181,8 @@ describe("storage", () => {
 
     expect(lookups).toHaveLength(MAX_SAVED_LOOKUPS);
     expect(lookups[0].result?.partName).toBe(`Alternator ${MAX_SAVED_LOOKUPS + 4}`);
+    expect(lookups.some((lookup) => lookup.id === firstLookup.id)).toBe(false);
+    expect(localStorage.getItem(`deep-spec:chat:${firstLookup.id}`)).toBeNull();
   });
 
   it("deletes a saved lookup", () => {
