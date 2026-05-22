@@ -182,6 +182,7 @@ export function buildEvalResultRow({
   error,
   expectedLabels,
   imagePath,
+  modelRun = null,
   providerAvailabilityFailure,
   responseStatus,
   retryCount = 0,
@@ -198,6 +199,7 @@ export function buildEvalResultRow({
     confidence: result?.confidence ?? null,
     isSafetyCritical: result?.isSafetyCritical ?? null,
     needsBetterPhoto: result?.needsBetterPhoto ?? null,
+    ocrUsed: Boolean(modelRun?.ocrUsed),
     providerAvailabilityFailure: Boolean(providerAvailabilityFailure),
     retryCount,
     safetyTriage: result?.safetyTriage ?? null,
@@ -239,6 +241,7 @@ async function main() {
         sampleTimeoutMs: options.sampleTimeoutMs,
       });
       const result = response.status === 200 ? response.body.result : null;
+      const modelRun = response.status === 200 ? response.body.modelRun : null;
       const error = response.status === 200 ? null : response.body.error;
       const score = scoreIdentificationResult(result, expectedLabels);
       const elapsedMs = Date.now() - startedAt;
@@ -253,6 +256,7 @@ async function main() {
         error,
         imagePath,
         expectedLabels,
+        modelRun,
         providerAvailabilityFailure,
         responseStatus: response.status,
         retryCount: response.evalRetryCount ?? 0,
@@ -363,6 +367,7 @@ export function buildEvalQualityMetrics({
   results,
 }) {
   const invalidResponseCount = results.filter((result) => result.errorCode === "invalid_response").length;
+  const ocrUsageCount = results.filter((result) => result.ocrUsed === true).length;
   const retryCount = results.reduce((sum, result) => sum + (Number(result.retryCount) || 0), 0);
   const safetyEscalationCount = results.filter(isSafetyEscalatedEvalRow).length;
   const safetyFalsePositiveCount = results.filter(isSafetyFalsePositiveEvalRow).length;
@@ -374,6 +379,8 @@ export function buildEvalQualityMetrics({
     invalidResponseCount,
     invalidResponseRate: ratio(invalidResponseCount, attemptedCount),
     latencyMs: summarizeLatency(results.map((result) => result.elapsedMs)),
+    ocrUsageCount,
+    ocrUsageRate: ratio(ocrUsageCount, attemptedCount),
     providerFailureRate: ratio(providerFailureCount, attemptedCount),
     retryCount,
     retryRate: ratio(retryCount, attemptedCount),
