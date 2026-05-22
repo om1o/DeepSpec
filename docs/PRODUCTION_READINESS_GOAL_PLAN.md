@@ -19,9 +19,9 @@ Use a 900-check audit grid instead: 9 production tracks x 100 checks each. Every
 
 ## Evidence From This Audit
 
-- `npm run check` passed in GitHub on PR #76 on May 22, 2026: lint, 30 test files, 221 tests, and production build.
-- GitHub Quality gate also passed `npm ci`, `npm run check`, and production build before intentionally failing the release cloud gate because Actions secrets are missing.
-- The live GitHub release stack is down to one open draft PR: #76, `[codex] Production readiness release v41 history filters`.
+- `npm run check` passed locally on May 22, 2026: lint, 30 test files, 221 tests, and production build.
+- GitHub Quality gate has also passed `npm ci`, `npm run check`, and production build on the current release stack; the release cloud gate must still fail until Supabase Actions secrets are configured.
+- The live GitHub release stack is down to one open draft PR: #78, `[codex] Production readiness release v43 result safety state`.
 - Browser QA passed for `/scan?test=1` on the current release branch: the test engine photo opened `/result`, identified `Alternator`, rendered evidence/sources/actions, and produced 0 local app console errors.
 - Browser QA on `/early-access` passed the failure-state check: cloud health reports the Supabase Auth/database blocker without hiding storage/RLS as verified.
 - `npm run eval:identify:release` passed 50/50 fixed Hugging Face samples with provider available, 0 provider failures, and 0 failure review rows.
@@ -42,7 +42,7 @@ Use a 900-check audit grid instead: 9 production tracks x 100 checks each. Every
 - Latest captured configured-run Supabase request/error id: `019e5086-262f-7f7e-a6aa-bf39c7de7319`.
 - Remote Supabase repair is blocked from this workspace until an authenticated Supabase CLI session, `SUPABASE_ACCESS_TOKEN`, or privileged Postgres connection is available; the current env files only provide public app config plus the Gemini key.
 - A bare checkout-local `npm run verify:supabase` also needs `.env.local` copied in; without `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`, it stops before the Auth preflight.
-- Supabase Preview check on PR #76 passed.
+- Supabase Preview check on PR #78 passed.
 - GitHub Actions release gate is failing because repository secrets `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` are not configured.
 - Hugging Face connector confirmed `DrBimmer/car-parts-and-damage-dataset` as the current fixed release dataset source: 1,812 high-resolution polygon-annotated car part/damage images, MIT license, object-detection and image-segmentation tags.
 - Google Lens reference behavior from official Google pages: camera/image/screenshot input, multiple result modes, ranked visual results, text copy/translate, visual matches, shopping/context actions, and ask/refine flows.
@@ -54,7 +54,7 @@ Use a 900-check audit grid instead: 9 production tracks x 100 checks each. Every
 | P0-001 | Blocker | Database | Cloud sync is not production ready because Supabase anonymous sign-in fails before storage or RLS can be proven. | `npm run verify:supabase` failed at step 1. | Fix Supabase Auth logs/triggers/config, rerun verifier until all 6 steps pass. |
 | P0-002 | Blocker | Database access | The anonymous Auth repair cannot be applied from this workspace because no Supabase CLI token or privileged Postgres connection is available. | `npx supabase projects list` fails with missing access token, and env-file inspection found no `SUPABASE_DB_URL`, `DATABASE_URL`, or `PG*` connection variables. | Add `SUPABASE_ACCESS_TOKEN` or a privileged DB connection, run the printed diagnostics in Supabase SQL Editor, apply the narrow Auth repair only if diagnostics confirm the standard profile trigger, then rerun `npm run verify:supabase`. |
 | P0-003 | Blocker | Backlog hygiene | There are no open standalone GitHub issues for production readiness. | GitHub issue search returned empty. | Convert this plan into milestones and issues instead of hiding work in PRs. |
-| P0-004 | Blocker | Release quality | The active release PR is still large and draft. | PR #76 changes 94 files and remains draft. | Keep review honest, keep superseded PRs closed, and make PR #76 ready only after cloud gates pass. |
+| P0-004 | Blocker | Release quality | The active release PR is still large and draft. | PR #78 changes 94 files and remains draft. | Keep review honest, keep superseded PRs closed, and make PR #78 ready only after cloud gates pass. |
 | P0-005 | Blocker | CI secrets | Release CI cannot prove cloud sync because public Supabase Actions secrets are missing. | Quality gate prints empty `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`, then exits 1 for the production-readiness PR title. | Add those two repository secrets, rerun CI, and require `npm run verify:supabase` to pass in Actions. |
 | P1-001 | High | Scanner UX | Test mode now bypasses camera-blocking copy, but it still needs live browser coverage alongside real camera denial states. | `Scanner.test.tsx` covers blocked camera plus clean `/scan?test=1`. | Run browser QA for `/scan?test=1`, blocked camera, and upload on mobile viewport before launch. |
 | P1-002 | High | Result UX | Result output is closer to a visual result sheet, but it is still not fully Google Lens-like. | Result now has candidates, image evidence, ranked sources, ask/refine actions, uncertainty, and one `Safety state` card, but it still renders as a section stack instead of an image-first bottom sheet/tabs layout. | Replace the remaining report stack with an image-first Lens result sheet: primary match, alternatives, evidence chips, action tabs, sources, and desktop two-pane layout. |
