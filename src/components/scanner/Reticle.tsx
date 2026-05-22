@@ -1,4 +1,10 @@
 import { cx } from "../../lib/utils";
+import {
+  SCANNER_RETICLE_ASPECT_RATIO,
+  SCANNER_RETICLE_CENTER_Y_RATIO,
+  SCANNER_RETICLE_MAX_WIDTH_PX,
+  SCANNER_RETICLE_WIDTH_RATIO,
+} from "../../lib/scannerReticle";
 
 type ReticleProps = {
   isVisible: boolean;
@@ -15,9 +21,14 @@ export default function Reticle({ isLocked, isVisible, label, progress }: Reticl
       aria-hidden="true"
       data-testid="object-reticle"
       className={cx(
-        "pointer-events-none fixed left-1/2 top-[45dvh] z-10 aspect-[3/4] w-[min(76vw,390px)] -translate-x-1/2 -translate-y-1/2 transition-opacity duration-300",
+        "pointer-events-none fixed left-1/2 z-10 -translate-x-1/2 -translate-y-1/2 transition-opacity duration-300",
         isVisible ? "opacity-100" : "opacity-0",
       )}
+      style={{
+        aspectRatio: `${SCANNER_RETICLE_ASPECT_RATIO}`,
+        top: `${SCANNER_RETICLE_CENTER_Y_RATIO * 100}dvh`,
+        width: `min(${SCANNER_RETICLE_WIDTH_RATIO * 100}vw, ${SCANNER_RETICLE_MAX_WIDTH_PX}px)`,
+      }}
     >
       <div className="absolute inset-0 rounded-[30px] border border-white/18 bg-black/5 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08),0_0_34px_rgba(11,116,255,0.25)]" />
       <div className={cx("scanner-sweep", isLocked ? "opacity-0" : "opacity-100")} />
