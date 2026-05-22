@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Webcam from "react-webcam";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import IdentifyButton from "../components/scanner/IdentifyButton";
 import MotionPermissionModal from "../components/scanner/MotionPermissionModal";
 import Reticle from "../components/scanner/Reticle";
@@ -15,7 +15,7 @@ import { saveLatestScanState } from "../lib/utils";
 import TestScanPanel from "../components/scanner/TestScanPanel";
 import { AIServiceError, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
 import { createLookup } from "../services/storage";
-import type { CapturedFrame, LabelRescueTrigger, ScanAnalysisState } from "../types";
+import type { IdentificationResult, CapturedFrame, LabelRescueTrigger, Lookup, ScanAnalysisState } from "../types";
 
 const AUTO_SCAN_HOLD_MS = 5000;
 const SECOND_FRAME_DELAY_MS = 120;
@@ -27,13 +27,18 @@ const videoConstraints: MediaTrackConstraints = {
   height: { ideal: 1080 },
 };
 
+type ScanReviewState = {
+  lookup: Lookup | null;
+  scanState: ScanAnalysisState;
+};
+
 export default function Scanner() {
   const location = useLocation();
-  const navigate = useNavigate();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisStep, setAnalysisStep] = useState<string | null>(null);
   const [autoScanPaused, setAutoScanPaused] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
+  const [scanReview, setScanReview] = useState<ScanReviewState | null>(null);
   const autoScanStartedRef = useRef(false);
   const cancelScanRef = useRef(false);
   const scanRequestIdRef = useRef(0);
@@ -43,9 +48,9 @@ export default function Scanner() {
     useStillness();
   const qaTestMode = isTestMode(location.search);
   const objectTarget = useObjectTarget(webcamRef, {
-    enabled: cameraState === "ready" && !qaTestMode && !isAnalyzing,
+    enabled: cameraState === "ready" && !qaTestMode && !isAnalyzing && !scanReview,
     holdDurationMs: AUTO_SCAN_HOLD_MS,
-    holdEnabled: cameraState === "ready" && isStable && !isAnalyzing && !autoScanPaused,
+    holdEnabled: cameraState === "ready" && isStable && !isAnalyzing && !autoScanPaused && !scanReview,
   });
   const targetProgress = objectTarget?.holdProgress ?? 0;
   const hasTargetLock = Boolean(objectTarget?.isLocked);
@@ -59,6 +64,7 @@ export default function Scanner() {
         hasTarget: Boolean(objectTarget),
         hasTargetLock,
         isStable,
+        scanReview,
         usesFallback,
       });
 
@@ -82,17 +88,17 @@ export default function Scanner() {
     scanRequestIdRef.current === requestId && !cancelScanRef.current
   ), []);
 
-  const persistAndNavigate = useCallback(
+  const persistAndShowReview = useCallback(
     (scanState: ScanAnalysisState) => {
       if (qaTestMode) {
-        navigate("/result", { state: { ...scanState, testRun: true } });
+        setScanReview({ lookup: null, scanState: { ...scanState, testRun: true } });
         return;
       }
 
       const saved = createLookup(scanState);
       if (saved.ok) {
         saveLatestScanState(scanState);
-        navigate(`/result/${saved.value.id}`, { state: scanState });
+        setScanReview({ lookup: saved.value, scanState });
         return;
       }
 
@@ -101,9 +107,9 @@ export default function Scanner() {
         storageWarning: saved.message,
       };
       saveLatestScanState(fallbackState);
-      navigate("/result", { state: fallbackState });
+      setScanReview({ lookup: null, scanState: fallbackState });
     },
-    [navigate, qaTestMode],
+    [qaTestMode],
   );
 
   const analyzeImageBase64 = useCallback(async (
@@ -136,8 +142,8 @@ export default function Scanner() {
     if (imageHash) {
       const cached = getCachedScanResult(imageHash);
       if (cached) {
-        setAnalysisStep("Opening result");
-        persistAndNavigate({ frame, result: cached, analyzedAt: new Date().toISOString() });
+        setAnalysisStep("Opening review");
+        persistAndShowReview({ frame, result: cached, analyzedAt: new Date().toISOString() });
         return;
       }
     }
@@ -163,21 +169,21 @@ export default function Scanner() {
       if (!isScanRequestActive(requestId)) return;
       if (imageHash) setCachedScanResult(imageHash, result);
       setAnalysisStep("Saving result");
-      persistAndNavigate({
+      persistAndShowReview({
         frame,
         result,
         analyzedAt: new Date().toISOString(),
       });
     } catch (analysisError) {
       if (!isScanRequestActive(requestId)) return;
-      persistAndNavigate({
+      persistAndShowReview({
         frame,
         errorMessage: getAIErrorMessage(analysisError),
         errorCode: analysisError instanceof AIServiceError ? analysisError.code : "analysis_failed",
         analyzedAt: new Date().toISOString(),
       });
     }
-  }, [isScanRequestActive, pauseAutoScan, persistAndNavigate, qaTestMode]);
+  }, [isScanRequestActive, pauseAutoScan, persistAndShowReview, qaTestMode]);
 
   const handleIdentify = useCallback(async () => {
     if (isAnalyzing) {
@@ -232,7 +238,7 @@ export default function Scanner() {
   }, [analyzeImageBase64, beginScanRequest, isAnalyzing, isScanRequestActive, pauseAutoScan]);
 
   useEffect(() => {
-    if (!hasTargetLock || cameraState !== "ready" || isAnalyzing || autoScanPaused) {
+    if (!hasTargetLock || cameraState !== "ready" || isAnalyzing || autoScanPaused || scanReview) {
       return;
     }
 
@@ -245,7 +251,7 @@ export default function Scanner() {
       navigator.vibrate(12);
     }
     void handleIdentify();
-  }, [autoScanPaused, cameraState, handleIdentify, hasTargetLock, isAnalyzing]);
+  }, [autoScanPaused, cameraState, handleIdentify, hasTargetLock, isAnalyzing, scanReview]);
 
   useEffect(() => {
     if (!hasTargetLock && !isAnalyzing) {
@@ -259,6 +265,12 @@ export default function Scanner() {
     setIsAnalyzing(false);
     setAnalysisStep(null);
     pauseAutoScan("Scan canceled. Hold the right item steady to try again.");
+  }
+
+  function closeScanReview() {
+    setScanReview(null);
+    setCaptureError(null);
+    pauseAutoScan();
   }
 
   return (
@@ -275,6 +287,13 @@ export default function Scanner() {
         onUserMedia={markReady}
         onUserMediaError={markError}
       />
+      {scanReview?.scanState.frame.imageBase64 ? (
+        <img
+          alt="Reviewed scan photo"
+          className="pointer-events-none absolute inset-0 z-[1] h-full w-full object-cover"
+          src={scanReview.scanState.frame.imageBase64}
+        />
+      ) : null}
 
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(2,6,23,0.58),rgba(2,6,23,0)_30%,rgba(2,6,23,0)_58%,rgba(2,6,23,0.74))]" />
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[42dvh] bg-[radial-gradient(circle_at_50%_72%,rgba(11,116,255,0.18),rgba(2,6,23,0)_34%),linear-gradient(to_top,rgba(2,6,23,0.86),rgba(2,6,23,0))]" />
@@ -308,7 +327,7 @@ export default function Scanner() {
         <>
           <Reticle
             isLocked={hasTargetLock}
-            isVisible={cameraState === "ready"}
+            isVisible={cameraState === "ready" && !scanReview}
             label={getReticleLabel(Boolean(objectTarget), hasTargetLock, autoScanSeconds)}
             progress={targetProgress}
           />
@@ -324,15 +343,19 @@ export default function Scanner() {
         />
       ) : null}
       {isAnalyzing ? <AnalyzingOverlay onCancel={cancelCurrentScan} step={analysisStep} /> : null}
+      {scanReview ? <ScanReviewSheet onNewScan={closeScanReview} review={scanReview} /> : null}
       {!qaTestMode ? (
         <IdentifyButton
           isDisabled={cameraState !== "ready" || isAnalyzing}
-          isReady={cameraState === "ready" && !isAnalyzing && (hasTargetLock || usesFallback || isStable)}
-          isVisible={cameraState !== "blocked"}
+          isReady={cameraState === "ready" && !isAnalyzing && !scanReview && (hasTargetLock || usesFallback || isStable)}
+          isVisible={cameraState !== "blocked" && !scanReview}
           onIdentify={() => void handleIdentify()}
         />
       ) : (
-        <TestScanPanel onBusyChange={setIsAnalyzing} />
+        <TestScanPanel
+          onBusyChange={setIsAnalyzing}
+          onScanComplete={(scanState) => setScanReview({ lookup: null, scanState })}
+        />
       )}
     </main>
   );
@@ -345,6 +368,7 @@ function getScannerStatus({
   hasTarget,
   hasTargetLock,
   isStable,
+  scanReview,
   usesFallback,
 }: {
   autoScanPaused: boolean;
@@ -353,10 +377,15 @@ function getScannerStatus({
   hasTarget: boolean;
   hasTargetLock: boolean;
   isStable: boolean;
+  scanReview: ScanReviewState | null;
   usesFallback: boolean;
 }) {
   if (cameraState !== "ready") {
     return "Opening camera";
+  }
+
+  if (scanReview) {
+    return "Review scan";
   }
 
   if (autoScanPaused) {
@@ -476,6 +505,258 @@ function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; step: stri
       </div>
     </div>
   );
+}
+
+function ScanReviewSheet({ onNewScan, review }: { onNewScan: () => void; review: ScanReviewState }) {
+  const { lookup, scanState } = review;
+  const result = scanState.result;
+  const capturedAt = scanState.frame.capturedAt ? new Date(scanState.frame.capturedAt).toLocaleString() : null;
+  const title = result?.partName ?? (scanState.errorMessage ? "Scan needs retry" : "Captured frame");
+
+  return (
+    <section
+      aria-labelledby="scan-review-title"
+      aria-modal="true"
+      className="fixed inset-x-0 bottom-0 z-50 max-h-[78dvh] overflow-hidden rounded-t-[28px] border border-white/12 bg-slate-950/96 text-white shadow-[0_-28px_70px_rgba(0,0,0,0.68)] backdrop-blur-xl"
+      role="dialog"
+    >
+      <div className="mx-auto mt-3 h-1.5 w-12 rounded-full bg-white/28" />
+      <div className="no-scrollbar max-h-[calc(78dvh-12px)] overflow-y-auto px-4 pb-[max(20px,env(safe-area-inset-bottom))] pt-4">
+        <div className="flex items-start gap-3">
+          <img
+            alt="Captured car part"
+            className="h-20 w-20 shrink-0 rounded-[20px] border border-white/12 object-cover"
+            src={scanState.frame.imageBase64}
+          />
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">
+              {scanState.testRun ? "QA test result" : lookup ? "Saved scan" : "Scan review"}
+            </p>
+            <h1 id="scan-review-title" className="mt-1 break-words text-2xl font-extrabold tracking-tight">
+              {title}
+            </h1>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {result ? (
+                <>
+                  <ReviewPill label={`${result.confidence} confidence`} tone={result.confidence === "low" ? "warn" : "ok"} />
+                  <ReviewPill label={result.scanCategory} />
+                  <ReviewPill label={getReviewStatus(result)} tone={result.isSafetyCritical ? "warn" : "ok"} />
+                </>
+              ) : null}
+              {scanState.storageWarning ? <ReviewPill label="Not saved" tone="warn" /> : null}
+            </div>
+          </div>
+        </div>
+
+        {capturedAt ? <p className="mt-3 text-xs font-semibold text-white/46">Captured {capturedAt}</p> : null}
+        {scanState.storageWarning ? <ReviewWarning title="Not saved locally" message={scanState.storageWarning} /> : null}
+
+        {result ? (
+          <div className="mt-4 space-y-3">
+            <ReviewSection title="What this is" items={[result.whatItDoes]} />
+            <ReviewSection title="What I see" items={result.visibleObservations} emptyText="No clear visual clues were returned." />
+            <ReviewSection title="Concerns" items={result.concerns} emptyText="Nothing concerning visible." />
+            <ReviewSection title="Next action" items={[result.nextAction]} />
+            <ReviewEvidenceRegions result={result} />
+            <ReviewCandidateMatches result={result} />
+            <ReviewSources result={result} />
+            <ReviewDataset lookup={lookup} result={result} testRun={Boolean(scanState.testRun)} />
+          </div>
+        ) : scanState.errorMessage ? (
+          <ReviewWarning title="AI identification failed" message={scanState.errorMessage} />
+        ) : (
+          <ReviewWarning title="No AI result" message="Deep Spec kept the captured photo, but this scan has no result attached yet." />
+        )}
+
+        <div className="sticky bottom-0 -mx-4 mt-4 grid grid-cols-2 gap-3 border-t border-white/10 bg-slate-950/96 px-4 py-4 backdrop-blur-xl">
+          <Button className="!bg-white !text-slate-950 shadow-none" type="button" onClick={onNewScan}>
+            New scan
+          </Button>
+          {lookup ? (
+            <Link
+              className="rounded-full bg-[var(--ds-accent)] px-5 py-3 text-center text-sm font-bold text-white shadow-sm"
+              to={`/result/${lookup.id}`}
+            >
+              Full report
+            </Link>
+          ) : (
+            <Link
+              className="rounded-full bg-[var(--ds-accent)] px-5 py-3 text-center text-sm font-bold text-white shadow-sm"
+              to="/history"
+            >
+              Saved scans
+            </Link>
+          )}
+          {lookup?.result ? (
+            <Link
+              className="col-span-2 rounded-full border border-white/12 bg-white/10 px-5 py-3 text-center text-sm font-bold text-white"
+              to={`/result/${lookup.id}/chat`}
+            >
+              Ask about this scan
+            </Link>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ReviewPill({ label, tone = "neutral" }: { label: string; tone?: "neutral" | "ok" | "warn" }) {
+  const styles = {
+    neutral: "border-white/12 bg-white/10 text-white/78",
+    ok: "border-[var(--ds-accent-line)] bg-[var(--ds-accent-soft)] text-[#93C5FD]",
+    warn: "border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] text-[#FCD34D]",
+  };
+
+  return (
+    <span className={`rounded-full border px-3 py-1 text-xs font-extrabold capitalize ${styles[tone]}`}>
+      {label.replaceAll("_", " ")}
+    </span>
+  );
+}
+
+function ReviewWarning({ message, title }: { message: string; title: string }) {
+  return (
+    <section className="mt-4 rounded-[22px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-4">
+      <p className="text-sm font-extrabold text-[#FCD34D]">{title}</p>
+      <p className="mt-2 text-sm leading-6 text-white/76">{message}</p>
+    </section>
+  );
+}
+
+function ReviewSection({ emptyText, items, title }: { emptyText?: string; items: string[]; title: string }) {
+  const visibleItems = items.filter(Boolean);
+
+  return (
+    <section className="rounded-[22px] border border-white/10 bg-white/[0.06] p-4">
+      <h2 className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/48">{title}</h2>
+      {visibleItems.length > 0 ? (
+        <ul className="mt-3 space-y-2 text-sm leading-6 text-white/86">
+          {visibleItems.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-3 text-sm leading-6 text-white/58">{emptyText}</p>
+      )}
+    </section>
+  );
+}
+
+function ReviewEvidenceRegions({ result }: { result: IdentificationResult }) {
+  if (!result.evidenceRegions.length) {
+    return null;
+  }
+
+  return (
+    <section className="rounded-[22px] border border-white/10 bg-white/[0.06] p-4">
+      <h2 className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/48">Image evidence</h2>
+      <div className="mt-3 grid grid-cols-1 gap-2">
+        {result.evidenceRegions.map((region) => (
+          <div key={`${region.regionLabel}-${region.label}`} className="rounded-2xl border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 py-3">
+            <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[#93C5FD]">{region.regionLabel}</p>
+            <p className="mt-1 text-sm font-extrabold text-white">{region.label}</p>
+            <p className="mt-1 text-sm leading-5 text-white/72">{region.observation}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ReviewCandidateMatches({ result }: { result: IdentificationResult }) {
+  if (!result.candidateMatches.length) {
+    return null;
+  }
+
+  return (
+    <section className="rounded-[22px] border border-white/10 bg-white/[0.06] p-4">
+      <h2 className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/48">Other possible matches</h2>
+      <div className="mt-3 grid grid-cols-1 gap-2">
+        {result.candidateMatches.map((candidate) => (
+          <div key={`${candidate.partName}-${candidate.reason}`} className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-extrabold text-white">{candidate.partName}</p>
+              <ReviewPill label={candidate.confidence} tone={candidate.confidence === "low" ? "warn" : "ok"} />
+            </div>
+            <p className="mt-1 text-xs font-semibold capitalize text-white/42">{candidate.scanCategory}</p>
+            <p className="mt-2 text-sm leading-5 text-white/72">{candidate.reason}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ReviewSources({ result }: { result: IdentificationResult }) {
+  const links = result.sourceLinks.filter((link) => /^https:\/\//.test(link.url)).slice(0, 4);
+  if (!links.length) {
+    return null;
+  }
+
+  return (
+    <section className="rounded-[22px] border border-white/10 bg-white/[0.06] p-4">
+      <h2 className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/48">Sources</h2>
+      <div className="mt-3 grid grid-cols-1 gap-2">
+        {links.map((link) => (
+          <a
+            key={link.url}
+            className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-3 text-sm font-bold leading-5 text-[#93C5FD]"
+            href={link.url}
+            rel="noreferrer"
+            target="_blank"
+          >
+            {link.label}
+            <span aria-hidden="true" className="mt-1 block text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/38">
+              {link.sourceType}
+            </span>
+          </a>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ReviewDataset({
+  lookup,
+  result,
+  testRun,
+}: {
+  lookup: Lookup | null;
+  result: IdentificationResult;
+  testRun: boolean;
+}) {
+  const rows = [
+    ["Dataset category", lookup?.scanCategory ?? result.scanCategory],
+    ["Training label", lookup?.trainingLabel ?? result.partName],
+    ["Review status", lookup?.trainingStatus?.replaceAll("_", " ") ?? (testRun ? "test run only" : "not saved")],
+  ];
+
+  return (
+    <section className="rounded-[22px] border border-white/10 bg-white/[0.06] p-4">
+      <h2 className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/48">Saved data</h2>
+      <div className="mt-3 grid grid-cols-1 gap-2">
+        {rows.map(([label, value]) => (
+          <div key={label} className="rounded-2xl border border-white/10 bg-white/[0.04] p-3">
+            <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-white/38">{label}</p>
+            <p className="mt-1 text-sm font-semibold capitalize leading-6 text-white/82">{value}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function getReviewStatus(result: IdentificationResult) {
+  if (result.safetyTriage === "needs_professional" || result.isSafetyCritical) {
+    return "Professional check";
+  }
+
+  if (result.safetyTriage === "needs_better_photo" || result.needsBetterPhoto) {
+    return "Better photo needed";
+  }
+
+  return "Useful match";
 }
 
 function readImageFileAsDataUrl(file: File) {
