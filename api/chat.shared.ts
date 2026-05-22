@@ -39,7 +39,9 @@ export async function createChatResponse(body: unknown, env: Record<string, stri
   const models = getChatModels(env);
   let rateLimited = false;
 
-  for (const model of models) {
+  for (let index = 0; index < models.length; index += 1) {
+    const model = models[index];
+    const canTryFallback = index < models.length - 1;
     const startedAt = Date.now();
     const response = await fetchGeminiChat(model, parsed.userMessage, apiKey);
 
@@ -56,11 +58,19 @@ export async function createChatResponse(body: unknown, env: Record<string, stri
     const responseBody = isJson ? ((await response.json().catch(() => null)) as JsonObject | null) : null;
 
     if (!response.ok) {
+      if (response.status === 503 && canTryFallback) {
+        continue;
+      }
+
       return errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
     }
 
     const message = cleanChatMessage(extractGeminiText(responseBody));
     if (!message) {
+      if (canTryFallback) {
+        continue;
+      }
+
       return errorResponse(502, "invalid_response", "Gemini did not return a usable chat answer.");
     }
 

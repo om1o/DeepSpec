@@ -134,7 +134,9 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
   const models = getIdentifyModels(env);
   let rateLimited = false;
 
-  for (const model of models) {
+  for (let index = 0; index < models.length; index += 1) {
+    const model = models[index];
+    const canTryFallback = index < models.length - 1;
     const startedAt = Date.now();
     const response = await fetchGeminiIdentify(model, parsed, ocr, apiKey);
 
@@ -151,16 +153,28 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
     const responseBody = isJson ? ((await response.json().catch(() => null)) as JsonObject | null) : null;
 
     if (!response.ok) {
+      if (response.status === 503 && canTryFallback) {
+        continue;
+      }
+
       return errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
     }
 
     const text = extractGeminiText(responseBody);
     if (!text) {
+      if (canTryFallback) {
+        continue;
+      }
+
       return errorResponse(502, "invalid_response", "Gemini did not return a usable answer.");
     }
 
     const result = parseIdentificationResult(text);
     if (!result) {
+      if (canTryFallback) {
+        continue;
+      }
+
       return errorResponse(502, "invalid_response", "Gemini returned JSON that Deep Spec could not read.");
     }
 
