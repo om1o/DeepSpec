@@ -95,6 +95,14 @@ describe("cloudSync", () => {
           imagePath: "user-1/lookup-1.jpg",
           modelRuns: [],
           promptVersions: [],
+          review: expect.objectContaining({
+            correctionText: null,
+            hasCorrection: false,
+            originalPartName: "Alternator",
+            reviewStatus: "raw_unreviewed",
+            trainingCategory: "electrical",
+            trainingLabel: "Alternator",
+          }),
           schemaVersion: 1,
           syncEvents: [
             expect.objectContaining({

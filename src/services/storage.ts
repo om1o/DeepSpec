@@ -232,6 +232,7 @@ export function getLookupDatasetMetadata(lookup: Lookup, imagePath?: string) {
     modelRuns: lookup.modelRuns,
     ocrText: getLookupOcrText(lookup),
     promptVersions: [...new Set(lookup.modelRuns.map((run) => run.promptVersion))],
+    review: getLookupReviewMetadata(lookup),
     sourceUrls: getLookupSourceUrls(lookup),
     syncEvents: lookup.syncEvents,
     testRun: Boolean(lookup.testRun),
@@ -256,6 +257,7 @@ export function getDatasetExport(lookups: Lookup[] = getLookups(), exportedAt = 
       errorCode: lookup.errorCode ?? null,
       errorMessage: lookup.errorMessage ?? null,
       rating: lookup.rating,
+      review: getLookupReviewMetadata(lookup),
       correction: lookup.correction,
       notes: lookup.notes,
       scanCategory: lookup.scanCategory,
@@ -295,6 +297,22 @@ export function scanStateFromLookup(lookup: Lookup): ScanAnalysisState {
     analyzedAt: lookup.analyzedAt,
     testRun: lookup.testRun,
     testVehicleLabel: lookup.testVehicleLabel,
+  };
+}
+
+function getLookupReviewMetadata(lookup: Lookup) {
+  const correctionText = lookup.correction?.trim() || null;
+
+  return {
+    correctedCategory: correctionText ? lookup.scanCategory : null,
+    correctionText,
+    hasCorrection: Boolean(correctionText),
+    originalConfidence: lookup.result?.confidence ?? null,
+    originalPartName: lookup.result?.partName ?? null,
+    rating: lookup.rating,
+    reviewStatus: lookup.trainingStatus,
+    trainingCategory: lookup.scanCategory,
+    trainingLabel: lookup.trainingLabel,
   };
 }
 
