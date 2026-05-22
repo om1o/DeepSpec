@@ -55,8 +55,8 @@ jobs:
               echo "Not verified: repository secrets VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY are missing."
             } >> "$GITHUB_STEP_SUMMARY"
 
-            if [ "$GITHUB_REF_NAME" = "main" ] || [[ "$branch" == codex/production-readiness-release* ]]; then
-              echo "Production-readiness branches and main must prove Supabase cloud sync."
+            if [ "$GITHUB_REF_NAME" = "main" ] || [[ "$branch" == codex/production-readiness-release* ]] || [[ "$branch" == codex/release-v* ]]; then
+              echo "Release branches and main must prove Supabase cloud sync."
               exit 1
             fi
 

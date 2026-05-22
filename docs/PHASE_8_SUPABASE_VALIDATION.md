@@ -76,7 +76,7 @@ The GitHub CI workflow runs `npm run check` on pushes and pull requests. It also
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_PUBLISHABLE_KEY`
 
-If those secrets are missing, ordinary feature PRs record an explicit "not verified" warning in the GitHub step summary. `main` and `codex/production-readiness-release*` branches fail instead, because those branches must prove Supabase cloud sync before they can be called release-ready.
+If those secrets are missing, ordinary feature PRs record an explicit "not verified" warning in the GitHub step summary. `main`, `codex/production-readiness-release*`, and `codex/release-v*` branches fail instead, because those branches must prove Supabase cloud sync before they can be called release-ready.
 
 Do not start Phase 9 until anonymous sign-in can create a user and the verifier passes.
 
