@@ -3,6 +3,7 @@ import type { CandidateMatch, EvidenceRegion, Lookup, SourceLink } from "../type
 export function buildScanReport(lookup: Lookup) {
   const result = lookup.result;
   const datasetEvidence = getDatasetEvidence(result?.evidence ?? []);
+  const detectedText = getDetectedTextEvidence(result?.evidence ?? []);
   const lines = [
     "Deep Spec Scan Report",
     `Created: ${formatDate(lookup.createdAt)}`,
@@ -32,6 +33,9 @@ export function buildScanReport(lookup: Lookup) {
     "",
     "Image evidence:",
     formatEvidenceRegions(result?.evidenceRegions),
+    "",
+    "Detected text:",
+    formatList(detectedText, "None detected."),
     "",
     "Concerns:",
     formatList(result?.concerns, "Nothing concerning visible."),
@@ -129,6 +133,12 @@ function formatSourceLinks(links: SourceLink[] | undefined) {
 
 function getDatasetEvidence(evidence: string[]) {
   return evidence.filter((item) => /^Local dataset match:|^Dataset source:/i.test(item));
+}
+
+function getDetectedTextEvidence(evidence: string[]) {
+  return evidence
+    .map((item) => item.match(/^OCR label text:\s*(.+)$/i)?.[1]?.replace(/\s+/g, " ").trim() ?? "")
+    .filter(Boolean);
 }
 
 function trimReportLine(value: string) {
