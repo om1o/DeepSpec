@@ -103,7 +103,7 @@ describe("cloudSync", () => {
             trainingCategory: "electrical",
             trainingLabel: "Alternator",
           }),
-          schemaVersion: 1,
+          schemaVersion: 2,
           syncEvents: [
             expect.objectContaining({
               imagePath: "user-1/lookup-1.jpg",

@@ -2,7 +2,7 @@ import { getEvidenceRegionAnchor } from "../lib/evidenceAnchors";
 import type { AIModelRun, CandidateMatch, ChatMessage, CloudSyncEvent, Confidence, EvidenceRegion, IdentificationResult, Lookup, Rating, ScanAnalysisState, ScanCategory, SourceLink, TrainingStatus } from "../types";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
-export const DATASET_EXPORT_SCHEMA_VERSION = 1;
+export const DATASET_EXPORT_SCHEMA_VERSION = 2;
 export const MAX_SAVED_LOOKUPS = 300;
 const MAX_CHAT_MESSAGES = 40;
 const CHAT_KEY = (id: string) => `deep-spec:chat:${id}`;
@@ -225,9 +225,12 @@ export function appendLookupSyncEvent(
 }
 
 export function getLookupDatasetMetadata(lookup: Lookup, imagePath?: string) {
+  const imageMetadata = getLookupImageMetadata(lookup);
+
   return {
     schemaVersion: DATASET_EXPORT_SCHEMA_VERSION,
     chatMessageCount: lookup.chatHistory.length,
+    ...imageMetadata,
     imagePath: imagePath ?? null,
     modelRuns: lookup.modelRuns,
     ocrText: getLookupOcrText(lookup),
@@ -253,6 +256,7 @@ export function getDatasetExport(lookups: Lookup[] = getLookups(), exportedAt = 
       capturedAt: lookup.frame.capturedAt,
       analyzedAt: lookup.analyzedAt ?? null,
       imageBase64: lookup.frame.imageBase64,
+      ...getLookupImageMetadata(lookup),
       result: lookup.result ?? null,
       errorCode: lookup.errorCode ?? null,
       errorMessage: lookup.errorMessage ?? null,
@@ -288,6 +292,7 @@ export function getReviewQueueExport(lookups: Lookup[] = getLookups(), exportedA
         capturedAt: lookup.frame.capturedAt,
         analyzedAt: lookup.analyzedAt ?? null,
         imageBase64: lookup.frame.imageBase64,
+        ...getLookupImageMetadata(lookup),
         priority: getReviewPriority(reasons),
         reasons,
         result: lookup.result
@@ -360,6 +365,36 @@ function getLookupReviewMetadata(lookup: Lookup) {
     trainingCategory: lookup.scanCategory,
     trainingLabel: lookup.trainingLabel,
   };
+}
+
+function getLookupImageMetadata(lookup: Lookup) {
+  return {
+    imageByteLength: getDataUrlByteLength(lookup.frame.imageBase64),
+    imageHash: stableTextHash(lookup.frame.imageBase64),
+    imageMimeType: getDataUrlMimeType(lookup.frame.imageBase64),
+  };
+}
+
+function getDataUrlMimeType(dataUrl: string) {
+  const match = /^data:([^;,]+)[;,]/.exec(dataUrl);
+  return match?.[1] ?? null;
+}
+
+function getDataUrlByteLength(dataUrl: string) {
+  const base64 = dataUrl.includes(",") ? dataUrl.split(",", 2)[1] : dataUrl;
+  const normalized = base64.replace(/\s/g, "");
+  if (!normalized) return 0;
+  const padding = normalized.endsWith("==") ? 2 : normalized.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((normalized.length * 3) / 4) - padding);
+}
+
+function stableTextHash(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `fnv1a-${(hash >>> 0).toString(16).padStart(8, "0")}`;
 }
 
 function getLookupReviewReasons(lookup: Lookup) {

@@ -242,6 +242,9 @@ describe("storage", () => {
     ]);
     expect(updated ? getLookupDatasetMetadata(updated, "user-1/lookup-1.jpg") : null).toMatchObject({
       chatMessageCount: 0,
+      imageByteLength: 3,
+      imageHash: expect.stringMatching(/^fnv1a-[0-9a-f]{8}$/),
+      imageMimeType: "image/jpeg",
       imagePath: "user-1/lookup-1.jpg",
       modelRuns: [identifyModelRun, chatModelRun],
       ocrText: "DENSO 104210",
@@ -257,7 +260,7 @@ describe("storage", () => {
         trainingCategory: "electrical",
         trainingLabel: "Alternator",
       },
-      schemaVersion: 1,
+      schemaVersion: DATASET_EXPORT_SCHEMA_VERSION,
       sourceUrls: [
         "https://www.google.com/search?q=Alternator%20car%20part",
         "https://www.google.com/search?q=Starter%20motor%20car%20part",
@@ -301,6 +304,9 @@ describe("storage", () => {
       analyzedAt: "2026-05-16T00:00:05.000Z",
       correction: "Denso alternator",
       imageBase64: "data:image/jpeg;base64,test",
+      imageByteLength: 3,
+      imageHash: expect.stringMatching(/^fnv1a-[0-9a-f]{8}$/),
+      imageMimeType: "image/jpeg",
       notes: "Driver side of engine bay.",
       rating: "down",
       review: {
@@ -324,6 +330,9 @@ describe("storage", () => {
     ]));
     expect(scan.metadata).toMatchObject({
       chatMessageCount: 2,
+      imageByteLength: 3,
+      imageHash: scan.imageHash,
+      imageMimeType: "image/jpeg",
       modelRuns: [identifyModelRun, chatModelRun],
       ocrText: "DENSO 104210",
       promptVersions: ["identify-v1", "followup-v1"],
