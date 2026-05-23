@@ -1,8 +1,13 @@
 # Deep Spec Production Readiness Completion Audit
 
 Audit date: May 23, 2026
-Branch audited: `codex/deepspec-v61-dataset-metadata`
-Head audited: `2e49159609c58bfe7f6189bc4928fba77c7494ee`
+
+Before relying on this audit, verify the current release branch and head:
+
+```powershell
+git status --short --branch
+git rev-parse HEAD
+```
 
 ## Verdict
 
@@ -20,13 +25,13 @@ The app-side release work is materially better: test scan mode is deterministic,
 | `/scan?test=1` passes consistently | Browser smoke at `http://127.0.0.1:5193/scan?test=1` | Mobile viewport `390x844` showed `Test scan ready`, no camera wall, clicked `Test engine photo`, reached `/result`, rendered `Alternator`, Match/Evidence/Sources tabs, alternatives, and no captured console/page errors. | Implemented for QA fixture. |
 | Supabase anonymous auth/cloud sync proven | `npm run verify:supabase` | Fails at `[1/6] Signing in as an anonymous Supabase user...`; latest request/error id `019e5276-9c96-7bb8-8d83-0e6b10dfd994`; storage/RLS checks never run. | Blocked. |
 | Honest cloud readiness copy | `src/services/cloudSync.ts`, `src/services/cloudSync.test.ts` | Configured copy says cloud sync is configured but not verified, and runtime health tracks Auth, storage upload, row upsert, RLS isolation, and last verified. | Implemented. |
-| Clean release stack | GitHub public pull request API | Only one open PR exists, #103, but it points at protected branch `codex/deepspec-v59-provider-fallback` instead of latest v61. | Partially implemented; PR retarget/create blocked. |
+| Clean release stack | GitHub public pull request API | Only one open PR exists, #103, but it points at protected branch `codex/deepspec-v59-provider-fallback` instead of the latest verified pushed branch. | Partially implemented; PR retarget/create blocked. |
 | Lens-like result data | `src/types/index.ts`, `api/identify.shared.ts`, `src/services/systemPrompts.ts` | `IdentificationResult` includes `candidateMatches`, `evidenceRegions`, and `sourceLinks`; prompts ask for ranked candidates, anchored evidence, and ranked safe links. | Implemented baseline. |
 | Lens-like result UX | `src/screens/Result.tsx`, `src/screens/Result.test.tsx` | Result has image-first layout, evidence callouts, Match/Evidence/Sources/Ask tabs for real scans, candidate correction, uncertainty, and grouped source cards. | Implemented baseline; exact boxes/masks and final mobile polish remain. |
 | Immediate ask/refine actions | `src/screens/Result.tsx`, `src/screens/Result.test.tsx` | Real unsaved scans are saved before chat; saved scans open chat with typed `?q=` context; QA test scans intentionally hide Ask. | Implemented. |
 | Dataset-grade local persistence | `src/services/storage.ts`, `src/services/storage.test.ts` | `MAX_SAVED_LOOKUPS = 300`; `DATASET_EXPORT_SCHEMA_VERSION = 2`; exports include image, image hash, MIME type, byte length, result, candidates, evidence, sources, chat, review, model runs, OCR, and sync events. | Implemented as local fallback. |
 | Dataset-grade cloud persistence | `src/services/cloudSync.ts`, Supabase verifier | Cloud metadata uses the dataset metadata shape, but real cloud persistence is not proven because Supabase Auth fails before storage/RLS. | Blocked. |
-| Release CI quality gate | GitHub check runs for `2e49159609c58bfe7f6189bc4928fba77c7494ee` | Remote Quality gate passed; Supabase Preview skipped on branch push. | App gate green; release cloud gate still not proven. |
+| Release CI quality gate | GitHub check runs for the current pushed branch head | Remote Quality gate passed on the latest pushed audit branch; Supabase Preview skipped on branch push. | App gate green; release cloud gate still not proven. |
 
 ## Current Blockers
 
@@ -41,5 +46,5 @@ The app-side release work is materially better: test scan mode is deterministic,
 2. Inspect Auth logs for request id `019e5276-9c96-7bb8-8d83-0e6b10dfd994`.
 3. Run `npm run supabase:print-auth-diagnostics` and apply the anonymous-user repair only if diagnostics confirm the standard profile trigger path.
 4. Rerun `npm run verify:supabase` until all 6 steps pass.
-5. Restore GitHub write auth, then open or retarget the release PR to `codex/deepspec-v61-dataset-metadata`.
+5. Restore GitHub write auth, then open or retarget the release PR to the latest verified pushed branch.
 6. Add `GEMINI_API_KEY`, rerun live upload identify, and run `npm run eval:identify:public` with enough quota/time.
