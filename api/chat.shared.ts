@@ -155,20 +155,32 @@ function clampRetryAfterSeconds(seconds: number) {
 }
 
 function getChatModels(env: Record<string, string | undefined>) {
-  return uniqueStrings([env.GEMINI_CHAT_MODEL || env.GEMINI_TEXT_MODEL || DEFAULT_MODEL, ...DEFAULT_FALLBACK_MODELS]);
+  return uniqueStrings([
+    env.GEMINI_CHAT_MODEL || env.GEMINI_TEXT_MODEL || DEFAULT_MODEL,
+    ...parseModelList(env.GEMINI_CHAT_FALLBACK_MODELS || env.GEMINI_FALLBACK_MODELS),
+    ...DEFAULT_FALLBACK_MODELS,
+  ]);
+}
+
+function parseModelList(value: string | undefined) {
+  return value?.split(",") ?? [];
 }
 
 function uniqueStrings(values: string[]) {
   const seen = new Set<string>();
-  return values.filter((value) => {
+  const unique: string[] = [];
+
+  for (const value of values) {
     const trimmed = value.trim();
     if (!trimmed || seen.has(trimmed)) {
-      return false;
+      continue;
     }
 
     seen.add(trimmed);
-    return true;
-  });
+    unique.push(trimmed);
+  }
+
+  return unique;
 }
 
 function fetchGeminiChat(model: string, userMessage: string, apiKey: string) {
