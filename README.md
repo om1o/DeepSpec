@@ -38,16 +38,6 @@ For email sign-in, configure the Supabase Auth email template to show the OTP to
 
 After a session is verified, Deep Spec opens the scanner at `/scan`.
 
-### AI model test scan (no save)
-
-Use this to smoke-test the scanner and result card with the bundled engine photo through the real identify model without writing history, session cache, or cloud sync:
-
-```
-http://localhost:5173/scan?test=1
-```
-
-Tap **Run AI test photo** on the panel. This sends the bundled photo through `/api/identify`, so `GEMINI_API_KEY` must be configured and the request can use provider quota. Use `npm run eval:identify:release` for broader live provider proof.
-
 ### Local dataset matching
 
 After downloading `DrBimmer/car-parts-and-damage-dataset` into `datasets/raw/drbimmer-car-parts-and-damage-dataset`, build the local labeled index with:
@@ -65,6 +55,16 @@ npm run eval:identify:release
 ```
 
 The eval reads `DEEPSPEC_DATASET_ROOT` locally first, falls back to Hugging Face if a sample is missing, and records latency, invalid response rate, safety false-positive rate, and provider availability in `.deepspec-eval/identify-summary.json`.
+
+For a broader benchmark built from the sorted local dataset index, run:
+
+```bash
+npm run eval:identify -- --sample-set public --sample-size 300
+```
+
+The public sample mode uses `DEEPSPEC_DATASET_INDEX_PATH` and will spend live provider quota for every attempted image.
+
+Before release browser QA, use `docs/BROWSER_QA_MATRIX.md` for the route, viewport, console, network, and seeded-scan evidence checklist.
 
 Google sign-in is hidden by default because it depends on a live Google OAuth client configured in the Supabase Google provider. Only enable it after the Google client ID and secret are valid:
 
