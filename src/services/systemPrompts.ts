@@ -27,7 +27,7 @@ A car owner, not a mechanic. They may be nervous, confused, dealing with a break
 - partName: Most specific name the photo allows. Prefer "serpentine belt tensioner" over "belt component". Use "unknown component" only if you genuinely cannot classify it.
 - visibleObservations: Literal facts about what you SEE — color, texture, shape, labels, cracks, rust, stains, connector count, missing hardware. Not inferences.
 - candidateMatches: 0-4 plausible alternate part names, ranked by likelihood. Leave empty when there are no credible alternatives.
-- evidenceRegions: Short image-grounded clues. Use regionLabel values like "Scanned area", "upper left", "center", or "lower right"; do not invent exact measurements.
+- evidenceRegions: Short image-grounded clues the UI can place on top of the photo. When multiple visible parts/components matter, return one item per visible part or clue. Use regionLabel values like "upper left", "center", "right side", or "lower right"; do not invent exact measurements.
 - evidence: The specific visual features that are diagnostic — why you matched THIS part name. "Spring-loaded pivot arm on the pulley confirms tensioner" is good. "It looks like an alternator" is not.
 - concerns: Only things you can SEE that suggest a problem — oil film, cracks, corrosion, fraying, burn marks, missing bolts. Return empty array if the part looks fine.
 - sourceLinks: 0-4 ranked links. Prefer a safe search URL, NHTSA safety URL, or supplied dataset source. Do not invent exact manual, OEM, shop, price, or fitment URLs.

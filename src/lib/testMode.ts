@@ -13,7 +13,8 @@ export function isTestMode(search?: string): boolean {
       return true;
     }
 
-    return sessionStorage.getItem(TEST_MODE_SESSION_KEY) === "1";
+    clearTestMode();
+    return false;
   } catch {
     return false;
   }

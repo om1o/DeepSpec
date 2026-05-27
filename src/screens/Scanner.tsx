@@ -591,6 +591,9 @@ export default function Scanner() {
           {captureError ? <CaptureErrorNotice message={captureError} onTryAgain={() => setCaptureError(null)} /> : null}
         </>
       ) : null}
+      {scanReview?.scanState.result ? (
+        <LensPartOverlays result={scanReview.scanState.result} target={anchoredReviewTarget} />
+      ) : null}
       {!qaTestMode ? (
         <GalleryScanButton
           isDisabled={isAnalyzing}
@@ -801,6 +804,123 @@ function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; step: stri
   );
 }
 
+type LensDetection = {
+  id: string;
+  label: string;
+  detail: string;
+  box: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  };
+  primary: boolean;
+};
+
+function LensPartOverlays({ result, target }: { result: IdentificationResult; target: ScanReviewTarget | null }) {
+  const detections = getLensDetections(result, target);
+  if (!detections.length) {
+    return null;
+  }
+
+  return (
+    <div className="pointer-events-none fixed inset-0 z-40" aria-label="Detected part overlays">
+      {detections.map((detection, index) => (
+        <div
+          key={detection.id}
+          data-testid={`lens-part-overlay-${index}`}
+          className={`absolute rounded-[18px] border-2 shadow-[0_0_0_999px_rgba(2,6,23,0.02)] ${
+            detection.primary
+              ? "border-[var(--ds-accent)] bg-[var(--ds-accent)]/10"
+              : "border-white/60 bg-white/8"
+          }`}
+          style={{
+            height: detection.box.height,
+            left: detection.box.left,
+            top: detection.box.top,
+            width: detection.box.width,
+          }}
+        >
+          <div
+            className={`absolute left-2 top-2 max-w-[min(220px,62vw)] rounded-full px-3 py-1.5 text-[11px] font-black tracking-tight text-white shadow-[0_10px_24px_rgba(0,0,0,0.3)] backdrop-blur-md ${
+              detection.primary ? "bg-[var(--ds-accent)]" : "bg-slate-950/78"
+            }`}
+          >
+            <span data-testid={detection.primary ? "lens-primary-label" : undefined}>{detection.label}</span>
+            <span className="ml-2 font-extrabold text-white/72">{detection.detail}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function getLensDetections(result: IdentificationResult, target: ScanReviewTarget | null): LensDetection[] {
+  const primaryBox = target ? targetToLensBox(target) : regionLabelToLensBox("center", 0);
+  const detections: LensDetection[] = [
+    {
+      id: `primary:${result.partName}`,
+      label: result.partName,
+      detail: result.confidence,
+      box: primaryBox,
+      primary: true,
+    },
+  ];
+
+  const primaryLabel = result.partName.trim().toLowerCase();
+  result.evidenceRegions
+    .filter((region) => region.label.trim().toLowerCase() !== primaryLabel)
+    .slice(0, 4)
+    .forEach((region, index) => {
+      detections.push({
+        id: `region:${region.regionLabel}:${region.label}`,
+        label: region.label,
+        detail: region.regionLabel,
+        box: regionLabelToLensBox(region.regionLabel, index + 1),
+        primary: false,
+      });
+    });
+
+  return detections.slice(0, 5);
+}
+
+function targetToLensBox(target: ScanReviewTarget) {
+  return {
+    left: clampNumber(target.x, 8, Math.max(8, window.innerWidth - 80)),
+    top: clampNumber(target.y, 84, Math.max(84, window.innerHeight - 120)),
+    width: clampNumber(target.width, 96, Math.min(420, window.innerWidth - 16)),
+    height: clampNumber(target.height, 82, Math.min(360, window.innerHeight - 140)),
+  };
+}
+
+function regionLabelToLensBox(regionLabel: string, index: number) {
+  const label = regionLabel.toLowerCase();
+  const width = Math.min(260, Math.max(126, window.innerWidth * 0.32));
+  const height = Math.min(150, Math.max(82, window.innerHeight * 0.14));
+  const leftColumn = Math.max(14, window.innerWidth * 0.08);
+  const rightColumn = Math.max(14, window.innerWidth - width - window.innerWidth * 0.08);
+  const topRow = Math.max(92, window.innerHeight * 0.2);
+  const middleRow = Math.max(112, window.innerHeight * 0.42);
+  const lowerRow = Math.min(window.innerHeight - height - 110, window.innerHeight * 0.64);
+
+  if (/upper|top/.test(label) && /left/.test(label)) return { left: leftColumn, top: topRow, width, height };
+  if (/upper|top/.test(label) && /right/.test(label)) return { left: rightColumn, top: topRow, width, height };
+  if (/lower|bottom/.test(label) && /left/.test(label)) return { left: leftColumn, top: lowerRow, width, height };
+  if (/lower|bottom/.test(label) && /right/.test(label)) return { left: rightColumn, top: lowerRow, width, height };
+  if (/left/.test(label)) return { left: leftColumn, top: middleRow, width, height };
+  if (/right/.test(label)) return { left: rightColumn, top: middleRow, width, height };
+  if (/lower|bottom/.test(label)) return { left: (window.innerWidth - width) / 2, top: lowerRow, width, height };
+  if (/upper|top/.test(label)) return { left: (window.innerWidth - width) / 2, top: topRow, width, height };
+
+  const offset = index % 2 === 0 ? -0.13 : 0.13;
+  return {
+    left: clampNumber((window.innerWidth - width) * (0.5 + offset), 14, window.innerWidth - width - 14),
+    top: clampNumber(middleRow + index * 12, 92, window.innerHeight - height - 110),
+    width,
+    height,
+  };
+}
+
 function ScanResultCard({
   isExpanded,
   isMismatch,
@@ -879,10 +999,13 @@ function ScanResultCard({
       />
       <div className="flex items-start gap-2 pr-6">
         <div className="min-w-0">
-          <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-white/55">Detection</p>
+          <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-white/55">Best match</p>
           <h3 className="mt-1 truncate text-base font-black leading-tight tracking-tight">
             {label}
           </h3>
+          {result?.whatItDoes ? (
+            <p className="mt-1 text-xs leading-5 text-white/68">{summarize(result.whatItDoes, 118)}</p>
+          ) : null}
           <div className="mt-2 flex flex-wrap gap-2">
             <span className="rounded-full border border-[var(--ds-accent-line)] bg-[var(--ds-accent-soft)] px-2 py-0.5 text-[10px] font-extrabold text-[var(--ds-accent)]">
               {result?.scanCategory ?? "unknown"}
@@ -943,15 +1066,30 @@ function ScanResultCard({
         {review.scanState.errorMessage ? (
           <p className="text-[12px] text-[var(--ds-danger-ink)]">{review.scanState.errorMessage}</p>
         ) : (
-          <ul className="space-y-1.5">
-            {cardFacts.map((fact) => (
-              <li key={fact} className="before:text-[var(--ds-accent)] before:content-['-'] before:mr-2">
-                {fact}
-              </li>
-            ))}
-          </ul>
+          <>
+            <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/48">Why it matched</p>
+            <ul className="mt-2 space-y-1.5">
+              {cardFacts.map((fact) => (
+                <li key={fact} className="before:text-[var(--ds-accent)] before:content-['-'] before:mr-2">
+                  {fact}
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </div>
+      {result?.candidateMatches.length ? (
+        <div className="mt-2 flex gap-2 overflow-hidden">
+          {result.candidateMatches.slice(0, 2).map((candidate) => (
+            <span
+              className="min-w-0 truncate rounded-full border border-white/12 bg-white/8 px-3 py-1.5 text-[11px] font-extrabold text-white/78"
+              key={candidate.partName}
+            >
+              Also check: {candidate.partName}
+            </span>
+          ))}
+        </div>
+      ) : null}
       {isExpanded ? (
         <div className="mt-2 rounded-2xl border border-white/10 bg-white/5 p-3">
           <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/48">Details</p>
@@ -1204,12 +1342,11 @@ function getReviewFacts(result: IdentificationResult | undefined, compact: boole
     return ["No AI result yet. Open the scan details to retry."];
   }
   const facts = [
-    result.whatItDoes ? summarize(result.whatItDoes, compact ? 110 : 180) : "",
     ...result.visibleObservations.map((item) => summarize(item, compact ? 80 : 120)),
     ...result.concerns.map((item) => `Caution: ${summarize(item, compact ? 70 : 120)}`),
   ].filter(Boolean);
 
-  return facts.slice(0, compact ? 3 : 5);
+  return facts.length ? facts.slice(0, compact ? 3 : 5) : ["No visual evidence returned. Treat this as uncertain."];
 }
 
 function getReviewExpandedFacts(result: IdentificationResult | undefined) {
