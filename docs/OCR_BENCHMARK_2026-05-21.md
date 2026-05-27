@@ -15,13 +15,13 @@ The default should only change if the newer checkpoint produces better evidence 
 
 ## Fixture
 
-The current committed blurry-label rescue test uses a mocked OCR result for:
+The committed blurry-label rescue test uses `public/test-fixtures/blurry-label-ocr-test.png`, a small downsampled PNG label fixture for:
 
 ```text
 DENSO 104210-1230
 ```
 
-There is not yet a committed real blurry-label image fixture in `public/test-fixtures`; only `engine-scan-test.jpg` exists there. For this benchmark, the fixture text above was rendered into a temporary printed label image, downsampled, and blurred to match the `too_blurry` OCR rescue scenario.
+The fixture text above is rendered into a printed label image, downsampled, and blurred to match the `too_blurry` OCR rescue scenario. The server-side identify test verifies that the OCR request sends that exact fixture image before Gemini receives the extracted label text.
 
 ## Environment
 

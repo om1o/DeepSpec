@@ -5,6 +5,9 @@ import { resolve } from "node:path";
 const imageBase64 =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
 const engineFixtureBase64 = `data:image/jpeg;base64,${readFileSync(resolve(process.cwd(), "public/test-fixtures/engine-scan-test.jpg")).toString("base64")}`;
+const blurryLabelFixturePath = resolve(process.cwd(), "public/test-fixtures/blurry-label-ocr-test.png");
+const blurryLabelFixtureBytes = readFileSync(blurryLabelFixturePath);
+const blurryLabelFixtureBase64 = `data:image/png;base64,${blurryLabelFixtureBytes.toString("base64")}`;
 
 const result = {
   partName: "Alternator",
@@ -247,7 +250,7 @@ describe("createIdentifyResponse", () => {
     expect(fetchSpy.mock.calls[0][0]).toEqual(expect.stringContaining("generativelanguage.googleapis.com"));
   });
 
-  it("runs OCR before Gemini for a blurry label rescue and saves extracted text as evidence", async () => {
+  it("runs OCR on the real blurry-label fixture before Gemini and saves extracted text as evidence", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(
@@ -271,7 +274,7 @@ describe("createIdentifyResponse", () => {
     await expect(
       createIdentifyResponse(
         {
-          imageBase64,
+          imageBase64: blurryLabelFixtureBase64,
           labelRescueTrigger: "too_blurry",
         },
         {
@@ -288,8 +291,13 @@ describe("createIdentifyResponse", () => {
       },
     });
 
+    expect(blurryLabelFixtureBytes.byteLength).toBeGreaterThan(1_000);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(fetchSpy.mock.calls[0][0]).toEqual(expect.stringContaining("api-inference.huggingface.co/models/microsoft%2Ftrocr-large-printed"));
+    expect((fetchSpy.mock.calls[0][1] as RequestInit).headers).toEqual(
+      expect.objectContaining({ "Content-Type": "image/png" }),
+    );
+    expect(Buffer.compare((fetchSpy.mock.calls[0][1] as RequestInit).body as Buffer, blurryLabelFixtureBytes)).toBe(0);
     expect(fetchSpy.mock.calls[1][0]).toEqual(expect.stringContaining("generativelanguage.googleapis.com"));
     const geminiBody = JSON.parse((fetchSpy.mock.calls[1][1] as RequestInit).body as string);
     expect(JSON.stringify(geminiBody)).toContain("DENSO 104210-1230");
