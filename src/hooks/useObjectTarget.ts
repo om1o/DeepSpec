@@ -4,6 +4,7 @@ import { detectObjectTargetFromImageData, type ObjectTargetBox } from "../lib/ob
 import { getScannerReticleBounds, isTargetInsideScannerBox } from "../lib/scannerReticle";
 
 export type CameraObjectTarget = {
+  id: string;
   confidence: number;
   height: number;
   holdProgress: number;
@@ -11,6 +12,12 @@ export type CameraObjectTarget = {
   left: number;
   top: number;
   width: number;
+  normalized?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
 };
 
 type UseObjectTargetOptions = {
@@ -29,7 +36,7 @@ export function useObjectTarget(
 ) {
   const [target, setTarget] = useState<CameraObjectTarget | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const lockRef = useRef<{ box: ObjectTargetBox; startedAt: number } | null>(null);
+  const lockRef = useRef<{ box: ObjectTargetBox; id: string; startedAt: number } | null>(null);
 
   useEffect(() => {
     if (!enabled) {
@@ -63,14 +70,22 @@ export function useObjectTarget(
       const now = Date.now();
       const previousLock = lockRef.current;
       const isSameTarget = Boolean(previousLock && getTargetShift(previousLock.box, detected) < TARGET_SHIFT_TOLERANCE);
+      const id = isSameTarget ? (previousLock?.id ?? makeObjectTargetId(detected)) : makeObjectTargetId(detected);
       const startedAt = holdEnabled && isSameTarget && previousLock ? previousLock.startedAt : now;
-      lockRef.current = { box: detected, startedAt };
+      lockRef.current = { box: detected, id, startedAt };
 
       const holdProgress = holdEnabled ? Math.min(1, (now - startedAt) / holdDurationMs) : 0;
       setTarget({
+        id,
         ...viewportTarget,
         confidence: detected.confidence,
         holdProgress,
+        normalized: {
+          x: detected.x,
+          y: detected.y,
+          width: detected.width,
+          height: detected.height,
+        },
         isLocked: holdProgress >= 1,
       });
     }, SAMPLE_INTERVAL_MS);
@@ -79,6 +94,15 @@ export function useObjectTarget(
   }, [enabled, holdDurationMs, holdEnabled, webcamRef]);
 
   return enabled ? target : null;
+}
+
+function makeObjectTargetId(box: ObjectTargetBox) {
+  const left = Math.round(box.x * 1000);
+  const top = Math.round(box.y * 1000);
+  const width = Math.round(box.width * 1000);
+  const height = Math.round(box.height * 1000);
+  const confidence = Math.round(box.confidence * 100);
+  return `${left}:${top}:${width}:${height}:${confidence}`;
 }
 
 function detectCurrentTarget(video: HTMLVideoElement, canvasRef: MutableRefObject<HTMLCanvasElement | null>) {

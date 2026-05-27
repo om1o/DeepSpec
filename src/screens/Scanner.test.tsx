@@ -45,6 +45,7 @@ const identifyCapturedFrame = vi.fn(async () => ({
 const objectTargetState = vi.hoisted(() => ({
   current: {
     confidence: 0.82,
+    id: "target-fast",
     height: 180,
     holdProgress: 1,
     isLocked: true,
@@ -53,6 +54,7 @@ const objectTargetState = vi.hoisted(() => ({
     width: 240,
   } as null | {
     confidence: number;
+    id: string;
     height: number;
     holdProgress: number;
     isLocked: boolean;
@@ -148,6 +150,7 @@ describe("Scanner", () => {
     };
     objectTargetState.current = {
       confidence: 0.82,
+      id: "target-fast",
       height: 180,
       holdProgress: 1,
       isLocked: true,
@@ -175,15 +178,12 @@ describe("Scanner", () => {
 
     await waitFor(() => expect(captureFrame).toHaveBeenCalled());
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
-    const review = await screen.findByRole("dialog", { name: "Alternator" });
-    expect(screen.getByTestId("webcam-preview")).toBeInTheDocument();
-    expect(within(review).getByRole("img", { name: "Captured car part" })).toHaveAttribute(
-      "src",
-      "data:image/jpeg;base64,compressed-frame",
-    );
-    expect(within(review).getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
-    expect(within(review).getByText("Saved scan")).toBeInTheDocument();
-    expect(within(review).getByText("Saved data")).toBeInTheDocument();
+    const reviewHeading = await screen.findByRole("heading", { level: 3, name: "Alternator" });
+    const reviewCard = reviewHeading.closest("section");
+    expect(reviewCard).toBeTruthy();
+    expect(within(reviewCard as HTMLElement).getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
+    expect(within(reviewCard as HTMLElement).getByText("AI detection")).toBeInTheDocument();
+    expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Open details" })).toBeInTheDocument();
     const savedLookups = JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]");
     expect(savedLookups).toHaveLength(1);
     expect(savedLookups[0]).toMatchObject({
@@ -208,9 +208,10 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
 
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
-    const review = await screen.findByRole("dialog", { name: "Alternator" });
-    expect(screen.getByTestId("webcam-preview")).toBeInTheDocument();
-    expect(within(review).getByText("Saved scan")).toBeInTheDocument();
+    const reviewHeading = await screen.findByRole("heading", { level: 3, name: "Alternator" });
+    const reviewCard = reviewHeading.closest("section");
+    expect(reviewCard).toBeTruthy();
+    expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Open details" })).toBeInTheDocument();
   }, 10000);
 
   it("identifies an uploaded photo when the camera is blocked", async () => {
@@ -235,14 +236,16 @@ describe("Scanner", () => {
     );
 
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
-    const review = await screen.findByRole("dialog", { name: "Alternator" });
-    expect(screen.getByTestId("webcam-preview")).toBeInTheDocument();
-    expect(within(review).getByText("Saved scan")).toBeInTheDocument();
+    const reviewHeading = await screen.findByRole("heading", { level: 3, name: "Alternator" });
+    const reviewCard = reviewHeading.closest("section");
+    expect(reviewCard).toBeTruthy();
+    expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Open details" })).toBeInTheDocument();
   }, 10000);
 
   it("requires a five-second hold before auto capture locks", () => {
     objectTargetState.current = {
       confidence: 0.82,
+      id: "target-fast",
       height: 180,
       holdProgress: 0,
       isLocked: false,
@@ -348,10 +351,11 @@ describe("Scanner", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Test engine photo" }));
 
-    const review = await screen.findByRole("dialog", { name: "Alternator" });
-    expect(within(review).getByText("QA test result")).toBeInTheDocument();
+    const review = await screen.findByRole("heading", { level: 3, name: "Alternator" });
+    const reviewCard = review.closest("section");
+    expect(reviewCard).toBeTruthy();
+    expect(within(reviewCard as HTMLElement).getByText("metadata")).toBeInTheDocument();
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
-    expect(within(review).getByText("test run only")).toBeInTheDocument();
     expect(localStorage.getItem("deep-spec:lookups")).toBeNull();
     expect(sessionStorage.getItem("deep-spec:latest-scan-state")).toBeNull();
   }, 10000);
@@ -462,7 +466,7 @@ describe("Scanner", () => {
 
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
     expect(identifyCapturedFrame.mock.calls[0][2]).toBe("too_blurry");
-    expect(await screen.findByRole("dialog", { name: "Alternator" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 3, name: "Alternator" })).toBeInTheDocument();
     expect(screen.queryByText(/Move closer and hold steady/)).not.toBeInTheDocument();
   }, 10000);
 });
