@@ -639,6 +639,75 @@ describe("createIdentifyResponse", () => {
     );
   });
 
+  it("promotes a strong local part match when Gemini returns a generic primary label", async () => {
+    const datasetRoot = resolve(process.cwd(), "tmp-test-dataset-index");
+    const indexPath = resolve(datasetRoot, "records.jsonl");
+    mkdirSync(datasetRoot, { recursive: true });
+    writeFileSync(
+      indexPath,
+      [
+        JSON.stringify({
+          canonicalKind: "damage",
+          labels: ["Front-bumper"],
+          links: {
+            image:
+              "https://huggingface.co/datasets/DrBimmer/car-parts-and-damage-dataset/resolve/main/Car%20damages%20dataset/File1/img/Car%20damages%20100.png",
+          },
+          primaryLabel: "Front-bumper",
+        }),
+        JSON.stringify({
+          canonicalKind: "damage",
+          labels: ["Fender"],
+          links: {
+            image:
+              "https://huggingface.co/datasets/DrBimmer/car-parts-and-damage-dataset/resolve/main/Car%20damages%20dataset/File1/img/Car%20damages%20101.png",
+          },
+          primaryLabel: "Fender",
+        }),
+      ].join("\n"),
+    );
+    const genericBodyResult = {
+      ...result,
+      partName: "unknown component",
+      confidence: "low",
+      scanCategory: "body",
+      visibleObservations: ["The front bumper cover is centered in the photo."],
+      concerns: ["The front bumper has scuffs near the lower edge."],
+      evidence: ["The front bumper is visible, but the image is pulled back."],
+    };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(genericBodyResult) }] } }],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(
+      createIdentifyResponse(
+        { imageBase64 },
+        {
+          DEEPSPEC_DATASET_INDEX_PATH: indexPath,
+          GEMINI_API_KEY: "test-key",
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          partName: "Front-bumper",
+          confidence: "medium",
+          evidence: expect.arrayContaining(["Local dataset match: Front-bumper (damage, 1 labeled sample)"]),
+        },
+      },
+    });
+  });
+
   it("does not create a damage dataset match from negated damage text", async () => {
     const datasetRoot = resolve(process.cwd(), "tmp-test-dataset-index");
     const indexPath = resolve(datasetRoot, "records.jsonl");

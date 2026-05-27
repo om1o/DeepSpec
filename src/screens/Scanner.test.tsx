@@ -194,6 +194,30 @@ describe("Scanner", () => {
     });
   }, 10000);
 
+  it("keeps the anchored result card usable in a mobile viewport", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 667 });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const reviewHeading = await screen.findByRole("heading", { level: 3, name: "Alternator" });
+    const reviewCard = reviewHeading.closest("section") as HTMLElement | null;
+    expect(reviewCard).toBeTruthy();
+    expect(Number.parseFloat(reviewCard?.style.left ?? "999")).toBeLessThanOrEqual(14);
+    expect(Number.parseFloat(reviewCard?.style.top ?? "999")).toBeLessThanOrEqual(120);
+    expect(reviewCard?.style.maxHeight).toContain("72dvh");
+    expect(reviewCard?.style.maxWidth).toContain("92vw");
+    expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Open details" })).toBeInTheDocument();
+    expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Copy area size" })).toBeInTheDocument();
+    expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Wrong match or wrong label?" })).toBeInTheDocument();
+  }, 10000);
+
   it("lets the user run a manual scan when target lock is not available", async () => {
     objectTargetState.current = null;
 
@@ -327,90 +351,12 @@ describe("Scanner", () => {
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
   }, 10000);
 
-  it("runs the generated engine test scan through the AI model without saving it to history", async () => {
-    window.history.pushState({}, "", "/scan?test=1");
-    objectTargetState.current = null;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        status: 200,
-        headers: {
-          get: (name: string) => (name.toLowerCase() === "content-type" ? "image/jpeg" : null),
-        },
-        arrayBuffer: async () => new TextEncoder().encode("test-engine-image").buffer,
-      })),
-    );
-
-    render(
-      <MemoryRouter initialEntries={["/scan?test=1"]}>
-        <Routes>
-          <Route path="/scan" element={<Scanner />} />
-        </Routes>
-      </MemoryRouter>,
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: "Run AI test photo" }));
-
-    const review = await screen.findByRole("heading", { level: 3, name: "Alternator" });
-    const reviewCard = review.closest("section");
-    expect(reviewCard).toBeTruthy();
-    expect(within(reviewCard as HTMLElement).getByText("AI detection")).toBeInTheDocument();
-    expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
-    expect(localStorage.getItem("deep-spec:lookups")).toBeNull();
-    expect(sessionStorage.getItem("deep-spec:latest-scan-state")).toBeNull();
-  }, 10000);
-
-  it("keeps test scan mode clean when camera access is blocked", () => {
-    window.history.pushState({}, "", "/scan?test=1");
-    cameraHookState.current = {
-      cameraError: "Permission denied",
-      cameraRequestId: 9,
-      cameraState: "blocked",
-    };
-    objectTargetState.current = null;
-
-    render(
-      <MemoryRouter initialEntries={["/scan?test=1"]}>
-        <Routes>
-          <Route path="/scan" element={<Scanner />} />
-        </Routes>
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByRole("button", { name: "Run AI test photo" })).toBeInTheDocument();
-    expect(screen.getByText("Test scan ready")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { level: 1, name: "Camera access needed" })).not.toBeInTheDocument();
-  });
-
-  it("lets testers exit sticky test scan mode", async () => {
+  it("keeps the real camera scanner active when a stale test query is present", async () => {
     window.history.pushState({}, "", "/scan?test=1");
     objectTargetState.current = null;
 
     render(
       <MemoryRouter initialEntries={["/scan?test=1"]}>
-        <Routes>
-          <Route path="/scan" element={<Scanner />} />
-        </Routes>
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByRole("button", { name: "Run AI test photo" })).toBeInTheDocument();
-    expect(sessionStorage.getItem("deep-spec:test-mode")).toBe("1");
-
-    await userEvent.click(screen.getByRole("button", { name: "Exit test mode" }));
-
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Run AI test photo" })).not.toBeInTheDocument());
-    expect(sessionStorage.getItem("deep-spec:test-mode")).toBeNull();
-    expect(screen.getByRole("button", { name: "Scan now" })).toBeInTheDocument();
-  });
-
-  it("does not keep test mode sticky after returning to the scanner", () => {
-    sessionStorage.setItem("deep-spec:test-mode", "1");
-    objectTargetState.current = null;
-
-    render(
-      <MemoryRouter initialEntries={["/scan"]}>
         <Routes>
           <Route path="/scan" element={<Scanner />} />
         </Routes>
@@ -419,8 +365,10 @@ describe("Scanner", () => {
 
     expect(screen.queryByRole("button", { name: "Run AI test photo" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Scan now" })).toBeInTheDocument();
-    expect(sessionStorage.getItem("deep-spec:test-mode")).toBeNull();
-  });
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    expect(localStorage.getItem("deep-spec:lookups")).toBeTruthy();
+  }, 10000);
 
   it("lets the user cancel an accidental auto scan before the result opens", async () => {
     identifyCapturedFrame.mockImplementationOnce(() => new Promise(() => undefined));

@@ -8,8 +8,10 @@ const DATASET_URL = `https://huggingface.co/datasets/${DATASET_ID}`;
 const DEFAULT_OUTPUT = ".deepspec-eval/identify-failures.jsonl";
 const DEFAULT_SUMMARY = ".deepspec-eval/identify-summary.json";
 const DEFAULT_DATASET_ROOT = "datasets/raw/drbimmer-car-parts-and-damage-dataset";
+const DEFAULT_DATASET_INDEX = "datasets/derived/drbimmer-car-parts-and-damage-dataset/records.jsonl";
 const DEFAULT_EVAL_DELAY_MS = 20_000;
 export const DATASET_FETCH_TIMEOUT_MS = 60_000;
+export const PUBLIC_SAMPLE_SIZE = 300;
 const RATE_LIMIT_RETRY_DELAYS_MS = [60_000, 120_000];
 const PROVIDER_AVAILABILITY_ERROR_CODES = new Set(["network", "provider_error", "rate_limited"]);
 const SAFETY_CRITICAL_EXPECTED_PATTERN = /\b(airbag|ball joint|brake|caliper|coolant|control arm|fluid|fuel|gas|injector|leak|oil|rack|rotor|shock|steering|strut|suspension|tie rod|tire|tyre|wheel)\b/;
@@ -214,12 +216,15 @@ export function summarizeEvalMetrics(results, requestedSampleCount = results.len
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const env = await loadEnv();
+  if (options.providerTimeoutMs !== null) {
+    env.DEEPSPEC_IDENTIFY_PROVIDER_TIMEOUT_MS = String(options.providerTimeoutMs);
+  }
 
   if (!env.GEMINI_API_KEY) {
     throw new Error("GEMINI_API_KEY is missing. Add it to .env or the process environment before running the eval.");
   }
 
-  const selectedSamples = RELEASE_SAMPLE_IMAGES.slice(0, options.sampleSize);
+  const selectedSamples = await resolveEvalSampleImages(options);
   const identify = await loadIdentifyPipeline();
   const failures = [];
   const results = [];
@@ -316,6 +321,7 @@ async function main() {
     datasetId: DATASET_ID,
     datasetUrl: DATASET_URL,
     generatedAt: new Date().toISOString(),
+    sampleSet: options.sampleSet,
     sampleSize: selectedSamples.length,
     attemptedCount: results.length,
     skippedCount: Math.max(0, selectedSamples.length - results.length),
@@ -328,8 +334,10 @@ async function main() {
     modelConfig: {
       identifyModel: env.GEMINI_MODEL || "gemini-2.5-flash",
       fallbackModels: env.GEMINI_FALLBACK_MODELS || "gemini-2.5-flash-lite",
+      providerTimeoutMs: env.DEEPSPEC_IDENTIFY_PROVIDER_TIMEOUT_MS || "25000",
     },
     datasetRoot: options.datasetRoot,
+    datasetIndex: options.datasetIndex,
     throttleDelayMs: options.delayMs,
     output: options.output,
     results,
@@ -373,10 +381,13 @@ async function createIdentifyResponseWithRetry(identify, dataUrl, env) {
 function parseArgs(args) {
   const options = {
     datasetRoot: process.env.DEEPSPEC_DATASET_ROOT || DEFAULT_DATASET_ROOT,
+    datasetIndex: process.env.DEEPSPEC_DATASET_INDEX_PATH || DEFAULT_DATASET_INDEX,
     delayMs: parseDelayMs(process.env.DEEPSPEC_EVAL_DELAY_MS, DEFAULT_EVAL_DELAY_MS),
     maxProviderFailures: parseMaxProviderFailures(process.env.DEEPSPEC_EVAL_MAX_PROVIDER_FAILURES, 1),
     output: DEFAULT_OUTPUT,
+    providerTimeoutMs: null,
     sampleSize: 6,
+    sampleSet: "release",
     summary: DEFAULT_SUMMARY,
   };
 
@@ -403,6 +414,15 @@ function parseArgs(args) {
     } else if (name === "--dataset-root") {
       options.datasetRoot = value;
       if (!inlineValue) index += 1;
+    } else if (name === "--dataset-index") {
+      options.datasetIndex = value;
+      if (!inlineValue) index += 1;
+    } else if (name === "--sample-set") {
+      options.sampleSet = parseSampleSet(value);
+      if (!inlineValue) index += 1;
+    } else if (name === "--provider-timeout-ms") {
+      options.providerTimeoutMs = parseProviderTimeoutMs(value);
+      if (!inlineValue) index += 1;
     } else if (name === "--help") {
       printHelp();
       process.exit(0);
@@ -427,22 +447,39 @@ function parseDelayMs(value, fallback) {
   return delayMs;
 }
 
+function parseSampleSet(value) {
+  if (value === "release" || value === "public") {
+    return value;
+  }
+
+  throw new Error("--sample-set must be either release or public.");
+}
+
+function parseProviderTimeoutMs(value) {
+  const timeoutMs = Number(value);
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 5_000 || timeoutMs > 120_000) {
+    throw new Error("--provider-timeout-ms must be an integer from 5000 to 120000.");
+  }
+
+  return timeoutMs;
+}
+
 function parseMaxProviderFailures(value, fallback) {
   if (value === undefined || value === null || value === "") {
     return fallback;
   }
 
   const failures = Number(value);
-  if (!Number.isInteger(failures) || failures < 1 || failures > RELEASE_SAMPLE_IMAGES.length) {
-    throw new Error(`--max-provider-failures must be an integer from 1 to ${RELEASE_SAMPLE_IMAGES.length}.`);
+  if (!Number.isInteger(failures) || failures < 1 || failures > 10_000) {
+    throw new Error("--max-provider-failures must be an integer from 1 to 10000.");
   }
 
   return failures;
 }
 
 function clampSampleSize(value) {
-  if (!Number.isInteger(value) || value < 1 || value > RELEASE_SAMPLE_IMAGES.length) {
-    throw new Error(`--sample-size must be an integer from 1 to ${RELEASE_SAMPLE_IMAGES.length}.`);
+  if (!Number.isInteger(value) || value < 1 || value > 10_000) {
+    throw new Error("--sample-size must be an integer from 1 to 10000.");
   }
 
   return value;
@@ -452,18 +489,115 @@ function printHelp() {
   console.log(`Run a local Deep Spec identify eval against ${DATASET_ID}.
 
 Options:
-  --sample-size <n>  Number of curated HF samples to run, 1-${RELEASE_SAMPLE_IMAGES.length}. Default: 6
+  --sample-size <n>  Number of samples to run. Default: 6
+  --sample-set <name>
+                     release uses the fixed 50-case set; public builds a deterministic set from the dataset index.
+                     Default: release
   --delay-ms <n>     Delay between provider calls. Default: ${DEFAULT_EVAL_DELAY_MS}
   --max-provider-failures <n>
                      Stop after this many provider availability failures. Default: 1
+  --provider-timeout-ms <n>
+                     Provider timeout for each model attempt, 5000-120000. Default: app setting
   --output <path>    JSONL failure review rows. Default: ${DEFAULT_OUTPUT}
   --summary <path>   JSON summary. Default: ${DEFAULT_SUMMARY}
   --dataset-root <path>
                      Local dataset root. Default: ${DEFAULT_DATASET_ROOT}
+  --dataset-index <path>
+                     Derived dataset records JSONL for public samples. Default: ${DEFAULT_DATASET_INDEX}
 
 The command exits nonzero when provider availability is blocked, any sample fails
 scoring, or the requested sample set is not fully attempted and passed.
 `);
+}
+
+async function resolveEvalSampleImages(options) {
+  if (options.sampleSet === "release") {
+    if (options.sampleSize > RELEASE_SAMPLE_IMAGES.length) {
+      throw new Error(`--sample-size cannot exceed ${RELEASE_SAMPLE_IMAGES.length} for the release sample set.`);
+    }
+
+    return RELEASE_SAMPLE_IMAGES.slice(0, options.sampleSize);
+  }
+
+  const records = await readDatasetIndex(options.datasetIndex);
+  return buildPublicSampleImages(records, options.sampleSize);
+}
+
+async function readDatasetIndex(datasetIndex) {
+  let text;
+
+  try {
+    text = await readFile(datasetIndex, "utf8");
+  } catch (error) {
+    throw new Error(`Could not read ${datasetIndex}. Run npm run dataset:sort before the public eval.`, { cause: error });
+  }
+
+  return text
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line, index) => parseDatasetRecord(line, index + 1, datasetIndex));
+}
+
+function parseDatasetRecord(line, lineNumber, datasetIndex) {
+  try {
+    return JSON.parse(line);
+  } catch (error) {
+    throw new Error(`Could not parse ${datasetIndex}:${lineNumber}.`, { cause: error });
+  }
+}
+
+export function buildPublicSampleImages(records, sampleSize = PUBLIC_SAMPLE_SIZE) {
+  const byLabel = new Map();
+
+  for (const record of records) {
+    const imagePath = datasetImagePathFromRecord(record);
+    const label = typeof record?.primaryLabel === "string" ? record.primaryLabel.trim() : "";
+
+    if (!imagePath || !label) continue;
+
+    if (!byLabel.has(label)) {
+      byLabel.set(label, []);
+    }
+
+    byLabel.get(label).push({ imagePath, id: String(record.id ?? imagePath) });
+  }
+
+  const labelQueues = [...byLabel.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([label, values]) => ({
+      label,
+      values: values.sort((left, right) => left.id.localeCompare(right.id)),
+    }));
+
+  const selected = [];
+  const seen = new Set();
+
+  while (selected.length < sampleSize && labelQueues.some((queue) => queue.values.length > 0)) {
+    for (const queue of labelQueues) {
+      const next = queue.values.shift();
+      if (!next || seen.has(next.imagePath)) continue;
+      selected.push(next.imagePath);
+      seen.add(next.imagePath);
+      if (selected.length === sampleSize) break;
+    }
+  }
+
+  if (selected.length < sampleSize) {
+    throw new Error(`Public eval needs ${sampleSize} usable indexed images, but only found ${selected.length}. Run npm run dataset:sort and check the local dataset.`);
+  }
+
+  return selected;
+}
+
+function datasetImagePathFromRecord(record) {
+  const group = typeof record?.rawGroupName === "string" ? record.rawGroupName.trim() : "";
+  const sourceImage = typeof record?.source?.image === "string" ? record.source.image.trim() : "";
+
+  if (!group || !sourceImage || sourceImage.includes("..")) {
+    return null;
+  }
+
+  return `${group}/${sourceImage}`.replaceAll("\\", "/");
 }
 
 async function loadEnv() {
