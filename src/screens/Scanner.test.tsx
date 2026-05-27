@@ -181,6 +181,7 @@ describe("Scanner", () => {
     const reviewHeading = await screen.findByRole("heading", { level: 3, name: "Alternator" });
     const reviewCard = reviewHeading.closest("section");
     expect(reviewCard).toBeTruthy();
+    expect(screen.getByTestId("lens-primary-label")).toHaveTextContent("Alternator");
     expect(within(reviewCard as HTMLElement).getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).getByText("AI detection")).toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Open details" })).toBeInTheDocument();
@@ -402,6 +403,23 @@ describe("Scanner", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Run AI test photo" })).not.toBeInTheDocument());
     expect(sessionStorage.getItem("deep-spec:test-mode")).toBeNull();
     expect(screen.getByRole("button", { name: "Scan now" })).toBeInTheDocument();
+  });
+
+  it("does not keep test mode sticky after returning to the scanner", () => {
+    sessionStorage.setItem("deep-spec:test-mode", "1");
+    objectTargetState.current = null;
+
+    render(
+      <MemoryRouter initialEntries={["/scan"]}>
+        <Routes>
+          <Route path="/scan" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByRole("button", { name: "Run AI test photo" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Scan now" })).toBeInTheDocument();
+    expect(sessionStorage.getItem("deep-spec:test-mode")).toBeNull();
   });
 
   it("lets the user cancel an accidental auto scan before the result opens", async () => {
