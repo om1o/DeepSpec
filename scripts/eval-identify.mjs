@@ -1,15 +1,18 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DATASET_ID = "DrBimmer/car-parts-and-damage-dataset";
 const DATASET_URL = `https://huggingface.co/datasets/${DATASET_ID}`;
 const DEFAULT_OUTPUT = ".deepspec-eval/identify-failures.jsonl";
 const DEFAULT_SUMMARY = ".deepspec-eval/identify-summary.json";
+const DEFAULT_DATASET_ROOT = "datasets/raw/drbimmer-car-parts-and-damage-dataset";
 const DEFAULT_EVAL_DELAY_MS = 20_000;
 export const DATASET_FETCH_TIMEOUT_MS = 60_000;
 const RATE_LIMIT_RETRY_DELAYS_MS = [60_000, 120_000];
 const PROVIDER_AVAILABILITY_ERROR_CODES = new Set(["network", "provider_error", "rate_limited"]);
+const SAFETY_CRITICAL_EXPECTED_PATTERN = /\b(airbag|ball joint|brake|caliper|coolant|control arm|fluid|fuel|gas|injector|leak|oil|rack|rotor|shock|steering|strut|suspension|tie rod|tire|tyre|wheel)\b/;
 
 export const RELEASE_SAMPLE_IMAGES = [
   "Car damages dataset/File1/img/Car damages 2.jpg",
@@ -96,6 +99,10 @@ export function scoreIdentificationResult(result, expectedLabels) {
     failureReasons.push("too_vague");
   }
 
+  if (isSafetyFalsePositive(result, expectedLabels)) {
+    failureReasons.push("safety_false_positive");
+  }
+
   return {
     ok: failureReasons.length === 0,
     matchedLabels,
@@ -168,6 +175,42 @@ export function getEvalExitCode(summary) {
   return 0;
 }
 
+export function isSafetyFalsePositive(result, expectedLabels) {
+  if (!result || isSafetyCriticalExpected(expectedLabels)) {
+    return false;
+  }
+
+  return result.isSafetyCritical === true || result.safetyTriage === "needs_professional";
+}
+
+export function summarizeEvalMetrics(results, requestedSampleCount = results.length) {
+  const attemptedCount = results.length;
+  const providerLatencies = results.map((result) => result.providerMs).filter(isFiniteNumber);
+  const totalLatencies = results.map((result) => result.totalMs ?? result.elapsedMs).filter(isFiniteNumber);
+  const providerFailureCount = results.filter((result) => result.failureReasons.includes("network") || result.failureReasons.includes("provider_error") || result.failureReasons.includes("rate_limited")).length;
+  const invalidResponseCount = results.filter((result) => result.invalidResponse || result.failureReasons.includes("invalid_response")).length;
+  const safetyFalsePositiveCount = results.filter((result) => result.safetyFalsePositive).length;
+  const passCount = results.filter((result) => result.status === 200 && result.failureReasons.length === 0).length;
+
+  return {
+    requestedSampleCount,
+    attemptedCount,
+    attemptedRate: rate(attemptedCount, requestedSampleCount),
+    passRate: rate(passCount, attemptedCount),
+    providerAvailabilityFailureRate: rate(providerFailureCount, attemptedCount),
+    invalidResponseCount,
+    invalidResponseRate: rate(invalidResponseCount, attemptedCount),
+    safetyFalsePositiveCount,
+    safetyFalsePositiveRate: rate(safetyFalsePositiveCount, attemptedCount),
+    wrongResultCount: results.filter((result) => result.failureReasons.includes("wrong_result")).length,
+    tooVagueCount: results.filter((result) => result.failureReasons.includes("too_vague")).length,
+    latencyMs: {
+      provider: summarizeLatency(providerLatencies),
+      total: summarizeLatency(totalLatencies),
+    },
+  };
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const env = await loadEnv();
@@ -187,20 +230,26 @@ async function main() {
     for (let index = 0; index < selectedSamples.length; index += 1) {
       const imagePath = selectedSamples[index];
       const startedAt = Date.now();
-      console.log(`[${index + 1}/${selectedSamples.length}] Fetching annotation for ${imagePath}`);
-      const annotation = await fetchJson(resolveUrl(annotationPathForImage(imagePath)));
+      console.log(`[${index + 1}/${selectedSamples.length}] Loading sample for ${imagePath}`);
+      const datasetStartedAt = Date.now();
+      const sample = await loadEvalSample(imagePath, options.datasetRoot);
+      const datasetFetchMs = Date.now() - datasetStartedAt;
+      const annotation = sample.annotation;
       const expectedLabels = getExpectedLabels(annotation);
-      console.log(`[${index + 1}/${selectedSamples.length}] Fetching image (${expectedLabels.join(", ") || "unlabeled"})`);
-      const image = await fetchBytes(resolveUrl(imagePath));
-      const dataUrl = toDataUrl(image.bytes, image.contentType);
+      const dataUrl = toDataUrl(sample.image.bytes, sample.image.contentType);
       const analyzedAt = new Date().toISOString();
-      console.log(`[${index + 1}/${selectedSamples.length}] Identifying image with provider`);
+      console.log(
+        `[${index + 1}/${selectedSamples.length}] Identifying image with provider (${expectedLabels.join(", ") || "unlabeled"}, ${sample.datasetSource})`,
+      );
+      const providerStartedAt = Date.now();
       const response = await createIdentifyResponseWithRetry(identify, dataUrl, env);
+      const providerMs = Date.now() - providerStartedAt;
       const result = response.status === 200 ? response.body.result : null;
       const error = response.status === 200 ? null : response.body.error;
       const score = scoreIdentificationResult(result, expectedLabels);
-      const elapsedMs = Date.now() - startedAt;
+      const totalMs = Date.now() - startedAt;
       const providerAvailabilityFailure = error && !isReviewableEvalFailure(error);
+      const safetyFalsePositive = isSafetyFalsePositive(result, expectedLabels);
 
       if (providerAvailabilityFailure) {
         providerFailureCount += 1;
@@ -213,9 +262,19 @@ async function main() {
         partName: result?.partName ?? null,
         confidence: result?.confidence ?? null,
         scanCategory: result?.scanCategory ?? null,
+        safetyTriage: result?.safetyTriage ?? null,
+        isSafetyCritical: result?.isSafetyCritical ?? null,
         matchedLabels: score.matchedLabels,
         failureReasons: providerAvailabilityFailure ? [error.code] : score.failureReasons,
-        elapsedMs,
+        invalidResponse: error?.code === "invalid_response",
+        safetyFalsePositive,
+        datasetSource: sample.datasetSource,
+        annotationSource: sample.annotationSource,
+        imageSource: sample.imageSource,
+        datasetFetchMs,
+        providerMs,
+        totalMs,
+        elapsedMs: totalMs,
       });
 
       if ((!score.ok || error) && isReviewableEvalFailure(error)) {
@@ -233,7 +292,7 @@ async function main() {
       }
 
       console.log(
-        `${score.ok && !error ? "PASS" : "FAIL"} ${imagePath} -> ${result?.partName ?? error?.code ?? "no result"} (${elapsedMs}ms)`,
+        `${score.ok && !error ? "PASS" : "FAIL"} ${imagePath} -> ${result?.partName ?? error?.code ?? "no result"} (${providerMs}ms provider, ${totalMs}ms total)`,
       );
 
       if (providerFailureCount >= options.maxProviderFailures) {
@@ -265,6 +324,12 @@ async function main() {
     passCount: results.filter((result) => result.status === 200 && result.failureReasons.length === 0).length,
     providerStatus: providerFailureCount > 0 ? "blocked" : "available",
     stoppedEarlyReason,
+    metrics: summarizeEvalMetrics(results, selectedSamples.length),
+    modelConfig: {
+      identifyModel: env.GEMINI_MODEL || "gemini-2.5-flash",
+      fallbackModels: env.GEMINI_FALLBACK_MODELS || "gemini-2.5-flash-lite",
+    },
+    datasetRoot: options.datasetRoot,
     throttleDelayMs: options.delayMs,
     output: options.output,
     results,
@@ -307,6 +372,7 @@ async function createIdentifyResponseWithRetry(identify, dataUrl, env) {
 
 function parseArgs(args) {
   const options = {
+    datasetRoot: process.env.DEEPSPEC_DATASET_ROOT || DEFAULT_DATASET_ROOT,
     delayMs: parseDelayMs(process.env.DEEPSPEC_EVAL_DELAY_MS, DEFAULT_EVAL_DELAY_MS),
     maxProviderFailures: parseMaxProviderFailures(process.env.DEEPSPEC_EVAL_MAX_PROVIDER_FAILURES, 1),
     output: DEFAULT_OUTPUT,
@@ -333,6 +399,9 @@ function parseArgs(args) {
       if (!inlineValue) index += 1;
     } else if (name === "--summary") {
       options.summary = value;
+      if (!inlineValue) index += 1;
+    } else if (name === "--dataset-root") {
+      options.datasetRoot = value;
       if (!inlineValue) index += 1;
     } else if (name === "--help") {
       printHelp();
@@ -389,6 +458,8 @@ Options:
                      Stop after this many provider availability failures. Default: 1
   --output <path>    JSONL failure review rows. Default: ${DEFAULT_OUTPUT}
   --summary <path>   JSON summary. Default: ${DEFAULT_SUMMARY}
+  --dataset-root <path>
+                     Local dataset root. Default: ${DEFAULT_DATASET_ROOT}
 
 The command exits nonzero when provider availability is blocked, any sample fails
 scoring, or the requested sample set is not fully attempted and passed.
@@ -457,6 +528,70 @@ export function buildEvalViteServerOptions() {
       ws: false,
     },
   };
+}
+
+export async function loadEvalSample(imagePath, datasetRoot) {
+  const annotationPath = annotationPathForImage(imagePath);
+  const localAnnotation = await readLocalJson(datasetRoot, annotationPath);
+  const localImage = await readLocalBytes(datasetRoot, imagePath);
+  const annotationSource = localAnnotation ? "local" : "hugging_face";
+  const imageSource = localImage ? "local" : "hugging_face";
+  const annotation = localAnnotation ?? (await fetchJson(resolveUrl(annotationPath)));
+  const image = localImage ?? (await fetchBytes(resolveUrl(imagePath)));
+
+  return {
+    annotation,
+    annotationSource,
+    image,
+    imageSource,
+    datasetSource: annotationSource === imageSource ? annotationSource : "mixed",
+  };
+}
+
+async function readLocalJson(datasetRoot, relativePath) {
+  const localPath = resolveLocalDatasetPath(datasetRoot, relativePath);
+  if (!localPath || !existsSync(localPath)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(await readFile(localPath, "utf8"));
+  } catch (error) {
+    throw datasetReadError(localPath, error);
+  }
+}
+
+async function readLocalBytes(datasetRoot, relativePath) {
+  const localPath = resolveLocalDatasetPath(datasetRoot, relativePath);
+  if (!localPath || !existsSync(localPath)) {
+    return null;
+  }
+
+  try {
+    return {
+      bytes: await readFile(localPath),
+      contentType: contentTypeForPath(localPath),
+    };
+  } catch (error) {
+    throw datasetReadError(localPath, error);
+  }
+}
+
+function resolveLocalDatasetPath(datasetRoot, relativePath) {
+  if (!datasetRoot || !relativePath || relativePath.includes("..")) {
+    return null;
+  }
+
+  const root = resolve(datasetRoot);
+  const localPath = resolve(root, relativePath);
+  return localPath === root || localPath.startsWith(`${root}${sep}`) ? localPath : null;
+}
+
+function contentTypeForPath(path) {
+  const extension = extname(path).toLowerCase();
+  if (extension === ".png") return "image/png";
+  if (extension === ".webp") return "image/webp";
+  return "image/jpeg";
 }
 
 function annotationPathForImage(imagePath) {
@@ -623,6 +758,48 @@ function categorizeExpectedLabels(labels) {
   if (/suspension|control arm|strut|shock|ball joint|wheel/.test(text)) return "suspension";
 
   return "unknown";
+}
+
+function isSafetyCriticalExpected(labels) {
+  return SAFETY_CRITICAL_EXPECTED_PATTERN.test(normalizeText(labels.join(" ")));
+}
+
+function summarizeLatency(values) {
+  if (values.length === 0) {
+    return {
+      count: 0,
+      average: null,
+      p50: null,
+      p95: null,
+      max: null,
+    };
+  }
+
+  const sorted = [...values].sort((a, b) => a - b);
+  return {
+    count: sorted.length,
+    average: Math.round(sorted.reduce((sum, value) => sum + value, 0) / sorted.length),
+    p50: percentile(sorted, 50),
+    p95: percentile(sorted, 95),
+    max: sorted[sorted.length - 1],
+  };
+}
+
+function percentile(sortedValues, percentileValue) {
+  const index = Math.min(sortedValues.length - 1, Math.max(0, Math.ceil((percentileValue / 100) * sortedValues.length) - 1));
+  return sortedValues[index];
+}
+
+function rate(count, total) {
+  if (!total) {
+    return 0;
+  }
+
+  return Number((count / total).toFixed(4));
+}
+
+function isFiniteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 function normalizeText(value) {

@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   DATASET_FETCH_TIMEOUT_MS,
   RELEASE_SAMPLE_IMAGES,
@@ -6,7 +8,10 @@ import {
   buildReviewLookup,
   getEvalExitCode,
   isReviewableEvalFailure,
+  isSafetyFalsePositive,
+  loadEvalSample,
   scoreIdentificationResult,
+  summarizeEvalMetrics,
 } from "./eval-identify.mjs";
 
 const result = {
@@ -195,5 +200,86 @@ describe("identify eval scoring", () => {
 
   it("allows slower Hugging Face dataset reads before timing out", () => {
     expect(DATASET_FETCH_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
+  });
+
+  it("marks safety false positives only when the expected label is not safety-critical", () => {
+    expect(isSafetyFalsePositive({ ...result, isSafetyCritical: true, safetyTriage: "needs_professional" }, ["Back-bumper"])).toBe(true);
+    expect(isSafetyFalsePositive({ ...result, isSafetyCritical: true, safetyTriage: "needs_professional" }, ["Brake caliper"])).toBe(false);
+    expect(scoreIdentificationResult({ ...result, isSafetyCritical: true, safetyTriage: "needs_professional" }, ["Back-bumper"])).toMatchObject({
+      ok: false,
+      failureReasons: ["safety_false_positive"],
+    });
+  });
+
+  it("summarizes release eval latency and failure rates", () => {
+    expect(
+      summarizeEvalMetrics(
+        [
+          {
+            status: 200,
+            failureReasons: [],
+            providerMs: 100,
+            totalMs: 140,
+            invalidResponse: false,
+            safetyFalsePositive: false,
+          },
+          {
+            status: 502,
+            failureReasons: ["invalid_response"],
+            providerMs: 300,
+            totalMs: 350,
+            invalidResponse: true,
+            safetyFalsePositive: true,
+          },
+        ],
+        4,
+      ),
+    ).toMatchObject({
+      requestedSampleCount: 4,
+      attemptedCount: 2,
+      attemptedRate: 0.5,
+      passRate: 0.5,
+      invalidResponseCount: 1,
+      invalidResponseRate: 0.5,
+      safetyFalsePositiveCount: 1,
+      safetyFalsePositiveRate: 0.5,
+      latencyMs: {
+        provider: {
+          average: 200,
+          p50: 100,
+          p95: 300,
+          max: 300,
+        },
+      },
+    });
+  });
+
+  it("loads release samples from a local dataset root before using Hugging Face", async () => {
+    const datasetRoot = resolve(process.cwd(), "tmp-eval-dataset");
+    const imagePath = "Car parts dataset/File1/img/Car damages 101.png";
+    const annotationPath = "Car parts dataset/File1/ann/Car damages 101.png.json";
+    mkdirSync(resolve(datasetRoot, "Car parts dataset/File1/img"), { recursive: true });
+    mkdirSync(resolve(datasetRoot, "Car parts dataset/File1/ann"), { recursive: true });
+    writeFileSync(
+      resolve(datasetRoot, annotationPath),
+      JSON.stringify({
+        objects: [
+          {
+            classTitle: "Alternator",
+            points: { exterior: [[0, 0], [10, 0], [10, 10], [0, 10]] },
+          },
+        ],
+      }),
+    );
+    writeFileSync(resolve(datasetRoot, imagePath), Buffer.from("fake-png"));
+
+    try {
+      const sample = await loadEvalSample(imagePath, datasetRoot);
+      expect(sample.datasetSource).toBe("local");
+      expect(sample.annotation.objects[0].classTitle).toBe("Alternator");
+      expect(sample.image.contentType).toBe("image/png");
+    } finally {
+      rmSync(datasetRoot, { force: true, recursive: true });
+    }
   });
 });

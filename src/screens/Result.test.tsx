@@ -66,7 +66,7 @@ describe("Result", () => {
     vi.unstubAllEnvs();
   });
 
-  it("shows the AI identification result", () => {
+  it("shows the AI identification result", async () => {
     renderResult(successfulScan);
 
     expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
@@ -75,15 +75,19 @@ describe("Result", () => {
       "data:image/jpeg;base64,test-image",
     );
     expect(screen.getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
-    expect(screen.getByText("Nothing concerning visible.")).toBeInTheDocument();
     expect(screen.getByText("Best match")).toBeInTheDocument();
     expect(screen.getByText("Other possible matches")).toBeInTheDocument();
     expect(screen.getByText("Starter motor")).toBeInTheDocument();
-    expect(screen.getByText("Image evidence")).toBeInTheDocument();
     expect(screen.getByText("Useful match")).toBeInTheDocument();
-    expect(screen.getByText("The pulley and vented housing match common alternator shapes.")).toBeInTheDocument();
-    expect(screen.getByText("Ranked sources")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Refine" })).toHaveAttribute("href", "/scan");
+
+    await userEvent.click(screen.getByRole("tab", { name: "Evidence" }));
+    expect(screen.getByText("Image evidence")).toBeInTheDocument();
+    expect(screen.getByText("The pulley and vented housing match common alternator shapes.")).toBeInTheDocument();
+    expect(screen.getByText("Nothing concerning visible.")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: "Sources" }));
+    expect(screen.getByText("Ranked sources")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Search this part" })).toHaveAttribute(
       "href",
       "https://www.google.com/search?q=Alternator%20car%20part",
@@ -238,6 +242,7 @@ describe("Result", () => {
       </MemoryRouter>,
     );
 
+    await userEvent.click(screen.getByRole("tab", { name: "Review" }));
     await userEvent.click(screen.getByRole("button", { name: "What should I check next?" }));
 
     expect(screen.getByText("Chat page")).toBeInTheDocument();
@@ -280,7 +285,7 @@ describe("Result", () => {
     expect(savedLookup.trainingStatus).toBe("user_corrected");
   });
 
-  it("shows scan report actions for saved scans", () => {
+  it("shows scan report actions for saved scans", async () => {
     const lookup = makeLookup();
     localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
 
@@ -292,6 +297,8 @@ describe("Result", () => {
     expect(screen.getByRole("button", { name: "Share" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Export" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Tell me more" })).toHaveAttribute("href", `/result/${lookup.id}/chat`);
+
+    await userEvent.click(screen.getByRole("tab", { name: "Review" }));
     expect(screen.getByRole("link", { name: "What should I check next?" })).toHaveAttribute(
       "href",
       `/result/${lookup.id}/chat?q=What%20should%20I%20check%20next%20for%20this%20Alternator%3F`,

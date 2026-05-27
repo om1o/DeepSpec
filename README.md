@@ -17,8 +17,10 @@ For AI identification, create `.env` or `.env.local` with:
 
 ```bash
 GEMINI_API_KEY=your_server_key_here
-GEMINI_MODEL=gemini-2.5-pro
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_FALLBACK_MODELS=gemini-2.5-flash-lite
 GEMINI_CHAT_MODEL=gemini-2.5-flash
+GEMINI_CHAT_FALLBACK_MODELS=gemini-2.5-flash-lite
 ```
 
 Do not use a `VITE_` API key. The app calls `/api/identify` and `/api/chat`, and the server-side proxies send the key to Gemini.
@@ -36,15 +38,15 @@ For email sign-in, configure the Supabase Auth email template to show the OTP to
 
 After a session is verified, Deep Spec opens the scanner at `/scan`.
 
-### QA test scan (no save)
+### AI model test scan (no save)
 
-Use this to send a bundled engine photo through Gemini without writing history, session cache, or cloud sync:
+Use this to smoke-test the scanner and result card with the bundled engine photo through the real identify model without writing history, session cache, or cloud sync:
 
 ```
 http://localhost:5173/scan?test=1
 ```
 
-Tap **Test engine photo** on the yellow panel. Requires `GEMINI_API_KEY` in `.env` / `.env.local` and `npm run dev`.
+Tap **Run AI test photo** on the panel. This sends the bundled photo through `/api/identify`, so `GEMINI_API_KEY` must be configured and the request can use provider quota. Use `npm run eval:identify:release` for broader live provider proof.
 
 ### Local dataset matching
 
@@ -55,6 +57,14 @@ npm run dataset:sort
 ```
 
 The command writes ignored local files under `datasets/derived/drbimmer-car-parts-and-damage-dataset`, including `records.jsonl`, per-label indexes, and sorted image links. `/api/identify` reads that index after Gemini responds, adds matching local dataset evidence, and surfaces direct Hugging Face source links on the result screen.
+
+For release gating, run the fixed 50-case identify eval:
+
+```bash
+npm run eval:identify:release
+```
+
+The eval reads `DEEPSPEC_DATASET_ROOT` locally first, falls back to Hugging Face if a sample is missing, and records latency, invalid response rate, safety false-positive rate, and provider availability in `.deepspec-eval/identify-summary.json`.
 
 Google sign-in is hidden by default because it depends on a live Google OAuth client configured in the Supabase Google provider. Only enable it after the Google client ID and secret are valid:
 

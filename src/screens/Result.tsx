@@ -458,13 +458,14 @@ function AnalysisResult({
   onSaveAndAsk: (question?: string) => void;
   result: IdentificationResult;
 }) {
+  const [activePanel, setActivePanel] = useState<ResultPanelId>("match");
   const showSafetyWarning = result.isSafetyCritical || result.safetyTriage === "needs_professional";
   const trustReview = getTrustReview(result);
   const needsBetterPhoto = result.needsBetterPhoto || result.safetyTriage === "needs_better_photo";
 
   return (
     <>
-      <section className="rounded-[24px] border border-neutral-200 bg-white p-4 shadow-[0_12px_34px_rgba(15,23,42,0.08)]">
+      <section className="sticky top-2 z-10 rounded-[24px] border border-neutral-200 bg-white p-4 shadow-[0_12px_34px_rgba(15,23,42,0.08)]">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Best match</p>
@@ -499,16 +500,72 @@ function AnalysisResult({
         </section>
       ) : null}
 
-      <CandidateMatchesSection candidates={result.candidateMatches ?? []} />
-      <DetectedTextSection findings={getDetectedTextFindings(result)} />
-      <ResultSection title="Match" items={[result.whatItDoes]} />
-      <EvidenceRegionsSection regions={result.evidenceRegions ?? []} />
-      <EvidenceSection items={result.evidence} />
-      <ResultSection title="Concerns" items={result.concerns} emptyText="Nothing concerning visible." />
-      <ResultSection title="Next action" items={[result.nextAction]} />
-      <FollowUpSuggestions canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
-      <ReferenceLinksSection links={getReferenceLinks(result)} />
+      <section className="rounded-[22px] border border-neutral-200 bg-white p-2 shadow-sm">
+        <div className="grid grid-cols-4 gap-1" role="tablist" aria-label="Result sections">
+          {RESULT_PANELS.map((panel) => (
+            <ResultPanelButton key={panel.id} active={activePanel === panel.id} label={panel.label} onClick={() => setActivePanel(panel.id)} />
+          ))}
+        </div>
+      </section>
+
+      {activePanel === "match" ? (
+        <>
+          <CandidateMatchesSection candidates={result.candidateMatches ?? []} />
+          <DetectedTextSection findings={getDetectedTextFindings(result)} />
+          <ResultSection title="Match" items={[result.whatItDoes]} />
+          <ResultSection title="Next action" items={[result.nextAction]} />
+        </>
+      ) : null}
+
+      {activePanel === "evidence" ? (
+        <>
+          <EvidenceRegionsSection regions={result.evidenceRegions ?? []} />
+          <EvidenceSection items={result.evidence} />
+          <ResultSection title="Concerns" items={result.concerns} emptyText="Nothing concerning visible." />
+        </>
+      ) : null}
+
+      {activePanel === "sources" ? <ReferenceLinksSection links={getReferenceLinks(result)} /> : null}
+
+      {activePanel === "review" ? (
+        <FollowUpSuggestions canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
+      ) : null}
     </>
+  );
+}
+
+type ResultPanelId = "match" | "evidence" | "sources" | "review";
+
+const RESULT_PANELS: { id: ResultPanelId; label: string }[] = [
+  { id: "match", label: "Match" },
+  { id: "evidence", label: "Evidence" },
+  { id: "sources", label: "Sources" },
+  { id: "review", label: "Review" },
+];
+
+function ResultPanelButton({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      aria-selected={active}
+      className={
+        active
+          ? "min-h-10 rounded-[16px] bg-[var(--ds-accent)] px-2 text-xs font-extrabold text-white"
+          : "min-h-10 rounded-[16px] px-2 text-xs font-extrabold text-neutral-500"
+      }
+      onClick={onClick}
+      role="tab"
+      type="button"
+    >
+      {label}
+    </button>
   );
 }
 

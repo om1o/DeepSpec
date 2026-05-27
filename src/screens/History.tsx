@@ -1,11 +1,26 @@
-import { useMemo } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import Button from "../components/ui/Button";
-import { getLookups } from "../services/storage";
-import type { Lookup } from "../types";
+import { MAX_SAVED_LOOKUPS, getLookups } from "../services/storage";
+import { SCAN_CATEGORIES, type Lookup, type Rating, type ScanCategory, type TrainingStatus } from "../types";
 
 export default function History() {
   const lookups = useMemo(() => getLookups(), []);
+  const [query, setQuery] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<ScanCategory | "all">("all");
+  const [reviewFilter, setReviewFilter] = useState<TrainingStatus | "error" | "all">("all");
+  const [ratingFilter, setRatingFilter] = useState<Exclude<Rating, null> | "unrated" | "all">("all");
+  const filteredLookups = useMemo(
+    () =>
+      lookups.filter(
+        (lookup) =>
+          matchesQuery(lookup, query) &&
+          matchesCategory(lookup, categoryFilter) &&
+          matchesReviewStatus(lookup, reviewFilter) &&
+          matchesRating(lookup, ratingFilter),
+      ),
+    [categoryFilter, lookups, query, ratingFilter, reviewFilter],
+  );
 
   return (
     <main className="min-h-dvh bg-[var(--ds-page)] px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-slate-950">
@@ -26,11 +41,66 @@ export default function History() {
         </header>
 
         {lookups.length > 0 ? (
+          <section className="mt-5 rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+            <label className="block">
+              <span className="sr-only">Search saved scans</span>
+              <input
+                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search saved scans"
+                value={query}
+              />
+            </label>
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <FilterSelect label="Filter category" value={categoryFilter} onChange={(value) => setCategoryFilter(value as ScanCategory | "all")}>
+                <option value="all">All categories</option>
+                {SCAN_CATEGORIES.map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
+              </FilterSelect>
+              <FilterSelect label="Filter review status" value={reviewFilter} onChange={(value) => setReviewFilter(value as TrainingStatus | "error" | "all")}>
+                <option value="all">All review states</option>
+                <option value="raw_unreviewed">Unreviewed</option>
+                <option value="user_confirmed">Confirmed</option>
+                <option value="user_corrected">Corrected</option>
+                <option value="error">AI errors</option>
+              </FilterSelect>
+              <FilterSelect label="Filter rating" value={ratingFilter} onChange={(value) => setRatingFilter(value as Exclude<Rating, null> | "unrated" | "all")}>
+                <option value="all">All ratings</option>
+                <option value="up">Helpful</option>
+                <option value="down">Wrong</option>
+                <option value="unrated">Unrated</option>
+              </FilterSelect>
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <p className="text-xs font-bold text-neutral-500">
+                {filteredLookups.length}/{lookups.length} saved scans
+              </p>
+              <Button type="button" onClick={() => exportLookups(lookups)}>
+                Export JSON
+              </Button>
+            </div>
+            {lookups.length >= MAX_SAVED_LOOKUPS ? (
+              <p className="mt-2 text-xs font-semibold leading-5 text-[var(--ds-warn-ink)]">
+                Local storage is at the {MAX_SAVED_LOOKUPS}-scan cap. Export before replacing older scans.
+              </p>
+            ) : null}
+          </section>
+        ) : null}
+
+        {filteredLookups.length > 0 ? (
           <div className="mt-6 space-y-3">
-            {lookups.map((lookup) => (
+            {filteredLookups.map((lookup) => (
               <LookupCard key={lookup.id} lookup={lookup} />
             ))}
           </div>
+        ) : lookups.length > 0 ? (
+          <section className="mt-6 rounded-[24px] border border-dashed border-slate-200 bg-white p-6 text-center shadow-sm">
+            <p className="text-sm font-bold text-[var(--ds-accent)]">No scans match</p>
+            <p className="mt-2 text-sm leading-6 text-neutral-500">Clear the filters to see the full saved scan list.</p>
+          </section>
         ) : (
           <section className="mt-8 rounded-[24px] border border-dashed border-slate-200 bg-white p-6 text-center shadow-sm">
             <p className="text-sm font-bold text-[var(--ds-accent)]">No saved scans yet</p>
@@ -45,6 +115,32 @@ export default function History() {
         )}
       </div>
     </main>
+  );
+}
+
+function FilterSelect({
+  children,
+  label,
+  onChange,
+  value,
+}: {
+  children: ReactNode;
+  label: string;
+  onChange: (value: string) => void;
+  value: string;
+}) {
+  return (
+    <label className="block">
+      <span className="sr-only">{label}</span>
+      <select
+        aria-label={label}
+        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-[var(--ds-accent)]"
+        onChange={(event) => onChange(event.target.value)}
+        value={value}
+      >
+        {children}
+      </select>
+    </label>
   );
 }
 
@@ -94,4 +190,66 @@ function getStatusLabel(lookup: Lookup) {
   }
 
   return `${lookup.result.confidence} confidence`;
+}
+
+function matchesQuery(lookup: Lookup, query: string) {
+  const normalizedQuery = normalizeText(query);
+  if (!normalizedQuery) {
+    return true;
+  }
+
+  return normalizeText(
+    [
+      lookup.result?.partName,
+      lookup.trainingLabel,
+      lookup.correction,
+      lookup.notes,
+      lookup.scanCategory,
+      lookup.result?.whatItDoes,
+      ...(lookup.result?.visibleObservations ?? []),
+      ...(lookup.result?.concerns ?? []),
+    ].join(" "),
+  ).includes(normalizedQuery);
+}
+
+function matchesCategory(lookup: Lookup, categoryFilter: ScanCategory | "all") {
+  return categoryFilter === "all" || lookup.scanCategory === categoryFilter;
+}
+
+function matchesReviewStatus(lookup: Lookup, reviewFilter: TrainingStatus | "error" | "all") {
+  if (reviewFilter === "all") {
+    return true;
+  }
+
+  if (reviewFilter === "error") {
+    return Boolean(lookup.errorMessage);
+  }
+
+  return lookup.trainingStatus === reviewFilter;
+}
+
+function matchesRating(lookup: Lookup, ratingFilter: Exclude<Rating, null> | "unrated" | "all") {
+  if (ratingFilter === "all") {
+    return true;
+  }
+
+  if (ratingFilter === "unrated") {
+    return lookup.rating === null;
+  }
+
+  return lookup.rating === ratingFilter;
+}
+
+function normalizeText(value: string) {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function exportLookups(lookups: Lookup[]) {
+  const blob = new Blob([`${JSON.stringify(lookups, null, 2)}\n`], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `deepspec-saved-scans-${new Date().toISOString().slice(0, 10)}.json`;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
