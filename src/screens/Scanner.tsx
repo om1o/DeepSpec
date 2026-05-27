@@ -645,7 +645,7 @@ export default function Scanner() {
                 lookup: null,
                 reviewTarget: null,
                 scanState: { ...scanState, testRun: true },
-                source: "metadata",
+                source: "AI detection",
                 sourceUpdatedAt: new Date().toISOString(),
               });
           }}

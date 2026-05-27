@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Button from "../ui/Button";
 import { clearTestMode } from "../../lib/testMode";
-import { TEST_ENGINE_IDENTIFICATION, TEST_ENGINE_IMAGE_URL, TEST_VEHICLE_LABEL } from "../../services/testScanFixture";
+import { identifyCapturedFrame } from "../../services/aiService";
+import { TEST_ENGINE_IMAGE_URL, TEST_VEHICLE_LABEL } from "../../services/testScanFixture";
 import type { CapturedFrame, ScanAnalysisState } from "../../types";
 
 type Props = {
@@ -44,9 +45,10 @@ export default function TestScanPanel({ onBusyChange, onScanComplete }: Props) {
 
     try {
       const frame = await loadTestFrame();
+      const result = await identifyCapturedFrame(frame);
       const scanState: ScanAnalysisState = {
         frame,
-        result: TEST_ENGINE_IDENTIFICATION,
+        result,
         analyzedAt: new Date().toISOString(),
         testRun: true,
         testVehicleLabel: TEST_VEHICLE_LABEL,
@@ -67,10 +69,10 @@ export default function TestScanPanel({ onBusyChange, onScanComplete }: Props) {
 
   return (
     <div className="fixed bottom-[120px] left-4 right-4 z-30 rounded-2xl border border-[var(--ds-accent-line)] bg-slate-950/78 p-4 backdrop-blur-xl">
-      <p className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Test mode</p>
-      <p className="mt-1 text-xs leading-5 text-white/72">Runs in memory only. No history, cloud save, or provider quota.</p>
+      <p className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">AI model test</p>
+      <p className="mt-1 text-xs leading-5 text-white/72">Runs the bundled engine photo through the real identify model. No history or cloud save.</p>
       <Button className="mt-3 w-full" type="button" onClick={() => void runTestScan()}>
-        Test engine photo
+        Run AI test photo
       </Button>
       <Button className="mt-2 w-full" type="button" variant="ghost" onClick={exitTestMode}>
         Exit test mode
