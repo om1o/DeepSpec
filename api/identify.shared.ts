@@ -31,11 +31,12 @@ export type IdentifyResponse =
     };
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
-const DEFAULT_FALLBACK_MODELS = ["gemini-flash-lite-latest"];
+const DEFAULT_FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
 const DEFAULT_OCR_MODEL = "microsoft/trocr-large-printed";
 const IDENTIFY_MAX_OUTPUT_TOKENS = 2048;
 const DEFAULT_DATASET_ROOT = "datasets/raw/drbimmer-car-parts-and-damage-dataset";
 const DEFAULT_DATASET_INDEX_PATH = "datasets/derived/drbimmer-car-parts-and-damage-dataset/records.jsonl";
+const RETRYABLE_PROVIDER_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 
 const IDENTIFICATION_RESPONSE_SCHEMA = {
   type: "object",
@@ -131,35 +132,61 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
   const sourceContext = buildDatasetSourceContext(env);
   const models = getIdentifyModels(env);
   let rateLimited = false;
+  let lastRetryableError: IdentifyResponse | null = null;
 
-  for (const model of models) {
+  for (let index = 0; index < models.length; index += 1) {
+    const model = models[index];
+    const hasFallback = index < models.length - 1;
     const startedAt = Date.now();
     const response = await fetchGeminiIdentify(model, parsed, ocr, sourceContext, apiKey);
 
     if (!response) {
-      return errorResponse(502, "network", "Deep Spec could not reach Gemini.");
+      const networkError = errorResponse(502, "network", "Deep Spec could not reach Gemini.");
+      lastRetryableError = networkError;
+      logIdentifyAttempt(model, startedAt, networkError, hasFallback);
+      if (hasFallback) continue;
+      return networkError;
     }
 
     if (response.status === 429) {
       rateLimited = true;
-      continue;
+      const retryError = errorResponse(429, "rate_limited", "Too many AI lookups right now. Try again in a few minutes.");
+      lastRetryableError = retryError;
+      logIdentifyAttempt(model, startedAt, retryError, hasFallback);
+      if (hasFallback) continue;
+      return retryError;
     }
 
     const isJson = (response.headers.get("content-type") ?? "").includes("application/json");
     const responseBody = isJson ? ((await response.json().catch(() => null)) as JsonObject | null) : null;
 
     if (!response.ok) {
-      return errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
+      const providerError = errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
+      if (RETRYABLE_PROVIDER_STATUSES.has(response.status)) {
+        lastRetryableError = providerError;
+        logIdentifyAttempt(model, startedAt, providerError, hasFallback);
+        if (hasFallback) continue;
+      }
+
+      return providerError;
     }
 
     const text = extractGeminiText(responseBody);
     if (!text) {
-      return errorResponse(502, "invalid_response", "Gemini did not return a usable answer.");
+      const invalidResponse = errorResponse(502, "invalid_response", "Gemini did not return a usable answer.");
+      lastRetryableError = invalidResponse;
+      logIdentifyAttempt(model, startedAt, invalidResponse, hasFallback);
+      if (hasFallback) continue;
+      return invalidResponse;
     }
 
     const result = parseIdentificationResult(text);
     if (!result) {
-      return errorResponse(502, "invalid_response", "Gemini returned JSON that Deep Spec could not read.");
+      const invalidResponse = errorResponse(502, "invalid_response", "Gemini returned JSON that Deep Spec could not read.");
+      lastRetryableError = invalidResponse;
+      logIdentifyAttempt(model, startedAt, invalidResponse, hasFallback);
+      if (hasFallback) continue;
+      return invalidResponse;
     }
 
     const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env);
@@ -184,11 +211,23 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
 
   return rateLimited
     ? errorResponse(429, "rate_limited", "Too many AI lookups right now. Try again in a few minutes.")
-    : errorResponse(502, "provider_error", "The AI provider rejected this request.");
+    : lastRetryableError ?? errorResponse(502, "provider_error", "The AI provider rejected this request.");
 }
 
 function getIdentifyModels(env: Record<string, string | undefined>) {
-  return uniqueStrings([env.GEMINI_MODEL || DEFAULT_MODEL, ...DEFAULT_FALLBACK_MODELS]);
+  return uniqueStrings([
+    env.GEMINI_MODEL || DEFAULT_MODEL,
+    ...splitModelList(env.GEMINI_FALLBACK_MODELS),
+    ...DEFAULT_FALLBACK_MODELS,
+  ]);
+}
+
+function splitModelList(value: string | undefined) {
+  if (!value) {
+    return [];
+  }
+
+  return value.split(",").map((item) => item.trim());
 }
 
 function uniqueStrings(values: string[]) {
@@ -201,6 +240,22 @@ function uniqueStrings(values: string[]) {
 
     seen.add(trimmed);
     return true;
+  });
+}
+
+function logIdentifyAttempt(model: string, startedAt: number, response: IdentifyResponse, fallbackAvailable: boolean) {
+  if (response.status === 200) {
+    return;
+  }
+
+  const code = "error" in response.body ? response.body.error.code : "unknown";
+  console.warn("[DeepSpec AI]", {
+    model,
+    latencyMs: Date.now() - startedAt,
+    success: false,
+    status: response.status,
+    code,
+    fallbackAvailable,
   });
 }
 

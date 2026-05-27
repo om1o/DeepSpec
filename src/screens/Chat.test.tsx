@@ -102,6 +102,26 @@ describe("Chat", () => {
     expect(screen.getByText("Too many AI chat requests right now. Try again in a few minutes.")).toBeInTheDocument();
     expect(screen.getByText(/not proof the model identified the part incorrectly/i)).toBeInTheDocument();
   });
+
+  it("retries the last unanswered question without duplicating the saved user message", async () => {
+    sendFollowUpMock
+      .mockRejectedValueOnce(new AIServiceError("provider_error", "The AI provider rejected this request."))
+      .mockResolvedValueOnce("Check the belt and battery light symptoms together.");
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+
+    renderChat(`/result/${lookup.id}/chat`);
+
+    await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "What should I check next?");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Retry last question" }));
+
+    expect(await screen.findByText("Check the belt and battery light symptoms together.")).toBeInTheDocument();
+
+    const chatHistory = JSON.parse(localStorage.getItem(`deep-spec:chat:${lookup.id}`) ?? "[]") as ChatMessage[];
+    expect(chatHistory.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(chatHistory.filter((message) => message.content === "What should I check next?")).toHaveLength(1);
+    expect(sendFollowUpMock).toHaveBeenCalledTimes(2);
+  });
 });
 
 function renderChat(path: string) {

@@ -9,7 +9,7 @@
     "check": "npm run lint && npm test && npm run build",
     "dataset:sort": "node scripts/sort-drbimmer-dataset.mjs",
     "eval:identify": "node scripts/eval-identify.mjs",
-    "eval:identify:release": "node scripts/eval-identify.mjs --sample-size 50 --max-provider-failures 1 && node scripts/verify-identify-eval-summary.mjs",
+    "eval:identify:release": "node scripts/eval-identify.mjs --sample-size 50 --max-provider-failures 1 && node scripts/verify-identify-eval-summary.mjs --min-sample-size 50",
     "lint": "eslint .",
     "test": "vitest run --configLoader native --pool forks",
     "supabase:print-migration": "node scripts/print-supabase-migration.mjs",

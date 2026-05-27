@@ -32,40 +32,64 @@ export default function Chat() {
       return;
     }
 
+    await sendQuestion(trimmedQuestion, true);
+  }
+
+  async function handleRetryLastQuestion() {
+    const lastUserMessage = lookup ? getLastUnansweredUserMessage(lookup) : null;
+    if (!lastUserMessage || isSending) {
+      return;
+    }
+
+    await sendQuestion(lastUserMessage.content, false);
+  }
+
+  async function sendQuestion(trimmedQuestion: string, shouldSaveUserMessage: boolean) {
+    if (!lookup || !lookup.result || isSending) {
+      return;
+    }
+
     setError(null);
     setErrorCode(null);
     setIsSending(true);
 
-    const userMessage = createChatMessage("user", trimmedQuestion);
-    const savedUserMessage = appendChatMessages(lookup.id, [userMessage]);
-    if (!savedUserMessage.ok) {
-      setError(savedUserMessage.message);
-      setErrorCode("storage");
-      setIsSending(false);
-      return;
-    }
+    let activeLookup = lookup;
 
-    if (!savedUserMessage.value) {
-      setError("This saved scan was not found.");
-      setErrorCode("not_found");
-      setIsSending(false);
-      return;
-    }
+    if (shouldSaveUserMessage) {
+      const userMessage = createChatMessage("user", trimmedQuestion);
+      const savedUserMessage = appendChatMessages(lookup.id, [userMessage]);
+      if (!savedUserMessage.ok) {
+        setError(savedUserMessage.message);
+        setErrorCode("storage");
+        setIsSending(false);
+        return;
+      }
 
-    setLookup(savedUserMessage.value);
-    setQuestion("");
+      if (!savedUserMessage.value) {
+        setError("This saved scan was not found.");
+        setErrorCode("not_found");
+        setIsSending(false);
+        return;
+      }
+
+      activeLookup = savedUserMessage.value;
+      setLookup(activeLookup);
+      setQuestion("");
+    }
 
     try {
-      const answer = await sendFollowUp(savedUserMessage.value, trimmedQuestion);
+      const answer = await sendFollowUp(activeLookup, trimmedQuestion);
       const assistantMessage = createChatMessage("assistant", answer);
-      const savedAssistantMessage = appendChatMessages(lookup.id, [assistantMessage]);
+      const savedAssistantMessage = appendChatMessages(activeLookup.id, [assistantMessage]);
       if (!savedAssistantMessage.ok) {
         setError(savedAssistantMessage.message);
+        setErrorCode("storage");
         return;
       }
 
       if (!savedAssistantMessage.value) {
         setError("This saved scan was not found.");
+        setErrorCode("not_found");
         return;
       }
 
@@ -97,6 +121,8 @@ export default function Chat() {
   const canChat = Boolean(lookup.result);
   const errorDetails = error ? getAIErrorDetails(errorCode) : null;
   const showSafetyWarning = lookup.result?.isSafetyCritical || lookup.result?.safetyTriage === "needs_professional";
+  const lastUnansweredUserMessage = getLastUnansweredUserMessage(lookup);
+  const canRetryLastQuestion = Boolean(error && lastUnansweredUserMessage && canChat && !isSending);
 
   return (
     <main className="min-h-dvh bg-[var(--ds-page)] px-4 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-slate-950">
@@ -167,6 +193,11 @@ export default function Chat() {
               {errorDetails.category === "provider_unavailable" ? (
                 <p className="mt-1 text-xs font-semibold leading-5 text-neutral-500">{errorDetails.description}</p>
               ) : null}
+              {canRetryLastQuestion ? (
+                <Button className="mt-3" type="button" onClick={handleRetryLastQuestion}>
+                  Retry last question
+                </Button>
+              ) : null}
             </section>
           ) : null}
 
@@ -193,4 +224,9 @@ export default function Chat() {
       </div>
     </main>
   );
+}
+
+function getLastUnansweredUserMessage(lookup: Lookup) {
+  const lastMessage = lookup.chatHistory.at(-1);
+  return lastMessage?.role === "user" ? lastMessage : null;
 }

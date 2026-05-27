@@ -1028,6 +1028,30 @@ function ScanResultCard({
           x
         </button>
       </div>
+      <div className="mt-3 grid grid-cols-3 gap-2">
+        <button
+          className="col-span-2 min-h-11 rounded-full bg-[var(--ds-accent)] text-sm font-black tracking-tight text-white"
+          onClick={onOpenDetails}
+          type="button"
+        >
+          Open details
+        </button>
+        <button
+          className="min-h-11 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
+          onClick={onMeasure}
+          type="button"
+        >
+          Measure
+        </button>
+        <button
+          className="col-span-3 min-h-10 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
+          onClick={onCopyValue}
+          type="button"
+        >
+          Copy value
+        </button>
+      </div>
+      {isExpanded ? (
       <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 p-3 text-xs leading-6 text-white/82">
         <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/48">Detected area overlay</p>
         <div className="relative mt-2 overflow-hidden rounded-xl border border-white/12 bg-black/30">
@@ -1050,6 +1074,7 @@ function ScanResultCard({
           ) : null}
         </div>
       </div>
+      ) : null}
       <div className={`mt-3 rounded-2xl border border-white/10 bg-white/5 p-3 text-xs leading-6 text-white/82 ${statusStyle.accent}`}>
         {isMismatch ? (
           <div className="mb-2 rounded-xl border border-[var(--ds-danger-line)] bg-[var(--ds-danger-soft)] p-2">
@@ -1078,7 +1103,7 @@ function ScanResultCard({
           </>
         )}
       </div>
-      {result?.candidateMatches.length ? (
+      {isExpanded && result?.candidateMatches.length ? (
         <div className="mt-2 flex gap-2 overflow-hidden">
           {result.candidateMatches.slice(0, 2).map((candidate) => (
             <span
@@ -1102,7 +1127,7 @@ function ScanResultCard({
           </ul>
         </div>
       ) : null}
-      {review.scanState.result ? (
+      {isExpanded && review.scanState.result ? (
         <a
           className="mt-2 block rounded-full border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 py-2 text-center text-[11px] font-black uppercase tracking-[0.12em] text-white/78"
           href={threeDSearchUrl}
@@ -1112,30 +1137,6 @@ function ScanResultCard({
           View 3D model
         </a>
       ) : null}
-
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        <button
-          className="col-span-2 min-h-11 rounded-full bg-[var(--ds-accent)] text-sm font-black tracking-tight text-white"
-          onClick={onOpenDetails}
-          type="button"
-        >
-          Open details
-        </button>
-        <button
-          className="min-h-11 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
-          onClick={onMeasure}
-          type="button"
-        >
-          Measure
-        </button>
-        <button
-          className="min-h-11 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
-          onClick={onCopyValue}
-          type="button"
-        >
-          Copy value
-        </button>
-      </div>
       <div className="mt-2 grid grid-cols-1 gap-2">
         {isReplacing ? (
           <>
