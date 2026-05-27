@@ -3,19 +3,20 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { vi } from "vitest";
 import Chat from "./Chat";
-import { sendFollowUp } from "../services/aiService";
+import { AIServiceError, sendFollowUpWithRun } from "../services/aiService";
 import { LOOKUPS_STORAGE_KEY } from "../services/storage";
+import type { ChatMessage } from "../types";
 import type { Lookup } from "../types";
 
 vi.mock("../services/aiService", async () => {
   const actual = await vi.importActual<typeof import("../services/aiService")>("../services/aiService");
   return {
     ...actual,
-    sendFollowUp: vi.fn(),
+    sendFollowUpWithRun: vi.fn(),
   };
 });
 
-const sendFollowUpMock = vi.mocked(sendFollowUp);
+const sendFollowUpMock = vi.mocked(sendFollowUpWithRun);
 
 const lookup: Lookup = {
   id: "lookup-1",
@@ -28,14 +29,17 @@ const lookup: Lookup = {
     partName: "Alternator",
     confidence: "high",
     scanCategory: "electrical",
+    candidateMatches: [],
     whatItDoes: "It charges the battery while the engine runs.",
     visibleObservations: ["Belt-driven housing is visible."],
+    evidenceRegions: [],
     concerns: [],
     safetyTriage: "can_help",
     isSafetyCritical: false,
     nextAction: "Take another photo if needed.",
     needsBetterPhoto: false,
     evidence: ["The pulley and housing match an alternator."],
+    sourceLinks: [],
   },
   analyzedAt: "2026-05-16T00:00:05.000Z",
   rating: null,
@@ -45,6 +49,8 @@ const lookup: Lookup = {
   trainingLabel: "Alternator",
   trainingStatus: "raw_unreviewed",
   chatHistory: [],
+  modelRuns: [],
+  syncEvents: [],
 };
 
 describe("Chat", () => {
@@ -61,7 +67,19 @@ describe("Chat", () => {
   });
 
   it("sends a follow-up and saves the chat history", async () => {
-    sendFollowUpMock.mockResolvedValue("The alternator charges the battery while the engine runs.");
+    sendFollowUpMock.mockResolvedValue({
+      message: "The alternator charges the battery while the engine runs.",
+      modelRun: {
+        id: "run-chat-1",
+        createdAt: "2026-05-16T00:00:06.000Z",
+        kind: "chat",
+        latencyMs: 250,
+        model: "gemini-2.5-flash",
+        ocrUsed: false,
+        promptVersion: "followup-v1",
+        provider: "gemini",
+      },
+    });
     localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
 
     renderChat(`/result/${lookup.id}/chat`);
@@ -71,10 +89,40 @@ describe("Chat", () => {
 
     expect(await screen.findByText("The alternator charges the battery while the engine runs.")).toBeInTheDocument();
 
-    const savedLookup = JSON.parse(localStorage.getItem(LOOKUPS_STORAGE_KEY) ?? "[]")[0] as Lookup;
-    expect(savedLookup.chatHistory).toHaveLength(2);
-    expect(savedLookup.chatHistory.map((message) => message.role)).toEqual(["user", "assistant"]);
+    const chatHistory = JSON.parse(localStorage.getItem(`deep-spec:chat:${lookup.id}`) ?? "[]") as ChatMessage[];
+    expect(chatHistory).toHaveLength(2);
+    expect(chatHistory.map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(sendFollowUpMock).toHaveBeenCalledWith(expect.objectContaining({ id: lookup.id }), "What does it do?");
+    const savedLookup = JSON.parse(localStorage.getItem(LOOKUPS_STORAGE_KEY) ?? "[]")[0] as Lookup;
+    expect(savedLookup.modelRuns).toEqual([
+      expect.objectContaining({
+        kind: "chat",
+        model: "gemini-2.5-flash",
+        promptVersion: "followup-v1",
+      }),
+    ]);
+  });
+
+  it("prefills a suggested question from the result screen", () => {
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+
+    renderChat(`/result/${lookup.id}/chat?q=How%20serious%20is%20this%3F`);
+
+    expect(screen.getByLabelText("Ask a follow-up question")).toHaveValue("How serious is this?");
+  });
+
+  it("explains provider rate limits without treating them as bad scan answers", async () => {
+    sendFollowUpMock.mockRejectedValue(new AIServiceError("rate_limited", "Too many AI chat requests right now. Try again in a few minutes."));
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+
+    renderChat(`/result/${lookup.id}/chat`);
+
+    await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "What should I check next?");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("AI provider is rate-limited")).toBeInTheDocument();
+    expect(screen.getByText("Too many AI chat requests right now. Try again in a few minutes.")).toBeInTheDocument();
+    expect(screen.getByText(/not proof the model identified the part incorrectly/i)).toBeInTheDocument();
   });
 });
 

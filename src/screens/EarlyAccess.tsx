@@ -1,7 +1,8 @@
 import { FormEvent, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import CloudHealthCard from "../components/CloudHealthCard";
 import Button from "../components/ui/Button";
-import { getCloudSyncStatus, syncFeedbackToCloud, syncWaitlistSignupToCloud } from "../services/cloudSync";
+import { getCloudHealthSnapshot, getCloudSyncStatus, type CloudHealthReport } from "../services/cloudSync";
 import { getEngagementData, saveFeedbackSubmission, saveWaitlistSignup } from "../services/engagement";
 import type { FeedbackSubmission, WaitlistSignup } from "../types";
 
@@ -16,13 +17,15 @@ export default function EarlyAccess() {
   const [waitlistStatus, setWaitlistStatus] = useState<string | null>(null);
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
   const cloudSync = getCloudSyncStatus();
+  const cloudHealth = getCloudHealthSnapshot();
+  const cloudCopy = getEarlyAccessCloudCopy(cloudSync.configured, cloudHealth.overall, cloudSync.message);
   const demandSignals = useMemo(
     () => [
       { label: "Local waitlist entries", value: String(stats.waitlist.length) },
       { label: "Feedback notes", value: String(stats.feedback.length) },
-      { label: "Cloud sync", value: cloudSync.configured ? "Ready" : "Off" },
+      { label: "Cloud sync", value: cloudCopy.signal },
     ],
-    [cloudSync.configured, stats],
+    [cloudCopy.signal, stats],
   );
 
   async function handleWaitlistSubmit(event: FormEvent<HTMLFormElement>) {
@@ -38,13 +41,7 @@ export default function EarlyAccess() {
     setMainProblem("");
     setStats(getEngagementData());
 
-    if (cloudSync.configured && result.value) {
-      const cloudResult = await syncWaitlistSignupToCloud(result.value);
-      setWaitlistStatus(`Saved on this device. ${cloudResult.message}`);
-      return;
-    }
-
-    setWaitlistStatus("Saved on this device. Backend sync comes after privacy review.");
+    setWaitlistStatus(cloudCopy.waitlistSaved);
   }
 
   async function handleFeedbackSubmit(event: FormEvent<HTMLFormElement>) {
@@ -63,57 +60,52 @@ export default function EarlyAccess() {
     setFeedbackMessage("");
     setStats(getEngagementData());
 
-    if (cloudSync.configured && result.value) {
-      const cloudResult = await syncFeedbackToCloud(result.value);
-      setFeedbackStatus(`Feedback saved locally. ${cloudResult.message}`);
-      return;
-    }
-
-    setFeedbackStatus("Feedback saved locally.");
+    setFeedbackStatus(cloudCopy.feedbackSaved);
   }
 
   return (
-    <main className="min-h-dvh bg-[#0A0A0A] px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-white">
+    <main className="min-h-dvh bg-[var(--ds-page)] px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-slate-950">
       <div className="mx-auto w-full max-w-md">
         <header className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-[13px] font-extrabold uppercase tracking-[0.18em] text-white/70">Deep Spec</p>
+          <div className="min-w-0">
+            <img src="/brand/deepspec-logo.png" alt="Deep Spec" className="h-12 w-36 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-[var(--ds-accent-line)]" />
             <h1 className="mt-2 text-2xl font-extrabold tracking-tight">Early access</h1>
           </div>
-          <Link to="/" className="rounded-full bg-white/10 px-4 py-2 text-sm font-bold text-white">
+          <Link to="/scan" className="rounded-full bg-[var(--ds-accent)] px-4 py-2 text-sm font-bold text-white shadow-sm">
             Scan
           </Link>
         </header>
 
-        <section className="mt-6 rounded-[24px] border border-white/10 bg-[#171717] p-5">
-          <p className="text-sm font-bold text-[#FACC15]">Business experiment</p>
+        <section className="mt-6 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+          <p className="text-sm font-bold text-[var(--ds-accent)]">Business experiment</p>
           <h2 className="mt-2 text-2xl font-extrabold tracking-tight">Prove people want this before charging.</h2>
-          <p className="mt-3 text-sm leading-6 text-[#A1A1AA]">
-            Deep Spec is testing demand with waitlist signups, feedback, saved scan reports, and mechanic escalation CTAs.
+          <p className="mt-3 text-sm leading-6 text-neutral-500">
+            Deep Spec is testing demand with waitlist signups, feedback, instant AI answers, and mechanic escalation CTAs.
             Payments, accounts, domains, and legal docs need parent review later.
           </p>
-          <p className="mt-3 rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-sm leading-6 text-[#A1A1AA]">
-            {cloudSync.message}
+          <p className="mt-3 rounded-2xl border border-neutral-100 bg-neutral-50 p-3 text-sm leading-6 text-neutral-500">
+            {cloudCopy.status}
           </p>
           <div className="mt-4 grid grid-cols-1 gap-3">
             {demandSignals.map((item) => (
-              <div key={item.label} className="rounded-2xl border border-white/10 bg-white/[0.04] p-3">
-                <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-white/42">{item.label}</p>
-                <p className="mt-1 text-lg font-extrabold text-white">{item.value}</p>
+              <div key={item.label} className="rounded-2xl border border-neutral-100 bg-neutral-50 p-3">
+                <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-neutral-400">{item.label}</p>
+                <p className="mt-1 text-lg font-extrabold text-neutral-900">{item.value}</p>
               </div>
             ))}
           </div>
+          <CloudHealthCard className="mt-4" />
         </section>
 
-        <form className="mt-4 rounded-[24px] border border-white/10 bg-[#171717] p-5" onSubmit={handleWaitlistSubmit}>
+        <form className="mt-4 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm" onSubmit={handleWaitlistSubmit}>
           <h2 className="text-lg font-extrabold tracking-tight">Join the waitlist</h2>
-          <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">
-            This saves locally right now. A real launch waitlist needs parent-approved privacy terms and backend storage.
+          <p className="mt-2 text-sm leading-6 text-neutral-500">
+            {cloudCopy.waitlistDescription}
           </p>
           <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/42">Email</span>
+            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Email</span>
             <input
-              className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/28 px-3 text-sm text-white outline-none placeholder:text-white/32 focus:border-[#FACC15]/50"
+              className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
               inputMode="email"
               onChange={(event) => setEmail(event.target.value)}
               placeholder="you@example.com"
@@ -122,9 +114,9 @@ export default function EarlyAccess() {
             />
           </label>
           <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/42">I am a</span>
+            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">I am a</span>
             <select
-              className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/28 px-3 text-sm text-white outline-none focus:border-[#FACC15]/50"
+              className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none focus:border-[var(--ds-accent)]"
               onChange={(event) => setUserType(event.target.value as WaitlistSignup["userType"])}
               value={userType}
             >
@@ -136,45 +128,44 @@ export default function EarlyAccess() {
             </select>
           </label>
           <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/42">What problem should Deep Spec solve?</span>
+            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">What problem should Deep Spec solve?</span>
             <textarea
-              className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-white/10 bg-black/28 p-3 text-sm leading-6 text-white outline-none placeholder:text-white/32 focus:border-[#FACC15]/50"
+              className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
               maxLength={240}
               onChange={(event) => setMainProblem(event.target.value)}
               placeholder="Example: I want to know if a used car leak is serious before buying."
               value={mainProblem}
             />
           </label>
-          {waitlistStatus ? <p className="mt-3 text-sm font-semibold text-[#FACC15]">{waitlistStatus}</p> : null}
+          {waitlistStatus ? <p className="mt-3 text-sm font-semibold text-[var(--ds-accent)]">{waitlistStatus}</p> : null}
           <Button className="mt-4 w-full" type="submit">
             Save waitlist entry
           </Button>
         </form>
 
-        <form className="mt-4 rounded-[24px] border border-white/10 bg-[#171717] p-5" onSubmit={handleFeedbackSubmit}>
+        <form className="mt-4 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm" onSubmit={handleFeedbackSubmit}>
           <h2 className="text-lg font-extrabold tracking-tight">Send product feedback</h2>
-          <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">
-            Tell us what would make Deep Spec worth coming back to. This is local-only until backend sync exists.
+          <p className="mt-2 text-sm leading-6 text-neutral-500">
+            {cloudCopy.feedbackDescription}
           </p>
           <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/42">Topic</span>
+            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Topic</span>
             <select
-              className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/28 px-3 text-sm text-white outline-none focus:border-[#FACC15]/50"
+              className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none focus:border-[var(--ds-accent)]"
               onChange={(event) => setFeedbackCategory(event.target.value as FeedbackSubmission["category"])}
               value={feedbackCategory}
             >
               <option value="scanner">Scanner</option>
               <option value="ai_result">AI result</option>
-              <option value="saved_scans">Saved scans</option>
               <option value="chat">Follow-up chat</option>
               <option value="business">Would pay for</option>
               <option value="other">Other</option>
             </select>
           </label>
           <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/42">Feedback</span>
+            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Feedback</span>
             <textarea
-              className="mt-2 min-h-28 w-full resize-none rounded-2xl border border-white/10 bg-black/28 p-3 text-sm leading-6 text-white outline-none placeholder:text-white/32 focus:border-[#FACC15]/50"
+              className="mt-2 min-h-28 w-full resize-none rounded-2xl border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
               maxLength={800}
               onChange={(event) => setFeedbackMessage(event.target.value)}
               placeholder="What felt useful, confusing, unsafe, or worth paying for?"
@@ -182,9 +173,9 @@ export default function EarlyAccess() {
             />
           </label>
           <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/42">Contact email optional</span>
+            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Contact email optional</span>
             <input
-              className="mt-2 h-12 w-full rounded-2xl border border-white/10 bg-black/28 px-3 text-sm text-white outline-none placeholder:text-white/32 focus:border-[#FACC15]/50"
+              className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
               inputMode="email"
               onChange={(event) => setContactEmail(event.target.value)}
               placeholder="only if you want a follow-up"
@@ -192,16 +183,66 @@ export default function EarlyAccess() {
               value={contactEmail}
             />
           </label>
-          {feedbackStatus ? <p className="mt-3 text-sm font-semibold text-[#FACC15]">{feedbackStatus}</p> : null}
+          {feedbackStatus ? <p className="mt-3 text-sm font-semibold text-[var(--ds-accent)]">{feedbackStatus}</p> : null}
           <Button className="mt-4 w-full" type="submit">
             Save feedback
           </Button>
         </form>
-
-        <Link className="mt-5 block rounded-full bg-white/10 px-5 py-3 text-center text-sm font-bold text-white" to="/history">
-          View saved scans
-        </Link>
       </div>
     </main>
   );
+}
+
+function getEarlyAccessCloudCopy(
+  configured: boolean,
+  overall: CloudHealthReport["overall"],
+  fallbackStatus: string,
+) {
+  if (!configured) {
+    return {
+      feedbackDescription: "Tell us what would make Deep Spec worth coming back to. This is local-only until backend sync exists.",
+      feedbackSaved: "Feedback saved locally.",
+      signal: "Off",
+      status: fallbackStatus,
+      waitlistDescription: "This saves locally right now. A real launch waitlist needs parent-approved privacy terms and backend storage.",
+      waitlistSaved: "Saved on this device. Backend sync comes after privacy review.",
+    };
+  }
+
+  if (overall === "ready") {
+    return {
+      feedbackDescription:
+        "Tell us what would make Deep Spec worth coming back to. Cloud health is verified, but feedback still saves locally until privacy-approved engagement sync is enabled.",
+      feedbackSaved: "Feedback saved locally. Cloud health is verified; feedback sync still waits for privacy-approved engagement storage.",
+      signal: "Ready",
+      status: "Cloud health is verified, but early-access contact data still saves locally until privacy-approved engagement sync is enabled.",
+      waitlistDescription:
+        "This saves locally right now. Cloud health is verified, but waitlist sync stays off until parent-approved privacy terms enable engagement storage.",
+      waitlistSaved: "Saved on this device. Cloud health is verified; waitlist sync still waits for privacy-approved engagement storage.",
+    };
+  }
+
+  if (overall === "blocked") {
+    return {
+      feedbackDescription:
+        "Tell us what would make Deep Spec worth coming back to. Feedback stays local because cloud health is blocked and privacy-approved engagement sync is not ready.",
+      feedbackSaved: "Feedback saved locally. Cloud feedback sync is blocked until Supabase health and privacy review pass.",
+      signal: "Blocked",
+      status: "Cloud sync is configured but blocked. Do not treat waitlist, feedback, storage, or RLS as production ready.",
+      waitlistDescription:
+        "This saves locally right now. Cloud waitlist sync is blocked until Supabase health and parent-approved privacy terms pass.",
+      waitlistSaved: "Saved on this device. Cloud waitlist sync is blocked until Supabase health and privacy review pass.",
+    };
+  }
+
+  return {
+    feedbackDescription:
+      "Tell us what would make Deep Spec worth coming back to. Feedback stays local until cloud health, privacy terms, and backend sync are verified.",
+    feedbackSaved: "Feedback saved locally. Cloud feedback sync waits for Supabase verifier and privacy review.",
+    signal: "Verify",
+    status: "Cloud sync is configured, but production readiness still depends on the Supabase verifier passing.",
+    waitlistDescription:
+      "This saves locally right now. Cloud waitlist sync stays off until parent-approved privacy terms and the Supabase verifier pass.",
+    waitlistSaved: "Saved on this device. Cloud waitlist sync waits for Supabase verifier and privacy review.",
+  };
 }

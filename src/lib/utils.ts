@@ -1,4 +1,5 @@
-import type { CapturedFrame, ScanAnalysisState } from "../types";
+import type { AIModelRun, CapturedFrame, ScanAnalysisState } from "../types";
+import { isTestMode } from "./testMode";
 
 const LATEST_CAPTURED_FRAME_KEY = "deep-spec:latest-captured-frame";
 const LATEST_SCAN_STATE_KEY = "deep-spec:latest-scan-state";
@@ -26,6 +27,10 @@ export function readLatestCapturedFrame(): CapturedFrame | null {
 }
 
 export function saveLatestScanState(state: ScanAnalysisState) {
+  if (isTestMode() || state.testRun) {
+    return;
+  }
+
   if (typeof sessionStorage === "undefined") {
     return;
   }
@@ -53,14 +58,30 @@ export function readLatestScanState(): ScanAnalysisState | null {
       return null;
     }
 
-    return {
+    const safeState: ScanAnalysisState = {
       frame: state.frame,
-      result: state.result,
-      errorMessage: typeof state.errorMessage === "string" ? state.errorMessage : undefined,
-      errorCode: typeof state.errorCode === "string" ? state.errorCode : undefined,
-      analyzedAt: typeof state.analyzedAt === "string" ? state.analyzedAt : undefined,
-      storageWarning: typeof state.storageWarning === "string" ? state.storageWarning : undefined,
     };
+
+    if (state.result) {
+      safeState.result = state.result;
+    }
+    if (typeof state.errorMessage === "string") {
+      safeState.errorMessage = state.errorMessage;
+    }
+    if (typeof state.errorCode === "string") {
+      safeState.errorCode = state.errorCode;
+    }
+    if (typeof state.analyzedAt === "string") {
+      safeState.analyzedAt = state.analyzedAt;
+    }
+    if (isAIModelRun(state.modelRun)) {
+      safeState.modelRun = state.modelRun;
+    }
+    if (typeof state.storageWarning === "string") {
+      safeState.storageWarning = state.storageWarning;
+    }
+
+    return safeState;
   } catch {
     return null;
   }
@@ -99,6 +120,24 @@ function isCapturedFrame(value: unknown): value is CapturedFrame {
     "capturedAt" in value &&
     typeof value.imageBase64 === "string" &&
     typeof value.capturedAt === "string"
+  );
+}
+
+function isAIModelRun(value: unknown): value is AIModelRun {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const run = value as Partial<AIModelRun>;
+  return (
+    typeof run.id === "string" &&
+    typeof run.createdAt === "string" &&
+    (run.kind === "identify" || run.kind === "chat") &&
+    run.provider === "gemini" &&
+    typeof run.model === "string" &&
+    typeof run.promptVersion === "string" &&
+    typeof run.latencyMs === "number" &&
+    typeof run.ocrUsed === "boolean"
   );
 }
 

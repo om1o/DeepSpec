@@ -1,0 +1,575 @@
+import { describe, expect, it, vi } from "vitest";
+import {
+  DATASET_FETCH_TIMEOUT_MS,
+  PUBLIC_LAUNCH_SAMPLE_SIZE,
+  RELEASE_SAMPLE_IMAGES,
+  buildEvalResultRow,
+  buildEvalSummary,
+  buildEvalViteServerOptions,
+  buildReviewLookup,
+  createIdentifyResponseWithRetry,
+  fetchPublicLaunchSampleImages,
+  getEvalExitCode,
+  getRetryDelayMs,
+  isReviewableEvalFailure,
+  isRetryableProviderAvailabilityResponse,
+  selectBalancedPublicLaunchSamples,
+  scoreIdentificationResult,
+} from "./eval-identify.mjs";
+
+const result = {
+  partName: "Rear bumper",
+  confidence: "high",
+  scanCategory: "body",
+  candidateMatches: [
+    {
+      partName: "Tail light",
+      confidence: "low",
+      scanCategory: "body",
+      reason: "A nearby rear body part that may appear in the same crop.",
+    },
+  ],
+  whatItDoes: "It protects the rear of the vehicle.",
+  visibleObservations: ["Painted rear bumper cover is visible."],
+  evidenceRegions: [
+    {
+      label: "Rear bumper cover",
+      observation: "Painted rear bumper cover is visible.",
+      regionLabel: "Scanned area",
+    },
+  ],
+  concerns: [],
+  safetyTriage: "can_help",
+  isSafetyCritical: false,
+  nextAction: "Take a closer photo if you need damage detail.",
+  needsBetterPhoto: false,
+  evidence: ["The lower rear body panel shape matches a bumper."],
+  sourceLinks: [],
+};
+
+describe("identify eval scoring", () => {
+  it("uses a fixed 50-case release sample set split across damage and parts", () => {
+    expect(RELEASE_SAMPLE_IMAGES).toHaveLength(50);
+    expect(new Set(RELEASE_SAMPLE_IMAGES).size).toBe(50);
+    expect(RELEASE_SAMPLE_IMAGES.filter((path) => path.startsWith("Car damages dataset/"))).toHaveLength(25);
+    expect(RELEASE_SAMPLE_IMAGES.filter((path) => path.startsWith("Car parts dataset/"))).toHaveLength(25);
+    expect(RELEASE_SAMPLE_IMAGES.every((path) => path.includes("/img/") && /\.(png|jpg)$/.test(path))).toBe(true);
+  });
+
+  it("builds a balanced 300-case public launch sample set from the Hugging Face tree", async () => {
+    const damageImages = Array.from({ length: 998 }, (_, index) => ({
+      path: `Car damages dataset/File1/img/Car damages ${index + 1}.png`,
+      type: "file",
+    }));
+    const partImages = Array.from({ length: 814 }, (_, index) => ({
+      path: `Car parts dataset/File1/img/Car damages ${index + 101}.png`,
+      type: "file",
+    }));
+    const fetchTree = vi.fn((directory) => {
+      if (directory === "Car damages dataset/File1/img") return damageImages;
+      if (directory === "Car parts dataset/File1/img") return partImages;
+      return [];
+    });
+
+    const samples = await fetchPublicLaunchSampleImages(fetchTree);
+
+    expect(samples).toHaveLength(PUBLIC_LAUNCH_SAMPLE_SIZE);
+    expect(new Set(samples).size).toBe(PUBLIC_LAUNCH_SAMPLE_SIZE);
+    expect(samples.filter((path) => path.startsWith("Car damages dataset/"))).toHaveLength(150);
+    expect(samples.filter((path) => path.startsWith("Car parts dataset/"))).toHaveLength(150);
+    expect(samples.every((path) => path.includes("/img/") && /\.(png|jpg)$/.test(path))).toBe(true);
+  });
+
+  it("selects public launch samples deterministically across each image pool", () => {
+    const samples = selectBalancedPublicLaunchSamples({
+      damageImages: ["damage/1.png", "damage/2.png", "damage/3.png", "damage/4.png", "damage/5.png"],
+      partImages: ["part/1.png", "part/2.png", "part/3.png", "part/4.png", "part/5.png"],
+      perGroup: 3,
+    });
+
+    expect(samples).toEqual(["damage/1.png", "damage/3.png", "damage/5.png", "part/1.png", "part/3.png", "part/5.png"]);
+  });
+
+  it("accepts directional label aliases", () => {
+    expect(scoreIdentificationResult(result, ["Back-bumper"])).toEqual({
+      ok: true,
+      matchedLabels: ["Back-bumper"],
+      failureReasons: [],
+    });
+  });
+
+  it("flags specific misses as wrong results", () => {
+    expect(scoreIdentificationResult(result, ["Headlight"])).toMatchObject({
+      ok: false,
+      matchedLabels: [],
+      failureReasons: ["wrong_result"],
+    });
+  });
+
+  it("flags low-confidence generic answers as too vague", () => {
+    expect(
+      scoreIdentificationResult(
+        {
+          ...result,
+          partName: "Vehicle component",
+          confidence: "low",
+          needsBetterPhoto: true,
+        },
+        ["Back-bumper"],
+      ),
+    ).toMatchObject({
+      ok: false,
+      failureReasons: expect.arrayContaining(["too_vague"]),
+    });
+  });
+
+  it("builds lookup-compatible failure review rows", () => {
+    const lookup = buildReviewLookup({
+      analyzedAt: "2026-05-20T12:00:00.000Z",
+      dataUrl: "data:image/jpeg;base64,aGVsbG8=",
+      error: null,
+      expectedLabels: ["Back-bumper", "Dent"],
+      imagePath: "Car damages dataset/File1/img/Car damages 100.png",
+      result,
+      score: {
+        ok: false,
+        matchedLabels: ["Back-bumper"],
+        failureReasons: ["too_vague"],
+      },
+    });
+
+    expect(lookup).toMatchObject({
+      rating: "down",
+      correction: "Back-bumper",
+      trainingLabel: "Back-bumper",
+      trainingStatus: "user_corrected",
+      scanCategory: "body",
+      frame: {
+        imageBase64: "data:image/jpeg;base64,aGVsbG8=",
+      },
+      eval: {
+        datasetId: "DrBimmer/car-parts-and-damage-dataset",
+        expectedLabels: ["Back-bumper", "Dent"],
+      },
+    });
+  });
+
+  it("uses body as the fallback category for exterior damage review rows", () => {
+    const lookup = buildReviewLookup({
+      analyzedAt: "2026-05-20T12:00:00.000Z",
+      dataUrl: "data:image/jpeg;base64,aGVsbG8=",
+      error: {
+        code: "invalid_response",
+        message: "Gemini returned JSON that Deep Spec could not read.",
+      },
+      expectedLabels: ["Front-bumper", "Front-wheel"],
+      imagePath: "Car damages dataset/File1/img/Car damages 101.png",
+      result: null,
+      score: {
+        ok: false,
+        matchedLabels: [],
+        failureReasons: ["pipeline_error"],
+      },
+    });
+
+    expect(lookup.scanCategory).toBe("body");
+  });
+
+  it("scores ranked candidate labels as possible matches", () => {
+    expect(scoreIdentificationResult(result, ["Tail light"])).toMatchObject({
+      ok: true,
+      matchedLabels: ["Tail light"],
+      failureReasons: [],
+    });
+  });
+
+  it("scores common visible damage wording as canonical damage labels", () => {
+    const damageResult = {
+      ...result,
+      partName: "Front bumper cover",
+      concerns: [
+        "Plastic deformation and buckling near the corner.",
+        "Scuffing, paint transfer, and chipped paint across the bumper.",
+        "Missing headlight with exposed wiring.",
+        "Panel misalignment and impact damage around the edge.",
+        "Rust and peeling paint around the damaged edge.",
+      ],
+      evidence: [
+        "The jagged edge and cracked plastic indicate a broken part.",
+        "Surface abrasions are visible on the painted cover.",
+      ],
+      visibleObservations: ["Crushed bumper plastic and rusted exposed metal are visible."],
+    };
+
+    expect(
+      scoreIdentificationResult(damageResult, [
+        "Dent",
+        "Scratch",
+        "Paint chip",
+        "Missing part",
+        "Corrosion",
+        "Flaking",
+        "Broken part",
+      ]),
+    ).toMatchObject({
+      ok: true,
+      matchedLabels: [
+        "Dent",
+        "Scratch",
+        "Paint chip",
+        "Missing part",
+        "Corrosion",
+        "Flaking",
+        "Broken part",
+      ],
+      failureReasons: [],
+    });
+  });
+
+  it("keeps provider availability failures out of training review rows", () => {
+    expect(isReviewableEvalFailure({ code: "rate_limited" })).toBe(false);
+    expect(isReviewableEvalFailure({ code: "network" })).toBe(false);
+    expect(isReviewableEvalFailure({ code: "invalid_response" })).toBe(true);
+    expect(isReviewableEvalFailure(null)).toBe(true);
+  });
+
+  it("retries temporary provider availability responses during eval", () => {
+    expect(isRetryableProviderAvailabilityResponse({ status: 429 }, "rate_limited")).toBe(true);
+    expect(isRetryableProviderAvailabilityResponse({ status: 503 }, "provider_error")).toBe(true);
+    expect(isRetryableProviderAvailabilityResponse({ status: 500 }, "network")).toBe(true);
+    expect(isRetryableProviderAvailabilityResponse({ status: 400 }, "provider_error")).toBe(false);
+  });
+
+  it("uses provider retry-after timing when it is shorter than the default eval backoff", () => {
+    expect(
+      getRetryDelayMs(
+        {
+          status: 429,
+          body: {
+            error: {
+              code: "rate_limited",
+              retryAfterSeconds: 15,
+            },
+          },
+        },
+        60_000,
+      ),
+    ).toBe(15_000);
+
+    expect(
+      getRetryDelayMs(
+        {
+          status: 429,
+          body: {
+            error: {
+              code: "rate_limited",
+              retryAfterSeconds: 120,
+            },
+          },
+        },
+        60_000,
+      ),
+    ).toBe(60_000);
+  });
+
+  it("stops eval retries before the per-sample retry budget is exhausted", async () => {
+    let now = 1_000;
+    const identify = {
+      createIdentifyResponse: vi.fn(async () => ({
+        status: 429,
+        body: {
+          error: {
+            code: "rate_limited",
+            message: "Too many AI lookups right now.",
+          },
+        },
+      })),
+    };
+
+    const response = await createIdentifyResponseWithRetry(identify, "data:image/jpeg;base64,test", {}, {
+      now: () => now,
+      retryDelaysMs: [60_000],
+      sampleTimeoutMs: 30_000,
+      sleepFn: async (delayMs) => {
+        now += delayMs;
+      },
+    });
+
+    expect(response).toMatchObject({
+      status: 504,
+      body: {
+        error: {
+          code: "network",
+          message: "Deep Spec provider retry budget expired after 30s.",
+        },
+      },
+    });
+    expect(identify.createIdentifyResponse).toHaveBeenCalledTimes(1);
+  });
+
+  it("times out a hung provider call inside the per-sample retry budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const identify = {
+        createIdentifyResponse: vi.fn(() => new Promise(() => undefined)),
+      };
+
+      const responsePromise = createIdentifyResponseWithRetry(identify, "data:image/jpeg;base64,test", {}, {
+        retryDelaysMs: [],
+        sampleTimeoutMs: 30_000,
+      });
+
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      await expect(responsePromise).resolves.toMatchObject({
+        status: 504,
+        body: {
+          error: {
+            code: "network",
+            message: "Deep Spec provider retry budget expired after 30s.",
+          },
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails the release gate when provider availability or scoring blocks the eval", () => {
+    expect(
+      getEvalExitCode({
+        attemptedCount: 6,
+        failureCount: 0,
+        passCount: 6,
+        providerFailureCount: 0,
+        providerStatus: "available",
+        sampleSize: 6,
+      }),
+    ).toBe(0);
+
+    expect(
+      getEvalExitCode({
+        attemptedCount: 1,
+        failureCount: 0,
+        passCount: 0,
+        providerFailureCount: 1,
+        providerStatus: "blocked",
+        sampleSize: 6,
+      }),
+    ).toBe(1);
+
+    expect(
+      getEvalExitCode({
+        attemptedCount: 6,
+        failureCount: 1,
+        passCount: 5,
+        providerFailureCount: 0,
+        providerStatus: "available",
+        sampleSize: 6,
+      }),
+    ).toBe(1);
+  });
+
+  it("keeps provider error details in release summaries", () => {
+    expect(
+      buildEvalResultRow({
+        elapsedMs: 150,
+        error: {
+          code: "provider_error",
+          message: "API key not valid. Please pass a valid API key.",
+        },
+        expectedLabels: ["Hood"],
+        imagePath: "Car damages dataset/File1/img/Car damages 2.jpg",
+        providerAvailabilityFailure: true,
+        responseStatus: 400,
+        result: null,
+        score: {
+          ok: false,
+          matchedLabels: [],
+          failureReasons: ["wrong_result"],
+        },
+      }),
+    ).toMatchObject({
+      errorCode: "provider_error",
+      errorMessage: "API key not valid. Please pass a valid API key.",
+      failureReasons: ["provider_error"],
+      status: 400,
+    });
+  });
+
+  it("adds launch quality metrics to eval summaries", () => {
+    const rows = [
+      buildEvalResultRow({
+        elapsedMs: 100,
+        error: null,
+        expectedLabels: ["Alternator"],
+        imagePath: "Car parts dataset/File1/img/Car damages 101.png",
+        providerAvailabilityFailure: false,
+        responseStatus: 200,
+        retryCount: 0,
+        result,
+        score: {
+          ok: true,
+          matchedLabels: ["Alternator"],
+          failureReasons: [],
+        },
+      }),
+      buildEvalResultRow({
+        elapsedMs: 300,
+        error: {
+          code: "invalid_response",
+          message: "Gemini returned JSON that Deep Spec could not read.",
+        },
+        expectedLabels: ["Hood"],
+        imagePath: "Car damages dataset/File1/img/Car damages 2.jpg",
+        providerAvailabilityFailure: false,
+        responseStatus: 502,
+        retryCount: 1,
+        result: null,
+        score: {
+          ok: false,
+          matchedLabels: [],
+          failureReasons: ["pipeline_error"],
+        },
+      }),
+      buildEvalResultRow({
+        elapsedMs: 500,
+        error: null,
+        expectedLabels: ["Alternator"],
+        imagePath: "Car parts dataset/File1/img/Car damages 136.png",
+        providerAvailabilityFailure: false,
+        responseStatus: 200,
+        retryCount: 0,
+        result: {
+          ...result,
+          isSafetyCritical: true,
+          safetyTriage: "needs_professional",
+        },
+        score: {
+          ok: true,
+          matchedLabels: ["Alternator"],
+          failureReasons: [],
+        },
+      }),
+      buildEvalResultRow({
+        elapsedMs: 700,
+        error: null,
+        expectedLabels: ["Brake rotor"],
+        imagePath: "Car parts dataset/File1/img/Car damages 137.png",
+        modelRun: {
+          ocrUsed: true,
+        },
+        providerAvailabilityFailure: false,
+        responseStatus: 200,
+        retryCount: 0,
+        result: {
+          ...result,
+          partName: "Brake rotor",
+          isSafetyCritical: false,
+          safetyTriage: "can_help",
+        },
+        score: {
+          ok: true,
+          matchedLabels: ["Brake rotor"],
+          failureReasons: [],
+        },
+      }),
+    ];
+
+    const summary = buildEvalSummary({
+      failures: [{}],
+      generatedAt: "2026-05-22T12:00:00.000Z",
+      options: {
+        delayMs: 20_000,
+        output: ".deepspec-eval/identify-public-failures.jsonl",
+        sampleSet: "public",
+        sampleTimeoutMs: 240_000,
+      },
+      providerFailureCount: 0,
+      results: rows,
+      selectedSamples: ["sample-1", "sample-2", "sample-3", "sample-4"],
+    });
+
+    expect(summary).toMatchObject({
+      attemptedCount: 4,
+      failureCount: 1,
+      passCount: 3,
+      qualityMetrics: {
+        accuracy: 0.75,
+        failureRate: 0.25,
+        invalidResponseCount: 1,
+        invalidResponseRate: 0.25,
+        latencyMs: {
+          average: 400,
+          max: 700,
+          median: 300,
+          min: 100,
+          p95: 700,
+        },
+        ocrUsageCount: 1,
+        ocrUsageRate: 0.25,
+        providerFailureRate: 0,
+        retryCount: 1,
+        retryRate: 0.25,
+        safetyEscalationCount: 1,
+        safetyFalseNegativeCount: 1,
+        safetyFalseNegativeRate: 0.25,
+        safetyFalsePositiveCount: 1,
+        safetyFalsePositiveRate: 0.25,
+      },
+      sampleSet: "public",
+    });
+  });
+
+  it("tracks provider retry count on retryable identify responses", async () => {
+    let now = 1_000;
+    const identify = {
+      createIdentifyResponse: vi
+        .fn()
+        .mockResolvedValueOnce({
+          status: 429,
+          body: {
+            error: {
+              code: "rate_limited",
+              message: "Too many AI lookups right now.",
+              retryAfterSeconds: 1,
+            },
+          },
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          body: {
+            result,
+          },
+        }),
+    };
+
+    const response = await createIdentifyResponseWithRetry(identify, "data:image/jpeg;base64,test", {}, {
+      now: () => now,
+      retryDelaysMs: [60_000],
+      sampleTimeoutMs: 30_000,
+      sleepFn: async (delayMs) => {
+        now += delayMs;
+      },
+    });
+
+    expect(response).toMatchObject({
+      evalRetryCount: 1,
+      status: 200,
+    });
+  });
+
+  it("does not open a Vite HMR websocket during eval SSR loading", () => {
+    expect(buildEvalViteServerOptions()).toMatchObject({
+      server: {
+        hmr: false,
+        middlewareMode: true,
+        ws: false,
+      },
+    });
+  });
+
+  it("allows slower Hugging Face dataset reads before timing out", () => {
+    expect(DATASET_FETCH_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
+  });
+});

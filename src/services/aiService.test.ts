@@ -1,22 +1,52 @@
-import { identifyCapturedFrame, runAI, sendFollowUp } from "./aiService";
+import { AI_REQUEST_TIMEOUT_MS, getAIErrorDetails, identifyCapturedFrame, runAI, sendFollowUp } from "./aiService";
 
 const result = {
   partName: "Alternator",
   confidence: "high",
   scanCategory: "electrical",
+  candidateMatches: [
+    {
+      partName: "Starter motor",
+      confidence: "low",
+      scanCategory: "electrical",
+      reason: "Also mounted nearby, but the visible pulley favors alternator.",
+      sourceLinks: [
+        {
+          label: "Starter research",
+          url: "https://www.google.com/search?q=Starter%20motor%20car%20part",
+          sourceType: "search",
+        },
+      ],
+    },
+  ],
   whatItDoes: "It charges the battery while the engine runs.",
   visibleObservations: ["Belt-driven metal housing is visible."],
+  evidenceRegions: [
+    {
+      label: "Pulley",
+      observation: "Belt-driven pulley is visible.",
+      regionLabel: "Scanned area",
+    },
+  ],
   concerns: [],
   safetyTriage: "can_help",
   isSafetyCritical: false,
   nextAction: "Take another photo of the label if you need more detail.",
   needsBetterPhoto: false,
   evidence: ["The pulley and vented housing match common alternator shapes."],
+  sourceLinks: [
+    {
+      label: "Search this part",
+      url: "https://www.google.com/search?q=Alternator%20car%20part",
+      sourceType: "search",
+    },
+  ],
 };
 
 describe("aiService", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it("routes vision calls through the identify API", async () => {
@@ -42,6 +72,28 @@ describe("aiService", () => {
     );
   });
 
+  it("passes blurry label rescue hints to the identify API", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ result }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await identifyCapturedFrame(
+      {
+        imageBase64: "data:image/jpeg;base64,test",
+        capturedAt: "2026-05-16T00:00:00.000Z",
+      },
+      undefined,
+      "too_blurry",
+    );
+
+    expect(JSON.parse(fetchSpy.mock.calls[0][1]?.body as string)).toMatchObject({
+      labelRescueTrigger: "too_blurry",
+    });
+  });
+
   it("throws a clean service error when the API rejects the request", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
@@ -49,6 +101,7 @@ describe("aiService", () => {
           error: {
             code: "rate_limited",
             message: "Too many AI lookups right now. Try again in a few minutes.",
+            retryAfterSeconds: 120,
           },
         }),
         {
@@ -66,6 +119,42 @@ describe("aiService", () => {
     ).rejects.toMatchObject({
       code: "rate_limited",
       message: "Too many AI lookups right now. Try again in a few minutes.",
+      retryAfterSeconds: 120,
+    });
+  });
+
+  it("aborts scan requests that exceed the client timeout", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      (_path, init) =>
+        new Promise((_resolve, reject) => {
+          const signal = init?.signal;
+          signal?.addEventListener("abort", () => reject(new DOMException("The operation was aborted.", "AbortError")));
+        }),
+    );
+
+    const scanPromise = identifyCapturedFrame({
+      imageBase64: "data:image/jpeg;base64,test",
+      capturedAt: "2026-05-16T00:00:00.000Z",
+    });
+    const expectation = expect(scanPromise).rejects.toMatchObject({
+      code: "network",
+      message: "Could not reach the Deep Spec AI service within the scan timeout.",
+    });
+
+    await vi.advanceTimersByTimeAsync(AI_REQUEST_TIMEOUT_MS);
+
+    await expectation;
+  });
+
+  it("classifies provider availability errors separately from model output errors", () => {
+    expect(getAIErrorDetails("rate_limited")).toMatchObject({
+      category: "provider_unavailable",
+      title: "AI provider is rate-limited",
+    });
+    expect(getAIErrorDetails("invalid_response")).toMatchObject({
+      category: "model_response",
+      title: "AI response was unreadable",
     });
   });
 
@@ -118,6 +207,8 @@ describe("aiService", () => {
           trainingLabel: "Alternator",
           trainingStatus: "raw_unreviewed",
           chatHistory: [],
+          modelRuns: [],
+          syncEvents: [],
         },
         "What does it do?",
       ),

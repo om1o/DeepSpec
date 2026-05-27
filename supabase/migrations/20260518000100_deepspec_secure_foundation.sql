@@ -4,6 +4,10 @@
 
 create extension if not exists pgcrypto;
 
+-- Newer Supabase projects require explicit API-facing grants for exposed schemas.
+-- RLS and per-table grants below still control which rows are visible.
+grant usage on schema public to anon, authenticated;
+
 create table if not exists public.scan_lookups (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -13,6 +17,7 @@ create table if not exists public.scan_lookups (
   analyzed_at timestamptz,
   synced_at timestamptz not null default now(),
   image_path text,
+  metadata_json jsonb not null default '{}'::jsonb,
   result_json jsonb,
   error_message text,
   error_code text,
@@ -30,6 +35,7 @@ create table if not exists public.scan_lookups (
 
 comment on table public.scan_lookups is 'Private Deep Spec scan records used for user history and future model evaluation.';
 comment on column public.scan_lookups.result_json is 'Structured AI result as shown to the user; never treat as verified repair documentation.';
+comment on column public.scan_lookups.metadata_json is 'Dataset metadata such as model runs, prompt versions, OCR text, source URLs, and sync events.';
 comment on column public.scan_lookups.scan_category is 'Coarse category for filtering, review, and future dataset balancing.';
 comment on column public.scan_lookups.training_status is 'Human review signal derived from rating and correction flow.';
 
@@ -202,3 +208,6 @@ create policy scan_images_delete_own
     bucket_id = 'scan-images'
     and (storage.foldername(name))[1] = (select auth.uid())::text
   );
+
+-- Ask PostgREST/Supabase Data API to refresh after the dashboard SQL run.
+notify pgrst, 'reload schema';

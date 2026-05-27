@@ -4,6 +4,15 @@ dev-dist/
 dist-ssr/
 .vite/
 .vercel/
+supabase/.temp/
+.deepspec-eval/
+.playwright-cli/
+.playwright-mcp/
+test-results/
+datasets/raw/
+datasets/derived/
+design-extract/
+design-import.html
 
 .DS_Store
 *.local

@@ -1,22 +1,39 @@
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import { getAIErrorDetails, getAIErrorMessage, identifyCapturedFrameWithRun } from "../services/aiService";
+import CloudHealthCard from "../components/CloudHealthCard";
 import Button from "../components/ui/Button";
-import { readLatestCapturedFrame, readLatestScanState } from "../lib/utils";
+import { getEvidenceRegionAnchor } from "../lib/evidenceAnchors";
+import { isTestMode } from "../lib/testMode";
+import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } from "../lib/utils";
 import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
 import { buildScanReport, downloadTextFile, getMechanicSearchUrl, getScanReportFilename } from "../services/report";
-import { deleteLookup, getLookup, scanStateFromLookup, updateLookup } from "../services/storage";
-import type { CapturedFrame, Confidence, IdentificationResult, Lookup, Rating, ScanAnalysisState } from "../types";
+import { createLookup, deleteLookup, getLookup, scanStateFromLookup, updateLookup, updateLookupResult } from "../services/storage";
+import type { CandidateMatch, CapturedFrame, Confidence, EvidenceRegion, IdentificationResult, Lookup, Rating, ScanAnalysisState, SourceLink } from "../types";
+
+type DetectedTextFinding = {
+  codes: string[];
+  exactSearchUrl: string;
+  partSearchUrl: string;
+  text: string;
+};
+
+type ResultSheetTab = "match" | "evidence" | "sources" | "ask";
 
 export default function Result() {
   const location = useLocation();
   const navigate = useNavigate();
   const { id } = useParams();
   const [lookup, setLookup] = useState<Lookup | null>(() => (id ? getLookup(id) : null));
+  const [liveScanState, setLiveScanState] = useState<ScanAnalysisState | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const scanState = lookup ? scanStateFromLookup(lookup) : getScanState(location.state);
+  const scanState = lookup ? scanStateFromLookup(lookup) : liveScanState ?? getScanState(location.state);
   const frame = scanState?.frame ?? readLatestCapturedFrame();
   const capturedAt = frame?.capturedAt ? new Date(frame.capturedAt).toLocaleString() : null;
   const storageWarning = scanState?.storageWarning;
+  const isQaTestRun = Boolean(scanState?.testRun);
+  const canSaveForChat = Boolean(!isQaTestRun && scanState?.frame && scanState.result);
+  const datasetSourceUrls = scanState?.result ? getDatasetSourceUrls(scanState.result.evidence) : [];
 
   function handleRating(rating: Rating) {
     if (!lookup) {
@@ -46,6 +63,85 @@ export default function Result() {
     handleLookupUpdate(updateLookup(lookup.id, { notes }));
   }
 
+  function handlePromoteCandidate(candidate: CandidateMatch) {
+    if (isQaTestRun) {
+      setSaveError("QA test scans are not saved. Exit test mode or take a real scan to correct this result.");
+      return;
+    }
+
+    if (lookup) {
+      handleLookupUpdate(updateLookup(lookup.id, { rating: "down", correction: candidate.partName }));
+      return;
+    }
+
+    if (!scanState?.frame || !scanState.result) {
+      return;
+    }
+
+    const saved = createLookup({
+      frame: scanState.frame,
+      result: scanState.result,
+      analyzedAt: scanState.analyzedAt ?? new Date().toISOString(),
+    });
+
+    if (!saved.ok) {
+      setSaveError(saved.message);
+      return;
+    }
+
+    const updated = updateLookup(saved.value.id, { rating: "down", correction: candidate.partName });
+    if (updated.ok) {
+      setLookup(updated.value);
+      setSaveError(null);
+      navigate(`/result/${saved.value.id}`, { replace: true, state: scanState });
+      return;
+    }
+
+    handleLookupUpdate(updated);
+  }
+
+  function handleDetectedTextCorrection(text: string) {
+    const correction = text.trim();
+    if (!correction) {
+      return;
+    }
+
+    if (isQaTestRun) {
+      setSaveError("QA test scans are not saved. Exit test mode or take a real scan to correct this result.");
+      return;
+    }
+
+    if (lookup) {
+      handleLookupUpdate(updateLookup(lookup.id, { rating: "down", correction }));
+      return;
+    }
+
+    if (!scanState?.frame || !scanState.result) {
+      return;
+    }
+
+    const saved = createLookup({
+      frame: scanState.frame,
+      result: scanState.result,
+      analyzedAt: scanState.analyzedAt ?? new Date().toISOString(),
+    });
+
+    if (!saved.ok) {
+      setSaveError(saved.message);
+      return;
+    }
+
+    const updated = updateLookup(saved.value.id, { rating: "down", correction });
+    if (updated.ok) {
+      setLookup(updated.value);
+      setSaveError(null);
+      navigate(`/result/${saved.value.id}`, { replace: true, state: scanState });
+      return;
+    }
+
+    handleLookupUpdate(updated);
+  }
+
   function handleDelete() {
     if (!lookup) {
       return;
@@ -58,6 +154,33 @@ export default function Result() {
     }
 
     setSaveError(result.message);
+  }
+
+  function handleSaveAndAsk(question?: string) {
+    if (isQaTestRun) {
+      setSaveError("QA test scans are not saved. Exit test mode or take a real scan to ask follow-ups.");
+      return;
+    }
+
+    if (!scanState?.frame || !scanState.result) {
+      return;
+    }
+
+    const saved = createLookup({
+      frame: scanState.frame,
+      result: scanState.result,
+      analyzedAt: scanState.analyzedAt ?? new Date().toISOString(),
+    });
+
+    if (!saved.ok) {
+      setSaveError(saved.message);
+      return;
+    }
+
+    setLookup(saved.value);
+    setSaveError(null);
+    const query = question ? `?q=${encodeURIComponent(question)}` : "";
+    navigate(`/result/${saved.value.id}/chat${query}`);
   }
 
   function handleLookupUpdate(result: ReturnType<typeof updateLookup>) {
@@ -74,36 +197,74 @@ export default function Result() {
   }
 
   return (
-    <main className="min-h-dvh bg-[#0A0A0A] px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-white">
-      <div className="mx-auto flex min-h-[calc(100dvh-48px)] w-full max-w-md flex-col">
-        <header className="mb-5 flex items-center justify-between">
-          <div>
-            <p className="text-[13px] font-extrabold uppercase tracking-[0.18em] text-white/70">Deep Spec</p>
-            <h1 className="mt-2 text-2xl font-extrabold tracking-tight">
+    <main className="min-h-dvh bg-[var(--ds-bg)] text-slate-950">
+      <div className="mx-auto grid min-h-dvh w-full max-w-6xl lg:grid-cols-[minmax(0,1fr)_430px] lg:p-4">
+        <section className="relative min-h-[48dvh] overflow-hidden bg-[#020617] text-white lg:sticky lg:top-4 lg:min-h-[calc(100dvh-32px)] lg:rounded-[30px]">
+          {frame?.imageBase64 ? (
+            <img
+              alt="Captured car part"
+              className="absolute inset-0 h-full w-full object-contain"
+              src={frame.imageBase64}
+            />
+          ) : (
+            <div className="absolute inset-0 grid place-items-center bg-[#061522] px-8 text-center text-sm text-white/62">
+              No captured frame yet.
+            </div>
+          )}
+          <FocusFrame isVisible={Boolean(frame?.imageBase64)} />
+          <ImageEvidenceCallouts regions={scanState?.result?.evidenceRegions} />
+          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(2,6,23,0.68),rgba(2,6,23,0.04)_38%,rgba(2,6,23,0.82))]" />
+          <header className="absolute left-0 right-0 top-0 z-10 flex items-center justify-between px-4 pt-[max(18px,env(safe-area-inset-top))]">
+            <img src="/brand/deepspec-logo.png" alt="Deep Spec" className="h-11 w-32 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-white/30" />
+            <Link to="/scan" className="rounded-full bg-white/90 px-4 py-2 text-sm font-bold text-slate-800 shadow-sm ring-1 ring-white/40 backdrop-blur-md">
+              Back
+            </Link>
+          </header>
+          <div className="absolute bottom-8 left-0 right-0 z-10 px-4">
+            <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Scanned photo</p>
+            <h1 className="mt-2 truncate text-3xl font-extrabold tracking-tight text-white">
               {scanState?.result ? scanState.result.partName : "Captured frame"}
             </h1>
+            {scanState?.result ? (
+              <p className="mt-2 text-sm font-semibold text-white/72">
+                {scanState.result.confidence} confidence / {scanState.result.scanCategory}
+              </p>
+            ) : null}
           </div>
-          <Link to="/" className="rounded-full bg-white/10 px-4 py-2 text-sm font-bold text-white">
-            Back
-          </Link>
-        </header>
+        </section>
 
-        {frame?.imageBase64 ? (
-          <img
-            alt="Captured car part"
-            className="aspect-[3/4] w-full rounded-[24px] border border-white/10 bg-black object-contain shadow-2xl"
-            src={frame.imageBase64}
-          />
-        ) : (
-          <div className="grid aspect-[3/4] w-full place-items-center rounded-[24px] border border-dashed border-white/15 bg-[#171717] px-8 text-center text-sm text-[#A1A1AA]">
-            No captured frame yet.
-          </div>
-        )}
-
-        <div className="mt-5 space-y-4">
-          {storageWarning ? <StorageWarning message={storageWarning} /> : null}
-          {scanState?.result ? <AnalysisResult result={scanState.result} capturedAt={capturedAt} /> : null}
-          {scanState?.errorMessage ? <AnalysisError message={scanState.errorMessage} capturedAt={capturedAt} /> : null}
+        <div className="relative z-10 -mt-7 rounded-t-[30px] bg-[var(--ds-page)] px-4 pb-8 pt-4 shadow-[0_-18px_48px_rgba(2,6,23,0.18)] lg:my-8 lg:-ml-10 lg:max-h-[calc(100dvh-64px)] lg:overflow-y-auto lg:rounded-[30px] lg:border lg:border-white/60 lg:shadow-[0_24px_70px_rgba(2,6,23,0.28)]">
+          <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-300 lg:hidden" />
+          <div className="space-y-3">
+          {isQaTestRun ? <TestRunNotice label={scanState?.testVehicleLabel} /> : null}
+          {!isQaTestRun && storageWarning ? <StorageWarning message={storageWarning} /> : null}
+          {!lookup && saveError ? <StorageWarning message={saveError} /> : null}
+          {scanState?.result ? (
+            <AnalysisResult
+              result={scanState.result}
+              capturedAt={capturedAt}
+              canSaveForChat={canSaveForChat}
+              lookupId={lookup?.id ?? null}
+              onPromoteCandidate={lookup || canSaveForChat ? handlePromoteCandidate : undefined}
+              onSaveAndAsk={handleSaveAndAsk}
+              onUseDetectedTextCorrection={lookup || canSaveForChat ? handleDetectedTextCorrection : undefined}
+              promotedPartName={lookup?.correction ?? null}
+            />
+          ) : null}
+          {scanState?.errorMessage ? (
+            <AnalysisError 
+              code={scanState.errorCode}
+              message={scanState.errorMessage} 
+              capturedAt={capturedAt} 
+              frame={frame}
+              lookup={lookup}
+              onLookupRetrySuccess={setLookup}
+              onScanRetrySuccess={(nextScanState) => {
+                setLiveScanState(nextScanState);
+                saveLatestScanState(nextScanState);
+              }}
+            />
+          ) : null}
           {!scanState?.result && !scanState?.errorMessage ? <NotAnalyzed capturedAt={capturedAt} /> : null}
           {lookup ? (
             <SavedScanControls
@@ -115,21 +276,94 @@ export default function Result() {
               onRating={handleRating}
             />
           ) : null}
+          {datasetSourceUrls.length > 0 ? <SourceFinePrint urls={datasetSourceUrls} /> : null}
         </div>
 
         <Button className="mt-6 w-full" onClick={() => window.location.assign("/")}>
           Try another scan
         </Button>
+        </div>
       </div>
     </main>
   );
 }
 
+function FocusFrame({ isVisible }: { isVisible: boolean }) {
+  if (!isVisible) {
+    return null;
+  }
+
+  return (
+    <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 aspect-[4/3] w-[min(74vw,420px)] -translate-x-1/2 -translate-y-1/2 rounded-[24px] border border-white/32 shadow-[0_0_0_999px_rgba(2,6,23,0.08),0_0_34px_rgba(11,116,255,0.24)]">
+      <div className="absolute -left-1 -top-1 size-8 rounded-tl-[24px] border-l-4 border-t-4 border-[var(--ds-accent)]" />
+      <div className="absolute -right-1 -top-1 size-8 rounded-tr-[24px] border-r-4 border-t-4 border-[var(--ds-accent)]" />
+      <div className="absolute -bottom-1 -left-1 size-8 rounded-bl-[24px] border-b-4 border-l-4 border-[var(--ds-accent)]" />
+      <div className="absolute -bottom-1 -right-1 size-8 rounded-br-[24px] border-b-4 border-r-4 border-[var(--ds-accent)]" />
+      <span className="absolute left-1/2 top-[calc(100%+12px)] -translate-x-1/2 rounded-full bg-black/56 px-3 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-white/88 ring-1 ring-white/12 backdrop-blur-md">
+        Scanned area
+      </span>
+    </div>
+  );
+}
+
+function ImageEvidenceCallouts({ regions }: { regions: EvidenceRegion[] | undefined }) {
+  const callouts = regions?.slice(0, 3) ?? [];
+  if (!callouts.length) {
+    return null;
+  }
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-10">
+      {callouts.map((region, index) => {
+        const anchor = getEvidenceRegionAnchor(region);
+        return (
+          <div
+            key={`${region.regionLabel}-${region.label}`}
+            className={`absolute max-w-[190px] rounded-2xl border border-white/30 bg-slate-950/72 px-3 py-2 text-white shadow-[0_14px_34px_rgba(0,0,0,0.28)] backdrop-blur-md ${getEvidenceCalloutPosition(anchor)}`}
+            data-testid={`evidence-callout-${anchor}`}
+          >
+            <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-white/62">Clue {index + 1} / {region.regionLabel}</p>
+            <p className="mt-1 truncate text-xs font-extrabold">{region.label}</p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function getEvidenceCalloutPosition(anchor: ReturnType<typeof getEvidenceRegionAnchor>) {
+  const positions = {
+    center: "left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2",
+    left: "left-[8%] top-1/2 -translate-y-1/2",
+    lower: "bottom-[24%] left-1/2 -translate-x-1/2",
+    lower_left: "bottom-[24%] left-[8%]",
+    lower_right: "bottom-[24%] right-[8%]",
+    right: "right-[8%] top-1/2 -translate-y-1/2",
+    scanned_area: "left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2",
+    upper: "left-1/2 top-[22%] -translate-x-1/2",
+    upper_left: "left-[8%] top-[22%]",
+    upper_right: "right-[8%] top-[22%]",
+  };
+
+  return positions[anchor];
+}
+
+function TestRunNotice({ label }: { label?: string }) {
+  return (
+    <section className="rounded-[24px] border border-[var(--ds-accent-line)] bg-[var(--ds-accent-soft)] p-5">
+      <p className="text-sm font-bold text-[var(--ds-accent)]">QA test result</p>
+      <p className="mt-2 text-sm leading-6 text-neutral-700">
+        This scan used {label ?? "a generated test photo"} and is not sent to provider or cloud services. Saved QA seeds stay local for review testing.
+      </p>
+    </section>
+  );
+}
+
 function StorageWarning({ message }: { message: string }) {
   return (
-    <section className="rounded-[24px] border border-[#F59E0B]/30 bg-[#F59E0B]/10 p-5">
-      <p className="text-sm font-bold text-[#FACC15]">Not saved locally</p>
-      <p className="mt-2 text-sm leading-6 text-white/82">{message}</p>
+    <section className="rounded-[24px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-5">
+      <p className="text-sm font-bold text-[var(--ds-warn-ink)]">Not saved locally</p>
+      <p className="mt-2 text-sm leading-6 text-neutral-700">{message}</p>
     </section>
   );
 }
@@ -153,6 +387,7 @@ function SavedScanControls({
   const [cloudStatusMessage, setCloudStatusMessage] = useState<string | null>(null);
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
   const cloudSync = getCloudSyncStatus();
+  const isQaSeed = Boolean(lookup.testRun);
   const needsProfessional = lookup.result?.isSafetyCritical || lookup.result?.safetyTriage === "needs_professional";
 
   async function handleShareReport() {
@@ -180,19 +415,30 @@ function SavedScanControls({
   }
 
   async function handleCloudSync() {
+    if (isQaSeed) {
+      setCloudStatusMessage("QA seed scans stay local and are not synced to the cloud dataset.");
+      return;
+    }
+
     setIsSyncingCloud(true);
     setCloudStatusMessage("Syncing scan...");
-
-    const result = await syncLookupToCloud(lookup);
-    setCloudStatusMessage(result.message);
-    setIsSyncingCloud(false);
+    try {
+      const result = await syncLookupToCloud(lookup);
+      setCloudStatusMessage(result.message);
+    } catch (error) {
+      setCloudStatusMessage(error instanceof Error ? `Cloud sync failed. ${error.message}` : "Cloud sync failed. Please try again.");
+    } finally {
+      setIsSyncingCloud(false);
+    }
   }
 
   return (
-    <section className="rounded-[24px] border border-white/10 bg-[#171717] p-5">
-      <p className="text-sm font-extrabold text-white">Saved scan</p>
-      <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">
-        Your rating and correction stay on this device. This is the data moat for improving Deep Spec later.
+    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
+      <p className="text-sm font-extrabold text-neutral-900">Saved scan</p>
+      <p className="mt-2 text-sm leading-6 text-neutral-500">
+        {isQaSeed
+          ? "This QA seed is saved locally so review controls can be tested without provider quota or cloud writes."
+          : "Your rating, correction, and notes stay on this device and help improve future results."}
       </p>
       <div className="mt-4 grid grid-cols-1 gap-3">
         <TrustRow label="Dataset category" value={lookup.scanCategory} />
@@ -200,218 +446,876 @@ function SavedScanControls({
         <TrustRow label="Review status" value={lookup.trainingStatus.replaceAll("_", " ")} />
       </div>
 
-      {lookup.result ? (
-        <div className="mt-4 grid grid-cols-1 gap-3">
-          <Link
-            className="block rounded-full bg-white px-5 py-3 text-center text-sm font-bold text-neutral-950 shadow-[0_12px_40px_rgba(255,255,255,0.16)]"
-            to={`/result/${lookup.id}/chat`}
+      <div className="mt-5 border-t border-neutral-200 pt-4">
+        <h3 className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Review</h3>
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <Button
+            className={lookup.rating === "up" ? "!bg-[var(--ds-ok)] !text-white shadow-none" : "!bg-neutral-100 !text-neutral-900 shadow-none"}
+            onClick={() => onRating("up")}
           >
-            Tell me more
-          </Link>
-          {needsProfessional ? (
-            <a
-              className="block rounded-full border border-[#F59E0B]/30 bg-[#F59E0B]/10 px-5 py-3 text-center text-sm font-bold text-[#FACC15]"
-              href={getMechanicSearchUrl(lookup)}
-              rel="noreferrer"
-              target="_blank"
+            Helpful
+          </Button>
+          <Button
+            className={lookup.rating === "down" ? "!bg-[var(--ds-danger)] !text-white shadow-none" : "!bg-neutral-100 !text-neutral-900 shadow-none"}
+            onClick={() => onRating("down")}
+          >
+            Wrong
+          </Button>
+        </div>
+
+        {lookup.rating === "down" ? (
+          <label className="mt-4 block">
+            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">What was it actually?</span>
+            <textarea
+              className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[var(--ds-accent)]"
+              maxLength={240}
+              onChange={(event) => onCorrectionChange(event.target.value)}
+              placeholder="Example: coolant reservoir cap, not brake fluid cap"
+              value={lookup.correction ?? ""}
+            />
+          </label>
+        ) : null}
+
+        <label className="mt-4 block">
+          <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Private notes</span>
+          <textarea
+            className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[var(--ds-accent)]"
+            maxLength={500}
+            onChange={(event) => onNotesChange(event.target.value)}
+            placeholder="Optional: where the part was, symptoms, what you checked next"
+            value={lookup.notes}
+          />
+        </label>
+
+        {saveError ? <p className="mt-3 text-sm font-semibold text-[var(--ds-danger-ink)]">{saveError}</p> : null}
+      </div>
+
+      {lookup.result && !isQaSeed ? (
+        <div className="mt-5 border-t border-neutral-200 pt-4">
+          <h3 className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Actions</h3>
+          <div className="mt-3 grid grid-cols-1 gap-3">
+            <Link
+              className="block rounded-full bg-[var(--ds-accent)] px-5 py-3 text-center text-sm font-bold text-white shadow-sm"
+              to={`/result/${lookup.id}/chat`}
             >
-              Find nearby options
-            </a>
-          ) : null}
+              Tell me more
+            </Link>
+            {needsProfessional ? (
+              <a
+                className="block rounded-full border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-5 py-3 text-center text-sm font-bold text-[var(--ds-warn-ink)]"
+                href={getMechanicSearchUrl(lookup)}
+                rel="noreferrer"
+                target="_blank"
+              >
+                Find nearby options
+              </a>
+            ) : null}
+          </div>
         </div>
       ) : null}
 
-      <div className="mt-4 grid grid-cols-2 gap-3">
-        <Button variant={lookup.rating === "up" ? "primary" : "ghost"} onClick={() => onRating("up")}>
-          Helpful
-        </Button>
-        <Button variant={lookup.rating === "down" ? "primary" : "ghost"} onClick={() => onRating("down")}>
-          Wrong
-        </Button>
-      </div>
-
-      {lookup.rating === "down" ? (
-        <label className="mt-4 block">
-          <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/42">What was it actually?</span>
-          <textarea
-            className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-white/10 bg-black/28 p-3 text-sm leading-6 text-white outline-none placeholder:text-white/32 focus:border-[#FACC15]/50"
-            maxLength={240}
-            onChange={(event) => onCorrectionChange(event.target.value)}
-            placeholder="Example: coolant reservoir cap, not brake fluid cap"
-            value={lookup.correction ?? ""}
-          />
-        </label>
-      ) : null}
-
-      <label className="mt-4 block">
-        <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/42">Private notes</span>
-        <textarea
-          className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-white/10 bg-black/28 p-3 text-sm leading-6 text-white outline-none placeholder:text-white/32 focus:border-[#FACC15]/50"
-          maxLength={500}
-          onChange={(event) => onNotesChange(event.target.value)}
-          placeholder="Optional: where the part was, symptoms, what you checked next"
-          value={lookup.notes}
-        />
-      </label>
-
-      {saveError ? <p className="mt-3 text-sm font-semibold text-[#FCA5A5]">{saveError}</p> : null}
-
-      <div className="mt-4 rounded-[20px] border border-white/10 bg-white/[0.04] p-4">
-        <p className="text-sm font-extrabold text-white">Cloud dataset sync</p>
-        <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">{cloudSync.message}</p>
+      <div className="mt-5 border-t border-neutral-200 pt-4">
+        <h3 className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Cloud</h3>
+        <CloudHealthCard className="mt-3" />
+        <p className="mt-4 text-sm font-extrabold text-neutral-900">Cloud dataset sync</p>
+        <p className="mt-2 text-sm leading-6 text-neutral-500">
+          {isQaSeed ? "QA seed scans are local-only fixtures and cannot be synced to the cloud dataset." : cloudSync.message}
+        </p>
         <Button
-          className="mt-3 w-full"
-          disabled={!cloudSync.configured || isSyncingCloud}
+          className="mt-3 w-full !bg-neutral-100 !text-neutral-900 shadow-none"
+          disabled={isQaSeed || !cloudSync.configured || isSyncingCloud}
           onClick={handleCloudSync}
-          variant="ghost"
         >
           {isSyncingCloud ? "Syncing..." : "Sync this scan"}
         </Button>
-        {cloudStatusMessage ? <p className="mt-3 text-sm font-semibold text-[#FACC15]">{cloudStatusMessage}</p> : null}
+        {cloudStatusMessage ? <p className="mt-3 text-sm font-semibold text-[var(--ds-accent)]">{cloudStatusMessage}</p> : null}
       </div>
 
-      <div className="mt-4 rounded-[20px] border border-white/10 bg-white/[0.04] p-4">
-        <p className="text-sm font-extrabold text-white">Scan report</p>
-        <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">
+      <div className="mt-5 border-t border-neutral-200 pt-4">
+        <h3 className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Export</h3>
+        <p className="mt-2 text-sm font-extrabold text-neutral-900">Scan report</p>
+        <p className="mt-2 text-sm leading-6 text-neutral-500">
           Export a plain-text summary for a mechanic, buyer, or your own records. This does not create a public link.
         </p>
         <div className="mt-3 grid grid-cols-2 gap-3">
-          <Button variant="ghost" onClick={handleShareReport}>
+          <Button className="!bg-neutral-100 !text-neutral-900 shadow-none" onClick={handleShareReport}>
             Share
           </Button>
-          <Button variant="ghost" onClick={handleDownloadReport}>
+          <Button className="!bg-neutral-100 !text-neutral-900 shadow-none" onClick={handleDownloadReport}>
             Export
           </Button>
         </div>
-        {reportStatus ? <p className="mt-3 text-sm font-semibold text-[#FACC15]">{reportStatus}</p> : null}
+        {reportStatus ? <p className="mt-3 text-sm font-semibold text-[var(--ds-accent)]">{reportStatus}</p> : null}
       </div>
 
-      <Button className="mt-4 w-full border border-[#EF4444]/30 bg-[#EF4444]/10 text-[#FCA5A5] shadow-none" onClick={onDelete}>
-        Delete saved scan
-      </Button>
+      <div className="mt-5 border-t border-neutral-200 pt-4">
+        <h3 className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Danger zone</h3>
+        <Button className="mt-3 w-full border border-[var(--ds-danger-line)] !bg-[var(--ds-danger-soft)] !text-[var(--ds-danger)] shadow-none" onClick={onDelete}>
+          Delete saved scan
+        </Button>
+      </div>
     </section>
   );
 }
 
-function AnalysisResult({ capturedAt, result }: { capturedAt: string | null; result: IdentificationResult }) {
-  const showSafetyWarning = result.isSafetyCritical || result.safetyTriage === "needs_professional";
-  const trustReview = getTrustReview(result);
+function AnalysisResult({
+  canSaveForChat,
+  capturedAt,
+  lookupId,
+  onPromoteCandidate,
+  onSaveAndAsk,
+  onUseDetectedTextCorrection,
+  promotedPartName,
+  result,
+}: {
+  canSaveForChat: boolean;
+  capturedAt: string | null;
+  lookupId: string | null;
+  onPromoteCandidate?: (candidate: CandidateMatch) => void;
+  onSaveAndAsk: (question?: string) => void;
+  onUseDetectedTextCorrection?: (text: string) => void;
+  promotedPartName?: string | null;
+  result: IdentificationResult;
+}) {
+  const safetyState = getSafetyState(result);
+  const canAskAboutResult = Boolean(lookupId || canSaveForChat);
+  const [activeTab, setActiveTab] = useState<ResultSheetTab>("match");
+  const visibleTab = canAskAboutResult || activeTab !== "ask" ? activeTab : "match";
 
   return (
     <>
-      <section className="rounded-[24px] border border-white/10 bg-[#171717] p-5">
+      <section className="rounded-[24px] border border-neutral-200 bg-white p-4 shadow-[0_12px_34px_rgba(15,23,42,0.08)]">
         <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-sm font-bold text-[#FACC15]">AI identification</p>
-            <h2 className="mt-2 text-xl font-extrabold tracking-tight">{result.partName}</h2>
+          <div className="min-w-0">
+            <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Best match</p>
+            <h2 className="mt-1 truncate text-2xl font-extrabold tracking-tight">{result.partName}</h2>
           </div>
           <ConfidenceBadge confidence={result.confidence} />
         </div>
-        {capturedAt ? <p className="mt-3 text-xs font-semibold text-white/42">Captured {capturedAt}</p> : null}
-        <p className="mt-2 text-xs font-extrabold uppercase tracking-[0.14em] text-white/36">Dataset bucket: {result.scanCategory}</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <MiniPill label={result.scanCategory} />
+        </div>
+        {capturedAt ? <p className="mt-3 text-xs font-semibold text-neutral-400">Captured {capturedAt}</p> : null}
+        <QuickActions canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
       </section>
 
-      <TrustReviewCard review={trustReview} />
+      <SafetyStateSection state={safetyState} />
 
-      {showSafetyWarning ? (
-        <section className="rounded-[24px] border border-[#F59E0B]/30 bg-[#F59E0B]/10 p-5">
-          <p className="text-sm font-extrabold text-[#FACC15]">Safety-critical</p>
-          <p className="mt-2 text-sm leading-6 text-white/82">
-            Verify this with a mechanic before driving or attempting repair. Deep Spec can explain what is visible, but this category needs professional confirmation.
-          </p>
-        </section>
+      <ResultSheetTabs activeTab={visibleTab} canAsk={canAskAboutResult} onChange={setActiveTab} />
+      {visibleTab === "match" ? (
+        <div
+          id="result-tabpanel-match"
+          role="tabpanel"
+          aria-labelledby="result-tab-match"
+          className="space-y-3"
+        >
+          <CandidateMatchesSection
+            candidates={result.candidateMatches ?? []}
+            onPromote={onPromoteCandidate}
+            promotedPartName={promotedPartName}
+          />
+          <ResultSection title="Match" items={[result.whatItDoes]} />
+          <UncertaintySection result={result} />
+        </div>
       ) : null}
-
-      {result.needsBetterPhoto || result.safetyTriage === "needs_better_photo" ? (
-        <section className="rounded-[24px] border border-white/10 bg-white/[0.06] p-5">
-          <p className="text-sm font-extrabold text-white">Better photo needed</p>
-          <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">
-            Move closer, add light, and center any label, connector, hose, or damaged area in the yellow reticle.
-          </p>
-        </section>
+      {visibleTab === "evidence" ? (
+        <div
+          id="result-tabpanel-evidence"
+          role="tabpanel"
+          aria-labelledby="result-tab-evidence"
+          className="space-y-3"
+        >
+          <DetectedTextSection findings={getDetectedTextFindings(result)} onUseAsCorrection={onUseDetectedTextCorrection} />
+          <EvidenceRegionsSection regions={result.evidenceRegions ?? []} />
+          <EvidenceSection items={result.evidence} />
+          <ResultSection title="Concerns" items={result.concerns} emptyText="Nothing concerning visible." />
+        </div>
       ) : null}
-
-      <ResultSection title="What it does" items={[result.whatItDoes]} />
-      <ResultSection title="What I see" items={result.visibleObservations} emptyText="No clear visual clues were returned." />
-      <ResultSection title="Concerns" items={result.concerns} emptyText="Nothing concerning visible." />
-      <EvidenceSection items={result.evidence} />
-      <ResultSection title="Next action" items={[result.nextAction]} />
+      {visibleTab === "sources" ? (
+        <div
+          id="result-tabpanel-sources"
+          role="tabpanel"
+          aria-labelledby="result-tab-sources"
+          className="space-y-3"
+        >
+          <ReferenceLinksSection links={getReferenceLinks(result)} />
+        </div>
+      ) : null}
+      {canAskAboutResult && visibleTab === "ask" ? (
+        <div
+          id="result-tabpanel-ask"
+          role="tabpanel"
+          aria-labelledby="result-tab-ask"
+          className="space-y-3"
+        >
+          <ResultAskBox canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
+          <FollowUpSuggestions canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
+        </div>
+      ) : null}
     </>
   );
 }
 
-type TrustReview = {
-  borderClass: string;
+function ResultSheetTabs({
+  activeTab,
+  canAsk,
+  onChange,
+}: {
+  activeTab: ResultSheetTab;
+  canAsk: boolean;
+  onChange: (tab: ResultSheetTab) => void;
+}) {
+  const tabs: Array<{ id: ResultSheetTab; label: string }> = [
+    { id: "match", label: "Match" },
+    { id: "evidence", label: "Evidence" },
+    { id: "sources", label: "Sources" },
+    ...(canAsk ? [{ id: "ask" as const, label: "Ask" }] : []),
+  ];
+
+  return (
+    <div className="rounded-[18px] border border-neutral-200 bg-white p-1" role="tablist" aria-label="Result sections">
+      <div className={`grid ${canAsk ? "grid-cols-4" : "grid-cols-3"} gap-1`}>
+        {tabs.map((tab) => {
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              id={`result-tab-${tab.id}`}
+              aria-controls={`result-tabpanel-${tab.id}`}
+              aria-selected={isActive}
+              className={`min-h-11 rounded-[14px] px-2 text-sm font-extrabold transition ${
+                isActive
+                  ? "bg-[var(--ds-accent)] text-white shadow-sm"
+                  : "bg-transparent text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900"
+              }`}
+              role="tab"
+              type="button"
+              onClick={() => onChange(tab.id)}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function CandidateMatchesSection({
+  candidates,
+  onPromote,
+  promotedPartName,
+}: {
+  candidates: CandidateMatch[];
+  onPromote?: (candidate: CandidateMatch) => void;
+  promotedPartName?: string | null;
+}) {
+  if (!candidates.length) {
+    return null;
+  }
+
+  return (
+    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
+      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Other possible matches</h2>
+      <div className="mt-3 grid grid-cols-1 gap-2">
+        {candidates.map((candidate) => {
+          const isPromoted = promotedPartName?.trim().toLowerCase() === candidate.partName.toLowerCase();
+          const sourceLinks = getCandidateReferenceLinks(candidate);
+          return (
+          <div key={`${candidate.partName}-${candidate.reason}`} className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-extrabold text-neutral-900">{candidate.partName}</p>
+              <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[11px] font-extrabold capitalize text-neutral-500 ring-1 ring-neutral-200">
+                {candidate.confidence}
+              </span>
+            </div>
+            <p className="mt-1 text-xs font-semibold capitalize text-neutral-400">{candidate.scanCategory}</p>
+            <p className="mt-2 text-sm leading-5 text-neutral-600">{candidate.reason}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {sourceLinks.map((link) => (
+                <a
+                  key={link.url}
+                  className="rounded-full bg-white px-3 py-2 text-xs font-extrabold text-[var(--ds-evidence-ink)] ring-1 ring-neutral-200"
+                  href={link.url}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  {link.label}
+                  <span aria-hidden="true" className="ml-1 text-[10px] uppercase tracking-[0.12em] text-neutral-400">
+                    {link.sourceType}
+                  </span>
+                </a>
+              ))}
+            </div>
+            {onPromote ? (
+              <button
+                aria-label={`${isPromoted ? "Marked" : "Mark"} ${candidate.partName} correct`}
+                className={`mt-3 rounded-full px-3 py-2 text-xs font-extrabold ${
+                  isPromoted
+                    ? "bg-[var(--ds-ok-soft)] text-[var(--ds-ok-ink)] ring-1 ring-[var(--ds-ok-line)]"
+                    : "bg-white text-[var(--ds-evidence-ink)] ring-1 ring-neutral-200"
+                }`}
+                disabled={isPromoted}
+                type="button"
+                onClick={() => onPromote(candidate)}
+              >
+                {isPromoted ? "Marked correct" : "Mark correct"}
+              </button>
+            ) : null}
+          </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+type SafetyState = {
+  action: string;
   description: string;
-  photoQuality: string;
-  retakeGuidance: string;
+  tone: "danger" | "neutral" | "success" | "warning";
   status: string;
 };
 
-function TrustReviewCard({ review }: { review: TrustReview }) {
+function SafetyStateSection({ state }: { state: SafetyState }) {
+  const toneClasses = {
+    danger: "border-[var(--ds-danger-line)] bg-[var(--ds-danger-soft)] text-[var(--ds-danger-ink)]",
+    neutral: "border-neutral-200 bg-neutral-50 text-neutral-900",
+    success: "border-[var(--ds-ok-line)] bg-[var(--ds-ok-soft)] text-[var(--ds-ok-ink)]",
+    warning: "border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] text-[var(--ds-warn-ink)]",
+  };
+
   return (
-    <section className={`rounded-[24px] border bg-[#171717] p-5 ${review.borderClass}`}>
-      <p className="text-sm font-extrabold text-white">Trust check</p>
-      <h2 className="mt-2 text-xl font-extrabold tracking-tight">{review.status}</h2>
-      <p className="mt-3 text-sm leading-6 text-[#A1A1AA]">{review.description}</p>
-      <div className="mt-4 grid grid-cols-1 gap-3">
-        <TrustRow label="Photo quality" value={review.photoQuality} />
-        <TrustRow label="Retake guidance" value={review.retakeGuidance} />
+    <section className={`rounded-[22px] border p-4 ${toneClasses[state.tone]}`} aria-label="Safety state">
+      <p className="text-xs font-extrabold uppercase tracking-[0.14em] opacity-70">Safety state</p>
+      <h2 className="mt-2 text-base font-extrabold tracking-tight">{state.status}</h2>
+      <p className="mt-2 text-sm leading-6 text-neutral-700">{state.description}</p>
+      <div className="mt-3 border-t border-current/20 pt-3">
+        <p className="text-xs font-extrabold uppercase tracking-[0.14em] opacity-70">Action</p>
+        <p className="mt-1 text-sm font-semibold leading-6 text-neutral-800">{state.action}</p>
       </div>
+    </section>
+  );
+}
+
+function MiniPill({ label }: { label: string }) {
+  return (
+    <span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-xs font-extrabold capitalize text-neutral-600">
+      {label.replaceAll("_", " ")}
+    </span>
+  );
+}
+
+function QuickActions({
+  canSaveForChat,
+  lookupId,
+  onSaveAndAsk,
+  result,
+}: {
+  canSaveForChat: boolean;
+  lookupId: string | null;
+  onSaveAndAsk: () => void;
+  result: IdentificationResult;
+}) {
+  const nearbyUrl = getMapsSearchUrl(result);
+  let askAction = null;
+  if (lookupId) {
+    askAction = (
+      <Link className="rounded-full bg-[var(--ds-accent)] px-3 py-2 text-center text-xs font-extrabold text-white" to={`/result/${lookupId}/chat`}>
+        Ask
+      </Link>
+    );
+  } else if (canSaveForChat) {
+    askAction = (
+      <button className="rounded-full bg-[var(--ds-accent)] px-3 py-2 text-center text-xs font-extrabold text-white" type="button" onClick={onSaveAndAsk}>
+        Ask
+      </button>
+    );
+  }
+  const canAsk = Boolean(askAction);
+
+  return (
+    <div className={`mt-4 grid ${canAsk ? "grid-cols-3" : "grid-cols-2"} gap-2`}>
+      <Link className="rounded-full bg-neutral-100 px-3 py-2 text-center text-xs font-extrabold text-neutral-900" to="/scan">
+        Refine
+      </Link>
+      {askAction}
+      <a
+        className="rounded-full bg-neutral-100 px-3 py-2 text-center text-xs font-extrabold text-neutral-900"
+        href={nearbyUrl}
+        rel="noreferrer"
+        target="_blank"
+      >
+        Nearby
+      </a>
+    </div>
+  );
+}
+
+function DetectedTextSection({
+  findings,
+  onUseAsCorrection,
+}: {
+  findings: DetectedTextFinding[];
+  onUseAsCorrection?: (text: string) => void;
+}) {
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  if (!findings.length) {
+    return null;
+  }
+
+  const codeCount = findings.reduce((sum, finding) => sum + finding.codes.length, 0);
+
+  async function copyText(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyStatus("Copied");
+    } catch {
+      setCopyStatus("Copy failed");
+    }
+  }
+
+  return (
+    <section aria-labelledby="detected-text-heading" className="overflow-hidden rounded-[28px] border border-neutral-200 bg-white shadow-[0_18px_48px_rgba(15,23,42,0.14)]">
+      <div className="grid place-items-center bg-neutral-50 pt-3">
+        <div className="h-1.5 w-12 rounded-full bg-neutral-300" />
+      </div>
+      <header className="border-b border-neutral-200 bg-neutral-50 px-4 pb-4 pt-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--ds-evidence-ink)]">Image text</p>
+            <h2 id="detected-text-heading" className="mt-1 text-xl font-extrabold tracking-tight text-neutral-950">Text output</h2>
+          </div>
+          <span className="shrink-0 rounded-full border border-neutral-200 bg-white px-3 py-1 text-[11px] font-extrabold text-neutral-500">
+            {codeCount ? `${codeCount} code${codeCount === 1 ? "" : "s"}` : "label"}
+          </span>
+        </div>
+        {copyStatus ? <p className="mt-3 text-xs font-extrabold text-[var(--ds-evidence-ink)]">{copyStatus}</p> : null}
+      </header>
+      <div className="divide-y divide-neutral-200">
+        {findings.map((finding) => (
+          <article key={finding.text} className="p-4">
+            <div className="rounded-[18px] bg-slate-950 px-4 py-4 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.10)]">
+              <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-white/54">Detected label</p>
+              <p className="mt-2 break-words font-mono text-lg font-extrabold leading-7 text-white">{finding.text}</p>
+            </div>
+            {finding.codes.length ? (
+              <div className="mt-3 overflow-hidden rounded-[16px] border border-neutral-200 bg-neutral-50">
+                <p className="border-b border-neutral-200 px-3 py-2 text-[11px] font-extrabold uppercase tracking-[0.14em] text-neutral-400">Likely part number</p>
+                {finding.codes.map((code) => (
+                  <div key={code} className="flex items-center justify-between gap-3 px-3 py-3">
+                    <span className="text-sm font-semibold text-neutral-500">Candidate code</span>
+                    <span className="break-all text-right font-mono text-sm font-extrabold text-neutral-950">{code}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <button
+                className="min-h-11 rounded-[14px] border border-neutral-200 bg-neutral-50 px-3 text-sm font-extrabold text-neutral-900"
+                onClick={() => void copyText(finding.text)}
+                type="button"
+              >
+                Copy text
+              </button>
+              {onUseAsCorrection ? (
+                <button
+                  className="min-h-11 rounded-[14px] border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 text-sm font-extrabold text-[var(--ds-evidence-ink)]"
+                  onClick={() => onUseAsCorrection(finding.text)}
+                  type="button"
+                >
+                  Use as correction
+                </button>
+              ) : null}
+              <a
+                className="grid min-h-11 place-items-center rounded-[14px] bg-[var(--ds-accent)] px-3 text-center text-sm font-extrabold text-white"
+                href={finding.exactSearchUrl}
+                rel="noreferrer"
+                target="_blank"
+              >
+                Search exact
+              </a>
+              <a
+                className="col-span-2 grid min-h-11 place-items-center rounded-[14px] border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 text-center text-sm font-extrabold text-[var(--ds-evidence-ink)]"
+                href={finding.partSearchUrl}
+                rel="noreferrer"
+                target="_blank"
+              >
+                Search with part
+              </a>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function FollowUpSuggestions({
+  canSaveForChat,
+  lookupId,
+  onSaveAndAsk,
+  result,
+}: {
+  canSaveForChat: boolean;
+  lookupId: string | null;
+  onSaveAndAsk: (question: string) => void;
+  result: IdentificationResult;
+}) {
+  const prompts = getFollowUpPrompts(result);
+  if (!lookupId && !canSaveForChat) {
+    return null;
+  }
+
+  return (
+    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
+      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Ask next</h2>
+      <div className="mt-3 grid grid-cols-1 gap-2">
+        {prompts.map((prompt) => (
+          lookupId ? (
+            <Link
+              key={prompt.question}
+              className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3 text-sm font-bold leading-5 text-[var(--ds-evidence-ink)]"
+              to={`/result/${lookupId}/chat?q=${encodeURIComponent(prompt.question)}`}
+            >
+              {prompt.label}
+            </Link>
+          ) : (
+            <button
+              key={prompt.question}
+              className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3 text-left text-sm font-bold leading-5 text-[var(--ds-evidence-ink)]"
+              type="button"
+              onClick={() => onSaveAndAsk(prompt.question)}
+            >
+              {prompt.label}
+            </button>
+          )
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ResultAskBox({
+  canSaveForChat,
+  lookupId,
+  onSaveAndAsk,
+  result,
+}: {
+  canSaveForChat: boolean;
+  lookupId: string | null;
+  onSaveAndAsk: (question: string) => void;
+  result: IdentificationResult;
+}) {
+  const [question, setQuestion] = useState("");
+  const navigate = useNavigate();
+  const trimmedQuestion = question.trim().slice(0, 500);
+  if (!lookupId && !canSaveForChat) {
+    return null;
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!trimmedQuestion) {
+      return;
+    }
+
+    if (lookupId) {
+      navigate(`/result/${lookupId}/chat?q=${encodeURIComponent(trimmedQuestion)}`);
+      return;
+    }
+
+    onSaveAndAsk(trimmedQuestion);
+  }
+
+  return (
+    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
+      <form onSubmit={handleSubmit}>
+        <label className="block">
+          <span className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Ask about this result</span>
+          <textarea
+            className="mt-3 min-h-20 w-full resize-none rounded-2xl border border-neutral-200 bg-neutral-50 p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[var(--ds-accent)]"
+            maxLength={500}
+            onChange={(event) => setQuestion(event.target.value)}
+            placeholder={`Example: what should I inspect on this ${result.partName}?`}
+            value={question}
+          />
+        </label>
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <p className="text-xs font-semibold text-neutral-400">{question.length}/500</p>
+          <Button className="px-4 py-2" disabled={!trimmedQuestion} type="submit">
+            Ask follow-up
+          </Button>
+        </div>
+      </form>
     </section>
   );
 }
 
 function TrustRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-3">
-      <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-white/42">{label}</p>
-      <p className="mt-1 text-sm leading-6 text-white/84">{value}</p>
+    <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
+      <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-neutral-400">{label}</p>
+      <p className="mt-1 text-sm leading-6 text-neutral-700">{value}</p>
     </div>
   );
 }
 
 function EvidenceSection({ items }: { items: string[] }) {
-  const visibleItems = items.filter(Boolean);
+  const visibleItems = items.map(formatEvidenceItem).filter(Boolean);
 
   return (
-    <section className="rounded-[24px] border border-white/10 bg-[#171717] p-5">
-      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-white/62">Why Deep Spec thinks this</h2>
+    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
+      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Visual clues</h2>
       {visibleItems.length > 0 ? (
         <div className="mt-3 flex flex-wrap gap-2">
           {visibleItems.map((item) => (
-            <span key={item} className="rounded-full border border-[#3B82F6]/24 bg-[#3B82F6]/10 px-3 py-2 text-xs font-semibold leading-5 text-[#BFDBFE]">
+            <span key={item} className="rounded-full border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 py-2 text-xs font-semibold leading-5 text-[var(--ds-evidence-ink)]">
               {item}
             </span>
           ))}
         </div>
       ) : (
-        <p className="mt-3 text-sm leading-6 text-[#A1A1AA]">No visual evidence returned. Treat this result as uncertain.</p>
+        <p className="mt-3 text-sm leading-6 text-neutral-500">No visual evidence returned. Treat this result as uncertain.</p>
       )}
     </section>
   );
 }
 
-function AnalysisError({ capturedAt, message }: { capturedAt: string | null; message: string }) {
+function EvidenceRegionsSection({ regions }: { regions: EvidenceRegion[] }) {
+  if (!regions.length) {
+    return null;
+  }
+
   return (
-    <section className="rounded-[24px] border border-[#EF4444]/30 bg-[#EF4444]/10 p-5">
-      <p className="text-sm font-bold text-[#FCA5A5]">AI identification failed</p>
-      <h2 className="mt-2 text-xl font-extrabold tracking-tight">Keep the photo and try again</h2>
-      <p className="mt-3 text-sm leading-6 text-white/78">{message}</p>
-      {capturedAt ? <p className="mt-3 text-xs font-semibold text-white/42">Captured {capturedAt}</p> : null}
+    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
+      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Image evidence</h2>
+      <div className="mt-3 grid grid-cols-1 gap-2">
+        {regions.map((region) => (
+          <div key={`${region.label}-${region.observation}`} className="rounded-2xl border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 py-3">
+            <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--ds-evidence-ink)]">{region.regionLabel}</p>
+            <p className="mt-1 text-sm font-extrabold text-neutral-900">{region.label}</p>
+            <p className="mt-1 text-sm leading-5 text-neutral-700">{region.observation}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function UncertaintySection({ result }: { result: IdentificationResult }) {
+  const reasons = getUncertaintyReasons(result);
+  const retakeGuidance = getRetakeGuidance(result);
+
+  return (
+    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
+      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Why it might be wrong</h2>
+      <div className="mt-3 space-y-2 text-sm leading-6 text-neutral-700">
+        {reasons.map((reason) => (
+          <p key={reason}>{reason}</p>
+        ))}
+      </div>
+      <div className="mt-4 rounded-2xl border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 py-3">
+        <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--ds-evidence-ink)]">Retake guidance</p>
+        <p className="mt-1 text-sm leading-5 text-neutral-700">{retakeGuidance}</p>
+      </div>
+    </section>
+  );
+}
+
+function formatEvidenceItem(item: string) {
+  const cleaned = item.trim();
+  if (!cleaned || /^Dataset source:|^OCR label text:/i.test(cleaned)) {
+    return "";
+  }
+
+  return cleaned
+    .replace(/^Local dataset match:\s*/i, "Similar dataset sample: ");
+}
+
+type ReferenceLink = Pick<SourceLink, "label" | "sourceType" | "url">;
+type ReferenceGroup = {
+  description: string;
+  id: "dataset" | "nearby" | "research" | "safety";
+  links: ReferenceLink[];
+  title: string;
+};
+
+function ReferenceLinksSection({ links }: { links: ReferenceLink[] }) {
+  const groups = groupReferenceLinks(links);
+  if (!groups.length) {
+    return null;
+  }
+
+  return (
+    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
+      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Ranked sources</h2>
+      <div className="mt-3 space-y-3">
+        {groups.map((group) => (
+          <div key={group.id} className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-extrabold text-neutral-900">{group.title}</h3>
+                <p className="mt-1 text-xs leading-5 text-neutral-500">{group.description}</p>
+              </div>
+              <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[11px] font-extrabold text-neutral-400 ring-1 ring-neutral-200">
+                {group.links.length}
+              </span>
+            </div>
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {group.links.map((link) => (
+                <a
+                  key={link.url}
+                  className="rounded-2xl border border-neutral-200 bg-white px-3 py-3 text-sm font-bold leading-5 text-[var(--ds-evidence-ink)]"
+                  href={link.url}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  {link.label}
+                  <span aria-hidden="true" className="mt-1 block text-[11px] font-extrabold uppercase tracking-[0.12em] text-neutral-400">
+                    {link.sourceType}
+                  </span>
+                </a>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SourceFinePrint({ urls }: { urls: string[] }) {
+  return (
+    <section className="px-1 py-2 text-[11px] leading-5 text-neutral-400">
+      <p className="font-extrabold uppercase tracking-[0.14em]">Dataset sources</p>
+      <div className="mt-1 space-y-1">
+        {urls.map((url, index) => (
+          <a
+            key={url}
+            className="block truncate underline decoration-neutral-300 underline-offset-4"
+            href={url}
+            rel="noreferrer"
+            target="_blank"
+          >
+            Hugging Face source {index + 1}
+          </a>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AnalysisError({
+  capturedAt,
+  code,
+  frame,
+  lookup,
+  message,
+  onLookupRetrySuccess,
+  onScanRetrySuccess,
+}: {
+  capturedAt: string | null;
+  code?: string;
+  frame: CapturedFrame | null | undefined;
+  lookup: Lookup | null;
+  message: string;
+  onLookupRetrySuccess: (updatedLookup: Lookup) => void;
+  onScanRetrySuccess: (scanState: ScanAnalysisState) => void;
+}) {
+  const [isOnline, setIsOnline] = useState(() => typeof navigator !== "undefined" ? navigator.onLine : true);
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+  const errorDetails = getAIErrorDetails(code);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  async function handleRetry() {
+    const retryFrame = lookup?.frame ?? frame;
+    if (!retryFrame || isRetrying) return;
+    setIsRetrying(true);
+    setRetryError(null);
+
+    try {
+      const { modelRun, result } = await identifyCapturedFrameWithRun(retryFrame);
+      if (lookup) {
+        const updateResult = updateLookupResult(lookup.id, result, modelRun);
+        if (updateResult.ok) {
+          if (updateResult.value) {
+            onLookupRetrySuccess(updateResult.value);
+          } else {
+            setRetryError("This saved scan was not found.");
+          }
+        } else {
+          setRetryError(updateResult.message);
+        }
+      } else {
+        onScanRetrySuccess({
+          frame: retryFrame,
+          modelRun,
+          result,
+          analyzedAt: new Date().toISOString(),
+        });
+      }
+    } catch (err) {
+      setRetryError(getAIErrorMessage(err));
+    } finally {
+      setIsRetrying(false);
+    }
+  }
+
+  return (
+    <section className="scanner-error-flash rounded-[24px] border border-[var(--ds-danger-line)] bg-[var(--ds-danger-soft)] p-5">
+      <p className="text-sm font-bold text-[var(--ds-danger-ink)]">
+        {errorDetails.category === "provider_unavailable" ? "Provider unavailable" : "AI identification failed"}
+      </p>
+      <h2 className="mt-2 text-xl font-extrabold tracking-tight">{errorDetails.title}</h2>
+      <p className="mt-3 text-sm leading-6 text-neutral-700">{message}</p>
+      <p className="mt-3 text-sm leading-6 text-neutral-700">{errorDetails.description}</p>
+      {capturedAt ? <p className="mt-3 text-xs font-semibold text-neutral-400">Captured {capturedAt}</p> : null}
+
+      {frame ? (
+        <div className="mt-4 border-t border-neutral-200 pt-4">
+          <p className="text-xs font-semibold text-neutral-500">
+            {isOnline ? "Internet connection is active." : "Offline. Find an internet connection to retry identification."}
+          </p>
+          <Button
+            className="mt-3 w-full"
+            disabled={!isOnline || isRetrying}
+            onClick={handleRetry}
+          >
+            {isRetrying ? "Retrying..." : errorDetails.retryLabel}
+          </Button>
+          {retryError ? (
+            <p className="mt-3 text-sm font-semibold text-[var(--ds-danger-ink)]">{retryError}</p>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }
 
 function NotAnalyzed({ capturedAt }: { capturedAt: string | null }) {
   return (
-    <section className="rounded-[24px] border border-white/10 bg-[#171717] p-5">
-      <p className="text-sm font-bold text-[#FACC15]">Not analyzed yet</p>
+    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
+      <p className="text-sm font-bold text-[var(--ds-accent)]">Not analyzed yet</p>
       <h2 className="mt-2 text-xl font-extrabold tracking-tight">Scan again to identify this</h2>
-      <p className="mt-3 text-sm leading-6 text-[#A1A1AA]">
+      <p className="mt-3 text-sm leading-6 text-neutral-500">
         Deep Spec has the captured frame, but no AI result is attached to this screen.
       </p>
-      {capturedAt ? <p className="mt-3 text-xs font-semibold text-white/42">Captured {capturedAt}</p> : null}
+      {capturedAt ? <p className="mt-3 text-xs font-semibold text-neutral-400">Captured {capturedAt}</p> : null}
     </section>
   );
 }
@@ -428,16 +1332,16 @@ function ResultSection({
   const visibleItems = items.filter(Boolean);
 
   return (
-    <section className="rounded-[24px] border border-white/10 bg-[#171717] p-5">
-      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-white/62">{title}</h2>
+    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
+      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">{title}</h2>
       {visibleItems.length > 0 ? (
-        <ul className="mt-3 space-y-2 text-sm leading-6 text-[#E5E7EB]">
+        <ul className="mt-3 space-y-2 text-sm leading-6 text-neutral-800">
           {visibleItems.map((item) => (
             <li key={item}>{item}</li>
           ))}
         </ul>
       ) : (
-        <p className="mt-3 text-sm leading-6 text-[#A1A1AA]">{emptyText}</p>
+        <p className="mt-3 text-sm leading-6 text-neutral-500">{emptyText}</p>
       )}
     </section>
   );
@@ -445,9 +1349,9 @@ function ResultSection({
 
 function ConfidenceBadge({ confidence }: { confidence: Confidence }) {
   const styles = {
-    high: "bg-[#10B981]/15 text-[#6EE7B7] border-[#10B981]/30",
-    medium: "bg-[#F59E0B]/15 text-[#FCD34D] border-[#F59E0B]/30",
-    low: "bg-[#EF4444]/15 text-[#FCA5A5] border-[#EF4444]/30",
+    high: "bg-[var(--ds-ok-soft)] text-[var(--ds-ok-ink)] border-[var(--ds-ok-line)]",
+    medium: "bg-[var(--ds-warn-soft)] text-[var(--ds-warn-ink)] border-[var(--ds-warn-line)]",
+    low: "bg-[var(--ds-danger-soft)] text-[var(--ds-danger-ink)] border-[var(--ds-danger-line)]",
   };
 
   return (
@@ -457,54 +1361,304 @@ function ConfidenceBadge({ confidence }: { confidence: Confidence }) {
   );
 }
 
-function getTrustReview(result: IdentificationResult): TrustReview {
+function getReferenceLinks(result: IdentificationResult): ReferenceLink[] {
+  const sourceLinks = (result.sourceLinks ?? []).filter((link) => /^https:\/\//.test(link.url));
+  const datasetLinks = getDatasetSourceUrls(result.evidence).map((url, index) => ({
+    label: `Dataset match ${index + 1}`,
+    sourceType: "dataset" as const,
+    url,
+  }));
+  const defaults: ReferenceLink[] = [
+    {
+      label: "Nearby help",
+      sourceType: "search",
+      url: getMapsSearchUrl(result),
+    },
+    {
+      label: "Report safety issue",
+      sourceType: "safety",
+      url: "https://www.nhtsa.gov/report-a-safety-problem",
+    },
+  ];
+
+  return uniqueReferenceLinks([...sourceLinks, ...datasetLinks, ...defaults]).slice(0, 8);
+}
+
+function getCandidateReferenceLinks(candidate: CandidateMatch): ReferenceLink[] {
+  const sourceLinks = (candidate.sourceLinks ?? []).filter((link) => /^https:\/\//.test(link.url));
+  const fallback: ReferenceLink = {
+    label: `Research ${candidate.partName}`,
+    sourceType: "search",
+    url: getPartSearchUrl(candidate.partName),
+  };
+
+  return uniqueReferenceLinks([...sourceLinks, fallback]).slice(0, 3);
+}
+
+function uniqueReferenceLinks(links: ReferenceLink[]) {
+  const seen = new Set<string>();
+  const unique: ReferenceLink[] = [];
+
+  for (const link of links) {
+    const key = link.url.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(link);
+  }
+
+  return unique;
+}
+
+function groupReferenceLinks(links: ReferenceLink[]): ReferenceGroup[] {
+  const groups: ReferenceGroup[] = [
+    {
+      description: "Annotated examples and dataset matches for visual comparison, not fitment proof.",
+      id: "dataset",
+      links: [],
+      title: "Visual dataset matches",
+    },
+    {
+      description: "Part-specific search and reference links for checking symptoms, labels, and common locations.",
+      id: "research",
+      links: [],
+      title: "Research",
+    },
+    {
+      description: "Local service searches when the result may need inspection, testing, or replacement.",
+      id: "nearby",
+      links: [],
+      title: "Nearby help",
+    },
+    {
+      description: "Safety reporting and recall-oriented links for risk-sensitive findings.",
+      id: "safety",
+      links: [],
+      title: "Safety",
+    },
+  ];
+  const byId = new Map(groups.map((group) => [group.id, group]));
+
+  for (const link of links) {
+    const group = byId.get(getReferenceGroupId(link));
+    group?.links.push(link);
+  }
+
+  return groups.filter((group) => group.links.length > 0);
+}
+
+function getReferenceGroupId(link: ReferenceLink): ReferenceGroup["id"] {
+  if (link.sourceType === "dataset" || link.url.includes("huggingface.co/datasets/")) {
+    return "dataset";
+  }
+
+  if (link.sourceType === "safety" || /nhtsa|recall|safety/i.test(`${link.label} ${link.url}`)) {
+    return "safety";
+  }
+
+  if (/google\.com\/maps|nearby/i.test(`${link.label} ${link.url}`)) {
+    return "nearby";
+  }
+
+  return "research";
+}
+
+function getUncertaintyReasons(result: IdentificationResult) {
+  const reasons: string[] = [];
+
+  if (result.confidence !== "high") {
+    reasons.push(`Confidence is ${result.confidence}, so treat this as a likely direction rather than a final part call.`);
+  }
+
+  if (result.candidateMatches.length > 0) {
+    const candidateNames = result.candidateMatches.slice(0, 2).map((candidate) => candidate.partName).join(", ");
+    reasons.push(`Other plausible matches remain: ${candidateNames}. Compare labels, connectors, and mounting points before acting.`);
+  }
+
+  if (result.needsBetterPhoto || result.safetyTriage === "needs_better_photo") {
+    reasons.push("The current photo does not show enough detail for a strong match.");
+  }
+
+  if (!result.evidenceRegions.length) {
+    reasons.push("The model did not return image-region evidence, so the visual reasoning is less auditable.");
+  }
+
+  if (!result.sourceLinks.length && !getDatasetSourceUrls(result.evidence).length) {
+    reasons.push("No external or dataset source was returned for this result.");
+  }
+
+  if (!reasons.length) {
+    reasons.push("No major uncertainty flags were returned, but part labels and vehicle fitment still need real-world verification.");
+  }
+
+  return reasons;
+}
+
+function getRetakeGuidance(result: IdentificationResult) {
+  if (result.needsBetterPhoto || result.safetyTriage === "needs_better_photo") {
+    return "Move closer, add light, and include any label, connector, hose path, or mounting bolts in the frame.";
+  }
+
+  if (result.confidence === "low") {
+    return "Retake from a second angle and center the most distinctive shape or printed label.";
+  }
+
+  if (result.candidateMatches.length > 0) {
+    return "Take one wider context photo and one close label photo to separate the best match from alternatives.";
+  }
+
+  return "Take a second angle if you need buying, fitment, or repair confidence.";
+}
+
+function getFollowUpPrompts(result: IdentificationResult) {
+  const partName = result.partName;
+  const prompts = [
+    {
+      label: "What should I check next?",
+      question: `What should I check next for this ${partName}?`,
+    },
+    {
+      label: "How serious is this?",
+      question: `How serious is this ${partName} result based only on the photo?`,
+    },
+  ];
+
+  prompts.push(
+    result.needsBetterPhoto || result.safetyTriage === "needs_better_photo"
+      ? {
+          label: "What photo angle would help?",
+          question: `What photo angle would help identify this ${partName} better?`,
+        }
+      : {
+          label: "What symptoms match this part?",
+          question: `What common symptoms connect to this ${partName}?`,
+        },
+  );
+
+  return prompts;
+}
+
+function getMapsSearchUrl(result: IdentificationResult) {
+  const query = encodeURIComponent(`${result.scanCategory} ${result.partName} auto repair near me`);
+  return `https://www.google.com/maps/search/?api=1&query=${query}`;
+}
+
+function getPartSearchUrl(partName: string) {
+  const query = encodeURIComponent(`${partName} car part`);
+  return `https://www.google.com/search?q=${query}`;
+}
+
+function getDatasetSourceUrls(evidence: string[]) {
+  const urls = new Set<string>();
+
+  for (const item of evidence) {
+    const matches = item.match(/https:\/\/[^\s)]+/g) ?? [];
+    for (const match of matches) {
+      if (match.includes("huggingface.co/datasets/")) {
+        urls.add(match);
+      }
+    }
+  }
+
+  return [...urls].slice(0, 3);
+}
+
+function getDetectedTextFindings(result: IdentificationResult): DetectedTextFinding[] {
+  const seen = new Set<string>();
+  const findings: DetectedTextFinding[] = [];
+
+  for (const item of result.evidence) {
+    const text = getOcrEvidenceText(item);
+    if (!text) continue;
+
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    findings.push({
+      codes: getLikelyCodeTokens(text),
+      exactSearchUrl: getExactTextSearchUrl(text),
+      partSearchUrl: getPartTextSearchUrl(text, result.partName),
+      text,
+    });
+  }
+
+  return findings.slice(0, 3);
+}
+
+function getOcrEvidenceText(item: string) {
+  const match = item.match(/^OCR label text:\s*(.+)$/i);
+  const text = match?.[1]?.replace(/\s+/g, " ").trim();
+  return text || null;
+}
+
+function getLikelyCodeTokens(text: string) {
+  const tokens = text.match(/\b[A-Z0-9][A-Z0-9./#:-]{3,}[A-Z0-9]\b/gi) ?? [];
+  const seen = new Set<string>();
+  const codes: string[] = [];
+
+  for (const token of tokens) {
+    const normalized = token.toUpperCase();
+    if (seen.has(normalized)) continue;
+    if (!/\d/.test(normalized) || !/[A-Z./#:-]/.test(normalized)) continue;
+    seen.add(normalized);
+    codes.push(normalized);
+  }
+
+  return codes.slice(0, 4);
+}
+
+function getExactTextSearchUrl(text: string) {
+  return `https://www.google.com/search?q=${encodeURIComponent(text)}`;
+}
+
+function getPartTextSearchUrl(text: string, partName: string) {
+  const query = encodeURIComponent(`${text} ${partName} car part`);
+  return `https://www.google.com/search?q=${query}`;
+}
+
+function getSafetyState(result: IdentificationResult): SafetyState {
   if (result.safetyTriage === "needs_professional" || result.isSafetyCritical) {
     return {
-      borderClass: "border-[#F59E0B]/35",
+      action: "Have a qualified mechanic verify it before driving or repair work.",
       description:
-        "Deep Spec can explain the visible clues, but this category can affect driving safety. Do not treat this as repair approval.",
-      photoQuality: result.confidence === "low" ? "Risk flagged and identification uncertain" : "Risk flagged",
-      retakeGuidance: "Take another photo for your records, then verify with a mechanic before driving or repairing.",
+        "Deep Spec can explain visible clues, but this category can affect driving safety and is not repair approval.",
       status: "Professional verification needed",
+      tone: "warning",
     };
   }
 
   if (result.safetyTriage === "needs_better_photo" || result.needsBetterPhoto) {
     return {
-      borderClass: "border-[#F59E0B]/35",
+      action: "Move closer, add light, and center any label, connector, hose, or damaged area in the lens frame.",
       description: "The image does not give Deep Spec enough reliable detail. A better photo matters more than another guess.",
-      photoQuality: "Poor",
-      retakeGuidance: "Move closer, add light, and center the label, connector, leak, crack, or damaged area.",
-      status: "Incomplete data",
+      status: "Better photo needed",
+      tone: "neutral",
     };
   }
 
   if (result.confidence === "low") {
     return {
-      borderClass: "border-[#EF4444]/30",
+      action: result.nextAction,
       description: "The app found some clues, but not enough to make a strong identification.",
-      photoQuality: "Usable but weak",
-      retakeGuidance: "Retake from a wider angle and one close-up of any label or connector.",
       status: "Low-confidence result",
+      tone: "danger",
     };
   }
 
   if (result.confidence === "medium") {
     return {
-      borderClass: "border-[#F59E0B]/25",
+      action: result.nextAction,
       description: "This is useful for understanding the part, but one more angle would make the result stronger.",
-      photoQuality: "Usable",
-      retakeGuidance: "Optional: capture the label, connector, mounting point, or nearby part context.",
       status: "Check another angle",
+      tone: "warning",
     };
   }
 
   return {
-    borderClass: "border-[#10B981]/25",
+    action: result.nextAction,
     description: "The image has enough visual evidence for a useful consumer-level explanation.",
-    photoQuality: "Good",
-    retakeGuidance: "Optional: take a close-up label photo if you need more certainty later.",
     status: "Useful match",
+    tone: "success",
   };
 }
 
@@ -515,6 +1669,10 @@ function getScanState(state: unknown): ScanAnalysisState | null {
 
   if (isCapturedFrame(state)) {
     return { frame: state };
+  }
+
+  if (isTestMode()) {
+    return null;
   }
 
   return readLatestScanState();
