@@ -7,7 +7,7 @@ Audit date: May 21, 2026
 Make Deep Spec production ready as a domain-specific Google Lens for car parts:
 
 1. A user can open the app, scan or upload a car photo, and get a fast, trustworthy, image-first answer.
-2. The answer feels like visual search, not a static report: primary match, alternatives, evidence tied to the image, actions, sources, and follow-up questions.
+2. The answer feels like visual search, not a static report: primary match, related comparison parts, evidence tied to the image, actions, sources, and follow-up questions.
 3. Every scan photo, model output, user correction, rating, notes, chat, and sync status is preserved as dataset-ready product data.
 4. The app is safe to ship: auth works, cloud sync works, RLS is proven, model failures are recoverable, and production checks are repeatable.
 
@@ -20,9 +20,9 @@ Use a 900-check audit grid instead: 9 production tracks x 100 checks each. Every
 ## Evidence From This Audit
 
 - `npm run check` passed: lint, 24 test files, 134 tests, and production build.
-- Browser QA passed for local auth continue and `/scan?test=1` fixture scan.
+- Browser QA passed for local auth continue and a scanner fixture scan on an earlier branch.
 - Live QA scan identified the engine fixture as `Alternator` with high confidence and no browser console errors.
-- May 22 browser QA on mobile viewport `390x844` confirmed `/scan?test=1` now renders only the test scanner state, with `Test scan ready`, `Test engine photo`, and no camera-denied copy.
+- May 27 scanner direction changed: the user-facing scanner no longer has a fixture test mode; QA should use the real camera, upload path, and automated component tests.
 - May 22 browser QA confirmed `/scan` with denied camera shows `Camera access needed` plus the gallery fallback controls, and uploading `public/test-fixtures/engine-scan-test.jpg` reaches a saved result screen. The live identify call returned `500` because this local server is missing `GEMINI_API_KEY`.
 - `npm run verify:supabase` failed at anonymous Supabase sign-in: `Database error creating anonymous user (unexpected_failure), HTTP 500`.
 - `npm run eval:identify` passed 5 of 6 sampled dataset cases and failed 1 with `invalid_response`.
@@ -40,13 +40,13 @@ Use a 900-check audit grid instead: 9 production tracks x 100 checks each. Every
 | P0-002 | Blocker | Output reliability | Identify eval still cannot complete the release set because provider availability fails after fallback. | May 27 release eval stopped at 12/50 with `network` after both configured models failed. | Keep provider fallback, fix quota/network/provider stability, rerun the 50-case gate until all samples complete. |
 | P0-003 | Blocker | Backlog hygiene | There are no open standalone GitHub issues for production readiness. | GitHub issue search returned empty. | Convert this plan into milestones and issues instead of hiding work in PRs. |
 | P0-004 | Blocker | Release quality | Open PR stack is large and overlapping. | GitHub returned open PRs #4-#13. | Merge/close/rebase PRs into a clean production branch before broad changes. |
-| P1-001 | High | Scanner UX | Resolved on current branch: `/scan?test=1` bypasses camera-blocking copy and renders a clean non-camera scanner state. | Browser QA on May 22 showed `Test scan ready` and `Test engine photo` without `Camera access needed`; `src/screens/Scanner.test.tsx` passed 13 tests. | Keep regression coverage and verify this route in every browser smoke pass. |
+| P1-001 | High | Scanner UX | Resolved locally: the scanner keeps the real camera/upload flow even if a stale `?test=1` query is present. | `src/screens/Scanner.test.tsx` covers the stale query, manual scan, auto scan, upload, blocked camera, cancel, and blur rescue paths. | Keep regression coverage and verify `/scan` in every browser smoke pass. |
 | P1-002 | High | Result UX | Partially resolved: result output now keeps a sticky primary match/action card and segments Match, Evidence, Sources, and Review. | `src/screens/Result.test.tsx` covers tabbed result sections. | Continue with image callouts and desktop split layout. |
 | P1-003 | High | Result accuracy | The fixture alternator was treated as professional verification needed. | Live QA result showed high confidence alternator plus safety-critical/pro verification warning. | Recalibrate safety triage so ordinary electrical parts are not escalated unless visible risk exists. |
 | P1-004 | High | Evidence UX | Evidence is displayed as text chips disconnected from image regions. | Live result has evidence chips below the fold only. | Add image callouts/regions and map evidence to visible observations. |
-| P1-005 | High | Alternatives | App returns one answer only; Lens often ranks possible results and may show alternatives. | Current `IdentificationResult` has no alternatives. | Add `candidateMatches[]` with confidence/reason/source. |
-| P1-006 | High | Follow-up | Ask/refine is hidden behind saved scan chat, not on the first result. | Live QA result has no immediate ask/refine input because QA scans are unsaved. | Add result-level "Ask about this" and "Refine with another angle" actions. |
-| P1-007 | High | Persistence | QA scan intentionally does not save, so browser QA cannot verify saved controls from the fixture. | Result shows "not saved to history, cloud sync, or training review." | Add a local QA seed route or test-only save toggle for production QA. |
+| P1-005 | High | Related parts | Partially resolved: `candidateMatches[]` now exists and should be presented as related comparison parts, not generic alternatives. | Scanner result bubble shows related parts to compare with reasons. | Keep improving ranking quality and source context. |
+| P1-006 | High | Follow-up | Ask/refine is hidden behind saved scan chat, not on the first result. | Current flow still routes follow-up through saved scans. | Add result-level "Ask about this" and "Refine with another angle" actions. |
+| P1-007 | High | Persistence | Browser QA must now use a real camera/upload scan to verify saved controls. | The user-facing fixture mode was removed. | Keep upload fixture QA documented and verify saved controls from real persisted scans. |
 | P1-008 | High | Cloud UI | UI can say cloud sync is ready even when end-to-end verification fails. | Early Access showed cloud ready; verifier failed anonymous sign-in. | Add runtime cloud health state: configured, auth-ok, storage-ok, RLS-ok, last verified. |
 | P1-009 | High | Copy/content | Early Access says cloud sync is ready but form copy says backend sync comes later/local-only. | Browser snapshot. | Make cloud copy state-driven and non-contradictory. |
 | P1-010 | High | Database shape | `scan_lookups` stores result JSON but no separate model-run metadata table. | Migration inspection. | Add model run metadata after P0 cloud auth is fixed: provider, model, latency, prompt version, error code, OCR used. |
@@ -72,7 +72,7 @@ Current Deep Spec output should be replaced by a result surface with this hierar
 
 1. Image hero with visible focus region and optional evidence callouts.
 2. Bottom result sheet with the primary answer: part name, confidence, category, and safety state.
-3. Candidate carousel: alternate possible parts with short reasons.
+3. Candidate carousel: related possible parts with short reasons.
 4. Action row: ask, retake, add another angle, save, sync, share, find nearby help.
 5. Tabs or segmented sections:
    - Match: what it is and what it does.
@@ -91,7 +91,7 @@ After Auth is fixed, evolve the database in narrow steps:
 
 1. Keep `scan_lookups` as the user-facing saved scan table.
 2. Add `scan_model_runs` for provider/model/prompt version/latency/OCR/eval/error metadata.
-3. Add `scan_candidates` for alternate matches and ranked confidence.
+3. Add `scan_candidates` for related candidate matches and ranked confidence.
 4. Add `scan_evidence` for structured evidence tied to optional image regions.
 5. Add `scan_corrections` for structured user corrections and review status.
 6. Add `sync_events` for upload/upsert/delete audit trail.
@@ -115,7 +115,7 @@ Minimum preserved fields for every scan:
 
 | Track | Checks | Focus |
 | --- | ---: | --- |
-| Scanner capture | 100 | camera permissions, test mode, upload mode, blur/dark/bright, multi-frame, cancel, retry |
+| Scanner capture | 100 | camera permissions, upload mode, blur/dark/bright, multi-frame, cancel, retry |
 | Result UX | 100 | Lens-like grouping, image callouts, candidates, actions, safety, mobile/desktop |
 | Output quality | 100 | accuracy, invalid JSON, confidence, calibration, safety false positives, latency |
 | Database | 100 | auth, RLS, storage, migrations, sync, retention, export, deletion |
@@ -150,7 +150,7 @@ Exit criteria:
 Exit criteria:
 
 - Result screen is image-first with a bottom sheet.
-- Primary match, alternatives, evidence, concerns, actions, and review are grouped cleanly.
+- Primary match, related comparison parts, evidence, concerns, actions, and review are grouped cleanly.
 - Evidence can be tied to image regions when available.
 - Follow-up/refine is available from the result without forcing the user through saved history first.
 - Desktop has a useful two-pane layout.
@@ -190,7 +190,7 @@ Deep Spec is not production ready until all of these are true:
 - `npm run check` passes.
 - `npm run eval:identify` meets the release threshold.
 - `npm run verify:supabase` passes.
-- Browser QA passes on `/auth`, `/scan`, `/scan?test=1`, `/result`, `/history`, `/early-access`, and chat.
+- Browser QA passes on `/auth`, `/scan`, `/result`, `/history`, `/early-access`, and chat using `docs/BROWSER_QA_MATRIX.md`.
 - The output is Lens-like: image-first, ranked, visual, actionable, and easy to correct.
 - Every scan can become durable dataset data.
 - GitHub issues/milestones reflect the production backlog.
