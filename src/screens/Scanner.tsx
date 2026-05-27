@@ -1,25 +1,28 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Webcam from "react-webcam";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import IdentifyButton from "../components/scanner/IdentifyButton";
 import MotionPermissionModal from "../components/scanner/MotionPermissionModal";
 import Reticle from "../components/scanner/Reticle";
 import Button from "../components/ui/Button";
 import { useCamera } from "../hooks/useCamera";
-import { useObjectTarget } from "../hooks/useObjectTarget";
+import { useObjectTarget, type CameraObjectTarget } from "../hooks/useObjectTarget";
 import { useStillness } from "../hooks/useStillness";
 import { assessImageQuality } from "../lib/imageQuality";
 import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
+import { getScanCardPreferences, type ScanCardPreferences, updateScanCardPreferences } from "../lib/scanResultCardSettings";
 import { isTestMode } from "../lib/testMode";
 import { saveLatestScanState } from "../lib/utils";
 import TestScanPanel from "../components/scanner/TestScanPanel";
 import { AIServiceError, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
-import { createLookup } from "../services/storage";
-import type { IdentificationResult, CapturedFrame, LabelRescueTrigger, Lookup, ScanAnalysisState } from "../types";
+import { createLookup, updateLookup } from "../services/storage";
+import type { Confidence, IdentificationResult, CapturedFrame, LabelRescueTrigger, Lookup, ScanAnalysisState } from "../types";
 
 const AUTO_SCAN_HOLD_MS = 5000;
 const SECOND_FRAME_DELAY_MS = 120;
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
+const MATCH_THRESHOLD = 0.18;
+const SCAN_CARD_WIDTH_PX = 286;
 
 const videoConstraints: MediaTrackConstraints = {
   facingMode: { ideal: "environment" },
@@ -27,18 +30,45 @@ const videoConstraints: MediaTrackConstraints = {
   height: { ideal: 1080 },
 };
 
+type ScanReviewResultSource = "AI detection" | "metadata" | "user correction";
+
+type ScanReviewTarget = {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  confidence: number;
+};
+
 type ScanReviewState = {
   lookup: Lookup | null;
   scanState: ScanAnalysisState;
+  correction: string | null;
+  source: ScanReviewResultSource;
+  sourceUpdatedAt: string;
+  reviewTarget: ScanReviewTarget | null;
+};
+
+type ReviewCardPlacement = {
+  left: number;
+  top: number;
+  anchorSide: "left" | "right";
 };
 
 export default function Scanner() {
   const location = useLocation();
+  const navigate = useNavigate();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisStep, setAnalysisStep] = useState<string | null>(null);
   const [autoScanPaused, setAutoScanPaused] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [scanReview, setScanReview] = useState<ScanReviewState | null>(null);
+  const [scanCardPrefs, setScanCardPrefs] = useState<ScanCardPreferences>(() => getScanCardPreferences(location.pathname));
+  const [scanCardStatusMessage, setScanCardStatusMessage] = useState<string | null>(null);
+  const [isCardExpanded, setIsCardExpanded] = useState(false);
+  const [isReplacingLabel, setIsReplacingLabel] = useState(false);
+  const [replacementLabel, setReplacementLabel] = useState("");
   const autoScanStartedRef = useRef(false);
   const cancelScanRef = useRef(false);
   const scanRequestIdRef = useRef(0);
@@ -49,7 +79,9 @@ export default function Scanner() {
   const qaTestMode = isTestMode(location.search);
   const objectTarget = useObjectTarget(webcamRef, {
     enabled: cameraState === "ready" && !qaTestMode && !isAnalyzing && !scanReview,
-    holdDurationMs: AUTO_SCAN_HOLD_MS,
+    holdDurationMs: cameraState === "ready" && isStable && !isAnalyzing && !autoScanPaused && !scanReview
+      ? AUTO_SCAN_HOLD_MS
+      : undefined,
     holdEnabled: cameraState === "ready" && isStable && !isAnalyzing && !autoScanPaused && !scanReview,
   });
   const targetProgress = objectTarget?.holdProgress ?? 0;
@@ -68,18 +100,31 @@ export default function Scanner() {
         usesFallback,
       });
 
-  const pauseAutoScan = useCallback((message?: string) => {
-    autoScanStartedRef.current = false;
-    setAutoScanPaused(true);
-    if (message) {
-      setCaptureError(message);
-    }
+  const anchoredReviewTarget = useMemo(
+    () => getAnchoredReviewTarget(scanReview?.reviewTarget ?? null, objectTarget),
+    [objectTarget, scanReview?.reviewTarget],
+  );
 
-    window.setTimeout(() => setAutoScanPaused(false), 1800);
+  const isMismatch = scanReview?.reviewTarget && objectTarget
+    ? isTargetMismatch(scanReview.reviewTarget, objectTarget)
+    : false;
+
+  const pauseAutoScan = useCallback((message?: string) => {
+    const shouldPause = Boolean(message);
+    setAutoScanPaused(shouldPause);
+    setCaptureError(message ? message : null);
+    autoScanStartedRef.current = false;
+    if (shouldPause) {
+      window.setTimeout(() => setAutoScanPaused(false), 1800);
+    }
   }, []);
+
+  const reviewCardPlacement = getReviewCardPlacement(anchoredReviewTarget);
 
   const beginScanRequest = useCallback(() => {
     cancelScanRef.current = false;
+    setAutoScanPaused(false);
+    setCaptureError(null);
     scanRequestIdRef.current += 1;
     return scanRequestIdRef.current;
   }, []);
@@ -88,35 +133,75 @@ export default function Scanner() {
     scanRequestIdRef.current === requestId && !cancelScanRef.current
   ), []);
 
-  const persistAndShowReview = useCallback(
-    (scanState: ScanAnalysisState) => {
-      if (qaTestMode) {
-        setScanReview({ lookup: null, scanState: { ...scanState, testRun: true } });
-        return;
-      }
-
-      const saved = createLookup(scanState);
-      if (saved.ok) {
-        saveLatestScanState(scanState);
-        setScanReview({ lookup: saved.value, scanState });
-        return;
-      }
-
-      const fallbackState = {
-        ...scanState,
-        storageWarning: saved.message,
-      };
-      saveLatestScanState(fallbackState);
-      setScanReview({ lookup: null, scanState: fallbackState });
+  const persistAndShowReview = useCallback((
+    scanState: ScanAnalysisState,
+    options: {
+      requestId: number;
+      reviewTarget: ScanReviewTarget | null;
+      source: ScanReviewResultSource;
+      sourceUpdatedAt: string;
+      correction?: string | null;
     },
-    [qaTestMode],
-  );
+  ) => {
+    const source = options.source;
+    const sourceUpdatedAt = options.sourceUpdatedAt;
+    if (!isScanRequestActive(options.requestId)) {
+      return;
+    }
+
+    if (qaTestMode) {
+      setIsCardExpanded(!scanCardPrefs.compactCardsByDefault);
+      setScanReview({
+        correction: options.correction ?? null,
+        lookup: null,
+        reviewTarget: options.reviewTarget,
+        scanState: { ...scanState, testVehicleLabel: scanState.testVehicleLabel },
+        source,
+        sourceUpdatedAt,
+      });
+      return;
+    }
+
+    const saved = createLookup(scanState);
+    if (saved.ok) {
+      saveLatestScanState(scanState);
+      setIsCardExpanded(!scanCardPrefs.compactCardsByDefault);
+      setScanReview({
+        correction: options.correction ?? saved.value.correction,
+        lookup: saved.value,
+        reviewTarget: options.reviewTarget,
+        scanState,
+        source,
+        sourceUpdatedAt,
+      });
+      return;
+    }
+
+    const fallbackState = {
+      ...scanState,
+      storageWarning: saved.message,
+    };
+    saveLatestScanState(fallbackState);
+    setIsCardExpanded(!scanCardPrefs.compactCardsByDefault);
+    setScanReview({
+      correction: options.correction ?? null,
+      lookup: null,
+      reviewTarget: options.reviewTarget,
+      scanState: fallbackState,
+      source,
+      sourceUpdatedAt,
+    });
+  }, [isScanRequestActive, qaTestMode, scanCardPrefs.compactCardsByDefault]);
 
   const analyzeImageBase64 = useCallback(async (
     imageBase64: string,
     requestId: number,
     secondFrameProvider?: () => Promise<string>,
+    reviewTargetOverride?: CameraObjectTarget,
   ) => {
+    const sourceUpdatedAt = new Date().toISOString();
+    const reviewTarget = reviewTargetOverride ? getReviewTargetFromObject(reviewTargetOverride) : null;
+
     setAnalysisStep("Checking photo quality");
     const quality = await assessImageQuality(imageBase64);
     if (!isScanRequestActive(requestId)) return;
@@ -143,7 +228,15 @@ export default function Scanner() {
       const cached = getCachedScanResult(imageHash);
       if (cached) {
         setAnalysisStep("Opening review");
-        persistAndShowReview({ frame, result: cached, analyzedAt: new Date().toISOString() });
+        await persistAndShowReview(
+          { frame, result: cached, analyzedAt: new Date().toISOString() },
+          {
+            requestId,
+            reviewTarget,
+            source: "metadata",
+            sourceUpdatedAt,
+          },
+        );
         return;
       }
     }
@@ -169,27 +262,44 @@ export default function Scanner() {
       if (!isScanRequestActive(requestId)) return;
       if (imageHash) setCachedScanResult(imageHash, result);
       setAnalysisStep("Saving result");
-      persistAndShowReview({
-        frame,
-        result,
-        analyzedAt: new Date().toISOString(),
-      });
+      await persistAndShowReview(
+        {
+          frame,
+          result,
+          analyzedAt: new Date().toISOString(),
+        },
+        {
+          requestId,
+          reviewTarget,
+          source: "AI detection",
+          sourceUpdatedAt,
+        },
+      );
     } catch (analysisError) {
       if (!isScanRequestActive(requestId)) return;
-      persistAndShowReview({
-        frame,
-        errorMessage: getAIErrorMessage(analysisError),
-        errorCode: analysisError instanceof AIServiceError ? analysisError.code : "analysis_failed",
-        analyzedAt: new Date().toISOString(),
-      });
+      await persistAndShowReview(
+        {
+          frame,
+          errorMessage: getAIErrorMessage(analysisError),
+          errorCode: analysisError instanceof AIServiceError ? analysisError.code : "analysis_failed",
+          analyzedAt: new Date().toISOString(),
+        },
+        {
+          requestId,
+          reviewTarget,
+          source: "AI detection",
+          sourceUpdatedAt,
+        },
+      );
     }
   }, [isScanRequestActive, pauseAutoScan, persistAndShowReview, qaTestMode]);
 
-  const handleIdentify = useCallback(async () => {
+  const handleIdentify = useCallback(async (reviewTargetOverride?: CameraObjectTarget) => {
     if (isAnalyzing) {
       return;
     }
 
+    const reviewTarget = reviewTargetOverride ?? objectTarget ?? undefined;
     const requestId = beginScanRequest();
     try {
       setIsAnalyzing(true);
@@ -198,7 +308,7 @@ export default function Scanner() {
       const imageBase64 = await captureFrame();
       if (!isScanRequestActive(requestId)) return;
 
-      await analyzeImageBase64(imageBase64, requestId, captureFrame);
+      await analyzeImageBase64(imageBase64, requestId, captureFrame, reviewTarget);
     } catch (error) {
       if (isScanRequestActive(requestId)) {
         pauseAutoScan(error instanceof Error ? error.message : "Capture failed. Try again.");
@@ -209,7 +319,7 @@ export default function Scanner() {
         setAnalysisStep(null);
       }
     }
-  }, [analyzeImageBase64, beginScanRequest, captureFrame, isAnalyzing, isScanRequestActive, pauseAutoScan]);
+  }, [analyzeImageBase64, beginScanRequest, captureFrame, isAnalyzing, isScanRequestActive, objectTarget, pauseAutoScan]);
 
   const handleGalleryFile = useCallback(async (file: File) => {
     if (isAnalyzing) {
@@ -236,6 +346,147 @@ export default function Scanner() {
       }
     }
   }, [analyzeImageBase64, beginScanRequest, isAnalyzing, isScanRequestActive, pauseAutoScan]);
+
+  const retryReviewScan = useCallback(async () => {
+    if (!scanReview?.reviewTarget) {
+      return;
+    }
+
+    setScanCardStatusMessage("Rescanning this point.");
+    const override = getObjectTargetFromReviewTarget(scanReview.reviewTarget);
+    await handleIdentify(override);
+  }, [handleIdentify, scanReview]);
+  const applyLabelCorrection = useCallback((correction: string) => {
+    if (!scanReview) return;
+
+    if (!scanReview.lookup) {
+      setScanReview({
+        ...scanReview,
+        correction,
+        source: "user correction",
+        sourceUpdatedAt: new Date().toISOString(),
+      });
+      setScanCardStatusMessage("Label replacement saved locally.");
+      return;
+    }
+
+    const lookupUpdate = updateLookup(scanReview.lookup.id, { correction });
+    if (!lookupUpdate.ok) {
+      setScanCardStatusMessage(lookupUpdate.message);
+      return;
+    }
+
+    setScanReview({
+      ...scanReview,
+      correction,
+      lookup: lookupUpdate.value,
+      source: "user correction",
+      sourceUpdatedAt: new Date().toISOString(),
+    });
+    setScanCardStatusMessage("Label replacement applied.");
+  }, [scanReview]);
+
+  const handleReportReplace = useCallback(() => {
+    const trimmed = replacementLabel.trim();
+    if (!trimmed) {
+      setScanCardStatusMessage("Enter the replacement label.");
+      return;
+    }
+
+    applyLabelCorrection(trimmed);
+    setIsReplacingLabel(false);
+    setReplacementLabel("");
+  }, [applyLabelCorrection, replacementLabel]);
+
+  const handleUndoCorrection = useCallback(() => {
+    if (!scanReview) {
+      return;
+    }
+
+    if (!scanReview.lookup) {
+      setScanReview({
+        ...scanReview,
+        correction: null,
+        source: "AI detection",
+        sourceUpdatedAt: new Date().toISOString(),
+      });
+      setScanCardStatusMessage("Label correction removed.");
+      return;
+    }
+
+    const result = updateLookup(scanReview.lookup.id, { correction: null });
+    if (!result.ok) {
+      setScanCardStatusMessage(result.message);
+      return;
+    }
+
+    setScanReview({
+      ...scanReview,
+      correction: null,
+      lookup: result.value,
+      source: "AI detection",
+      sourceUpdatedAt: new Date().toISOString(),
+    });
+    setScanCardStatusMessage("Label correction removed.");
+  }, [scanReview]);
+
+  const handleCopyLabel = useCallback(async () => {
+    if (!scanReview) {
+      return;
+    }
+
+    const label = getReviewDisplayLabel(scanReview);
+    const confidence = scanReview.scanState.result?.confidence;
+    const copied = await copyText(
+      confidence ? `${label} | ${scanReview.scanState.result?.scanCategory ?? "unknown"} | ${confidence}` : label,
+    );
+    setScanCardStatusMessage(copied ? "Label copied." : "Copy blocked. Try again.");
+  }, [scanReview]);
+
+  const handleReviewMeasure = useCallback(async () => {
+    if (!scanReview?.reviewTarget) {
+      setScanCardStatusMessage("No point to measure yet.");
+      return;
+    }
+
+    const copied = await copyText(
+      `${scanReview.reviewTarget.width.toFixed(0)}x${scanReview.reviewTarget.height.toFixed(0)} px`,
+    );
+    setScanCardStatusMessage(
+      copied ? "Point size copied to clipboard." : "Could not copy point size right now.",
+    );
+  }, [scanReview]);
+
+  const handleOpenDetails = useCallback(() => {
+    if (!scanReview) {
+      return;
+    }
+
+    if (qaTestMode) {
+      setScanCardStatusMessage("QA test results are in-memory only.");
+      return;
+    }
+
+    saveLatestScanState(scanReview.scanState);
+    navigate(scanReview.lookup ? `/result/${scanReview.lookup.id}` : "/result");
+  }, [navigate, qaTestMode, scanReview]);
+
+  const toggleCompactCardMode = useCallback(() => {
+    const updated = updateScanCardPreferences(location.pathname, {
+      compactCardsByDefault: !scanCardPrefs.compactCardsByDefault,
+    });
+    setScanCardPrefs(updated);
+    if (scanReview) {
+      setIsCardExpanded(!updated.compactCardsByDefault);
+    }
+  }, [location.pathname, scanCardPrefs.compactCardsByDefault, scanReview]);
+
+  const toggleHideConfidence = useCallback(() => {
+    const updated = updateScanCardPreferences(location.pathname, {
+      hideConfidence: !scanCardPrefs.hideConfidence,
+    });
+    setScanCardPrefs(updated);
+  }, [location.pathname, scanCardPrefs.hideConfidence]);
 
   useEffect(() => {
     if (!hasTargetLock || cameraState !== "ready" || isAnalyzing || autoScanPaused || scanReview) {
@@ -270,7 +521,11 @@ export default function Scanner() {
   function closeScanReview() {
     setScanReview(null);
     setCaptureError(null);
+    setIsReplacingLabel(false);
+    setReplacementLabel("");
+    setScanCardStatusMessage(null);
     pauseAutoScan();
+    setIsCardExpanded(false);
   }
 
   return (
@@ -343,7 +598,36 @@ export default function Scanner() {
         />
       ) : null}
       {isAnalyzing ? <AnalyzingOverlay onCancel={cancelCurrentScan} step={analysisStep} /> : null}
-      {scanReview ? <ScanReviewSheet onNewScan={closeScanReview} review={scanReview} /> : null}
+      {scanReview ? (
+        <ScanResultCard
+          isExpanded={isCardExpanded}
+          isMismatch={Boolean(isMismatch)}
+          isReplacing={isReplacingLabel}
+          target={anchoredReviewTarget}
+          onCancelReplace={() => setIsReplacingLabel(false)}
+          onClose={closeScanReview}
+          onCopyValue={handleCopyLabel}
+          onMeasure={handleReviewMeasure}
+          onOpenDetails={handleOpenDetails}
+          onRetryMismatch={retryReviewScan}
+          onReportReplace={handleReportReplace}
+          onUndoCorrection={handleUndoCorrection}
+          onToggleExpand={() => setIsCardExpanded((value) => !value)}
+          onToggleCompactMode={toggleCompactCardMode}
+          onToggleHideConfidence={toggleHideConfidence}
+          placement={reviewCardPlacement}
+          prefs={scanCardPrefs}
+          replacementLabel={replacementLabel}
+          review={scanReview}
+          scanCardStatusMessage={scanCardStatusMessage}
+          onWrongLabel={() => {
+            setReplacementLabel(scanReview?.scanState.result?.partName ?? "");
+            setIsReplacingLabel(true);
+            setScanCardStatusMessage(null);
+          }}
+          onReplacementLabelChange={setReplacementLabel}
+        />
+      ) : null}
       {!qaTestMode ? (
         <IdentifyButton
           isDisabled={cameraState !== "ready" || isAnalyzing}
@@ -354,7 +638,17 @@ export default function Scanner() {
       ) : (
         <TestScanPanel
           onBusyChange={setIsAnalyzing}
-          onScanComplete={(scanState) => setScanReview({ lookup: null, scanState })}
+          onScanComplete={(scanState) => {
+            setIsCardExpanded(!scanCardPrefs.compactCardsByDefault);
+            setScanReview({
+                correction: null,
+                lookup: null,
+                reviewTarget: null,
+                scanState: { ...scanState, testRun: true },
+                source: "metadata",
+                sourceUpdatedAt: new Date().toISOString(),
+              });
+          }}
         />
       )}
     </main>
@@ -507,256 +801,284 @@ function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; step: stri
   );
 }
 
-function ScanReviewSheet({ onNewScan, review }: { onNewScan: () => void; review: ScanReviewState }) {
-  const { lookup, scanState } = review;
-  const result = scanState.result;
-  const capturedAt = scanState.frame.capturedAt ? new Date(scanState.frame.capturedAt).toLocaleString() : null;
-  const title = result?.partName ?? (scanState.errorMessage ? "Scan needs retry" : "Captured frame");
+function ScanResultCard({
+  isExpanded,
+  isMismatch,
+  isReplacing,
+  onCancelReplace,
+  onClose,
+  onCopyValue,
+  onMeasure,
+  onOpenDetails,
+  onRetryMismatch,
+  onReportReplace,
+  onUndoCorrection,
+  onToggleExpand,
+  onToggleCompactMode,
+  onToggleHideConfidence,
+  onReplacementLabelChange,
+  onWrongLabel,
+  target,
+  placement,
+  prefs,
+  replacementLabel,
+  review,
+  scanCardStatusMessage,
+}: {
+  isExpanded: boolean;
+  isMismatch: boolean;
+  isReplacing: boolean;
+  onCancelReplace: () => void;
+  onClose: () => void;
+  onCopyValue: () => void;
+  onMeasure: () => void;
+  onOpenDetails: () => void;
+  onRetryMismatch: () => void;
+  onReportReplace: () => void;
+  onUndoCorrection: () => void;
+  onToggleExpand: () => void;
+  onToggleCompactMode: () => void;
+  onToggleHideConfidence: () => void;
+  onReplacementLabelChange: (value: string) => void;
+  onWrongLabel: () => void;
+  target: ScanReviewTarget | null;
+  placement: ReviewCardPlacement;
+  prefs: ScanCardPreferences;
+  replacementLabel: string;
+  review: ScanReviewState;
+  scanCardStatusMessage: string | null;
+}) {
+  const result = review.scanState.result;
+  const label = getReviewDisplayLabel(review);
+  const confidence = result?.confidence;
+  const isCompact = prefs.compactCardsByDefault && !isExpanded;
+  const statusStyle = getConfidenceStyle(confidence);
+  const cardFacts = getReviewFacts(result, isCompact);
+  const extendedFacts = getReviewExpandedFacts(result);
+  const lastUpdated = formatTimestamp(review.sourceUpdatedAt);
+  const targetOverlayStyle = getReviewTargetOverlayStyle(target);
+  const threeDSearchUrl = get3DSearchUrl(label);
 
   return (
     <section
-      aria-labelledby="scan-review-title"
-      aria-modal="true"
-      className="fixed inset-x-0 bottom-0 z-50 max-h-[78dvh] overflow-hidden rounded-t-[28px] border border-white/12 bg-slate-950/96 text-white shadow-[0_-28px_70px_rgba(0,0,0,0.68)] backdrop-blur-xl"
-      role="dialog"
+      aria-live="polite"
+      className="pointer-events-auto fixed z-50 flex origin-top-left flex-col rounded-2xl border border-white/12 bg-slate-950/96 px-3 py-3 text-white shadow-[0_22px_56px_rgba(2,6,23,0.68)] backdrop-blur-xl transition-[top,left,opacity]"
+      style={{
+        left: placement.left,
+        top: placement.top,
+        width: `${SCAN_CARD_WIDTH_PX}px`,
+        maxWidth: "min(84vw, 286px)",
+      }}
     >
-      <div className="mx-auto mt-3 h-1.5 w-12 rounded-full bg-white/28" />
-      <div className="no-scrollbar max-h-[calc(78dvh-12px)] overflow-y-auto px-4 pb-[max(20px,env(safe-area-inset-bottom))] pt-4">
-        <div className="flex items-start gap-3">
-          <img
-            alt="Captured car part"
-            className="h-20 w-20 shrink-0 rounded-[20px] border border-white/12 object-cover"
-            src={scanState.frame.imageBase64}
-          />
-          <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">
-              {scanState.testRun ? "QA test result" : lookup ? "Saved scan" : "Scan review"}
-            </p>
-            <h1 id="scan-review-title" className="mt-1 break-words text-2xl font-extrabold tracking-tight">
-              {title}
-            </h1>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {result ? (
-                <>
-                  <ReviewPill label={`${result.confidence} confidence`} tone={result.confidence === "low" ? "warn" : "ok"} />
-                  <ReviewPill label={result.scanCategory} />
-                  <ReviewPill label={getReviewStatus(result)} tone={result.isSafetyCritical ? "warn" : "ok"} />
-                </>
-              ) : null}
-              {scanState.storageWarning ? <ReviewPill label="Not saved" tone="warn" /> : null}
-            </div>
+      <div
+        className={`pointer-events-none absolute top-6 h-0 w-0 border-t-[8px] border-b-[8px] border-transparent ${
+          placement.anchorSide === "right"
+            ? "left-[-10px] border-r-[10px] border-r-white/12"
+            : "right-[-10px] border-l-[10px] border-l-white/12"
+        }`}
+      />
+      <div className="flex items-start gap-2 pr-6">
+        <div className="min-w-0">
+          <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-white/55">Detection</p>
+          <h3 className="mt-1 truncate text-base font-black leading-tight tracking-tight">
+            {label}
+          </h3>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <span className="rounded-full border border-[var(--ds-accent-line)] bg-[var(--ds-accent-soft)] px-2 py-0.5 text-[10px] font-extrabold text-[var(--ds-accent)]">
+              {result?.scanCategory ?? "unknown"}
+            </span>
+            {!prefs.hideConfidence && confidence ? (
+              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-extrabold capitalize ${statusStyle.chip}`}>{confidence} confidence</span>
+            ) : null}
+            <span className="rounded-full border border-white/12 bg-white/6 px-2 py-0.5 text-[10px] font-extrabold text-white/78">
+              {review.source}
+            </span>
           </div>
+          <p className="mt-2 text-[11px] text-white/50">Updated {lastUpdated}</p>
         </div>
-
-        {capturedAt ? <p className="mt-3 text-xs font-semibold text-white/46">Captured {capturedAt}</p> : null}
-        {scanState.storageWarning ? <ReviewWarning title="Not saved locally" message={scanState.storageWarning} /> : null}
-
-        {result ? (
-          <div className="mt-4 space-y-3">
-            <ReviewSection title="What this is" items={[result.whatItDoes]} />
-            <ReviewSection title="What I see" items={result.visibleObservations} emptyText="No clear visual clues were returned." />
-            <ReviewSection title="Concerns" items={result.concerns} emptyText="Nothing concerning visible." />
-            <ReviewSection title="Next action" items={[result.nextAction]} />
-            <ReviewEvidenceRegions result={result} />
-            <ReviewCandidateMatches result={result} />
-            <ReviewSources result={result} />
-            <ReviewDataset lookup={lookup} result={result} testRun={Boolean(scanState.testRun)} />
-          </div>
-        ) : scanState.errorMessage ? (
-          <ReviewWarning title="AI identification failed" message={scanState.errorMessage} />
-        ) : (
-          <ReviewWarning title="No AI result" message="Deep Spec kept the captured photo, but this scan has no result attached yet." />
-        )}
-
-        <div className="sticky bottom-0 -mx-4 mt-4 grid grid-cols-2 gap-3 border-t border-white/10 bg-slate-950/96 px-4 py-4 backdrop-blur-xl">
-          <Button className="!bg-white !text-slate-950 shadow-none" type="button" onClick={onNewScan}>
-            New scan
-          </Button>
-          {lookup ? (
-            <Link
-              className="rounded-full bg-[var(--ds-accent)] px-5 py-3 text-center text-sm font-bold text-white shadow-sm"
-              to={`/result/${lookup.id}`}
-            >
-              Full report
-            </Link>
-          ) : (
-            <Link
-              className="rounded-full bg-[var(--ds-accent)] px-5 py-3 text-center text-sm font-bold text-white shadow-sm"
-              to="/history"
-            >
-              Saved scans
-            </Link>
-          )}
-          {lookup?.result ? (
-            <Link
-              className="col-span-2 rounded-full border border-white/12 bg-white/10 px-5 py-3 text-center text-sm font-bold text-white"
-              to={`/result/${lookup.id}/chat`}
-            >
-              Ask about this scan
-            </Link>
+        <button
+          className="ml-auto rounded-full border border-white/12 p-1 text-sm text-white/56 hover:bg-white/8"
+          onClick={onClose}
+          type="button"
+          aria-label="Close result card"
+        >
+          x
+        </button>
+      </div>
+      <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 p-3 text-xs leading-6 text-white/82">
+        <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/48">Detected area overlay</p>
+        <div className="relative mt-2 overflow-hidden rounded-xl border border-white/12 bg-black/30">
+          <img
+            alt={`Scan photo for ${label}`}
+            className="h-28 w-full object-cover"
+            src={review.scanState.frame.imageBase64}
+          />
+          {targetOverlayStyle ? (
+            <span
+              aria-hidden
+              className="absolute rounded-sm border-2 border-[var(--ds-accent)] bg-[var(--ds-accent)]/25 shadow-[0_0_0_1px_rgba(11,116,255,0.45)]"
+              style={{
+                height: `${targetOverlayStyle.height}%`,
+                left: `${targetOverlayStyle.left}%`,
+                top: `${targetOverlayStyle.top}%`,
+                width: `${targetOverlayStyle.width}%`,
+              }}
+            />
           ) : null}
         </div>
       </div>
-    </section>
-  );
-}
-
-function ReviewPill({ label, tone = "neutral" }: { label: string; tone?: "neutral" | "ok" | "warn" }) {
-  const styles = {
-    neutral: "border-white/12 bg-white/10 text-white/78",
-    ok: "border-[var(--ds-accent-line)] bg-[var(--ds-accent-soft)] text-[#93C5FD]",
-    warn: "border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] text-[#FCD34D]",
-  };
-
-  return (
-    <span className={`rounded-full border px-3 py-1 text-xs font-extrabold capitalize ${styles[tone]}`}>
-      {label.replaceAll("_", " ")}
-    </span>
-  );
-}
-
-function ReviewWarning({ message, title }: { message: string; title: string }) {
-  return (
-    <section className="mt-4 rounded-[22px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-4">
-      <p className="text-sm font-extrabold text-[#FCD34D]">{title}</p>
-      <p className="mt-2 text-sm leading-6 text-white/76">{message}</p>
-    </section>
-  );
-}
-
-function ReviewSection({ emptyText, items, title }: { emptyText?: string; items: string[]; title: string }) {
-  const visibleItems = items.filter(Boolean);
-
-  return (
-    <section className="rounded-[22px] border border-white/10 bg-white/[0.06] p-4">
-      <h2 className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/48">{title}</h2>
-      {visibleItems.length > 0 ? (
-        <ul className="mt-3 space-y-2 text-sm leading-6 text-white/86">
-          {visibleItems.map((item) => (
-            <li key={item}>{item}</li>
-          ))}
-        </ul>
-      ) : (
-        <p className="mt-3 text-sm leading-6 text-white/58">{emptyText}</p>
-      )}
-    </section>
-  );
-}
-
-function ReviewEvidenceRegions({ result }: { result: IdentificationResult }) {
-  if (!result.evidenceRegions.length) {
-    return null;
-  }
-
-  return (
-    <section className="rounded-[22px] border border-white/10 bg-white/[0.06] p-4">
-      <h2 className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/48">Image evidence</h2>
-      <div className="mt-3 grid grid-cols-1 gap-2">
-        {result.evidenceRegions.map((region) => (
-          <div key={`${region.regionLabel}-${region.label}`} className="rounded-2xl border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 py-3">
-            <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[#93C5FD]">{region.regionLabel}</p>
-            <p className="mt-1 text-sm font-extrabold text-white">{region.label}</p>
-            <p className="mt-1 text-sm leading-5 text-white/72">{region.observation}</p>
+      <div className={`mt-3 rounded-2xl border border-white/10 bg-white/5 p-3 text-xs leading-6 text-white/82 ${statusStyle.accent}`}>
+        {isMismatch ? (
+          <div className="mb-2 rounded-xl border border-[var(--ds-danger-line)] bg-[var(--ds-danger-soft)] p-2">
+            <p className="text-[11px] font-extrabold text-[var(--ds-danger-ink)]">Data mismatch. Re-scan this point.</p>
+            <button
+              className="mt-2 rounded-full bg-[var(--ds-danger)] px-3 py-2 text-[10px] font-extrabold text-white"
+              onClick={onRetryMismatch}
+              type="button"
+            >
+              Re-scan now
+            </button>
           </div>
-        ))}
+        ) : null}
+        {review.scanState.errorMessage ? (
+          <p className="text-[12px] text-[var(--ds-danger-ink)]">{review.scanState.errorMessage}</p>
+        ) : (
+          <ul className="space-y-1.5">
+            {cardFacts.map((fact) => (
+              <li key={fact} className="before:text-[var(--ds-accent)] before:content-['-'] before:mr-2">
+                {fact}
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
-    </section>
-  );
-}
+      {isExpanded ? (
+        <div className="mt-2 rounded-2xl border border-white/10 bg-white/5 p-3">
+          <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/48">Details</p>
+          <ul className="mt-2 space-y-1.5 text-xs leading-6 text-white/82">
+            {extendedFacts.map((fact) => (
+              <li key={fact} className="before:text-[var(--ds-accent)] before:content-['-'] before:mr-2">
+                {fact}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {review.scanState.result ? (
+        <a
+          className="mt-2 block rounded-full border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 py-2 text-center text-[11px] font-black uppercase tracking-[0.12em] text-white/78"
+          href={threeDSearchUrl}
+          rel="noreferrer"
+          target="_blank"
+        >
+          View 3D model
+        </a>
+      ) : null}
 
-function ReviewCandidateMatches({ result }: { result: IdentificationResult }) {
-  if (!result.candidateMatches.length) {
-    return null;
-  }
-
-  return (
-    <section className="rounded-[22px] border border-white/10 bg-white/[0.06] p-4">
-      <h2 className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/48">Other possible matches</h2>
-      <div className="mt-3 grid grid-cols-1 gap-2">
-        {result.candidateMatches.map((candidate) => (
-          <div key={`${candidate.partName}-${candidate.reason}`} className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-3">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-extrabold text-white">{candidate.partName}</p>
-              <ReviewPill label={candidate.confidence} tone={candidate.confidence === "low" ? "warn" : "ok"} />
+      <div className="mt-3 grid grid-cols-3 gap-2">
+        <button
+          className="col-span-2 min-h-11 rounded-full bg-[var(--ds-accent)] text-sm font-black tracking-tight text-white"
+          onClick={onOpenDetails}
+          type="button"
+        >
+          Open details
+        </button>
+        <button
+          className="min-h-11 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
+          onClick={onMeasure}
+          type="button"
+        >
+          Measure
+        </button>
+        <button
+          className="min-h-11 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
+          onClick={onCopyValue}
+          type="button"
+        >
+          Copy value
+        </button>
+      </div>
+      <div className="mt-2 grid grid-cols-1 gap-2">
+        {isReplacing ? (
+          <>
+            <input
+              aria-label="replacement label"
+              className="w-full rounded-xl border border-white/12 bg-slate-950 px-3 py-2 text-sm text-white outline-none placeholder:text-white/42"
+              maxLength={80}
+              onChange={(event) => onReplacementLabelChange(event.target.value)}
+              placeholder="Example: coolant reservoir cap"
+              value={replacementLabel}
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                className="rounded-full bg-white/85 px-3 py-2 text-xs font-black text-slate-900"
+                onClick={onReportReplace}
+                type="button"
+              >
+                Report / replace
+              </button>
+              <button
+                className="rounded-full border border-white/15 px-3 py-2 text-xs font-black text-white/82"
+                onClick={onCancelReplace}
+                type="button"
+              >
+                Cancel
+              </button>
             </div>
-            <p className="mt-1 text-xs font-semibold capitalize text-white/42">{candidate.scanCategory}</p>
-            <p className="mt-2 text-sm leading-5 text-white/72">{candidate.reason}</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function ReviewSources({ result }: { result: IdentificationResult }) {
-  const links = result.sourceLinks.filter((link) => /^https:\/\//.test(link.url)).slice(0, 4);
-  if (!links.length) {
-    return null;
-  }
-
-  return (
-    <section className="rounded-[22px] border border-white/10 bg-white/[0.06] p-4">
-      <h2 className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/48">Sources</h2>
-      <div className="mt-3 grid grid-cols-1 gap-2">
-        {links.map((link) => (
-          <a
-            key={link.url}
-            className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-3 text-sm font-bold leading-5 text-[#93C5FD]"
-            href={link.url}
-            rel="noreferrer"
-            target="_blank"
+          </>
+        ) : (
+          <button
+            className="rounded-full border border-white/15 px-3 py-2 text-xs font-black text-white/90"
+            onClick={onWrongLabel}
+            type="button"
           >
-            {link.label}
-            <span aria-hidden="true" className="mt-1 block text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/38">
-              {link.sourceType}
-            </span>
-          </a>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function ReviewDataset({
-  lookup,
-  result,
-  testRun,
-}: {
-  lookup: Lookup | null;
-  result: IdentificationResult;
-  testRun: boolean;
-}) {
-  const rows = [
-    ["Dataset category", lookup?.scanCategory ?? result.scanCategory],
-    ["Training label", lookup?.trainingLabel ?? result.partName],
-    ["Review status", lookup?.trainingStatus?.replaceAll("_", " ") ?? (testRun ? "test run only" : "not saved")],
-  ];
-
-  return (
-    <section className="rounded-[22px] border border-white/10 bg-white/[0.06] p-4">
-      <h2 className="text-xs font-extrabold uppercase tracking-[0.14em] text-white/48">Saved data</h2>
-      <div className="mt-3 grid grid-cols-1 gap-2">
-        {rows.map(([label, value]) => (
-          <div key={label} className="rounded-2xl border border-white/10 bg-white/[0.04] p-3">
-            <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-white/38">{label}</p>
-            <p className="mt-1 text-sm font-semibold capitalize leading-6 text-white/82">{value}</p>
+            Wrong label?
+          </button>
+        )}
+        {review.correction ? (
+          <div className="flex items-center justify-between gap-2 rounded-full border border-white/12 bg-white/8 px-3 py-2 text-xs">
+            <span className="font-black">Correction: {review.correction}</span>
+            <button className="font-black underline underline-offset-2" onClick={onUndoCorrection} type="button">
+              Undo
+            </button>
           </div>
-        ))}
+        ) : null}
       </div>
+      <div className="mt-2 flex items-center justify-between text-xs">
+        <button className="underline underline-offset-2" onClick={onToggleExpand} type="button">
+          {isExpanded ? "Show less" : "Show more"}
+        </button>
+        <div className="flex items-center gap-2">
+          <button className="underline underline-offset-2" onClick={onToggleCompactMode} type="button">
+            {prefs.compactCardsByDefault ? "Compact cards on" : "Compact cards off"}
+          </button>
+          <button className="underline underline-offset-2" onClick={onToggleHideConfidence} type="button">
+            {prefs.hideConfidence ? "Show confidence" : "Hide confidence"}
+          </button>
+        </div>
+      </div>
+      {scanCardStatusMessage ? <p className="mt-2 text-xs font-extrabold text-white/72">{scanCardStatusMessage}</p> : null}
+      {result ? (
+        <Link
+          className="mt-3 rounded-full border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 py-2 text-center text-[11px] font-black uppercase tracking-[0.14em] text-white/78"
+          to={result.partName ? "/history" : "/scan"}
+        >
+          Saved scans
+        </Link>
+      ) : null}
     </section>
   );
 }
 
-function getReviewStatus(result: IdentificationResult) {
-  if (result.safetyTriage === "needs_professional" || result.isSafetyCritical) {
-    return "Professional check";
-  }
-
-  if (result.safetyTriage === "needs_better_photo" || result.needsBetterPhoto) {
-    return "Better photo needed";
-  }
-
-  return "Useful match";
+function CaptureErrorNotice({ message, onTryAgain }: { message: string; onTryAgain: () => void }) {
+  return (
+    <div className="fixed bottom-[220px] left-1/2 z-20 w-[calc(100%-32px)] max-w-sm -translate-x-1/2 rounded-2xl border border-[var(--ds-danger-line)] bg-[#2A0F12]/92 p-4 text-center shadow-2xl">
+      <p className="text-sm font-extrabold text-[var(--ds-danger-ink)]">{message}</p>
+      <Button className="mt-3 w-full" onClick={onTryAgain}>
+        Try again
+      </Button>
+    </div>
+  );
 }
 
 function readImageFileAsDataUrl(file: File) {
@@ -784,13 +1106,225 @@ function readImageFileAsDataUrl(file: File) {
   });
 }
 
-function CaptureErrorNotice({ message, onTryAgain }: { message: string; onTryAgain: () => void }) {
+function isTargetMismatch(storedTarget: ScanReviewTarget, objectTarget: CameraObjectTarget) {
+  const current = getReviewTargetFromObject(objectTarget);
+  const distance = getTargetDistance(storedTarget, current);
+  const sameId = storedTarget.id === current.id;
+  return distance > MATCH_THRESHOLD || !sameId || storedTarget.confidence - objectTarget.confidence > 0.34;
+}
+
+function shouldTrackTarget(storedTarget: ScanReviewTarget, objectTarget: CameraObjectTarget | null) {
+  if (!objectTarget) {
+    return false;
+  }
+  if (storedTarget.id !== objectTarget.id) {
+    return false;
+  }
+  return !isTargetMismatch(storedTarget, objectTarget);
+}
+
+function getAnchoredReviewTarget(
+  storedTarget: ScanReviewTarget | null,
+  objectTarget: CameraObjectTarget | null,
+) {
+  if (!storedTarget) {
+    return null;
+  }
+
+  const nextTarget = shouldTrackTarget(storedTarget, objectTarget) && objectTarget
+    ? getReviewTargetFromObject(objectTarget)
+    : storedTarget;
+  return clampReviewTarget(nextTarget);
+}
+
+function clampReviewTarget(target: ScanReviewTarget): ScanReviewTarget {
+  return {
+    ...target,
+    x: clampNumber(target.x, 6, Math.max(6, window.innerWidth - 60)),
+    y: clampNumber(target.y, 6, Math.max(6, window.innerHeight - 60)),
+    width: clampNumber(target.width, 48, window.innerWidth),
+    height: clampNumber(target.height, 48, window.innerHeight),
+    confidence: clampNumber(target.confidence, 0, 1),
+  };
+}
+
+function getReviewTargetFromObject(target: CameraObjectTarget): ScanReviewTarget {
+  return {
+    confidence: target.confidence,
+    height: target.height,
+    id: target.id,
+    width: target.width,
+    x: target.left,
+    y: target.top,
+  };
+}
+
+function getObjectTargetFromReviewTarget(reviewTarget: ScanReviewTarget): CameraObjectTarget {
+  return {
+    confidence: reviewTarget.confidence,
+    height: reviewTarget.height,
+    holdProgress: 1,
+    id: reviewTarget.id,
+    isLocked: true,
+    left: reviewTarget.x,
+    top: reviewTarget.y,
+    width: reviewTarget.width,
+  };
+}
+
+function getReviewDisplayLabel(review: ScanReviewState) {
   return (
-    <div className="fixed bottom-[220px] left-1/2 z-20 w-[calc(100%-32px)] max-w-sm -translate-x-1/2 rounded-2xl border border-[var(--ds-danger-line)] bg-[#2A0F12]/92 p-4 text-center shadow-2xl">
-      <p className="text-sm font-extrabold text-[var(--ds-danger-ink)]">{message}</p>
-      <Button className="mt-3 w-full" onClick={onTryAgain}>
-        Try again
-      </Button>
-    </div>
+    review.correction?.trim()
+    || review.scanState.result?.partName
+    || review.lookup?.trainingLabel
+    || "Captured part"
   );
+}
+
+function getReviewTargetOverlayStyle(target: ScanReviewTarget | null) {
+  if (!target) {
+    return null;
+  }
+
+  return {
+    height: clampNumber((target.height / Math.max(1, window.innerHeight)) * 100, 1, 100),
+    left: clampNumber((target.x / Math.max(1, window.innerWidth)) * 100, 0, 100),
+    top: clampNumber((target.y / Math.max(1, window.innerHeight)) * 100, 0, 100),
+    width: clampNumber((target.width / Math.max(1, window.innerWidth)) * 100, 1, 100),
+  };
+}
+
+function get3DSearchUrl(label: string) {
+  const encoded = encodeURIComponent(`${label} 3D model`);
+  return `https://www.sketchfab.com/search?type=models&sort_by=-relevance&q=${encoded}`;
+}
+
+function getReviewFacts(result: IdentificationResult | undefined, compact: boolean) {
+  if (!result) {
+    return ["No AI result yet. Open the scan details to retry."];
+  }
+  const facts = [
+    result.whatItDoes ? summarize(result.whatItDoes, compact ? 110 : 180) : "",
+    ...result.visibleObservations.map((item) => summarize(item, compact ? 80 : 120)),
+    ...result.concerns.map((item) => `Caution: ${summarize(item, compact ? 70 : 120)}`),
+  ].filter(Boolean);
+
+  return facts.slice(0, compact ? 3 : 5);
+}
+
+function getReviewExpandedFacts(result: IdentificationResult | undefined) {
+  if (!result) {
+    return [];
+  }
+
+  return [
+    result.whatItDoes,
+    ...result.visibleObservations,
+    ...result.concerns,
+    result.nextAction,
+    ...result.evidence,
+    ...result.candidateMatches.map((item) => `${item.partName}: ${item.reason}`),
+  ]
+    .filter(Boolean)
+    .map((item) => summarize(item, 150))
+    .slice(0, 7);
+}
+
+function getConfidenceStyle(confidence: Confidence | undefined) {
+  if (confidence === "high") {
+    return {
+      accent: "shadow-[0_0_0_1px_rgba(16,185,129,0.25)]",
+      chip: "border-[var(--ds-ok-line)] bg-[var(--ds-ok-soft)] text-[var(--ds-ok-ink)]",
+    };
+  }
+
+  if (confidence === "medium") {
+    return {
+      accent: "shadow-[0_0_0_1px_rgba(245,158,11,0.22)]",
+      chip: "border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] text-[var(--ds-warn-ink)]",
+    };
+  }
+
+  return {
+    accent: "shadow-[0_0_0_1px_rgba(248,113,113,0.22)]",
+    chip: "border-[var(--ds-danger-line)] bg-[var(--ds-danger-soft)] text-[var(--ds-danger-ink)]",
+  };
+}
+
+function getReviewCardPlacement(target: ScanReviewTarget | null): ReviewCardPlacement {
+  if (!target) {
+    return {
+      anchorSide: "right",
+      left: 14,
+      top: Math.max(72, window.innerHeight - 220),
+    };
+  }
+
+  const margin = 12;
+  const gap = 10;
+  const canPlaceRight = target.x + target.width + SCAN_CARD_WIDTH_PX + gap < window.innerWidth;
+  const anchorSide = canPlaceRight ? "left" : "right";
+  const left = canPlaceRight
+    ? clampNumber(target.x + target.width + gap, 8, window.innerWidth - SCAN_CARD_WIDTH_PX - 12)
+    : clampNumber(target.x - SCAN_CARD_WIDTH_PX - gap, 8, window.innerWidth - SCAN_CARD_WIDTH_PX - 12);
+  const rawTop = target.y + target.height / 2;
+  const top = clampNumber(rawTop - margin, 72, Math.max(72, window.innerHeight - 220));
+
+  return { anchorSide, left, top };
+}
+
+function formatTimestamp(value: string) {
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return "just now";
+  }
+}
+
+function getTargetDistance(a: ScanReviewTarget, b: ScanReviewTarget) {
+  const centerXA = a.x + a.width / 2;
+  const centerXB = b.x + b.width / 2;
+  const centerYA = a.y + a.height / 2;
+  const centerYB = b.y + b.height / 2;
+  const widthDelta = Math.abs(a.width - b.width) / Math.max(1, window.innerWidth);
+  const heightDelta = Math.abs(a.height - b.height) / Math.max(1, window.innerHeight);
+  return (
+    Math.abs(centerXA - centerXB) / Math.max(1, window.innerWidth)
+    + Math.abs(centerYA - centerYB) / Math.max(1, window.innerHeight)
+    + widthDelta
+    + heightDelta
+  ) / 4;
+}
+
+async function copyText(value: string) {
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const success = document.execCommand("copy");
+    textarea.remove();
+    return success;
+  } catch {
+    return false;
+  }
+}
+
+function summarize(value: string, limit: number) {
+  const trimmed = value.trim();
+  if (trimmed.length <= limit) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, Math.max(12, limit - 1)).trimEnd()}...`;
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
 }
