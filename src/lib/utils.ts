@@ -1,5 +1,4 @@
 import type { CapturedFrame, ScanAnalysisState } from "../types";
-import { isTestMode } from "./testMode";
 
 const LATEST_CAPTURED_FRAME_KEY = "deep-spec:latest-captured-frame";
 const LATEST_SCAN_STATE_KEY = "deep-spec:latest-scan-state";
@@ -27,10 +26,6 @@ export function readLatestCapturedFrame(): CapturedFrame | null {
 }
 
 export function saveLatestScanState(state: ScanAnalysisState) {
-  if (isTestMode() || state.testRun) {
-    return;
-  }
-
   if (typeof sessionStorage === "undefined") {
     return;
   }

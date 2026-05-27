@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
 import CloudHealthCard from "../components/CloudHealthCard";
 import Button from "../components/ui/Button";
-import { isTestMode } from "../lib/testMode";
 import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } from "../lib/utils";
 import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
 import { buildScanReport, downloadTextFile, getMechanicSearchUrl, getScanReportFilename } from "../services/report";
@@ -28,8 +27,7 @@ export default function Result() {
   const frame = scanState?.frame ?? readLatestCapturedFrame();
   const capturedAt = frame?.capturedAt ? new Date(frame.capturedAt).toLocaleString() : null;
   const storageWarning = scanState?.storageWarning;
-  const isQaTestRun = Boolean(scanState?.testRun);
-  const canSaveForChat = Boolean(!isQaTestRun && scanState?.frame && scanState.result);
+  const canSaveForChat = Boolean(scanState?.frame && scanState.result);
   const datasetSourceUrls = scanState?.result ? getDatasetSourceUrls(scanState.result.evidence) : [];
 
   function handleRating(rating: Rating) {
@@ -75,11 +73,6 @@ export default function Result() {
   }
 
   function handleSaveAndAsk(question?: string) {
-    if (isQaTestRun) {
-      setSaveError("QA test scans are not saved. Exit test mode or take a real scan to ask follow-ups.");
-      return;
-    }
-
     if (!scanState?.frame || !scanState.result) {
       return;
     }
@@ -154,8 +147,7 @@ export default function Result() {
         <div className="relative z-10 -mt-7 rounded-t-[30px] bg-[var(--ds-page)] px-4 pb-8 pt-4 shadow-[0_-18px_48px_rgba(2,6,23,0.18)] lg:my-8 lg:-ml-10 lg:max-h-[calc(100dvh-64px)] lg:overflow-y-auto lg:rounded-[30px] lg:border lg:border-white/60 lg:shadow-[0_24px_70px_rgba(2,6,23,0.28)]">
           <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-300 lg:hidden" />
           <div className="space-y-3">
-          {isQaTestRun ? <TestRunNotice label={scanState?.testVehicleLabel} /> : null}
-          {!isQaTestRun && storageWarning ? <StorageWarning message={storageWarning} /> : null}
+          {storageWarning ? <StorageWarning message={storageWarning} /> : null}
           {!lookup && saveError ? <StorageWarning message={saveError} /> : null}
           {scanState?.result ? (
             <AnalysisResult
@@ -253,17 +245,6 @@ function getEvidenceCalloutPosition(regionLabel: string) {
   if (/lower|bottom/.test(label)) return "bottom-[24%] left-1/2 -translate-x-1/2";
   if (/upper|top/.test(label)) return "left-1/2 top-[22%] -translate-x-1/2";
   return "left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2";
-}
-
-function TestRunNotice({ label }: { label?: string }) {
-  return (
-    <section className="rounded-[24px] border border-[var(--ds-accent-line)] bg-[var(--ds-accent-soft)] p-5">
-      <p className="text-sm font-bold text-[var(--ds-accent)]">QA test result</p>
-      <p className="mt-2 text-sm leading-6 text-neutral-700">
-        This scan used {label ?? "a generated test photo"} and was not saved to history, cloud sync, or training review automatically.
-      </p>
-    </section>
-  );
 }
 
 function StorageWarning({ message }: { message: string }) {
@@ -1222,10 +1203,6 @@ function getScanState(state: unknown): ScanAnalysisState | null {
 
   if (isCapturedFrame(state)) {
     return { frame: state };
-  }
-
-  if (isTestMode()) {
-    return null;
   }
 
   return readLatestScanState();

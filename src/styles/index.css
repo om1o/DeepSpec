@@ -181,6 +181,62 @@ a {
   border-radius: 14px;
 }
 
+.scanner-lens-grid {
+  position: absolute;
+  inset: 14px;
+  border-radius: 18px;
+  background:
+    linear-gradient(rgba(255,255,255,0.10), rgba(255,255,255,0.10)) 50% 0 / 1px 100% no-repeat,
+    linear-gradient(90deg, rgba(255,255,255,0.10), rgba(255,255,255,0.10)) 0 50% / 100% 1px no-repeat,
+    radial-gradient(circle at 50% 50%, rgba(11,116,255,0.16), transparent 34%);
+}
+
+.scanner-lock-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 58%;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border: 1px dashed rgba(255,255,255,0.24);
+  border-radius: 9999px;
+}
+
+.scanner-lock-ring-locked {
+  border-color: rgba(11,116,255,0.88);
+  box-shadow: 0 0 26px rgba(11,116,255,0.30);
+}
+
+.scanner-center-pin {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  transform: translate(-50%, -50%);
+  border-radius: 9999px;
+  background: #fff;
+  box-shadow: 0 0 0 4px rgba(11,116,255,0.22), 0 0 18px rgba(11,116,255,0.42);
+}
+
+.scanner-side-tick {
+  position: absolute;
+  top: 50%;
+  width: 34px;
+  height: 2px;
+  transform: translateY(-50%);
+  border-radius: 9999px;
+  background: rgba(255,255,255,0.52);
+}
+
+.scanner-side-tick-left {
+  left: -42px;
+}
+
+.scanner-side-tick-right {
+  right: -42px;
+}
+
 .scanner-sweep::before {
   content: "";
   position: absolute;

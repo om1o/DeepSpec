@@ -2,6 +2,7 @@ import { IDENTIFY_PROMPT } from "../src/services/systemPrompts";
 import {
   SCAN_CATEGORIES,
   type CandidateMatch,
+  type Confidence,
   type EvidenceRegion,
   type IdentificationResult,
   type ScanCategory,
@@ -34,6 +35,7 @@ const DEFAULT_MODEL = "gemini-2.5-flash";
 const DEFAULT_FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
 const DEFAULT_OCR_MODEL = "microsoft/trocr-large-printed";
 const IDENTIFY_MAX_OUTPUT_TOKENS = 2048;
+const DEFAULT_IDENTIFY_PROVIDER_TIMEOUT_MS = 25_000;
 const DEFAULT_DATASET_ROOT = "datasets/raw/drbimmer-car-parts-and-damage-dataset";
 const DEFAULT_DATASET_INDEX_PATH = "datasets/derived/drbimmer-car-parts-and-damage-dataset/records.jsonl";
 const RETRYABLE_PROVIDER_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
@@ -138,7 +140,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
     const model = models[index];
     const hasFallback = index < models.length - 1;
     const startedAt = Date.now();
-    const response = await fetchGeminiIdentify(model, parsed, ocr, sourceContext, apiKey);
+    const response = await fetchGeminiIdentify(model, parsed, ocr, sourceContext, apiKey, env);
 
     if (!response) {
       const networkError = errorResponse(502, "network", "Deep Spec could not reach Gemini.");
@@ -271,12 +273,13 @@ function fetchGeminiIdentify(
   ocr: { text: string; model: string } | null,
   sourceContext: string | null,
   apiKey: string,
+  env: Record<string, string | undefined>,
 ) {
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
   return fetch(endpoint, {
     method: "POST",
-    signal: AbortSignal.timeout(25_000),
+    signal: AbortSignal.timeout(getIdentifyProviderTimeoutMs(env)),
     headers: {
       "Content-Type": "application/json",
       "x-goog-api-key": apiKey,
@@ -312,6 +315,20 @@ function fetchGeminiIdentify(
       },
     }),
   }).catch(() => null);
+}
+
+function getIdentifyProviderTimeoutMs(env: Record<string, string | undefined>) {
+  const value = env.DEEPSPEC_IDENTIFY_PROVIDER_TIMEOUT_MS;
+  if (!value) {
+    return DEFAULT_IDENTIFY_PROVIDER_TIMEOUT_MS;
+  }
+
+  const timeoutMs = Number(value);
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 5_000 || timeoutMs > 120_000) {
+    return DEFAULT_IDENTIFY_PROVIDER_TIMEOUT_MS;
+  }
+
+  return timeoutMs;
 }
 
 function parseIdentifyRequest(body: unknown):
@@ -412,13 +429,16 @@ function normalizeIdentificationResult(
   const needsBetterPhoto = result.needsBetterPhoto || safetyTriage === "needs_better_photo";
   const datasetMatches = findDatasetMatches(result, env);
   const cleanEvidence = appendDatasetEvidence(appendOcrEvidence(cleanList(result.evidence), ocrText), datasetMatches);
-  const partName = cleanText(result.partName, "Unidentified car part");
+  const originalPartName = cleanText(result.partName, "Unidentified car part");
+  const partName = resolvePrimaryPartName(originalPartName, datasetMatches);
   const scanCategory = getTrustedCategory(result);
   const visibleObservations = cleanList(result.visibleObservations);
+  const confidence = resolvePrimaryConfidence(result.confidence, originalPartName, partName, datasetMatches);
 
   return {
     ...result,
     partName,
+    confidence,
     scanCategory,
     candidateMatches: normalizeCandidateMatches(result, datasetMatches, partName, scanCategory),
     whatItDoes: cleanText(result.whatItDoes, "Deep Spec could not verify what this part does from this photo."),
@@ -434,6 +454,39 @@ function normalizeIdentificationResult(
     safetyTriage,
     needsBetterPhoto,
   };
+}
+
+function resolvePrimaryPartName(partName: string, datasetMatches: DatasetMatch[]) {
+  if (!isGenericPartName(partName)) {
+    return partName;
+  }
+
+  const supportedPartMatch = datasetMatches.find((match) => isDatasetPartMatch(match) && match.score >= 5);
+  return supportedPartMatch?.label ?? partName;
+}
+
+function resolvePrimaryConfidence(
+  confidence: Confidence,
+  originalPartName: string,
+  partName: string,
+  datasetMatches: DatasetMatch[],
+): Confidence {
+  if (confidence !== "low" || originalPartName === partName) {
+    return confidence;
+  }
+
+  const promotedMatch = datasetMatches.find((match) => isDatasetPartMatch(match) && match.label.toLowerCase() === partName.toLowerCase());
+  return promotedMatch && promotedMatch.score >= 5 ? "medium" : confidence;
+}
+
+function isGenericPartName(partName: string) {
+  return /^(unknown|unknown component|unidentified|unidentified car part|car part|vehicle component|vehicle part|damaged area|car body|vehicle body|body panel)$/i.test(
+    partName.trim(),
+  );
+}
+
+function isDatasetPartMatch(match: DatasetMatch) {
+  return match.kind === "part" || categorizeText(match.label) !== "unknown";
 }
 
 function appendDatasetEvidence(evidence: string[], matches: DatasetMatch[]) {
@@ -465,7 +518,7 @@ function normalizeCandidateMatches(
     .filter((candidate) => candidate.partName.toLowerCase() !== primaryPartName.toLowerCase());
 
   const datasetCandidates = datasetMatches
-    .filter((match) => match.kind === "part")
+    .filter(isDatasetPartMatch)
     .map((match) => ({
       partName: match.label,
       confidence: match.score >= 5 ? "medium" as const : "low" as const,
@@ -1091,7 +1144,7 @@ function categorizeText(text: string): ScanCategory {
   if (/fuel|gas|injector|fuel line|tank/.test(normalized)) return "fuel";
   if (/leak|oil|coolant|fluid/.test(normalized)) return "leak";
   if (/battery|alternator|starter|wire|wiring|connector|fuse|sensor|electrical/.test(normalized)) return "electrical";
-  if (/bumper|fender|door|panel|body/.test(normalized)) return "body";
+  if (/bumper|fender|door|panel|body|hood|windshield|window|wheel|headlight|tail\s*light|taillight|roof|grille|license|mirror|rocker|quarter|trunk/.test(normalized)) return "body";
   if (/engine|belt|hose|radiator|thermostat|filter|intake|manifold/.test(normalized)) return "engine";
 
   return "unknown";

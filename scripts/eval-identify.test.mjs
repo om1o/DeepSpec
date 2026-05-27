@@ -3,7 +3,9 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   DATASET_FETCH_TIMEOUT_MS,
+  PUBLIC_SAMPLE_SIZE,
   RELEASE_SAMPLE_IMAGES,
+  buildPublicSampleImages,
   buildEvalViteServerOptions,
   buildReviewLookup,
   getEvalExitCode,
@@ -51,6 +53,45 @@ describe("identify eval scoring", () => {
     expect(RELEASE_SAMPLE_IMAGES.filter((path) => path.startsWith("Car damages dataset/"))).toHaveLength(25);
     expect(RELEASE_SAMPLE_IMAGES.filter((path) => path.startsWith("Car parts dataset/"))).toHaveLength(25);
     expect(RELEASE_SAMPLE_IMAGES.every((path) => path.includes("/img/") && /\.(png|jpg)$/.test(path))).toBe(true);
+  });
+
+  it("builds a deterministic 300-case public sample set from the dataset index shape", () => {
+    const records = Array.from({ length: PUBLIC_SAMPLE_SIZE + 5 }, (_, index) => {
+      const label = index % 2 === 0 ? "Back-bumper" : "Scratch";
+      const group = label === "Scratch" ? "Car parts dataset" : "Car damages dataset";
+
+      return {
+        id: `record-${String(index).padStart(3, "0")}`,
+        primaryLabel: label,
+        rawGroupName: group,
+        source: {
+          image: `File1/img/Car damages ${index}.png`,
+        },
+      };
+    });
+
+    const samples = buildPublicSampleImages(records, PUBLIC_SAMPLE_SIZE);
+
+    expect(samples).toHaveLength(300);
+    expect(new Set(samples).size).toBe(300);
+    expect(samples[0]).toBe("Car damages dataset/File1/img/Car damages 0.png");
+    expect(samples[1]).toBe("Car parts dataset/File1/img/Car damages 1.png");
+  });
+
+  it("rejects a public sample set when the local index has too few usable images", () => {
+    expect(() =>
+      buildPublicSampleImages(
+        [
+          {
+            id: "one",
+            primaryLabel: "Scratch",
+            rawGroupName: "Car parts dataset",
+            source: { image: "File1/img/Car damages 1.png" },
+          },
+        ],
+        2,
+      ),
+    ).toThrow(/needs 2 usable indexed images/);
   });
 
   it("accepts directional label aliases", () => {

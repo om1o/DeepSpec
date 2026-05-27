@@ -31,6 +31,11 @@ export default function Reticle({ isLocked, isVisible, label, progress }: Reticl
       }}
     >
       <div className="absolute inset-0 rounded-[30px] border border-white/18 bg-black/5 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08),0_0_34px_rgba(11,116,255,0.25)]" />
+      <div className="scanner-lens-grid" />
+      <div className={cx("scanner-lock-ring", isLocked ? "scanner-lock-ring-locked" : "")} />
+      <div className="scanner-center-pin" />
+      <div className="scanner-side-tick scanner-side-tick-left" />
+      <div className="scanner-side-tick scanner-side-tick-right" />
       <div className={cx("scanner-sweep", isLocked ? "opacity-0" : "opacity-100")} />
       <div className="scanner-corner scanner-corner-tl" />
       <div className="scanner-corner scanner-corner-tr" />

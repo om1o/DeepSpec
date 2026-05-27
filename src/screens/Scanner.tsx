@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import Webcam from "react-webcam";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import IdentifyButton from "../components/scanner/IdentifyButton";
@@ -11,9 +12,7 @@ import { useStillness } from "../hooks/useStillness";
 import { assessImageQuality } from "../lib/imageQuality";
 import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
 import { getScanCardPreferences, type ScanCardPreferences, updateScanCardPreferences } from "../lib/scanResultCardSettings";
-import { isTestMode } from "../lib/testMode";
 import { saveLatestScanState } from "../lib/utils";
-import TestScanPanel from "../components/scanner/TestScanPanel";
 import { AIServiceError, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
 import { createLookup, updateLookup } from "../services/storage";
 import type { Confidence, IdentificationResult, CapturedFrame, LabelRescueTrigger, Lookup, ScanAnalysisState } from "../types";
@@ -22,7 +21,8 @@ const AUTO_SCAN_HOLD_MS = 5000;
 const SECOND_FRAME_DELAY_MS = 120;
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
 const MATCH_THRESHOLD = 0.18;
-const SCAN_CARD_WIDTH_PX = 286;
+const SCAN_CARD_WIDTH_PX = 340;
+const SCAN_CARD_SAFE_HEIGHT_PX = 560;
 
 const videoConstraints: MediaTrackConstraints = {
   facingMode: { ideal: "environment" },
@@ -76,9 +76,8 @@ export default function Scanner() {
     useCamera();
   const { error: motionError, isStable, needsPermission, requestPermission, usesFallback } =
     useStillness();
-  const qaTestMode = isTestMode(location.search);
   const objectTarget = useObjectTarget(webcamRef, {
-    enabled: cameraState === "ready" && !qaTestMode && !isAnalyzing && !scanReview,
+    enabled: cameraState === "ready" && !isAnalyzing && !scanReview,
     holdDurationMs: cameraState === "ready" && isStable && !isAnalyzing && !autoScanPaused && !scanReview
       ? AUTO_SCAN_HOLD_MS
       : undefined,
@@ -87,18 +86,16 @@ export default function Scanner() {
   const targetProgress = objectTarget?.holdProgress ?? 0;
   const hasTargetLock = Boolean(objectTarget?.isLocked);
   const autoScanSeconds = Math.max(1, Math.ceil((1 - targetProgress) * (AUTO_SCAN_HOLD_MS / 1000)));
-  const scannerStatus = qaTestMode
-    ? "Test scan ready"
-    : getScannerStatus({
-        autoScanPaused,
-        autoScanSeconds,
-        cameraState,
-        hasTarget: Boolean(objectTarget),
-        hasTargetLock,
-        isStable,
-        scanReview,
-        usesFallback,
-      });
+  const scannerStatus = getScannerStatus({
+    autoScanPaused,
+    autoScanSeconds,
+    cameraState,
+    hasTarget: Boolean(objectTarget),
+    hasTargetLock,
+    isStable,
+    scanReview,
+    usesFallback,
+  });
 
   const anchoredReviewTarget = useMemo(
     () => getAnchoredReviewTarget(scanReview?.reviewTarget ?? null, objectTarget),
@@ -149,19 +146,6 @@ export default function Scanner() {
       return;
     }
 
-    if (qaTestMode) {
-      setIsCardExpanded(!scanCardPrefs.compactCardsByDefault);
-      setScanReview({
-        correction: options.correction ?? null,
-        lookup: null,
-        reviewTarget: options.reviewTarget,
-        scanState: { ...scanState, testVehicleLabel: scanState.testVehicleLabel },
-        source,
-        sourceUpdatedAt,
-      });
-      return;
-    }
-
     const saved = createLookup(scanState);
     if (saved.ok) {
       saveLatestScanState(scanState);
@@ -191,7 +175,7 @@ export default function Scanner() {
       source,
       sourceUpdatedAt,
     });
-  }, [isScanRequestActive, qaTestMode, scanCardPrefs.compactCardsByDefault]);
+  }, [isScanRequestActive, scanCardPrefs.compactCardsByDefault]);
 
   const analyzeImageBase64 = useCallback(async (
     imageBase64: string,
@@ -217,12 +201,10 @@ export default function Scanner() {
       imageBase64,
       capturedAt: new Date().toISOString(),
     };
-    if (!qaTestMode) {
-      saveLatestScanState({ frame });
-    }
+    saveLatestScanState({ frame });
 
     setAnalysisStep("Checking saved matches");
-    const imageHash = !qaTestMode ? await hashImageDataUrl(imageBase64) : null;
+    const imageHash = await hashImageDataUrl(imageBase64);
     if (!isScanRequestActive(requestId)) return;
     if (imageHash) {
       const cached = getCachedScanResult(imageHash);
@@ -242,7 +224,7 @@ export default function Scanner() {
     }
 
     let secondFrame: CapturedFrame | undefined;
-    if (!qaTestMode && secondFrameProvider) {
+    if (secondFrameProvider) {
       await new Promise<void>((resolve) => setTimeout(resolve, SECOND_FRAME_DELAY_MS));
       if (!isScanRequestActive(requestId)) return;
       try {
@@ -292,7 +274,7 @@ export default function Scanner() {
         },
       );
     }
-  }, [isScanRequestActive, pauseAutoScan, persistAndShowReview, qaTestMode]);
+  }, [isScanRequestActive, pauseAutoScan, persistAndShowReview]);
 
   const handleIdentify = useCallback(async (reviewTargetOverride?: CameraObjectTarget) => {
     if (isAnalyzing) {
@@ -462,14 +444,14 @@ export default function Scanner() {
       return;
     }
 
-    if (qaTestMode) {
-      setScanCardStatusMessage("QA test results are in-memory only.");
+    saveLatestScanState(scanReview.scanState);
+    if (scanReview.lookup) {
+      navigate(`/result/${scanReview.lookup.id}`);
       return;
     }
 
-    saveLatestScanState(scanReview.scanState);
-    navigate(scanReview.lookup ? `/result/${scanReview.lookup.id}` : "/result");
-  }, [navigate, qaTestMode, scanReview]);
+    navigate("/result", { state: scanReview.scanState });
+  }, [navigate, scanReview]);
 
   const toggleCompactCardMode = useCallback(() => {
     const updated = updateScanCardPreferences(location.pathname, {
@@ -575,8 +557,8 @@ export default function Scanner() {
         </p>
       </header>
 
-      {!qaTestMode && cameraState === "loading" ? <CameraLoading /> : null}
-      {!qaTestMode && cameraState === "blocked" ? <CameraBlocked message={cameraError} onRetry={retryCamera} /> : null}
+      {cameraState === "loading" ? <CameraLoading /> : null}
+      {cameraState === "blocked" ? <CameraBlocked message={cameraError} onRetry={retryCamera} /> : null}
 
       {cameraState !== "blocked" ? (
         <>
@@ -594,12 +576,10 @@ export default function Scanner() {
       {scanReview?.scanState.result ? (
         <LensPartOverlays result={scanReview.scanState.result} target={anchoredReviewTarget} />
       ) : null}
-      {!qaTestMode ? (
-        <GalleryScanButton
-          isDisabled={isAnalyzing}
-          onFileSelected={(file) => void handleGalleryFile(file)}
-        />
-      ) : null}
+      <GalleryScanButton
+        isDisabled={isAnalyzing}
+        onFileSelected={(file) => void handleGalleryFile(file)}
+      />
       {isAnalyzing ? <AnalyzingOverlay onCancel={cancelCurrentScan} step={analysisStep} /> : null}
       {scanReview ? (
         <ScanResultCard
@@ -631,29 +611,12 @@ export default function Scanner() {
           onReplacementLabelChange={setReplacementLabel}
         />
       ) : null}
-      {!qaTestMode ? (
-        <IdentifyButton
-          isDisabled={cameraState !== "ready" || isAnalyzing}
-          isReady={cameraState === "ready" && !isAnalyzing && !scanReview && (hasTargetLock || usesFallback || isStable)}
-          isVisible={cameraState !== "blocked" && !scanReview}
-          onIdentify={() => void handleIdentify()}
-        />
-      ) : (
-        <TestScanPanel
-          onBusyChange={setIsAnalyzing}
-          onScanComplete={(scanState) => {
-            setIsCardExpanded(!scanCardPrefs.compactCardsByDefault);
-            setScanReview({
-                correction: null,
-                lookup: null,
-                reviewTarget: null,
-                scanState: { ...scanState, testRun: true },
-                source: "AI detection",
-                sourceUpdatedAt: new Date().toISOString(),
-              });
-          }}
-        />
-      )}
+      <IdentifyButton
+        isDisabled={cameraState !== "ready" || isAnalyzing}
+        isReady={cameraState === "ready" && !isAnalyzing && !scanReview && (hasTargetLock || usesFallback || isStable)}
+        isVisible={cameraState !== "blocked" && !scanReview}
+        onIdentify={() => void handleIdentify()}
+      />
     </main>
   );
 }
@@ -973,8 +936,9 @@ function ScanResultCard({
   const confidence = result?.confidence;
   const isCompact = prefs.compactCardsByDefault && !isExpanded;
   const statusStyle = getConfidenceStyle(confidence);
-  const cardFacts = getReviewFacts(result, isCompact);
-  const extendedFacts = getReviewExpandedFacts(result);
+  const visibleFacts = getVisibleFacts(result, isCompact);
+  const concernFacts = getConcernFacts(result, isCompact);
+  const evidenceFacts = getEvidenceFacts(result, isCompact);
   const lastUpdated = formatTimestamp(review.sourceUpdatedAt);
   const targetOverlayStyle = getReviewTargetOverlayStyle(target);
   const threeDSearchUrl = get3DSearchUrl(label);
@@ -982,12 +946,14 @@ function ScanResultCard({
   return (
     <section
       aria-live="polite"
-      className="pointer-events-auto fixed z-50 flex origin-top-left flex-col rounded-2xl border border-white/12 bg-slate-950/96 px-3 py-3 text-white shadow-[0_22px_56px_rgba(2,6,23,0.68)] backdrop-blur-xl transition-[top,left,opacity]"
+      className="pointer-events-auto fixed z-50 flex origin-top-left flex-col rounded-[22px] border border-white/14 bg-slate-950/96 px-4 py-4 text-white shadow-[0_24px_64px_rgba(2,6,23,0.72)] backdrop-blur-xl transition-[top,left,opacity]"
       style={{
         left: placement.left,
+        maxHeight: `min(72dvh, ${SCAN_CARD_SAFE_HEIGHT_PX}px)`,
+        overflowY: "auto",
         top: placement.top,
         width: `${SCAN_CARD_WIDTH_PX}px`,
-        maxWidth: "min(84vw, 286px)",
+        maxWidth: "min(92vw, 340px)",
       }}
     >
       <div
@@ -997,30 +963,27 @@ function ScanResultCard({
             : "right-[-10px] border-l-[10px] border-l-white/12"
         }`}
       />
-      <div className="flex items-start gap-2 pr-6">
-        <div className="min-w-0">
-          <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-white/55">Best match</p>
-          <h3 className="mt-1 truncate text-base font-black leading-tight tracking-tight">
-            {label}
-          </h3>
-          {result?.whatItDoes ? (
-            <p className="mt-1 text-xs leading-5 text-white/68">{summarize(result.whatItDoes, 118)}</p>
-          ) : null}
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--ds-accent)]">Lens result</p>
+          <h3 className="mt-1 text-xl font-black leading-tight tracking-tight">{label}</h3>
           <div className="mt-2 flex flex-wrap gap-2">
-            <span className="rounded-full border border-[var(--ds-accent-line)] bg-[var(--ds-accent-soft)] px-2 py-0.5 text-[10px] font-extrabold text-[var(--ds-accent)]">
+            <span className="rounded-full border border-[var(--ds-accent-line)] bg-[var(--ds-accent-soft)] px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-[0.08em] text-white">
               {result?.scanCategory ?? "unknown"}
             </span>
             {!prefs.hideConfidence && confidence ? (
-              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-extrabold capitalize ${statusStyle.chip}`}>{confidence} confidence</span>
+              <span className={`rounded-full border px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-[0.08em] ${statusStyle.chip}`}>
+                {confidence} confidence
+              </span>
             ) : null}
-            <span className="rounded-full border border-white/12 bg-white/6 px-2 py-0.5 text-[10px] font-extrabold text-white/78">
+            <span className="rounded-full border border-white/12 bg-white/6 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-[0.08em] text-white/78">
               {review.source}
             </span>
           </div>
           <p className="mt-2 text-[11px] text-white/50">Updated {lastUpdated}</p>
         </div>
         <button
-          className="ml-auto rounded-full border border-white/12 p-1 text-sm text-white/56 hover:bg-white/8"
+          className="grid size-8 shrink-0 place-items-center rounded-full border border-white/12 text-sm text-white/62 hover:bg-white/8"
           onClick={onClose}
           type="button"
           aria-label="Close result card"
@@ -1028,36 +991,69 @@ function ScanResultCard({
           x
         </button>
       </div>
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        <button
-          className="col-span-2 min-h-11 rounded-full bg-[var(--ds-accent)] text-sm font-black tracking-tight text-white"
-          onClick={onOpenDetails}
-          type="button"
-        >
-          Open details
-        </button>
-        <button
-          className="min-h-11 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
-          onClick={onMeasure}
-          type="button"
-        >
-          Measure
-        </button>
-        <button
-          className="col-span-3 min-h-10 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
-          onClick={onCopyValue}
-          type="button"
-        >
-          Copy value
-        </button>
+
+      <div className={`mt-4 border-t border-white/10 pt-3 text-xs leading-6 text-white/82 ${statusStyle.accent}`}>
+        {isMismatch ? (
+          <div className="mb-3 border-l-2 border-[var(--ds-danger)] pl-3">
+            <SectionTitle>Target changed</SectionTitle>
+            <p className="text-[12px] text-[var(--ds-danger-ink)]">The current object moved away from the saved scan point.</p>
+            <button
+              className="mt-2 rounded-full bg-[var(--ds-danger)] px-3 py-2 text-[10px] font-extrabold text-white"
+              onClick={onRetryMismatch}
+              type="button"
+            >
+              Rescan this point
+            </button>
+          </div>
+        ) : null}
+        {review.scanState.errorMessage ? (
+          <>
+            <SectionTitle>Scan issue</SectionTitle>
+            <p className="text-[12px] text-[var(--ds-danger-ink)]">{review.scanState.errorMessage}</p>
+          </>
+        ) : (
+          <>
+            {result?.whatItDoes ? (
+              <BubbleSection title="What this is">
+                <p>{summarize(result.whatItDoes, isCompact ? 150 : 220)}</p>
+              </BubbleSection>
+            ) : null}
+            <BubbleSection title="What I can see">
+              <FactList facts={visibleFacts} />
+            </BubbleSection>
+            <BubbleSection title="Why Deep Spec matched it">
+              <FactList facts={evidenceFacts} />
+            </BubbleSection>
+            <BubbleSection title="Cautions">
+              <FactList facts={concernFacts} emptyText="No visible damage or safety concern was called out in this photo." />
+            </BubbleSection>
+            {result?.nextAction ? (
+              <BubbleSection title="Next step">
+                <p>{summarize(result.nextAction, 170)}</p>
+              </BubbleSection>
+            ) : null}
+          </>
+        )}
       </div>
-      {isExpanded ? (
-      <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 p-3 text-xs leading-6 text-white/82">
-        <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/48">Detected area overlay</p>
+
+      {result?.candidateMatches.length ? (
+        <BubbleSection title="Related parts to compare">
+          <div className="space-y-2">
+            {result.candidateMatches.slice(0, isExpanded ? 4 : 2).map((candidate) => (
+              <div className="border-l border-white/16 pl-3" key={candidate.partName}>
+                <p className="font-black text-white">{candidate.partName}</p>
+                <p className="text-white/64">{summarize(candidate.reason, isCompact ? 90 : 140)}</p>
+              </div>
+            ))}
+          </div>
+        </BubbleSection>
+      ) : null}
+
+      <BubbleSection title="Image area">
         <div className="relative mt-2 overflow-hidden rounded-xl border border-white/12 bg-black/30">
           <img
             alt={`Scan photo for ${label}`}
-            className="h-28 w-full object-cover"
+            className="h-32 w-full object-cover"
             src={review.scanState.frame.imageBase64}
           />
           {targetOverlayStyle ? (
@@ -1073,73 +1069,44 @@ function ScanResultCard({
             />
           ) : null}
         </div>
-      </div>
-      ) : null}
-      <div className={`mt-3 rounded-2xl border border-white/10 bg-white/5 p-3 text-xs leading-6 text-white/82 ${statusStyle.accent}`}>
-        {isMismatch ? (
-          <div className="mb-2 rounded-xl border border-[var(--ds-danger-line)] bg-[var(--ds-danger-soft)] p-2">
-            <p className="text-[11px] font-extrabold text-[var(--ds-danger-ink)]">Data mismatch. Re-scan this point.</p>
-            <button
-              className="mt-2 rounded-full bg-[var(--ds-danger)] px-3 py-2 text-[10px] font-extrabold text-white"
-              onClick={onRetryMismatch}
-              type="button"
+      </BubbleSection>
+
+      <BubbleSection title="Actions">
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            className="col-span-2 min-h-11 rounded-full bg-[var(--ds-accent)] text-sm font-black tracking-tight text-white"
+            onClick={onOpenDetails}
+            type="button"
+          >
+            Open details
+          </button>
+          <button
+            className="min-h-10 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
+            onClick={onMeasure}
+            type="button"
+          >
+            Copy area size
+          </button>
+          <button
+            className="min-h-10 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
+            onClick={onCopyValue}
+            type="button"
+          >
+            Copy match
+          </button>
+          {review.scanState.result ? (
+            <a
+              className="col-span-2 rounded-full border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 py-2 text-center text-[11px] font-black uppercase tracking-[0.12em] text-white/78"
+              href={threeDSearchUrl}
+              rel="noreferrer"
+              target="_blank"
             >
-              Re-scan now
-            </button>
-          </div>
-        ) : null}
-        {review.scanState.errorMessage ? (
-          <p className="text-[12px] text-[var(--ds-danger-ink)]">{review.scanState.errorMessage}</p>
-        ) : (
-          <>
-            <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/48">Why it matched</p>
-            <ul className="mt-2 space-y-1.5">
-              {cardFacts.map((fact) => (
-                <li key={fact} className="before:text-[var(--ds-accent)] before:content-['-'] before:mr-2">
-                  {fact}
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-      </div>
-      {isExpanded && result?.candidateMatches.length ? (
-        <div className="mt-2 flex gap-2 overflow-hidden">
-          {result.candidateMatches.slice(0, 2).map((candidate) => (
-            <span
-              className="min-w-0 truncate rounded-full border border-white/12 bg-white/8 px-3 py-1.5 text-[11px] font-extrabold text-white/78"
-              key={candidate.partName}
-            >
-              Also check: {candidate.partName}
-            </span>
-          ))}
+              Search 3D models for this part
+            </a>
+          ) : null}
         </div>
-      ) : null}
-      {isExpanded ? (
-        <div className="mt-2 rounded-2xl border border-white/10 bg-white/5 p-3">
-          <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/48">Details</p>
-          <ul className="mt-2 space-y-1.5 text-xs leading-6 text-white/82">
-            {extendedFacts.map((fact) => (
-              <li key={fact} className="before:text-[var(--ds-accent)] before:content-['-'] before:mr-2">
-                {fact}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {isExpanded && review.scanState.result ? (
-        <a
-          className="mt-2 block rounded-full border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 py-2 text-center text-[11px] font-black uppercase tracking-[0.12em] text-white/78"
-          href={threeDSearchUrl}
-          rel="noreferrer"
-          target="_blank"
-        >
-          View 3D model
-        </a>
-      ) : null}
-      <div className="mt-2 grid grid-cols-1 gap-2">
         {isReplacing ? (
-          <>
+          <div className="mt-2 space-y-2">
             <input
               aria-label="replacement label"
               className="w-full rounded-xl border border-white/12 bg-slate-950 px-3 py-2 text-sm text-white outline-none placeholder:text-white/42"
@@ -1164,14 +1131,14 @@ function ScanResultCard({
                 Cancel
               </button>
             </div>
-          </>
+          </div>
         ) : (
           <button
-            className="rounded-full border border-white/15 px-3 py-2 text-xs font-black text-white/90"
+            className="mt-2 w-full rounded-full border border-white/15 px-3 py-2 text-xs font-black text-white/90"
             onClick={onWrongLabel}
             type="button"
           >
-            Wrong label?
+            Wrong match or wrong label?
           </button>
         )}
         {review.correction ? (
@@ -1182,12 +1149,13 @@ function ScanResultCard({
             </button>
           </div>
         ) : null}
-      </div>
-      <div className="mt-2 flex items-center justify-between text-xs">
+      </BubbleSection>
+
+      <div className="mt-2 flex items-center justify-between gap-3 border-t border-white/10 pt-3 text-xs">
         <button className="underline underline-offset-2" onClick={onToggleExpand} type="button">
           {isExpanded ? "Show less" : "Show more"}
         </button>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <button className="underline underline-offset-2" onClick={onToggleCompactMode} type="button">
             {prefs.compactCardsByDefault ? "Compact cards on" : "Compact cards off"}
           </button>
@@ -1199,13 +1167,41 @@ function ScanResultCard({
       {scanCardStatusMessage ? <p className="mt-2 text-xs font-extrabold text-white/72">{scanCardStatusMessage}</p> : null}
       {result ? (
         <Link
-          className="mt-3 rounded-full border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 py-2 text-center text-[11px] font-black uppercase tracking-[0.14em] text-white/78"
+          className="mt-3 rounded-full border border-white/12 bg-white/6 px-3 py-2 text-center text-[11px] font-black uppercase tracking-[0.14em] text-white/78"
           to={result.partName ? "/history" : "/scan"}
         >
           Saved scans
         </Link>
       ) : null}
     </section>
+  );
+}
+
+function BubbleSection({ children, title }: { children: ReactNode; title: string }) {
+  return (
+    <div className="border-t border-white/10 py-3 first:border-t-0 first:pt-0">
+      <SectionTitle>{title}</SectionTitle>
+      <div className="mt-1 text-xs leading-6 text-white/82">{children}</div>
+    </div>
+  );
+}
+
+function SectionTitle({ children }: { children: ReactNode }) {
+  return (
+    <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/48">{children}</p>
+  );
+}
+
+function FactList({ emptyText, facts }: { emptyText?: string; facts: string[] }) {
+  const items = facts.length ? facts : emptyText ? [emptyText] : [];
+  return (
+    <ul className="space-y-1.5">
+      {items.map((fact) => (
+        <li key={fact} className="pl-3 before:-ml-3 before:mr-2 before:text-[var(--ds-accent)] before:content-['-']">
+          {fact}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -1338,34 +1334,41 @@ function get3DSearchUrl(label: string) {
   return `https://www.sketchfab.com/search?type=models&sort_by=-relevance&q=${encoded}`;
 }
 
-function getReviewFacts(result: IdentificationResult | undefined, compact: boolean) {
+function getVisibleFacts(result: IdentificationResult | undefined, compact: boolean) {
   if (!result) {
     return ["No AI result yet. Open the scan details to retry."];
   }
-  const facts = [
-    ...result.visibleObservations.map((item) => summarize(item, compact ? 80 : 120)),
-    ...result.concerns.map((item) => `Caution: ${summarize(item, compact ? 70 : 120)}`),
-  ].filter(Boolean);
+  const facts = result.visibleObservations
+    .map((item) => summarize(item, compact ? 85 : 130))
+    .filter(Boolean);
 
-  return facts.length ? facts.slice(0, compact ? 3 : 5) : ["No visual evidence returned. Treat this as uncertain."];
+  return facts.length ? facts.slice(0, compact ? 3 : 5) : ["No visual observations were returned. Treat this as uncertain."];
 }
 
-function getReviewExpandedFacts(result: IdentificationResult | undefined) {
+function getConcernFacts(result: IdentificationResult | undefined, compact: boolean) {
   if (!result) {
     return [];
   }
 
-  return [
-    result.whatItDoes,
-    ...result.visibleObservations,
-    ...result.concerns,
-    result.nextAction,
+  return result.concerns
+    .map((item) => summarize(item, compact ? 85 : 130))
+    .filter(Boolean)
+    .slice(0, compact ? 3 : 5);
+}
+
+function getEvidenceFacts(result: IdentificationResult | undefined, compact: boolean) {
+  if (!result) {
+    return ["Deep Spec needs a completed AI result before it can explain the match."];
+  }
+
+  const facts = [
     ...result.evidence,
-    ...result.candidateMatches.map((item) => `${item.partName}: ${item.reason}`),
+    ...result.evidenceRegions.map((item) => `${item.regionLabel}: ${item.observation}`),
   ]
     .filter(Boolean)
-    .map((item) => summarize(item, 150))
-    .slice(0, 7);
+    .map((item) => summarize(item, compact ? 90 : 145));
+
+  return facts.length ? facts.slice(0, compact ? 3 : 6) : ["No diagnostic evidence was returned by the model."];
 }
 
 function getConfidenceStyle(confidence: Confidence | undefined) {
@@ -1394,7 +1397,7 @@ function getReviewCardPlacement(target: ScanReviewTarget | null): ReviewCardPlac
     return {
       anchorSide: "right",
       left: 14,
-      top: Math.max(72, window.innerHeight - 220),
+      top: Math.max(72, window.innerHeight - SCAN_CARD_SAFE_HEIGHT_PX),
     };
   }
 
@@ -1403,10 +1406,10 @@ function getReviewCardPlacement(target: ScanReviewTarget | null): ReviewCardPlac
   const canPlaceRight = target.x + target.width + SCAN_CARD_WIDTH_PX + gap < window.innerWidth;
   const anchorSide = canPlaceRight ? "left" : "right";
   const left = canPlaceRight
-    ? clampNumber(target.x + target.width + gap, 8, window.innerWidth - SCAN_CARD_WIDTH_PX - 12)
-    : clampNumber(target.x - SCAN_CARD_WIDTH_PX - gap, 8, window.innerWidth - SCAN_CARD_WIDTH_PX - 12);
+    ? clampNumber(target.x + target.width + gap, 14, window.innerWidth - SCAN_CARD_WIDTH_PX - 14)
+    : clampNumber(target.x - SCAN_CARD_WIDTH_PX - gap, 14, window.innerWidth - SCAN_CARD_WIDTH_PX - 14);
   const rawTop = target.y + target.height / 2;
-  const top = clampNumber(rawTop - margin, 72, Math.max(72, window.innerHeight - 220));
+  const top = clampNumber(rawTop - margin, 72, Math.max(72, window.innerHeight - SCAN_CARD_SAFE_HEIGHT_PX));
 
   return { anchorSide, left, top };
 }
