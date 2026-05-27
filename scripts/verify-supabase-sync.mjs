@@ -33,6 +33,10 @@ let ownerClient;
 let failureMessage;
 
 try {
+  console.log("[0/6] Checking Supabase Auth settings...");
+  await runPreflight(config);
+  console.log("      Anonymous sign-ins are enabled in Supabase Auth settings.");
+
   ownerClient = createClient(config.url, config.key, {
     auth: {
       autoRefreshToken: false,
@@ -42,7 +46,7 @@ try {
   });
 
   console.log("[1/6] Signing in as an anonymous Supabase user...");
-  const firstUser = await signInAnonymously(ownerClient);
+  const firstUser = await signInAnonymously(ownerClient, config);
   userId = firstUser.id;
   imagePath = `${userId}/${testId}.jpg`;
 
@@ -105,7 +109,7 @@ try {
       persistSession: false,
     },
   });
-  await signInAnonymously(otherClient);
+  await signInAnonymously(otherClient, config);
   const crossRead = await otherClient.from("scan_lookups").select("local_id").eq("local_id", testId);
   await assertNoError(crossRead, "Cross-user RLS check failed");
 
@@ -129,21 +133,112 @@ try {
   }
 }
 
-async function signInAnonymously(supabase) {
+async function signInAnonymously(supabase, config) {
   const { data, error } = await supabase.auth.signInAnonymously();
   if (error || !data.user) {
+    const code = error?.code ? ` (${error.code})` : "";
+    const status = error?.status ? `HTTP ${error.status}` : "unknown status";
+    const dashboardLinks = getDashboardLinks(config.url);
     throw new Error(
-      `Anonymous sign-in failed. Enable anonymous sign-ins in Supabase Auth settings. ${error?.message ?? ""}`.trim(),
+      [
+        `Anonymous sign-in failed: ${error?.message ?? "No user returned"}${code}, ${status}.`,
+        "The verifier already confirmed anonymous sign-ins are enabled, so this is a Supabase Auth/database problem instead of a browser app problem.",
+        dashboardLinks
+          ? `Open Auth logs for the failed /signup event: ${dashboardLinks.authLogs}`
+          : "Open Supabase Dashboard -> Auth logs for the failed /signup event.",
+        "Then run `npm run supabase:print-auth-diagnostics` and paste the SQL into Supabase SQL Editor.",
+        dashboardLinks ? `SQL Editor: ${dashboardLinks.sqlEditor}` : "Look for triggers or functions on auth.users that write to missing or constrained profile tables.",
+        "Common causes: an outdated Auth schema, or a database trigger on auth.users failing while inserting into public.profiles or another required table.",
+        "The private scan table and storage checks cannot run until Auth can create an anonymous user.",
+      ].join(" "),
     );
   }
 
   return data.user;
 }
 
+function getDashboardLinks(projectUrl) {
+  let hostname;
+
+  try {
+    hostname = new URL(projectUrl).hostname;
+  } catch {
+    return null;
+  }
+
+  const projectRef = hostname.endsWith(".supabase.co") ? hostname.replace(".supabase.co", "") : "";
+  if (!projectRef) {
+    return null;
+  }
+
+  return {
+    authLogs: `https://supabase.com/dashboard/project/${projectRef}/logs/auth-logs`,
+    sqlEditor: `https://supabase.com/dashboard/project/${projectRef}/sql/new`,
+  };
+}
+
+async function runPreflight(config) {
+  const headers = {
+    apikey: config.key,
+    Authorization: `Bearer ${config.key}`,
+  };
+  const settings = await fetchJson(`${config.url}/auth/v1/settings`, headers);
+
+  if (!settings.ok) {
+    throw new Error(`Could not read Supabase Auth settings: ${settings.status} ${settings.bodyText}`);
+  }
+
+  if (settings.body?.external?.anonymous_users !== true) {
+    throw new Error("Anonymous sign-ins are disabled in Supabase Auth settings.");
+  }
+}
+
+async function fetchJson(url, headers) {
+  const response = await fetch(url, { headers });
+  const bodyText = await response.text();
+  let parsedBody;
+
+  try {
+    parsedBody = bodyText ? JSON.parse(bodyText) : null;
+  } catch {
+    parsedBody = null;
+  }
+
+  return {
+    body: parsedBody,
+    bodyText,
+    ok: response.ok,
+    status: response.status,
+  };
+}
+
 async function assertNoError(result, label) {
   if (result.error) {
-    throw new Error(`${label}: ${result.error.message}`);
+    throw new Error(`${label}: ${formatSupabaseError(result.error)}`);
   }
+}
+
+function formatSupabaseError(error) {
+  const message = error.message ?? "Unknown Supabase error.";
+  const code = error.code ? ` (${error.code})` : "";
+
+  if (error.code === "PGRST205" || /schema cache/i.test(message)) {
+    return [
+      `${message}${code}.`,
+      "Apply supabase/migrations/20260518000100_deepspec_secure_foundation.sql,",
+      "or run npm run supabase:print-migration and paste that SQL into Supabase SQL Editor.",
+      "Then make sure Project Settings -> API exposes the public schema and wait for the schema cache to refresh.",
+    ].join(" ");
+  }
+
+  if (/bucket not found/i.test(message)) {
+    return [
+      `${message}${code}.`,
+      "Apply the DeepSpec Supabase migration so the private scan-images bucket and storage policies are created.",
+    ].join(" ");
+  }
+
+  return `${message}${code}`;
 }
 
 async function cleanupTestData(supabase, userId, testId, imagePath) {

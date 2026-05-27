@@ -1,13 +1,15 @@
-import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
-import type { IncomingMessage } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineConfig } from "vitest/config";
 import { loadEnv } from "vite";
+import type { ViteDevServer } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
-import { createChatResponse } from "./api/chat.shared";
-import { createIdentifyResponse } from "./api/identify.shared";
 
-export default defineConfig(({ mode }) => {
+type TailwindViteModule = typeof import("@tailwindcss/vite");
+const importTailwindcss = () => Function('return import("@tailwindcss/vite")')() as Promise<TailwindViteModule>;
+
+export default defineConfig(async ({ mode }) => {
+  const { default: tailwindcss } = await importTailwindcss();
   const env = loadEnv(mode, process.cwd(), "");
   const serverEnv = {
     ...process.env,
@@ -20,8 +22,8 @@ export default defineConfig(({ mode }) => {
       tailwindcss(),
       {
         name: "deep-spec-api",
-        configureServer(server) {
-          server.middlewares.use("/api/identify", async (request, response) => {
+        configureServer(server: ViteDevServer) {
+          server.middlewares.use("/api/identify", async (request: IncomingMessage, response: ServerResponse) => {
             response.setHeader("Cache-Control", "no-store");
 
             if (request.method !== "POST") {
@@ -32,13 +34,14 @@ export default defineConfig(({ mode }) => {
             }
 
             const body = await readJsonBody(request).catch(() => null);
+            const { createIdentifyResponse } = (await server.ssrLoadModule("/api/identify.shared.ts")) as typeof import("./api/identify.shared");
             const result = await createIdentifyResponse(body, serverEnv);
             response.statusCode = result.status;
             response.setHeader("Content-Type", "application/json");
             response.end(JSON.stringify(result.body));
           });
 
-          server.middlewares.use("/api/chat", async (request, response) => {
+          server.middlewares.use("/api/chat", async (request: IncomingMessage, response: ServerResponse) => {
             response.setHeader("Cache-Control", "no-store");
 
             if (request.method !== "POST") {
@@ -49,6 +52,7 @@ export default defineConfig(({ mode }) => {
             }
 
             const body = await readJsonBody(request).catch(() => null);
+            const { createChatResponse } = (await server.ssrLoadModule("/api/chat.shared.ts")) as typeof import("./api/chat.shared");
             const result = await createChatResponse(body, serverEnv);
             response.statusCode = result.status;
             response.setHeader("Content-Type", "application/json");
@@ -58,13 +62,13 @@ export default defineConfig(({ mode }) => {
       },
       VitePWA({
         registerType: "autoUpdate",
-        includeAssets: ["icon-192.png", "icon-512.png"],
+        includeAssets: ["icon-192.png", "icon-512.png", "brand/deepspec-logo.png"],
         manifest: {
           name: "Deep Spec",
           short_name: "Deep Spec",
           description: "Know what you're looking at.",
-          theme_color: "#0A0A0A",
-          background_color: "#0A0A0A",
+          theme_color: "#061522",
+          background_color: "#F7FAFF",
           display: "standalone",
           orientation: "portrait",
           start_url: "/",
@@ -96,6 +100,17 @@ export default defineConfig(({ mode }) => {
       environment: "jsdom",
       globals: true,
       setupFiles: "./src/test/setup.ts",
+      testTimeout: 15_000,
+    },
+    server: {
+      host: "0.0.0.0",
+      port: 5174,
+      strictPort: false,
+    },
+    preview: {
+      host: "0.0.0.0",
+      port: 4174,
+      strictPort: false,
     },
   };
 });

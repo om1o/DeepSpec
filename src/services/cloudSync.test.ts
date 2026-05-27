@@ -22,11 +22,20 @@ describe("cloudSync", () => {
   });
 
   it("stays disabled when Supabase public config is missing", async () => {
-    const { getCloudSyncStatus, syncLookupToCloud } = await import("./cloudSync");
+    const { getCloudHealthSnapshot, getCloudSyncStatus, syncLookupToCloud } = await import("./cloudSync");
 
     expect(getCloudSyncStatus()).toEqual({
       configured: false,
       message: "Cloud sync is off. Add Supabase public config after parent-approved privacy setup.",
+    });
+    expect(getCloudHealthSnapshot()).toMatchObject({
+      configured: false,
+      overall: "unconfigured",
+      checks: {
+        configured: {
+          status: "fail",
+        },
+      },
     });
 
     await expect(syncLookupToCloud(makeLookup())).resolves.toEqual({
@@ -78,6 +87,17 @@ describe("cloudSync", () => {
     );
   });
 
+  it("does not call configured cloud sync ready before the verifier proves it", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const { getCloudSyncStatus } = await import("./cloudSync");
+
+    expect(getCloudSyncStatus()).toEqual({
+      configured: true,
+      message: "Cloud sync is configured but not verified. Run the Supabase verifier before calling storage and RLS ready.",
+    });
+  });
+
   it("returns a plain-language error when anonymous sign-in is not enabled", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
@@ -97,6 +117,31 @@ describe("cloudSync", () => {
       ok: false,
       message: "Cloud sync needs Supabase anonymous sign-ins enabled before scans can upload.",
     });
+  });
+
+  it("resets clientPromise so the next call can retry after an import failure", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    mocks.createClient.mockRejectedValueOnce(new Error("Module load failed"));
+    const { syncLookupToCloud } = await import("./cloudSync");
+
+    // First call — import throws; should fail but not lock the promise
+    const first = await syncLookupToCloud(makeLookup());
+    expect(first.ok).toBe(false);
+
+    // Second call — createClient now succeeds
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    const upsert = vi.fn().mockResolvedValue({ error: null });
+    mocks.createClient.mockReturnValue({
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "user-retry" } }, error: null }),
+      },
+      from: vi.fn().mockReturnValue({ upsert }),
+      storage: { from: vi.fn().mockReturnValue({ upload }) },
+    });
+    const second = await syncLookupToCloud(makeLookup());
+    expect(second.ok).toBe(true);
   });
 
   it("syncs waitlist and feedback rows without storing service-role credentials", async () => {
@@ -135,7 +180,101 @@ describe("cloudSync", () => {
     ).resolves.toEqual({ ok: true, message: "Feedback synced." });
     expect(insert).toHaveBeenCalledTimes(2);
   });
+
+  it("checks runtime cloud health across auth, storage, row write, and RLS isolation", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    const remove = vi.fn().mockResolvedValue({ error: null });
+    const upsert = vi.fn().mockResolvedValue({ error: null });
+    const ownerDeleteQuery = makeDeleteQuery();
+    const crossReadEq = vi.fn().mockResolvedValue({ data: [], error: null });
+    mocks.createClient
+      .mockReturnValueOnce({
+        auth: {
+          signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "owner-1" } }, error: null }),
+        },
+        from: vi.fn().mockReturnValue({
+          delete: vi.fn().mockReturnValue(ownerDeleteQuery),
+          upsert,
+        }),
+        storage: {
+          from: vi.fn().mockReturnValue({ remove, upload }),
+        },
+      })
+      .mockReturnValueOnce({
+        auth: {
+          signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "other-1" } }, error: null }),
+        },
+        from: vi.fn().mockReturnValue({
+          select: vi.fn().mockReturnValue({ eq: crossReadEq }),
+        }),
+        storage: {
+          from: vi.fn(),
+        },
+      });
+    const { getCloudHealthSnapshot, verifyCloudHealth } = await import("./cloudSync");
+
+    const report = await verifyCloudHealth();
+
+    expect(report.overall).toBe("ready");
+    expect(report.lastVerifiedAt).toBe(report.checkedAt);
+    expect(report.checks.configured.status).toBe("pass");
+    expect(report.checks.anonymousAuth.status).toBe("pass");
+    expect(report.checks.storageUpload.status).toBe("pass");
+    expect(report.checks.rowUpsert.status).toBe("pass");
+    expect(report.checks.rlsIsolation.status).toBe("pass");
+    expect(upload).toHaveBeenCalledWith(
+      expect.stringMatching(/^owner-1\/health-.+\.jpg$/),
+      expect.any(Blob),
+      expect.objectContaining({ contentType: "image/jpeg", upsert: false }),
+    );
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        image_path: expect.stringMatching(/^owner-1\/health-.+\.jpg$/),
+        scan_category: "unknown",
+        training_label: "Runtime Health Check",
+        training_status: "raw_unreviewed",
+        user_id: "owner-1",
+      }),
+      { onConflict: "user_id,local_id" },
+    );
+    expect(crossReadEq).toHaveBeenCalledWith("local_id", expect.stringMatching(/^health-/));
+    expect(remove).toHaveBeenCalledWith([expect.stringMatching(/^owner-1\/health-.+\.jpg$/)]);
+    expect(getCloudHealthSnapshot().overall).toBe("ready");
+  });
+
+  it("reports the anonymous auth step as blocked before storage checks run", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const upload = vi.fn();
+    mocks.createClient.mockReturnValue({
+      auth: {
+        signInAnonymously: vi.fn().mockResolvedValue({ data: { user: null }, error: { message: "Database error creating anonymous user" } }),
+      },
+      from: vi.fn(),
+      storage: {
+        from: vi.fn().mockReturnValue({ upload }),
+      },
+    });
+    const { verifyCloudHealth } = await import("./cloudSync");
+
+    const report = await verifyCloudHealth();
+
+    expect(report.overall).toBe("blocked");
+    expect(report.checks.configured.status).toBe("pass");
+    expect(report.checks.anonymousAuth.status).toBe("fail");
+    expect(report.checks.storageUpload.status).toBe("unknown");
+    expect(report.lastVerifiedAt).toBeNull();
+    expect(upload).not.toHaveBeenCalled();
+  });
 });
+
+function makeDeleteQuery() {
+  const secondEq = vi.fn().mockResolvedValue({ error: null });
+  const firstEq = vi.fn().mockReturnValue({ eq: secondEq });
+  return { eq: firstEq };
+}
 
 function makeLookup(): Lookup {
   return {
@@ -160,8 +299,11 @@ function makeLookup(): Lookup {
       partName: "Alternator",
       safetyTriage: "can_help",
       scanCategory: "electrical",
+      candidateMatches: [],
       visibleObservations: ["Belt-driven housing is visible."],
+      evidenceRegions: [],
       whatItDoes: "It charges the battery while the engine runs.",
+      sourceLinks: [],
     },
     scanCategory: "electrical",
     trainingLabel: "Alternator",

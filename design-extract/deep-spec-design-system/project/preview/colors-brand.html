@@ -1,0 +1,32 @@
+<!doctype html>
+<html><head><meta charset="utf-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  body { margin: 0; padding: 20px; background: var(--ds-bg); font-family: var(--ds-font-sans); color: #fff; }
+  .grid { display: grid; grid-template-columns: 220px 1fr; gap: 14px; }
+  .hero { background: #FACC15; color: #0A0A0A; border-radius: 22px; padding: 18px; min-height: 120px; display: flex; flex-direction: column; justify-content: space-between; box-shadow: 0 0 30px rgba(250,204,21,0.30); }
+  .hero .name { font-size: 16px; font-weight: 800; }
+  .hero .hex { font-family: ui-monospace, monospace; font-size: 12px; font-weight: 600; }
+  .hero .tag { font-size: 10px; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; }
+  .uses { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .use { background: #171717; border: 1px solid rgba(255,255,255,0.10); border-radius: 18px; padding: 12px; }
+  .use .lab { font-size: 10px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255,255,255,0.42); margin-bottom: 8px; }
+  .eyebrow-demo { font-size: 13px; font-weight: 700; color: #FACC15; }
+  .reticle-strip { height: 32px; border: 1.5px dashed rgba(250,204,21,0.45); border-radius: 10px; box-shadow: 0 0 14px rgba(250,204,21,0.25); }
+  .focusring { height: 32px; border-radius: 12px; border: 1px solid rgba(250,204,21,0.50); background: rgba(0,0,0,0.28); }
+  .soft { height: 32px; border-radius: 12px; background: rgba(250,204,21,0.12); border: 1px solid rgba(250,204,21,0.30); }
+</style></head>
+<body>
+  <div class="grid">
+    <div class="hero">
+      <div class="tag">SCANNER YELLOW</div>
+      <div><div class="name">--ds-accent</div><div class="hex">#FACC15</div></div>
+    </div>
+    <div class="uses">
+      <div class="use"><div class="lab">RETICLE BORDER</div><div class="reticle-strip"></div></div>
+      <div class="use"><div class="lab">INPUT FOCUS</div><div class="focusring"></div></div>
+      <div class="use"><div class="lab">SOFT FILL · 12%</div><div class="soft"></div></div>
+      <div class="use"><div class="lab">EYEBROW INK</div><div class="eyebrow-demo">Trust check</div></div>
+    </div>
+  </div>
+</body></html>

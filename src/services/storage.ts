@@ -1,8 +1,9 @@
-import type { ChatMessage, Confidence, IdentificationResult, Lookup, Rating, ScanAnalysisState, ScanCategory, TrainingStatus } from "../types";
+import type { CandidateMatch, ChatMessage, Confidence, EvidenceRegion, IdentificationResult, Lookup, Rating, ScanAnalysisState, ScanCategory, SourceLink, TrainingStatus } from "../types";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
 export const MAX_SAVED_LOOKUPS = 50;
 const MAX_CHAT_MESSAGES = 40;
+const CHAT_KEY = (id: string) => `deep-spec:chat:${id}`;
 
 type StorageResult<T> =
   | {
@@ -62,7 +63,9 @@ export function getLookups(): Lookup[] {
 }
 
 export function getLookup(id: string): Lookup | null {
-  return getLookups().find((lookup) => lookup.id === id) ?? null;
+  const lookup = getLookups().find((l) => l.id === id) ?? null;
+  if (!lookup) return null;
+  return mergeLookupChatHistory(lookup);
 }
 
 export function updateLookup(
@@ -94,16 +97,10 @@ export function updateLookup(
     : { ok: false, message: writeResult.message, value: updatedLookup };
 }
 
-export function createChatMessage(role: ChatMessage["role"], content: string): ChatMessage {
-  return {
-    id: createId(),
-    role,
-    content: cleanText(content, role === "user" ? 500 : 1200),
-    timestamp: new Date().toISOString(),
-  };
-}
-
-export function appendChatMessages(id: string, messages: ChatMessage[]): StorageResult<Lookup | null> {
+export function updateLookupResult(
+  id: string,
+  result: IdentificationResult,
+): StorageResult<Lookup | null> {
   const lookups = getLookups();
   const index = lookups.findIndex((lookup) => lookup.id === id);
 
@@ -111,14 +108,16 @@ export function appendChatMessages(id: string, messages: ChatMessage[]): Storage
     return { ok: false, message: "This saved scan was not found.", value: null };
   }
 
-  const cleanMessages = messages.map(normalizeChatMessage).filter((message): message is ChatMessage => Boolean(message));
-  if (cleanMessages.length === 0) {
-    return { ok: true, value: lookups[index] };
-  }
-
+  const existing = lookups[index];
   const updatedLookup: Lookup = {
-    ...lookups[index],
-    chatHistory: [...lookups[index].chatHistory, ...cleanMessages].slice(-MAX_CHAT_MESSAGES),
+    ...existing,
+    result,
+    errorMessage: undefined,
+    errorCode: undefined,
+    analyzedAt: new Date().toISOString(),
+    scanCategory: categorizeScan(result, existing.correction ?? undefined),
+    trainingLabel: getTrainingLabel(result, existing.correction),
+    trainingStatus: getTrainingStatus(existing.rating, existing.correction),
   };
 
   const updatedLookups = [...lookups];
@@ -130,6 +129,57 @@ export function appendChatMessages(id: string, messages: ChatMessage[]): Storage
     : { ok: false, message: writeResult.message, value: updatedLookup };
 }
 
+
+export function createChatMessage(role: ChatMessage["role"], content: string): ChatMessage {
+  return {
+    id: createId(),
+    role,
+    content: cleanText(content, role === "user" ? 500 : 1200),
+    timestamp: new Date().toISOString(),
+  };
+}
+
+export function appendChatMessages(id: string, messages: ChatMessage[]): StorageResult<Lookup | null> {
+  const lookup = getLookup(id);
+  if (!lookup) {
+    return { ok: false, message: "This saved scan was not found.", value: null };
+  }
+
+  const cleanMessages = messages.map(normalizeChatMessage).filter((message): message is ChatMessage => Boolean(message));
+  if (cleanMessages.length === 0) {
+    return { ok: true, value: lookup };
+  }
+
+  const updatedHistory = [...lookup.chatHistory, ...cleanMessages].slice(-MAX_CHAT_MESSAGES);
+  const updatedLookup: Lookup = { ...lookup, chatHistory: updatedHistory };
+  const lookups = getLookups();
+  const index = lookups.findIndex((storedLookup) => storedLookup.id === id);
+
+  if (index === -1) {
+    return { ok: false, message: "This saved scan was not found.", value: null };
+  }
+
+  const updatedLookups = [...lookups];
+  updatedLookups[index] = updatedLookup;
+
+  const lookupWriteResult = writeLookups(updatedLookups);
+  if (!lookupWriteResult.ok) {
+    return { ok: false, message: lookupWriteResult.message, value: updatedLookup };
+  }
+
+  const chatWriteResult = writeChatHistory(id, updatedHistory);
+  if (!chatWriteResult.ok) {
+    try {
+      localStorage.removeItem(CHAT_KEY(id));
+    } catch {
+      // Fall back to the parent lookup record if the per-scan chat key cannot be updated.
+    }
+    return { ok: false, message: chatWriteResult.message, value: updatedLookup };
+  }
+
+  return { ok: true, value: updatedLookup };
+}
+
 export function deleteLookup(id: string): StorageResult<boolean> {
   const existing = getLookups();
   const next = existing.filter((lookup) => lookup.id !== id);
@@ -139,6 +189,9 @@ export function deleteLookup(id: string): StorageResult<boolean> {
   }
 
   const writeResult = writeLookups(next);
+  if (writeResult.ok && hasLocalStorage()) {
+    try { localStorage.removeItem(CHAT_KEY(id)); } catch { /* ignore */ }
+  }
   return writeResult.ok ? { ok: true, value: true } : { ok: false, message: writeResult.message, value: false };
 }
 
@@ -150,6 +203,38 @@ export function scanStateFromLookup(lookup: Lookup): ScanAnalysisState {
     errorCode: lookup.errorCode,
     analyzedAt: lookup.analyzedAt,
   };
+}
+
+function mergeLookupChatHistory(lookup: Lookup): Lookup {
+  if (!hasLocalStorage()) return lookup;
+  try {
+    const raw = localStorage.getItem(CHAT_KEY(lookup.id));
+    if (!raw) return lookup;
+    const parsed = JSON.parse(raw) as unknown;
+    const chatHistory = normalizeChatHistory(parsed);
+    if (chatHistory.length === 0) return lookup;
+    return { ...lookup, chatHistory };
+  } catch {
+    return lookup;
+  }
+}
+
+function writeChatHistory(id: string, history: ChatMessage[]): StorageResult<ChatMessage[]> {
+  if (!hasLocalStorage()) {
+    return { ok: false, message: "Saved scans are not available in this browser.", value: history };
+  }
+  try {
+    localStorage.setItem(CHAT_KEY(id), JSON.stringify(history));
+    return { ok: true, value: history };
+  } catch (error) {
+    return {
+      ok: false,
+      message: isQuotaError(error)
+        ? "Your device storage is full. Delete older saved scans, then try again."
+        : "Deep Spec could not save this scan on this device.",
+      value: history,
+    };
+  }
 }
 
 function writeLookups(lookups: Lookup[]): StorageResult<Lookup[]> {
@@ -165,6 +250,7 @@ function writeLookups(lookups: Lookup[]): StorageResult<Lookup[]> {
 
   try {
     localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify(cappedLookups));
+    pruneChatHistory(lookups.slice(MAX_SAVED_LOOKUPS));
     return { ok: true, value: cappedLookups };
   } catch (error) {
     return {
@@ -174,6 +260,16 @@ function writeLookups(lookups: Lookup[]): StorageResult<Lookup[]> {
         : "Deep Spec could not save this scan on this device.",
       value: cappedLookups,
     };
+  }
+}
+
+function pruneChatHistory(droppedLookups: Lookup[]) {
+  for (const lookup of droppedLookups) {
+    try {
+      localStorage.removeItem(CHAT_KEY(lookup.id));
+    } catch {
+      // Best-effort cleanup after the bounded lookup index is already saved.
+    }
   }
 }
 
@@ -264,6 +360,10 @@ function isTrainingStatus(value: unknown): value is TrainingStatus {
   return value === "raw_unreviewed" || value === "user_confirmed" || value === "user_corrected";
 }
 
+function isSourceType(value: unknown): value is SourceLink["sourceType"] {
+  return value === "dataset" || value === "reference" || value === "search" || value === "safety";
+}
+
 function getTrainingStatus(rating: Rating | undefined, correction: string | null | undefined): TrainingStatus {
   if (correction?.trim()) {
     return "user_corrected";
@@ -340,15 +440,75 @@ function normalizeStoredIdentificationResult(value: unknown, correction?: string
     partName: cleanText(result.partName, 80),
     confidence: result.confidence,
     scanCategory: isScanCategory(result.scanCategory) ? result.scanCategory : categorizeScan(result, correction),
+    candidateMatches: normalizeCandidateMatches(result.candidateMatches),
     whatItDoes: cleanText(result.whatItDoes, 500),
     visibleObservations: cleanStringArray(result.visibleObservations, 6, 180),
+    evidenceRegions: normalizeEvidenceRegions(result.evidenceRegions, result.visibleObservations, result.evidence),
     concerns: cleanStringArray(result.concerns, 6, 180),
     safetyTriage: result.safetyTriage,
     isSafetyCritical: result.isSafetyCritical,
     nextAction: cleanText(result.nextAction, 500),
     needsBetterPhoto: result.needsBetterPhoto,
-    evidence: cleanStringArray(result.evidence, 6, 180),
+    evidence: cleanStringArray(result.evidence, 8, 320),
+    sourceLinks: normalizeSourceLinks(result.sourceLinks),
   };
+}
+
+function normalizeCandidateMatches(value: unknown): CandidateMatch[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is Partial<CandidateMatch> => typeof item === "object" && item !== null)
+    .map((candidate) => ({
+      partName: typeof candidate.partName === "string" ? cleanText(candidate.partName, 80) : "",
+      confidence: isConfidence(candidate.confidence) ? candidate.confidence : "low",
+      scanCategory: isScanCategory(candidate.scanCategory) ? candidate.scanCategory : categorizeText(candidate.partName ?? ""),
+      reason: typeof candidate.reason === "string" ? cleanText(candidate.reason, 180) : "",
+    }))
+    .filter((candidate) => candidate.partName && candidate.reason)
+    .slice(0, 4);
+}
+
+function normalizeEvidenceRegions(regions: unknown, observations: unknown[], evidence: unknown[]): EvidenceRegion[] {
+  if (Array.isArray(regions)) {
+    const cleaned = regions
+      .filter((item): item is Partial<EvidenceRegion> => typeof item === "object" && item !== null)
+      .map((region) => ({
+        label: typeof region.label === "string" ? cleanText(region.label, 80) : "",
+        observation: typeof region.observation === "string" ? cleanText(region.observation, 180) : "",
+        regionLabel: typeof region.regionLabel === "string" ? cleanText(region.regionLabel, 80) : "Scanned area",
+      }))
+      .filter((region) => region.label && region.observation)
+      .slice(0, 4);
+
+    if (cleaned.length) {
+      return cleaned;
+    }
+  }
+
+  return cleanStringArray([...observations, ...evidence], 3, 180).map((observation, index) => ({
+    label: index === 0 ? "Primary clue" : `Clue ${index + 1}`,
+    observation,
+    regionLabel: "Scanned area",
+  }));
+}
+
+function normalizeSourceLinks(value: unknown): SourceLink[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is Partial<SourceLink> => typeof item === "object" && item !== null)
+    .map((link) => ({
+      label: typeof link.label === "string" ? cleanText(link.label, 80) : "",
+      url: typeof link.url === "string" ? cleanText(link.url, 300) : "",
+      sourceType: isSourceType(link.sourceType) ? link.sourceType : "reference",
+    }))
+    .filter((link) => link.label && /^https:\/\//.test(link.url))
+    .slice(0, 6);
 }
 
 function normalizeChatHistory(value: unknown): ChatMessage[] {

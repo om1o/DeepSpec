@@ -38,24 +38,24 @@ export async function createChatResponse(body: unknown, env: Record<string, stri
   const startedAt = Date.now();
   const response = await fetch(endpoint, {
     method: "POST",
+    signal: AbortSignal.timeout(20_000),
     headers: {
       "Content-Type": "application/json",
       "x-goog-api-key": apiKey,
     },
     body: JSON.stringify({
+      system_instruction: {
+        parts: [{ text: FOLLOWUP_PROMPT }],
+      },
       contents: [
         {
           role: "user",
-          parts: [
-            {
-              text: `${FOLLOWUP_PROMPT}\n\nSaved scan context and user question:\n${parsed.userMessage}`,
-            },
-          ],
+          parts: [{ text: parsed.userMessage }],
         },
       ],
       generationConfig: {
-        temperature: 0.4,
-        maxOutputTokens: 320,
+        temperature: 0.3,
+        maxOutputTokens: 480,
       },
     }),
   }).catch(() => null);
@@ -68,7 +68,8 @@ export async function createChatResponse(body: unknown, env: Record<string, stri
     return errorResponse(429, "rate_limited", "Too many AI chat requests right now. Try again in a few minutes.");
   }
 
-  const responseBody = (await response.json().catch(() => null)) as JsonObject | null;
+  const isJson = (response.headers.get("content-type") ?? "").includes("application/json");
+  const responseBody = isJson ? ((await response.json().catch(() => null)) as JsonObject | null) : null;
 
   if (!response.ok) {
     return errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));

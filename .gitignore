@@ -4,6 +4,11 @@ dev-dist/
 dist-ssr/
 .vite/
 .vercel/
+supabase/.temp/
+.deepspec-eval/
+.playwright-mcp/
+datasets/raw/
+datasets/derived/
 
 .DS_Store
 *.local
