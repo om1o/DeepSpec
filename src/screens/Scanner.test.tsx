@@ -326,7 +326,7 @@ describe("Scanner", () => {
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
   }, 10000);
 
-  it("runs the generated engine test scan without saving it to history", async () => {
+  it("runs the generated engine test scan through the AI model without saving it to history", async () => {
     window.history.pushState({}, "", "/scan?test=1");
     objectTargetState.current = null;
     vi.stubGlobal(
@@ -349,13 +349,13 @@ describe("Scanner", () => {
       </MemoryRouter>,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "Test engine photo" }));
+    await userEvent.click(screen.getByRole("button", { name: "Run AI test photo" }));
 
     const review = await screen.findByRole("heading", { level: 3, name: "Alternator" });
     const reviewCard = review.closest("section");
     expect(reviewCard).toBeTruthy();
-    expect(within(reviewCard as HTMLElement).getByText("metadata")).toBeInTheDocument();
-    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    expect(within(reviewCard as HTMLElement).getByText("AI detection")).toBeInTheDocument();
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem("deep-spec:lookups")).toBeNull();
     expect(sessionStorage.getItem("deep-spec:latest-scan-state")).toBeNull();
   }, 10000);
@@ -377,7 +377,7 @@ describe("Scanner", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole("button", { name: "Test engine photo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run AI test photo" })).toBeInTheDocument();
     expect(screen.getByText("Test scan ready")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 1, name: "Camera access needed" })).not.toBeInTheDocument();
   });
@@ -394,12 +394,12 @@ describe("Scanner", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole("button", { name: "Test engine photo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run AI test photo" })).toBeInTheDocument();
     expect(sessionStorage.getItem("deep-spec:test-mode")).toBe("1");
 
     await userEvent.click(screen.getByRole("button", { name: "Exit test mode" }));
 
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Test engine photo" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Run AI test photo" })).not.toBeInTheDocument());
     expect(sessionStorage.getItem("deep-spec:test-mode")).toBeNull();
     expect(screen.getByRole("button", { name: "Scan now" })).toBeInTheDocument();
   });
