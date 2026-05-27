@@ -46,7 +46,6 @@ jobs:
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
         run: |
-          branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
           pr_title=""
           if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then
             pr_title="$(node -e "const fs = require('node:fs'); const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8')); process.stdout.write(event.pull_request?.title ?? '')")"
@@ -59,8 +58,8 @@ jobs:
               echo "Not verified: repository secrets VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY are missing."
             } >> "$GITHUB_STEP_SUMMARY"
 
-            if [ "$GITHUB_REF_NAME" = "main" ] || [[ "$branch" == codex/production-readiness-release* ]] || [[ "$branch" == codex/release-v* ]] || [[ "$pr_title" == "[codex] Production readiness release"* ]]; then
-              echo "Release branches and main must prove Supabase cloud sync."
+            if [ "$GITHUB_REF_NAME" = "main" ] || [[ "$pr_title" == "[codex] Production readiness release"* ]]; then
+              echo "Production-readiness release PRs and main must prove Supabase cloud sync."
               exit 1
             fi
 

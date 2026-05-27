@@ -76,7 +76,9 @@ The GitHub CI workflow runs `npm run check` on pushes and pull requests. It also
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_PUBLISHABLE_KEY`
 
-If those secrets are missing, ordinary feature PRs record an explicit "not verified" warning in the GitHub step summary. `main`, `codex/production-readiness-release*`, `codex/release-v*`, and PRs titled `[codex] Production readiness release...` fail instead, because those release paths must prove Supabase cloud sync before they can be called release-ready.
+If those secrets are missing, ordinary feature PRs record an explicit "not verified" warning in the GitHub step summary. `main` and PRs titled `[codex] Production readiness release...` fail instead, because those release paths must prove Supabase cloud sync before they can be called release-ready.
+
+Do not encode release readiness in the branch name. Use a normal update branch for release PR work; if GitHub returns `Cannot update this protected ref`, create the replacement branch from the latest release PR head before opening the replacement PR. The CI release gate follows the PR title so the branch can keep receiving commits without matching a protected release-ref pattern.
 
 Do not start Phase 9 until anonymous sign-in can create a user and the verifier passes.
 

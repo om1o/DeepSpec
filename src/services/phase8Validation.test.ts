@@ -78,18 +78,18 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(docs).toContain("supabase:print-auth-diagnostics");
     expect(docs).toContain("supabase:print-auth-anonymous-repair");
     expect(docs).toContain("supabase:apply-auth-anonymous-repair");
-    expect(docs).toContain("codex/production-readiness-release*");
-    expect(docs).toContain("codex/release-v*");
     expect(docs).toContain("[codex] Production readiness release");
+    expect(docs).toContain("Do not encode release readiness in the branch name");
+    expect(docs).toContain("Cannot update this protected ref");
   });
 
   it("does not let production-readiness CI silently skip Supabase verification", () => {
     expect(ciWorkflow).toContain("Supabase public secrets are not configured; cloud sync verifier did not run.");
     expect(ciWorkflow).toContain("GITHUB_STEP_SUMMARY");
     expect(ciWorkflow).toContain("GITHUB_EVENT_PATH");
-    expect(ciWorkflow).toContain("codex/production-readiness-release*");
-    expect(ciWorkflow).toContain("codex/release-v*");
     expect(ciWorkflow).toContain("[codex] Production readiness release");
-    expect(ciWorkflow).toContain("Release branches and main must prove Supabase cloud sync.");
+    expect(ciWorkflow).not.toContain("codex/production-readiness-release*");
+    expect(ciWorkflow).not.toContain("codex/release-v*");
+    expect(ciWorkflow).toContain("Production-readiness release PRs and main must prove Supabase cloud sync.");
   });
 });
