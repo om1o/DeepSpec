@@ -45,6 +45,8 @@ The verifier must:
 
 If any step fails, Phase 8 is not complete yet. Fix the Supabase config, migration, bucket, Auth setting, or RLS policy, then run the verifier again.
 
+The current hosted Auth blocker is tracked in [GitHub issue #106](https://github.com/om1o/DeepSpec/issues/106).
+
 ## If Anonymous Sign-In Returns A Database Error
 
 If `npm run verify:supabase` says `Database error creating anonymous user`, the app reached Supabase Auth but Supabase failed while inserting the anonymous user.
