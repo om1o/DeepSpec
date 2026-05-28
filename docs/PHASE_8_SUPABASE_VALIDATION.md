@@ -40,6 +40,11 @@ DEEPSPEC_AUTH_TEST_EMAIL=qa@example.com DEEPSPEC_AUTH_TEST_EMAIL_CODE=123456 npm
 ```
 
 Set `DEEPSPEC_AUTH_REQUIRE_CREDENTIALS=true` on release runs that must fail unless password and code entry are proven with a real Supabase session.
+You can also pass `--require-credentials` through npm for a one-off strict local gate:
+
+```bash
+npm run verify:auth -- --require-credentials
+```
 
 Run:
 
