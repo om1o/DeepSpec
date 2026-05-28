@@ -28,6 +28,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
 
       - name: Set up Node
         uses: actions/setup-node@v5
@@ -54,6 +56,12 @@ jobs:
               echo ""
               echo "Not verified: repository secrets VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY are missing."
             } >> "$GITHUB_STEP_SUMMARY"
+
+            changed_files="$(git diff --name-only HEAD^1 HEAD || true)"
+            if echo "$changed_files" | grep -E '^(supabase/|scripts/(verify-supabase-sync|print-supabase-).*\.mjs|src/services/cloudSync|docs/PHASE_8_SUPABASE_VALIDATION\.md)' > /dev/null; then
+              echo "This PR changes Supabase/cloud-sync files, so it must prove cloud sync with repository secrets configured."
+              exit 1
+            fi
 
             if [ "$GITHUB_REF_NAME" = "main" ] || [[ "$branch" == codex/production-readiness-release* ]]; then
               echo "Production-readiness branches and main must prove Supabase cloud sync."
