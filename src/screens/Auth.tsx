@@ -6,12 +6,14 @@ import {
   isGoogleAuthEnabled,
   isSupabaseAuthConfigured,
   signInWithGitHub,
+  signInWithPassword,
   sendEmailVerificationCode,
   signInWithGoogle,
   verifyEmailCode,
 } from "../services/auth";
 
 type AuthStep = "email" | "code";
+type AuthMode = "code" | "password";
 const SCAN_ROUTE = "/scan";
 const CODE_LENGTH = 6;
 const RESEND_COOLDOWN_SECONDS = 30;
@@ -23,8 +25,10 @@ export default function Auth() {
   const githubAuthEnabled = isGitHubAuthEnabled();
   const oauthEnabled = googleAuthEnabled || githubAuthEnabled;
   const canSubmit = supabaseConfigured;
+  const [authMode, setAuthMode] = useState<AuthMode>("code");
   const [step, setStep] = useState<AuthStep>("email");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -105,6 +109,20 @@ export default function Auth() {
 
     if (!supabaseConfigured) {
       setError("Supabase auth is not configured for this build.");
+      return;
+    }
+
+    if (authMode === "password") {
+      setIsSubmitting(true);
+      try {
+        const normalizedEmail = email.trim().toLowerCase();
+        await signInWithPassword(normalizedEmail, password);
+        navigate(SCAN_ROUTE, { replace: true });
+      } catch (authError) {
+        setError(authError instanceof Error ? authError.message : "Password sign in failed. Try again.");
+      } finally {
+        setIsSubmitting(false);
+      }
       return;
     }
 
@@ -189,6 +207,15 @@ export default function Auth() {
     autoSubmittedCodeRef.current = null;
   }
 
+  function switchAuthMode(mode: AuthMode) {
+    setAuthMode(mode);
+    setStep("email");
+    setCode("");
+    setError(null);
+    setNotice(null);
+    autoSubmittedCodeRef.current = null;
+  }
+
   if (isCheckingSession) {
     return (
       <main className="flex min-h-dvh items-center justify-center bg-white px-4 text-center text-sm font-bold text-neutral-500">
@@ -208,8 +235,8 @@ export default function Auth() {
       <section className="mx-auto flex w-full max-w-[540px] flex-col items-center">
         <img src="/brand/deepspec-logo.png" alt="Deep Spec" className="h-28 w-full max-w-xs rounded-[14px] bg-white object-contain p-2 shadow-sm ring-1 ring-[var(--ds-accent-line)]" />
         <p className="mt-5 text-sm font-black text-[var(--ds-accent)]">Deep Spec</p>
-        <h1 className="mt-7 text-center text-3xl font-black text-slate-950">Sign in with a code</h1>
-        <p className="mt-3 text-center text-lg font-semibold text-slate-500">No password. No magic link.</p>
+        <h1 className="mt-7 text-center text-3xl font-black text-slate-950">Sign in</h1>
+        <p className="mt-3 text-center text-lg font-semibold text-slate-500">Use a verification code, password, Google, or GitHub.</p>
 
         <div className="mt-16 w-full space-y-3">
           {googleAuthEnabled ? (
@@ -249,13 +276,34 @@ export default function Auth() {
               </div>
             ) : null}
 
+            <div className="grid grid-cols-2 gap-2 rounded-[10px] border border-neutral-200 bg-white p-1 shadow-sm" role="tablist" aria-label="Sign in method">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={authMode === "code"}
+                onClick={() => switchAuthMode("code")}
+                className={authMode === "code" ? "h-10 rounded-[8px] bg-[var(--ds-accent)] text-sm font-black text-white" : "h-10 rounded-[8px] text-sm font-black text-neutral-500"}
+              >
+                Code
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={authMode === "password"}
+                onClick={() => switchAuthMode("password")}
+                className={authMode === "password" ? "h-10 rounded-[8px] bg-[var(--ds-accent)] text-sm font-black text-white" : "h-10 rounded-[8px] text-sm font-black text-neutral-500"}
+              >
+                Password
+              </button>
+            </div>
+
             <label className="block">
               <span className="sr-only">Email address</span>
               <input
                 className="h-14 w-full rounded-[8px] border border-slate-200 bg-white px-4 text-base font-semibold text-slate-950 shadow-sm outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)] disabled:bg-slate-100"
                 autoCapitalize="none"
                 autoComplete="email"
-                disabled={step === "code" || isSubmitting}
+                disabled={(authMode === "code" && step === "code") || isSubmitting}
                 enterKeyHint="next"
                 inputMode="email"
                 name="email"
@@ -268,7 +316,24 @@ export default function Auth() {
               />
             </label>
 
-            {step === "code" ? (
+            {authMode === "password" ? (
+              <label className="block">
+                <span className="sr-only">Password</span>
+                <input
+                  className="h-14 w-full rounded-[8px] border border-slate-200 bg-white px-4 text-base font-semibold text-slate-950 shadow-sm outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)]"
+                  autoComplete="current-password"
+                  disabled={isSubmitting}
+                  name="password"
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="Enter your password"
+                  required={authMode === "password" && supabaseConfigured}
+                  type="password"
+                  value={password}
+                />
+              </label>
+            ) : null}
+
+            {authMode === "code" && step === "code" ? (
               <label className="block">
                 <span className="mb-2 block text-sm font-black text-neutral-700">Verification code</span>
                 <input
@@ -307,11 +372,11 @@ export default function Auth() {
               disabled={isSubmitting || isGoogleLoading || isGitHubLoading || !canSubmit}
               type="submit"
             >
-              {submitLabel(step, supabaseConfigured, isSubmitting)}
+              {submitLabel(authMode, step, supabaseConfigured, isSubmitting)}
             </button>
           </form>
 
-          {step === "code" ? (
+          {authMode === "code" && step === "code" ? (
             <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
@@ -333,7 +398,7 @@ export default function Auth() {
         </div>
 
         <p className="mt-8 max-w-sm text-center text-xs font-semibold leading-5 text-neutral-500">
-          Use the one-time code from your email to continue.
+          Deep Spec only opens after Supabase verifies your session.
         </p>
       </section>
     </main>
@@ -372,16 +437,24 @@ function OAuthButton({
 }
 
 function submitLabel(
+  authMode: AuthMode,
   step: AuthStep,
   supabaseConfigured: boolean,
   isSubmitting: boolean,
 ) {
   if (isSubmitting) {
+    if (authMode === "password") {
+      return "Checking password...";
+    }
     return step === "email" ? "Sending code..." : "Checking code...";
   }
 
   if (!supabaseConfigured) {
     return "Auth unavailable";
+  }
+
+  if (authMode === "password") {
+    return "Sign in with password";
   }
 
   return step === "email" ? "Send verification code" : "Verify code";

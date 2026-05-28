@@ -8,6 +8,7 @@ const supabaseMock = vi.hoisted(() => ({
     getUser: vi.fn(),
     signInWithOAuth: vi.fn(),
     signInWithOtp: vi.fn(),
+    signInWithPassword: vi.fn(),
     verifyOtp: vi.fn(),
   },
   createClient: vi.fn(),
@@ -23,12 +24,13 @@ describe("Auth", () => {
     localStorage.clear();
     vi.stubEnv("VITE_SUPABASE_URL", "https://deep-spec.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "public-test-key");
-    vi.stubEnv("VITE_ENABLE_GOOGLE_AUTH", "");
-    vi.stubEnv("VITE_ENABLE_GITHUB_AUTH", "");
+    vi.stubEnv("VITE_ENABLE_GOOGLE_AUTH", undefined);
+    vi.stubEnv("VITE_ENABLE_GITHUB_AUTH", undefined);
 
     supabaseMock.auth.getUser.mockReset();
     supabaseMock.auth.signInWithOAuth.mockReset();
     supabaseMock.auth.signInWithOtp.mockReset();
+    supabaseMock.auth.signInWithPassword.mockReset();
     supabaseMock.auth.verifyOtp.mockReset();
     supabaseMock.createClient.mockReset();
 
@@ -36,6 +38,7 @@ describe("Auth", () => {
     supabaseMock.auth.getUser.mockResolvedValue({ data: { user: null }, error: null });
     supabaseMock.auth.signInWithOAuth.mockResolvedValue({ data: {}, error: null });
     supabaseMock.auth.signInWithOtp.mockResolvedValue({ data: {}, error: null });
+    supabaseMock.auth.signInWithPassword.mockResolvedValue({ data: {}, error: null });
     supabaseMock.auth.verifyOtp.mockResolvedValue({ data: {}, error: null });
   });
 
@@ -46,10 +49,10 @@ describe("Auth", () => {
   it("uses Deep Spec branding and defaults to code sign-in", async () => {
     await renderAuth();
 
-    expect(await screen.findByRole("heading", { name: "Sign in with a code" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
     expect(screen.getByAltText("Deep Spec")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Continue with Google" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Continue with GitHub" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue with Google" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue with GitHub" })).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Enter your email address")).toBeInTheDocument();
     expect(screen.queryByText(/facebook/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/microsoft/i)).not.toBeInTheDocument();
@@ -89,9 +92,8 @@ describe("Auth", () => {
     expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
   });
 
-  it("starts Google auth only when explicitly enabled", async () => {
+  it("starts Google auth by default when Supabase is configured", async () => {
     const user = userEvent.setup();
-    vi.stubEnv("VITE_ENABLE_GOOGLE_AUTH", "true");
     await renderAuth();
 
     await user.click(await screen.findByRole("button", { name: "Continue with Google" }));
@@ -107,9 +109,45 @@ describe("Auth", () => {
     expect(screen.queryByText(/apple/i)).not.toBeInTheDocument();
   });
 
-  it("starts GitHub auth only when explicitly enabled", async () => {
+  it("signs in with an email and password after Supabase verifies the session", async () => {
     const user = userEvent.setup();
-    vi.stubEnv("VITE_ENABLE_GITHUB_AUTH", "true");
+    supabaseMock.auth.getUser
+      .mockResolvedValueOnce({ data: { user: null }, error: null })
+      .mockResolvedValueOnce({ data: { user: makeUser("password-user") }, error: null });
+
+    await renderAuth();
+
+    await user.click(await screen.findByRole("tab", { name: "Password" }));
+    await user.type(screen.getByPlaceholderText("Enter your email address"), "Tester@Example.com");
+    await user.type(screen.getByPlaceholderText("Enter your password"), "correct-password");
+    await user.click(screen.getByRole("button", { name: "Sign in with password" }));
+
+    await waitFor(() => {
+      expect(supabaseMock.auth.signInWithPassword).toHaveBeenCalledWith({
+        email: "tester@example.com",
+        password: "correct-password",
+      });
+    });
+    expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
+  });
+
+  it("does not open the scanner when password auth does not verify a user", async () => {
+    const user = userEvent.setup();
+    supabaseMock.auth.signInWithPassword.mockResolvedValueOnce({ data: {}, error: { message: "Invalid login credentials" } });
+
+    await renderAuth();
+
+    await user.click(await screen.findByRole("tab", { name: "Password" }));
+    await user.type(screen.getByPlaceholderText("Enter your email address"), "tester@example.com");
+    await user.type(screen.getByPlaceholderText("Enter your password"), "wrong-password");
+    await user.click(screen.getByRole("button", { name: "Sign in with password" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Invalid login credentials");
+    expect(screen.queryByText("Scanner opened")).not.toBeInTheDocument();
+  });
+
+  it("starts GitHub auth by default when Supabase is configured", async () => {
+    const user = userEvent.setup();
     await renderAuth();
 
     await user.click(await screen.findByRole("button", { name: "Continue with GitHub" }));
@@ -123,6 +161,16 @@ describe("Auth", () => {
     expect(screen.queryByText(/facebook/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/microsoft/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/apple/i)).not.toBeInTheDocument();
+  });
+
+  it("hides OAuth providers when they are explicitly disabled", async () => {
+    vi.stubEnv("VITE_ENABLE_GOOGLE_AUTH", "false");
+    vi.stubEnv("VITE_ENABLE_GITHUB_AUTH", "false");
+
+    await renderAuth();
+
+    expect(screen.queryByRole("button", { name: "Continue with Google" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Continue with GitHub" })).not.toBeInTheDocument();
   });
 
   it("fails closed when Supabase auth is not configured", async () => {

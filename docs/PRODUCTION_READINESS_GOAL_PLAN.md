@@ -120,7 +120,7 @@ Minimum preserved fields for every scan:
 | Output quality | 100 | accuracy, invalid JSON, confidence, calibration, safety false positives, latency |
 | Database | 100 | auth, RLS, storage, migrations, sync, retention, export, deletion |
 | Dataset/eval | 100 | Hugging Face dataset integrity, eval coverage, failure review, label taxonomy |
-| Auth/privacy | 100 | OTP, Google OAuth, local bypass boundaries, PII copy, privacy docs |
+| Auth/privacy | 100 | OTP, password, Google OAuth, GitHub OAuth, local bypass boundaries, PII copy, privacy docs |
 | History/review | 100 | filters, corrections, notes, review queue, training labels |
 | Chat/follow-up | 100 | context grounding, safety limits, persistence, rate limits |
 | Release/observability | 100 | CI, browser smoke, logs, metrics, Sentry/alerts, GitHub issue hygiene |

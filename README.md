@@ -34,7 +34,7 @@ VITE_SUPABASE_PUBLISHABLE_KEY=your_publishable_or_anon_key
 
 Never put a Supabase service-role key in a `VITE_` variable. Browser code can only use the publishable/anon key. Apply the migration in `supabase/migrations/20260518000100_deepspec_secure_foundation.sql`, enable Supabase anonymous sign-ins if you want device-only users to sync scans, and keep the `scan-images` bucket private.
 
-For email sign-in, configure the Supabase Auth email template to show the OTP token with `{{ .Token }}` instead of a setup or magic-link URL with `{{ .ConfirmationURL }}`. The app sends an email OTP request and verifies the typed code in the UI; it does not request an email redirect link for code sign-in.
+For email code sign-in, configure the Supabase Auth email template to show the OTP token with `{{ .Token }}` instead of a setup or magic-link URL with `{{ .ConfirmationURL }}`. The app sends an email OTP request and verifies the typed code in the UI; it does not request an email redirect link for code sign-in. Existing users can also sign in with their Supabase email/password credentials.
 
 After a session is verified, Deep Spec opens the scanner at `/scan`.
 
@@ -66,14 +66,14 @@ The public sample mode uses `DEEPSPEC_DATASET_INDEX_PATH` and will spend live pr
 
 Before release browser QA, use `docs/BROWSER_QA_MATRIX.md` for the route, viewport, console, network, and seeded-scan evidence checklist.
 
-Google and GitHub sign-in are hidden by default because they depend on live OAuth apps configured in the matching Supabase Auth providers. Only enable them after the provider client IDs and secrets are valid:
+Google and GitHub sign-in appear when Supabase is configured. This project currently exposes both providers from Supabase Auth settings. Set either flag to `false` only if that provider is not configured in Supabase:
 
 ```bash
-VITE_ENABLE_GOOGLE_AUTH=true
-VITE_ENABLE_GITHUB_AUTH=true
+VITE_ENABLE_GOOGLE_AUTH=false
+VITE_ENABLE_GITHUB_AUTH=false
 ```
 
-There is no local continue or fixture login path. A protected route opens only after Supabase verifies an email code or returns a real OAuth session.
+There is no local continue or fixture login path. A protected route opens only after Supabase verifies an email code, password, or OAuth session.
 
 ## Current scope
 

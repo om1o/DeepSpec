@@ -13,11 +13,11 @@ export function isSupabaseAuthConfigured() {
 }
 
 export function isGoogleAuthEnabled() {
-  return isSupabaseAuthConfigured() && import.meta.env.VITE_ENABLE_GOOGLE_AUTH?.trim().toLowerCase() === "true";
+  return isOAuthProviderEnabled(import.meta.env.VITE_ENABLE_GOOGLE_AUTH);
 }
 
 export function isGitHubAuthEnabled() {
-  return isSupabaseAuthConfigured() && import.meta.env.VITE_ENABLE_GITHUB_AUTH?.trim().toLowerCase() === "true";
+  return isOAuthProviderEnabled(import.meta.env.VITE_ENABLE_GITHUB_AUTH);
 }
 
 export async function getVerifiedAuthUser(): Promise<User | null> {
@@ -63,6 +63,25 @@ export async function verifyEmailCode(email: string, token: string) {
   const user = await getVerifiedAuthUser();
   if (!user) {
     throw new Error("Could not verify this session. Request a new code and try again.");
+  }
+
+  return user;
+}
+
+export async function signInWithPassword(email: string, password: string) {
+  const client = await getRequiredAuthClient();
+  const result = await client.auth.signInWithPassword({
+    email,
+    password,
+  });
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  const user = await getVerifiedAuthUser();
+  if (!user) {
+    throw new Error("Could not verify this session. Check your email and password and try again.");
   }
 
   return user;
@@ -137,6 +156,14 @@ function getSupabaseAuthConfig(): SupabaseAuthConfig | null {
   }
 
   return { key, url };
+}
+
+function isOAuthProviderEnabled(flag: string | undefined) {
+  if (!isSupabaseAuthConfigured()) {
+    return false;
+  }
+
+  return flag?.trim().toLowerCase() !== "false";
 }
 
 async function getRequiredAuthClient() {
