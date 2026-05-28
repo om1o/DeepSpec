@@ -74,11 +74,19 @@ describe("Result", () => {
       "src",
       "data:image/jpeg;base64,test-image",
     );
-    expect(screen.getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
+    expect(screen.getAllByText("It charges the battery while the engine runs.").length).toBeGreaterThan(0);
     expect(screen.getByText("Best match")).toBeInTheDocument();
     expect(screen.getByText("Other possible matches")).toBeInTheDocument();
     expect(screen.getByText("Starter motor")).toBeInTheDocument();
     expect(screen.getByText("Useful match")).toBeInTheDocument();
+    expect(screen.getByText("Owner decision pack")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Complete brief" })).toBeInTheDocument();
+    expect(screen.getByText("Data coverage")).toBeInTheDocument();
+    expect(screen.getByText("6/6")).toBeInTheDocument();
+    expect(screen.getByText("Alternator / electrical / high confidence")).toBeInTheDocument();
+    expect(screen.getAllByText("Take another photo of the label if you need more detail.").length).toBeGreaterThan(0);
+    expect(screen.getByText("Can you confirm this is the Alternator from the photo?")).toBeInTheDocument();
+    expect(screen.getByText("How do I rule out Starter motor?")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Refine" })).toHaveAttribute("href", "/scan");
 
     await userEvent.click(screen.getByRole("tab", { name: "Evidence" }));
@@ -121,7 +129,29 @@ describe("Result", () => {
       "href",
       "https://www.google.com/search?q=DENSO%20104210-1230%20Alternator%20car%20part",
     );
+    expect(screen.getByText("Does the visible label or part number match the exact replacement?")).toBeInTheDocument();
     expect(screen.queryByText("Visible label text: DENSO 104210-1230")).not.toBeInTheDocument();
+  });
+
+  it("shows what data is still missing before a user trusts a weak result", () => {
+    renderResult({
+      ...successfulScan,
+      result: {
+        ...successfulScan.result!,
+        confidence: "low",
+        candidateMatches: [],
+        evidenceRegions: [],
+        needsBetterPhoto: true,
+        safetyTriage: "needs_better_photo",
+        sourceLinks: [],
+      },
+    });
+
+    expect(screen.getByText("Still missing")).toBeInTheDocument();
+    expect(screen.getByText("Sharper, brighter photo from another angle.")).toBeInTheDocument();
+    expect(screen.getByText("Image callouts that tie the answer to exact visible areas.")).toBeInTheDocument();
+    expect(screen.getByText("Related comparison parts to rule out close matches.")).toBeInTheDocument();
+    expect(screen.getByText("Reference links or dataset examples for outside checking.")).toBeInTheDocument();
   });
 
   it("turns matched dataset source evidence into a reference link", () => {
@@ -242,7 +272,7 @@ describe("Result", () => {
     renderResult(null);
 
     expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
-    expect(screen.getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
+    expect(screen.getAllByText("It charges the battery while the engine runs.").length).toBeGreaterThan(0);
   });
 
   it("handles a direct result route without captured state", () => {
@@ -402,7 +432,7 @@ describe("Result", () => {
 
     expect(screen.queryByText("Provider unavailable")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
-    expect(screen.getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
+    expect(screen.getAllByText("It charges the battery while the engine runs.").length).toBeGreaterThan(0);
 
     onlineSpy.mockRestore();
   });
