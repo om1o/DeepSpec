@@ -36,7 +36,7 @@ Use a 900-check audit grid instead: 9 production tracks x 100 checks each. Every
 
 | ID | Severity | Area | Finding | Evidence | Fix Direction |
 | --- | --- | --- | --- | --- | --- |
-| P0-001 | Blocker | Database | Cloud sync is not production ready because Supabase anonymous sign-in fails before storage, RLS, or durable dataset tables can be proven. | `npm run verify:supabase` failed at step 1. | Fix Supabase Auth logs/triggers/config, rerun verifier until all 8 steps pass. |
+| P0-001 | Blocker | Database | Cloud sync is not production ready because Supabase anonymous sign-in fails before storage, RLS, or durable dataset tables can be proven. | `npm run verify:supabase` failed at step 1; tracked in [#106](https://github.com/om1o/DeepSpec/issues/106). | Fix Supabase Auth logs/triggers/config, rerun verifier until all 8 steps pass. |
 | P0-002 | Blocker | Output reliability | Identify eval still cannot complete the release set because provider availability fails after fallback. | May 27 release eval stopped at 12/50 with `network` after both configured models failed. | Keep provider fallback, fix quota/network/provider stability, rerun the 50-case gate until all samples complete. |
 | P0-003 | Blocker | Backlog hygiene | There are no open standalone GitHub issues for production readiness. | GitHub issue search returned empty. | Convert this plan into milestones and issues instead of hiding work in PRs. |
 | P0-004 | Blocker | Release quality | Open PR stack is large and overlapping. | GitHub returned open PRs #4-#13. | Merge/close/rebase PRs into a clean production branch before broad changes. |
