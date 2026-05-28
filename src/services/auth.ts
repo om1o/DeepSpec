@@ -8,6 +8,7 @@ type SupabaseAuthConfig = {
 
 const AUTH_VERIFY_TIMEOUT_MS = 8_000;
 let clientPromise: Promise<SupabaseClient> | null = null;
+let authRedirectPromise: Promise<boolean> | null = null;
 
 export function isSupabaseAuthConfigured() {
   return Boolean(getSupabaseAuthConfig());
@@ -31,6 +32,11 @@ export async function getVerifiedAuthUser(): Promise<User | null> {
 }
 
 async function verifyAuthUser(client: SupabaseClient): Promise<User | null> {
+  const redirectReady = await completeAuthRedirectIfNeeded(client);
+  if (!redirectReady) {
+    return null;
+  }
+
   const result = await withTimeout(client.auth.getUser().catch(() => null), AUTH_VERIFY_TIMEOUT_MS);
   if (!result) {
     return null;
@@ -170,11 +176,13 @@ export async function subscribeToAuthChanges(onChange: (user: User | null) => vo
       return;
     }
 
-    void verifyAuthUser(client)
-      .then(onChange)
-      .catch(() => {
-        onChange(null);
-      });
+    setTimeout(() => {
+      void verifyAuthUser(client)
+        .then(onChange)
+        .catch(() => {
+          onChange(null);
+        });
+    }, 0);
   });
 
   return () => subscription.data.subscription.unsubscribe();
@@ -206,6 +214,37 @@ async function getRequiredAuthClient() {
   }
 
   return client;
+}
+
+async function completeAuthRedirectIfNeeded(client: SupabaseClient): Promise<boolean> {
+  if (typeof window === "undefined") {
+    return true;
+  }
+
+  const url = new URL(window.location.href);
+  const authCode = url.searchParams.get("code");
+  if (!authCode) {
+    return true;
+  }
+
+  if (!authRedirectPromise) {
+    authRedirectPromise = withTimeout(exchangeAuthCodeForSession(client, authCode, url), AUTH_VERIFY_TIMEOUT_MS)
+      .then((result) => result === true)
+      .catch(() => false);
+  }
+
+  return authRedirectPromise;
+}
+
+async function exchangeAuthCodeForSession(client: SupabaseClient, authCode: string, url: URL) {
+  const result = await client.auth.exchangeCodeForSession(authCode);
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  url.searchParams.delete("code");
+  window.history.replaceState(window.history.state, document.title, `${url.pathname}${url.search}${url.hash}`);
+  return true;
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
