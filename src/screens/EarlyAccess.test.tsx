@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, vi } from "vitest";
 import EarlyAccess from "./EarlyAccess";
 import { ENGAGEMENT_STORAGE_KEY } from "../services/engagement";
+import * as cloudSync from "../services/cloudSync";
 
 describe("EarlyAccess", () => {
   beforeEach(() => {
@@ -13,6 +14,7 @@ describe("EarlyAccess", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
 
@@ -34,18 +36,60 @@ describe("EarlyAccess", () => {
     });
     await userEvent.click(screen.getByRole("button", { name: "Save waitlist entry" }));
 
-    expect(await screen.findByText("Saved on this device. Backend sync comes after privacy review.")).toBeInTheDocument();
+    expect(await screen.findByText("Saved on this device. Cloud sync is off for this build.")).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Feedback"), {
       target: { value: "I would pay for scan reports I can send to a mechanic." },
     });
     await userEvent.click(screen.getByRole("button", { name: "Save feedback" }));
 
-    expect(await screen.findByText("Feedback saved locally.")).toBeInTheDocument();
+    expect(await screen.findByText("Feedback saved locally. Cloud sync is off for this build.")).toBeInTheDocument();
 
     const savedData = JSON.parse(localStorage.getItem(ENGAGEMENT_STORAGE_KEY) ?? "{}");
     expect(savedData.waitlist).toHaveLength(1);
     expect(savedData.feedback).toHaveLength(1);
+  });
+
+  it("syncs waitlist and feedback when cloud config is present", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const waitlistSync = vi.spyOn(cloudSync, "syncWaitlistSignupToCloud").mockResolvedValue({ ok: true, message: "Waitlist entry synced." });
+    const feedbackSync = vi.spyOn(cloudSync, "syncFeedbackToCloud").mockResolvedValue({ ok: true, message: "Feedback synced." });
+    renderEarlyAccess();
+
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "tester@example.com" } });
+    fireEvent.change(screen.getByLabelText("What problem should Deep Spec solve?"), {
+      target: { value: "Help me understand used-car leaks." },
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Save waitlist entry" }));
+
+    expect(await screen.findByText("Saved locally and synced to cloud.")).toBeInTheDocument();
+    expect(waitlistSync).toHaveBeenCalledWith(expect.objectContaining({ email: "tester@example.com" }));
+
+    fireEvent.change(screen.getByLabelText("Feedback"), {
+      target: { value: "I would pay for scan reports I can send to a mechanic." },
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Save feedback" }));
+
+    expect(await screen.findByText("Feedback saved locally and synced to cloud.")).toBeInTheDocument();
+    expect(feedbackSync).toHaveBeenCalledWith(expect.objectContaining({ message: "I would pay for scan reports I can send to a mechanic." }));
+  });
+
+  it("keeps local Early Access data when cloud sync fails", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    vi.spyOn(cloudSync, "syncWaitlistSignupToCloud").mockResolvedValue({ ok: false, message: "Cloud sync failed: network unavailable" });
+    renderEarlyAccess();
+
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "tester@example.com" } });
+    fireEvent.change(screen.getByLabelText("What problem should Deep Spec solve?"), {
+      target: { value: "Help me understand used-car leaks." },
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Save waitlist entry" }));
+
+    expect(await screen.findByText("Saved locally. Cloud sync failed: network unavailable")).toBeInTheDocument();
+    const savedData = JSON.parse(localStorage.getItem(ENGAGEMENT_STORAGE_KEY) ?? "{}");
+    expect(savedData.waitlist).toHaveLength(1);
   });
 });
 

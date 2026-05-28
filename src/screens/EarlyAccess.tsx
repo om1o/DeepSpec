@@ -2,7 +2,7 @@ import { FormEvent, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import CloudHealthCard from "../components/CloudHealthCard";
 import Button from "../components/ui/Button";
-import { getCloudSyncStatus } from "../services/cloudSync";
+import { getCloudSyncStatus, syncFeedbackToCloud, syncWaitlistSignupToCloud } from "../services/cloudSync";
 import { getEngagementData, saveFeedbackSubmission, saveWaitlistSignup } from "../services/engagement";
 import type { FeedbackSubmission, WaitlistSignup } from "../types";
 
@@ -42,7 +42,19 @@ export default function EarlyAccess() {
     setMainProblem("");
     setStats(getEngagementData());
 
-    setWaitlistStatus("Saved on this device. Backend sync comes after privacy review.");
+    if (!result.value) {
+      setWaitlistStatus("Saved on this device, but the waitlist entry could not be prepared for cloud sync.");
+      return;
+    }
+
+    if (!cloudSync.configured) {
+      setWaitlistStatus("Saved on this device. Cloud sync is off for this build.");
+      return;
+    }
+
+    setWaitlistStatus("Saved on this device. Syncing waitlist entry...");
+    const syncResult = await syncWaitlistSignupToCloud(result.value);
+    setWaitlistStatus(syncResult.ok ? "Saved locally and synced to cloud." : `Saved locally. ${syncResult.message}`);
   }
 
   async function handleFeedbackSubmit(event: FormEvent<HTMLFormElement>) {
@@ -61,7 +73,19 @@ export default function EarlyAccess() {
     setFeedbackMessage("");
     setStats(getEngagementData());
 
-    setFeedbackStatus("Feedback saved locally.");
+    if (!result.value) {
+      setFeedbackStatus("Feedback saved locally, but it could not be prepared for cloud sync.");
+      return;
+    }
+
+    if (!cloudSync.configured) {
+      setFeedbackStatus("Feedback saved locally. Cloud sync is off for this build.");
+      return;
+    }
+
+    setFeedbackStatus("Feedback saved locally. Syncing...");
+    const syncResult = await syncFeedbackToCloud(result.value);
+    setFeedbackStatus(syncResult.ok ? "Feedback saved locally and synced to cloud." : `Feedback saved locally. ${syncResult.message}`);
   }
 
   return (
@@ -101,7 +125,7 @@ export default function EarlyAccess() {
         <form className="mt-4 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm" onSubmit={handleWaitlistSubmit}>
           <h2 className="text-lg font-extrabold tracking-tight">Join the waitlist</h2>
           <p className="mt-2 text-sm leading-6 text-neutral-500">
-            This saves locally right now. A real launch waitlist needs parent-approved privacy terms and backend storage.
+            This saves locally first. When cloud sync is configured, Deep Spec also sends the entry to the private waitlist table.
           </p>
           <label className="mt-4 block">
             <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Email</span>
@@ -147,7 +171,7 @@ export default function EarlyAccess() {
         <form className="mt-4 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm" onSubmit={handleFeedbackSubmit}>
           <h2 className="text-lg font-extrabold tracking-tight">Send product feedback</h2>
           <p className="mt-2 text-sm leading-6 text-neutral-500">
-            Tell us what would make Deep Spec worth coming back to. This is local-only until backend sync exists.
+            Tell us what would make Deep Spec worth coming back to. This saves locally first and syncs when cloud config is available.
           </p>
           <label className="mt-4 block">
             <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Topic</span>

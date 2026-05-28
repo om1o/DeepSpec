@@ -9,7 +9,7 @@ A parent should help with the Supabase account, project ownership, and privacy t
 In Supabase:
 
 1. Create a project.
-2. Apply `supabase/migrations/20260518000100_deepspec_secure_foundation.sql`.
+2. Apply every SQL file in `supabase/migrations` in timestamp order.
 3. Enable anonymous sign-ins in Auth if you want device-only users.
 4. Confirm the `scan-images` storage bucket is private.
 5. Copy the project URL and publishable/anon key.
@@ -36,11 +36,12 @@ The verifier must:
 1. Check that anonymous sign-ins are enabled.
 1. Sign in as an anonymous Supabase user.
 2. Upload a tiny private test image to `scan-images`.
-3. Upsert a test row in `public.scan_lookups`.
-4. Read the row back as the owner.
-5. Sign in as a second anonymous user and prove that user cannot read the first user's row.
-6. Download the private image as the owner.
-7. Delete the test row and test image.
+3. Upsert a test row in `public.scan_lookups` with image hash, MIME type, and byte length metadata.
+4. Write representative durable dataset detail rows in `public.scan_candidates`, `public.scan_evidence`, `public.scan_corrections`, `public.scan_model_runs`, and `public.sync_events`.
+5. Read the parent scan row and every detail table back as the owner.
+6. Sign in as a second anonymous user and prove that user cannot read the first user's parent scan row or detail rows.
+7. Download the private image as the owner.
+8. Delete the sync audit event, test row, and test image.
 
 If any step fails, Phase 8 is not complete yet. Fix the Supabase config, migration, bucket, Auth setting, or RLS policy, then run the verifier again.
 
@@ -78,7 +79,7 @@ Fix:
 
 1. Open Supabase Dashboard -> SQL Editor.
 2. Run `npm run supabase:print-migration`.
-3. Paste the printed SQL into the Supabase SQL Editor and run it.
+3. Paste the printed SQL into the Supabase SQL Editor and run it. The command prints every migration in timestamp order, including the secure foundation and durable dataset tables.
 4. Go to Project Settings -> API and make sure the `public` schema is exposed.
 5. Wait a minute. The migration also sends `notify pgrst, 'reload schema';` to ask the Data API to refresh.
 6. Rerun `npm run verify:supabase`.
@@ -94,5 +95,6 @@ After the command passes:
 5. Tap `Sync this scan`.
 6. Verify Supabase Storage has the uploaded image under the authenticated user's folder.
 7. Verify `public.scan_lookups` has the scan row with category, training label/status, rating, correction, notes, and result JSON.
+8. Verify `public.scan_candidates`, `public.scan_evidence`, `public.scan_corrections`, `public.scan_model_runs`, and `public.sync_events` have the matching durable dataset records for the scan.
 
 Do not move to a dataset review dashboard until this passes.

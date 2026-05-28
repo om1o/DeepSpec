@@ -17,7 +17,7 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(packageJson.scripts["supabase:print-auth-diagnostics"]).toBe("node scripts/print-supabase-auth-diagnostics.mjs");
   });
 
-  it("checks private image upload, scan row write, owner read, cross-user block, and cleanup", () => {
+  it("checks private image upload, durable dataset writes, owner reads, cross-user blocks, and cleanup", () => {
     expect(verifier).toContain("/auth/v1/settings");
     expect(verifier).toContain("PGRST205");
     expect(verifier.indexOf("signInAnonymously(ownerClient, config)")).toBeLessThan(
@@ -25,9 +25,25 @@ describe("Phase 8 Supabase validation tooling", () => {
     );
     expect(verifier).toContain("storage.from(SCAN_BUCKET).upload");
     expect(verifier).toContain('from("scan_lookups").upsert');
+    expect(verifier).toContain("image_hash");
+    expect(verifier).toContain("image_mime_type");
+    expect(verifier).toContain("image_byte_length");
+    expect(verifier).toContain("durable dataset detail rows");
+    expect(verifier).toContain('from("scan_candidates").insert');
+    expect(verifier).toContain('from("scan_evidence").insert');
+    expect(verifier).toContain('from("scan_corrections").upsert');
+    expect(verifier).toContain('from("scan_model_runs").insert');
+    expect(verifier).toContain('from("sync_events").insert');
     expect(verifier).toContain("Owner read failed");
+    expect(verifier).toContain("scan_candidates owner read failed");
+    expect(verifier).toContain("scan_evidence owner read failed");
+    expect(verifier).toContain("scan_corrections owner read failed");
+    expect(verifier).toContain("scan_model_runs owner read failed");
+    expect(verifier).toContain("sync_events owner read failed");
     expect(verifier).toContain("another anonymous user cannot read");
+    expect(verifier).toContain("assertCrossUserCannotRead");
     expect(verifier).toContain('from("scan_lookups").delete()');
+    expect(verifier).toContain('from("sync_events").delete()');
     expect(verifier).toContain("storage.from(SCAN_BUCKET).remove");
   });
 
