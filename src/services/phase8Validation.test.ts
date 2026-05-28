@@ -7,14 +7,30 @@ describe("Phase 8 Supabase validation tooling", () => {
     scripts: Record<string, string>;
   };
   const verifier = readFileSync(join(process.cwd(), "scripts", "verify-supabase-sync.mjs"), "utf8");
+  const authVerifier = readFileSync(join(process.cwd(), "scripts", "verify-auth-flows.mjs"), "utf8");
   const authDiagnostics = readFileSync(join(process.cwd(), "scripts", "print-supabase-auth-diagnostics.mjs"), "utf8");
   const docs = readFileSync(join(process.cwd(), "docs", "PHASE_8_SUPABASE_VALIDATION.md"), "utf8");
   const ciWorkflow = readFileSync(join(process.cwd(), ".github", "workflows", "ci.yml"), "utf8");
 
   it("exposes a dedicated Supabase verification command", () => {
     expect(packageJson.scripts["verify:supabase"]).toBe("node scripts/verify-supabase-sync.mjs");
+    expect(packageJson.scripts["verify:auth"]).toBe("node scripts/verify-auth-flows.mjs");
     expect(packageJson.scripts["supabase:print-migration"]).toBe("node scripts/print-supabase-migration.mjs");
     expect(packageJson.scripts["supabase:print-auth-diagnostics"]).toBe("node scripts/print-supabase-auth-diagnostics.mjs");
+  });
+
+  it("exposes a dedicated auth flow verifier", () => {
+    expect(authVerifier).toContain("/auth/v1/settings");
+    expect(authVerifier).toContain("external?.google");
+    expect(authVerifier).toContain("external?.github");
+    expect(authVerifier).toContain("signInWithOAuth");
+    expect(authVerifier).toContain("skipBrowserRedirect");
+    expect(authVerifier).toContain("signInWithPassword");
+    expect(authVerifier).toContain("signInWithOtp");
+    expect(authVerifier).toContain("verifyOtp");
+    expect(authVerifier).toContain("DEEPSPEC_AUTH_TEST_EMAIL");
+    expect(authVerifier).toContain("DEEPSPEC_AUTH_TEST_EMAIL_CODE");
+    expect(authVerifier).toContain("DEEPSPEC_AUTH_REQUIRE_CREDENTIALS");
   });
 
   it("checks private image upload, durable dataset writes, owner reads, cross-user blocks, and cleanup", () => {
