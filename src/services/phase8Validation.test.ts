@@ -56,6 +56,8 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(verifier).toContain("auth.users");
     expect(authDiagnostics).toContain("auth.audit_log_entries");
     expect(authDiagnostics).toContain("REQUEST_ID_HERE");
+    expect(authDiagnostics).toContain("process.argv[2]");
+    expect(authDiagnostics).toContain("escapeSqlLikeLiteral");
     expect(authDiagnostics).toContain("security_type");
     expect(authDiagnostics).toContain("profiles_table");
     expect(authDiagnostics).toContain("suggested_drop_trigger_sql");

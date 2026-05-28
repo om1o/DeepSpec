@@ -1,7 +1,14 @@
+const requestId = process.argv[2]?.trim() || "REQUEST_ID_HERE";
+
 console.log("DeepSpec Supabase Auth diagnostics SQL");
 console.log("");
 console.log("Use this only in the Supabase SQL Editor for the DeepSpec project.");
 console.log("It is read-only and helps diagnose `Database error creating anonymous user` failures.");
+console.log(
+  requestId === "REQUEST_ID_HERE"
+    ? "Pass the verifier's sb-request-id/error_id as an argument to prefill the audit-log lookup."
+    : `Audit-log lookup is prefilled for request id ${requestId}.`,
+);
 console.log("Run every query, then inspect the Auth logs entry for the matching /signup failure.");
 console.log("");
 console.log(`-- 1. Check whether Auth audit logs are stored in Postgres.
@@ -19,7 +26,7 @@ where table_schema = 'auth'
 order by ordinal_position;
 
 -- 2. Search recent Auth audit entries for the failed anonymous signup.
--- Replace REQUEST_ID_HERE with the sb-request-id/error_id printed by npm run verify:supabase.
+-- Pass the sb-request-id/error_id as an argument to npm run supabase:print-auth-diagnostics to prefill this value.
 -- If Postgres audit-log storage was disabled, use Dashboard -> Auth Logs instead.
 select
   created_at,
@@ -28,7 +35,7 @@ select
 from auth.audit_log_entries
 where created_at > now() - interval '2 hours'
   and (
-    payload::text ilike '%REQUEST_ID_HERE%'
+    payload::text ilike '%${escapeSqlLikeLiteral(requestId)}%'
     or payload::text ilike '%signup%'
     or payload::text ilike '%anonymous%'
     or payload::text ilike '%unexpected_failure%'
@@ -261,3 +268,7 @@ where id = 'scan-images';
 -- 15. Confirm anonymous Auth is enabled through the verifier first, then rerun:
 -- npm run verify:supabase
 `);
+
+function escapeSqlLikeLiteral(value) {
+  return value.replaceAll("'", "''").replaceAll("\\", "\\\\");
+}
