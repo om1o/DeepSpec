@@ -240,10 +240,83 @@ describe("createIdentifyResponse", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(3);
     expect(fetchSpy.mock.calls[2][0]).toBe("http://127.0.0.1:11434/api/chat");
     const ollamaBody = JSON.parse((fetchSpy.mock.calls[2][1] as RequestInit).body as string);
-    expect(ollamaBody.model).toBe("qwen2.5vl:7b");
+    expect(ollamaBody.model).toBe("llava:latest");
     expect(ollamaBody.stream).toBe(false);
     expect(ollamaBody.format).toBe("json");
-    expect(ollamaBody.messages[1].images).toEqual([imageBase64.replace(/^data:image\/png;base64,/, "")]);
+    expect(ollamaBody.messages[0].images).toEqual([imageBase64.replace(/^data:image\/png;base64,/, "")]);
+  });
+
+  it("uses local Ollama when Gemini is not configured and local fallback is enabled", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          message: {
+            content: JSON.stringify(result),
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(
+      createIdentifyResponse(
+        { imageBase64 },
+        {
+          DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK: "true",
+        },
+      ),
+    ).resolves.toEqual({
+      status: 200,
+      body: {
+        result,
+      },
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0][0]).toBe("http://127.0.0.1:11434/api/chat");
+  });
+
+  it("normalizes concise local Ollama JSON into the full identify result shape", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          message: {
+            content: JSON.stringify({
+              partName: "Engine",
+              confidence: 0.95,
+              scanCategory: "engine",
+              visibleObservations: ["Engine bay components are visible."],
+            }),
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(
+      createIdentifyResponse(
+        { imageBase64 },
+        {
+          DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK: "true",
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          partName: "Engine",
+          confidence: "high",
+          scanCategory: "engine",
+          visibleObservations: ["Engine bay components are visible."],
+        },
+      },
+    });
   });
 
   it("uses comma-separated identify fallback models before the built-in fallback", async () => {
@@ -330,11 +403,14 @@ describe("createIdentifyResponse", () => {
 
     const ollamaBody = JSON.parse((fetchSpy.mock.calls[2][1] as RequestInit).body as string);
     expect(ollamaBody).toMatchObject({
-      model: "qwen2.5vl:7b",
+      model: "llava:latest",
       stream: false,
       format: "json",
+      options: {
+        num_ctx: 2048,
+      },
     });
-    expect(ollamaBody.messages[1].images).toEqual(["iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="]);
+    expect(ollamaBody.messages[0].images).toEqual(["iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="]);
   });
 
   it("does not use Ollama when the local dev fallback flag is off", async () => {
