@@ -2,11 +2,13 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const migrationPath = join(process.cwd(), "supabase", "migrations", "20260518000100_deepspec_secure_foundation.sql");
+const migrationsDir = join(process.cwd(), "supabase", "migrations");
+const foundationMigrationPath = join(migrationsDir, "20260518000100_deepspec_secure_foundation.sql");
+const durableDatasetMigrationPath = join(migrationsDir, "20260528000309_durable_dataset_tables.sql");
 const srcPath = join(process.cwd(), "src");
 
 describe("Supabase secure foundation migration", () => {
-  const sql = readFileSync(migrationPath, "utf8");
+  const sql = readFileSync(foundationMigrationPath, "utf8");
 
   it("keeps scan rows private with auth-owned RLS policies", () => {
     expect(sql).toContain("grant usage on schema public to anon, authenticated");
@@ -46,6 +48,39 @@ describe("Supabase secure foundation migration", () => {
     const source = readSourceFiles(srcPath);
     expect(source).not.toMatch(/service[_-]?role/i);
     expect(source).not.toMatch(/SUPABASE_SERVICE/i);
+  });
+});
+
+describe("Supabase durable dataset migration", () => {
+  const sql = readFileSync(durableDatasetMigrationPath, "utf8");
+
+  it("adds original image metadata to scan_lookups", () => {
+    expect(sql).toContain("add column if not exists image_hash text");
+    expect(sql).toContain("add column if not exists image_mime_type text");
+    expect(sql).toContain("add column if not exists image_byte_length integer");
+  });
+
+  it("creates model run, candidate, evidence, correction, and sync event tables", () => {
+    expect(sql).toContain("create table if not exists public.scan_model_runs");
+    expect(sql).toContain("create table if not exists public.scan_candidates");
+    expect(sql).toContain("create table if not exists public.scan_evidence");
+    expect(sql).toContain("create table if not exists public.scan_corrections");
+    expect(sql).toContain("create table if not exists public.sync_events");
+  });
+
+  it("keeps dataset detail tables auth-owned and Data API accessible to authenticated users", () => {
+    for (const table of ["scan_model_runs", "scan_candidates", "scan_evidence", "scan_corrections", "sync_events"]) {
+      expect(sql).toContain(`alter table public.${table} enable row level security`);
+      expect(sql).toContain(`revoke all on public.${table} from anon`);
+      expect(sql).toContain(`grant select, insert, update, delete on public.${table} to authenticated`);
+      expect(sql).toContain(`(select auth.uid()) = user_id`);
+    }
+  });
+
+  it("links detail rows back to the user-owned scan row", () => {
+    expect(sql).toContain("references public.scan_lookups (user_id, local_id)");
+    expect(sql).toContain("on delete cascade");
+    expect(sql).toContain("notify pgrst, 'reload schema'");
   });
 });
 
