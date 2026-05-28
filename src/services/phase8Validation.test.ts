@@ -10,6 +10,7 @@ describe("Phase 8 Supabase validation tooling", () => {
   const authVerifier = readFileSync(join(process.cwd(), "scripts", "verify-auth-flows.mjs"), "utf8");
   const authDiagnostics = readFileSync(join(process.cwd(), "scripts", "print-supabase-auth-diagnostics.mjs"), "utf8");
   const docs = readFileSync(join(process.cwd(), "docs", "PHASE_8_SUPABASE_VALIDATION.md"), "utf8");
+  const envExample = readFileSync(join(process.cwd(), ".env.example"), "utf8");
   const ciWorkflow = readFileSync(join(process.cwd(), ".github", "workflows", "ci.yml"), "utf8");
 
   it("exposes a dedicated Supabase verification command", () => {
@@ -87,6 +88,14 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(docs).toContain("VITE_SUPABASE_PUBLISHABLE_KEY");
     expect(docs).toContain("supabase:print-auth-diagnostics");
     expect(docs).toContain("codex/production-readiness-release*");
+  });
+
+  it("documents optional live auth verification environment inputs", () => {
+    expect(envExample).toContain("DEEPSPEC_AUTH_TEST_EMAIL=");
+    expect(envExample).toContain("DEEPSPEC_AUTH_TEST_PASSWORD=");
+    expect(envExample).toContain("DEEPSPEC_AUTH_SEND_CODE=false");
+    expect(envExample).toContain("DEEPSPEC_AUTH_TEST_EMAIL_CODE=");
+    expect(envExample).toContain("DEEPSPEC_AUTH_REQUIRE_CREDENTIALS=false");
   });
 
   it("does not let production-readiness CI silently skip Supabase verification", () => {
