@@ -73,6 +73,10 @@ If those secrets are missing, ordinary feature PRs record an explicit "not verif
 PRs that change Supabase migrations, cloud-sync code, or this validation document fail instead, because schema and cloud-sync changes must prove the live verifier before they can be treated as ready.
 `main` and `codex/production-readiness-release*` branches also fail when secrets are missing, because those branches must prove Supabase cloud sync before they can be called release-ready.
 
+If Supabase preview branches are connected, also check the Supabase bot comment on the PR.
+If it says the preview branch was ignored because the project reached its concurrent preview branch limit, the migration has not been tested in a preview database.
+Clear an old preview branch or raise the Supabase preview-branch limit, then rerun the PR checks before treating the migration as cloud-verified.
+
 Do not start Phase 9 until anonymous sign-in can create a user and the verifier passes.
 
 ## If scan_lookups Is Missing From The Schema Cache
