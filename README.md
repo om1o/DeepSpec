@@ -25,6 +25,17 @@ GEMINI_CHAT_FALLBACK_MODELS=gemini-2.5-flash-lite
 
 Do not use a `VITE_` API key. The app calls `/api/identify` and `/api/chat`, and the server-side proxies send the key to Gemini.
 
+For emergency local development when Gemini is rate-limited, `/api/identify` can fall back to a local Ollama vision model after all configured Gemini identify models fail with provider availability errors:
+
+```bash
+ollama pull qwen2.5vl:7b
+DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK=true
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_IDENTIFY_MODEL=qwen2.5vl:7b
+```
+
+Keep this off for normal release checks unless the fallback host is intentionally available to the backend. A deployed Vercel function cannot reach Ollama on your laptop at `localhost`.
+
 Optional cloud sync uses Supabase. This needs parent-approved privacy terms before real users upload photos:
 
 ```bash
