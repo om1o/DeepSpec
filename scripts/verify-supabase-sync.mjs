@@ -40,16 +40,11 @@ try {
   await runPreflight(config);
   console.log("      Anonymous sign-ins are enabled in Supabase Auth settings.");
 
-  ownerClient = createClient(config.url, config.key, {
-    auth: {
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-      persistSession: false,
-    },
-  });
+  const ownerAuthContext = createAuthRequestContext();
+  ownerClient = createVerifierClient(config, ownerAuthContext);
 
   console.log("[1/8] Signing in as an anonymous Supabase user...");
-  const firstUser = await signInAnonymously(ownerClient, config);
+  const firstUser = await signInAnonymously(ownerClient, config, ownerAuthContext);
   userId = firstUser.id;
   imagePath = `${userId}/${testId}.jpg`;
 
@@ -119,14 +114,9 @@ try {
   await assertOwnerDatasetRows(ownerClient, testId);
 
   console.log("[6/8] Proving another anonymous user cannot read that scan dataset...");
-  const otherClient = createClient(config.url, config.key, {
-    auth: {
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-      persistSession: false,
-    },
-  });
-  await signInAnonymously(otherClient, config);
+  const otherAuthContext = createAuthRequestContext();
+  const otherClient = createVerifierClient(config, otherAuthContext);
+  await signInAnonymously(otherClient, config, otherAuthContext);
   await assertCrossUserCannotRead(otherClient, "scan_lookups", "local_id", testId);
   await assertCrossUserCannotRead(otherClient, "scan_candidates", "scan_local_id", testId);
   await assertCrossUserCannotRead(otherClient, "scan_evidence", "scan_local_id", testId);
@@ -150,7 +140,7 @@ try {
   }
 }
 
-async function signInAnonymously(supabase, config) {
+async function signInAnonymously(supabase, config, authRequestContext) {
   const { data, error } = await supabase.auth.signInAnonymously();
   if (error || !data.user) {
     const code = error?.code ? ` (${error.code})` : "";
@@ -159,6 +149,7 @@ async function signInAnonymously(supabase, config) {
     throw new Error(
       [
         `Anonymous sign-in failed: ${error?.message ?? "No user returned"}${code}, ${status}.`,
+        formatAuthRequestContext(authRequestContext),
         "The verifier already confirmed anonymous sign-ins are enabled, so this is a Supabase Auth/database problem instead of a browser app problem.",
         dashboardLinks
           ? `Open Auth logs for the failed /signup event: ${dashboardLinks.authLogs}`
@@ -172,6 +163,70 @@ async function signInAnonymously(supabase, config) {
   }
 
   return data.user;
+}
+
+function createVerifierClient(config, authRequestContext) {
+  return createClient(config.url, config.key, {
+    auth: {
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+      persistSession: false,
+    },
+    global: {
+      fetch: createTrackedAuthFetch(authRequestContext),
+    },
+  });
+}
+
+function createAuthRequestContext() {
+  return {
+    lastSignupResponse: null,
+  };
+}
+
+function createTrackedAuthFetch(authRequestContext) {
+  return async (input, init) => {
+    const response = await fetch(input, init);
+    const url = getFetchInputUrl(input);
+
+    if (url.includes("/auth/v1/signup")) {
+      authRequestContext.lastSignupResponse = {
+        errorCode: response.headers.get("x-sb-error-code"),
+        requestId: response.headers.get("sb-request-id"),
+        status: response.status,
+      };
+    }
+
+    return response;
+  };
+}
+
+function getFetchInputUrl(input) {
+  if (typeof input === "string") {
+    return input;
+  }
+
+  if (input instanceof URL) {
+    return input.toString();
+  }
+
+  return input?.url ?? "";
+}
+
+function formatAuthRequestContext(authRequestContext) {
+  const response = authRequestContext?.lastSignupResponse;
+  if (!response) {
+    return "No /signup response metadata was captured.";
+  }
+
+  return [
+    `Supabase /signup response: HTTP ${response.status}.`,
+    response.errorCode ? `x-sb-error-code: ${response.errorCode}.` : "",
+    response.requestId ? `sb-request-id/error_id: ${response.requestId}.` : "",
+    response.requestId ? "Search that request id in Supabase Auth Logs." : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function getDashboardLinks(projectUrl) {

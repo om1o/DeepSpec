@@ -50,6 +50,8 @@ describe("Phase 8 Supabase validation tooling", () => {
   it("prints actionable Supabase Auth diagnostics when anonymous sign-in fails", () => {
     expect(verifier).toContain("Anonymous sign-ins are enabled in Supabase Auth settings.");
     expect(verifier).toContain("logs/auth-logs");
+    expect(verifier).toContain("sb-request-id/error_id");
+    expect(verifier).toContain("Search that request id in Supabase Auth Logs.");
     expect(verifier).toContain("supabase:print-auth-diagnostics");
     expect(verifier).toContain("auth.users");
     expect(authDiagnostics).toContain("security_type");
