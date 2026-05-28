@@ -47,6 +47,14 @@ If any step fails, Phase 8 is not complete yet. Fix the Supabase config, migrati
 
 The current hosted Auth blocker is tracked in [GitHub issue #106](https://github.com/om1o/DeepSpec/issues/106).
 
+If Auth is blocked before the verifier reaches the schema/storage checks, run this read-only probe:
+
+```bash
+npm run supabase:probe-hosted-setup
+```
+
+It checks the hosted Data API schema cache for `scan_lookups`, `scan_model_runs`, `scan_candidates`, `scan_evidence`, `scan_corrections`, and `sync_events`, then checks whether the `scan-images` Storage bucket exists. It does not create Auth users or write data.
+
 ## If Anonymous Sign-In Returns A Database Error
 
 If `npm run verify:supabase` says `Database error creating anonymous user`, the app reached Supabase Auth but Supabase failed while inserting the anonymous user.

@@ -10,6 +10,7 @@ describe("Phase 8 Supabase validation tooling", () => {
   const authDiagnostics = readFileSync(join(process.cwd(), "scripts", "print-supabase-auth-diagnostics.mjs"), "utf8");
   const authRepair = readFileSync(join(process.cwd(), "scripts", "print-supabase-auth-anonymous-repair.mjs"), "utf8");
   const authRepairSql = readFileSync(join(process.cwd(), "scripts", "supabase-auth-anonymous-repair-sql.mjs"), "utf8");
+  const hostedProbe = readFileSync(join(process.cwd(), "scripts", "probe-supabase-hosted-setup.mjs"), "utf8");
   const docs = readFileSync(join(process.cwd(), "docs", "PHASE_8_SUPABASE_VALIDATION.md"), "utf8");
   const ciWorkflow = readFileSync(join(process.cwd(), ".github", "workflows", "ci.yml"), "utf8");
 
@@ -20,6 +21,7 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(packageJson.scripts["supabase:print-auth-anonymous-repair"]).toBe(
       "node scripts/print-supabase-auth-anonymous-repair.mjs",
     );
+    expect(packageJson.scripts["supabase:probe-hosted-setup"]).toBe("node scripts/probe-supabase-hosted-setup.mjs");
   });
 
   it("checks private image upload, durable dataset writes, owner reads, cross-user blocks, and cleanup", () => {
@@ -89,12 +91,25 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(authRepairSql).not.toContain("drop trigger if exists");
   });
 
+  it("probes hosted scan tables and storage without creating Auth users", () => {
+    expect(hostedProbe).toContain("This is read-only and does not create Auth users.");
+    expect(hostedProbe).toContain("/rest/v1/");
+    expect(hostedProbe).toContain("/storage/v1/bucket/");
+    expect(hostedProbe).toContain("PGRST205");
+    expect(hostedProbe).toContain("scan_lookups");
+    expect(hostedProbe).toContain("scan_model_runs");
+    expect(hostedProbe).toContain("scan-images");
+    expect(hostedProbe).toContain("supabase:print-migration");
+    expect(hostedProbe).toContain("verify:supabase");
+  });
+
   it("documents that parent setup and non-service-role keys are required", () => {
     expect(docs).toContain("Parent-Required Setup");
     expect(docs).toContain("Do not put a service-role key");
     expect(docs).toContain("VITE_SUPABASE_PUBLISHABLE_KEY");
     expect(docs).toContain("supabase:print-auth-diagnostics");
     expect(docs).toContain("supabase:print-auth-anonymous-repair");
+    expect(docs).toContain("supabase:probe-hosted-setup");
     expect(docs).toContain("Authentication -> Hooks");
     expect(docs).toContain("supabase_auth_admin");
     expect(docs).toContain("codex/production-readiness-release*");
