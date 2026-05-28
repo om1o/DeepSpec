@@ -64,7 +64,7 @@ Use a 900-check audit grid instead: 9 production tracks x 100 checks each. Every
 | P2-007 | Medium | Safety | Safety copy is repeated in `Trust check`, `Safety-critical`, and `Next action`. | Live result. | Deduplicate into one clear safety state with one action. |
 | P2-008 | Medium | Data review | No in-app dataset review dashboard exists. | Routes are scan/history/result/chat/early-access/auth. | Add internal review queue after cloud sync passes. |
 | P2-009 | Medium | Observability | No production logging/analytics plan for scan failures, invalid responses, latency, or sync errors. | Code/log inspection. | Add privacy-safe event logging and release dashboard. |
-| P2-010 | Medium | Auth | Local dev bypass exists while Supabase config is present. | Auth screen shows local continue. | Keep for dev only; production build must prove bypass absent. |
+| P2-010 | Medium | Auth | Resolved locally: local dev bypass was removed from the auth guard and auth screen. | `src/App.test.tsx` and `src/screens/Auth.test.tsx` now require a verified Supabase session or a configured OAuth provider. | Keep regression coverage so protected routes cannot reopen a fixture login path. |
 
 ## Google Lens-Like Result Target
 
@@ -180,7 +180,7 @@ Exit criteria:
 - Real browser smoke passes on mobile and desktop.
 - Camera, upload, result, history, saved result, correction, chat, waitlist, feedback, cloud sync, and offline/retry states are tested.
 - No 404s or console errors in core routes.
-- Production build has no local auth bypass.
+- Production and development builds have no local auth bypass.
 - Privacy/legal copy is ready for real users before collecting photos or emails at scale.
 
 ## Definition Of Done For Production

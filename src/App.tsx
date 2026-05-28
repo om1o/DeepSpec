@@ -7,7 +7,7 @@ import EarlyAccess from "./screens/EarlyAccess";
 import History from "./screens/History";
 import Result from "./screens/Result";
 import Scanner from "./screens/Scanner";
-import { getVerifiedAuthUser, hasLocalAuthBypass, subscribeToAuthChanges } from "./services/auth";
+import { getVerifiedAuthUser, subscribeToAuthChanges } from "./services/auth";
 
 type AuthStatus = "checking" | "allowed" | "blocked";
 
@@ -22,18 +22,18 @@ function RequireAuth({ children }: { children: ReactNode }) {
     getVerifiedAuthUser()
       .then((user) => {
         if (isMounted) {
-          setStatus(user || hasLocalAuthBypass() ? "allowed" : "blocked");
+          setStatus(user ? "allowed" : "blocked");
         }
       })
       .catch(() => {
         if (isMounted) {
-          setStatus(hasLocalAuthBypass() ? "allowed" : "blocked");
+          setStatus("blocked");
         }
       });
 
     subscribeToAuthChanges((user) => {
       if (isMounted) {
-        setStatus(user || hasLocalAuthBypass() ? "allowed" : "blocked");
+        setStatus(user ? "allowed" : "blocked");
       }
     }).then((cleanup) => {
       if (isMounted) {
@@ -44,7 +44,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
     }).catch(() => {
       if (isMounted) {
         setStatus((current) => (
-          current === "checking" ? (hasLocalAuthBypass() ? "allowed" : "blocked") : current
+          current === "checking" ? "blocked" : current
         ));
       }
     });

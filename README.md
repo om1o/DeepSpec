@@ -66,11 +66,14 @@ The public sample mode uses `DEEPSPEC_DATASET_INDEX_PATH` and will spend live pr
 
 Before release browser QA, use `docs/BROWSER_QA_MATRIX.md` for the route, viewport, console, network, and seeded-scan evidence checklist.
 
-Google sign-in is hidden by default because it depends on a live Google OAuth client configured in the Supabase Google provider. Only enable it after the Google client ID and secret are valid:
+Google and GitHub sign-in are hidden by default because they depend on live OAuth apps configured in the matching Supabase Auth providers. Only enable them after the provider client IDs and secrets are valid:
 
 ```bash
 VITE_ENABLE_GOOGLE_AUTH=true
+VITE_ENABLE_GITHUB_AUTH=true
 ```
+
+There is no local continue or fixture login path. A protected route opens only after Supabase verifies an email code or returns a real OAuth session.
 
 ## Current scope
 

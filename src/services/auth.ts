@@ -1,6 +1,5 @@
 import type { AuthChangeEvent, Session, SupabaseClient, User } from "@supabase/supabase-js";
-
-const LOCAL_AUTH_KEY = "ds_auth_seen";
+import type { Provider } from "@supabase/supabase-js";
 
 type SupabaseAuthConfig = {
   key: string;
@@ -17,35 +16,14 @@ export function isGoogleAuthEnabled() {
   return isSupabaseAuthConfigured() && import.meta.env.VITE_ENABLE_GOOGLE_AUTH?.trim().toLowerCase() === "true";
 }
 
-export function hasLocalAuthBypass() {
-  if (!canUseLocalAuthBypass()) {
-    return false;
-  }
-
-  try {
-    return localStorage.getItem(LOCAL_AUTH_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-export function markLocalAuthBypass() {
-  if (!canUseLocalAuthBypass()) {
-    return false;
-  }
-
-  try {
-    localStorage.setItem(LOCAL_AUTH_KEY, "1");
-    return true;
-  } catch {
-    return false;
-  }
+export function isGitHubAuthEnabled() {
+  return isSupabaseAuthConfigured() && import.meta.env.VITE_ENABLE_GITHUB_AUTH?.trim().toLowerCase() === "true";
 }
 
 export async function getVerifiedAuthUser(): Promise<User | null> {
   const client = await getAuthClient();
   if (!client) {
-    return hasLocalAuthBypass() ? makeLocalUser() : null;
+    return null;
   }
 
   const { data, error } = await client.auth.getUser();
@@ -91,9 +69,17 @@ export async function verifyEmailCode(email: string, token: string) {
 }
 
 export async function signInWithGoogle() {
+  return signInWithOAuthProvider("google");
+}
+
+export async function signInWithGitHub() {
+  return signInWithOAuthProvider("github");
+}
+
+async function signInWithOAuthProvider(provider: Provider) {
   const client = await getRequiredAuthClient();
   const result = await client.auth.signInWithOAuth({
-    provider: "google",
+    provider,
     options: {
       redirectTo: new URL("/scan", window.location.origin).toString(),
     },
@@ -153,10 +139,6 @@ function getSupabaseAuthConfig(): SupabaseAuthConfig | null {
   return { key, url };
 }
 
-function canUseLocalAuthBypass() {
-  return import.meta.env.DEV;
-}
-
 async function getRequiredAuthClient() {
   const client = await getAuthClient();
   if (!client) {
@@ -164,14 +146,4 @@ async function getRequiredAuthClient() {
   }
 
   return client;
-}
-
-function makeLocalUser(): User {
-  return {
-    app_metadata: {},
-    aud: "authenticated",
-    created_at: new Date(0).toISOString(),
-    id: "local-device",
-    user_metadata: {},
-  } as User;
 }
