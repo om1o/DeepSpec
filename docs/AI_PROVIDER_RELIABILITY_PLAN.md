@@ -30,6 +30,7 @@ npm run eval:identify -- --sample-set public --sample-size 300 --delay-ms 0 --pr
 ```
 
 `DEEPSPEC_DATASET_ROOT`, `DEEPSPEC_DATASET_INDEX_PATH`, `DEEPSPEC_EVAL_DELAY_MS`, `DEEPSPEC_EVAL_MAX_PROVIDER_FAILURES`, `DEEPSPEC_IDENTIFY_PROVIDER_TIMEOUT_MS`, `GEMINI_FALLBACK_MODELS`, and `GEMINI_CHAT_FALLBACK_MODELS` can set the same defaults for release runs.
+For a fast provider smoke where rate limits should fail immediately instead of waiting through release backoff, add `--rate-limit-retries 0`.
 
 Optional local identify fallback:
 

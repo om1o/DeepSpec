@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -6,6 +6,7 @@ import {
   PUBLIC_SAMPLE_SIZE,
   RELEASE_SAMPLE_IMAGES,
   buildPublicSampleImages,
+  createIdentifyResponseWithRetry,
   buildEvalViteServerOptions,
   buildReviewLookup,
   getEvalExitCode,
@@ -241,6 +242,25 @@ describe("identify eval scoring", () => {
 
   it("allows slower Hugging Face dataset reads before timing out", () => {
     expect(DATASET_FETCH_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
+  });
+
+  it("can skip long rate-limit retries for quick live smoke checks", async () => {
+    const identify = {
+      createIdentifyResponse: vi.fn(async () => ({
+        status: 429,
+        body: {
+          error: {
+            code: "rate_limited",
+            message: "Too many AI lookups right now.",
+          },
+        },
+      })),
+    };
+
+    const response = await createIdentifyResponseWithRetry(identify, "data:image/jpeg;base64,aGVsbG8=", {}, 0);
+
+    expect(response.status).toBe(429);
+    expect(identify.createIdentifyResponse).toHaveBeenCalledTimes(1);
   });
 
   it("marks safety false positives only when the expected label is not safety-critical", () => {
