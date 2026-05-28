@@ -28,10 +28,10 @@ Do not use a `VITE_` API key. The app calls `/api/identify` and `/api/chat`, and
 For emergency local development when Gemini is rate-limited, `/api/identify` can fall back to a local Ollama vision model after all configured Gemini identify models fail with provider availability errors:
 
 ```bash
-ollama pull qwen2.5vl:7b
+ollama pull llava
 DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK=true
 OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_IDENTIFY_MODEL=qwen2.5vl:7b
+OLLAMA_IDENTIFY_MODEL=llava:latest
 ```
 
 Keep this off for normal release checks unless the fallback host is intentionally available to the backend. A deployed Vercel function cannot reach Ollama on your laptop at `localhost`.

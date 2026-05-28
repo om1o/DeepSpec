@@ -35,10 +35,10 @@ For a fast provider smoke where rate limits should fail immediately instead of w
 Optional local identify fallback:
 
 ```powershell
-ollama pull qwen2.5vl:7b
+ollama pull llava
 $env:DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK="true"
 $env:OLLAMA_BASE_URL="http://127.0.0.1:11434"
-$env:OLLAMA_IDENTIFY_MODEL="qwen2.5vl:7b"
+$env:OLLAMA_IDENTIFY_MODEL="llava:latest"
 ```
 
 This fallback is useful when a developer machine has Ollama running and Gemini returns `429` or another retryable provider failure. It is not a production guarantee unless the backend can reach that Ollama host.

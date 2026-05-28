@@ -33,15 +33,23 @@ export type IdentifyResponse =
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
 const DEFAULT_FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
-const DEFAULT_OLLAMA_IDENTIFY_MODEL = "qwen2.5vl:7b";
+const DEFAULT_OLLAMA_IDENTIFY_MODEL = "llava:latest";
 const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 const DEFAULT_OCR_MODEL = "microsoft/trocr-large-printed";
 const IDENTIFY_MAX_OUTPUT_TOKENS = 2048;
+const OLLAMA_IDENTIFY_MAX_OUTPUT_TOKENS = 900;
 const DEFAULT_IDENTIFY_PROVIDER_TIMEOUT_MS = 25_000;
-const DEFAULT_OLLAMA_IDENTIFY_TIMEOUT_MS = 90_000;
+const DEFAULT_OLLAMA_IDENTIFY_TIMEOUT_MS = 180_000;
 const DEFAULT_DATASET_ROOT = "datasets/raw/drbimmer-car-parts-and-damage-dataset";
 const DEFAULT_DATASET_INDEX_PATH = "datasets/derived/drbimmer-car-parts-and-damage-dataset/records.jsonl";
 const RETRYABLE_PROVIDER_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+
+const OLLAMA_IDENTIFY_PROMPT = [
+  "Identify the main visible car part or car damage.",
+  "Return only JSON with partName, confidence, scanCategory, and visibleObservations.",
+  "confidence: high, medium, or low.",
+  `scanCategory: ${SCAN_CATEGORIES.join(", ")}.`,
+].join(" ");
 
 const IDENTIFICATION_RESPONSE_SCHEMA = {
   type: "object",
@@ -123,11 +131,6 @@ const IDENTIFICATION_RESPONSE_SCHEMA = {
 };
 
 export async function createIdentifyResponse(body: unknown, env: Record<string, string | undefined>): Promise<IdentifyResponse> {
-  const apiKey = env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return errorResponse(500, "not_configured", "Deep Spec AI is not configured. Add GEMINI_API_KEY on the server.");
-  }
-
   const parsed = parseIdentifyRequest(body);
   if ("error" in parsed) {
     return parsed.error;
@@ -135,8 +138,15 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
 
   const ocr = shouldRunOcr(parsed) ? await runOcrFallback(parsed, env) : null;
   const sourceContext = buildDatasetSourceContext(env);
-  const models = getIdentifyModels(env);
   const hasOllamaFallback = isOllamaIdentifyFallbackEnabled(env);
+  const apiKey = env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return hasOllamaFallback
+      ? createOllamaIdentifyResponse(parsed, ocr, env)
+      : errorResponse(500, "not_configured", "Deep Spec AI is not configured. Add GEMINI_API_KEY on the server.");
+  }
+
+  const models = getIdentifyModels(env);
   let rateLimited = false;
   let lastRetryableError: IdentifyResponse | null = null;
 
@@ -221,7 +231,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
   }
 
   if (hasOllamaFallback && lastRetryableError) {
-    const response = await createOllamaIdentifyResponse(parsed, ocr, sourceContext, env);
+    const response = await createOllamaIdentifyResponse(parsed, ocr, env);
     if (response.status === 200) {
       return response;
     }
@@ -294,12 +304,11 @@ async function createOllamaIdentifyResponse(
     userMessage: string;
   },
   ocr: { text: string; model: string } | null,
-  sourceContext: string | null,
   env: Record<string, string | undefined>,
 ): Promise<IdentifyResponse> {
   const model = env.OLLAMA_IDENTIFY_MODEL?.trim() || DEFAULT_OLLAMA_IDENTIFY_MODEL;
   const startedAt = Date.now();
-  const response = await fetchOllamaIdentify(model, parsed, ocr, sourceContext, env);
+  const response = await fetchOllamaIdentify(model, parsed, ocr, env);
 
   if (!response) {
     const networkError = errorResponse(502, "network", "Deep Spec could not reach the local Ollama fallback.");
@@ -317,7 +326,7 @@ async function createOllamaIdentifyResponse(
   }
 
   const text = extractOllamaText(responseBody);
-  const result = text ? parseIdentificationResult(text) : null;
+  const result = text ? parseOllamaIdentificationResult(text) : null;
   if (!result) {
     const invalidResponse = errorResponse(502, "invalid_response", "Ollama returned JSON that Deep Spec could not read.");
     logIdentifyAttempt("ollama", model, startedAt, invalidResponse, false);
@@ -354,7 +363,6 @@ function fetchOllamaIdentify(
     userMessage: string;
   },
   ocr: { text: string; model: string } | null,
-  sourceContext: string | null,
   env: Record<string, string | undefined>,
 ) {
   const baseUrl = getOllamaBaseUrl(env);
@@ -364,18 +372,11 @@ function fetchOllamaIdentify(
 
   const messages = [
     {
-      role: "system",
-      content: [
-        IDENTIFY_PROMPT,
-        "Return only one valid JSON object that matches the requested Deep Spec schema. Do not wrap it in Markdown.",
-      ].join("\n\n"),
-    },
-    {
       role: "user",
       content: [
+        OLLAMA_IDENTIFY_PROMPT,
         parsed.userMessage,
         ocr?.text ? buildOcrContext(ocr.text) : "",
-        sourceContext ?? "",
       ]
         .filter(Boolean)
         .join("\n\n"),
@@ -395,8 +396,9 @@ function fetchOllamaIdentify(
       stream: false,
       format: "json",
       options: {
+        num_ctx: 2048,
         temperature: 0.1,
-        num_predict: IDENTIFY_MAX_OUTPUT_TOKENS,
+        num_predict: OLLAMA_IDENTIFY_MAX_OUTPUT_TOKENS,
       },
     }),
   }).catch(() => null);
@@ -600,6 +602,72 @@ function parseIdentificationResult(text: string): IdentificationResult | null {
   } catch {
     return null;
   }
+}
+
+function parseOllamaIdentificationResult(text: string): IdentificationResult | null {
+  const fullResult = parseIdentificationResult(text);
+  if (fullResult) {
+    return fullResult;
+  }
+
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (!isRecord(parsed) || typeof parsed.partName !== "string") {
+      return null;
+    }
+
+    const partName = cleanText(parsed.partName, "Unidentified car part");
+    const scanCategory = getTrustedCandidateCategory(resolveScanCategory(parsed.scanCategory), partName);
+    const visibleObservations = isStringArray(parsed.visibleObservations) && parsed.visibleObservations.length > 0
+      ? parsed.visibleObservations
+      : [`The local vision model identified ${partName} as the main visible item.`];
+
+    return {
+      partName,
+      confidence: resolveOllamaConfidence(parsed.confidence),
+      scanCategory,
+      candidateMatches: [],
+      whatItDoes: `${partName} is the main item the local vision model could identify in this scan.`,
+      visibleObservations,
+      evidenceRegions: [
+        {
+          label: partName,
+          observation: visibleObservations[0] ?? `The scan appears to show ${partName}.`,
+          regionLabel: "Scanned area",
+        },
+      ],
+      concerns: [],
+      safetyTriage: isSafetyCriticalCategory(scanCategory) ? "needs_professional" : "can_help",
+      isSafetyCritical: isSafetyCriticalCategory(scanCategory),
+      nextAction: "Verify this result with a clearer angle before ordering parts or repairing the vehicle.",
+      needsBetterPhoto: false,
+      evidence: visibleObservations,
+      sourceLinks: [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function resolveOllamaConfidence(value: unknown): Confidence {
+  if (isConfidence(value)) {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    if (value >= 0.8) return "high";
+    if (value >= 0.45) return "medium";
+  }
+
+  return "low";
+}
+
+function resolveScanCategory(value: unknown): ScanCategory {
+  return isScanCategory(value) ? value : "unknown";
+}
+
+function isSafetyCriticalCategory(category: ScanCategory) {
+  return category === "airbag" || category === "brakes" || category === "fuel" || category === "leak" || category === "steering" || category === "suspension";
 }
 
 function normalizeIdentificationResult(
