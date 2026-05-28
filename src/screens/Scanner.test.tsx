@@ -213,7 +213,7 @@ describe("Scanner", () => {
     });
   }, 10000);
 
-  it("sends a focused target crop to AI when the scanner has a locked object", async () => {
+  it("sends a focused target crop as the AI image when the scanner has a locked object", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <Routes>
@@ -229,9 +229,10 @@ describe("Scanner", () => {
       width: 0.25,
       height: 0.2,
     });
-    expect(identifyCapturedFrame.mock.calls[0][1]).toMatchObject({
+    expect(identifyCapturedFrame.mock.calls[0][0]).toMatchObject({
       imageBase64: "data:image/jpeg;base64,target-crop",
     });
+    expect(identifyCapturedFrame.mock.calls[0][1]).toBeUndefined();
   }, 10000);
 
   it("falls back to a second camera frame when a focused target crop is unavailable", async () => {

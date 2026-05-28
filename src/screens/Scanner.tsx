@@ -224,6 +224,7 @@ export default function Scanner() {
       }
     }
 
+    let focusedFrame: CapturedFrame | undefined;
     let secondFrame: CapturedFrame | undefined;
     const focusedCrop = reviewTargetOverride?.normalized
       ? await createFocusedScanCrop(imageBase64, reviewTargetOverride.normalized)
@@ -233,11 +234,11 @@ export default function Scanner() {
       const cropQuality = await assessImageQuality(focusedCrop);
       if (!isScanRequestActive(requestId)) return;
       if (cropQuality.ok) {
-        secondFrame = { imageBase64: focusedCrop, capturedAt: new Date().toISOString() };
+        focusedFrame = { imageBase64: focusedCrop, capturedAt: new Date().toISOString() };
       }
     }
 
-    if (!secondFrame && secondFrameProvider) {
+    if (!focusedFrame && !secondFrame && secondFrameProvider) {
       await new Promise<void>((resolve) => setTimeout(resolve, SECOND_FRAME_DELAY_MS));
       if (!isScanRequestActive(requestId)) return;
       try {
@@ -253,7 +254,7 @@ export default function Scanner() {
 
     try {
       setAnalysisStep("Matching vehicle data");
-      const result = await identifyCapturedFrame(frame, secondFrame, labelRescueTrigger);
+      const result = await identifyCapturedFrame(focusedFrame ?? frame, focusedFrame ? undefined : secondFrame, labelRescueTrigger);
       if (!isScanRequestActive(requestId)) return;
       if (imageHash) setCachedScanResult(imageHash, result);
       setAnalysisStep("Saving result");
