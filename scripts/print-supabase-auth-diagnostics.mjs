@@ -109,12 +109,34 @@ where n.nspname not in ('pg_catalog', 'information_schema')
   )
 order by schema_name, function_name;
 
--- 7. Check whether a profiles table exists and has constraints that could reject anonymous users.
+-- 7. Check Postgres functions that are likely Supabase Auth Hooks.
+-- In Supabase Auth Hooks, a before_user_created Postgres function can block signup.
+-- Hook functions should be SECURITY DEFINER, pin search_path, and grant execute to supabase_auth_admin.
+select
+  n.nspname as function_schema,
+  p.proname as function_name,
+  pg_get_userbyid(p.proowner) as function_owner,
+  case when p.prosecdef then 'security definer' else 'security invoker' end as security_type,
+  coalesce(array_to_string(p.proconfig, ', '), '') as function_config,
+  has_function_privilege('supabase_auth_admin', p.oid, 'execute') as supabase_auth_admin_can_execute,
+  pg_get_functiondef(p.oid) as function_definition
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname not in ('pg_catalog', 'information_schema', 'pg_toast')
+  and (
+    p.proname ilike '%hook%'
+    or p.proname ilike '%auth%'
+    or pg_get_functiondef(p.oid) ilike '%before_user_created%'
+    or pg_get_functiondef(p.oid) ilike '%supabase_auth_admin%'
+  )
+order by function_schema, function_name;
+
+-- 8. Check whether a profiles table exists and has constraints that could reject anonymous users.
 select
   to_regclass('public.profiles') as profiles_table,
   to_regclass('public.users') as public_users_table;
 
--- 8. Show required columns/defaults on common profile tables.
+-- 9. Show required columns/defaults on common profile tables.
 -- Anonymous users usually do not have email or display-name fields, so NOT NULL
 -- profile columns without safe defaults can break auth.users trigger inserts.
 select
@@ -147,7 +169,7 @@ from pg_constraint
 where conrelid in (select table_oid from candidate_tables)
 order by table_name::text, constraint_name;
 
--- 9. Generate review-only drop statements for auth.users triggers.
+-- 10. Generate review-only drop statements for auth.users triggers.
 -- Do not run these until the Auth log or function body proves the trigger is the failing object.
 select
   format(
@@ -162,7 +184,7 @@ where n.nspname = 'auth'
   and not tg.tgisinternal
 order by tg.tgname;
 
--- 10. Check whether the DeepSpec cloud tables are present.
+-- 11. Check whether the DeepSpec cloud tables are present.
 with expected_tables(table_name) as (
   values
     ('scan_lookups'),
@@ -178,7 +200,7 @@ select
 from expected_tables
 order by table_name;
 
--- 11. Check whether required durable dataset columns exist.
+-- 12. Check whether required durable dataset columns exist.
 with expected_columns(table_name, column_name) as (
   values
     ('scan_lookups', 'image_hash'),
@@ -212,7 +234,7 @@ left join information_schema.columns columns
   and columns.column_name = expected_columns.column_name
 order by expected_columns.table_name, expected_columns.column_name;
 
--- 12. Check RLS and role grants for the cloud dataset tables.
+-- 13. Check RLS and role grants for the cloud dataset tables.
 with expected_tables(table_name) as (
   values
     ('scan_lookups'),
@@ -235,7 +257,7 @@ left join pg_class c
   on c.oid = to_regclass('public.' || quote_ident(expected_tables.table_name))
 order by expected_tables.table_name;
 
--- 13. List RLS policies for the cloud dataset tables.
+-- 14. List RLS policies for the cloud dataset tables.
 select
   schemaname,
   tablename,
@@ -256,7 +278,7 @@ where schemaname = 'public'
   )
 order by tablename, policyname;
 
--- 14. Check the private scan image bucket.
+-- 15. Check the private scan image bucket.
 select
   id,
   public,
@@ -265,7 +287,7 @@ select
 from storage.buckets
 where id = 'scan-images';
 
--- 15. Confirm anonymous Auth is enabled through the verifier first, then rerun:
+-- 16. Confirm anonymous Auth is enabled through the verifier first, then rerun:
 -- npm run verify:supabase
 `);
 

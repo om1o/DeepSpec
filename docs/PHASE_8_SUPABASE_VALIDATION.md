@@ -56,11 +56,12 @@ Check this before changing app code:
 
 1. Supabase Dashboard -> Authentication -> Sign In / Providers -> Anonymous sign-ins is enabled.
 2. Supabase Dashboard -> Auth logs: open the failed `/signup` event and read the database error. The verifier prints the project-specific Auth logs link when it can derive the project ref from `VITE_SUPABASE_URL`, and it prints the `sb-request-id` / `error_id` when Supabase returns one.
-3. Run `npm run supabase:print-auth-diagnostics -- <sb-request-id>`, paste the printed read-only SQL into Supabase SQL Editor, and inspect every result set. If you omit the argument, replace `REQUEST_ID_HERE` with the verifier's `sb-request-id` / `error_id`. It checks recent `auth.audit_log_entries`, trigger/function details, profile-table constraints, durable dataset tables, required columns, RLS, authenticated grants, and the private `scan-images` bucket.
-4. If SQL shows non-internal triggers on `auth.users`, inspect the matching function body, `security_type`, owner, and `function_config`. A trigger function writing to `public.profiles` or `public.users` must be `security definer` and should pin `search_path`.
-5. If SQL shows `public.profiles` / `public.users` required columns, defaults, or constraints that anonymous users cannot satisfy, make those profile fields nullable/defaulted for anonymous users or remove the trigger that writes to them. Do not run the generated drop-trigger statements until the Auth log or function body proves that trigger is the failing object.
-6. Apply this repo's migrations if the table, column, grant, RLS, policy, or bucket checks are missing anything.
-7. Rerun `npm run verify:supabase`.
+3. Run `npm run supabase:print-auth-diagnostics -- <sb-request-id>`, paste the printed read-only SQL into Supabase SQL Editor, and inspect every result set. If you omit the argument, replace `REQUEST_ID_HERE` with the verifier's `sb-request-id` / `error_id`. It checks recent `auth.audit_log_entries`, trigger/function details, likely Auth Hook functions, profile-table constraints, durable dataset tables, required columns, RLS, authenticated grants, and the private `scan-images` bucket.
+4. Supabase Dashboard -> Authentication -> Hooks: check whether a `before_user_created` hook is enabled. For Postgres hooks, the function must be `security definer`, should pin `search_path`, and must be executable by `supabase_auth_admin`; if it reads/writes tables with RLS, its table grants and policies must allow that role.
+5. If SQL shows non-internal triggers on `auth.users`, inspect the matching function body, `security_type`, owner, and `function_config`. A trigger function writing to `public.profiles` or `public.users` must be `security definer` and should pin `search_path`.
+6. If SQL shows `public.profiles` / `public.users` required columns, defaults, or constraints that anonymous users cannot satisfy, make those profile fields nullable/defaulted for anonymous users or remove the trigger that writes to them. Do not run the generated drop-trigger statements until the Auth log or function body proves that trigger is the failing object.
+7. Apply this repo's migrations if the table, column, grant, RLS, policy, or bucket checks are missing anything.
+8. Rerun `npm run verify:supabase`.
 
 ## GitHub Actions
 

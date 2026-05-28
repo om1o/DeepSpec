@@ -59,6 +59,9 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(authDiagnostics).toContain("process.argv[2]");
     expect(authDiagnostics).toContain("escapeSqlLikeLiteral");
     expect(authDiagnostics).toContain("security_type");
+    expect(authDiagnostics).toContain("Supabase Auth Hooks");
+    expect(authDiagnostics).toContain("before_user_created");
+    expect(authDiagnostics).toContain("supabase_auth_admin_can_execute");
     expect(authDiagnostics).toContain("profiles_table");
     expect(authDiagnostics).toContain("suggested_drop_trigger_sql");
     expect(authDiagnostics).toContain("scan_model_runs");
@@ -74,6 +77,8 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(docs).toContain("Do not put a service-role key");
     expect(docs).toContain("VITE_SUPABASE_PUBLISHABLE_KEY");
     expect(docs).toContain("supabase:print-auth-diagnostics");
+    expect(docs).toContain("Authentication -> Hooks");
+    expect(docs).toContain("supabase_auth_admin");
     expect(docs).toContain("codex/production-readiness-release*");
   });
 
