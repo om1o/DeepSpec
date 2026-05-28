@@ -137,7 +137,7 @@ describe("cloudSync", () => {
 
     expect(getCloudSyncStatus()).toEqual({
       configured: true,
-      message: "Cloud sync is configured but not verified. Run the Supabase verifier before calling storage and RLS ready.",
+      message: "Cloud sync is configured but not verified. Run the Supabase verifier before calling storage, RLS, and dataset tables ready.",
     });
   });
 
@@ -233,12 +233,17 @@ describe("cloudSync", () => {
     expect(insert).toHaveBeenCalledTimes(2);
   });
 
-  it("checks runtime cloud health across auth, storage, row write, and RLS isolation", async () => {
+  it("checks runtime cloud health across auth, storage, row write, durable details, and RLS isolation", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
     const upload = vi.fn().mockResolvedValue({ error: null });
     const remove = vi.fn().mockResolvedValue({ error: null });
     const upsert = vi.fn().mockResolvedValue({ error: null });
+    const candidateInsert = vi.fn().mockResolvedValue({ error: null });
+    const evidenceInsert = vi.fn().mockResolvedValue({ error: null });
+    const correctionUpsert = vi.fn().mockResolvedValue({ error: null });
+    const modelRunInsert = vi.fn().mockResolvedValue({ error: null });
+    const syncEventInsert = vi.fn().mockResolvedValue({ error: null });
     const ownerDeleteQuery = makeDeleteQuery();
     const crossReadEq = vi.fn().mockResolvedValue({ data: [], error: null });
     mocks.createClient
@@ -246,9 +251,24 @@ describe("cloudSync", () => {
         auth: {
           signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "owner-1" } }, error: null }),
         },
-        from: vi.fn().mockReturnValue({
-          delete: vi.fn().mockReturnValue(ownerDeleteQuery),
-          upsert,
+        from: vi.fn((table: string) => {
+          if (table === "scan_lookups") {
+            return {
+              delete: vi.fn().mockReturnValue(ownerDeleteQuery),
+              upsert,
+            };
+          }
+          if (table === "scan_candidates") return { insert: candidateInsert };
+          if (table === "scan_evidence") return { insert: evidenceInsert };
+          if (table === "scan_corrections") return { upsert: correctionUpsert };
+          if (table === "scan_model_runs") return { insert: modelRunInsert };
+          if (table === "sync_events") {
+            return {
+              delete: vi.fn().mockReturnValue(ownerDeleteQuery),
+              insert: syncEventInsert,
+            };
+          }
+          throw new Error(`Unexpected table ${table}`);
         }),
         storage: {
           from: vi.fn().mockReturnValue({ remove, upload }),
@@ -275,6 +295,7 @@ describe("cloudSync", () => {
     expect(report.checks.anonymousAuth.status).toBe("pass");
     expect(report.checks.storageUpload.status).toBe("pass");
     expect(report.checks.rowUpsert.status).toBe("pass");
+    expect(report.checks.datasetDetails.status).toBe("pass");
     expect(report.checks.rlsIsolation.status).toBe("pass");
     expect(upload).toHaveBeenCalledWith(
       expect.stringMatching(/^owner-1\/health-.+\.jpg$/),
@@ -292,6 +313,13 @@ describe("cloudSync", () => {
       { onConflict: "user_id,local_id" },
     );
     expect(crossReadEq).toHaveBeenCalledWith("local_id", expect.stringMatching(/^health-/));
+    expect(candidateInsert).toHaveBeenCalledWith(expect.objectContaining({ scan_local_id: expect.stringMatching(/^health-/) }));
+    expect(evidenceInsert).toHaveBeenCalledWith(expect.objectContaining({ evidence_type: "observation" }));
+    expect(correctionUpsert).toHaveBeenCalledWith(expect.objectContaining({ scan_local_id: expect.stringMatching(/^health-/) }), {
+      onConflict: "user_id,scan_local_id",
+    });
+    expect(modelRunInsert).toHaveBeenCalledWith(expect.objectContaining({ provider: "runtime-health" }));
+    expect(syncEventInsert).toHaveBeenCalledWith(expect.objectContaining({ event_type: "verify", status: "success" }));
     expect(remove).toHaveBeenCalledWith([expect.stringMatching(/^owner-1\/health-.+\.jpg$/)]);
     expect(getCloudHealthSnapshot().overall).toBe("ready");
   });
@@ -317,6 +345,7 @@ describe("cloudSync", () => {
     expect(report.checks.configured.status).toBe("pass");
     expect(report.checks.anonymousAuth.status).toBe("fail");
     expect(report.checks.storageUpload.status).toBe("unknown");
+    expect(report.checks.datasetDetails.status).toBe("unknown");
     expect(report.lastVerifiedAt).toBeNull();
     expect(upload).not.toHaveBeenCalled();
   });

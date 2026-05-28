@@ -16,7 +16,13 @@ export type CloudSyncStatus = {
   message: string;
 };
 
-export type CloudHealthStepId = "configured" | "anonymousAuth" | "storageUpload" | "rowUpsert" | "rlsIsolation";
+export type CloudHealthStepId =
+  | "configured"
+  | "anonymousAuth"
+  | "storageUpload"
+  | "rowUpsert"
+  | "datasetDetails"
+  | "rlsIsolation";
 export type CloudHealthStepStatus = "pass" | "fail" | "unknown";
 
 export type CloudHealthCheck = {
@@ -61,7 +67,7 @@ export function getCloudSyncStatus(): CloudSyncStatus {
 
   return {
     configured: true,
-    message: "Cloud sync is configured but not verified. Run the Supabase verifier before calling storage and RLS ready.",
+    message: "Cloud sync is configured but not verified. Run the Supabase verifier before calling storage, RLS, and dataset tables ready.",
   };
 }
 
@@ -140,6 +146,9 @@ export async function verifyCloudHealth(): Promise<CloudHealthReport> {
       "scan_lookups upsert failed",
     );
     report = updateCloudHealthCheck(report, "rowUpsert", "pass", "scan_lookups upsert passed through RLS.");
+
+    await writeCloudHealthDatasetDetails(ownerClient, userId, testId);
+    report = updateCloudHealthCheck(report, "datasetDetails", "pass", "Durable dataset detail writes passed through RLS.");
 
     const otherClient = await createVerificationClient(config);
     await signInForHealthCheck(otherClient);
@@ -336,6 +345,68 @@ async function insertSyncEvent(
     }),
     "sync_events insert failed",
   );
+}
+
+async function writeCloudHealthDatasetDetails(supabase: SupabaseClient, userId: string, scanLocalId: string) {
+  await assertCloudResult(
+    await supabase.from("scan_candidates").insert({
+      candidate_json: { source: "runtime-health" },
+      candidate_rank: 0,
+      confidence: "low",
+      part_name: "Runtime Health Related Part",
+      reason: "Synthetic row for runtime durable dataset verification.",
+      scan_category: "unknown",
+      scan_local_id: scanLocalId,
+      user_id: userId,
+    }),
+    "scan_candidates insert failed",
+  );
+  await assertCloudResult(
+    await supabase.from("scan_evidence").insert({
+      evidence_json: { source: "runtime-health" },
+      evidence_rank: 0,
+      evidence_text: "Synthetic visual observation for runtime durable dataset verification.",
+      evidence_type: "observation",
+      label: "Runtime health observation",
+      scan_local_id: scanLocalId,
+      user_id: userId,
+    }),
+    "scan_evidence insert failed",
+  );
+  await assertCloudResult(
+    await supabase.from("scan_corrections").upsert(
+      {
+        corrected_category: null,
+        corrected_part_name: null,
+        correction_text: null,
+        damage_severity: "unknown",
+        notes: "Synthetic correction row for runtime durable dataset verification.",
+        rating: null,
+        region_label: null,
+        scan_local_id: scanLocalId,
+        training_status: "raw_unreviewed",
+        user_id: userId,
+      },
+      { onConflict: "user_id,scan_local_id" },
+    ),
+    "scan_corrections upsert failed",
+  );
+  await assertCloudResult(
+    await supabase.from("scan_model_runs").insert({
+      error_code: null,
+      error_message: null,
+      latency_ms: 0,
+      metadata_json: { source: "runtime-health" },
+      model: "synthetic",
+      ocr_used: false,
+      prompt_version: "runtime-health",
+      provider: "runtime-health",
+      scan_local_id: scanLocalId,
+      user_id: userId,
+    }),
+    "scan_model_runs insert failed",
+  );
+  await insertSyncEvent(supabase, userId, scanLocalId, "verify", "success", "Runtime durable dataset details verified.");
 }
 
 async function deleteScanDetails(supabase: SupabaseClient, table: "scan_candidates" | "scan_evidence", userId: string, scanLocalId: string) {
@@ -605,6 +676,7 @@ function getFriendlySyncError(error: unknown) {
 
 async function cleanupCloudHealthCheck(supabase: SupabaseClient, userId: string, testId: string, imagePath: string) {
   try {
+    await supabase.from("sync_events").delete().eq("user_id", userId).eq("scan_local_id", testId);
     await supabase.from("scan_lookups").delete().eq("user_id", userId).eq("local_id", testId);
     await supabase.storage.from(SCAN_BUCKET).remove([imagePath]);
   } catch {
@@ -626,6 +698,7 @@ function createCloudHealthReport(config: CloudSyncConfig | null, checkedAt: stri
       anonymousAuth: createCloudHealthCheck("anonymousAuth", "Anonymous auth", "Not checked yet.", "unknown"),
       storageUpload: createCloudHealthCheck("storageUpload", "Image upload", "Not checked yet.", "unknown"),
       rowUpsert: createCloudHealthCheck("rowUpsert", "Row upsert", "Not checked yet.", "unknown"),
+      datasetDetails: createCloudHealthCheck("datasetDetails", "Dataset details", "Not checked yet.", "unknown"),
       rlsIsolation: createCloudHealthCheck("rlsIsolation", "RLS isolation", "Not checked yet.", "unknown"),
     },
     configured,
