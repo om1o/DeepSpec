@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const supabaseMock = vi.hoisted(() => ({
   auth: {
+    exchangeCodeForSession: vi.fn(),
     getUser: vi.fn(),
     onAuthStateChange: vi.fn(),
   },
@@ -19,6 +20,8 @@ describe("auth service", () => {
     vi.resetModules();
     vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "publishable-key");
+    window.history.pushState({}, "", "/");
+    supabaseMock.auth.exchangeCodeForSession.mockReset();
     supabaseMock.auth.getUser.mockReset();
     supabaseMock.auth.onAuthStateChange.mockReset();
     supabaseMock.createClient.mockReset();
@@ -33,6 +36,7 @@ describe("auth service", () => {
         },
       },
     });
+    supabaseMock.auth.exchangeCodeForSession.mockResolvedValue({ data: {}, error: null });
   });
 
   afterEach(() => {
@@ -48,6 +52,48 @@ describe("auth service", () => {
     await vi.advanceTimersByTimeAsync(8_000);
 
     await expect(userPromise).resolves.toBeNull();
+  });
+
+  it("exchanges an OAuth callback code before returning the verified user", async () => {
+    window.history.pushState({}, "", "/scan?code=oauth-code&keep=1#camera");
+    const { getVerifiedAuthUser } = await import("./auth");
+    supabaseMock.auth.getUser.mockResolvedValue({
+      data: {
+        user: {
+          app_metadata: {},
+          aud: "authenticated",
+          created_at: new Date(0).toISOString(),
+          id: "oauth-user",
+          user_metadata: {},
+        },
+      },
+      error: null,
+    });
+
+    await expect(getVerifiedAuthUser()).resolves.toEqual(expect.objectContaining({ id: "oauth-user" }));
+
+    expect(supabaseMock.auth.exchangeCodeForSession).toHaveBeenCalledWith("oauth-code");
+    expect(supabaseMock.auth.exchangeCodeForSession.mock.invocationCallOrder[0]).toBeLessThan(
+      supabaseMock.auth.getUser.mock.invocationCallOrder[0],
+    );
+    expect(window.location.pathname).toBe("/scan");
+    expect(window.location.search).toBe("?keep=1");
+    expect(window.location.hash).toBe("#camera");
+  });
+
+  it("fails closed when an OAuth callback code cannot be exchanged", async () => {
+    window.history.pushState({}, "", "/scan?code=bad-code");
+    const { getVerifiedAuthUser } = await import("./auth");
+    supabaseMock.auth.exchangeCodeForSession.mockResolvedValue({
+      data: {},
+      error: {
+        message: "Invalid code",
+      },
+    });
+
+    await expect(getVerifiedAuthUser()).resolves.toBeNull();
+
+    expect(supabaseMock.auth.getUser).not.toHaveBeenCalled();
   });
 
   it("verifies auth-change sessions with Supabase before reporting a user", async () => {
@@ -76,6 +122,38 @@ describe("auth service", () => {
 
     await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ id: "verified-user" })));
     expect(onChange).not.toHaveBeenCalledWith(expect.objectContaining({ id: "event-user" }));
+  });
+
+  it("defers Supabase user verification outside the auth-change callback", async () => {
+    vi.useFakeTimers();
+    const { subscribeToAuthChanges } = await import("./auth");
+    const onChange = vi.fn();
+    supabaseMock.auth.getUser.mockResolvedValue({
+      data: {
+        user: {
+          app_metadata: {},
+          aud: "authenticated",
+          created_at: new Date(0).toISOString(),
+          id: "verified-user",
+          user_metadata: {},
+        },
+      },
+      error: null,
+    });
+
+    await subscribeToAuthChanges(onChange);
+    const listener = supabaseMock.auth.onAuthStateChange.mock.calls[0][0];
+    listener("SIGNED_IN", {
+      user: {
+        id: "event-user",
+      },
+    });
+
+    expect(supabaseMock.auth.getUser).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ id: "verified-user" })));
   });
 
   it("fails closed when an auth-change session cannot be verified", async () => {
