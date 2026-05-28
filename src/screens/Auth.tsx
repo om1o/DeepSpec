@@ -7,6 +7,7 @@ import {
   isSupabaseAuthConfigured,
   signInWithGitHub,
   signInWithPassword,
+  signUpWithPassword,
   sendEmailVerificationCode,
   signInWithGoogle,
   verifyEmailCode,
@@ -14,6 +15,7 @@ import {
 
 type AuthStep = "email" | "code";
 type AuthMode = "code" | "password";
+type PasswordMode = "signin" | "signup";
 const SCAN_ROUTE = "/scan";
 const CODE_LENGTH = 6;
 const RESEND_COOLDOWN_SECONDS = 30;
@@ -26,6 +28,7 @@ export default function Auth() {
   const oauthEnabled = googleAuthEnabled || githubAuthEnabled;
   const canSubmit = supabaseConfigured;
   const [authMode, setAuthMode] = useState<AuthMode>("code");
+  const [passwordMode, setPasswordMode] = useState<PasswordMode>("signin");
   const [step, setStep] = useState<AuthStep>("email");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -116,10 +119,18 @@ export default function Auth() {
       setIsSubmitting(true);
       try {
         const normalizedEmail = email.trim().toLowerCase();
-        await signInWithPassword(normalizedEmail, password);
-        navigate(SCAN_ROUTE, { replace: true });
+        const user = passwordMode === "signin"
+          ? await signInWithPassword(normalizedEmail, password)
+          : await signUpWithPassword(normalizedEmail, password);
+        if (user) {
+          navigate(SCAN_ROUTE, { replace: true });
+          return;
+        }
+
+        setNotice("Account created. Check your email to confirm it, then sign in with your password.");
+        setPasswordMode("signin");
       } catch (authError) {
-        setError(authError instanceof Error ? authError.message : "Password sign in failed. Try again.");
+        setError(authError instanceof Error ? authError.message : "Password authentication failed. Try again.");
       } finally {
         setIsSubmitting(false);
       }
@@ -213,6 +224,7 @@ export default function Auth() {
     setCode("");
     setError(null);
     setNotice(null);
+    setPasswordMode("signin");
     autoSubmittedCodeRef.current = null;
   }
 
@@ -317,20 +329,39 @@ export default function Auth() {
             </label>
 
             {authMode === "password" ? (
-              <label className="block">
-                <span className="sr-only">Password</span>
-                <input
-                  className="h-14 w-full rounded-[8px] border border-slate-200 bg-white px-4 text-base font-semibold text-slate-950 shadow-sm outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)]"
-                  autoComplete="current-password"
-                  disabled={isSubmitting}
-                  name="password"
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder="Enter your password"
-                  required={authMode === "password" && supabaseConfigured}
-                  type="password"
-                  value={password}
-                />
-              </label>
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPasswordMode("signin")}
+                    className={passwordMode === "signin" ? "h-11 rounded-[8px] border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] text-sm font-black text-[var(--ds-accent)]" : "h-11 rounded-[8px] border border-neutral-200 bg-white text-sm font-black text-neutral-500"}
+                  >
+                    Existing account
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPasswordMode("signup")}
+                    className={passwordMode === "signup" ? "h-11 rounded-[8px] border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] text-sm font-black text-[var(--ds-accent)]" : "h-11 rounded-[8px] border border-neutral-200 bg-white text-sm font-black text-neutral-500"}
+                  >
+                    New account
+                  </button>
+                </div>
+                <label className="block">
+                  <span className="sr-only">Password</span>
+                  <input
+                    className="h-14 w-full rounded-[8px] border border-slate-200 bg-white px-4 text-base font-semibold text-slate-950 shadow-sm outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)]"
+                    autoComplete={passwordMode === "signin" ? "current-password" : "new-password"}
+                    disabled={isSubmitting}
+                    minLength={8}
+                    name="password"
+                    onChange={(event) => setPassword(event.target.value)}
+                    placeholder={passwordMode === "signin" ? "Enter your password" : "Create a password"}
+                    required={authMode === "password" && supabaseConfigured}
+                    type="password"
+                    value={password}
+                  />
+                </label>
+              </>
             ) : null}
 
             {authMode === "code" && step === "code" ? (
@@ -372,7 +403,7 @@ export default function Auth() {
               disabled={isSubmitting || isGoogleLoading || isGitHubLoading || !canSubmit}
               type="submit"
             >
-              {submitLabel(authMode, step, supabaseConfigured, isSubmitting)}
+              {submitLabel(authMode, passwordMode, step, supabaseConfigured, isSubmitting)}
             </button>
           </form>
 
@@ -438,13 +469,14 @@ function OAuthButton({
 
 function submitLabel(
   authMode: AuthMode,
+  passwordMode: PasswordMode,
   step: AuthStep,
   supabaseConfigured: boolean,
   isSubmitting: boolean,
 ) {
   if (isSubmitting) {
     if (authMode === "password") {
-      return "Checking password...";
+      return passwordMode === "signin" ? "Checking password..." : "Creating account...";
     }
     return step === "email" ? "Sending code..." : "Checking code...";
   }
@@ -454,7 +486,7 @@ function submitLabel(
   }
 
   if (authMode === "password") {
-    return "Sign in with password";
+    return passwordMode === "signin" ? "Sign in with password" : "Create password account";
   }
 
   return step === "email" ? "Send verification code" : "Verify code";

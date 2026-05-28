@@ -9,6 +9,7 @@ const supabaseMock = vi.hoisted(() => ({
     signInWithOAuth: vi.fn(),
     signInWithOtp: vi.fn(),
     signInWithPassword: vi.fn(),
+    signUp: vi.fn(),
     verifyOtp: vi.fn(),
   },
   createClient: vi.fn(),
@@ -31,6 +32,7 @@ describe("Auth", () => {
     supabaseMock.auth.signInWithOAuth.mockReset();
     supabaseMock.auth.signInWithOtp.mockReset();
     supabaseMock.auth.signInWithPassword.mockReset();
+    supabaseMock.auth.signUp.mockReset();
     supabaseMock.auth.verifyOtp.mockReset();
     supabaseMock.createClient.mockReset();
 
@@ -39,6 +41,7 @@ describe("Auth", () => {
     supabaseMock.auth.signInWithOAuth.mockResolvedValue({ data: {}, error: null });
     supabaseMock.auth.signInWithOtp.mockResolvedValue({ data: {}, error: null });
     supabaseMock.auth.signInWithPassword.mockResolvedValue({ data: {}, error: null });
+    supabaseMock.auth.signUp.mockResolvedValue({ data: {}, error: null });
     supabaseMock.auth.verifyOtp.mockResolvedValue({ data: {}, error: null });
   });
 
@@ -144,6 +147,44 @@ describe("Auth", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Invalid login credentials");
     expect(screen.queryByText("Scanner opened")).not.toBeInTheDocument();
+  });
+
+  it("creates a password account but waits for email confirmation before opening the scanner", async () => {
+    const user = userEvent.setup();
+
+    await renderAuth();
+
+    await user.click(await screen.findByRole("tab", { name: "Password" }));
+    await user.click(screen.getByRole("button", { name: "New account" }));
+    await user.type(screen.getByPlaceholderText("Enter your email address"), "NewUser@Example.com");
+    await user.type(screen.getByPlaceholderText("Create a password"), "new-password-123");
+    await user.click(screen.getByRole("button", { name: "Create password account" }));
+
+    await waitFor(() => {
+      expect(supabaseMock.auth.signUp).toHaveBeenCalledWith({
+        email: "newuser@example.com",
+        password: "new-password-123",
+      });
+    });
+    expect(await screen.findByText("Account created. Check your email to confirm it, then sign in with your password.")).toBeInTheDocument();
+    expect(screen.queryByText("Scanner opened")).not.toBeInTheDocument();
+  });
+
+  it("opens the scanner after password account creation only when Supabase returns a verified session", async () => {
+    const user = userEvent.setup();
+    supabaseMock.auth.getUser
+      .mockResolvedValueOnce({ data: { user: null }, error: null })
+      .mockResolvedValueOnce({ data: { user: makeUser("new-password-user") }, error: null });
+
+    await renderAuth();
+
+    await user.click(await screen.findByRole("tab", { name: "Password" }));
+    await user.click(screen.getByRole("button", { name: "New account" }));
+    await user.type(screen.getByPlaceholderText("Enter your email address"), "newuser@example.com");
+    await user.type(screen.getByPlaceholderText("Create a password"), "new-password-123");
+    await user.click(screen.getByRole("button", { name: "Create password account" }));
+
+    expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
   });
 
   it("starts GitHub auth by default when Supabase is configured", async () => {

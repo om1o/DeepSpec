@@ -87,6 +87,20 @@ export async function signInWithPassword(email: string, password: string) {
   return user;
 }
 
+export async function signUpWithPassword(email: string, password: string) {
+  const client = await getRequiredAuthClient();
+  const result = await client.auth.signUp({
+    email,
+    password,
+  });
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  return getVerifiedAuthUser();
+}
+
 export async function signInWithGoogle() {
   return signInWithOAuthProvider("google");
 }
