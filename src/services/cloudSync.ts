@@ -152,12 +152,8 @@ export async function verifyCloudHealth(): Promise<CloudHealthReport> {
 
     const otherClient = await createVerificationClient(config);
     await signInForHealthCheck(otherClient);
-    const crossRead = await otherClient.from("scan_lookups").select("local_id").eq("local_id", testId);
-    await assertCloudResult(crossRead, "Cross-user RLS read failed");
-    if ((crossRead.data ?? []).length > 0) {
-      throw new Error("RLS failed: another anonymous user could read the health-check scan.");
-    }
-    report = updateCloudHealthCheck(report, "rlsIsolation", "pass", "Another anonymous user could not read this scan.");
+    await assertCloudHealthRlsIsolation(otherClient, testId);
+    report = updateCloudHealthCheck(report, "rlsIsolation", "pass", "Another anonymous user could not read this scan dataset.");
 
     return saveCloudHealthReport({
       ...report,
@@ -407,6 +403,25 @@ async function writeCloudHealthDatasetDetails(supabase: SupabaseClient, userId: 
     "scan_model_runs insert failed",
   );
   await insertSyncEvent(supabase, userId, scanLocalId, "verify", "success", "Runtime durable dataset details verified.");
+}
+
+async function assertCloudHealthRlsIsolation(supabase: SupabaseClient, scanLocalId: string) {
+  const checks = [
+    { idColumn: "local_id", table: "scan_lookups" },
+    { idColumn: "scan_local_id", table: "scan_candidates" },
+    { idColumn: "scan_local_id", table: "scan_evidence" },
+    { idColumn: "scan_local_id", table: "scan_corrections" },
+    { idColumn: "scan_local_id", table: "scan_model_runs" },
+    { idColumn: "scan_local_id", table: "sync_events" },
+  ];
+
+  for (const check of checks) {
+    const crossRead = await supabase.from(check.table).select(check.idColumn).eq(check.idColumn, scanLocalId);
+    await assertCloudResult(crossRead, `${check.table} cross-user RLS read failed`);
+    if ((crossRead.data ?? []).length > 0) {
+      throw new Error(`RLS failed: another anonymous user could read ${check.table}.`);
+    }
+  }
 }
 
 async function deleteScanDetails(supabase: SupabaseClient, table: "scan_candidates" | "scan_evidence", userId: string, scanLocalId: string) {

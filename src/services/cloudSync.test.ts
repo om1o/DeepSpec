@@ -246,6 +246,9 @@ describe("cloudSync", () => {
     const syncEventInsert = vi.fn().mockResolvedValue({ error: null });
     const ownerDeleteQuery = makeDeleteQuery();
     const crossReadEq = vi.fn().mockResolvedValue({ data: [], error: null });
+    const crossReadFrom = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({ eq: crossReadEq }),
+    });
     mocks.createClient
       .mockReturnValueOnce({
         auth: {
@@ -278,9 +281,7 @@ describe("cloudSync", () => {
         auth: {
           signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "other-1" } }, error: null }),
         },
-        from: vi.fn().mockReturnValue({
-          select: vi.fn().mockReturnValue({ eq: crossReadEq }),
-        }),
+        from: crossReadFrom,
         storage: {
           from: vi.fn(),
         },
@@ -312,7 +313,14 @@ describe("cloudSync", () => {
       }),
       { onConflict: "user_id,local_id" },
     );
+    expect(crossReadFrom).toHaveBeenCalledWith("scan_lookups");
+    expect(crossReadFrom).toHaveBeenCalledWith("scan_candidates");
+    expect(crossReadFrom).toHaveBeenCalledWith("scan_evidence");
+    expect(crossReadFrom).toHaveBeenCalledWith("scan_corrections");
+    expect(crossReadFrom).toHaveBeenCalledWith("scan_model_runs");
+    expect(crossReadFrom).toHaveBeenCalledWith("sync_events");
     expect(crossReadEq).toHaveBeenCalledWith("local_id", expect.stringMatching(/^health-/));
+    expect(crossReadEq).toHaveBeenCalledWith("scan_local_id", expect.stringMatching(/^health-/));
     expect(candidateInsert).toHaveBeenCalledWith(expect.objectContaining({ scan_local_id: expect.stringMatching(/^health-/) }));
     expect(evidenceInsert).toHaveBeenCalledWith(expect.objectContaining({ evidence_type: "observation" }));
     expect(correctionUpsert).toHaveBeenCalledWith(expect.objectContaining({ scan_local_id: expect.stringMatching(/^health-/) }), {
