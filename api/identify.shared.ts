@@ -33,9 +33,12 @@ export type IdentifyResponse =
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
 const DEFAULT_FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
+const DEFAULT_OLLAMA_IDENTIFY_MODEL = "qwen2.5vl:7b";
+const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 const DEFAULT_OCR_MODEL = "microsoft/trocr-large-printed";
 const IDENTIFY_MAX_OUTPUT_TOKENS = 2048;
 const DEFAULT_IDENTIFY_PROVIDER_TIMEOUT_MS = 25_000;
+const DEFAULT_OLLAMA_IDENTIFY_TIMEOUT_MS = 90_000;
 const DEFAULT_DATASET_ROOT = "datasets/raw/drbimmer-car-parts-and-damage-dataset";
 const DEFAULT_DATASET_INDEX_PATH = "datasets/derived/drbimmer-car-parts-and-damage-dataset/records.jsonl";
 const RETRYABLE_PROVIDER_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
@@ -133,20 +136,23 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
   const ocr = shouldRunOcr(parsed) ? await runOcrFallback(parsed, env) : null;
   const sourceContext = buildDatasetSourceContext(env);
   const models = getIdentifyModels(env);
+  const hasOllamaFallback = isOllamaIdentifyFallbackEnabled(env);
   let rateLimited = false;
   let lastRetryableError: IdentifyResponse | null = null;
 
   for (let index = 0; index < models.length; index += 1) {
     const model = models[index];
     const hasFallback = index < models.length - 1;
+    const fallbackAvailable = hasFallback || hasOllamaFallback;
     const startedAt = Date.now();
     const response = await fetchGeminiIdentify(model, parsed, ocr, sourceContext, apiKey, env);
 
     if (!response) {
       const networkError = errorResponse(502, "network", "Deep Spec could not reach Gemini.");
       lastRetryableError = networkError;
-      logIdentifyAttempt(model, startedAt, networkError, hasFallback);
+      logIdentifyAttempt("gemini", model, startedAt, networkError, fallbackAvailable);
       if (hasFallback) continue;
+      if (hasOllamaFallback) break;
       return networkError;
     }
 
@@ -154,8 +160,9 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
       rateLimited = true;
       const retryError = errorResponse(429, "rate_limited", "Too many AI lookups right now. Try again in a few minutes.");
       lastRetryableError = retryError;
-      logIdentifyAttempt(model, startedAt, retryError, hasFallback);
+      logIdentifyAttempt("gemini", model, startedAt, retryError, fallbackAvailable);
       if (hasFallback) continue;
+      if (hasOllamaFallback) break;
       return retryError;
     }
 
@@ -166,8 +173,9 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
       const providerError = errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
       if (RETRYABLE_PROVIDER_STATUSES.has(response.status)) {
         lastRetryableError = providerError;
-        logIdentifyAttempt(model, startedAt, providerError, hasFallback);
+        logIdentifyAttempt("gemini", model, startedAt, providerError, fallbackAvailable);
         if (hasFallback) continue;
+        if (hasOllamaFallback) break;
       }
 
       return providerError;
@@ -177,7 +185,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
     if (!text) {
       const invalidResponse = errorResponse(502, "invalid_response", "Gemini did not return a usable answer.");
       lastRetryableError = invalidResponse;
-      logIdentifyAttempt(model, startedAt, invalidResponse, hasFallback);
+      logIdentifyAttempt("gemini", model, startedAt, invalidResponse, hasFallback);
       if (hasFallback) continue;
       return invalidResponse;
     }
@@ -186,7 +194,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
     if (!result) {
       const invalidResponse = errorResponse(502, "invalid_response", "Gemini returned JSON that Deep Spec could not read.");
       lastRetryableError = invalidResponse;
-      logIdentifyAttempt(model, startedAt, invalidResponse, hasFallback);
+      logIdentifyAttempt("gemini", model, startedAt, invalidResponse, hasFallback);
       if (hasFallback) continue;
       return invalidResponse;
     }
@@ -194,6 +202,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
     const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env);
 
     console.info("[DeepSpec AI]", {
+      provider: "gemini",
       model,
       latencyMs: Date.now() - startedAt,
       success: true,
@@ -209,6 +218,15 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
         result: normalizedResult,
       },
     };
+  }
+
+  if (hasOllamaFallback && lastRetryableError) {
+    const response = await createOllamaIdentifyResponse(parsed, ocr, sourceContext, env);
+    if (response.status === 200) {
+      return response;
+    }
+
+    return "error" in response.body && response.body.error.code === "invalid_response" ? response : lastRetryableError;
   }
 
   return rateLimited
@@ -245,13 +263,20 @@ function uniqueStrings(values: string[]) {
   });
 }
 
-function logIdentifyAttempt(model: string, startedAt: number, response: IdentifyResponse, fallbackAvailable: boolean) {
+function logIdentifyAttempt(
+  provider: "gemini" | "ollama",
+  model: string,
+  startedAt: number,
+  response: IdentifyResponse,
+  fallbackAvailable: boolean,
+) {
   if (response.status === 200) {
     return;
   }
 
   const code = "error" in response.body ? response.body.error.code : "unknown";
   console.warn("[DeepSpec AI]", {
+    provider,
     model,
     latencyMs: Date.now() - startedAt,
     success: false,
@@ -259,6 +284,163 @@ function logIdentifyAttempt(model: string, startedAt: number, response: Identify
     code,
     fallbackAvailable,
   });
+}
+
+async function createOllamaIdentifyResponse(
+  parsed: {
+    base64: string;
+    mimeType: string;
+    base64_2: string | null;
+    userMessage: string;
+  },
+  ocr: { text: string; model: string } | null,
+  sourceContext: string | null,
+  env: Record<string, string | undefined>,
+): Promise<IdentifyResponse> {
+  const model = env.OLLAMA_IDENTIFY_MODEL?.trim() || DEFAULT_OLLAMA_IDENTIFY_MODEL;
+  const startedAt = Date.now();
+  const response = await fetchOllamaIdentify(model, parsed, ocr, sourceContext, env);
+
+  if (!response) {
+    const networkError = errorResponse(502, "network", "Deep Spec could not reach the local Ollama fallback.");
+    logIdentifyAttempt("ollama", model, startedAt, networkError, false);
+    return networkError;
+  }
+
+  const isJson = (response.headers.get("content-type") ?? "").includes("application/json");
+  const responseBody = isJson ? ((await response.json().catch(() => null)) as JsonObject | null) : null;
+
+  if (!response.ok) {
+    const providerError = errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
+    logIdentifyAttempt("ollama", model, startedAt, providerError, false);
+    return providerError;
+  }
+
+  const text = extractOllamaText(responseBody);
+  const result = text ? parseIdentificationResult(text) : null;
+  if (!result) {
+    const invalidResponse = errorResponse(502, "invalid_response", "Ollama returned JSON that Deep Spec could not read.");
+    logIdentifyAttempt("ollama", model, startedAt, invalidResponse, false);
+    return invalidResponse;
+  }
+
+  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env);
+
+  console.info("[DeepSpec AI]", {
+    provider: "ollama",
+    model,
+    latencyMs: Date.now() - startedAt,
+    success: true,
+    confidence: normalizedResult.confidence,
+    scanCategory: normalizedResult.scanCategory,
+    safetyTriage: normalizedResult.safetyTriage,
+    ocrUsed: Boolean(ocr?.text),
+  });
+
+  return {
+    status: 200,
+    body: {
+      result: normalizedResult,
+    },
+  };
+}
+
+function fetchOllamaIdentify(
+  model: string,
+  parsed: {
+    base64: string;
+    mimeType: string;
+    base64_2: string | null;
+    userMessage: string;
+  },
+  ocr: { text: string; model: string } | null,
+  sourceContext: string | null,
+  env: Record<string, string | undefined>,
+) {
+  const baseUrl = getOllamaBaseUrl(env);
+  if (!baseUrl) {
+    return null;
+  }
+
+  const messages = [
+    {
+      role: "system",
+      content: [
+        IDENTIFY_PROMPT,
+        "Return only one valid JSON object that matches the requested Deep Spec schema. Do not wrap it in Markdown.",
+      ].join("\n\n"),
+    },
+    {
+      role: "user",
+      content: [
+        parsed.userMessage,
+        ocr?.text ? buildOcrContext(ocr.text) : "",
+        sourceContext ?? "",
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+      images: [parsed.base64, parsed.base64_2].filter(isString),
+    },
+  ];
+
+  return fetch(`${baseUrl}/api/chat`, {
+    method: "POST",
+    signal: AbortSignal.timeout(getOllamaIdentifyTimeoutMs(env)),
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      stream: false,
+      format: "json",
+      options: {
+        temperature: 0.1,
+        num_predict: IDENTIFY_MAX_OUTPUT_TOKENS,
+      },
+    }),
+  }).catch(() => null);
+}
+
+function isOllamaIdentifyFallbackEnabled(env: Record<string, string | undefined>) {
+  return env.DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK === "true";
+}
+
+function getOllamaBaseUrl(env: Record<string, string | undefined>) {
+  const raw = env.OLLAMA_BASE_URL?.trim() || DEFAULT_OLLAMA_BASE_URL;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
+function getOllamaIdentifyTimeoutMs(env: Record<string, string | undefined>) {
+  const value = env.DEEPSPEC_OLLAMA_IDENTIFY_TIMEOUT_MS;
+  if (!value) {
+    return DEFAULT_OLLAMA_IDENTIFY_TIMEOUT_MS;
+  }
+
+  const timeoutMs = Number(value);
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 5_000 || timeoutMs > 300_000) {
+    return DEFAULT_OLLAMA_IDENTIFY_TIMEOUT_MS;
+  }
+
+  return timeoutMs;
+}
+
+function extractOllamaText(responseBody: JsonObject | null) {
+  const message = responseBody?.message;
+  if (isRecord(message) && typeof message.content === "string") {
+    return message.content.trim();
+  }
+
+  return null;
 }
 
 function fetchGeminiIdentify(
@@ -1062,6 +1244,10 @@ function isRecord(value: unknown): value is JsonObject {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
 }
 
 function isCandidateMatchArray(value: unknown): value is CandidateMatch[] {

@@ -10,6 +10,7 @@ Deep Spec should not depend on a live provider call for every QA check. Provider
 4. Provider availability failures such as `rate_limited`, `network`, and `provider_error` are summarized as provider health failures. They are not written as training review rows because they do not prove the model was wrong.
 5. Model-quality failures such as `invalid_response`, wrong results, vague results, or safety false positives are still written to `.deepspec-eval/identify-failures.jsonl` in the saved-scan review shape when they are reviewable.
 6. Scanner production readiness requires both paths: real camera/upload smoke must pass consistently, and the live eval must pass its release threshold without provider availability blockers.
+7. The Ollama identify fallback is local-development insurance only. It may run after all Gemini identify models hit retryable provider failures, but it does not replace the live provider release gate.
 
 ## Commands
 
@@ -29,5 +30,16 @@ npm run eval:identify -- --sample-set public --sample-size 300 --delay-ms 0 --pr
 ```
 
 `DEEPSPEC_DATASET_ROOT`, `DEEPSPEC_DATASET_INDEX_PATH`, `DEEPSPEC_EVAL_DELAY_MS`, `DEEPSPEC_EVAL_MAX_PROVIDER_FAILURES`, `DEEPSPEC_IDENTIFY_PROVIDER_TIMEOUT_MS`, `GEMINI_FALLBACK_MODELS`, and `GEMINI_CHAT_FALLBACK_MODELS` can set the same defaults for release runs.
+
+Optional local identify fallback:
+
+```powershell
+ollama pull qwen2.5vl:7b
+$env:DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK="true"
+$env:OLLAMA_BASE_URL="http://127.0.0.1:11434"
+$env:OLLAMA_IDENTIFY_MODEL="qwen2.5vl:7b"
+```
+
+This fallback is useful when a developer machine has Ollama running and Gemini returns `429` or another retryable provider failure. It is not a production guarantee unless the backend can reach that Ollama host.
 
 The summary at `.deepspec-eval/identify-summary.json` includes provider and total latency percentiles, invalid response rate, safety false-positive rate, pass rate, and provider availability failure rate.

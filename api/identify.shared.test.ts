@@ -193,6 +193,59 @@ describe("createIdentifyResponse", () => {
     expect(fetchSpy.mock.calls[1][0]).toEqual(expect.stringContaining("/models/gemini-2.5-flash-lite:generateContent"));
   });
 
+  it("falls back to local Ollama when Gemini providers are unavailable and local fallback is enabled", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response("<html>Service Unavailable</html>", {
+          status: 503,
+          headers: { "Content-Type": "text/html" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response("<html>Service Unavailable</html>", {
+          status: 503,
+          headers: { "Content-Type": "text/html" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            message: {
+              content: JSON.stringify(result),
+            },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+
+    await expect(
+      createIdentifyResponse(
+        { imageBase64 },
+        {
+          GEMINI_API_KEY: "test-key",
+          DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK: "true",
+        },
+      ),
+    ).resolves.toEqual({
+      status: 200,
+      body: {
+        result,
+      },
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(fetchSpy.mock.calls[2][0]).toBe("http://127.0.0.1:11434/api/chat");
+    const ollamaBody = JSON.parse((fetchSpy.mock.calls[2][1] as RequestInit).body as string);
+    expect(ollamaBody.model).toBe("qwen2.5vl:7b");
+    expect(ollamaBody.stream).toBe(false);
+    expect(ollamaBody.format).toBe("json");
+    expect(ollamaBody.messages[1].images).toEqual([imageBase64.replace(/^data:image\/png;base64,/, "")]);
+  });
+
   it("uses comma-separated identify fallback models before the built-in fallback", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
@@ -224,6 +277,131 @@ describe("createIdentifyResponse", () => {
 
     expect(fetchSpy.mock.calls[0][0]).toEqual(expect.stringContaining("/models/gemini-2.5-flash:generateContent"));
     expect(fetchSpy.mock.calls[1][0]).toEqual(expect.stringContaining("/models/gemini-custom-fast:generateContent"));
+  });
+
+  it("uses local Ollama vision only after Gemini identify models are rate limited", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "quota exhausted" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "fallback quota exhausted" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            message: {
+              content: JSON.stringify(result),
+            },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+
+    await expect(
+      createIdentifyResponse(
+        { imageBase64 },
+        {
+          DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK: "true",
+          GEMINI_API_KEY: "test-key",
+        },
+      ),
+    ).resolves.toEqual({
+      status: 200,
+      body: {
+        result,
+      },
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(fetchSpy.mock.calls[0][0]).toEqual(expect.stringContaining("/models/gemini-2.5-flash:generateContent"));
+    expect(fetchSpy.mock.calls[1][0]).toEqual(expect.stringContaining("/models/gemini-2.5-flash-lite:generateContent"));
+    expect(fetchSpy.mock.calls[2][0]).toBe("http://127.0.0.1:11434/api/chat");
+
+    const ollamaBody = JSON.parse((fetchSpy.mock.calls[2][1] as RequestInit).body as string);
+    expect(ollamaBody).toMatchObject({
+      model: "qwen2.5vl:7b",
+      stream: false,
+      format: "json",
+    });
+    expect(ollamaBody.messages[1].images).toEqual(["iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="]);
+  });
+
+  it("does not use Ollama when the local dev fallback flag is off", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "quota exhausted" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "fallback quota exhausted" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 429,
+      body: {
+        error: {
+          code: "rate_limited",
+        },
+      },
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("surfaces invalid Ollama JSON as a fallback failure instead of hiding it as rate limited", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "quota exhausted" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "fallback quota exhausted" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ message: { content: "not json" } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+    await expect(
+      createIdentifyResponse(
+        { imageBase64 },
+        {
+          DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK: "true",
+          GEMINI_API_KEY: "test-key",
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: 502,
+      body: {
+        error: {
+          code: "invalid_response",
+        },
+      },
+    });
   });
 
   it("keeps the current engine QA fixture on the normal Gemini path", async () => {
