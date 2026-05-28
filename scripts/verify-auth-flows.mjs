@@ -13,8 +13,9 @@ const config = {
 const testEmail = process.env.DEEPSPEC_AUTH_TEST_EMAIL?.trim();
 const testPassword = process.env.DEEPSPEC_AUTH_TEST_PASSWORD?.trim();
 const testOtpCode = process.env.DEEPSPEC_AUTH_TEST_EMAIL_CODE?.trim();
-const shouldSendOtp = process.env.DEEPSPEC_AUTH_SEND_CODE === "true";
-const requireCredentials = process.env.DEEPSPEC_AUTH_REQUIRE_CREDENTIALS === "true";
+const args = new Set(process.argv.slice(2));
+const shouldSendOtp = process.env.DEEPSPEC_AUTH_SEND_CODE === "true" || args.has("--send-code");
+const requireCredentials = process.env.DEEPSPEC_AUTH_REQUIRE_CREDENTIALS === "true" || args.has("--require-credentials");
 
 if (!config.url || !config.key) {
   fail(

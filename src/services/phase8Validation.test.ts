@@ -31,6 +31,8 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(authVerifier).toContain("DEEPSPEC_AUTH_TEST_EMAIL");
     expect(authVerifier).toContain("DEEPSPEC_AUTH_TEST_EMAIL_CODE");
     expect(authVerifier).toContain("DEEPSPEC_AUTH_REQUIRE_CREDENTIALS");
+    expect(authVerifier).toContain("--require-credentials");
+    expect(authVerifier).toContain("--send-code");
   });
 
   it("checks private image upload, durable dataset writes, owner reads, cross-user blocks, and cleanup", () => {
