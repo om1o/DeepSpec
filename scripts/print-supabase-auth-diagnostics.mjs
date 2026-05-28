@@ -4,7 +4,39 @@ console.log("Use this only in the Supabase SQL Editor for the DeepSpec project."
 console.log("It is read-only and helps diagnose `Database error creating anonymous user` failures.");
 console.log("Run every query, then inspect the Auth logs entry for the matching /signup failure.");
 console.log("");
-console.log(`-- 1. List every trigger attached to auth.users.
+console.log(`-- 1. Check whether Auth audit logs are stored in Postgres.
+-- Supabase stores auth audit events in auth.audit_log_entries by default.
+select
+  to_regclass('auth.audit_log_entries') as auth_audit_log_entries_table;
+
+select
+  column_name,
+  data_type,
+  is_nullable
+from information_schema.columns
+where table_schema = 'auth'
+  and table_name = 'audit_log_entries'
+order by ordinal_position;
+
+-- 2. Search recent Auth audit entries for the failed anonymous signup.
+-- Replace REQUEST_ID_HERE with the sb-request-id/error_id printed by npm run verify:supabase.
+-- If Postgres audit-log storage was disabled, use Dashboard -> Auth Logs instead.
+select
+  created_at,
+  id,
+  payload
+from auth.audit_log_entries
+where created_at > now() - interval '2 hours'
+  and (
+    payload::text ilike '%REQUEST_ID_HERE%'
+    or payload::text ilike '%signup%'
+    or payload::text ilike '%anonymous%'
+    or payload::text ilike '%unexpected_failure%'
+  )
+order by created_at desc
+limit 25;
+
+-- 3. List every trigger attached to auth.users.
 select
   trigger_name,
   action_timing,
@@ -15,7 +47,7 @@ where event_object_schema = 'auth'
   and event_object_table = 'users'
 order by trigger_name;
 
--- 2. Show Postgres trigger definitions for auth.users, including disabled triggers.
+-- 4. Show Postgres trigger definitions for auth.users, including disabled triggers.
 -- If a non-internal trigger appears here, it can block anonymous sign-up.
 select
   tg.tgname as trigger_name,
@@ -29,7 +61,7 @@ where n.nspname = 'auth'
   and not tg.tgisinternal
 order by tg.tgname;
 
--- 3. Identify the functions behind non-internal auth.users triggers.
+-- 5. Identify the functions behind non-internal auth.users triggers.
 -- Check that trigger functions writing outside auth are SECURITY DEFINER and have a fixed search_path.
 select
   trigger_info.trigger_name,
@@ -52,7 +84,7 @@ where auth_ns.nspname = 'auth'
   and not tg.tgisinternal
 order by trigger_info.trigger_name;
 
--- 4. Find functions that mention auth.users, anonymous metadata, or common profile inserts.
+-- 6. Find functions that mention auth.users, anonymous metadata, or common profile inserts.
 select
   n.nspname as schema_name,
   p.proname as function_name,
@@ -70,12 +102,12 @@ where n.nspname not in ('pg_catalog', 'information_schema')
   )
 order by schema_name, function_name;
 
--- 5. Check whether a profiles table exists and has constraints that could reject anonymous users.
+-- 7. Check whether a profiles table exists and has constraints that could reject anonymous users.
 select
   to_regclass('public.profiles') as profiles_table,
   to_regclass('public.users') as public_users_table;
 
--- 6. Show required columns/defaults on common profile tables.
+-- 8. Show required columns/defaults on common profile tables.
 -- Anonymous users usually do not have email or display-name fields, so NOT NULL
 -- profile columns without safe defaults can break auth.users trigger inserts.
 select
@@ -108,7 +140,7 @@ from pg_constraint
 where conrelid in (select table_oid from candidate_tables)
 order by table_name::text, constraint_name;
 
--- 7. Generate review-only drop statements for auth.users triggers.
+-- 9. Generate review-only drop statements for auth.users triggers.
 -- Do not run these until the Auth log or function body proves the trigger is the failing object.
 select
   format(
@@ -123,7 +155,7 @@ where n.nspname = 'auth'
   and not tg.tgisinternal
 order by tg.tgname;
 
--- 8. Check whether the DeepSpec cloud tables are present.
+-- 10. Check whether the DeepSpec cloud tables are present.
 with expected_tables(table_name) as (
   values
     ('scan_lookups'),
@@ -139,7 +171,7 @@ select
 from expected_tables
 order by table_name;
 
--- 9. Check whether required durable dataset columns exist.
+-- 11. Check whether required durable dataset columns exist.
 with expected_columns(table_name, column_name) as (
   values
     ('scan_lookups', 'image_hash'),
@@ -173,7 +205,7 @@ left join information_schema.columns columns
   and columns.column_name = expected_columns.column_name
 order by expected_columns.table_name, expected_columns.column_name;
 
--- 10. Check RLS and role grants for the cloud dataset tables.
+-- 12. Check RLS and role grants for the cloud dataset tables.
 with expected_tables(table_name) as (
   values
     ('scan_lookups'),
@@ -196,7 +228,7 @@ left join pg_class c
   on c.oid = to_regclass('public.' || quote_ident(expected_tables.table_name))
 order by expected_tables.table_name;
 
--- 11. List RLS policies for the cloud dataset tables.
+-- 13. List RLS policies for the cloud dataset tables.
 select
   schemaname,
   tablename,
@@ -217,7 +249,7 @@ where schemaname = 'public'
   )
 order by tablename, policyname;
 
--- 12. Check the private scan image bucket.
+-- 14. Check the private scan image bucket.
 select
   id,
   public,
@@ -226,6 +258,6 @@ select
 from storage.buckets
 where id = 'scan-images';
 
--- 13. Confirm anonymous Auth is enabled through the verifier first, then rerun:
+-- 15. Confirm anonymous Auth is enabled through the verifier first, then rerun:
 -- npm run verify:supabase
 `);

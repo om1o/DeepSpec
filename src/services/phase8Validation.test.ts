@@ -54,6 +54,8 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(verifier).toContain("Search that request id in Supabase Auth Logs.");
     expect(verifier).toContain("supabase:print-auth-diagnostics");
     expect(verifier).toContain("auth.users");
+    expect(authDiagnostics).toContain("auth.audit_log_entries");
+    expect(authDiagnostics).toContain("REQUEST_ID_HERE");
     expect(authDiagnostics).toContain("security_type");
     expect(authDiagnostics).toContain("profiles_table");
     expect(authDiagnostics).toContain("suggested_drop_trigger_sql");
