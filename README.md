@@ -34,7 +34,7 @@ VITE_SUPABASE_PUBLISHABLE_KEY=your_publishable_or_anon_key
 
 Never put a Supabase service-role key in a `VITE_` variable. Browser code can only use the publishable/anon key. Apply the migration in `supabase/migrations/20260518000100_deepspec_secure_foundation.sql`, enable Supabase anonymous sign-ins if you want device-only users to sync scans, and keep the `scan-images` bucket private.
 
-For email code sign-in, configure the Supabase Auth email template to show the OTP token with `{{ .Token }}` instead of a setup or magic-link URL with `{{ .ConfirmationURL }}`. The app sends an email OTP request and verifies the typed code in the UI; it does not request an email redirect link for code sign-in. Existing users can also sign in with their Supabase email/password credentials.
+For email code sign-in, configure the Supabase Auth email template to show the OTP token with `{{ .Token }}` instead of a setup or magic-link URL with `{{ .ConfirmationURL }}`. The app sends an email OTP request and verifies the typed code in the UI; it does not request an email redirect link for code sign-in. Users can also sign in with Supabase email/password credentials or create a password account. If Supabase requires email confirmation, the app waits for confirmation instead of opening the scanner immediately.
 
 After a session is verified, Deep Spec opens the scanner at `/scan`.
 
