@@ -75,6 +75,21 @@ select
   to_regclass('public.profiles') as profiles_table,
   to_regclass('public.users') as public_users_table;
 
+-- 6. Show required columns/defaults on common profile tables.
+-- Anonymous users usually do not have email or display-name fields, so NOT NULL
+-- profile columns without safe defaults can break auth.users trigger inserts.
+select
+  table_schema,
+  table_name,
+  column_name,
+  data_type,
+  is_nullable,
+  column_default
+from information_schema.columns
+where table_schema = 'public'
+  and table_name in ('profiles', 'users')
+order by table_name, ordinal_position;
+
 with candidate_tables as (
   select table_oid
   from (
@@ -93,7 +108,7 @@ from pg_constraint
 where conrelid in (select table_oid from candidate_tables)
 order by table_name::text, constraint_name;
 
--- 6. Generate review-only drop statements for auth.users triggers.
+-- 7. Generate review-only drop statements for auth.users triggers.
 -- Do not run these until the Auth log or function body proves the trigger is the failing object.
 select
   format(
@@ -108,7 +123,7 @@ where n.nspname = 'auth'
   and not tg.tgisinternal
 order by tg.tgname;
 
--- 7. Check whether the DeepSpec cloud tables are present.
+-- 8. Check whether the DeepSpec cloud tables are present.
 with expected_tables(table_name) as (
   values
     ('scan_lookups'),
@@ -124,7 +139,7 @@ select
 from expected_tables
 order by table_name;
 
--- 8. Check whether required durable dataset columns exist.
+-- 9. Check whether required durable dataset columns exist.
 with expected_columns(table_name, column_name) as (
   values
     ('scan_lookups', 'image_hash'),
@@ -158,7 +173,7 @@ left join information_schema.columns columns
   and columns.column_name = expected_columns.column_name
 order by expected_columns.table_name, expected_columns.column_name;
 
--- 9. Check RLS and role grants for the cloud dataset tables.
+-- 10. Check RLS and role grants for the cloud dataset tables.
 with expected_tables(table_name) as (
   values
     ('scan_lookups'),
@@ -181,7 +196,7 @@ left join pg_class c
   on c.oid = to_regclass('public.' || quote_ident(expected_tables.table_name))
 order by expected_tables.table_name;
 
--- 10. List RLS policies for the cloud dataset tables.
+-- 11. List RLS policies for the cloud dataset tables.
 select
   schemaname,
   tablename,
@@ -202,7 +217,7 @@ where schemaname = 'public'
   )
 order by tablename, policyname;
 
--- 11. Check the private scan image bucket.
+-- 12. Check the private scan image bucket.
 select
   id,
   public,
@@ -211,6 +226,6 @@ select
 from storage.buckets
 where id = 'scan-images';
 
--- 12. Confirm anonymous Auth is enabled through the verifier first, then rerun:
+-- 13. Confirm anonymous Auth is enabled through the verifier first, then rerun:
 -- npm run verify:supabase
 `);
