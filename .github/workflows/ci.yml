@@ -41,6 +41,33 @@ jobs:
       - name: Run lint, tests, and build
         run: npm run check
 
+      - name: Verify Supabase auth providers when secrets are configured
+        env:
+          DEEPSPEC_AUTH_TEST_EMAIL: ${{ secrets.DEEPSPEC_AUTH_TEST_EMAIL }}
+          DEEPSPEC_AUTH_TEST_EMAIL_CODE: ${{ secrets.DEEPSPEC_AUTH_TEST_EMAIL_CODE }}
+          DEEPSPEC_AUTH_TEST_PASSWORD: ${{ secrets.DEEPSPEC_AUTH_TEST_PASSWORD }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+        run: |
+          branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
+          if [ -z "$VITE_SUPABASE_URL" ] || [ -z "$VITE_SUPABASE_PUBLISHABLE_KEY" ]; then
+            echo "::warning::Supabase public secrets are not configured; auth verifier did not run."
+            {
+              echo "### Supabase auth"
+              echo ""
+              echo "Not verified: repository secrets VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY are missing."
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            if [ "$GITHUB_REF_NAME" = "main" ] || [[ "$branch" == codex/production-readiness-release* ]]; then
+              echo "Production-readiness branches and main must prove Supabase auth provider readiness."
+              exit 1
+            fi
+
+            exit 0
+          fi
+
+          npm run verify:auth
+
       - name: Verify Supabase cloud sync when secrets are configured
         env:
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}

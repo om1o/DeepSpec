@@ -90,6 +90,9 @@ describe("Phase 8 Supabase validation tooling", () => {
   });
 
   it("does not let production-readiness CI silently skip Supabase verification", () => {
+    expect(ciWorkflow).toContain("npm run verify:auth");
+    expect(ciWorkflow).toContain("Supabase public secrets are not configured; auth verifier did not run.");
+    expect(ciWorkflow).toContain("Production-readiness branches and main must prove Supabase auth provider readiness.");
     expect(ciWorkflow).toContain("Supabase public secrets are not configured; cloud sync verifier did not run.");
     expect(ciWorkflow).toContain("GITHUB_STEP_SUMMARY");
     expect(ciWorkflow).toContain("codex/production-readiness-release*");
