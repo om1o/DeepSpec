@@ -36,7 +36,7 @@ Use a 900-check audit grid instead: 9 production tracks x 100 checks each. Every
 
 | ID | Severity | Area | Finding | Evidence | Fix Direction |
 | --- | --- | --- | --- | --- | --- |
-| P0-001 | Blocker | Database | Cloud sync is not production ready because Supabase anonymous sign-in fails before storage or RLS can be proven. | `npm run verify:supabase` failed at step 1. | Fix Supabase Auth logs/triggers/config, rerun verifier until all 6 steps pass. |
+| P0-001 | Blocker | Database | Cloud sync is not production ready because Supabase anonymous sign-in fails before storage, RLS, or durable dataset tables can be proven. | `npm run verify:supabase` failed at step 1. | Fix Supabase Auth logs/triggers/config, rerun verifier until all 8 steps pass. |
 | P0-002 | Blocker | Output reliability | Identify eval still cannot complete the release set because provider availability fails after fallback. | May 27 release eval stopped at 12/50 with `network` after both configured models failed. | Keep provider fallback, fix quota/network/provider stability, rerun the 50-case gate until all samples complete. |
 | P0-003 | Blocker | Backlog hygiene | There are no open standalone GitHub issues for production readiness. | GitHub issue search returned empty. | Convert this plan into milestones and issues instead of hiding work in PRs. |
 | P0-004 | Blocker | Release quality | Open PR stack is large and overlapping. | GitHub returned open PRs #4-#13. | Merge/close/rebase PRs into a clean production branch before broad changes. |
@@ -49,7 +49,7 @@ Use a 900-check audit grid instead: 9 production tracks x 100 checks each. Every
 | P1-007 | High | Persistence | Browser QA must now use a real camera/upload scan to verify saved controls. | The user-facing fixture mode was removed. | Keep upload fixture QA documented and verify saved controls from real persisted scans. |
 | P1-008 | High | Cloud UI | UI can say cloud sync is ready even when end-to-end verification fails. | Early Access showed cloud ready; verifier failed anonymous sign-in. | Add runtime cloud health state: configured, auth-ok, storage-ok, RLS-ok, last verified. |
 | P1-009 | High | Copy/content | Early Access says cloud sync is ready but form copy says backend sync comes later/local-only. | Browser snapshot. | Make cloud copy state-driven and non-contradictory. |
-| P1-010 | High | Database shape | `scan_lookups` stores result JSON but no separate model-run metadata table. | Migration inspection. | Add model run metadata after P0 cloud auth is fixed: provider, model, latency, prompt version, error code, OCR used. |
+| P1-010 | High | Database shape | Durable dataset detail tables are now staged in migrations, but they are not production-proven until Supabase Auth lets the verifier create a user. | Migration inspection plus `npm run verify:supabase` failing before table writes. | Apply the migrations to the hosted project after Auth is fixed, then rerun the verifier until it proves parent scan, detail rows, storage, and RLS. |
 | P1-011 | High | Dataset quality | Local storage caps saved scans at 50. | `MAX_SAVED_LOOKUPS = 50`. | Keep local cap, but cloud dataset must preserve all synced scans with retention/export policy. |
 | P1-012 | High | Corrections | Correction is plain text only, not structured enough for training. | `correction: string`. | Add corrected part/category/damage severity/region fields in cloud review layer. |
 | P1-013 | High | Visual search | Partially resolved on current branch: upload-from-gallery is visible in the live scanner and remains available when camera permission is denied. | Browser QA on May 22 showed `Upload photo` and `Paste image` in the denied-camera state; uploading the engine fixture reached a saved result screen, but live AI identify returned `500` because the local server lacks `GEMINI_API_KEY`. | Keep the upload fallback, then rerun live upload with provider configuration before calling the visual-search path production ready. |
@@ -85,16 +85,16 @@ Current Deep Spec output should be replaced by a result surface with this hierar
 
 ## Database Goal
 
-Do not expand the schema until Supabase anonymous sign-in passes. The current production blocker is Auth, not table design.
+Do not add more database scope until Supabase anonymous sign-in passes. The current production blocker is Auth, not table design.
 
-After Auth is fixed, evolve the database in narrow steps:
+The durable dataset tables are staged in this branch and must be applied only with the existing migration flow. After Auth is fixed, prove the staged shape in narrow steps:
 
 1. Keep `scan_lookups` as the user-facing saved scan table.
-2. Add `scan_model_runs` for provider/model/prompt version/latency/OCR/eval/error metadata.
-3. Add `scan_candidates` for related candidate matches and ranked confidence.
-4. Add `scan_evidence` for structured evidence tied to optional image regions.
-5. Add `scan_corrections` for structured user corrections and review status.
-6. Add `sync_events` for upload/upsert/delete audit trail.
+2. Apply `scan_model_runs` for provider/model/prompt version/latency/OCR/eval/error metadata.
+3. Apply `scan_candidates` for related candidate matches and ranked confidence.
+4. Apply `scan_evidence` for structured evidence tied to optional image regions.
+5. Apply `scan_corrections` for structured user corrections and review status.
+6. Apply `sync_events` for upload/upsert/delete audit trail.
 7. Add an internal `dataset_review_queue` view/table only after real scans sync reliably.
 
 Minimum preserved fields for every scan:
@@ -140,9 +140,9 @@ Exit criteria:
 
 Exit criteria:
 
-- `npm run verify:supabase` passes all 6 steps.
+- `npm run verify:supabase` passes all 8 steps.
 - Supabase Auth logs show anonymous user creation works.
-- Private image upload, row upsert, owner read, cross-user deny, and owner download are proven.
+- Private image upload, parent row upsert, durable detail row writes, owner reads, cross-user deny, and owner download are proven.
 - UI cloud status is based on real verification state, not just config presence.
 
 ### Milestone 2: Make The Result Like Google Lens
