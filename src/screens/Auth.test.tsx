@@ -24,6 +24,7 @@ describe("Auth", () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://deep-spec.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "public-test-key");
     vi.stubEnv("VITE_ENABLE_GOOGLE_AUTH", "");
+    vi.stubEnv("VITE_ENABLE_GITHUB_AUTH", "");
 
     supabaseMock.auth.getUser.mockReset();
     supabaseMock.auth.signInWithOAuth.mockReset();
@@ -48,6 +49,7 @@ describe("Auth", () => {
     expect(await screen.findByRole("heading", { name: "Sign in with a code" })).toBeInTheDocument();
     expect(screen.getByAltText("Deep Spec")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Continue with Google" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Continue with GitHub" })).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText("Enter your email address")).toBeInTheDocument();
     expect(screen.queryByText(/facebook/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/microsoft/i)).not.toBeInTheDocument();
@@ -105,20 +107,35 @@ describe("Auth", () => {
     expect(screen.queryByText(/apple/i)).not.toBeInTheDocument();
   });
 
-  it("shows local continue when Supabase auth is not configured", async () => {
+  it("starts GitHub auth only when explicitly enabled", async () => {
     const user = userEvent.setup();
+    vi.stubEnv("VITE_ENABLE_GITHUB_AUTH", "true");
+    await renderAuth();
+
+    await user.click(await screen.findByRole("button", { name: "Continue with GitHub" }));
+
+    expect(supabaseMock.auth.signInWithOAuth).toHaveBeenCalledWith({
+      provider: "github",
+      options: {
+        redirectTo: "http://localhost:3000/scan",
+      },
+    });
+    expect(screen.queryByText(/facebook/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/microsoft/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/apple/i)).not.toBeInTheDocument();
+  });
+
+  it("fails closed when Supabase auth is not configured", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "");
 
     await renderAuth();
 
-    expect(await screen.findByText("Supabase auth is not configured for this build. Local continue is only available for development.")).toBeInTheDocument();
+    expect(await screen.findByText("Supabase auth is not configured for this build.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /google/i })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Continue locally" }));
-
-    expect(localStorage.getItem("ds_auth_seen")).toBe("1");
-    expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /github/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Auth unavailable" })).toBeDisabled();
+    expect(screen.queryByText("Scanner opened")).not.toBeInTheDocument();
   });
 
   it("fails closed when production auth config is missing", async () => {
@@ -128,22 +145,9 @@ describe("Auth", () => {
 
     await renderAuth();
 
-    expect(await screen.findByText("Supabase auth is not configured for this build. Local continue is only available for development.")).toBeInTheDocument();
+    expect(await screen.findByText("Supabase auth is not configured for this build.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Auth unavailable" })).toBeDisabled();
     expect(screen.queryByText("Scanner opened")).not.toBeInTheDocument();
-  });
-
-  it("allows local browser QA to bypass configured Supabase auth in dev", async () => {
-    const user = userEvent.setup();
-
-    await renderAuth();
-
-    expect(await screen.findByText("Local browser QA can continue without sending an email code.")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Continue locally" }));
-
-    expect(localStorage.getItem("ds_auth_seen")).toBe("1");
-    expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
   });
 
   it("extracts a 6-digit code from a noisy paste like 'Your code is 123456'", async () => {

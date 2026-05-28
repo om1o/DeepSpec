@@ -5,7 +5,6 @@ import App from "./App";
 
 const authMock = vi.hoisted(() => ({
   getVerifiedAuthUser: vi.fn(),
-  hasLocalAuthBypass: vi.fn(),
   subscribeToAuthChanges: vi.fn(),
 }));
 
@@ -20,10 +19,8 @@ vi.mock("./screens/Scanner", () => ({ default: () => <div>Scanner screen</div> }
 describe("App auth guard", () => {
   beforeEach(() => {
     authMock.getVerifiedAuthUser.mockReset();
-    authMock.hasLocalAuthBypass.mockReset();
     authMock.subscribeToAuthChanges.mockReset();
 
-    authMock.hasLocalAuthBypass.mockReturnValue(false);
     authMock.subscribeToAuthChanges.mockResolvedValue(() => undefined);
   });
 
@@ -43,15 +40,6 @@ describe("App auth guard", () => {
       id: "verified-user",
       user_metadata: {},
     });
-
-    renderApp("/scan");
-
-    expect(await screen.findByText("Scanner screen")).toBeInTheDocument();
-  });
-
-  it("opens protected routes when the local dev auth marker is present", async () => {
-    authMock.getVerifiedAuthUser.mockResolvedValue(null);
-    authMock.hasLocalAuthBypass.mockReturnValue(true);
 
     renderApp("/scan");
 

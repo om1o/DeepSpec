@@ -2,9 +2,10 @@ import { ClipboardEvent, FormEvent, useCallback, useEffect, useRef, useState } f
 import { useNavigate } from "react-router-dom";
 import {
   getVerifiedAuthUser,
+  isGitHubAuthEnabled,
   isGoogleAuthEnabled,
   isSupabaseAuthConfigured,
-  markLocalAuthBypass,
+  signInWithGitHub,
   sendEmailVerificationCode,
   signInWithGoogle,
   verifyEmailCode,
@@ -19,8 +20,9 @@ export default function Auth() {
   const navigate = useNavigate();
   const supabaseConfigured = isSupabaseAuthConfigured();
   const googleAuthEnabled = isGoogleAuthEnabled();
-  const localDevBypassEnabled = import.meta.env.DEV;
-  const canSubmit = supabaseConfigured || localDevBypassEnabled;
+  const githubAuthEnabled = isGitHubAuthEnabled();
+  const oauthEnabled = googleAuthEnabled || githubAuthEnabled;
+  const canSubmit = supabaseConfigured;
   const [step, setStep] = useState<AuthStep>("email");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -29,6 +31,7 @@ export default function Auth() {
   const [isCheckingSession, setIsCheckingSession] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [isGitHubLoading, setIsGitHubLoading] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
   const codeInputRef = useRef<HTMLInputElement | null>(null);
   const autoSubmittedCodeRef = useRef<string | null>(null);
@@ -101,11 +104,7 @@ export default function Auth() {
     setNotice(null);
 
     if (!supabaseConfigured) {
-      if (localDevBypassEnabled) {
-        handleLocalContinue();
-      } else {
-        setError("Supabase auth is not configured for this build.");
-      }
+      setError("Supabase auth is not configured for this build.");
       return;
     }
 
@@ -139,6 +138,19 @@ export default function Auth() {
     } catch (authError) {
       setError(authError instanceof Error ? authError.message : "Google sign in failed. Try again.");
       setIsGoogleLoading(false);
+    }
+  }
+
+  async function handleGitHubSignIn() {
+    setError(null);
+    setNotice(null);
+    setIsGitHubLoading(true);
+
+    try {
+      await signInWithGitHub();
+    } catch (authError) {
+      setError(authError instanceof Error ? authError.message : "GitHub sign in failed. Try again.");
+      setIsGitHubLoading(false);
     }
   }
 
@@ -177,11 +189,6 @@ export default function Auth() {
     autoSubmittedCodeRef.current = null;
   }
 
-  function handleLocalContinue() {
-    markLocalAuthBypass();
-    navigate(SCAN_ROUTE, { replace: true });
-  }
-
   if (isCheckingSession) {
     return (
       <main className="flex min-h-dvh items-center justify-center bg-white px-4 text-center text-sm font-bold text-neutral-500">
@@ -206,21 +213,28 @@ export default function Auth() {
 
         <div className="mt-16 w-full space-y-3">
           {googleAuthEnabled ? (
-            <button
-              type="button"
+            <OAuthButton
+              brand="G"
+              disabled={isGoogleLoading || isGitHubLoading || isSubmitting}
+              isLoading={isGoogleLoading}
+              label="Continue with Google"
+              loadingLabel="Opening Google..."
               onClick={handleGoogleSignIn}
-              className="grid h-14 w-full grid-cols-[44px_1fr_44px] items-center rounded-[8px] border border-neutral-200 bg-white px-4 text-base font-black text-neutral-800 shadow-sm transition active:bg-neutral-50 disabled:pointer-events-none disabled:opacity-50"
-              disabled={isGoogleLoading || isSubmitting}
-            >
-              <span className="text-xl font-black text-[#4285F4]" aria-hidden="true">
-                G
-              </span>
-              <span>{isGoogleLoading ? "Opening Google..." : "Continue with Google"}</span>
-              <span />
-            </button>
+            />
           ) : null}
 
-          {googleAuthEnabled ? (
+          {githubAuthEnabled ? (
+            <OAuthButton
+              brand="GH"
+              disabled={isGoogleLoading || isGitHubLoading || isSubmitting}
+              isLoading={isGitHubLoading}
+              label="Continue with GitHub"
+              loadingLabel="Opening GitHub..."
+              onClick={handleGitHubSignIn}
+            />
+          ) : null}
+
+          {oauthEnabled ? (
             <div className="flex items-center py-5">
               <div className="h-px flex-1 bg-neutral-200" />
               <span className="mx-4 text-sm font-semibold text-neutral-400">Or</span>
@@ -231,12 +245,7 @@ export default function Auth() {
           <form className="space-y-3" onSubmit={handleSubmit}>
             {!supabaseConfigured ? (
               <div className="rounded-[8px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold leading-6 text-amber-900">
-                Supabase auth is not configured for this build. Local continue is only available for development.
-              </div>
-            ) : null}
-            {localDevBypassEnabled && supabaseConfigured ? (
-              <div className="rounded-[8px] border border-[var(--ds-accent-line)] bg-[var(--ds-accent-soft)] px-4 py-3 text-sm font-semibold leading-6 text-[var(--ds-ok-ink)]">
-                Local browser QA can continue without sending an email code.
+                Supabase auth is not configured for this build.
               </div>
             ) : null}
 
@@ -295,22 +304,12 @@ export default function Auth() {
 
             <button
               className="h-14 w-full rounded-[8px] bg-[var(--ds-accent)] px-4 text-base font-black text-white shadow-[var(--ds-shadow-primary)] transition active:bg-[var(--ds-accent-pressed)] disabled:pointer-events-none disabled:opacity-50"
-              disabled={isSubmitting || isGoogleLoading || !canSubmit}
+              disabled={isSubmitting || isGoogleLoading || isGitHubLoading || !canSubmit}
               type="submit"
             >
-              {submitLabel(step, supabaseConfigured, localDevBypassEnabled, isSubmitting)}
+              {submitLabel(step, supabaseConfigured, isSubmitting)}
             </button>
           </form>
-
-          {localDevBypassEnabled && supabaseConfigured ? (
-            <button
-              type="button"
-              onClick={handleLocalContinue}
-              className="h-12 w-full rounded-[8px] border border-neutral-200 bg-white px-3 text-sm font-black text-neutral-700 shadow-sm active:bg-neutral-50"
-            >
-              Continue locally
-            </button>
-          ) : null}
 
           {step === "code" ? (
             <div className="grid grid-cols-2 gap-3">
@@ -341,10 +340,40 @@ export default function Auth() {
   );
 }
 
+function OAuthButton({
+  brand,
+  disabled,
+  isLoading,
+  label,
+  loadingLabel,
+  onClick,
+}: {
+  brand: string;
+  disabled: boolean;
+  isLoading: boolean;
+  label: string;
+  loadingLabel: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="grid h-14 w-full grid-cols-[44px_1fr_44px] items-center rounded-[8px] border border-neutral-200 bg-white px-4 text-base font-black text-neutral-800 shadow-sm transition active:bg-neutral-50 disabled:pointer-events-none disabled:opacity-50"
+      disabled={disabled}
+    >
+      <span className="text-lg font-black text-[#24292F]" aria-hidden="true">
+        {brand}
+      </span>
+      <span>{isLoading ? loadingLabel : label}</span>
+      <span />
+    </button>
+  );
+}
+
 function submitLabel(
   step: AuthStep,
   supabaseConfigured: boolean,
-  localDevBypassEnabled: boolean,
   isSubmitting: boolean,
 ) {
   if (isSubmitting) {
@@ -352,7 +381,7 @@ function submitLabel(
   }
 
   if (!supabaseConfigured) {
-    return localDevBypassEnabled ? "Continue locally" : "Auth unavailable";
+    return "Auth unavailable";
   }
 
   return step === "email" ? "Send verification code" : "Verify code";
