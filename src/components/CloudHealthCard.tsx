@@ -13,6 +13,7 @@ const CLOUD_HEALTH_STEPS = [
   "anonymousAuth",
   "storageUpload",
   "rowUpsert",
+  "datasetDetails",
   "rlsIsolation",
 ] as const;
 
