@@ -95,6 +95,20 @@ describe("Auth", () => {
     expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
   });
 
+  it("does not open the scanner when code auth does not verify a user", async () => {
+    const user = userEvent.setup();
+    supabaseMock.auth.getUser.mockResolvedValue({ data: { user: null }, error: null });
+
+    await renderAuth();
+
+    await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
+    await user.click(screen.getByRole("button", { name: "Send verification code" }));
+    await user.type(await screen.findByLabelText("Verification code"), "123456");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not verify this session. Request a new code and try again.");
+    expect(screen.queryByText("Scanner opened")).not.toBeInTheDocument();
+  });
+
   it("starts Google auth by default when Supabase is configured", async () => {
     const user = userEvent.setup();
     await renderAuth();
