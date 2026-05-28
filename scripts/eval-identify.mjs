@@ -247,7 +247,7 @@ async function main() {
         `[${index + 1}/${selectedSamples.length}] Identifying image with provider (${expectedLabels.join(", ") || "unlabeled"}, ${sample.datasetSource})`,
       );
       const providerStartedAt = Date.now();
-      const response = await createIdentifyResponseWithRetry(identify, dataUrl, env);
+      const response = await createIdentifyResponseWithRetry(identify, dataUrl, env, options.rateLimitRetries);
       const providerMs = Date.now() - providerStartedAt;
       const result = response.status === 200 ? response.body.result : null;
       const error = response.status === 200 ? null : response.body.error;
@@ -335,6 +335,7 @@ async function main() {
       identifyModel: env.GEMINI_MODEL || "gemini-2.5-flash",
       fallbackModels: env.GEMINI_FALLBACK_MODELS || "gemini-2.5-flash-lite",
       providerTimeoutMs: env.DEEPSPEC_IDENTIFY_PROVIDER_TIMEOUT_MS || "25000",
+      rateLimitRetries: options.rateLimitRetries,
     },
     datasetRoot: options.datasetRoot,
     datasetIndex: options.datasetIndex,
@@ -356,21 +357,22 @@ async function main() {
   }
 }
 
-async function createIdentifyResponseWithRetry(identify, dataUrl, env) {
+export async function createIdentifyResponseWithRetry(identify, dataUrl, env, rateLimitRetries = RATE_LIMIT_RETRY_DELAYS_MS.length) {
   const payload = {
     imageBase64: dataUrl,
     userMessage: "Identify this car part or visible damage from the captured photo.",
   };
 
-  for (let attempt = 0; attempt <= RATE_LIMIT_RETRY_DELAYS_MS.length; attempt += 1) {
+  const retryDelaysMs = RATE_LIMIT_RETRY_DELAYS_MS.slice(0, rateLimitRetries);
+  for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
     const response = await identify.createIdentifyResponse(payload, env);
     const code = response.status === 200 ? null : response.body.error.code;
 
-    if (code !== "rate_limited" || attempt === RATE_LIMIT_RETRY_DELAYS_MS.length) {
+    if (code !== "rate_limited" || attempt === retryDelaysMs.length) {
       return response;
     }
 
-    const delayMs = RATE_LIMIT_RETRY_DELAYS_MS[attempt];
+    const delayMs = retryDelaysMs[attempt];
     console.log(`rate_limited; retrying in ${Math.round(delayMs / 1000)}s`);
     await sleep(delayMs);
   }
@@ -386,6 +388,7 @@ function parseArgs(args) {
     maxProviderFailures: parseMaxProviderFailures(process.env.DEEPSPEC_EVAL_MAX_PROVIDER_FAILURES, 1),
     output: DEFAULT_OUTPUT,
     providerTimeoutMs: null,
+    rateLimitRetries: parseRateLimitRetries(process.env.DEEPSPEC_EVAL_RATE_LIMIT_RETRIES, RATE_LIMIT_RETRY_DELAYS_MS.length),
     sampleSize: 6,
     sampleSet: "release",
     summary: DEFAULT_SUMMARY,
@@ -422,6 +425,9 @@ function parseArgs(args) {
       if (!inlineValue) index += 1;
     } else if (name === "--provider-timeout-ms") {
       options.providerTimeoutMs = parseProviderTimeoutMs(value);
+      if (!inlineValue) index += 1;
+    } else if (name === "--rate-limit-retries") {
+      options.rateLimitRetries = parseRateLimitRetries(value, options.rateLimitRetries);
       if (!inlineValue) index += 1;
     } else if (name === "--help") {
       printHelp();
@@ -464,6 +470,19 @@ function parseProviderTimeoutMs(value) {
   return timeoutMs;
 }
 
+function parseRateLimitRetries(value, fallback) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+
+  const retries = Number(value);
+  if (!Number.isInteger(retries) || retries < 0 || retries > RATE_LIMIT_RETRY_DELAYS_MS.length) {
+    throw new Error(`--rate-limit-retries must be an integer from 0 to ${RATE_LIMIT_RETRY_DELAYS_MS.length}.`);
+  }
+
+  return retries;
+}
+
 function parseMaxProviderFailures(value, fallback) {
   if (value === undefined || value === null || value === "") {
     return fallback;
@@ -498,6 +517,8 @@ Options:
                      Stop after this many provider availability failures. Default: 1
   --provider-timeout-ms <n>
                      Provider timeout for each model attempt, 5000-120000. Default: app setting
+  --rate-limit-retries <n>
+                     Number of rate-limit retries before failing, 0-${RATE_LIMIT_RETRY_DELAYS_MS.length}. Default: ${RATE_LIMIT_RETRY_DELAYS_MS.length}
   --output <path>    JSONL failure review rows. Default: ${DEFAULT_OUTPUT}
   --summary <path>   JSON summary. Default: ${DEFAULT_SUMMARY}
   --dataset-root <path>
