@@ -8,6 +8,8 @@ describe("Phase 8 Supabase validation tooling", () => {
   };
   const verifier = readFileSync(join(process.cwd(), "scripts", "verify-supabase-sync.mjs"), "utf8");
   const authDiagnostics = readFileSync(join(process.cwd(), "scripts", "print-supabase-auth-diagnostics.mjs"), "utf8");
+  const authRepair = readFileSync(join(process.cwd(), "scripts", "print-supabase-auth-anonymous-repair.mjs"), "utf8");
+  const authRepairSql = readFileSync(join(process.cwd(), "scripts", "supabase-auth-anonymous-repair-sql.mjs"), "utf8");
   const docs = readFileSync(join(process.cwd(), "docs", "PHASE_8_SUPABASE_VALIDATION.md"), "utf8");
   const ciWorkflow = readFileSync(join(process.cwd(), ".github", "workflows", "ci.yml"), "utf8");
 
@@ -15,6 +17,9 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(packageJson.scripts["verify:supabase"]).toBe("node scripts/verify-supabase-sync.mjs");
     expect(packageJson.scripts["supabase:print-migration"]).toBe("node scripts/print-supabase-migration.mjs");
     expect(packageJson.scripts["supabase:print-auth-diagnostics"]).toBe("node scripts/print-supabase-auth-diagnostics.mjs");
+    expect(packageJson.scripts["supabase:print-auth-anonymous-repair"]).toBe(
+      "node scripts/print-supabase-auth-anonymous-repair.mjs",
+    );
   });
 
   it("checks private image upload, durable dataset writes, owner reads, cross-user blocks, and cleanup", () => {
@@ -72,11 +77,24 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(authDiagnostics).toContain("review before running");
   });
 
+  it("prints a guarded anonymous Auth repair only for the standard profile trigger", () => {
+    expect(authRepair).toContain("Use this only after the Auth log or diagnostics show this exact failing path");
+    expect(authRepair).toContain("auth.users -> public.handle_new_user() -> public.profiles");
+    expect(authRepairSql).toContain("create or replace function public.handle_new_user()");
+    expect(authRepairSql).toContain("security definer");
+    expect(authRepairSql).toContain("set search_path = ''");
+    expect(authRepairSql).toContain("coalesce(new.is_anonymous, false)");
+    expect(authRepairSql).toContain("return new;");
+    expect(authRepairSql).toContain("not tg.tgisinternal");
+    expect(authRepairSql).not.toContain("drop trigger if exists");
+  });
+
   it("documents that parent setup and non-service-role keys are required", () => {
     expect(docs).toContain("Parent-Required Setup");
     expect(docs).toContain("Do not put a service-role key");
     expect(docs).toContain("VITE_SUPABASE_PUBLISHABLE_KEY");
     expect(docs).toContain("supabase:print-auth-diagnostics");
+    expect(docs).toContain("supabase:print-auth-anonymous-repair");
     expect(docs).toContain("Authentication -> Hooks");
     expect(docs).toContain("supabase_auth_admin");
     expect(docs).toContain("codex/production-readiness-release*");

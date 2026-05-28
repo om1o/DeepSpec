@@ -60,8 +60,9 @@ Check this before changing app code:
 4. Supabase Dashboard -> Authentication -> Hooks: check whether a `before_user_created` hook is enabled. For Postgres hooks, the function must be `security definer`, should pin `search_path`, and must be executable by `supabase_auth_admin`; if it reads/writes tables with RLS, its table grants and policies must allow that role.
 5. If SQL shows non-internal triggers on `auth.users`, inspect the matching function body, `security_type`, owner, and `function_config`. A trigger function writing to `public.profiles` or `public.users` must be `security definer` and should pin `search_path`.
 6. If SQL shows `public.profiles` / `public.users` required columns, defaults, or constraints that anonymous users cannot satisfy, make those profile fields nullable/defaulted for anonymous users or remove the trigger that writes to them. Do not run the generated drop-trigger statements until the Auth log or function body proves that trigger is the failing object.
-7. Apply this repo's migrations if the table, column, grant, RLS, policy, or bucket checks are missing anything.
-8. Rerun `npm run verify:supabase`.
+7. If the Auth log or diagnostics prove the exact standard template path `auth.users -> public.handle_new_user() -> public.profiles` is failing, run `npm run supabase:print-auth-anonymous-repair`, review the printed SQL, then paste it into Supabase SQL Editor. Do not use that repair for any other trigger, hook, or profile-table shape.
+8. Apply this repo's migrations if the table, column, grant, RLS, policy, or bucket checks are missing anything.
+9. Rerun `npm run verify:supabase`.
 
 ## GitHub Actions
 
