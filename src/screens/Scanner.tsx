@@ -10,6 +10,7 @@ import { useCamera } from "../hooks/useCamera";
 import { useObjectTarget, type CameraObjectTarget } from "../hooks/useObjectTarget";
 import { useStillness } from "../hooks/useStillness";
 import { assessImageQuality } from "../lib/imageQuality";
+import { createFocusedScanCrop } from "../lib/focusCrop";
 import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
 import { getScanCardPreferences, type ScanCardPreferences, updateScanCardPreferences } from "../lib/scanResultCardSettings";
 import { saveLatestScanState } from "../lib/utils";
@@ -224,7 +225,19 @@ export default function Scanner() {
     }
 
     let secondFrame: CapturedFrame | undefined;
-    if (secondFrameProvider) {
+    const focusedCrop = reviewTargetOverride?.normalized
+      ? await createFocusedScanCrop(imageBase64, reviewTargetOverride.normalized)
+      : null;
+    if (!isScanRequestActive(requestId)) return;
+    if (focusedCrop) {
+      const cropQuality = await assessImageQuality(focusedCrop);
+      if (!isScanRequestActive(requestId)) return;
+      if (cropQuality.ok) {
+        secondFrame = { imageBase64: focusedCrop, capturedAt: new Date().toISOString() };
+      }
+    }
+
+    if (!secondFrame && secondFrameProvider) {
       await new Promise<void>((resolve) => setTimeout(resolve, SECOND_FRAME_DELAY_MS));
       if (!isScanRequestActive(requestId)) return;
       try {

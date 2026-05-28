@@ -7,6 +7,7 @@ import Scanner from "./Scanner";
 const captureFrame = vi.fn(async () => "data:image/jpeg;base64,compressed-frame");
 const retryCamera = vi.fn();
 const assessImageQuality = vi.fn(async () => ({ ok: true }));
+const createFocusedScanCrop = vi.fn(async () => "data:image/jpeg;base64,target-crop");
 const identifyCapturedFrame = vi.fn(async () => ({
   partName: "Alternator",
   confidence: "high",
@@ -61,6 +62,12 @@ const objectTargetState = vi.hoisted(() => ({
     left: number;
     top: number;
     width: number;
+    normalized?: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    };
   },
 }));
 const objectTargetOptions = vi.hoisted(() => ({
@@ -122,6 +129,10 @@ vi.mock("../lib/imageQuality", () => ({
   assessImageQuality: (...args: unknown[]) => assessImageQuality(...args),
 }));
 
+vi.mock("../lib/focusCrop", () => ({
+  createFocusedScanCrop: (...args: unknown[]) => createFocusedScanCrop(...args),
+}));
+
 // Cache always misses in scanner tests - cache logic tested in scanCache.test.ts
 vi.mock("../lib/scanCache", () => ({
   hashImageDataUrl: vi.fn(async () => null),
@@ -141,6 +152,8 @@ describe("Scanner", () => {
     retryCamera.mockClear();
     assessImageQuality.mockReset();
     assessImageQuality.mockResolvedValue({ ok: true });
+    createFocusedScanCrop.mockReset();
+    createFocusedScanCrop.mockResolvedValue("data:image/jpeg;base64,target-crop");
     identifyCapturedFrame.mockReset();
     identifyCapturedFrame.mockResolvedValue(makeScanResult("Alternator"));
     cameraHookState.current = {
@@ -157,6 +170,12 @@ describe("Scanner", () => {
       left: 80,
       top: 160,
       width: 240,
+      normalized: {
+        x: 0.2,
+        y: 0.3,
+        width: 0.25,
+        height: 0.2,
+      },
     };
     objectTargetOptions.latest = null;
     localStorage.clear();
@@ -191,6 +210,50 @@ describe("Scanner", () => {
       scanCategory: "electrical",
       trainingLabel: "Alternator",
       trainingStatus: "raw_unreviewed",
+    });
+  }, 10000);
+
+  it("sends a focused target crop to AI when the scanner has a locked object", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    expect(createFocusedScanCrop).toHaveBeenCalledWith("data:image/jpeg;base64,compressed-frame", {
+      x: 0.2,
+      y: 0.3,
+      width: 0.25,
+      height: 0.2,
+    });
+    expect(identifyCapturedFrame.mock.calls[0][1]).toMatchObject({
+      imageBase64: "data:image/jpeg;base64,target-crop",
+    });
+  }, 10000);
+
+  it("falls back to a second camera frame when a focused target crop is unavailable", async () => {
+    createFocusedScanCrop.mockResolvedValueOnce(null);
+    captureFrame
+      .mockResolvedValueOnce("data:image/jpeg;base64,primary-frame")
+      .mockResolvedValueOnce("data:image/jpeg;base64,second-frame");
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    expect(identifyCapturedFrame.mock.calls[0][0]).toMatchObject({
+      imageBase64: "data:image/jpeg;base64,primary-frame",
+    });
+    expect(identifyCapturedFrame.mock.calls[0][1]).toMatchObject({
+      imageBase64: "data:image/jpeg;base64,second-frame",
     });
   }, 10000);
 
