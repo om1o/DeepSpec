@@ -108,6 +108,109 @@ where n.nspname = 'auth'
   and not tg.tgisinternal
 order by tg.tgname;
 
--- 7. Confirm anonymous Auth is enabled through the verifier first, then rerun:
+-- 7. Check whether the DeepSpec cloud tables are present.
+with expected_tables(table_name) as (
+  values
+    ('scan_lookups'),
+    ('scan_model_runs'),
+    ('scan_candidates'),
+    ('scan_evidence'),
+    ('scan_corrections'),
+    ('sync_events')
+)
+select
+  table_name,
+  to_regclass('public.' || quote_ident(table_name)) is not null as table_exists
+from expected_tables
+order by table_name;
+
+-- 8. Check whether required durable dataset columns exist.
+with expected_columns(table_name, column_name) as (
+  values
+    ('scan_lookups', 'image_hash'),
+    ('scan_lookups', 'image_mime_type'),
+    ('scan_lookups', 'image_byte_length'),
+    ('scan_model_runs', 'provider'),
+    ('scan_model_runs', 'model'),
+    ('scan_model_runs', 'prompt_version'),
+    ('scan_model_runs', 'latency_ms'),
+    ('scan_model_runs', 'ocr_used'),
+    ('scan_candidates', 'candidate_rank'),
+    ('scan_candidates', 'part_name'),
+    ('scan_candidates', 'confidence'),
+    ('scan_evidence', 'evidence_rank'),
+    ('scan_evidence', 'evidence_type'),
+    ('scan_evidence', 'evidence_text'),
+    ('scan_corrections', 'corrected_part_name'),
+    ('scan_corrections', 'corrected_category'),
+    ('scan_corrections', 'damage_severity'),
+    ('sync_events', 'event_type'),
+    ('sync_events', 'status')
+)
+select
+  expected_columns.table_name,
+  expected_columns.column_name,
+  columns.column_name is not null as column_exists
+from expected_columns
+left join information_schema.columns columns
+  on columns.table_schema = 'public'
+  and columns.table_name = expected_columns.table_name
+  and columns.column_name = expected_columns.column_name
+order by expected_columns.table_name, expected_columns.column_name;
+
+-- 9. Check RLS and role grants for the cloud dataset tables.
+with expected_tables(table_name) as (
+  values
+    ('scan_lookups'),
+    ('scan_model_runs'),
+    ('scan_candidates'),
+    ('scan_evidence'),
+    ('scan_corrections'),
+    ('sync_events')
+)
+select
+  expected_tables.table_name,
+  c.relrowsecurity as rls_enabled,
+  case when c.oid is null then null else has_table_privilege('authenticated', c.oid, 'select') end as authenticated_can_select,
+  case when c.oid is null then null else has_table_privilege('authenticated', c.oid, 'insert') end as authenticated_can_insert,
+  case when c.oid is null then null else has_table_privilege('authenticated', c.oid, 'update') end as authenticated_can_update,
+  case when c.oid is null then null else has_table_privilege('authenticated', c.oid, 'delete') end as authenticated_can_delete,
+  case when c.oid is null then null else has_table_privilege('anon', c.oid, 'select') end as anon_can_select
+from expected_tables
+left join pg_class c
+  on c.oid = to_regclass('public.' || quote_ident(expected_tables.table_name))
+order by expected_tables.table_name;
+
+-- 10. List RLS policies for the cloud dataset tables.
+select
+  schemaname,
+  tablename,
+  policyname,
+  cmd,
+  roles,
+  qual,
+  with_check
+from pg_policies
+where schemaname = 'public'
+  and tablename in (
+    'scan_lookups',
+    'scan_model_runs',
+    'scan_candidates',
+    'scan_evidence',
+    'scan_corrections',
+    'sync_events'
+  )
+order by tablename, policyname;
+
+-- 11. Check the private scan image bucket.
+select
+  id,
+  public,
+  file_size_limit,
+  allowed_mime_types
+from storage.buckets
+where id = 'scan-images';
+
+-- 12. Confirm anonymous Auth is enabled through the verifier first, then rerun:
 -- npm run verify:supabase
 `);

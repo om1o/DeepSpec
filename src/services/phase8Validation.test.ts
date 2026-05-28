@@ -55,6 +55,11 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(authDiagnostics).toContain("security_type");
     expect(authDiagnostics).toContain("profiles_table");
     expect(authDiagnostics).toContain("suggested_drop_trigger_sql");
+    expect(authDiagnostics).toContain("scan_model_runs");
+    expect(authDiagnostics).toContain("image_hash");
+    expect(authDiagnostics).toContain("rls_enabled");
+    expect(authDiagnostics).toContain("authenticated_can_insert");
+    expect(authDiagnostics).toContain("scan-images");
     expect(authDiagnostics).toContain("review before running");
   });
 
