@@ -481,6 +481,8 @@ function AnalysisResult({
         </section>
       ) : null}
 
+      <CompleteBrief result={result} />
+
       <section className="rounded-[22px] border border-neutral-200 bg-white p-2 shadow-sm">
         <div className="grid grid-cols-4 gap-1" role="tablist" aria-label="Result sections">
           {RESULT_PANELS.map((panel) => (
@@ -512,6 +514,74 @@ function AnalysisResult({
         <FollowUpSuggestions canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
       ) : null}
     </>
+  );
+}
+
+function CompleteBrief({ result }: { result: IdentificationResult }) {
+  const coverage = getDataCoverage(result);
+  const missingData = getMissingData(result);
+  const questions = getMechanicQuestions(result);
+
+  return (
+    <section aria-labelledby="complete-brief-heading" className="rounded-[24px] border border-[var(--ds-accent-line)] bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Owner decision pack</p>
+          <h2 id="complete-brief-heading" className="mt-1 text-xl font-extrabold tracking-tight text-neutral-950">Complete brief</h2>
+        </div>
+        <div className="shrink-0 rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-right">
+          <p className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-neutral-400">Data coverage</p>
+          <p className="mt-1 text-lg font-extrabold text-neutral-950">{coverage.score}/{coverage.total}</p>
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-2">
+        <BriefRow label="What it is" value={`${result.partName} / ${result.scanCategory} / ${result.confidence} confidence`} />
+        <BriefRow label="Why it matters" value={result.whatItDoes} />
+        <BriefRow label="Do next" value={result.nextAction} />
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <BriefList title="Still missing" items={missingData} emptyText="Enough data for a useful first pass. A second angle can still improve certainty." />
+        <BriefList title="Ask before repair" items={questions} />
+      </div>
+    </section>
+  );
+}
+
+function BriefRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3">
+      <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-neutral-400">{label}</p>
+      <p className="mt-1 text-sm leading-6 text-neutral-800">{value}</p>
+    </div>
+  );
+}
+
+function BriefList({
+  emptyText,
+  items,
+  title,
+}: {
+  emptyText?: string;
+  items: string[];
+  title: string;
+}) {
+  const visibleItems = items.filter(Boolean).slice(0, 4);
+
+  return (
+    <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3">
+      <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-neutral-400">{title}</p>
+      {visibleItems.length > 0 ? (
+        <ul className="mt-2 space-y-2 text-sm leading-5 text-neutral-800">
+          {visibleItems.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-sm leading-5 text-neutral-600">{emptyText}</p>
+      )}
+    </div>
   );
 }
 
@@ -1084,6 +1154,73 @@ function getFollowUpPrompts(result: IdentificationResult) {
   );
 
   return prompts;
+}
+
+function getDataCoverage(result: IdentificationResult) {
+  const checks = [
+    result.confidence !== "low",
+    result.visibleObservations.length > 0 || result.evidence.length > 0,
+    result.evidenceRegions.length > 0,
+    result.candidateMatches.length > 0,
+    result.sourceLinks.length > 0 || getDatasetSourceUrls(result.evidence).length > 0,
+    !result.needsBetterPhoto && result.safetyTriage !== "needs_better_photo",
+  ];
+
+  return {
+    score: checks.filter(Boolean).length,
+    total: checks.length,
+  };
+}
+
+function getMissingData(result: IdentificationResult) {
+  const missing = [];
+
+  if (result.confidence === "low" || result.needsBetterPhoto || result.safetyTriage === "needs_better_photo") {
+    missing.push("Sharper, brighter photo from another angle.");
+  }
+
+  if (!result.evidenceRegions.length) {
+    missing.push("Image callouts that tie the answer to exact visible areas.");
+  }
+
+  if (!result.candidateMatches.length) {
+    missing.push("Related comparison parts to rule out close matches.");
+  }
+
+  if (!result.sourceLinks.length && !getDatasetSourceUrls(result.evidence).length) {
+    missing.push("Reference links or dataset examples for outside checking.");
+  }
+
+  if (!getDetectedTextFindings(result).length) {
+    missing.push("Visible label, casting mark, or part number.");
+  }
+
+  if (result.isSafetyCritical || result.safetyTriage === "needs_professional") {
+    missing.push("Mechanic confirmation before driving or repair.");
+  }
+
+  return missing;
+}
+
+function getMechanicQuestions(result: IdentificationResult) {
+  const questions = [
+    `Can you confirm this is the ${result.partName} from the photo?`,
+    `What symptoms would prove this ${result.partName} is actually the problem?`,
+  ];
+
+  if (result.candidateMatches.length > 0) {
+    questions.push(`How do I rule out ${result.candidateMatches[0].partName}?`);
+  }
+
+  if (getDetectedTextFindings(result).length > 0) {
+    questions.push("Does the visible label or part number match the exact replacement?");
+  }
+
+  if (result.isSafetyCritical || result.safetyTriage === "needs_professional") {
+    questions.unshift("Is this safe to drive before repair?");
+  }
+
+  return questions;
 }
 
 function getMapsSearchUrl(result: IdentificationResult) {
