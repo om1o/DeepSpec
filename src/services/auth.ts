@@ -6,6 +6,7 @@ type SupabaseAuthConfig = {
   url: string;
 };
 
+const AUTH_VERIFY_TIMEOUT_MS = 8_000;
 let clientPromise: Promise<SupabaseClient> | null = null;
 
 export function isSupabaseAuthConfigured() {
@@ -26,7 +27,16 @@ export async function getVerifiedAuthUser(): Promise<User | null> {
     return null;
   }
 
-  const { data, error } = await client.auth.getUser();
+  return verifyAuthUser(client);
+}
+
+async function verifyAuthUser(client: SupabaseClient): Promise<User | null> {
+  const result = await withTimeout(client.auth.getUser().catch(() => null), AUTH_VERIFY_TIMEOUT_MS);
+  if (!result) {
+    return null;
+  }
+
+  const { data, error } = result;
   if (error || !data.user) {
     return null;
   }
@@ -155,7 +165,16 @@ export async function subscribeToAuthChanges(onChange: (user: User | null) => vo
   }
 
   const subscription = client.auth.onAuthStateChange((_event: AuthChangeEvent, session: Session | null) => {
-    onChange(session?.user ?? null);
+    if (!session?.user) {
+      onChange(null);
+      return;
+    }
+
+    void verifyAuthUser(client)
+      .then(onChange)
+      .catch(() => {
+        onChange(null);
+      });
   });
 
   return () => subscription.data.subscription.unsubscribe();
@@ -187,4 +206,17 @@ async function getRequiredAuthClient() {
   }
 
   return client;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => {
+    timeoutId = setTimeout(() => resolve(null), timeoutMs);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  });
 }
