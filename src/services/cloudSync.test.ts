@@ -49,13 +49,27 @@ describe("cloudSync", () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
     const upload = vi.fn().mockResolvedValue({ error: null });
-    const upsert = vi.fn().mockResolvedValue({ error: null });
+    const scanLookupUpsert = vi.fn().mockResolvedValue({ error: null });
+    const correctionUpsert = vi.fn().mockResolvedValue({ error: null });
+    const candidateInsert = vi.fn().mockResolvedValue({ error: null });
+    const evidenceInsert = vi.fn().mockResolvedValue({ error: null });
+    const modelRunInsert = vi.fn().mockResolvedValue({ error: null });
+    const syncEventInsert = vi.fn().mockResolvedValue({ error: null });
+    const from = vi.fn((table: string) => {
+      if (table === "scan_lookups") return { upsert: scanLookupUpsert };
+      if (table === "scan_candidates") return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert: candidateInsert };
+      if (table === "scan_evidence") return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert: evidenceInsert };
+      if (table === "scan_corrections") return { upsert: correctionUpsert };
+      if (table === "scan_model_runs") return { insert: modelRunInsert };
+      if (table === "sync_events") return { insert: syncEventInsert };
+      throw new Error(`Unexpected table ${table}`);
+    });
     mocks.createClient.mockReturnValue({
       auth: {
         getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
         signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } }, error: null }),
       },
-      from: vi.fn().mockReturnValue({ upsert }),
+      from,
       storage: {
         from: vi.fn().mockReturnValue({ upload }),
       },
@@ -74,8 +88,11 @@ describe("cloudSync", () => {
       expect.any(Blob),
       expect.objectContaining({ contentType: "image/jpeg", upsert: true }),
     );
-    expect(upsert).toHaveBeenCalledWith(
+    expect(scanLookupUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
+        image_byte_length: 5,
+        image_hash: expect.any(String),
+        image_mime_type: "image/jpeg",
         image_path: "user-1/lookup-1.jpg",
         local_id: "lookup-1",
         scan_category: "electrical",
@@ -85,6 +102,32 @@ describe("cloudSync", () => {
       }),
       { onConflict: "user_id,local_id" },
     );
+    expect(candidateInsert).toHaveBeenCalledWith([
+      expect.objectContaining({
+        candidate_rank: 0,
+        part_name: "Starter motor",
+        scan_local_id: "lookup-1",
+        user_id: "user-1",
+      }),
+    ]);
+    expect(evidenceInsert).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ evidence_type: "observation", evidence_text: "Belt-driven housing is visible." }),
+        expect.objectContaining({ evidence_type: "region", region_label: "center" }),
+        expect.objectContaining({ evidence_type: "evidence", evidence_text: "Pulley and vented housing are visible." }),
+        expect.objectContaining({ evidence_type: "source_link", source_type: "dataset" }),
+      ]),
+    );
+    expect(correctionUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scan_local_id: "lookup-1",
+        training_status: "raw_unreviewed",
+        user_id: "user-1",
+      }),
+      { onConflict: "user_id,scan_local_id" },
+    );
+    expect(modelRunInsert).toHaveBeenCalledWith(expect.objectContaining({ model: "unknown", provider: "unknown", scan_local_id: "lookup-1" }));
+    expect(syncEventInsert).toHaveBeenCalledWith(expect.objectContaining({ event_type: "upsert", status: "success" }));
   });
 
   it("does not call configured cloud sync ready before the verifier proves it", async () => {
@@ -132,12 +175,21 @@ describe("cloudSync", () => {
     // Second call — createClient now succeeds
     const upload = vi.fn().mockResolvedValue({ error: null });
     const upsert = vi.fn().mockResolvedValue({ error: null });
+    const insert = vi.fn().mockResolvedValue({ error: null });
     mocks.createClient.mockReturnValue({
       auth: {
         getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
         signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "user-retry" } }, error: null }),
       },
-      from: vi.fn().mockReturnValue({ upsert }),
+      from: vi.fn((table: string) => {
+        if (table === "scan_candidates" || table === "scan_evidence") {
+          return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert };
+        }
+        if (table === "scan_model_runs" || table === "sync_events") {
+          return { insert };
+        }
+        return { upsert };
+      }),
       storage: { from: vi.fn().mockReturnValue({ upload }) },
     });
     const second = await syncLookupToCloud(makeLookup());
@@ -299,11 +351,30 @@ function makeLookup(): Lookup {
       partName: "Alternator",
       safetyTriage: "can_help",
       scanCategory: "electrical",
-      candidateMatches: [],
+      candidateMatches: [
+        {
+          confidence: "low",
+          partName: "Starter motor",
+          reason: "Similar engine-bay component, but no belt pulley.",
+          scanCategory: "electrical",
+        },
+      ],
       visibleObservations: ["Belt-driven housing is visible."],
-      evidenceRegions: [],
+      evidenceRegions: [
+        {
+          label: "Pulley",
+          observation: "Belt pulley appears in the center of the scan.",
+          regionLabel: "center",
+        },
+      ],
       whatItDoes: "It charges the battery while the engine runs.",
-      sourceLinks: [],
+      sourceLinks: [
+        {
+          label: "Dataset sample: Alternator",
+          sourceType: "dataset",
+          url: "https://example.com/alternator.jpg",
+        },
+      ],
     },
     scanCategory: "electrical",
     trainingLabel: "Alternator",

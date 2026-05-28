@@ -178,6 +178,7 @@ export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult
     const supabase = await getClient(config);
     const user = await ensureCloudUser(supabase);
     const image = dataUrlToBlob(lookup.frame.imageBase64);
+    const imageHash = await hashBytes(image.bytes);
     const imagePath = `${user.id}/${lookup.id}.${image.extension}`;
     const uploaded = await supabase.storage.from(SCAN_BUCKET).upload(imagePath, image.blob, {
       contentType: image.contentType,
@@ -197,6 +198,9 @@ export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult
         created_at: lookup.createdAt,
         error_code: lookup.errorCode ?? null,
         error_message: lookup.errorMessage ?? null,
+        image_byte_length: image.byteLength,
+        image_hash: imageHash,
+        image_mime_type: image.contentType,
         image_path: imagePath,
         local_id: lookup.id,
         notes: lookup.notes,
@@ -214,6 +218,8 @@ export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult
       throw new Error(saved.error.message);
     }
 
+    await syncDatasetDetailTables(supabase, user.id, lookup);
+
     return {
       ok: true,
       imagePath,
@@ -225,6 +231,171 @@ export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult
       message: getFriendlySyncError(error),
     };
   }
+}
+
+async function syncDatasetDetailTables(supabase: SupabaseClient, userId: string, lookup: Lookup) {
+  await replaceScanCandidates(supabase, userId, lookup);
+  await replaceScanEvidence(supabase, userId, lookup);
+  await upsertScanCorrection(supabase, userId, lookup);
+  await insertScanModelRun(supabase, userId, lookup);
+  await insertSyncEvent(supabase, userId, lookup.id, "upsert", "success", "Scan dataset details synced.");
+}
+
+async function replaceScanCandidates(supabase: SupabaseClient, userId: string, lookup: Lookup) {
+  await deleteScanDetails(supabase, "scan_candidates", userId, lookup.id);
+  const candidates = lookup.result?.candidateMatches ?? [];
+  if (!candidates.length) {
+    return;
+  }
+
+  await assertCloudResult(
+    await supabase.from("scan_candidates").insert(
+      candidates.map((candidate, index) => ({
+        candidate_json: candidate,
+        candidate_rank: index,
+        confidence: candidate.confidence,
+        part_name: candidate.partName,
+        reason: candidate.reason,
+        scan_category: candidate.scanCategory,
+        scan_local_id: lookup.id,
+        user_id: userId,
+      })),
+    ),
+    "scan_candidates insert failed",
+  );
+}
+
+async function replaceScanEvidence(supabase: SupabaseClient, userId: string, lookup: Lookup) {
+  await deleteScanDetails(supabase, "scan_evidence", userId, lookup.id);
+  const evidence = buildEvidenceRows(userId, lookup);
+  if (!evidence.length) {
+    return;
+  }
+
+  await assertCloudResult(await supabase.from("scan_evidence").insert(evidence), "scan_evidence insert failed");
+}
+
+async function upsertScanCorrection(supabase: SupabaseClient, userId: string, lookup: Lookup) {
+  await assertCloudResult(
+    await supabase.from("scan_corrections").upsert(
+      {
+        corrected_category: lookup.correction ? lookup.scanCategory : null,
+        corrected_part_name: lookup.correction?.trim() || null,
+        correction_text: lookup.correction,
+        damage_severity: "unknown",
+        notes: lookup.notes,
+        rating: lookup.rating,
+        region_label: null,
+        scan_local_id: lookup.id,
+        training_status: lookup.trainingStatus,
+        user_id: userId,
+      },
+      { onConflict: "user_id,scan_local_id" },
+    ),
+    "scan_corrections upsert failed",
+  );
+}
+
+async function insertScanModelRun(supabase: SupabaseClient, userId: string, lookup: Lookup) {
+  await assertCloudResult(
+    await supabase.from("scan_model_runs").insert({
+      error_code: lookup.errorCode ?? null,
+      error_message: lookup.errorMessage ?? null,
+      metadata_json: {
+        confidence: lookup.result?.confidence ?? null,
+        hasResult: Boolean(lookup.result),
+        safetyTriage: lookup.result?.safetyTriage ?? null,
+      },
+      model: "unknown",
+      ocr_used: hasOcrEvidence(lookup),
+      prompt_version: null,
+      provider: "unknown",
+      scan_local_id: lookup.id,
+      user_id: userId,
+    }),
+    "scan_model_runs insert failed",
+  );
+}
+
+async function insertSyncEvent(
+  supabase: SupabaseClient,
+  userId: string,
+  scanLocalId: string,
+  eventType: "upload" | "upsert" | "delete" | "verify",
+  status: "success" | "failure",
+  message: string,
+) {
+  await assertCloudResult(
+    await supabase.from("sync_events").insert({
+      event_type: eventType,
+      message,
+      metadata_json: {},
+      scan_local_id: scanLocalId,
+      status,
+      user_id: userId,
+    }),
+    "sync_events insert failed",
+  );
+}
+
+async function deleteScanDetails(supabase: SupabaseClient, table: "scan_candidates" | "scan_evidence", userId: string, scanLocalId: string) {
+  await assertCloudResult(
+    await supabase.from(table).delete().eq("user_id", userId).eq("scan_local_id", scanLocalId),
+    `${table} cleanup failed`,
+  );
+}
+
+function buildEvidenceRows(userId: string, lookup: Lookup) {
+  const rows: Array<Record<string, unknown>> = [];
+  const result = lookup.result;
+  if (!result) {
+    return rows;
+  }
+
+  const addRow = (row: Record<string, unknown>) => {
+    rows.push({
+      ...row,
+      evidence_rank: rows.length,
+      scan_local_id: lookup.id,
+      user_id: userId,
+    });
+  };
+
+  result.visibleObservations.forEach((observation) => addRow({
+    evidence_json: { observation },
+    evidence_text: observation,
+    evidence_type: "observation",
+  }));
+  result.evidenceRegions.forEach((region) => addRow({
+    evidence_json: region,
+    evidence_text: region.observation,
+    evidence_type: "region",
+    label: region.label,
+    region_label: region.regionLabel,
+  }));
+  result.concerns.forEach((concern) => addRow({
+    evidence_json: { concern },
+    evidence_text: concern,
+    evidence_type: "concern",
+  }));
+  result.evidence.forEach((item) => addRow({
+    evidence_json: { evidence: item },
+    evidence_text: item,
+    evidence_type: /^OCR label text:/i.test(item) ? "ocr" : "evidence",
+  }));
+  result.sourceLinks.forEach((link) => addRow({
+    evidence_json: link,
+    evidence_text: link.label,
+    evidence_type: "source_link",
+    source_type: link.sourceType,
+    url: link.url,
+  }));
+
+  return rows;
+}
+
+function hasOcrEvidence(lookup: Lookup) {
+  return lookup.result?.evidence.some((item) => /^OCR label text:/i.test(item)) ?? false;
 }
 
 export async function syncWaitlistSignupToCloud(signup: WaitlistSignup): Promise<CloudSyncResult> {
@@ -364,6 +535,8 @@ function dataUrlToBlob(dataUrl: string) {
 
   return {
     blob: new Blob([bytes], { type: contentType }),
+    byteLength: bytes.byteLength,
+    bytes,
     contentType,
     extension: getImageExtension(contentType),
   };
@@ -387,6 +560,17 @@ function base64ToBytes(base64: string) {
 
 function healthTestImageBlob() {
   return new Blob([base64ToBytes(HEALTH_TEST_IMAGE_BASE64)], { type: "image/jpeg" });
+}
+
+async function hashBytes(bytes: Uint8Array) {
+  if (typeof crypto === "undefined" || !crypto.subtle) {
+    return null;
+  }
+
+  const hashInput = new Uint8Array(bytes.byteLength);
+  hashInput.set(bytes);
+  const digest = await crypto.subtle.digest("SHA-256", hashInput.buffer);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function createRuntimeId() {
