@@ -25,6 +25,22 @@ Do not put a service-role key in `.env.local`, especially not in a `VITE_` varia
 
 ## Verification Command
 
+For Auth and login provider readiness, run:
+
+```bash
+npm run verify:auth
+```
+
+The Auth verifier checks that Supabase signup is enabled, Google and GitHub providers are enabled, and both OAuth redirect URLs can be generated without opening a browser. For a real password and email-code login proof, provide test credentials from a real inbox:
+
+```bash
+DEEPSPEC_AUTH_TEST_EMAIL=qa@example.com DEEPSPEC_AUTH_TEST_PASSWORD=... npm run verify:auth
+DEEPSPEC_AUTH_SEND_CODE=true DEEPSPEC_AUTH_TEST_EMAIL=qa@example.com npm run verify:auth
+DEEPSPEC_AUTH_TEST_EMAIL=qa@example.com DEEPSPEC_AUTH_TEST_EMAIL_CODE=123456 npm run verify:auth
+```
+
+Set `DEEPSPEC_AUTH_REQUIRE_CREDENTIALS=true` on release runs that must fail unless password and code entry are proven with a real Supabase session.
+
 Run:
 
 ```bash
