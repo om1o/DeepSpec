@@ -52,9 +52,11 @@ async function verifyAuthUser(client: SupabaseClient): Promise<User | null> {
 
 export async function sendEmailVerificationCode(email: string) {
   const client = await getRequiredAuthClient();
+  const emailRedirectTo = getAuthRedirectUrl();
   const result = await client.auth.signInWithOtp({
     email,
     options: {
+      ...(emailRedirectTo ? { emailRedirectTo } : {}),
       shouldCreateUser: true,
     },
   });
@@ -139,6 +141,18 @@ async function signInWithOAuthProvider(provider: Provider) {
   }
 }
 
+export async function signOut() {
+  const client = await getAuthClient();
+  if (!client) {
+    return;
+  }
+
+  const result = await client.auth.signOut();
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+}
+
 export async function getAuthClient() {
   const config = getSupabaseAuthConfig();
   if (!config) {
@@ -204,7 +218,7 @@ function isOAuthProviderEnabled(flag: string | undefined) {
     return false;
   }
 
-  return flag?.trim().toLowerCase() !== "false";
+  return flag?.trim().toLowerCase() === "true";
 }
 
 async function getRequiredAuthClient() {
@@ -245,6 +259,14 @@ async function exchangeAuthCodeForSession(client: SupabaseClient, authCode: stri
   url.searchParams.delete("code");
   window.history.replaceState(window.history.state, document.title, `${url.pathname}${url.search}${url.hash}`);
   return true;
+}
+
+function getAuthRedirectUrl() {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  return new URL("/scan", window.location.origin).toString();
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {

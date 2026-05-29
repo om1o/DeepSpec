@@ -1,12 +1,26 @@
 import { type ReactNode, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import Button from "../components/ui/Button";
+import { signOut } from "../services/auth";
 import { MAX_SAVED_LOOKUPS, getLookups } from "../services/storage";
 import { SCAN_CATEGORIES, type Lookup, type Rating, type ScanCategory, type TrainingStatus } from "../types";
 
 export default function History() {
+  const navigate = useNavigate();
   const lookups = useMemo(() => getLookups(), []);
+  const [isSigningOut, setIsSigningOut] = useState(false);
   const [query, setQuery] = useState("");
+
+  async function handleSignOut() {
+    setIsSigningOut(true);
+    try {
+      await signOut();
+      navigate("/auth", { replace: true });
+    } catch {
+      setIsSigningOut(false);
+    }
+  }
+
   const [categoryFilter, setCategoryFilter] = useState<ScanCategory | "all">("all");
   const [reviewFilter, setReviewFilter] = useState<TrainingStatus | "error" | "all">("all");
   const [ratingFilter, setRatingFilter] = useState<Exclude<Rating, null> | "unrated" | "all">("all");
@@ -30,7 +44,15 @@ export default function History() {
             <img src="/brand/deepspec-logo.png" alt="Deep Spec" className="h-12 w-36 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-[var(--ds-accent-line)]" />
             <h1 className="mt-2 text-2xl font-extrabold tracking-tight">Saved scans</h1>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={handleSignOut}
+              disabled={isSigningOut}
+              className="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200 disabled:opacity-60"
+            >
+              {isSigningOut ? "Signing out..." : "Sign out"}
+            </button>
             <Link to="/early-access" className="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200">
               Join
             </Link>

@@ -1,4 +1,5 @@
 import type { SupabaseClient, User } from "@supabase/supabase-js";
+import { getAuthClient } from "./auth";
 import type { FeedbackSubmission, Lookup, WaitlistSignup } from "../types";
 
 const SCAN_BUCKET = "scan-images";
@@ -52,8 +53,6 @@ export type CloudSyncResult =
       ok: false;
       message: string;
     };
-
-let clientPromise: Promise<SupabaseClient> | null = null;
 
 export function getCloudSyncStatus(): CloudSyncStatus {
   const config = getCloudSyncConfig();
@@ -180,7 +179,7 @@ export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult
   }
 
   try {
-    const supabase = await getClient(config);
+    const supabase = await getClient();
     const user = await ensureCloudUser(supabase);
     const image = dataUrlToBlob(lookup.frame.imageBase64);
     const imageHash = await hashBytes(image.bytes);
@@ -491,7 +490,7 @@ export async function syncWaitlistSignupToCloud(signup: WaitlistSignup): Promise
   }
 
   try {
-    const supabase = await getClient(config);
+    const supabase = await getClient();
     const inserted = await supabase.from("waitlist_signups").insert({
       email: signup.email,
       main_problem: signup.mainProblem,
@@ -516,7 +515,7 @@ export async function syncFeedbackToCloud(feedback: FeedbackSubmission): Promise
   }
 
   try {
-    const supabase = await getClient(config);
+    const supabase = await getClient();
     const inserted = await supabase.from("feedback_submissions").insert({
       category: feedback.category,
       contact_email: feedback.contactEmail || null,
@@ -546,24 +545,17 @@ function getCloudSyncConfig(): CloudSyncConfig | null {
   return { key, url };
 }
 
-async function getClient(config: CloudSyncConfig) {
-  if (!clientPromise) {
-    clientPromise = import("@supabase/supabase-js")
-      .then(({ createClient }) =>
-        createClient(config.url, config.key, {
-          auth: {
-            autoRefreshToken: true,
-            persistSession: true,
-          },
-        }),
-      )
-      .catch((error) => {
-        clientPromise = null;
-        throw error;
-      });
+async function getClient() {
+  // Reuse the single persistent auth client so only one GoTrueClient ever
+  // owns the shared auth-token storage key. Callers have already validated
+  // config (same VITE_SUPABASE_* env that getAuthClient reads), so a null
+  // client here means auth is genuinely unconfigured.
+  const client = await getAuthClient();
+  if (!client) {
+    throw new Error("Supabase auth is not configured for this build.");
   }
 
-  return clientPromise;
+  return client;
 }
 
 async function createVerificationClient(config: CloudSyncConfig): Promise<SupabaseClient> {

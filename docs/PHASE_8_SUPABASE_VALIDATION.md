@@ -19,6 +19,9 @@ In `.env.local`:
 ```bash
 VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=your_publishable_or_anon_key
+# Set these only after the matching provider is enabled in Supabase Auth.
+VITE_ENABLE_GOOGLE_AUTH=
+VITE_ENABLE_GITHUB_AUTH=
 ```
 
 Do not put a service-role key in `.env.local`, especially not in a `VITE_` variable.
@@ -31,7 +34,7 @@ For Auth and login provider readiness, run:
 npm run verify:auth
 ```
 
-The Auth verifier checks that Supabase signup is enabled, Google and GitHub providers are enabled, and both OAuth redirect URLs can be generated without opening a browser. For a real password and email-code login proof, provide test credentials from a real inbox:
+The Auth verifier checks that Supabase signup is enabled. It checks Google or GitHub only when `VITE_ENABLE_GOOGLE_AUTH=true` or `VITE_ENABLE_GITHUB_AUTH=true`, so a clean email-only Supabase project does not fail on unconfigured OAuth. For a real password and email-code or magic-link login proof, provide test credentials from a real inbox:
 
 ```bash
 DEEPSPEC_AUTH_TEST_EMAIL=qa@example.com DEEPSPEC_AUTH_TEST_PASSWORD=... npm run verify:auth

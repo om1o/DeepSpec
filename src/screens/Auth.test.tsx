@@ -49,17 +49,28 @@ describe("Auth", () => {
     vi.unstubAllEnvs();
   });
 
-  it("uses Deep Spec branding and defaults to code sign-in", async () => {
+  it("uses Deep Spec branding and defaults to code sign-in without unconfigured OAuth providers", async () => {
     await renderAuth();
 
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
-    expect(screen.getByAltText("Deep Spec")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Continue with Google" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Continue with GitHub" })).toBeInTheDocument();
+    expect(screen.getAllByAltText("Deep Spec")).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "Continue with Google" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Continue with GitHub" })).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText("Enter your email address")).toBeInTheDocument();
+    expect(screen.getByText("Cloud ready")).toBeInTheDocument();
     expect(screen.queryByText(/facebook/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/microsoft/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/apple/i)).not.toBeInTheDocument();
+  });
+
+  it("shows OAuth providers only when they are enabled for the build", async () => {
+    vi.stubEnv("VITE_ENABLE_GOOGLE_AUTH", "true");
+    vi.stubEnv("VITE_ENABLE_GITHUB_AUTH", "true");
+
+    await renderAuth();
+
+    expect(await screen.findByRole("button", { name: "Continue with Google" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue with GitHub" })).toBeInTheDocument();
   });
 
   it("sends and verifies a Supabase email verification code", async () => {
@@ -71,17 +82,17 @@ describe("Auth", () => {
     await renderAuth();
 
     await user.type(await screen.findByPlaceholderText("Enter your email address"), "Tester@Example.com");
-    await user.click(screen.getByRole("button", { name: "Send verification code" }));
+    await user.click(screen.getByRole("button", { name: "Send sign-in email" }));
 
     await waitFor(() => {
       expect(supabaseMock.auth.signInWithOtp).toHaveBeenCalledWith({
         email: "tester@example.com",
         options: {
+          emailRedirectTo: "http://localhost:3000/scan",
           shouldCreateUser: true,
         },
       });
     });
-    expect(supabaseMock.auth.signInWithOtp.mock.calls[0][0].options).not.toHaveProperty("emailRedirectTo");
 
     await user.type(await screen.findByLabelText("Verification code"), "123456");
 
@@ -102,14 +113,15 @@ describe("Auth", () => {
     await renderAuth();
 
     await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
-    await user.click(screen.getByRole("button", { name: "Send verification code" }));
+    await user.click(screen.getByRole("button", { name: "Send sign-in email" }));
     await user.type(await screen.findByLabelText("Verification code"), "123456");
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not verify this session. Request a new code and try again.");
     expect(screen.queryByText("Scanner opened")).not.toBeInTheDocument();
   });
 
-  it("starts Google auth by default when Supabase is configured", async () => {
+  it("starts Google auth when that provider is enabled for the build", async () => {
+    vi.stubEnv("VITE_ENABLE_GOOGLE_AUTH", "true");
     const user = userEvent.setup();
     await renderAuth();
 
@@ -201,7 +213,8 @@ describe("Auth", () => {
     expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
   });
 
-  it("starts GitHub auth by default when Supabase is configured", async () => {
+  it("starts GitHub auth when that provider is enabled for the build", async () => {
+    vi.stubEnv("VITE_ENABLE_GITHUB_AUTH", "true");
     const user = userEvent.setup();
     await renderAuth();
 
@@ -258,7 +271,7 @@ describe("Auth", () => {
     await renderAuth();
 
     await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
-    await user.click(screen.getByRole("button", { name: "Send verification code" }));
+    await user.click(screen.getByRole("button", { name: "Send sign-in email" }));
 
     const codeInput = await screen.findByLabelText("Verification code");
     codeInput.focus();
@@ -278,7 +291,7 @@ describe("Auth", () => {
     await renderAuth();
 
     await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
-    await user.click(screen.getByRole("button", { name: "Send verification code" }));
+    await user.click(screen.getByRole("button", { name: "Send sign-in email" }));
 
     const resendButton = await screen.findByRole("button", { name: /Resend in \d+s/ });
     expect(resendButton).toBeDisabled();
