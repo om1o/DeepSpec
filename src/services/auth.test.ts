@@ -5,6 +5,7 @@ const supabaseMock = vi.hoisted(() => ({
     exchangeCodeForSession: vi.fn(),
     getUser: vi.fn(),
     onAuthStateChange: vi.fn(),
+    signInAnonymously: vi.fn(),
     signInWithOtp: vi.fn(),
     signOut: vi.fn(),
   },
@@ -26,6 +27,7 @@ describe("auth service", () => {
     supabaseMock.auth.exchangeCodeForSession.mockReset();
     supabaseMock.auth.getUser.mockReset();
     supabaseMock.auth.onAuthStateChange.mockReset();
+    supabaseMock.auth.signInAnonymously.mockReset();
     supabaseMock.auth.signInWithOtp.mockReset();
     supabaseMock.auth.signOut.mockReset();
     supabaseMock.createClient.mockReset();
@@ -41,6 +43,7 @@ describe("auth service", () => {
       },
     });
     supabaseMock.auth.exchangeCodeForSession.mockResolvedValue({ data: {}, error: null });
+    supabaseMock.auth.signInAnonymously.mockResolvedValue({ data: {}, error: null });
     supabaseMock.auth.signInWithOtp.mockResolvedValue({ data: {}, error: null });
   });
 
@@ -79,6 +82,26 @@ describe("auth service", () => {
         shouldCreateUser: true,
       },
     });
+  });
+
+  it("starts anonymous sessions through Supabase and verifies the returned user", async () => {
+    const { signInAnonymously } = await import("./auth");
+    supabaseMock.auth.getUser.mockResolvedValue({
+      data: {
+        user: {
+          app_metadata: {},
+          aud: "authenticated",
+          created_at: new Date(0).toISOString(),
+          id: "anonymous-user",
+          user_metadata: {},
+        },
+      },
+      error: null,
+    });
+
+    await expect(signInAnonymously()).resolves.toEqual(expect.objectContaining({ id: "anonymous-user" }));
+
+    expect(supabaseMock.auth.signInAnonymously).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed when Supabase user verification hangs", async () => {

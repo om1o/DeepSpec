@@ -105,18 +105,20 @@ export async function signInWithPassword(email: string, password: string) {
   return user;
 }
 
-export async function signUpWithPassword(email: string, password: string) {
+export async function signInAnonymously() {
   const client = await getRequiredAuthClient();
-  const result = await client.auth.signUp({
-    email,
-    password,
-  });
+  const result = await client.auth.signInAnonymously();
 
   if (result.error) {
     throw new Error(result.error.message);
   }
 
-  return getVerifiedAuthUser();
+  const user = await getVerifiedAuthUser();
+  if (!user) {
+    throw new Error("Could not verify this session. Try again.");
+  }
+
+  return user;
 }
 
 export async function signInWithGoogle() {
