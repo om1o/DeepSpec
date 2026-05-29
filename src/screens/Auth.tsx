@@ -6,16 +6,16 @@ import {
   isGoogleAuthEnabled,
   isSupabaseAuthConfigured,
   sendEmailSignInLink,
+  signInAnonymously,
   signInWithGitHub,
   signInWithGoogle,
   signInWithPassword,
-  signUpWithPassword,
   verifyEmailCode,
 } from "../services/auth";
 
 type AuthStep = "email" | "sent" | "code";
 type AuthMode = "link" | "password";
-type PasswordMode = "signin" | "signup";
+type PasswordMode = "signin" | "anonymous";
 const SCAN_ROUTE = "/scan";
 const CODE_LENGTH = 6;
 const RESEND_COOLDOWN_SECONDS = 30;
@@ -118,16 +118,13 @@ export default function Auth() {
     if (authMode === "password") {
       setIsSubmitting(true);
       try {
-        const normalizedEmail = email.trim().toLowerCase();
         const user = passwordMode === "signin"
-          ? await signInWithPassword(normalizedEmail, password)
-          : await signUpWithPassword(normalizedEmail, password);
+          ? await signInWithPassword(email.trim().toLowerCase(), password)
+          : await signInAnonymously();
         if (user) {
           navigate(SCAN_ROUTE, { replace: true });
           return;
         }
-
-        setError("Supabase still requires email confirmation for new password accounts. Disable Confirm Email in the Supabase Email provider, then create the account again.");
       } catch (authError) {
         setError(authError instanceof Error ? authError.message : "Password authentication failed. Try again.");
       } finally {
@@ -289,7 +286,7 @@ export default function Auth() {
             <p className="text-sm font-black uppercase tracking-[0.14em] text-[var(--ds-accent)]">Deep Spec account</p>
             <h1 className="mt-3 text-4xl font-black tracking-normal text-white">Sign in</h1>
             <p className="mt-3 text-base font-semibold leading-7 text-white/68">
-              Use password login first. New accounts open immediately when Supabase Confirm Email is off.
+              Use an existing password account or start a private Supabase session without email.
             </p>
           </div>
 
@@ -352,24 +349,26 @@ export default function Auth() {
                 </button>
               </div>
 
-              <label className="block">
-                <span className="mb-2 block text-sm font-black text-white/84">Email address</span>
-                <input
-                  className="h-14 w-full rounded-[8px] border border-white/12 bg-white/10 px-4 text-base font-semibold text-white shadow-sm outline-none placeholder:text-white/38 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)] disabled:bg-white/5 disabled:text-white/64"
-                  autoCapitalize="none"
-                  autoComplete="email"
-                  disabled={(authMode === "link" && step !== "email") || isSubmitting}
-                  enterKeyHint="next"
-                  inputMode="email"
-                  name="email"
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="Enter your email address"
-                  required={supabaseConfigured}
-                  spellCheck={false}
-                  type="email"
-                  value={email}
-                />
-              </label>
+              {authMode === "link" || passwordMode === "signin" ? (
+                <label className="block">
+                  <span className="mb-2 block text-sm font-black text-white/84">Email address</span>
+                  <input
+                    className="h-14 w-full rounded-[8px] border border-white/12 bg-white/10 px-4 text-base font-semibold text-white shadow-sm outline-none placeholder:text-white/38 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)] disabled:bg-white/5 disabled:text-white/64"
+                    autoCapitalize="none"
+                    autoComplete="email"
+                    disabled={(authMode === "link" && step !== "email") || isSubmitting}
+                    enterKeyHint="next"
+                    inputMode="email"
+                    name="email"
+                    onChange={(event) => setEmail(event.target.value)}
+                    placeholder="Enter your email address"
+                    required={(authMode === "link" || passwordMode === "signin") && supabaseConfigured}
+                    spellCheck={false}
+                    type="email"
+                    value={email}
+                  />
+                </label>
+              ) : null}
 
               {authMode === "password" ? (
                 <>
@@ -383,27 +382,33 @@ export default function Auth() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setPasswordMode("signup")}
-                      className={passwordMode === "signup" ? "h-11 rounded-[8px] border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] text-sm font-black text-white" : "h-11 rounded-[8px] border border-white/12 bg-white/5 text-sm font-black text-white/62"}
+                      onClick={() => setPasswordMode("anonymous")}
+                      className={passwordMode === "anonymous" ? "h-11 rounded-[8px] border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] text-sm font-black text-white" : "h-11 rounded-[8px] border border-white/12 bg-white/5 text-sm font-black text-white/62"}
                     >
-                      New account
+                      No email
                     </button>
                   </div>
-                  <label className="block">
-                    <span className="mb-2 block text-sm font-black text-white/84">Password</span>
-                    <input
-                      className="h-14 w-full rounded-[8px] border border-white/12 bg-white/10 px-4 text-base font-semibold text-white shadow-sm outline-none placeholder:text-white/38 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)]"
-                      autoComplete={passwordMode === "signin" ? "current-password" : "new-password"}
-                      disabled={isSubmitting}
-                      minLength={8}
-                      name="password"
-                      onChange={(event) => setPassword(event.target.value)}
-                      placeholder={passwordMode === "signin" ? "Enter your password" : "Create a password"}
-                      required={authMode === "password" && supabaseConfigured}
-                      type="password"
-                      value={password}
-                    />
-                  </label>
+                  {passwordMode === "signin" ? (
+                    <label className="block">
+                      <span className="mb-2 block text-sm font-black text-white/84">Password</span>
+                      <input
+                        className="h-14 w-full rounded-[8px] border border-white/12 bg-white/10 px-4 text-base font-semibold text-white shadow-sm outline-none placeholder:text-white/38 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)]"
+                        autoComplete="current-password"
+                        disabled={isSubmitting}
+                        minLength={8}
+                        name="password"
+                        onChange={(event) => setPassword(event.target.value)}
+                        placeholder="Enter your password"
+                        required={authMode === "password" && passwordMode === "signin" && supabaseConfigured}
+                        type="password"
+                        value={password}
+                      />
+                    </label>
+                  ) : (
+                    <p className="rounded-[8px] border border-sky-300/30 bg-sky-400/12 px-4 py-3 text-sm font-bold leading-6 text-sky-100">
+                      No email confirmation required.
+                    </p>
+                  )}
                 </>
               ) : null}
 
@@ -542,7 +547,7 @@ function submitLabel(
 ) {
   if (isSubmitting) {
     if (authMode === "password") {
-      return passwordMode === "signin" ? "Checking password..." : "Creating account...";
+      return passwordMode === "signin" ? "Checking password..." : "Starting session...";
     }
     return step === "code" ? "Checking code..." : "Sending link...";
   }
@@ -552,7 +557,7 @@ function submitLabel(
   }
 
   if (authMode === "password") {
-    return passwordMode === "signin" ? "Sign in with password" : "Create password account";
+    return passwordMode === "signin" ? "Sign in with password" : "Continue without email";
   }
 
   if (step === "code") {
