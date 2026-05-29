@@ -5,6 +5,7 @@ const supabaseMock = vi.hoisted(() => ({
     exchangeCodeForSession: vi.fn(),
     getUser: vi.fn(),
     onAuthStateChange: vi.fn(),
+    signInWithOtp: vi.fn(),
     signOut: vi.fn(),
   },
   createClient: vi.fn(),
@@ -25,6 +26,7 @@ describe("auth service", () => {
     supabaseMock.auth.exchangeCodeForSession.mockReset();
     supabaseMock.auth.getUser.mockReset();
     supabaseMock.auth.onAuthStateChange.mockReset();
+    supabaseMock.auth.signInWithOtp.mockReset();
     supabaseMock.auth.signOut.mockReset();
     supabaseMock.createClient.mockReset();
     supabaseMock.unsubscribe.mockReset();
@@ -39,6 +41,7 @@ describe("auth service", () => {
       },
     });
     supabaseMock.auth.exchangeCodeForSession.mockResolvedValue({ data: {}, error: null });
+    supabaseMock.auth.signInWithOtp.mockResolvedValue({ data: {}, error: null });
   });
 
   afterEach(() => {
@@ -62,6 +65,20 @@ describe("auth service", () => {
 
     expect(enabledAuth.isGoogleAuthEnabled()).toBe(true);
     expect(enabledAuth.isGitHubAuthEnabled()).toBe(true);
+  });
+
+  it("sends email sign-in links with the current scan redirect", async () => {
+    const { sendEmailSignInLink } = await import("./auth");
+
+    await expect(sendEmailSignInLink("user@example.com")).resolves.toBeUndefined();
+
+    expect(supabaseMock.auth.signInWithOtp).toHaveBeenCalledWith({
+      email: "user@example.com",
+      options: {
+        emailRedirectTo: "http://localhost:3000/scan",
+        shouldCreateUser: true,
+      },
+    });
   });
 
   it("fails closed when Supabase user verification hangs", async () => {
