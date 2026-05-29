@@ -50,7 +50,7 @@ async function verifyAuthUser(client: SupabaseClient): Promise<User | null> {
   return data.user;
 }
 
-export async function sendEmailVerificationCode(email: string) {
+export async function sendEmailSignInLink(email: string) {
   const client = await getRequiredAuthClient();
   const emailRedirectTo = getAuthRedirectUrl();
   const result = await client.auth.signInWithOtp({

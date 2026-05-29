@@ -49,7 +49,7 @@ describe("Auth", () => {
     vi.unstubAllEnvs();
   });
 
-  it("uses Deep Spec branding and defaults to code sign-in without unconfigured OAuth providers", async () => {
+  it("uses Deep Spec branding and defaults to email-link sign-in without unconfigured OAuth providers", async () => {
     await renderAuth();
 
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
@@ -57,6 +57,8 @@ describe("Auth", () => {
     expect(screen.queryByRole("button", { name: "Continue with Google" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Continue with GitHub" })).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText("Enter your email address")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Email link" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "Send sign-in link" })).toBeInTheDocument();
     expect(screen.getByText("Cloud ready")).toBeInTheDocument();
     expect(screen.queryByText(/facebook/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/microsoft/i)).not.toBeInTheDocument();
@@ -73,7 +75,7 @@ describe("Auth", () => {
     expect(screen.getByRole("button", { name: "Continue with GitHub" })).toBeInTheDocument();
   });
 
-  it("sends and verifies a Supabase email verification code", async () => {
+  it("sends a Supabase email sign-in link and verifies the code fallback", async () => {
     const user = userEvent.setup();
     supabaseMock.auth.getUser
       .mockResolvedValueOnce({ data: { user: null }, error: null })
@@ -82,7 +84,7 @@ describe("Auth", () => {
     await renderAuth();
 
     await user.type(await screen.findByPlaceholderText("Enter your email address"), "Tester@Example.com");
-    await user.click(screen.getByRole("button", { name: "Send sign-in email" }));
+    await user.click(screen.getByRole("button", { name: "Send sign-in link" }));
 
     await waitFor(() => {
       expect(supabaseMock.auth.signInWithOtp).toHaveBeenCalledWith({
@@ -94,6 +96,9 @@ describe("Auth", () => {
       });
     });
 
+    expect(await screen.findByText("Sign-in link sent to tester@example.com. Open it from your email to finish login.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Verification code")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "I have a code" }));
     await user.type(await screen.findByLabelText("Verification code"), "123456");
 
     await waitFor(() => {
@@ -113,7 +118,8 @@ describe("Auth", () => {
     await renderAuth();
 
     await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
-    await user.click(screen.getByRole("button", { name: "Send sign-in email" }));
+    await user.click(screen.getByRole("button", { name: "Send sign-in link" }));
+    await user.click(await screen.findByRole("button", { name: "I have a code" }));
     await user.type(await screen.findByLabelText("Verification code"), "123456");
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not verify this session. Request a new code and try again.");
@@ -271,7 +277,8 @@ describe("Auth", () => {
     await renderAuth();
 
     await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
-    await user.click(screen.getByRole("button", { name: "Send sign-in email" }));
+    await user.click(screen.getByRole("button", { name: "Send sign-in link" }));
+    await user.click(await screen.findByRole("button", { name: "I have a code" }));
 
     const codeInput = await screen.findByLabelText("Verification code");
     codeInput.focus();
@@ -286,16 +293,16 @@ describe("Auth", () => {
     });
   });
 
-  it("disables the resend button with a live countdown after sending a code", async () => {
+  it("disables the resend button with a live countdown after sending a sign-in link", async () => {
     const user = userEvent.setup();
     await renderAuth();
 
     await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
-    await user.click(screen.getByRole("button", { name: "Send sign-in email" }));
+    await user.click(screen.getByRole("button", { name: "Send sign-in link" }));
 
-    const resendButton = await screen.findByRole("button", { name: /Resend in \d+s/ });
+    const resendButton = await screen.findByRole("button", { name: /Send in \d+s/ });
     expect(resendButton).toBeDisabled();
-    expect(resendButton.textContent).toMatch(/Resend in 30s/);
+    expect(resendButton.textContent).toMatch(/Send in 30s/);
   });
 });
 
