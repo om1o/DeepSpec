@@ -49,7 +49,7 @@ describe("Auth", () => {
     vi.unstubAllEnvs();
   });
 
-  it("uses Deep Spec branding and defaults to email-link sign-in without unconfigured OAuth providers", async () => {
+  it("uses Deep Spec branding and defaults to password sign-in without unconfigured OAuth providers", async () => {
     await renderAuth();
 
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
@@ -57,8 +57,8 @@ describe("Auth", () => {
     expect(screen.queryByRole("button", { name: "Continue with Google" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Continue with GitHub" })).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText("Enter your email address")).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Email link" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("button", { name: "Send sign-in link" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Password" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "Sign in with password" })).toBeInTheDocument();
     expect(screen.getByText("Cloud ready")).toBeInTheDocument();
     expect(screen.queryByText(/facebook/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/microsoft/i)).not.toBeInTheDocument();
@@ -83,6 +83,7 @@ describe("Auth", () => {
 
     await renderAuth();
 
+    await user.click(await screen.findByRole("tab", { name: "Email link" }));
     await user.type(await screen.findByPlaceholderText("Enter your email address"), "Tester@Example.com");
     await user.click(screen.getByRole("button", { name: "Send sign-in link" }));
 
@@ -117,6 +118,7 @@ describe("Auth", () => {
 
     await renderAuth();
 
+    await user.click(await screen.findByRole("tab", { name: "Email link" }));
     await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
     await user.click(screen.getByRole("button", { name: "Send sign-in link" }));
     await user.click(await screen.findByRole("button", { name: "I have a code" }));
@@ -152,8 +154,7 @@ describe("Auth", () => {
 
     await renderAuth();
 
-    await user.click(await screen.findByRole("tab", { name: "Password" }));
-    await user.type(screen.getByPlaceholderText("Enter your email address"), "Tester@Example.com");
+    await user.type(await screen.findByPlaceholderText("Enter your email address"), "Tester@Example.com");
     await user.type(screen.getByPlaceholderText("Enter your password"), "correct-password");
     await user.click(screen.getByRole("button", { name: "Sign in with password" }));
 
@@ -172,8 +173,7 @@ describe("Auth", () => {
 
     await renderAuth();
 
-    await user.click(await screen.findByRole("tab", { name: "Password" }));
-    await user.type(screen.getByPlaceholderText("Enter your email address"), "tester@example.com");
+    await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
     await user.type(screen.getByPlaceholderText("Enter your password"), "wrong-password");
     await user.click(screen.getByRole("button", { name: "Sign in with password" }));
 
@@ -181,13 +181,12 @@ describe("Auth", () => {
     expect(screen.queryByText("Scanner opened")).not.toBeInTheDocument();
   });
 
-  it("creates a password account but waits for email confirmation before opening the scanner", async () => {
+  it("surfaces a configuration error when Supabase still requires email confirmation", async () => {
     const user = userEvent.setup();
 
     await renderAuth();
 
-    await user.click(await screen.findByRole("tab", { name: "Password" }));
-    await user.click(screen.getByRole("button", { name: "New account" }));
+    await user.click(await screen.findByRole("button", { name: "New account" }));
     await user.type(screen.getByPlaceholderText("Enter your email address"), "NewUser@Example.com");
     await user.type(screen.getByPlaceholderText("Create a password"), "new-password-123");
     await user.click(screen.getByRole("button", { name: "Create password account" }));
@@ -198,7 +197,7 @@ describe("Auth", () => {
         password: "new-password-123",
       });
     });
-    expect(await screen.findByText("Account created. Check your email to confirm it, then sign in with your password.")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Supabase still requires email confirmation for new password accounts.");
     expect(screen.queryByText("Scanner opened")).not.toBeInTheDocument();
   });
 
@@ -210,8 +209,7 @@ describe("Auth", () => {
 
     await renderAuth();
 
-    await user.click(await screen.findByRole("tab", { name: "Password" }));
-    await user.click(screen.getByRole("button", { name: "New account" }));
+    await user.click(await screen.findByRole("button", { name: "New account" }));
     await user.type(screen.getByPlaceholderText("Enter your email address"), "newuser@example.com");
     await user.type(screen.getByPlaceholderText("Create a password"), "new-password-123");
     await user.click(screen.getByRole("button", { name: "Create password account" }));
@@ -276,6 +274,7 @@ describe("Auth", () => {
     const user = userEvent.setup();
     await renderAuth();
 
+    await user.click(await screen.findByRole("tab", { name: "Email link" }));
     await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
     await user.click(screen.getByRole("button", { name: "Send sign-in link" }));
     await user.click(await screen.findByRole("button", { name: "I have a code" }));
@@ -297,6 +296,7 @@ describe("Auth", () => {
     const user = userEvent.setup();
     await renderAuth();
 
+    await user.click(await screen.findByRole("tab", { name: "Email link" }));
     await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
     await user.click(screen.getByRole("button", { name: "Send sign-in link" }));
 

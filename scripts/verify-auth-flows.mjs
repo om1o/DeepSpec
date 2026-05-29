@@ -36,6 +36,8 @@ try {
   const settings = await fetchAuthSettings(config);
   assert(settings.disable_signup !== true, "Supabase signup is disabled.");
   console.log("      Signup is enabled.");
+  assert(settings.mailer_autoconfirm === true, "Supabase Confirm Email is still enabled. Disable Confirm Email under Authentication > Sign In / Providers > Email so password signup returns a session without email confirmation.");
+  console.log("      Email confirmation is disabled for password signups.");
 
   console.log("[1/6] Checking configured OAuth providers...");
   if (enabledOAuthProviders.length > 0) {
