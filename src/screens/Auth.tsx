@@ -27,7 +27,7 @@ export default function Auth() {
   const githubAuthEnabled = isGitHubAuthEnabled();
   const oauthEnabled = googleAuthEnabled || githubAuthEnabled;
   const canSubmit = supabaseConfigured;
-  const [authMode, setAuthMode] = useState<AuthMode>("link");
+  const [authMode, setAuthMode] = useState<AuthMode>("password");
   const [passwordMode, setPasswordMode] = useState<PasswordMode>("signin");
   const [step, setStep] = useState<AuthStep>("email");
   const [email, setEmail] = useState("");
@@ -127,8 +127,7 @@ export default function Auth() {
           return;
         }
 
-        setNotice("Account created. Check your email to confirm it, then sign in with your password.");
-        setPasswordMode("signin");
+        setError("Supabase still requires email confirmation for new password accounts. Disable Confirm Email in the Supabase Email provider, then create the account again.");
       } catch (authError) {
         setError(authError instanceof Error ? authError.message : "Password authentication failed. Try again.");
       } finally {
@@ -271,8 +270,8 @@ export default function Auth() {
               </p>
             </div>
             <div className="grid grid-cols-3 gap-3">
-              <StatusCell label="Auth" value="Email link" />
-              <StatusCell label="Fallback" value="Code entry" />
+              <StatusCell label="Auth" value="Password first" />
+              <StatusCell label="Email" value="Optional" />
               <StatusCell label="Session" value="Verified" />
             </div>
           </div>
@@ -290,7 +289,7 @@ export default function Auth() {
             <p className="text-sm font-black uppercase tracking-[0.14em] text-[var(--ds-accent)]">Deep Spec account</p>
             <h1 className="mt-3 text-4xl font-black tracking-normal text-white">Sign in</h1>
             <p className="mt-3 text-base font-semibold leading-7 text-white/68">
-              Use the email link first. Password login and 6-digit codes stay available when your Supabase account supports them.
+              Use password login first. New accounts open immediately when Supabase Confirm Email is off.
             </p>
           </div>
 
