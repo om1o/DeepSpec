@@ -22,12 +22,15 @@ describe("Phase 8 Supabase validation tooling", () => {
 
   it("exposes a dedicated auth flow verifier", () => {
     expect(authVerifier).toContain("/auth/v1/settings");
-    expect(authVerifier).toContain("external?.google");
-    expect(authVerifier).toContain("external?.github");
+    expect(authVerifier).toContain("enabledOAuthProviders");
+    expect(authVerifier).toContain("settings.external?.[provider]");
+    expect(authVerifier).toContain("VITE_ENABLE_GOOGLE_AUTH");
+    expect(authVerifier).toContain("VITE_ENABLE_GITHUB_AUTH");
     expect(authVerifier).toContain("signInWithOAuth");
     expect(authVerifier).toContain("skipBrowserRedirect");
     expect(authVerifier).toContain("signInWithPassword");
     expect(authVerifier).toContain("signInWithOtp");
+    expect(authVerifier).toContain("emailRedirectTo");
     expect(authVerifier).toContain("verifyOtp");
     expect(authVerifier).toContain("DEEPSPEC_AUTH_TEST_EMAIL");
     expect(authVerifier).toContain("DEEPSPEC_AUTH_TEST_EMAIL_CODE");

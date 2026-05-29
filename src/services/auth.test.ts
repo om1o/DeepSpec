@@ -5,6 +5,7 @@ const supabaseMock = vi.hoisted(() => ({
     exchangeCodeForSession: vi.fn(),
     getUser: vi.fn(),
     onAuthStateChange: vi.fn(),
+    signOut: vi.fn(),
   },
   createClient: vi.fn(),
   unsubscribe: vi.fn(),
@@ -24,6 +25,7 @@ describe("auth service", () => {
     supabaseMock.auth.exchangeCodeForSession.mockReset();
     supabaseMock.auth.getUser.mockReset();
     supabaseMock.auth.onAuthStateChange.mockReset();
+    supabaseMock.auth.signOut.mockReset();
     supabaseMock.createClient.mockReset();
     supabaseMock.unsubscribe.mockReset();
     supabaseMock.createClient.mockReturnValue({
@@ -41,6 +43,25 @@ describe("auth service", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+
+  it("keeps OAuth providers disabled unless the build explicitly enables them", async () => {
+    const defaultAuth = await import("./auth");
+
+    expect(defaultAuth.isGoogleAuthEnabled()).toBe(false);
+    expect(defaultAuth.isGitHubAuthEnabled()).toBe(false);
+
+    vi.resetModules();
+    vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "publishable-key");
+    vi.stubEnv("VITE_ENABLE_GOOGLE_AUTH", "true");
+    vi.stubEnv("VITE_ENABLE_GITHUB_AUTH", "true");
+
+    const enabledAuth = await import("./auth");
+
+    expect(enabledAuth.isGoogleAuthEnabled()).toBe(true);
+    expect(enabledAuth.isGitHubAuthEnabled()).toBe(true);
   });
 
   it("fails closed when Supabase user verification hangs", async () => {
@@ -177,5 +198,20 @@ describe("auth service", () => {
     });
 
     await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith(null));
+  });
+
+  it("signs out through the Supabase client", async () => {
+    const { signOut } = await import("./auth");
+    supabaseMock.auth.signOut.mockResolvedValue({ error: null });
+
+    await expect(signOut()).resolves.toBeUndefined();
+    expect(supabaseMock.auth.signOut).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces a sign-out failure instead of failing silently", async () => {
+    const { signOut } = await import("./auth");
+    supabaseMock.auth.signOut.mockResolvedValue({ error: { message: "Sign-out failed" } });
+
+    await expect(signOut()).rejects.toThrow("Sign-out failed");
   });
 });

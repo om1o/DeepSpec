@@ -357,6 +357,38 @@ describe("cloudSync", () => {
     expect(report.lastVerifiedAt).toBeNull();
     expect(upload).not.toHaveBeenCalled();
   });
+
+  it("shares one Supabase client with the auth service instead of creating a second GoTrueClient", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const insert = vi.fn().mockResolvedValue({ error: null });
+    mocks.createClient.mockReturnValue({
+      auth: {
+        getUser: vi.fn().mockResolvedValue({ data: { user: { id: "shared-user" } }, error: null }),
+        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "shared-user" } }, error: null }),
+        onAuthStateChange: vi.fn().mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } }),
+      },
+      from: vi.fn().mockReturnValue({ insert }),
+      storage: { from: vi.fn() },
+    });
+
+    const auth = await import("./auth");
+    const cloudSync = await import("./cloudSync");
+
+    // Both modules resolve their client through the same auth singleton, so the
+    // browser only ever holds one GoTrueClient on the shared auth-token key.
+    await auth.getVerifiedAuthUser();
+    await cloudSync.syncFeedbackToCloud({
+      category: "scanner",
+      contactEmail: "",
+      createdAt: "2026-05-18T00:00:00.000Z",
+      id: "feedback-1",
+      message: "Shared client regression check.",
+    });
+
+    expect(mocks.createClient).toHaveBeenCalledTimes(1);
+  });
 });
 
 function makeDeleteQuery() {
