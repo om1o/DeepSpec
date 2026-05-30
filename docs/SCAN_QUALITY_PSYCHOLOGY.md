@@ -48,7 +48,7 @@ Sources:
 - https://www.nngroup.com/articles/progress-indicators/
 - https://lawsofux.com/hicks-law/
 - https://www.behaviormodel.org/
-- https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2733214
+- https://doi.org/10.1509/jmkr.43.1.39
 
 ## Next scan upgrades
 
