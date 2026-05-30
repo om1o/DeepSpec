@@ -2,13 +2,22 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useCamera } from "./useCamera";
 
+const CAMERA_START_TIMEOUT_MS = 15000;
+
 describe("useCamera", () => {
+  let getUserMedia: ReturnType<typeof vi.fn>;
+  let stopCameraTrack: ReturnType<typeof vi.fn>;
+
   beforeEach(() => {
     vi.useFakeTimers();
+    stopCameraTrack = vi.fn();
+    getUserMedia = vi.fn(async () => ({
+      getTracks: () => [{ stop: stopCameraTrack }],
+    }));
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
       value: {
-        getUserMedia: vi.fn(),
+        getUserMedia,
       },
     });
   });
@@ -24,7 +33,7 @@ describe("useCamera", () => {
     expect(screen.getByTestId("state")).toHaveTextContent("loading");
 
     act(() => {
-      vi.advanceTimersByTime(8000);
+      vi.advanceTimersByTime(CAMERA_START_TIMEOUT_MS);
     });
 
     expect(screen.getByTestId("state")).toHaveTextContent("blocked");
@@ -36,25 +45,67 @@ describe("useCamera", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Ready" }));
     act(() => {
-      vi.advanceTimersByTime(8000);
+      vi.advanceTimersByTime(CAMERA_START_TIMEOUT_MS);
     });
 
     expect(screen.getByTestId("state")).toHaveTextContent("ready");
     expect(screen.getByTestId("error")).toHaveTextContent("none");
   });
 
-  it("retries the camera request after a pending permission timeout", () => {
+  it("retries the camera request after a pending permission timeout", async () => {
     render(<CameraProbe />);
 
     act(() => {
-      vi.advanceTimersByTime(8000);
+      vi.advanceTimersByTime(CAMERA_START_TIMEOUT_MS);
     });
     expect(screen.getByTestId("state")).toHaveTextContent("blocked");
 
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      await Promise.resolve();
+    });
 
+    expect(getUserMedia).toHaveBeenCalledWith({
+      audio: false,
+      video: true,
+    });
+    expect(stopCameraTrack).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("state")).toHaveTextContent("loading");
     expect(screen.getByTestId("error")).toHaveTextContent("none");
+  });
+
+  it("shows the browser camera error when retry permission fails", async () => {
+    getUserMedia.mockRejectedValueOnce(new DOMException("Permission denied"));
+    render(<CameraProbe />);
+
+    act(() => {
+      vi.advanceTimersByTime(CAMERA_START_TIMEOUT_MS);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("state")).toHaveTextContent("blocked");
+    expect(screen.getByTestId("error")).toHaveTextContent("Permission denied");
+  });
+
+  it("explains when another app is already using the camera", async () => {
+    getUserMedia.mockRejectedValueOnce(new DOMException("Device in use", "NotReadableError"));
+    render(<CameraProbe />);
+
+    act(() => {
+      vi.advanceTimersByTime(CAMERA_START_TIMEOUT_MS);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("state")).toHaveTextContent("blocked");
+    expect(screen.getByTestId("error")).toHaveTextContent("already open in another tab or app");
   });
 });
 
