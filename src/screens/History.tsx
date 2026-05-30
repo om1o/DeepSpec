@@ -1,15 +1,37 @@
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Button from "../components/ui/Button";
 import { signOut } from "../services/auth";
-import { MAX_SAVED_LOOKUPS, getLookups } from "../services/storage";
+import { readCloudLookups } from "../services/cloudHistory";
+import { MAX_SAVED_LOOKUPS, getLookups, scanStateFromLookup } from "../services/storage";
 import { SCAN_CATEGORIES, type Lookup, type Rating, type ScanCategory, type TrainingStatus } from "../types";
 
 export default function History() {
   const navigate = useNavigate();
-  const lookups = useMemo(() => getLookups(), []);
+  const [lookups, setLookups] = useState<Lookup[]>(() => getLookups());
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    let isMounted = true;
+    const localLookups = getLookups();
+
+    void readCloudLookups()
+      .then((result) => {
+        if (!isMounted || !result.ok) {
+          return;
+        }
+
+        setLookups(mergeLookups(localLookups, result.value));
+      })
+      .catch(() => {
+        // Keep local history if cloud history fails to load.
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   async function handleSignOut() {
     setIsSigningOut(true);
@@ -174,6 +196,7 @@ function LookupCard({ lookup }: { lookup: Lookup }) {
   return (
     <Link
       to={`/result/${lookup.id}`}
+      state={scanStateFromLookup(lookup)}
       className="grid grid-cols-[88px_1fr] gap-3 rounded-[24px] border border-slate-200 bg-white p-3 text-slate-950 shadow-sm transition hover:border-blue-200"
     >
       <img
@@ -264,6 +287,25 @@ function matchesRating(lookup: Lookup, ratingFilter: Exclude<Rating, null> | "un
 
 function normalizeText(value: string) {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function mergeLookups(localLookups: Lookup[], cloudLookups: Lookup[]) {
+  const byId = new Map<string, Lookup>();
+
+  for (const lookup of cloudLookups) {
+    byId.set(lookup.id, lookup);
+  }
+
+  for (const lookup of localLookups) {
+    byId.set(lookup.id, lookup);
+  }
+
+  return [...byId.values()].sort((left, right) => getTimestamp(right.createdAt) - getTimestamp(left.createdAt));
+}
+
+function getTimestamp(value: string) {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function exportLookups(lookups: Lookup[]) {

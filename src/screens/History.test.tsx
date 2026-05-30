@@ -1,9 +1,17 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { vi } from "vitest";
 import History from "./History";
+import { readCloudLookups } from "../services/cloudHistory";
 import { LOOKUPS_STORAGE_KEY } from "../services/storage";
 import type { Lookup } from "../types";
+
+vi.mock("../services/cloudHistory", () => ({
+  readCloudLookups: vi.fn(),
+}));
+
+const readCloudLookupsMock = vi.mocked(readCloudLookups);
 
 const lookup: Lookup = {
   id: "lookup-1",
@@ -56,6 +64,11 @@ const bodyLookup: Lookup = {
 describe("History", () => {
   beforeEach(() => {
     localStorage.clear();
+    readCloudLookupsMock.mockReset();
+    readCloudLookupsMock.mockResolvedValue({
+      ok: false,
+      message: "No verified Supabase session was found.",
+    });
   });
 
   it("shows an empty saved scan state", () => {
@@ -102,6 +115,18 @@ describe("History", () => {
     await userEvent.selectOptions(screen.getByLabelText("Filter rating"), "up");
     expect(screen.getByText("Alternator")).toBeInTheDocument();
     expect(screen.queryByText("Rear bumper")).not.toBeInTheDocument();
+  });
+
+  it("loads cloud-backed scans", async () => {
+    readCloudLookupsMock.mockResolvedValue({
+      ok: true,
+      value: [lookup],
+    });
+
+    renderHistory();
+
+    expect(await screen.findByText("Alternator")).toBeInTheDocument();
+    expect(screen.getByText("1/1 saved scans")).toBeInTheDocument();
   });
 });
 
