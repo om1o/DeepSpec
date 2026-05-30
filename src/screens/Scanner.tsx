@@ -706,6 +706,7 @@ function CameraLoading() {
 
 function CameraBlocked({ message, onRetry }: { message: string | null; onRetry: () => void }) {
   const denied = /denied|notallowed/i.test(message ?? "");
+  const waiting = /permission.*waiting|camera prompt/i.test(message ?? "");
 
   return (
     <div className="fixed inset-0 z-30 grid place-items-center bg-[var(--ds-bg)] px-6 text-center">
@@ -715,13 +716,13 @@ function CameraBlocked({ message, onRetry }: { message: string | null; onRetry: 
         </div>
         <h1 className="text-2xl font-extrabold tracking-tight">Camera access needed</h1>
         <p className="mt-3 text-sm leading-6 text-[#A1A1AA]">
-          Deep Spec needs your camera to scan parts. {denied ? "Allow camera access for this site, then try again." : "Check camera access, then try again."}
+          Deep Spec needs your camera to scan parts. {denied || waiting ? "Allow camera access for this site, then try again." : "Check camera access, then try again."}
         </p>
         {message ? <p className="mt-3 text-xs text-white/48">{message}</p> : null}
         <Button className="mt-6" onClick={onRetry}>
           Try camera again
         </Button>
-        <button className="mt-4 text-xs font-bold text-white/48 underline underline-offset-4" onClick={() => window.location.reload()}>
+        <button className="mx-auto mt-4 block text-xs font-bold text-white/48 underline underline-offset-4" onClick={() => window.location.reload()}>
           Reload app
         </button>
       </div>

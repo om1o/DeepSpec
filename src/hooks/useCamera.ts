@@ -1,8 +1,12 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Webcam from "react-webcam";
 import { compressImageDataUrl } from "../lib/utils";
 
 type CameraState = "loading" | "ready" | "blocked";
+
+const CAMERA_START_TIMEOUT_MS = 8000;
+const CAMERA_PERMISSION_WAITING_MESSAGE =
+  "Camera permission is still waiting. Approve the browser camera prompt, then try again.";
 
 export function useCamera() {
   const webcamRef = useRef<Webcam>(null);
@@ -35,6 +39,19 @@ export function useCamera() {
     setCameraError(null);
     setCameraRequestId((current) => current + 1);
   }, [cameraCaptureSupported]);
+
+  useEffect(() => {
+    if (cameraState !== "loading") {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      setCameraState("blocked");
+      setCameraError(CAMERA_PERMISSION_WAITING_MESSAGE);
+    }, CAMERA_START_TIMEOUT_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [cameraRequestId, cameraState]);
 
   const captureFrame = useCallback(async () => {
     const screenshot = webcamRef.current?.getScreenshot();
