@@ -314,8 +314,31 @@ describe("Scanner", () => {
     expect(reviewCard?.style.maxHeight).toContain("72dvh");
     expect(reviewCard?.style.maxWidth).toContain("92vw");
     expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Open details" })).toBeInTheDocument();
-    expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Copy area size" })).toBeInTheDocument();
+    expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Set reference" })).toBeInTheDocument();
+    expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Estimate size" })).toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Wrong match or wrong label?" })).toBeInTheDocument();
+  }, 10000);
+
+  it("requires a size reference before estimating AR size for fastener replacement", async () => {
+    identifyCapturedFrame.mockResolvedValueOnce(makeScanResult("Hex nut"));
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const reviewHeading = await screen.findByRole("heading", { level: 3, name: "Hex nut" });
+    const reviewCard = reviewHeading.closest("section") as HTMLElement | null;
+    expect(reviewCard).toBeTruthy();
+
+    await userEvent.click(within(reviewCard as HTMLElement).getByRole("button", { name: "Estimate size" }));
+    expect(await screen.findByText("Set a reference first (card or coin) to estimate mm size.")).toBeInTheDocument();
+
+    await userEvent.click(within(reviewCard as HTMLElement).getByRole("button", { name: "Set reference" }));
+    expect(await screen.findByText("Card short edge saved for AR size estimates.")).toBeInTheDocument();
   }, 10000);
 
   it("lets the user run a manual scan when target lock is not available", async () => {
