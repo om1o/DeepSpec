@@ -6,6 +6,7 @@ import IdentifyButton from "../components/scanner/IdentifyButton";
 import MotionPermissionModal from "../components/scanner/MotionPermissionModal";
 import Reticle from "../components/scanner/Reticle";
 import Button from "../components/ui/Button";
+import HistoryDockButton from "../components/ui/HistoryDockButton";
 import { useCamera, type CameraDevice } from "../hooks/useCamera";
 import { useObjectTarget, type CameraObjectTarget } from "../hooks/useObjectTarget";
 import { useStillness } from "../hooks/useStillness";
@@ -680,6 +681,7 @@ export default function Scanner() {
         isVisible={cameraState !== "blocked" && !scanReview}
         onIdentify={() => void handleIdentify()}
       />
+      <HistoryDockButton />
     </main>
   );
 }
@@ -1271,14 +1273,6 @@ function ScanResultCard({
         </div>
       </div>
       {scanCardStatusMessage ? <p className="mt-2 text-xs font-extrabold text-white/72">{scanCardStatusMessage}</p> : null}
-      {result ? (
-        <Link
-          className="mt-3 rounded-full border border-white/12 bg-white/6 px-3 py-2 text-center text-[11px] font-black uppercase tracking-[0.14em] text-white/78"
-          to={result.partName ? "/history" : "/scan"}
-        >
-          Saved scans
-        </Link>
-      ) : null}
     </section>
   );
 }

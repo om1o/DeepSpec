@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
 import CloudHealthCard from "../components/CloudHealthCard";
 import Button from "../components/ui/Button";
+import HistoryDockButton from "../components/ui/HistoryDockButton";
 import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } from "../lib/utils";
 import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
 import { buildScanReport, downloadTextFile, getMechanicSearchUrl, getScanReportFilename } from "../services/report";
@@ -191,6 +192,7 @@ export default function Result() {
         </Button>
         </div>
       </div>
+      <HistoryDockButton />
     </main>
   );
 }
