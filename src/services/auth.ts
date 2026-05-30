@@ -105,6 +105,32 @@ export async function signInWithPassword(email: string, password: string) {
   return user;
 }
 
+export async function signUpWithPassword(email: string, password: string) {
+  const client = await getRequiredAuthClient();
+  const result = await client.auth.signUp({
+    email,
+    password,
+    options: {
+      emailRedirectTo: getAuthRedirectUrl(),
+    },
+  });
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  if (!result.data.session) {
+    throw new Error("Supabase still requires email confirmation for new password accounts. Disable Confirm Email in the Supabase Email provider, then create the account again.");
+  }
+
+  const user = await getVerifiedAuthUser();
+  if (!user) {
+    throw new Error("Could not verify this new account session. Try signing in again.");
+  }
+
+  return user;
+}
+
 export async function signInAnonymously() {
   const client = await getRequiredAuthClient();
   const result = await client.auth.signInAnonymously();
