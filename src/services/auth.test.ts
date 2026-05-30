@@ -7,7 +7,9 @@ const supabaseMock = vi.hoisted(() => ({
     onAuthStateChange: vi.fn(),
     signInAnonymously: vi.fn(),
     signInWithOtp: vi.fn(),
+    signInWithPassword: vi.fn(),
     signOut: vi.fn(),
+    signUp: vi.fn(),
   },
   createClient: vi.fn(),
   unsubscribe: vi.fn(),
@@ -29,7 +31,9 @@ describe("auth service", () => {
     supabaseMock.auth.onAuthStateChange.mockReset();
     supabaseMock.auth.signInAnonymously.mockReset();
     supabaseMock.auth.signInWithOtp.mockReset();
+    supabaseMock.auth.signInWithPassword.mockReset();
     supabaseMock.auth.signOut.mockReset();
+    supabaseMock.auth.signUp.mockReset();
     supabaseMock.createClient.mockReset();
     supabaseMock.unsubscribe.mockReset();
     supabaseMock.createClient.mockReturnValue({
@@ -45,6 +49,8 @@ describe("auth service", () => {
     supabaseMock.auth.exchangeCodeForSession.mockResolvedValue({ data: {}, error: null });
     supabaseMock.auth.signInAnonymously.mockResolvedValue({ data: {}, error: null });
     supabaseMock.auth.signInWithOtp.mockResolvedValue({ data: {}, error: null });
+    supabaseMock.auth.signInWithPassword.mockResolvedValue({ data: {}, error: null });
+    supabaseMock.auth.signUp.mockResolvedValue({ data: { session: { access_token: "token" } }, error: null });
   });
 
   afterEach(() => {
@@ -102,6 +108,42 @@ describe("auth service", () => {
     await expect(signInAnonymously()).resolves.toEqual(expect.objectContaining({ id: "anonymous-user" }));
 
     expect(supabaseMock.auth.signInAnonymously).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates a password account only when Supabase returns an active session", async () => {
+    const { signUpWithPassword } = await import("./auth");
+    supabaseMock.auth.getUser.mockResolvedValue({
+      data: {
+        user: {
+          app_metadata: {},
+          aud: "authenticated",
+          created_at: new Date(0).toISOString(),
+          id: "new-password-user",
+          user_metadata: {},
+        },
+      },
+      error: null,
+    });
+
+    await expect(signUpWithPassword("new@example.com", "correct-password")).resolves.toEqual(expect.objectContaining({ id: "new-password-user" }));
+
+    expect(supabaseMock.auth.signUp).toHaveBeenCalledWith({
+      email: "new@example.com",
+      password: "correct-password",
+      options: {
+        emailRedirectTo: "http://localhost:3000/scan",
+      },
+    });
+  });
+
+  it("fails password account creation clearly when email confirmation is still required", async () => {
+    const { signUpWithPassword } = await import("./auth");
+    supabaseMock.auth.signUp.mockResolvedValueOnce({ data: { session: null }, error: null });
+
+    await expect(signUpWithPassword("new@example.com", "correct-password")).rejects.toThrow(
+      "Supabase still requires email confirmation for new password accounts.",
+    );
+    expect(supabaseMock.auth.getUser).not.toHaveBeenCalled();
   });
 
   it("fails closed when Supabase user verification hangs", async () => {

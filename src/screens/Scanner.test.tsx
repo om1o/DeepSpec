@@ -8,6 +8,8 @@ const captureFrame = vi.fn(async () => "data:image/jpeg;base64,compressed-frame"
 const retryCamera = vi.fn();
 const assessImageQuality = vi.fn(async () => ({ ok: true }));
 const createFocusedScanCrop = vi.fn(async () => "data:image/jpeg;base64,target-crop");
+const getCloudSyncStatus = vi.fn(() => ({ configured: false, message: "Cloud sync is off." }));
+const syncLookupToCloud = vi.fn(async () => ({ ok: true, message: "Scan synced." }));
 const identifyCapturedFrame = vi.fn(async () => ({
   partName: "Alternator",
   confidence: "high",
@@ -127,6 +129,11 @@ vi.mock("../services/aiService", () => ({
   identifyCapturedFrame: (...args: unknown[]) => identifyCapturedFrame(...args),
 }));
 
+vi.mock("../services/cloudSync", () => ({
+  getCloudSyncStatus: () => getCloudSyncStatus(),
+  syncLookupToCloud: (...args: unknown[]) => syncLookupToCloud(...args),
+}));
+
 // Pass all images as ok - quality logic is tested separately in imageQuality.test.ts
 vi.mock("../lib/imageQuality", () => ({
   assessImageQuality: (...args: unknown[]) => assessImageQuality(...args),
@@ -157,6 +164,10 @@ describe("Scanner", () => {
     assessImageQuality.mockResolvedValue({ ok: true });
     createFocusedScanCrop.mockReset();
     createFocusedScanCrop.mockResolvedValue("data:image/jpeg;base64,target-crop");
+    getCloudSyncStatus.mockReset();
+    getCloudSyncStatus.mockReturnValue({ configured: false, message: "Cloud sync is off." });
+    syncLookupToCloud.mockReset();
+    syncLookupToCloud.mockResolvedValue({ ok: true, message: "Scan synced." });
     identifyCapturedFrame.mockReset();
     identifyCapturedFrame.mockResolvedValue(makeScanResult("Alternator"));
     cameraHookState.current = {
@@ -214,6 +225,28 @@ describe("Scanner", () => {
       trainingLabel: "Alternator",
       trainingStatus: "raw_unreviewed",
     });
+  }, 10000);
+
+  it("syncs a new saved scan to the cloud dataset when Supabase is configured", async () => {
+    getCloudSyncStatus.mockReturnValue({ configured: true, message: "Cloud sync is configured." });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await screen.findByRole("heading", { level: 3, name: "Alternator" });
+
+    await waitFor(() => {
+      expect(syncLookupToCloud).toHaveBeenCalledWith(expect.objectContaining({
+        scanCategory: "electrical",
+        trainingLabel: "Alternator",
+      }));
+    });
+    expect(await screen.findByText("Saved to cloud dataset.")).toBeInTheDocument();
   }, 10000);
 
   it("sends a focused target crop as the AI image when the scanner has a locked object", async () => {

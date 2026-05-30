@@ -10,12 +10,13 @@ import {
   signInWithGitHub,
   signInWithGoogle,
   signInWithPassword,
+  signUpWithPassword,
   verifyEmailCode,
 } from "../services/auth";
 
 type AuthStep = "email" | "sent" | "code";
 type AuthMode = "link" | "password";
-type PasswordMode = "signin" | "anonymous";
+type PasswordMode = "signin" | "signup" | "anonymous";
 const SCAN_ROUTE = "/scan";
 const CODE_LENGTH = 6;
 const RESEND_COOLDOWN_SECONDS = 30;
@@ -118,9 +119,12 @@ export default function Auth() {
     if (authMode === "password") {
       setIsSubmitting(true);
       try {
-        const user = passwordMode === "signin"
-          ? await signInWithPassword(email.trim().toLowerCase(), password)
-          : await signInAnonymously();
+        const normalizedEmail = email.trim().toLowerCase();
+        const user = passwordMode === "anonymous"
+          ? await signInAnonymously()
+          : passwordMode === "signup"
+            ? await signUpWithPassword(normalizedEmail, password)
+            : await signInWithPassword(normalizedEmail, password);
         if (user) {
           navigate(SCAN_ROUTE, { replace: true });
           return;
@@ -345,11 +349,11 @@ export default function Auth() {
                   onClick={() => switchAuthMode("password")}
                   className={authMode === "password" ? "h-11 rounded-[7px] bg-white text-sm font-black text-[var(--ds-logo-ink)] shadow-sm" : "h-11 rounded-[7px] text-sm font-black text-white/62"}
                 >
-                  Password
+                  Account
                 </button>
               </div>
 
-              {authMode === "link" || passwordMode === "signin" ? (
+              {authMode === "link" || passwordMode !== "anonymous" ? (
                 <label className="block">
                   <span className="mb-2 block text-sm font-black text-white/84">Email address</span>
                   <input
@@ -362,7 +366,7 @@ export default function Auth() {
                     name="email"
                     onChange={(event) => setEmail(event.target.value)}
                     placeholder="Enter your email address"
-                    required={(authMode === "link" || passwordMode === "signin") && supabaseConfigured}
+                    required={(authMode === "link" || passwordMode !== "anonymous") && supabaseConfigured}
                     spellCheck={false}
                     type="email"
                     value={email}
@@ -372,13 +376,20 @@ export default function Auth() {
 
               {authMode === "password" ? (
                 <>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-3 gap-2">
                     <button
                       type="button"
                       onClick={() => setPasswordMode("signin")}
                       className={passwordMode === "signin" ? "h-11 rounded-[8px] border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] text-sm font-black text-white" : "h-11 rounded-[8px] border border-white/12 bg-white/5 text-sm font-black text-white/62"}
                     >
-                      Existing account
+                      Sign in
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPasswordMode("signup")}
+                      className={passwordMode === "signup" ? "h-11 rounded-[8px] border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] text-sm font-black text-white" : "h-11 rounded-[8px] border border-white/12 bg-white/5 text-sm font-black text-white/62"}
+                    >
+                      Create
                     </button>
                     <button
                       type="button"
@@ -388,18 +399,18 @@ export default function Auth() {
                       No email
                     </button>
                   </div>
-                  {passwordMode === "signin" ? (
+                  {passwordMode !== "anonymous" ? (
                     <label className="block">
                       <span className="mb-2 block text-sm font-black text-white/84">Password</span>
                       <input
                         className="h-14 w-full rounded-[8px] border border-white/12 bg-white/10 px-4 text-base font-semibold text-white shadow-sm outline-none placeholder:text-white/38 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)]"
-                        autoComplete="current-password"
+                        autoComplete={passwordMode === "signup" ? "new-password" : "current-password"}
                         disabled={isSubmitting}
                         minLength={8}
                         name="password"
                         onChange={(event) => setPassword(event.target.value)}
                         placeholder="Enter your password"
-                        required={authMode === "password" && passwordMode === "signin" && supabaseConfigured}
+                        required={supabaseConfigured}
                         type="password"
                         value={password}
                       />
@@ -547,7 +558,11 @@ function submitLabel(
 ) {
   if (isSubmitting) {
     if (authMode === "password") {
-      return passwordMode === "signin" ? "Checking password..." : "Starting session...";
+      if (passwordMode === "anonymous") {
+        return "Starting session...";
+      }
+
+      return passwordMode === "signup" ? "Creating account..." : "Checking password...";
     }
     return step === "code" ? "Checking code..." : "Sending link...";
   }
@@ -557,7 +572,11 @@ function submitLabel(
   }
 
   if (authMode === "password") {
-    return passwordMode === "signin" ? "Sign in with password" : "Continue without email";
+    if (passwordMode === "anonymous") {
+      return "Continue without email";
+    }
+
+    return passwordMode === "signup" ? "Create account" : "Sign in to scanner";
   }
 
   if (step === "code") {

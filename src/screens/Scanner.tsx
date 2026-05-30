@@ -15,6 +15,7 @@ import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../l
 import { getScanCardPreferences, type ScanCardPreferences, updateScanCardPreferences } from "../lib/scanResultCardSettings";
 import { saveLatestScanState } from "../lib/utils";
 import { AIServiceError, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
+import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
 import { createLookup, updateLookup } from "../services/storage";
 import type { Confidence, IdentificationResult, CapturedFrame, LabelRescueTrigger, Lookup, ScanAnalysisState } from "../types";
 
@@ -142,6 +143,18 @@ export default function Scanner() {
     return scanRequestIdRef.current;
   }, []);
 
+  const syncSavedLookup = useCallback((lookup: Lookup) => {
+    if (!getCloudSyncStatus().configured) {
+      return;
+    }
+
+    setScanCardStatusMessage("Saving to cloud dataset.");
+    void syncLookupToCloud(lookup)
+      .then((result) => {
+        setScanCardStatusMessage(result.ok ? "Saved to cloud dataset." : result.message);
+      });
+  }, []);
+
   const isScanRequestActive = useCallback((requestId: number) => (
     scanRequestIdRef.current === requestId && !cancelScanRef.current
   ), []);
@@ -174,6 +187,7 @@ export default function Scanner() {
         source,
         sourceUpdatedAt,
       });
+      syncSavedLookup(saved.value);
       return;
     }
 
@@ -191,7 +205,7 @@ export default function Scanner() {
       source,
       sourceUpdatedAt,
     });
-  }, [isScanRequestActive, scanCardPrefs.compactCardsByDefault]);
+  }, [isScanRequestActive, scanCardPrefs.compactCardsByDefault, syncSavedLookup]);
 
   const analyzeImageBase64 = useCallback(async (
     imageBase64: string,
@@ -386,6 +400,10 @@ export default function Scanner() {
       setScanCardStatusMessage(lookupUpdate.message);
       return;
     }
+    if (!lookupUpdate.value) {
+      setScanCardStatusMessage("This saved scan was not found.");
+      return;
+    }
 
     setScanReview({
       ...scanReview,
@@ -395,7 +413,8 @@ export default function Scanner() {
       sourceUpdatedAt: new Date().toISOString(),
     });
     setScanCardStatusMessage("Label replacement applied.");
-  }, [scanReview]);
+    syncSavedLookup(lookupUpdate.value);
+  }, [scanReview, syncSavedLookup]);
 
   const handleReportReplace = useCallback(() => {
     const trimmed = replacementLabel.trim();
@@ -430,6 +449,10 @@ export default function Scanner() {
       setScanCardStatusMessage(result.message);
       return;
     }
+    if (!result.value) {
+      setScanCardStatusMessage("This saved scan was not found.");
+      return;
+    }
 
     setScanReview({
       ...scanReview,
@@ -439,7 +462,8 @@ export default function Scanner() {
       sourceUpdatedAt: new Date().toISOString(),
     });
     setScanCardStatusMessage("Label correction removed.");
-  }, [scanReview]);
+    syncSavedLookup(result.value);
+  }, [scanReview, syncSavedLookup]);
 
   const handleCopyLabel = useCallback(async () => {
     if (!scanReview) {

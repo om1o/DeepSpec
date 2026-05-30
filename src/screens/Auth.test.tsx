@@ -52,7 +52,7 @@ describe("Auth", () => {
     vi.unstubAllEnvs();
   });
 
-  it("uses Deep Spec branding and defaults to password sign-in without unconfigured OAuth providers", async () => {
+  it("uses Deep Spec branding and defaults to account sign-in without unconfigured OAuth providers", async () => {
     await renderAuth();
 
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
@@ -60,8 +60,8 @@ describe("Auth", () => {
     expect(screen.queryByRole("button", { name: "Continue with Google" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Continue with GitHub" })).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText("Enter your email address")).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Password" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("button", { name: "Sign in with password" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Account" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "Sign in to scanner" })).toBeInTheDocument();
     expect(screen.getByText("Cloud ready")).toBeInTheDocument();
     expect(screen.queryByText(/facebook/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/microsoft/i)).not.toBeInTheDocument();
@@ -159,7 +159,7 @@ describe("Auth", () => {
 
     await user.type(await screen.findByPlaceholderText("Enter your email address"), "Tester@Example.com");
     await user.type(screen.getByPlaceholderText("Enter your password"), "correct-password");
-    await user.click(screen.getByRole("button", { name: "Sign in with password" }));
+    await user.click(screen.getByRole("button", { name: "Sign in to scanner" }));
 
     await waitFor(() => {
       expect(supabaseMock.auth.signInWithPassword).toHaveBeenCalledWith({
@@ -178,7 +178,7 @@ describe("Auth", () => {
 
     await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
     await user.type(screen.getByPlaceholderText("Enter your password"), "wrong-password");
-    await user.click(screen.getByRole("button", { name: "Sign in with password" }));
+    await user.click(screen.getByRole("button", { name: "Sign in to scanner" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Invalid login credentials");
     expect(screen.queryByText("Scanner opened")).not.toBeInTheDocument();
@@ -201,6 +201,47 @@ describe("Auth", () => {
       expect(supabaseMock.auth.signInAnonymously).toHaveBeenCalledTimes(1);
     });
     expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
+  });
+
+  it("creates a password account when Supabase returns an active session", async () => {
+    const user = userEvent.setup();
+    supabaseMock.auth.signUp.mockResolvedValueOnce({ data: { session: { access_token: "new-session" } }, error: null });
+    supabaseMock.auth.getUser
+      .mockResolvedValueOnce({ data: { user: null }, error: null })
+      .mockResolvedValueOnce({ data: { user: makeUser("created-user") }, error: null });
+
+    await renderAuth();
+
+    await user.click(await screen.findByRole("button", { name: "Create" }));
+    await user.type(await screen.findByPlaceholderText("Enter your email address"), "New@Example.com");
+    await user.type(screen.getByPlaceholderText("Enter your password"), "correct-password");
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+
+    await waitFor(() => {
+      expect(supabaseMock.auth.signUp).toHaveBeenCalledWith({
+        email: "new@example.com",
+        password: "correct-password",
+        options: {
+          emailRedirectTo: "http://localhost:3000/scan",
+        },
+      });
+    });
+    expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
+  });
+
+  it("does not create a password account silently when Supabase still requires email confirmation", async () => {
+    const user = userEvent.setup();
+    supabaseMock.auth.signUp.mockResolvedValueOnce({ data: { session: null }, error: null });
+
+    await renderAuth();
+
+    await user.click(await screen.findByRole("button", { name: "Create" }));
+    await user.type(await screen.findByPlaceholderText("Enter your email address"), "new@example.com");
+    await user.type(screen.getByPlaceholderText("Enter your password"), "correct-password");
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Supabase still requires email confirmation for new password accounts.");
+    expect(screen.queryByText("Scanner opened")).not.toBeInTheDocument();
   });
 
   it("starts GitHub auth when that provider is enabled for the build", async () => {
