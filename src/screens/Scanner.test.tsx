@@ -83,6 +83,7 @@ const cameraHookState = vi.hoisted(() => ({
 
 vi.mock("../hooks/useCamera", () => ({
   useCamera: () => ({
+    cameraDevices: [],
     cameraRequestId: cameraHookState.current.cameraRequestId,
     cameraError: cameraHookState.current.cameraError,
     cameraState: cameraHookState.current.cameraState,
@@ -90,6 +91,8 @@ vi.mock("../hooks/useCamera", () => ({
     markError: vi.fn(),
     markReady: vi.fn(),
     retryCamera,
+    selectCamera: vi.fn(),
+    selectedCameraId: "",
     webcamRef: { current: null },
   }),
 }));
@@ -374,6 +377,7 @@ describe("Scanner", () => {
 
     expect(screen.getByRole("heading", { level: 1, name: "Camera access needed" })).toBeInTheDocument();
     expect(screen.getByText(/Allow camera access for this site/)).toBeInTheDocument();
+    expect(screen.queryByTestId("webcam-preview")).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Try camera again" }));
 

@@ -6,7 +6,7 @@ import IdentifyButton from "../components/scanner/IdentifyButton";
 import MotionPermissionModal from "../components/scanner/MotionPermissionModal";
 import Reticle from "../components/scanner/Reticle";
 import Button from "../components/ui/Button";
-import { useCamera } from "../hooks/useCamera";
+import { useCamera, type CameraDevice } from "../hooks/useCamera";
 import { useObjectTarget, type CameraObjectTarget } from "../hooks/useObjectTarget";
 import { useStillness } from "../hooks/useStillness";
 import { assessImageQuality } from "../lib/imageQuality";
@@ -25,7 +25,7 @@ const MATCH_THRESHOLD = 0.18;
 const SCAN_CARD_WIDTH_PX = 340;
 const SCAN_CARD_SAFE_HEIGHT_PX = 560;
 
-const videoConstraints: MediaTrackConstraints = {
+const DEFAULT_VIDEO_CONSTRAINTS: MediaTrackConstraints = {
   facingMode: { ideal: "environment" },
   width: { ideal: 1920 },
   height: { ideal: 1080 },
@@ -73,8 +73,23 @@ export default function Scanner() {
   const autoScanStartedRef = useRef(false);
   const cancelScanRef = useRef(false);
   const scanRequestIdRef = useRef(0);
-  const { cameraError, cameraRequestId, cameraState, captureFrame, markError, markReady, retryCamera, webcamRef } =
-    useCamera();
+  const {
+    cameraDevices,
+    cameraError,
+    cameraRequestId,
+    cameraState,
+    captureFrame,
+    markError,
+    markReady,
+    retryCamera,
+    selectCamera,
+    selectedCameraId,
+    webcamRef,
+  } = useCamera();
+  const activeVideoConstraints = useMemo(
+    () => getVideoConstraints(selectedCameraId),
+    [selectedCameraId],
+  );
   const { error: motionError, isStable, needsPermission, requestPermission, usesFallback } =
     useStillness();
   const objectTarget = useObjectTarget(webcamRef, {
@@ -526,18 +541,20 @@ export default function Scanner() {
 
   return (
     <main className="relative min-h-dvh overflow-hidden bg-[var(--ds-bg)] text-white">
-      <Webcam
-        key={cameraRequestId}
-        ref={webcamRef}
-        audio={false}
-        className="absolute inset-0 h-full w-full object-cover"
-        mirrored={false}
-        screenshotFormat="image/jpeg"
-        screenshotQuality={0.92}
-        videoConstraints={videoConstraints}
-        onUserMedia={markReady}
-        onUserMediaError={markError}
-      />
+      {cameraState !== "blocked" ? (
+        <Webcam
+          key={cameraRequestId}
+          ref={webcamRef}
+          audio={false}
+          className="absolute inset-0 h-full w-full object-cover"
+          mirrored={false}
+          screenshotFormat="image/jpeg"
+          screenshotQuality={0.92}
+          videoConstraints={activeVideoConstraints}
+          onUserMedia={markReady}
+          onUserMediaError={markError}
+        />
+      ) : null}
       {scanReview?.scanState.frame.imageBase64 ? (
         <img
           alt="Reviewed scan photo"
@@ -572,7 +589,15 @@ export default function Scanner() {
       </header>
 
       {cameraState === "loading" ? <CameraLoading /> : null}
-      {cameraState === "blocked" ? <CameraBlocked message={cameraError} onRetry={retryCamera} /> : null}
+      {cameraState === "blocked" ? (
+        <CameraBlocked
+          devices={cameraDevices}
+          message={cameraError}
+          onRetry={retryCamera}
+          onSelectCamera={selectCamera}
+          selectedCameraId={selectedCameraId}
+        />
+      ) : null}
 
       {cameraState !== "blocked" ? (
         <>
@@ -681,6 +706,18 @@ function getScannerStatus({
   return "Lens ready";
 }
 
+function getVideoConstraints(deviceId: string): MediaTrackConstraints {
+  if (!deviceId) {
+    return DEFAULT_VIDEO_CONSTRAINTS;
+  }
+
+  return {
+    deviceId: { exact: deviceId },
+    width: DEFAULT_VIDEO_CONSTRAINTS.width,
+    height: DEFAULT_VIDEO_CONSTRAINTS.height,
+  };
+}
+
 function getReticleLabel(hasTarget: boolean, hasTargetLock: boolean, autoScanSeconds: number) {
   if (hasTargetLock) {
     return "Scanning";
@@ -704,9 +741,22 @@ function CameraLoading() {
   );
 }
 
-function CameraBlocked({ message, onRetry }: { message: string | null; onRetry: () => void }) {
+function CameraBlocked({
+  devices,
+  message,
+  onRetry,
+  onSelectCamera,
+  selectedCameraId,
+}: {
+  devices: CameraDevice[];
+  message: string | null;
+  onRetry: () => void;
+  onSelectCamera: (deviceId: string) => void;
+  selectedCameraId: string;
+}) {
   const denied = /denied|notallowed/i.test(message ?? "");
   const waiting = /permission.*waiting|camera prompt/i.test(message ?? "");
+  const hasCameraChoices = devices.length > 1;
 
   return (
     <div className="fixed inset-0 z-30 grid place-items-center bg-[var(--ds-bg)] px-6 text-center">
@@ -719,6 +769,23 @@ function CameraBlocked({ message, onRetry }: { message: string | null; onRetry: 
           Deep Spec needs your camera to scan parts. {denied || waiting ? "Allow camera access for this site, then try again." : "Check camera access, then try again."}
         </p>
         {message ? <p className="mt-3 text-xs text-white/48">{message}</p> : null}
+        {hasCameraChoices ? (
+          <label className="mx-auto mt-5 block max-w-xs text-left">
+            <span className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-white/54">Camera</span>
+            <select
+              className="h-11 w-full rounded-[8px] border border-white/12 bg-slate-950 px-3 text-sm font-bold text-white outline-none focus:border-[var(--ds-accent)]"
+              onChange={(event) => onSelectCamera(event.target.value)}
+              value={selectedCameraId}
+            >
+              <option value="">Default camera</option>
+              {devices.map((device) => (
+                <option key={device.deviceId} value={device.deviceId}>
+                  {device.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <Button className="mt-6" onClick={onRetry}>
           Try camera again
         </Button>
