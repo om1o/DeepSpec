@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import Button from "../components/ui/Button";
+import HistoryDockButton from "../components/ui/HistoryDockButton";
 import { AIServiceError, getAIErrorDetails, getAIErrorMessage, sendFollowUp } from "../services/aiService";
 import { appendChatMessages, createChatMessage, getLookup } from "../services/storage";
 import type { Lookup } from "../types";
@@ -113,6 +114,7 @@ export default function Chat() {
             Saved scans
           </Link>
         </section>
+        <HistoryDockButton />
       </main>
     );
   }
@@ -222,6 +224,7 @@ export default function Chat() {
           </form>
         </section>
       </div>
+      <HistoryDockButton />
     </main>
   );
 }
