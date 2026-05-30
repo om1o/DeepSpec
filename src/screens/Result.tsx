@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
 import CloudHealthCard from "../components/CloudHealthCard";
 import Button from "../components/ui/Button";
@@ -7,6 +7,7 @@ import HistoryDockButton from "../components/ui/HistoryDockButton";
 import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } from "../lib/utils";
 import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
 import { buildScanReport, downloadTextFile, getMechanicSearchUrl, getScanReportFilename } from "../services/report";
+import { recordManualCorrection, recordUserTrustScore } from "../services/scanQualityMetrics";
 import { createLookup, deleteLookup, getLookup, scanStateFromLookup, updateLookup, updateLookupResult } from "../services/storage";
 import type { CandidateMatch, CapturedFrame, Confidence, EvidenceRegion, IdentificationResult, Lookup, Rating, ScanAnalysisState, SourceLink } from "../types";
 
@@ -30,10 +31,24 @@ export default function Result() {
   const storageWarning = scanState?.storageWarning;
   const canSaveForChat = Boolean(scanState?.frame && scanState.result);
   const datasetSourceUrls = scanState?.result ? getDatasetSourceUrls(scanState.result.evidence) : [];
+  const manualCorrectionTrackedRef = useRef(false);
+
+  function trackManualCorrectionOnce() {
+    if (manualCorrectionTrackedRef.current) {
+      return;
+    }
+
+    manualCorrectionTrackedRef.current = true;
+    recordManualCorrection();
+  }
 
   function handleRating(rating: Rating) {
     if (!lookup) {
       return;
+    }
+
+    if (rating === "down") {
+      trackManualCorrectionOnce();
     }
 
     const result = updateLookup(lookup.id, {
@@ -46,6 +61,10 @@ export default function Result() {
   function handleCorrection(correction: string) {
     if (!lookup) {
       return;
+    }
+
+    if (correction.trim()) {
+      trackManualCorrectionOnce();
     }
 
     handleLookupUpdate(updateLookup(lookup.id, { correction }));
@@ -276,6 +295,7 @@ function SavedScanControls({
   const [reportStatus, setReportStatus] = useState<string | null>(null);
   const [cloudStatusMessage, setCloudStatusMessage] = useState<string | null>(null);
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
+  const [trustScore, setTrustScore] = useState<number | null>(null);
   const cloudSync = getCloudSyncStatus();
   const needsProfessional = lookup.result?.isSafetyCritical || lookup.result?.safetyTriage === "needs_professional";
 
@@ -314,6 +334,11 @@ function SavedScanControls({
     } finally {
       setIsSyncingCloud(false);
     }
+  }
+
+  function handleTrustScore(score: number) {
+    setTrustScore(score);
+    recordUserTrustScore(score);
   }
 
   return (
@@ -362,6 +387,25 @@ function SavedScanControls({
         >
           Wrong
         </Button>
+      </div>
+
+      <div className="mt-4 rounded-[20px] border border-neutral-200 bg-neutral-50 p-4">
+        <p className="text-sm font-extrabold text-neutral-900">Trust this result?</p>
+        <p className="mt-2 text-sm leading-6 text-neutral-500">
+          Exact size requires a reference object beside the part.
+        </p>
+        <input
+          aria-label="User trust score"
+          className="mt-3 h-2 w-full accent-[var(--ds-accent)]"
+          max={5}
+          min={1}
+          onChange={(event) => handleTrustScore(Number(event.target.value))}
+          type="range"
+          value={trustScore ?? 3}
+        />
+        <p className="mt-2 text-xs font-bold text-neutral-400">
+          {trustScore ? `${trustScore}/5 recorded` : "Slide after checking the result."}
+        </p>
       </div>
 
       {lookup.rating === "down" ? (

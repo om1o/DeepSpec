@@ -410,9 +410,35 @@ describe("Scanner", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("Auto scan in 5s")).toBeInTheDocument();
+    expect(screen.getByText("You're 10% there")).toBeInTheDocument();
     expect(screen.getByText("Hold still 5s")).toBeInTheDocument();
     expect(objectTargetOptions.latest?.holdDurationMs).toBe(5000);
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+  });
+
+  it("blocks auto scan when the locked object is too small", () => {
+    objectTargetState.current = {
+      confidence: 0.82,
+      id: "target-tiny",
+      height: 40,
+      holdProgress: 1,
+      isLocked: true,
+      left: 80,
+      top: 160,
+      width: 40,
+    };
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getAllByText("Move closer").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Scan now" })).toBeDisabled();
+    expect(captureFrame).not.toHaveBeenCalled();
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
   });
 
@@ -539,7 +565,7 @@ describe("Scanner", () => {
     expect(localStorage.getItem("deep-spec:lookups")).toBeNull();
   }, 10000);
 
-  it("rescues blurry captures by sending a label OCR hint to identify", async () => {
+  it("blocks blurry captures with a single quality coach fix before identify", async () => {
     assessImageQuality.mockResolvedValueOnce({
       ok: false,
       issue: "too_blurry",
@@ -554,10 +580,11 @@ describe("Scanner", () => {
       </MemoryRouter>,
     );
 
-    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
-    expect(identifyCapturedFrame.mock.calls[0][2]).toBe("too_blurry");
-    expect(await screen.findByRole("heading", { level: 3, name: "Alternator" })).toBeInTheDocument();
-    expect(screen.queryByText(/Move closer and hold steady/)).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 2, name: "Too blurry" })).toBeInTheDocument();
+    expect(screen.getAllByText("Hold still 2s").length).toBeGreaterThan(0);
+    expect(screen.getByText("Try this exact fix, then scan again.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Scan again" })).toBeInTheDocument();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
   }, 10000);
 });
 

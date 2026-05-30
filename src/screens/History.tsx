@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import Button from "../components/ui/Button";
 import { signOut } from "../services/auth";
 import { readCloudLookups } from "../services/cloudHistory";
+import { getScanQualityMetrics, type ScanQualityFailureReason, type ScanQualityMetrics } from "../services/scanQualityMetrics";
 import { MAX_SAVED_LOOKUPS, getLookups, scanStateFromLookup } from "../services/storage";
 import { SCAN_CATEGORIES, type Lookup, type Rating, type ScanCategory, type TrainingStatus } from "../types";
 
@@ -11,6 +12,7 @@ export default function History() {
   const [lookups, setLookups] = useState<Lookup[]>(() => getLookups());
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [query, setQuery] = useState("");
+  const qualityMetrics = useMemo(() => getScanQualityMetrics(), []);
 
   useEffect(() => {
     let isMounted = true;
@@ -83,6 +85,8 @@ export default function History() {
             </Link>
           </div>
         </header>
+
+        <ScanQualityMetricsPanel metrics={qualityMetrics} />
 
         {lookups.length > 0 ? (
           <section className="mt-5 rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
@@ -162,6 +166,72 @@ export default function History() {
   );
 }
 
+function ScanQualityMetricsPanel({ metrics }: { metrics: ScanQualityMetrics }) {
+  const firstPassRate = formatPercent(metrics.firstPassSuccesses, metrics.attempts);
+  const avgAcceptableSeconds = metrics.acceptableScans
+    ? `${(metrics.totalTimeToAcceptableMs / metrics.acceptableScans / 1000).toFixed(1)}s`
+    : "No data";
+  const topFailure = getTopReason(metrics.failuresByReason);
+  const retakeCount = sumReasonCounts(metrics.retakesByReason);
+  const needsBetterPhoto = sumCameraNeeds(metrics);
+  const cameraOutcomeTotal = sumCameraTotals(metrics);
+  const needsBetterPhotoRate = formatPercent(needsBetterPhoto, cameraOutcomeTotal);
+  const manualCorrectionRate = formatPercent(metrics.manualCorrections, Math.max(metrics.acceptableScans, metrics.manualCorrections));
+  const averageTrust = metrics.trustScores.count
+    ? `${(metrics.trustScores.total / metrics.trustScores.count).toFixed(1)}/5`
+    : "No data";
+  const retakeRates = getRetakeRates(metrics);
+
+  return (
+    <section className="mt-5 rounded-[24px] border border-[var(--ds-accent-line)] bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Scan quality</p>
+          <h2 className="mt-1 text-xl font-extrabold tracking-tight">Quality coach metrics</h2>
+        </div>
+        <span className="rounded-full bg-[var(--ds-accent-soft)] px-3 py-1 text-xs font-black text-[var(--ds-accent)]">
+          {metrics.attempts} attempts
+        </span>
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <MetricTile label="First-pass success" value={firstPassRate} />
+        <MetricTile label="Avg. acceptable time" value={avgAcceptableSeconds} />
+        <MetricTile label="Retakes" value={`${retakeCount}`} />
+        <MetricTile label="Manual correction rate" value={manualCorrectionRate} />
+        <MetricTile label="Needs better photo" value={needsBetterPhotoRate} />
+        <MetricTile label="Trust score" value={averageTrust} />
+      </div>
+      {topFailure ? (
+        <p className="mt-3 text-sm font-semibold text-neutral-500">
+          Top blocker: {formatReason(topFailure.reason)} ({topFailure.count}).
+        </p>
+      ) : (
+        <p className="mt-3 text-sm font-semibold text-neutral-500">
+          No scan-quality failures recorded yet.
+        </p>
+      )}
+      {retakeRates.length ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {retakeRates.map(({ rate, reason }) => (
+            <span key={reason} className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-bold text-neutral-600">
+              {formatReason(reason)} retake {rate}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function MetricTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3">
+      <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-neutral-400">{label}</p>
+      <p className="mt-1 text-lg font-extrabold text-neutral-950">{value}</p>
+    </div>
+  );
+}
+
 function FilterSelect({
   children,
   label,
@@ -186,6 +256,42 @@ function FilterSelect({
       </select>
     </label>
   );
+}
+
+function getTopReason(counts: Record<ScanQualityFailureReason, number>) {
+  return (Object.entries(counts) as [ScanQualityFailureReason, number][])
+    .filter(([, count]) => count > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([reason, count]) => ({ reason, count }))[0] ?? null;
+}
+
+function sumReasonCounts(counts: Record<ScanQualityFailureReason, number>) {
+  return Object.values(counts).reduce((sum, count) => sum + count, 0);
+}
+
+function sumCameraNeeds(metrics: ScanQualityMetrics) {
+  return Object.values(metrics.needsBetterPhotoByCamera).reduce((sum, stats) => sum + stats.needsBetterPhoto, 0);
+}
+
+function sumCameraTotals(metrics: ScanQualityMetrics) {
+  return Object.values(metrics.needsBetterPhotoByCamera).reduce((sum, stats) => sum + stats.total, 0);
+}
+
+function formatPercent(part: number, total: number) {
+  return total > 0 ? `${Math.round((part / total) * 100)}%` : "No data";
+}
+
+function getRetakeRates(metrics: ScanQualityMetrics) {
+  return (Object.keys(metrics.failuresByReason) as ScanQualityFailureReason[])
+    .filter((reason) => metrics.failuresByReason[reason] > 0)
+    .map((reason) => ({
+      rate: formatPercent(metrics.retakesByReason[reason], metrics.failuresByReason[reason]),
+      reason,
+    }));
+}
+
+function formatReason(reason: ScanQualityFailureReason) {
+  return reason.replaceAll("_", " ");
 }
 
 function LookupCard({ lookup }: { lookup: Lookup }) {
