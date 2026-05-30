@@ -26,6 +26,18 @@ const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
 const MATCH_THRESHOLD = 0.18;
 const SCAN_CARD_WIDTH_PX = 340;
 const SCAN_CARD_SAFE_HEIGHT_PX = 560;
+const METRIC_FASTENER_WIDTHS_MM = [6, 7, 8, 10, 12, 13, 14, 16, 17, 18, 19, 21, 22, 24];
+const SAE_FASTENER_WIDTHS = [
+  { label: "1/4 in", mm: 6.35 },
+  { label: "5/16 in", mm: 7.94 },
+  { label: "3/8 in", mm: 9.53 },
+  { label: "7/16 in", mm: 11.11 },
+  { label: "1/2 in", mm: 12.7 },
+  { label: "9/16 in", mm: 14.29 },
+  { label: "5/8 in", mm: 15.88 },
+  { label: "11/16 in", mm: 17.46 },
+  { label: "3/4 in", mm: 19.05 },
+];
 
 const DEFAULT_VIDEO_CONSTRAINTS: MediaTrackConstraints = {
   facingMode: { ideal: "environment" },
@@ -59,6 +71,15 @@ type ReviewCardPlacement = {
   anchorSide: "left" | "right";
 };
 
+type SizeReferencePreset = "card_short_edge" | "card_long_edge" | "us_quarter" | "us_nickel";
+
+type SizeCalibration = {
+  capturedAt: string;
+  preset: SizeReferencePreset;
+  referenceMm: number;
+  referencePx: number;
+};
+
 export default function Scanner() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -72,6 +93,8 @@ export default function Scanner() {
   const [isCardExpanded, setIsCardExpanded] = useState(false);
   const [isReplacingLabel, setIsReplacingLabel] = useState(false);
   const [replacementLabel, setReplacementLabel] = useState("");
+  const [sizeReferencePreset, setSizeReferencePreset] = useState<SizeReferencePreset>("card_short_edge");
+  const [sizeCalibration, setSizeCalibration] = useState<SizeCalibration | null>(null);
   const autoScanStartedRef = useRef(false);
   const cancelScanRef = useRef(false);
   const scanRequestIdRef = useRef(0);
@@ -479,19 +502,56 @@ export default function Scanner() {
     setScanCardStatusMessage(copied ? "Label copied." : "Copy blocked. Try again.");
   }, [scanReview]);
 
+  const handleSetSizeReference = useCallback(() => {
+    if (!scanReview?.reviewTarget) {
+      setScanCardStatusMessage("No target lock yet. Center a reference object first.");
+      return;
+    }
+
+    const referenceMm = getSizeReferenceMm(sizeReferencePreset);
+    const referencePx = Math.max(scanReview.reviewTarget.width, scanReview.reviewTarget.height);
+    if (referencePx < 36) {
+      setScanCardStatusMessage("Reference target is too small. Move closer and lock the object.");
+      return;
+    }
+
+    setSizeCalibration({
+      capturedAt: new Date().toISOString(),
+      preset: sizeReferencePreset,
+      referenceMm,
+      referencePx,
+    });
+    setScanCardStatusMessage(`${getSizeReferenceLabel(sizeReferencePreset)} saved for AR size estimates.`);
+  }, [scanReview, sizeReferencePreset]);
+
   const handleReviewMeasure = useCallback(async () => {
     if (!scanReview?.reviewTarget) {
       setScanCardStatusMessage("No point to measure yet.");
       return;
     }
 
-    const copied = await copyText(
-      `${scanReview.reviewTarget.width.toFixed(0)}x${scanReview.reviewTarget.height.toFixed(0)} px`,
-    );
+    if (!sizeCalibration) {
+      setScanCardStatusMessage("Set a reference first (card or coin) to estimate mm size.");
+      return;
+    }
+
+    const widthMm = estimateMm(scanReview.reviewTarget.width, sizeCalibration);
+    const heightMm = estimateMm(scanReview.reviewTarget.height, sizeCalibration);
+    const label = getReviewDisplayLabel(scanReview);
+    const fastenerHint = /nut|bolt|screw|stud|thread|fastener/i.test(label)
+      ? getFastenerSizeHint(Math.max(widthMm, heightMm))
+      : null;
+    const summary = fastenerHint
+      ? `${label}: ${widthMm.toFixed(1)} x ${heightMm.toFixed(1)} mm (approx). ${fastenerHint}`
+      : `${label}: ${widthMm.toFixed(1)} x ${heightMm.toFixed(1)} mm (approx).`;
+
+    const copied = await copyText(summary);
     setScanCardStatusMessage(
-      copied ? "Point size copied to clipboard." : "Could not copy point size right now.",
+      copied
+        ? "AR size estimate copied. Keep reference and target on the same depth plane."
+        : summary,
     );
-  }, [scanReview]);
+  }, [scanReview, sizeCalibration]);
 
   const handleOpenDetails = useCallback(() => {
     if (!scanReview) {
@@ -662,11 +722,15 @@ export default function Scanner() {
           onToggleExpand={() => setIsCardExpanded((value) => !value)}
           onToggleCompactMode={toggleCompactCardMode}
           onToggleHideConfidence={toggleHideConfidence}
+          onSetSizeReference={handleSetSizeReference}
+          onSizeReferencePresetChange={(preset) => setSizeReferencePreset(preset)}
           placement={reviewCardPlacement}
           prefs={scanCardPrefs}
           replacementLabel={replacementLabel}
           review={scanReview}
           scanCardStatusMessage={scanCardStatusMessage}
+          sizeCalibration={sizeCalibration}
+          sizeReferencePreset={sizeReferencePreset}
           onWrongLabel={() => {
             setReplacementLabel(scanReview?.scanState.result?.partName ?? "");
             setIsReplacingLabel(true);
@@ -903,7 +967,7 @@ function LensPartOverlays({ result, target }: { result: IdentificationResult; ta
           className={`absolute rounded-[18px] border-2 shadow-[0_0_0_999px_rgba(2,6,23,0.02)] ${
             detection.primary
               ? "border-[var(--ds-accent)] bg-[var(--ds-accent)]/10"
-              : "border-white/60 bg-white/8"
+              : "border-cyan-200/82 bg-cyan-300/8"
           }`}
           style={{
             height: detection.box.height,
@@ -941,18 +1005,20 @@ function getLensDetections(result: IdentificationResult, target: ScanReviewTarge
   const primaryLabel = result.partName.trim().toLowerCase();
   result.evidenceRegions
     .filter((region) => region.label.trim().toLowerCase() !== primaryLabel)
-    .slice(0, 4)
+    .slice(0, 5)
     .forEach((region, index) => {
       detections.push({
         id: `region:${region.regionLabel}:${region.label}`,
         label: region.label,
-        detail: region.regionLabel,
-        box: regionLabelToLensBox(region.regionLabel, index + 1),
+        detail: summarize(region.observation || region.regionLabel, 34),
+        box: target
+          ? regionToTargetSubBox(region.regionLabel, index, primaryBox)
+          : regionLabelToLensBox(region.regionLabel, index + 1),
         primary: false,
       });
     });
 
-  return detections.slice(0, 5);
+  return detections.slice(0, 6);
 }
 
 function targetToLensBox(target: ScanReviewTarget) {
@@ -1003,6 +1069,8 @@ function ScanResultCard({
   onOpenDetails,
   onRetryMismatch,
   onReportReplace,
+  onSetSizeReference,
+  onSizeReferencePresetChange,
   onUndoCorrection,
   onToggleExpand,
   onToggleCompactMode,
@@ -1015,6 +1083,8 @@ function ScanResultCard({
   replacementLabel,
   review,
   scanCardStatusMessage,
+  sizeCalibration,
+  sizeReferencePreset,
 }: {
   isExpanded: boolean;
   isMismatch: boolean;
@@ -1026,6 +1096,8 @@ function ScanResultCard({
   onOpenDetails: () => void;
   onRetryMismatch: () => void;
   onReportReplace: () => void;
+  onSetSizeReference: () => void;
+  onSizeReferencePresetChange: (preset: SizeReferencePreset) => void;
   onUndoCorrection: () => void;
   onToggleExpand: () => void;
   onToggleCompactMode: () => void;
@@ -1038,6 +1110,8 @@ function ScanResultCard({
   replacementLabel: string;
   review: ScanReviewState;
   scanCardStatusMessage: string | null;
+  sizeCalibration: SizeCalibration | null;
+  sizeReferencePreset: SizeReferencePreset;
 }) {
   const result = review.scanState.result;
   const label = getReviewDisplayLabel(review);
@@ -1050,6 +1124,9 @@ function ScanResultCard({
   const lastUpdated = formatTimestamp(review.sourceUpdatedAt);
   const targetOverlayStyle = getReviewTargetOverlayStyle(target);
   const threeDSearchUrl = get3DSearchUrl(label);
+  const referenceSummary = sizeCalibration
+    ? `${getSizeReferenceLabel(sizeCalibration.preset)} (${sizeCalibration.referenceMm.toFixed(2)} mm)`
+    : "No reference set";
 
   return (
     <section
@@ -1188,15 +1265,39 @@ function ScanResultCard({
           >
             Open details
           </button>
+          <label className="col-span-2 block">
+            <span className="mb-1 block text-[10px] font-black uppercase tracking-[0.12em] text-white/64">Size reference</span>
+            <select
+              aria-label="Size reference preset"
+              className="h-10 w-full rounded-full border border-white/12 bg-slate-950/92 px-3 text-[11px] font-black text-white outline-none focus:border-[var(--ds-accent)]"
+              onChange={(event) => onSizeReferencePresetChange(event.target.value as SizeReferencePreset)}
+              value={sizeReferencePreset}
+            >
+              <option value="card_short_edge">Card short edge (53.98 mm)</option>
+              <option value="card_long_edge">Card long edge (85.60 mm)</option>
+              <option value="us_quarter">US quarter (24.26 mm)</option>
+              <option value="us_nickel">US nickel (21.21 mm)</option>
+            </select>
+          </label>
+          <button
+            className="min-h-10 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
+            onClick={onSetSizeReference}
+            type="button"
+          >
+            Set reference
+          </button>
           <button
             className="min-h-10 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
             onClick={onMeasure}
             type="button"
           >
-            Copy area size
+            Estimate size
           </button>
+          <p className="col-span-2 text-[10px] font-semibold leading-5 text-white/66">
+            {referenceSummary}
+          </p>
           <button
-            className="min-h-10 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
+            className="col-span-2 min-h-10 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
             onClick={onCopyValue}
             type="button"
           >
@@ -1275,6 +1376,54 @@ function ScanResultCard({
       {scanCardStatusMessage ? <p className="mt-2 text-xs font-extrabold text-white/72">{scanCardStatusMessage}</p> : null}
     </section>
   );
+}
+
+function regionToTargetSubBox(regionLabel: string, index: number, primaryBox: LensDetection["box"]) {
+  const inset = 6;
+  const innerLeft = primaryBox.left + inset;
+  const innerTop = primaryBox.top + inset;
+  const innerWidth = Math.max(64, primaryBox.width - inset * 2);
+  const innerHeight = Math.max(58, primaryBox.height - inset * 2);
+  const halfWidth = Math.max(52, innerWidth * 0.47);
+  const halfHeight = Math.max(46, innerHeight * 0.46);
+  const lowerTop = innerTop + Math.max(8, innerHeight - halfHeight);
+  const rightLeft = innerLeft + Math.max(8, innerWidth - halfWidth);
+  const label = regionLabel.toLowerCase();
+
+  if (/upper|top/.test(label) && /left/.test(label)) {
+    return { left: innerLeft, top: innerTop, width: halfWidth, height: halfHeight };
+  }
+  if (/upper|top/.test(label) && /right/.test(label)) {
+    return { left: rightLeft, top: innerTop, width: halfWidth, height: halfHeight };
+  }
+  if (/lower|bottom/.test(label) && /left/.test(label)) {
+    return { left: innerLeft, top: lowerTop, width: halfWidth, height: halfHeight };
+  }
+  if (/lower|bottom/.test(label) && /right/.test(label)) {
+    return { left: rightLeft, top: lowerTop, width: halfWidth, height: halfHeight };
+  }
+  if (/left/.test(label)) {
+    return { left: innerLeft, top: innerTop + innerHeight * 0.24, width: halfWidth, height: halfHeight };
+  }
+  if (/right/.test(label)) {
+    return { left: rightLeft, top: innerTop + innerHeight * 0.24, width: halfWidth, height: halfHeight };
+  }
+  if (/upper|top/.test(label)) {
+    return { left: innerLeft + (innerWidth - halfWidth) / 2, top: innerTop, width: halfWidth, height: halfHeight };
+  }
+  if (/lower|bottom/.test(label)) {
+    return { left: innerLeft + (innerWidth - halfWidth) / 2, top: lowerTop, width: halfWidth, height: halfHeight };
+  }
+
+  const slots = [
+    { left: innerLeft, top: innerTop },
+    { left: rightLeft, top: innerTop },
+    { left: innerLeft, top: lowerTop },
+    { left: rightLeft, top: lowerTop },
+    { left: innerLeft + (innerWidth - halfWidth) / 2, top: innerTop + (innerHeight - halfHeight) / 2 },
+  ];
+  const slot = slots[index % slots.length];
+  return { left: slot.left, top: slot.top, width: halfWidth, height: halfHeight };
 }
 
 function BubbleSection({ children, title }: { children: ReactNode; title: string }) {
@@ -1432,6 +1581,59 @@ function getReviewTargetOverlayStyle(target: ScanReviewTarget | null) {
 function get3DSearchUrl(label: string) {
   const encoded = encodeURIComponent(`${label} 3D model`);
   return `https://www.sketchfab.com/search?type=models&sort_by=-relevance&q=${encoded}`;
+}
+
+function getSizeReferenceMm(preset: SizeReferencePreset) {
+  switch (preset) {
+    case "card_long_edge":
+      return 85.6;
+    case "us_quarter":
+      return 24.26;
+    case "us_nickel":
+      return 21.21;
+    case "card_short_edge":
+    default:
+      return 53.98;
+  }
+}
+
+function getSizeReferenceLabel(preset: SizeReferencePreset) {
+  switch (preset) {
+    case "card_long_edge":
+      return "Card long edge";
+    case "us_quarter":
+      return "US quarter";
+    case "us_nickel":
+      return "US nickel";
+    case "card_short_edge":
+    default:
+      return "Card short edge";
+  }
+}
+
+function estimateMm(targetPixels: number, calibration: SizeCalibration) {
+  const mmPerPixel = calibration.referenceMm / Math.max(1, calibration.referencePx);
+  return targetPixels * mmPerPixel;
+}
+
+function getFastenerSizeHint(acrossMm: number) {
+  const metric = findNearestMetricFastener(acrossMm);
+  const sae = findNearestSaeFastener(acrossMm);
+  return `Fastener guess: ${metric} wrench / ${sae} (approx).`;
+}
+
+function findNearestMetricFastener(widthMm: number) {
+  const nearest = METRIC_FASTENER_WIDTHS_MM.reduce((best, current) => (
+    Math.abs(current - widthMm) < Math.abs(best - widthMm) ? current : best
+  ), METRIC_FASTENER_WIDTHS_MM[0]);
+  return `${nearest} mm`;
+}
+
+function findNearestSaeFastener(widthMm: number) {
+  const nearest = SAE_FASTENER_WIDTHS.reduce((best, current) => (
+    Math.abs(current.mm - widthMm) < Math.abs(best.mm - widthMm) ? current : best
+  ), SAE_FASTENER_WIDTHS[0]);
+  return nearest.label;
 }
 
 function getVisibleFacts(result: IdentificationResult | undefined, compact: boolean) {
