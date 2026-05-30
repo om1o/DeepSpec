@@ -4,6 +4,10 @@
 
 create extension if not exists pgcrypto;
 
+-- Newer Supabase projects require explicit API-facing grants for exposed schemas.
+-- RLS and per-table grants below still control which rows are visible.
+grant usage on schema public to anon, authenticated;
+
 create table if not exists public.scan_lookups (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -202,3 +206,6 @@ create policy scan_images_delete_own
     bucket_id = 'scan-images'
     and (storage.foldername(name))[1] = (select auth.uid())::text
   );
+
+-- Ask PostgREST/Supabase Data API to refresh after the dashboard SQL run.
+notify pgrst, 'reload schema';

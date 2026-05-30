@@ -1,0 +1,708 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Deep Spec — 3-State Scanner</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+  :root { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
+  html, body, #root { background: #050505; }
+  body { margin: 0; min-height: 100dvh; -webkit-font-smoothing: antialiased; }
+  /* Custom keyframes */
+  @keyframes ds-pulse-ring {
+    0%   { box-shadow: 0 0 0 0 rgba(74,222,128,0.55); }
+    70%  { box-shadow: 0 0 0 10px rgba(74,222,128,0.0); }
+    100% { box-shadow: 0 0 0 0 rgba(74,222,128,0.0); }
+  }
+  .ds-pulse-ring { animation: ds-pulse-ring 1.6s ease-out infinite; }
+  @keyframes ds-spin { to { transform: rotate(360deg); } }
+  .ds-spinner { animation: ds-spin 1.1s linear infinite; }
+  /* Hide scrollbar on chips row */
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+  /* State toggle — fully bypasses Tailwind CDN for predictable highlighting */
+  .ds-toggle {
+    display: inline-flex;
+    border-radius: 9999px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.10);
+    padding: 4px;
+    gap: 0;
+  }
+  .ds-state-pill {
+    padding: 0 14px; height: 36px; border-radius: 9999px;
+    font-size: 11.5px; font-weight: 800;
+    background-color: transparent; color: rgba(255,255,255,0.70);
+    box-shadow: none; border: 0; cursor: pointer; font-family: inherit;
+    transition: background-color 180ms ease, color 180ms ease, box-shadow 180ms ease;
+  }
+  .ds-state-pill[aria-pressed="true"] {
+    background-color: #FFFFFF !important;
+    color: #0A0A0A !important;
+    box-shadow: 0 6px 18px rgba(255,255,255,0.18) !important;
+  }
+  /* Camera "feed" — a moody dark-engine-bay backdrop using gradients only */
+  .feed {
+    background:
+      radial-gradient(140% 70% at 20% 18%, rgba(70,70,70,0.55) 0%, rgba(20,20,20,0) 55%),
+      radial-gradient(120% 80% at 80% 70%, rgba(40,40,40,0.50) 0%, rgba(10,10,10,0) 60%),
+      radial-gradient(60% 40% at 50% 50%, rgba(58,52,40,0.45) 0%, rgba(28,28,30,0) 70%),
+      linear-gradient(165deg, #1C1C1E 0%, #0F0F10 60%, #0A0A0A 100%);
+    position: relative;
+  }
+  .feed::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background:
+      repeating-linear-gradient(115deg, rgba(255,255,255,0.018) 0 2px, transparent 2px 6px),
+      radial-gradient(80% 50% at 50% 35%, rgba(255,255,255,0.04), transparent 60%);
+    mix-blend-mode: screen;
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="env,react">
+const { useState, useEffect } = React;
+
+/* ============================================================
+   Small primitives used across the three states
+   ============================================================ */
+
+function GlassPill({ children, className = "" }) {
+  return (
+    <div className={`inline-flex items-center justify-center rounded-full bg-black/[0.38] ring-1 ring-white/10 backdrop-blur-xl ${className}`}>
+      {children}
+    </div>
+  );
+}
+
+function ReticleCorner({ pos }) {
+  // pos: tl tr bl br
+  const map = {
+    tl: "top-0 left-0 border-t-[3px] border-l-[3px] rounded-tl-[18px]",
+    tr: "top-0 right-0 border-t-[3px] border-r-[3px] rounded-tr-[18px]",
+    bl: "bottom-0 left-0 border-b-[3px] border-l-[3px] rounded-bl-[18px]",
+    br: "bottom-0 right-0 border-b-[3px] border-b-[3px] border-r-[3px] rounded-br-[18px]",
+  };
+  return (
+    <div
+      className={`absolute w-5 h-5 ${map[pos]}`}
+      style={{
+        borderColor: "rgba(250,204,21,0.92)",
+        filter: "drop-shadow(0 0 6px rgba(250,204,21,0.55))",
+      }}
+    />
+  );
+}
+
+function Reticle({ isStable }) {
+  return (
+    <div
+      className="absolute left-1/2 -translate-x-1/2 -translate-y-1/2 w-[72%] aspect-[4/3] pointer-events-none transition-all duration-300"
+      style={{ top: "43%" }}
+    >
+      <div
+        className="absolute inset-0 rounded-[18px] border-2 border-dashed transition-all duration-300"
+        style={{
+          borderColor: "rgba(250,204,21,0.38)",
+          boxShadow: isStable
+            ? "0 0 36px rgba(250,204,21,0.42), inset 0 0 0 1px rgba(250,204,21,0.06)"
+            : "0 0 16px rgba(250,204,21,0.18)",
+        }}
+      />
+      <ReticleCorner pos="tl" />
+      <ReticleCorner pos="tr" />
+      <ReticleCorner pos="bl" />
+      <ReticleCorner pos="br" />
+      {isStable && (
+        <GlassPill className="absolute left-1/2 -translate-x-1/2 -bottom-12 px-3 py-2 text-[11px] font-extrabold tracking-wide" >
+          <span style={{ color: "#FACC15" }}>Tap Identify when ready</span>
+        </GlassPill>
+      )}
+    </div>
+  );
+}
+
+/* ============================================================
+   Top bar — three glass pills over the camera feed
+   ============================================================ */
+
+function TopBar() {
+  return (
+    <header
+      className="absolute left-0 right-0 z-20 px-4"
+      style={{ top: "calc(max(14px, env(safe-area-inset-top)) + 38px)" }}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <button className="rounded-full bg-black/[0.38] ring-1 ring-white/10 backdrop-blur-xl px-3 h-9 text-[12px] font-extrabold text-white/90">
+          DS
+        </button>
+
+        <div className="rounded-full bg-black/[0.38] ring-1 ring-white/10 backdrop-blur-xl px-3.5 py-1.5 text-center leading-none">
+          <div className="text-[13px] font-extrabold text-white">Deep Spec</div>
+          <div
+            className="mt-[2px] text-[9.5px] font-extrabold tracking-[0.18em] uppercase"
+            style={{ color: "#FACC15" }}
+          >
+            AI Part Scanner
+          </div>
+        </div>
+
+        <button className="rounded-full bg-black/[0.38] ring-1 ring-white/10 backdrop-blur-xl w-9 h-9 grid place-items-center text-white/90 text-base font-extrabold">
+          +
+        </button>
+      </div>
+    </header>
+  );
+}
+
+function StatusHint({ isStable }) {
+  return (
+    <div
+      className="absolute left-1/2 -translate-x-1/2 z-20"
+      style={{ top: "calc(max(14px, env(safe-area-inset-top)) + 98px)" }}
+    >
+      <GlassPill className="px-3.5 py-1.5">
+        <span className="text-[11.5px] font-bold text-white/80">
+          {isStable ? "Tap DS to identify" : "Point at a car part and hold steady"}
+        </span>
+      </GlassPill>
+    </div>
+  );
+}
+
+/* ============================================================
+   The bottom "physical card" — light sheet shown in State 1 / 2
+   ============================================================ */
+
+function LightSheet({ isReady, dim }) {
+  return (
+    <div
+      className="absolute left-0 right-0 bottom-0 z-10"
+      style={{
+        background: "#F5F5F5",
+        borderTopLeftRadius: 28,
+        borderTopRightRadius: 28,
+        boxShadow:
+          "0 -20px 60px rgba(0,0,0,0.45), 0 -2px 0 rgba(255,255,255,0.06) inset",
+        transition: "opacity 300ms",
+        opacity: dim ? 0.78 : 1,
+      }}
+    >
+      {/* DS Button floating above the sheet edge */}
+      <div className="absolute left-1/2 -translate-x-1/2 -top-8 z-30">
+        <DSButton isReady={isReady} dim={dim} />
+      </div>
+
+      <div className="pt-12 px-4 pb-4">
+        {/* Search bar */}
+        <div className="flex items-center gap-2 h-10 rounded-full bg-white ring-1 ring-black/[0.06] shadow-[0_2px_8px_rgba(0,0,0,0.04)] pl-1.5 pr-3">
+          <span
+            className="grid place-items-center h-7 px-2 rounded-full text-[10px] font-black tracking-wide"
+            style={{ background: "#FACC15", color: "#0A0A0A" }}
+          >
+            AI
+          </span>
+          <span className="text-[13px] font-semibold text-zinc-400 truncate">
+            Ask about this car part
+          </span>
+        </div>
+
+        {/* Mode chips */}
+        <div className="mt-3 flex gap-2 overflow-x-auto no-scrollbar">
+          {["Identify", "Damage", "Leak", "Safety"].map((m, i) => (
+            <button
+              key={m}
+              className={
+                "shrink-0 rounded-full px-3.5 h-7 text-[11px] font-extrabold " +
+                (i === 0
+                  ? "bg-[#0A0A0A] text-white"
+                  : "bg-[#EDEDED] text-[#3F3F46]")
+              }
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+
+        {/* Two info tiles */}
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <InfoTile label="Mode" value="Part scan" />
+          <InfoTile label="Output" value="Safety first" />
+        </div>
+
+        {/* Tab bar */}
+        <div className="mt-3 grid grid-cols-3 rounded-full bg-[#EDEDED] p-1">
+          <button className="h-9 rounded-full bg-[#0A0A0A] text-white text-[11.5px] font-extrabold">
+            Scan
+          </button>
+          <button className="h-9 text-[11.5px] font-extrabold text-[#71717A]">
+            Saved
+          </button>
+          <button className="h-9 text-[11.5px] font-extrabold text-[#71717A]">
+            Help
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InfoTile({ label, value }) {
+  return (
+    <div className="rounded-2xl bg-white ring-1 ring-black/[0.08] px-3 py-2.5">
+      <div className="text-[9.5px] font-black tracking-[0.16em] uppercase text-[#A1A1AA]">
+        {label}
+      </div>
+      <div className="mt-0.5 text-[13px] font-extrabold text-[#0A0A0A]">{value}</div>
+    </div>
+  );
+}
+
+function DSButton({ isReady, dim }) {
+  return (
+    <div className="relative">
+      {/* Green pulse ring when ready */}
+      {isReady && !dim && (
+        <span
+          aria-hidden
+          className="absolute inset-0 rounded-full ds-pulse-ring"
+          style={{ boxShadow: "0 0 0 0 rgba(74,222,128,0.55)" }}
+        />
+      )}
+      <button
+        className="relative w-16 h-16 rounded-full grid place-items-center transition-transform active:scale-95"
+        style={{
+          background: "#0A0A0A",
+          border: "5px solid #F5F5F5",
+          opacity: dim ? 0.6 : 1,
+          boxShadow: isReady
+            ? "0 0 0 2px rgba(74,222,128,0.70), 0 0 0 4px #0A0A0A, 0 10px 30px rgba(0,0,0,0.55)"
+            : "0 10px 30px rgba(0,0,0,0.55)",
+        }}
+        aria-label="Identify"
+      >
+        <span
+          className="grid place-items-center w-9 h-9 rounded-full text-[12px] font-black tracking-[0.04em]"
+          style={{
+            background: "#FACC15",
+            color: "#0A0A0A",
+            boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.10)",
+          }}
+        >
+          {dim ? (
+            <span className="block w-3.5 h-3.5 rounded-full border-2 border-[#0A0A0A] border-t-transparent ds-spinner" />
+          ) : (
+            "DS"
+          )}
+        </span>
+      </button>
+    </div>
+  );
+}
+
+/* ============================================================
+   Result bottom sheet — DARK, expanded ~70% (State 3)
+   ============================================================ */
+
+function ResultSheet({ open }) {
+  return (
+    <div
+      className="absolute left-0 right-0 z-30 transition-transform duration-500"
+      style={{
+        bottom: 0,
+        height: "72%",
+        transform: open ? "translateY(0%)" : "translateY(100%)",
+        background: "#0A0A0A",
+        borderTopLeftRadius: 28,
+        borderTopRightRadius: 28,
+        boxShadow: "0 -28px 60px rgba(0,0,0,0.65)",
+        transitionTimingFunction: "cubic-bezier(0.16, 1, 0.3, 1)",
+      }}
+    >
+      {/* Drag handle */}
+      <div className="pt-3 grid place-items-center">
+        <div className="w-9 h-1 rounded-full bg-white/20" />
+      </div>
+
+      {/* Peek strip — visible part name + chips */}
+      <div className="px-4 pt-3 pb-2 flex items-center justify-between gap-2">
+        <h2 className="text-[15px] font-extrabold text-white tracking-tight truncate">
+          Alternator
+        </h2>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span
+            className="rounded-full px-2.5 py-1 text-[10.5px] font-extrabold border"
+            style={{
+              background: "rgba(16,185,129,0.15)",
+              borderColor: "rgba(16,185,129,0.30)",
+              color: "#6EE7B7",
+            }}
+          >
+            high
+          </span>
+          <span className="rounded-full px-2.5 py-1 text-[10.5px] font-extrabold text-white/70 bg-white/10">
+            Electrical
+          </span>
+        </div>
+      </div>
+
+      {/* Scrollable content */}
+      <div
+        className="px-4 pb-6 overflow-y-auto space-y-3"
+        style={{ height: "calc(100% - 80px)" }}
+      >
+        {/* 1. AI identification */}
+        <section className="rounded-[24px] border border-white/10 bg-[#171717] p-5">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <p
+                className="text-[12.5px] font-bold"
+                style={{ color: "#FACC15" }}
+              >
+                AI identification
+              </p>
+              <h3 className="mt-1.5 text-[22px] font-extrabold tracking-tight text-white leading-none">
+                Alternator
+              </h3>
+            </div>
+            <span
+              className="shrink-0 rounded-full border px-2.5 py-1 text-[10.5px] font-extrabold capitalize"
+              style={{
+                background: "rgba(16,185,129,0.15)",
+                borderColor: "rgba(16,185,129,0.30)",
+                color: "#6EE7B7",
+              }}
+            >
+              high
+            </span>
+          </div>
+          <p className="mt-2.5 text-[11px] font-semibold text-white/40">
+            Captured 5/19/26, 4:12 PM
+          </p>
+          <p className="mt-1.5 text-[10.5px] font-extrabold tracking-[0.14em] uppercase text-white/40">
+            Dataset bucket: electrical
+          </p>
+        </section>
+
+        {/* 2. Trust check — green tint */}
+        <section
+          className="rounded-[24px] border bg-[#171717] p-5"
+          style={{ borderColor: "rgba(16,185,129,0.28)" }}
+        >
+          <p className="text-[12.5px] font-extrabold text-white">Trust check</p>
+          <h3 className="mt-1.5 text-[19px] font-extrabold tracking-tight text-white">
+            Useful match
+          </h3>
+          <p className="mt-2.5 text-[12.5px] leading-[1.55] text-[#A1A1AA]">
+            The image has enough visual evidence for a useful consumer-level
+            explanation.
+          </p>
+          <div className="mt-3.5 grid grid-cols-1 gap-2">
+            <TrustRow label="Photo quality" value="Good" />
+            <TrustRow label="Retake guidance" value="Optional close-up of label" />
+          </div>
+        </section>
+
+        {/* 3. What it does */}
+        <SectionList
+          title="What it does"
+          items={["Charges the battery while the engine runs."]}
+        />
+
+        {/* 4. What I see */}
+        <SectionList
+          title="What I see"
+          items={[
+            "Belt-driven metal housing visible.",
+            "Pulley and cooling fins centered in frame.",
+          ]}
+        />
+
+        {/* 5. Evidence chips */}
+        <section className="rounded-[24px] border border-white/10 bg-[#171717] p-5">
+          <h4 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-white/60">
+            Why Deep Spec thinks this
+          </h4>
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {[
+              "Pulley + housing match alternator",
+              "Belt-driven mount",
+              "Engine bay context",
+            ].map((c) => (
+              <span
+                key={c}
+                className="rounded-full border px-2.5 py-1.5 text-[10.5px] font-semibold leading-tight"
+                style={{
+                  background: "rgba(59,130,246,0.10)",
+                  borderColor: "rgba(59,130,246,0.24)",
+                  color: "#BFDBFE",
+                }}
+              >
+                {c}
+              </span>
+            ))}
+          </div>
+        </section>
+
+        {/* 6. Action buttons */}
+        <div className="grid grid-cols-1 gap-2">
+          <button
+            className="h-12 rounded-full text-[13px] font-extrabold"
+            style={{
+              background: "#FFFFFF",
+              color: "#0A0A0A",
+              boxShadow: "0 12px 40px rgba(255,255,255,0.18)",
+            }}
+          >
+            Tell me more
+          </button>
+          <button
+            className="h-12 rounded-full text-[13px] font-extrabold border"
+            style={{
+              background: "rgba(250,204,21,0.10)",
+              borderColor: "rgba(250,204,21,0.30)",
+              color: "#FACC15",
+            }}
+          >
+            Find nearby options
+          </button>
+        </div>
+
+        {/* 7. Rating row */}
+        <div className="grid grid-cols-2 gap-2 pb-2">
+          <button className="h-11 rounded-full bg-white/10 text-white text-[12.5px] font-extrabold backdrop-blur-md">
+            Helpful
+          </button>
+          <button className="h-11 rounded-full bg-white/10 text-white text-[12.5px] font-extrabold backdrop-blur-md">
+            Wrong
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TrustRow({ label, value }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2.5">
+      <p className="text-[10px] font-extrabold tracking-[0.14em] uppercase text-white/40">
+        {label}
+      </p>
+      <p className="mt-0.5 text-[12.5px] leading-[1.5] text-white/85 font-semibold">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function SectionList({ title, items }) {
+  return (
+    <section className="rounded-[24px] border border-white/10 bg-[#171717] p-5">
+      <h4 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-white/60">
+        {title}
+      </h4>
+      <ul className="mt-2.5 space-y-1.5">
+        {items.map((it) => (
+          <li
+            key={it}
+            className="text-[12.5px] leading-[1.55] text-[#E5E7EB]"
+          >
+            {it}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/* ============================================================
+   The three states
+   ============================================================ */
+
+function ScanState({ isStable }) {
+  return (
+    <>
+      <Feed />
+      <Vignette />
+      <TopBar />
+      <StatusHint isStable={isStable} />
+      <Reticle isStable={isStable} />
+      <LightSheet isReady={isStable} />
+    </>
+  );
+}
+
+function AnalyzingState() {
+  return (
+    <>
+      <Feed />
+      <Vignette />
+      <TopBar />
+      <StatusHint isStable />
+      <Reticle isStable />
+      <LightSheet isReady dim />
+      {/* Full-screen overlay */}
+      <div className="absolute inset-0 z-40 bg-black/70 backdrop-blur-md grid place-items-center">
+        <div className="rounded-full bg-white/10 border border-white/10 px-5 py-3 text-[13px] font-bold text-white shadow-2xl">
+          Analyzing photo…
+        </div>
+      </div>
+    </>
+  );
+}
+
+function ResultState() {
+  return (
+    <>
+      <Feed />
+      <Vignette />
+      <TopBar />
+      <ResultSheet open />
+    </>
+  );
+}
+
+function Feed() {
+  return <div className="absolute inset-0 feed" aria-hidden />;
+}
+
+function Vignette() {
+  return (
+    <div
+      className="absolute inset-0 pointer-events-none"
+      aria-hidden
+      style={{
+        background: `
+          radial-gradient(circle at 50% 72%, rgba(250,204,21,0.16), transparent 32%),
+          linear-gradient(to bottom, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0) 22%, rgba(0,0,0,0) 60%, rgba(0,0,0,0.55) 100%)
+        `,
+      }}
+    />
+  );
+}
+
+/* ============================================================
+   Page shell — phone frame + state switcher
+   ============================================================ */
+
+const STATES = [
+  { key: "scan",   label: "1 · Scanning",  hint: "Reticle locked, DS button armed" },
+  { key: "analyze",label: "2 · Analyzing", hint: "Gemini call in flight" },
+  { key: "result", label: "3 · Result",    hint: "Google-Lens-style dark sheet" },
+];
+
+function App() {
+  const [state, setState] = useState("scan");
+
+  // Arrow keys to flip states
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        setState((s) => {
+          const i = STATES.findIndex((x) => x.key === s);
+          return STATES[(i + 1) % STATES.length].key;
+        });
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        setState((s) => {
+          const i = STATES.findIndex((x) => x.key === s);
+          return STATES[(i - 1 + STATES.length) % STATES.length].key;
+        });
+      } else if (e.key === "1") setState("scan");
+      else if (e.key === "2") setState("analyze");
+      else if (e.key === "3") setState("result");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const current = STATES.find((s) => s.key === state);
+
+  return (
+    <div className="min-h-dvh w-full grid place-items-center py-10 px-4 text-white">
+      <div className="w-full max-w-sm">
+        {/* State switcher */}
+        <div className="mb-6 flex flex-col items-center gap-3">
+          <div
+            className="text-[10.5px] font-extrabold tracking-[0.22em] uppercase"
+            style={{ color: "#FACC15" }}
+          >
+            Deep Spec · scanner mock
+          </div>
+          <div className="ds-toggle" key={"toggle-" + state}>
+            {STATES.map((s) => {
+              const isActive = state === s.key;
+              const pillStyle = isActive
+                ? { padding: "0 14px", height: 36, borderRadius: 9999, fontSize: 11.5, fontWeight: 800, fontFamily: "inherit", border: 0, cursor: "pointer", backgroundColor: "#FFFFFF", color: "#0A0A0A", boxShadow: "0 6px 18px rgba(255,255,255,0.18)" }
+                : { padding: "0 14px", height: 36, borderRadius: 9999, fontSize: 11.5, fontWeight: 800, fontFamily: "inherit", border: 0, cursor: "pointer", backgroundColor: "transparent", color: "rgba(255,255,255,0.70)", boxShadow: "none" };
+              return (
+                <button
+                  key={s.key + "-" + (isActive ? "on" : "off")}
+                  type="button"
+                  onClick={() => setState(s.key)}
+                  style={pillStyle}
+                >
+                  {s.label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="text-[11.5px] font-semibold text-white/50 tracking-wide">
+            {current.hint} <span className="text-white/25">·</span>{" "}
+            <span className="text-white/35">← → · 1 2 3</span>
+          </div>
+        </div>
+
+        {/* Phone frame */}
+        <div className="relative mx-auto" style={{ width: 390, maxWidth: "100%" }}>
+          {/* outer bezel */}
+          <div
+            className="relative rounded-[54px] p-[10px] bg-black"
+            style={{
+              boxShadow:
+                "0 30px 80px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.06), 0 1px 0 rgba(255,255,255,0.10) inset",
+            }}
+          >
+            <div
+              className="relative overflow-hidden rounded-[44px] bg-[#0A0A0A]"
+              style={{ width: "100%", aspectRatio: "390 / 844" }}
+            >
+              {/* status bar (cosmetic) */}
+              <div className="absolute top-0 left-0 right-0 z-50 h-[14px] pointer-events-none">
+                <div className="absolute top-1.5 left-6 text-[10.5px] font-bold text-white/90">9:41</div>
+                <div className="absolute top-1.5 right-6 flex items-center gap-1 text-white/90">
+                  <span className="text-[10px] font-bold">●●●●</span>
+                </div>
+                {/* Dynamic Island */}
+                <div className="absolute top-2 left-1/2 -translate-x-1/2 w-24 h-6 rounded-full bg-black" />
+              </div>
+
+              {state === "scan" && <ScanState isStable />}
+              {state === "analyze" && <AnalyzingState />}
+              {state === "result" && <ResultState />}
+            </div>
+          </div>
+        </div>
+
+        {/* Footer caption */}
+        <p className="mt-6 text-center text-[11.5px] font-medium text-white/45 leading-relaxed max-w-sm mx-auto">
+          One canvas, three states. Light sheet in scan/analyze flips to a dark
+          full-bleed sheet on result — the answer feels integrated into the viewfinder.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

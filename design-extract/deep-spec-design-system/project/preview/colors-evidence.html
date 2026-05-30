@@ -1,0 +1,32 @@
+<!doctype html>
+<html><head><meta charset="utf-8" />
+<link rel="stylesheet" href="../colors_and_type.css" />
+<style>
+  body { margin: 0; padding: 20px; background: var(--ds-bg); font-family: var(--ds-font-sans); color: #fff; }
+  .wrap { display: grid; grid-template-columns: 200px 1fr; gap: 16px; align-items: center; }
+  .swatch { background: #3B82F6; border-radius: 20px; padding: 16px; min-height: 96px; display:flex; flex-direction: column; justify-content: space-between; color: #fff; }
+  .tag { font-size: 10px; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; opacity: 0.85; }
+  .name { font-size: 16px; font-weight: 800; }
+  .hex { font-family: ui-monospace, monospace; font-size: 12px; opacity: 0.85; }
+  .card { background: #171717; border-radius: 22px; padding: 16px; border: 1px solid rgba(255,255,255,0.10); }
+  .h { font-size: 11px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255,255,255,0.62); margin-bottom: 10px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { font-size: 11px; font-weight: 600; padding: 6px 10px; border-radius: 999px; background: rgba(59,130,246,0.10); border: 1px solid rgba(59,130,246,0.24); color: #BFDBFE; }
+</style></head>
+<body>
+  <div class="wrap">
+    <div class="swatch">
+      <div class="tag">EVIDENCE</div>
+      <div><div class="name">--ds-evidence</div><div class="hex">#3B82F6</div></div>
+    </div>
+    <div class="card">
+      <div class="h">Why Deep Spec thinks this</div>
+      <div class="chips">
+        <span class="chip">yellow cap visible</span>
+        <span class="chip">engine bay context</span>
+        <span class="chip">reservoir markings</span>
+        <span class="chip">plastic housing</span>
+      </div>
+    </div>
+  </div>
+</body></html>

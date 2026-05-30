@@ -2,6 +2,8 @@
 
 Mobile-first PWA scanner for identifying car parts. The current build covers scanning, AI identification, trust checks, saved scan records, and follow-up chat through server-side Gemini proxies.
 
+See `docs/PROJECT_GOAL.md` for the Deep Spec engineering, UI, UX, framework, and definition-of-done standard.
+
 ## Run locally
 
 ```bash
@@ -15,11 +17,24 @@ For AI identification, create `.env` or `.env.local` with:
 
 ```bash
 GEMINI_API_KEY=your_server_key_here
-GEMINI_MODEL=gemini-2.5-pro
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_FALLBACK_MODELS=gemini-2.5-flash-lite
 GEMINI_CHAT_MODEL=gemini-2.5-flash
+GEMINI_CHAT_FALLBACK_MODELS=gemini-2.5-flash-lite
 ```
 
 Do not use a `VITE_` API key. The app calls `/api/identify` and `/api/chat`, and the server-side proxies send the key to Gemini.
+
+For emergency local development when Gemini is rate-limited, `/api/identify` can fall back to a local Ollama vision model after all configured Gemini identify models fail with provider availability errors:
+
+```bash
+ollama pull llava
+DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK=true
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_IDENTIFY_MODEL=llava:latest
+```
+
+Keep this off for normal release checks unless the fallback host is intentionally available to the backend. A deployed Vercel function cannot reach Ollama on your laptop at `localhost`.
 
 Optional cloud sync uses Supabase. This needs parent-approved privacy terms before real users upload photos:
 
@@ -30,11 +45,52 @@ VITE_SUPABASE_PUBLISHABLE_KEY=your_publishable_or_anon_key
 
 Never put a Supabase service-role key in a `VITE_` variable. Browser code can only use the publishable/anon key. Apply the migration in `supabase/migrations/20260518000100_deepspec_secure_foundation.sql`, enable Supabase anonymous sign-ins if you want device-only users to sync scans, and keep the `scan-images` bucket private.
 
+For email sign-in, the app requests a Supabase OTP email with a `/scan` redirect link. The default Supabase template sends a magic link; if you want typed code entry too, configure the email template to show the OTP token with `{{ .Token }}`. Users can also sign in with Supabase email/password credentials or create a password account. If Supabase requires email confirmation, the app waits for confirmation instead of opening the scanner immediately.
+
+After a session is verified, Deep Spec opens the scanner at `/scan`.
+
+### Local dataset matching
+
+After downloading `DrBimmer/car-parts-and-damage-dataset` into `datasets/raw/drbimmer-car-parts-and-damage-dataset`, build the local labeled index with:
+
+```bash
+npm run dataset:sort
+```
+
+The command writes ignored local files under `datasets/derived/drbimmer-car-parts-and-damage-dataset`, including `records.jsonl`, per-label indexes, and sorted image links. `/api/identify` reads that index after Gemini responds, adds matching local dataset evidence, and surfaces direct Hugging Face source links on the result screen.
+
+For release gating, run the fixed 50-case identify eval:
+
+```bash
+npm run eval:identify:release
+```
+
+The eval reads `DEEPSPEC_DATASET_ROOT` locally first, falls back to Hugging Face if a sample is missing, and records latency, invalid response rate, safety false-positive rate, and provider availability in `.deepspec-eval/identify-summary.json`.
+
+For a broader benchmark built from the sorted local dataset index, run:
+
+```bash
+npm run eval:identify -- --sample-set public --sample-size 300
+```
+
+The public sample mode uses `DEEPSPEC_DATASET_INDEX_PATH` and will spend live provider quota for every attempted image.
+
+Before release browser QA, use `docs/BROWSER_QA_MATRIX.md` for the route, viewport, console, network, and seeded-scan evidence checklist.
+
+Google and GitHub sign-in are opt-in. Enable a provider in Supabase Auth first, then set the matching flag to `true` so the login page does not show a dead OAuth button:
+
+```bash
+VITE_ENABLE_GOOGLE_AUTH=true
+VITE_ENABLE_GITHUB_AUTH=true
+```
+
+There is no local continue or fixture login path. A protected route opens only after Supabase verifies an email code, password, or OAuth session.
+
 ## Current scope
 
 - Fullscreen rear-camera scanner
 - Motion permission prompt for iOS
-- Yellow reticle and Identify button after the phone is steady
+- Fixed lens frame, automatic hold capture, and a low manual Scan shutter
 - Capture and compress the current frame
 - Gemini-backed result screen through `/api/identify`
 - Model-backed scan category saved on every AI result, with deterministic fallback for old scans and user corrections

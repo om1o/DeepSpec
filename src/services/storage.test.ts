@@ -8,6 +8,7 @@ import {
   LOOKUPS_STORAGE_KEY,
   MAX_SAVED_LOOKUPS,
   updateLookup,
+  updateLookupResult,
 } from "./storage";
 import type { ScanAnalysisState } from "../types";
 
@@ -21,14 +22,36 @@ const scanState: ScanAnalysisState = {
     partName: "Alternator",
     confidence: "high",
     scanCategory: "electrical",
+    candidateMatches: [
+      {
+        partName: "Starter motor",
+        confidence: "low",
+        scanCategory: "electrical",
+        reason: "Also mounted nearby, but the pulley favors alternator.",
+      },
+    ],
     whatItDoes: "It charges the battery while the engine runs.",
     visibleObservations: ["Belt-driven housing is visible."],
+    evidenceRegions: [
+      {
+        label: "Pulley",
+        observation: "Belt-driven housing is visible.",
+        regionLabel: "Scanned area",
+      },
+    ],
     concerns: [],
     safetyTriage: "can_help",
     isSafetyCritical: false,
     nextAction: "Take another photo if needed.",
     needsBetterPhoto: false,
     evidence: ["The pulley and housing match an alternator."],
+    sourceLinks: [
+      {
+        label: "Search this part",
+        url: "https://www.google.com/search?q=Alternator%20car%20part",
+        sourceType: "search",
+      },
+    ],
   },
 };
 
@@ -71,6 +94,34 @@ describe("storage", () => {
     });
   });
 
+  it("updates AI result on successful retry", () => {
+    const failedScanState: ScanAnalysisState = {
+      frame: {
+        imageBase64: "data:image/jpeg;base64,test",
+        capturedAt: "2026-05-16T00:00:00.000Z",
+      },
+      errorMessage: "Connection timed out",
+      errorCode: "network",
+      analyzedAt: "2026-05-16T00:00:05.000Z",
+    };
+    const lookup = createLookup(failedScanState).value;
+    expect(lookup.result).toBeUndefined();
+    expect(lookup.errorMessage).toBe("Connection timed out");
+
+    const result = updateLookupResult(lookup.id, scanState.result!);
+
+    expect(result.ok).toBe(true);
+    const updated = getLookup(lookup.id);
+    expect(updated).toMatchObject({
+      errorMessage: undefined,
+      errorCode: undefined,
+      scanCategory: "electrical",
+      trainingLabel: "Alternator",
+    });
+    expect(updated?.result?.partName).toBe("Alternator");
+  });
+
+
   it("marks helpful scans as user-confirmed training data", () => {
     const lookup = createLookup(scanState).value;
 
@@ -92,14 +143,26 @@ describe("storage", () => {
 
     expect(result.ok).toBe(true);
     expect(getLookup(lookup.id)?.chatHistory).toHaveLength(2);
+    expect(getLookups()[0].chatHistory).toHaveLength(2);
     expect(getLookup(lookup.id)?.chatHistory[0]).toMatchObject({
       role: "user",
       content: expect.stringMatching(/^What does it do/),
     });
     expect(getLookup(lookup.id)?.chatHistory[0].content.length).toBeLessThanOrEqual(500);
+
+    updateLookupResult(lookup.id, {
+      ...scanState.result!,
+      partName: "Serpentine belt",
+    });
+
+    expect(getLookups()[0].chatHistory).toHaveLength(2);
+    expect(getLookup(lookup.id)?.chatHistory).toHaveLength(2);
   });
 
   it("caps saved scans so the local database stays bounded", () => {
+    const firstLookup = createLookup(scanState).value;
+    appendChatMessages(firstLookup.id, [createChatMessage("user", "Keep this with the first scan.")]);
+
     for (let index = 0; index < MAX_SAVED_LOOKUPS + 5; index += 1) {
       createLookup({
         ...scanState,
@@ -118,6 +181,8 @@ describe("storage", () => {
 
     expect(lookups).toHaveLength(MAX_SAVED_LOOKUPS);
     expect(lookups[0].result?.partName).toBe(`Alternator ${MAX_SAVED_LOOKUPS + 4}`);
+    expect(lookups.some((lookup) => lookup.id === firstLookup.id)).toBe(false);
+    expect(localStorage.getItem(`deep-spec:chat:${firstLookup.id}`)).toBeNull();
   });
 
   it("deletes a saved lookup", () => {
