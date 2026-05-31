@@ -30,7 +30,14 @@ export default function Reticle({ isLocked, isVisible, label, progress }: Reticl
         width: `min(${SCANNER_RETICLE_WIDTH_RATIO * 100}vw, ${SCANNER_RETICLE_MAX_WIDTH_PX}px)`,
       }}
     >
-      <div className="absolute inset-0 rounded-[30px] border border-white/18 bg-black/5 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08),0_0_34px_rgba(11,116,255,0.25)]" />
+      <div
+        className={cx(
+          "absolute inset-0 rounded-[30px] border bg-black/5 transition-[border-color,box-shadow,background-color] duration-300",
+          isLocked
+            ? "border-[var(--ds-ok-line)] bg-emerald-400/8 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.14),0_0_54px_rgba(16,185,129,0.42),0_0_88px_rgba(11,116,255,0.24)]"
+            : "border-white/18 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08),0_0_34px_rgba(11,116,255,0.25)]",
+        )}
+      />
       <div className="scanner-lens-grid" />
       <div className={cx("scanner-lock-ring", isLocked ? "scanner-lock-ring-locked" : "")} />
       <div className="scanner-center-pin" />
@@ -45,6 +52,11 @@ export default function Reticle({ isLocked, isVisible, label, progress }: Reticl
       {label ? (
         <div className="absolute left-1/2 top-[calc(100%+14px)] -translate-x-1/2 rounded-full bg-black/55 px-3 py-1.5 text-[11px] font-extrabold uppercase tracking-[0.16em] text-white/88 ring-1 ring-white/12 backdrop-blur-md">
           {label}
+        </div>
+      ) : null}
+      {isLocked ? (
+        <div className="absolute left-1/2 top-[-42px] -translate-x-1/2 rounded-full border border-[var(--ds-ok-line)] bg-emerald-950/82 px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.14em] text-[var(--ds-ok-ink)] shadow-[0_14px_34px_rgba(16,185,129,0.24)] backdrop-blur-md">
+          Locked
         </div>
       ) : null}
       <div className="absolute left-1/2 top-[calc(100%+48px)] w-[min(240px,70vw)] -translate-x-1/2 rounded-full bg-black/45 p-1.5 ring-1 ring-white/12 backdrop-blur-md">

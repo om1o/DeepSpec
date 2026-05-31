@@ -307,6 +307,9 @@ async function insertScanModelRun(supabase: SupabaseClient, userId: string, look
       error_message: lookup.errorMessage ?? null,
       metadata_json: {
         confidence: lookup.result?.confidence ?? null,
+        confidenceRange: lookup.result?.confidenceRange ?? null,
+        confidenceScore: lookup.result?.confidenceScore ?? null,
+        confirmationNeed: lookup.result?.confirmationNeed ?? null,
         hasResult: Boolean(lookup.result),
         safetyTriage: lookup.result?.safetyTriage ?? null,
       },
