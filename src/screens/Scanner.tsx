@@ -10,7 +10,7 @@ import HistoryDockButton from "../components/ui/HistoryDockButton";
 import { useCamera, type CameraDevice } from "../hooks/useCamera";
 import { useObjectTarget, type CameraObjectTarget } from "../hooks/useObjectTarget";
 import { useStillness } from "../hooks/useStillness";
-import { assessImageQuality, type ImageQualityIssue } from "../lib/imageQuality";
+import { assessImageQuality, type ImageQualityIssue, type ImageQualityResult } from "../lib/imageQuality";
 import { createFocusedScanCrop } from "../lib/focusCrop";
 import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
 import { getScanCardPreferences, type ScanCardPreferences, updateScanCardPreferences } from "../lib/scanResultCardSettings";
@@ -26,7 +26,7 @@ import {
   recordScanQualityRetake,
 } from "../services/scanQualityMetrics";
 import { createLookup, updateLookup } from "../services/storage";
-import type { Confidence, IdentificationResult, CapturedFrame, Lookup, ScanAnalysisState } from "../types";
+import type { Confidence, IdentificationResult, CapturedFrame, Lookup, ScanAnalysisState, ScanQualitySnapshot } from "../types";
 
 const AUTO_SCAN_HOLD_MS = 5000;
 const SECOND_FRAME_DELAY_MS = 120;
@@ -125,6 +125,7 @@ export default function Scanner() {
   const autoScanStartedRef = useRef(false);
   const cancelScanRef = useRef(false);
   const qualityFailureInAttemptRef = useRef(false);
+  const lastQualityFailureRef = useRef<ScanQualityCoachIssue | null>(null);
   const activeScanStartedAtRef = useRef(0);
   const scanRequestIdRef = useRef(0);
   const {
@@ -195,6 +196,7 @@ export default function Scanner() {
 
   const stopForQualityCoach = useCallback((issue: ScanQualityCoachIssue) => {
     qualityFailureInAttemptRef.current = true;
+    lastQualityFailureRef.current = issue;
     recordScanQualityFailure(issue);
     setQualityCoach(getScanQualityCoach(issue));
     setScanReward(null);
@@ -209,12 +211,15 @@ export default function Scanner() {
     setAutoScanPaused(false);
     setCaptureError(null);
     setScanReward(null);
+    const previousQualityIssue = qualityCoach?.issue ?? null;
     if (qualityCoach) {
       recordScanQualityRetake(qualityCoach.issue);
+    } else {
+      lastQualityFailureRef.current = null;
     }
     setQualityCoach(null);
     recordScanAttempt();
-    qualityFailureInAttemptRef.current = Boolean(qualityCoach);
+    qualityFailureInAttemptRef.current = Boolean(previousQualityIssue);
     activeScanStartedAtRef.current = Date.now();
     scanRequestIdRef.current += 1;
     return scanRequestIdRef.current;
@@ -318,6 +323,15 @@ export default function Scanner() {
       stopForQualityCoach(quality.issue);
       return;
     }
+    const scanQuality = buildScanQualitySnapshot({
+      cameraId: selectedCameraId,
+      firstPass: !qualityFailureInAttemptRef.current,
+      motionFallback: usesFallback,
+      motionStable: isStable,
+      previousFailureReason: lastQualityFailureRef.current,
+      quality,
+      target: reviewTargetOverride ?? null,
+    });
     setScanReward({
       detail: "Deep Spec can identify from this frame.",
       message: "Great - sharp enough",
@@ -328,7 +342,7 @@ export default function Scanner() {
       imageBase64,
       capturedAt: new Date().toISOString(),
     };
-    saveLatestScanState({ frame });
+    saveLatestScanState({ frame, scanQuality });
 
     setAnalysisStep("Checking saved matches");
     const imageHash = await hashImageDataUrl(imageBase64);
@@ -339,7 +353,7 @@ export default function Scanner() {
         setAnalysisStep("Opening review");
         recordScanOutcome(cached);
         await persistAndShowReview(
-          { frame, result: cached, analyzedAt: new Date().toISOString() },
+          { frame, result: cached, analyzedAt: new Date().toISOString(), scanQuality },
           {
             requestId,
             reviewTarget,
@@ -394,6 +408,7 @@ export default function Scanner() {
           frame,
           result,
           analyzedAt: new Date().toISOString(),
+          scanQuality,
         },
         {
           requestId,
@@ -410,6 +425,7 @@ export default function Scanner() {
           errorMessage: getAIErrorMessage(analysisError),
           errorCode: analysisError instanceof AIServiceError ? analysisError.code : "analysis_failed",
           analyzedAt: new Date().toISOString(),
+          scanQuality,
         },
         {
           requestId,
@@ -419,7 +435,7 @@ export default function Scanner() {
         },
       );
     }
-  }, [isScanRequestActive, persistAndShowReview, recordScanOutcome, stopForQualityCoach]);
+  }, [isScanRequestActive, isStable, persistAndShowReview, recordScanOutcome, selectedCameraId, stopForQualityCoach, usesFallback]);
 
   const handleIdentify = useCallback(async (reviewTargetOverride?: CameraObjectTarget) => {
     if (isAnalyzing) {
@@ -915,6 +931,87 @@ function getVideoConstraints(deviceId: string): MediaTrackConstraints {
     width: DEFAULT_VIDEO_CONSTRAINTS.width,
     height: DEFAULT_VIDEO_CONSTRAINTS.height,
   };
+}
+
+function buildScanQualitySnapshot({
+  cameraId,
+  firstPass,
+  motionFallback,
+  motionStable,
+  previousFailureReason,
+  quality,
+  target,
+}: {
+  cameraId: string;
+  firstPass: boolean;
+  motionFallback: boolean;
+  motionStable: boolean;
+  previousFailureReason: ScanQualityCoachIssue | null;
+  quality: Extract<ImageQualityResult, { ok: true }>;
+  target: CameraObjectTarget | null;
+}): ScanQualitySnapshot {
+  const metrics = quality.metrics;
+  const targetScore = getTargetCenteredScore(target);
+
+  return {
+    accepted: true,
+    averageLuminance: metrics?.averageLuminance ?? null,
+    brightPixelRatio: metrics?.brightPixelRatio ?? null,
+    brightnessScore: metrics?.brightnessScore ?? null,
+    cameraId: cameraId.trim() || "unknown",
+    checkedAt: new Date().toISOString(),
+    darkPixelRatio: metrics?.darkPixelRatio ?? null,
+    firstPass,
+    ...(previousFailureReason ? { fixAction: getScanQualityCoach(previousFailureReason).action } : {}),
+    glareScore: metrics?.glareScore ?? null,
+    gradientVariance: metrics?.gradientVariance ?? null,
+    motionFallback,
+    motionScore: motionFallback ? null : (motionStable ? 100 : 0),
+    motionStable,
+    objectSizeRatio: getObjectSizeRatio(target),
+    ...(previousFailureReason ? { previousFailureReason } : {}),
+    sampleHeight: metrics?.sampleHeight ?? null,
+    sampleWidth: metrics?.sampleWidth ?? null,
+    sharpnessScore: metrics?.sharpnessScore ?? null,
+    targetCenteredScore: targetScore,
+    targetConfidence: target?.confidence ?? null,
+    targetLocked: Boolean(target?.isLocked),
+  };
+}
+
+function getObjectSizeRatio(target: CameraObjectTarget | null) {
+  if (!target) {
+    return null;
+  }
+
+  if (target.normalized) {
+    return roundRatio(clampNumber(target.normalized.width * target.normalized.height, 0, 1));
+  }
+
+  const viewportArea = window.innerWidth * window.innerHeight;
+  return viewportArea > 0 ? roundRatio(clampNumber((target.width * target.height) / viewportArea, 0, 1)) : null;
+}
+
+function getTargetCenteredScore(target: CameraObjectTarget | null) {
+  if (!target) {
+    return null;
+  }
+
+  const center = target.normalized
+    ? {
+        x: target.normalized.x + target.normalized.width / 2,
+        y: target.normalized.y + target.normalized.height / 2,
+      }
+    : {
+        x: (target.left + target.width / 2) / window.innerWidth,
+        y: (target.top + target.height / 2) / window.innerHeight,
+      };
+  const distance = Math.hypot(center.x - 0.5, center.y - 0.5);
+  return Math.round(clampNumber((1 - distance / Math.SQRT1_2) * 100, 0, 100));
+}
+
+function roundRatio(value: number) {
+  return Math.round(value * 1000) / 1000;
 }
 
 function pulseTargetLock() {

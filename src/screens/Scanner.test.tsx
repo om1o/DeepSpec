@@ -7,6 +7,20 @@ import Scanner from "./Scanner";
 const captureFrame = vi.fn(async () => "data:image/jpeg;base64,compressed-frame");
 const retryCamera = vi.fn();
 const assessImageQuality = vi.fn(async () => ({ ok: true }));
+const passingQuality = {
+  metrics: {
+    averageLuminance: 126,
+    brightPixelRatio: 0.01,
+    brightnessScore: 98,
+    darkPixelRatio: 0,
+    glareScore: 95,
+    gradientVariance: 240,
+    sampleHeight: 72,
+    sampleWidth: 96,
+    sharpnessScore: 100,
+  },
+  ok: true,
+};
 const createFocusedScanCrop = vi.fn(async () => "data:image/jpeg;base64,target-crop");
 const getCloudSyncStatus = vi.fn(() => ({ configured: false, message: "Cloud sync is off." }));
 const syncLookupToCloud = vi.fn(async () => ({ ok: true, message: "Scan synced." }));
@@ -161,7 +175,7 @@ describe("Scanner", () => {
     captureFrame.mockResolvedValue("data:image/jpeg;base64,compressed-frame");
     retryCamera.mockClear();
     assessImageQuality.mockReset();
-    assessImageQuality.mockResolvedValue({ ok: true });
+    assessImageQuality.mockResolvedValue(passingQuality);
     createFocusedScanCrop.mockReset();
     createFocusedScanCrop.mockResolvedValue("data:image/jpeg;base64,target-crop");
     getCloudSyncStatus.mockReset();
@@ -222,6 +236,15 @@ describe("Scanner", () => {
     const savedLookups = JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]");
     expect(savedLookups).toHaveLength(1);
     expect(savedLookups[0]).toMatchObject({
+      scanQuality: {
+        accepted: true,
+        brightnessScore: 98,
+        firstPass: true,
+        objectSizeRatio: 0.05,
+        sharpnessScore: 100,
+        targetConfidence: 0.82,
+        targetLocked: true,
+      },
       scanCategory: "electrical",
       trainingLabel: "Alternator",
       trainingStatus: "raw_unreviewed",
@@ -243,6 +266,11 @@ describe("Scanner", () => {
 
     await waitFor(() => {
       expect(syncLookupToCloud).toHaveBeenCalledWith(expect.objectContaining({
+        scanQuality: expect.objectContaining({
+          accepted: true,
+          brightnessScore: 98,
+          sharpnessScore: 100,
+        }),
         scanCategory: "electrical",
         trainingLabel: "Alternator",
       }));

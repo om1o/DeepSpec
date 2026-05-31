@@ -18,6 +18,28 @@ const scanState: ScanAnalysisState = {
     capturedAt: "2026-05-16T00:00:00.000Z",
   },
   analyzedAt: "2026-05-16T00:00:05.000Z",
+  scanQuality: {
+    accepted: true,
+    averageLuminance: 126,
+    brightPixelRatio: 0.01,
+    brightnessScore: 98,
+    cameraId: "rear-camera",
+    checkedAt: "2026-05-16T00:00:01.000Z",
+    darkPixelRatio: 0,
+    firstPass: true,
+    glareScore: 95,
+    gradientVariance: 240,
+    motionFallback: true,
+    motionScore: null,
+    motionStable: true,
+    objectSizeRatio: 0.05,
+    sampleHeight: 72,
+    sampleWidth: 96,
+    sharpnessScore: 100,
+    targetCenteredScore: 72,
+    targetConfidence: 0.82,
+    targetLocked: true,
+  },
   result: {
     partName: "Alternator",
     confidence: "high",
@@ -69,6 +91,11 @@ describe("storage", () => {
     expect(getLookup(result.value.id)?.result?.partName).toBe("Alternator");
     expect(getLookup(result.value.id)).toMatchObject({
       scanCategory: "electrical",
+      scanQuality: {
+        brightnessScore: 98,
+        cameraId: "rear-camera",
+        sharpnessScore: 100,
+      },
       trainingLabel: "Alternator",
       trainingStatus: "raw_unreviewed",
     });

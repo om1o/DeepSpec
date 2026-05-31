@@ -126,7 +126,17 @@ describe("cloudSync", () => {
       }),
       { onConflict: "user_id,scan_local_id" },
     );
-    expect(modelRunInsert).toHaveBeenCalledWith(expect.objectContaining({ model: "unknown", provider: "unknown", scan_local_id: "lookup-1" }));
+    expect(modelRunInsert).toHaveBeenCalledWith(expect.objectContaining({
+      metadata_json: expect.objectContaining({
+        scanQuality: expect.objectContaining({
+          brightnessScore: 98,
+          sharpnessScore: 100,
+        }),
+      }),
+      model: "unknown",
+      provider: "unknown",
+      scan_local_id: "lookup-1",
+    }));
     expect(syncEventInsert).toHaveBeenCalledWith(expect.objectContaining({ event_type: "upsert", status: "success" }));
   });
 
@@ -444,6 +454,28 @@ function makeLookup(): Lookup {
           url: "https://example.com/alternator.jpg",
         },
       ],
+    },
+    scanQuality: {
+      accepted: true,
+      averageLuminance: 126,
+      brightPixelRatio: 0.01,
+      brightnessScore: 98,
+      cameraId: "rear-camera",
+      checkedAt: "2026-05-18T00:00:01.000Z",
+      darkPixelRatio: 0,
+      firstPass: true,
+      glareScore: 95,
+      gradientVariance: 240,
+      motionFallback: true,
+      motionScore: null,
+      motionStable: true,
+      objectSizeRatio: 0.05,
+      sampleHeight: 72,
+      sampleWidth: 96,
+      sharpnessScore: 100,
+      targetCenteredScore: 72,
+      targetConfidence: 0.82,
+      targetLocked: true,
     },
     scanCategory: "electrical",
     trainingLabel: "Alternator",
