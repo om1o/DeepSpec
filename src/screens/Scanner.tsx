@@ -91,6 +91,11 @@ type ScanQualityCoachState = {
   title: string;
 };
 
+type ScanRewardState = {
+  detail: string;
+  message: string;
+};
+
 type SizeReferencePreset = "card_short_edge" | "card_long_edge" | "us_quarter" | "us_nickel";
 
 type SizeCalibration = {
@@ -114,6 +119,7 @@ export default function Scanner() {
   const [isReplacingLabel, setIsReplacingLabel] = useState(false);
   const [replacementLabel, setReplacementLabel] = useState("");
   const [qualityCoach, setQualityCoach] = useState<ScanQualityCoachState | null>(null);
+  const [scanReward, setScanReward] = useState<ScanRewardState | null>(null);
   const [sizeReferencePreset, setSizeReferencePreset] = useState<SizeReferencePreset>("card_short_edge");
   const [sizeCalibration, setSizeCalibration] = useState<SizeCalibration | null>(null);
   const autoScanStartedRef = useRef(false);
@@ -138,6 +144,7 @@ export default function Scanner() {
     () => getVideoConstraints(selectedCameraId),
     [selectedCameraId],
   );
+  const isRetakeGuide = useMemo(() => new URLSearchParams(location.search).get("guide") === "retake", [location.search]);
   const { error: motionError, isStable, needsPermission, requestPermission, usesFallback } =
     useStillness();
   const objectTarget = useObjectTarget(webcamRef, {
@@ -190,6 +197,7 @@ export default function Scanner() {
     qualityFailureInAttemptRef.current = true;
     recordScanQualityFailure(issue);
     setQualityCoach(getScanQualityCoach(issue));
+    setScanReward(null);
     setCaptureError(null);
     setAutoScanPaused(true);
     autoScanStartedRef.current = false;
@@ -200,6 +208,7 @@ export default function Scanner() {
     cancelScanRef.current = false;
     setAutoScanPaused(false);
     setCaptureError(null);
+    setScanReward(null);
     if (qualityCoach) {
       recordScanQualityRetake(qualityCoach.issue);
     }
@@ -309,6 +318,11 @@ export default function Scanner() {
       stopForQualityCoach(quality.issue);
       return;
     }
+    setScanReward({
+      detail: "Deep Spec can identify from this frame.",
+      message: "Great - sharp enough",
+    });
+    pulseScanSuccess();
 
     const frame: CapturedFrame = {
       imageBase64,
@@ -607,9 +621,10 @@ export default function Scanner() {
     const fastenerHint = /nut|bolt|screw|stud|thread|fastener/i.test(label)
       ? getFastenerSizeHint(Math.max(widthMm, heightMm))
       : null;
+    const uncertainty = getMeasurementUncertainty(scanReview.reviewTarget, sizeCalibration);
     const summary = fastenerHint
-      ? `${label}: ${widthMm.toFixed(1)} x ${heightMm.toFixed(1)} mm (approx). ${fastenerHint}`
-      : `${label}: ${widthMm.toFixed(1)} x ${heightMm.toFixed(1)} mm (approx).`;
+      ? `${label}: ${widthMm.toFixed(1)} x ${heightMm.toFixed(1)} mm (approx). ${fastenerHint} Uncertainty: ${uncertainty}.`
+      : `${label}: ${widthMm.toFixed(1)} x ${heightMm.toFixed(1)} mm (approx). Uncertainty: ${uncertainty}.`;
 
     const copied = await copyText(summary);
     setScanCardStatusMessage(
@@ -660,9 +675,7 @@ export default function Scanner() {
     }
 
     autoScanStartedRef.current = true;
-    if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
-      navigator.vibrate(12);
-    }
+    pulseTargetLock();
     void handleIdentify();
   }, [autoScanPaused, cameraState, handleIdentify, hasTargetLock, isAnalyzing, isTargetTooSmallNow, scanReview]);
 
@@ -686,6 +699,7 @@ export default function Scanner() {
     setIsReplacingLabel(false);
     setReplacementLabel("");
     setScanCardStatusMessage(null);
+    setScanReward(null);
     pauseAutoScan();
     setIsCardExpanded(false);
   }
@@ -743,6 +757,7 @@ export default function Scanner() {
       {cameraState === "blocked" ? (
         <CameraBlocked
           devices={cameraDevices}
+          isRetakeGuide={isRetakeGuide}
           message={cameraError}
           onRetry={retryCamera}
           onSelectCamera={selectCamera}
@@ -773,6 +788,8 @@ export default function Scanner() {
             />
           ) : null}
           {captureError ? <CaptureErrorNotice message={captureError} onTryAgain={() => setCaptureError(null)} /> : null}
+          {scanReward && !qualityCoach ? <ScanRewardBadge reward={scanReward} /> : null}
+          {isRetakeGuide && !scanReward && !qualityCoach && !isAnalyzing && !scanReview ? <RetakeGuideNotice /> : null}
         </>
       ) : null}
       {scanReview?.scanState.result ? (
@@ -900,6 +917,20 @@ function getVideoConstraints(deviceId: string): MediaTrackConstraints {
   };
 }
 
+function pulseTargetLock() {
+  vibrate([18, 36, 24]);
+}
+
+function pulseScanSuccess() {
+  vibrate([12, 28, 18]);
+}
+
+function vibrate(pattern: VibratePattern) {
+  if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+    navigator.vibrate(pattern);
+  }
+}
+
 function getReticleLabel({
   autoScanSeconds,
   hasTarget,
@@ -945,12 +976,14 @@ function CameraLoading() {
 
 function CameraBlocked({
   devices,
+  isRetakeGuide,
   message,
   onRetry,
   onSelectCamera,
   selectedCameraId,
 }: {
   devices: CameraDevice[];
+  isRetakeGuide: boolean;
   message: string | null;
   onRetry: () => void;
   onSelectCamera: (deviceId: string) => void;
@@ -970,6 +1003,13 @@ function CameraBlocked({
         <p className="mt-3 text-sm leading-6 text-[#A1A1AA]">
           Deep Spec needs your camera to scan parts. {denied || waiting ? "Allow camera access for this site, then try again." : "Check camera access, then try again."}
         </p>
+        {isRetakeGuide ? (
+          <div className="mt-5 rounded-[18px] border border-white/12 bg-white/[0.06] px-4 py-3">
+            <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Retake guide</p>
+            <p className="mt-1 text-sm font-black text-white">Fill the frame from a slight angle.</p>
+            <p className="mt-1 text-xs font-semibold leading-5 text-white/64">Use upload if camera access is blocked.</p>
+          </div>
+        ) : null}
         {message ? <p className="mt-3 text-xs text-white/48">{message}</p> : null}
         {hasCameraChoices ? (
           <label className="mx-auto mt-5 block max-w-xs text-left">
@@ -1075,6 +1115,25 @@ function ScanQualityCoachNotice({
           Scan again
         </Button>
       </div>
+    </div>
+  );
+}
+
+function ScanRewardBadge({ reward }: { reward: ScanRewardState }) {
+  return (
+    <div className="fixed bottom-[198px] left-1/2 z-30 w-[calc(100%-32px)] max-w-xs -translate-x-1/2 rounded-[22px] border border-[var(--ds-ok-line)] bg-emerald-950/88 px-4 py-3 text-center text-white shadow-[0_20px_58px_rgba(16,185,129,0.28)] backdrop-blur-xl">
+      <p className="text-sm font-black tracking-tight text-[var(--ds-ok-ink)]">{reward.message}</p>
+      <p className="mt-1 text-xs font-semibold leading-5 text-white/68">{reward.detail}</p>
+    </div>
+  );
+}
+
+function RetakeGuideNotice() {
+  return (
+    <div className="fixed bottom-[198px] left-1/2 z-20 w-[calc(100%-32px)] max-w-sm -translate-x-1/2 rounded-[22px] border border-white/14 bg-slate-950/86 px-4 py-3 text-center text-white shadow-[0_18px_54px_rgba(2,6,23,0.5)] backdrop-blur-xl">
+      <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Retake guide</p>
+      <p className="mt-1 text-sm font-black">Fill the frame from a slight angle.</p>
+      <p className="mt-1 text-xs font-semibold leading-5 text-white/64">Keep labels, bolt heads, or connectors visible.</p>
     </div>
   );
 }
@@ -1256,6 +1315,8 @@ function ScanResultCard({
   const result = review.scanState.result;
   const label = getReviewDisplayLabel(review);
   const confidence = result?.confidence;
+  const confidenceRange = result ? getConfidenceRange(result) : null;
+  const isFastener = result ? isFastenerResult(result, label) : false;
   const isCompact = prefs.compactCardsByDefault && !isExpanded;
   const statusStyle = getConfidenceStyle(confidence);
   const visibleFacts = getVisibleFacts(result, isCompact);
@@ -1298,7 +1359,7 @@ function ScanResultCard({
             </span>
             {!prefs.hideConfidence && confidence ? (
               <span className={`rounded-full border px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-[0.08em] ${statusStyle.chip}`}>
-                {confidence} confidence
+                {confidenceRange ? `${confidenceRange.low}-${confidenceRange.high}% likely` : `${confidence} confidence`}
               </span>
             ) : null}
             <span className="rounded-full border border-white/12 bg-white/6 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-[0.08em] text-white/78">
@@ -1396,6 +1457,17 @@ function ScanResultCard({
         </div>
       </BubbleSection>
 
+      {isFastener ? (
+        <BubbleSection title="Fastener mode">
+          <p>
+            Reference required. Put the card or coin on the same flat plane as the fastener, then estimate size.
+          </p>
+          <p className="mt-2 text-white/60">
+            Output stays an estimate until depth and angle are verified.
+          </p>
+        </BubbleSection>
+      ) : null}
+
       <BubbleSection title="Actions">
         <div className="grid grid-cols-2 gap-2">
           <button
@@ -1470,7 +1542,7 @@ function ScanResultCard({
                 onClick={onReportReplace}
                 type="button"
               >
-                Report / replace
+                Save correction
               </button>
               <button
                 className="rounded-full border border-white/15 px-3 py-2 text-xs font-black text-white/82"
@@ -1483,11 +1555,11 @@ function ScanResultCard({
           </div>
         ) : (
           <button
-            className="mt-2 w-full rounded-full border border-white/15 px-3 py-2 text-xs font-black text-white/90"
+            className="mt-2 w-full rounded-full border border-[var(--ds-accent-line)] bg-[var(--ds-accent-soft)] px-3 py-2 text-xs font-black text-white"
             onClick={onWrongLabel}
             type="button"
           >
-            Wrong match or wrong label?
+            Correct label
           </button>
         )}
         {review.correction ? (
@@ -1810,6 +1882,47 @@ function getFastenerSizeHint(acrossMm: number) {
   const metric = findNearestMetricFastener(acrossMm);
   const sae = findNearestSaeFastener(acrossMm);
   return `Fastener guess: ${metric} wrench / ${sae} (approx).`;
+}
+
+function getMeasurementUncertainty(target: ScanReviewTarget, calibration: SizeCalibration) {
+  const targetPx = Math.max(target.width, target.height);
+  const ratio = targetPx / Math.max(1, calibration.referencePx);
+  if (targetPx < 80) {
+    return "target small";
+  }
+  if (ratio < 0.45 || ratio > 2.2) {
+    return "reference scale far from target size";
+  }
+  return "same-plane depth and angle still need visual check";
+}
+
+function isFastenerResult(result: IdentificationResult, label: string) {
+  return /\b(nut|bolt|screw|stud|thread|washer|fastener)\b/i.test(
+    [
+      label,
+      result.partName,
+      result.whatItDoes,
+      result.nextAction,
+      ...result.visibleObservations,
+      ...result.evidence,
+    ].join(" "),
+  );
+}
+
+function getConfidenceRange(result: IdentificationResult) {
+  if (result.confidenceRange) {
+    return {
+      high: clampNumber(result.confidenceRange.high, 0, 100),
+      low: clampNumber(result.confidenceRange.low, 0, 100),
+    };
+  }
+
+  const score = result.confidenceScore ?? (result.confidence === "high" ? 84 : result.confidence === "medium" ? 72 : 48);
+  const spread = score >= 80 ? 6 : score >= 65 ? 8 : 12;
+  return {
+    high: clampNumber(Math.round(score + spread), 0, 100),
+    low: clampNumber(Math.round(score - spread), 0, 100),
+  };
 }
 
 function findNearestMetricFastener(widthMm: number) {

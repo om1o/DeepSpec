@@ -2,6 +2,7 @@ import { IDENTIFY_PROMPT } from "../src/services/systemPrompts";
 import {
   SCAN_CATEGORIES,
   type CandidateMatch,
+  type ConfirmationNeed,
   type Confidence,
   type EvidenceRegion,
   type IdentificationResult,
@@ -56,6 +57,16 @@ const IDENTIFICATION_RESPONSE_SCHEMA = {
   properties: {
     partName: { type: "string" },
     confidence: { type: "string", enum: ["high", "medium", "low"] },
+    confidenceScore: { type: "number" },
+    confidenceRange: {
+      type: "object",
+      properties: {
+        low: { type: "number" },
+        high: { type: "number" },
+      },
+      required: ["low", "high"],
+    },
+    confirmationNeed: { type: "string", enum: ["none", "one_more_angle", "reference_needed"] },
     scanCategory: { type: "string", enum: [...SCAN_CATEGORIES] },
     candidateMatches: {
       type: "array",
@@ -684,11 +695,17 @@ function normalizeIdentificationResult(
   const scanCategory = getTrustedCategory(result);
   const visibleObservations = cleanList(result.visibleObservations);
   const confidence = resolvePrimaryConfidence(result.confidence, originalPartName, partName, datasetMatches);
+  const confidenceScore = normalizeConfidenceScore(result.confidenceScore);
+  const confidenceRange = normalizeConfidenceRange(result.confidenceRange);
+  const confirmationNeed = normalizeConfirmationNeed(result.confirmationNeed);
 
   return {
     ...result,
     partName,
     confidence,
+    ...(confidenceScore === undefined ? {} : { confidenceScore }),
+    ...(confidenceRange === undefined ? {} : { confidenceRange }),
+    ...(confirmationNeed === undefined ? {} : { confirmationNeed }),
     scanCategory,
     candidateMatches: normalizeCandidateMatches(result, datasetMatches, partName, scanCategory),
     whatItDoes: cleanText(result.whatItDoes, "Deep Spec could not verify what this part does from this photo."),
@@ -727,6 +744,36 @@ function resolvePrimaryConfidence(
 
   const promotedMatch = datasetMatches.find((match) => isDatasetPartMatch(match) && match.label.toLowerCase() === partName.toLowerCase());
   return promotedMatch && promotedMatch.score >= 5 ? "medium" : confidence;
+}
+
+function normalizeConfidenceScore(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return clampPercent(value);
+  }
+
+  return undefined;
+}
+
+function normalizeConfidenceRange(value: unknown) {
+  if (isRecord(value) && typeof value.low === "number" && typeof value.high === "number") {
+    const low = clampPercent(value.low);
+    const high = clampPercent(value.high);
+    return low <= high ? { low, high } : { low: high, high: low };
+  }
+
+  return undefined;
+}
+
+function normalizeConfirmationNeed(value: unknown): ConfirmationNeed | undefined {
+  if (value === "none" || value === "one_more_angle" || value === "reference_needed") {
+    return value;
+  }
+
+  return undefined;
+}
+
+function clampPercent(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value)));
 }
 
 function isGenericPartName(partName: string) {
@@ -1270,6 +1317,9 @@ function isIdentificationResult(value: unknown): value is IdentificationResult {
   return (
     typeof value.partName === "string" &&
     isConfidence(value.confidence) &&
+    isOptionalConfidenceScore(value.confidenceScore) &&
+    isOptionalConfidenceRange(value.confidenceRange) &&
+    isOptionalConfirmationNeed(value.confirmationNeed) &&
     isScanCategory(value.scanCategory) &&
     isCandidateMatchArray(value.candidateMatches) &&
     typeof value.whatItDoes === "string" &&
@@ -1348,6 +1398,31 @@ function isSourceLinkArray(value: unknown): value is SourceLink[] {
 
 function isConfidence(value: unknown) {
   return value === "high" || value === "medium" || value === "low";
+}
+
+function isOptionalConfidenceScore(value: unknown) {
+  return value === undefined || (typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100);
+}
+
+function isOptionalConfidenceRange(value: unknown) {
+  if (value === undefined) {
+    return true;
+  }
+
+  return (
+    isRecord(value) &&
+    typeof value.low === "number" &&
+    typeof value.high === "number" &&
+    Number.isFinite(value.low) &&
+    Number.isFinite(value.high) &&
+    value.low >= 0 &&
+    value.high <= 100 &&
+    value.low <= value.high
+  );
+}
+
+function isOptionalConfirmationNeed(value: unknown) {
+  return value === undefined || value === "none" || value === "one_more_angle" || value === "reference_needed";
 }
 
 function isSafetyTriage(value: unknown) {

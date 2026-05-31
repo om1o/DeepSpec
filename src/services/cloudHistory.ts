@@ -161,6 +161,9 @@ function parseIdentificationResult(value: unknown, fallbackCategory: ScanCategor
   return {
     partName,
     confidence: parseConfidence(value.confidence),
+    confidenceScore: parseConfidenceScore(value.confidenceScore, parseConfidence(value.confidence)),
+    confidenceRange: parseConfidenceRange(value.confidenceRange, value.confidenceScore, parseConfidence(value.confidence)),
+    confirmationNeed: parseConfirmationNeed(value.confirmationNeed),
     scanCategory: parseScanCategory(value.scanCategory, fallbackCategory),
     candidateMatches: parseCandidateMatches(value.candidateMatches),
     whatItDoes: isString(value.whatItDoes) ? value.whatItDoes : "",
@@ -252,6 +255,39 @@ function parseStringList(value: unknown, maxItems: number, maxLength: number) {
 
 function parseConfidence(value: unknown): Confidence {
   return value === "high" || value === "medium" || value === "low" ? value : "low";
+}
+
+function parseConfidenceScore(value: unknown, confidence: Confidence) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return clampPercent(value);
+  }
+
+  if (confidence === "high") return 84;
+  if (confidence === "medium") return 72;
+  return 48;
+}
+
+function parseConfidenceRange(value: unknown, score: unknown, confidence: Confidence) {
+  if (isObject(value) && typeof value.low === "number" && typeof value.high === "number") {
+    const low = clampPercent(value.low);
+    const high = clampPercent(value.high);
+    return low <= high ? { low, high } : { low: high, high: low };
+  }
+
+  const normalizedScore = parseConfidenceScore(score, confidence);
+  const spread = normalizedScore >= 80 ? 6 : normalizedScore >= 65 ? 8 : 12;
+  return {
+    low: clampPercent(normalizedScore - spread),
+    high: clampPercent(normalizedScore + spread),
+  };
+}
+
+function parseConfirmationNeed(value: unknown) {
+  return value === "none" || value === "one_more_angle" || value === "reference_needed" ? value : undefined;
+}
+
+function clampPercent(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value)));
 }
 
 function parseScanCategory(value: unknown, fallback: ScanCategory = "unknown"): ScanCategory {

@@ -17,6 +17,7 @@ A car owner, not a mechanic. They may be nervous, confused, dealing with a break
 10. Set a safety flag and a clear next action.
 11. If the object is a fastener (nut/bolt/screw/stud), include likely size guidance from visible geometry with explicit uncertainty wording.
 12. If the object is an engine or engine assembly, include likely engine type/family clues only when visible evidence supports it.
+13. Include confidenceScore (0-100), confidenceRange ({ low, high }), and confirmationNeed ("none", "one_more_angle", or "reference_needed"). Confidence should read like a range, not a certainty claim.
 
 ## Confidence calibration
 - high: You see 2 or more clear distinguishing features and can name the specific part with confidence.
@@ -24,6 +25,9 @@ A car owner, not a mechanic. They may be nervous, confused, dealing with a break
 - medium: You can identify the system and function but not the exact part name.
   Example: "Coolant hose - visible rubber construction and proximity to radiator, but cannot confirm which hose."
 - low: You can only make a general guess. If confidence is this low AND the photo looks usable, still answer - just be honest. Only set needsBetterPhoto true if the photo itself is the problem.
+- confidenceScore: Calibrated probability-like score from 0-100. Use 80-92 for high, 60-79 for medium, and 25-59 for low unless the photo strongly says otherwise.
+- confidenceRange: Honest low/high range around confidenceScore. Wider range for low confidence or poor photo quality.
+- confirmationNeed: "reference_needed" for fastener sizing, "one_more_angle" for medium/low or needsBetterPhoto, otherwise "none".
 
 ## Field definitions
 - partName: Most specific name the photo allows. Prefer "serpentine belt tensioner" over "belt component". Use "unknown component" only if you genuinely cannot classify it.

@@ -356,6 +356,43 @@ function isConfidence(value: unknown): value is Confidence {
   return value === "high" || value === "medium" || value === "low";
 }
 
+function normalizeConfidenceScore(value: unknown, confidence: Confidence) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return clampPercent(value);
+  }
+
+  if (confidence === "high") return 84;
+  if (confidence === "medium") return 72;
+  return 48;
+}
+
+function normalizeConfidenceRange(value: unknown, score: unknown, confidence: Confidence) {
+  if (isRecord(value) && typeof value.low === "number" && typeof value.high === "number") {
+    const low = clampPercent(value.low);
+    const high = clampPercent(value.high);
+    return low <= high ? { low, high } : { low: high, high: low };
+  }
+
+  const normalizedScore = normalizeConfidenceScore(score, confidence);
+  const spread = normalizedScore >= 80 ? 6 : normalizedScore >= 65 ? 8 : 12;
+  return {
+    low: clampPercent(normalizedScore - spread),
+    high: clampPercent(normalizedScore + spread),
+  };
+}
+
+function normalizeConfirmationNeed(value: unknown) {
+  return value === "none" || value === "one_more_angle" || value === "reference_needed" ? value : undefined;
+}
+
+function clampPercent(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 function isTrainingStatus(value: unknown): value is TrainingStatus {
   return value === "raw_unreviewed" || value === "user_confirmed" || value === "user_corrected";
 }
@@ -439,6 +476,9 @@ function normalizeStoredIdentificationResult(value: unknown, correction?: string
   return {
     partName: cleanText(result.partName, 80),
     confidence: result.confidence,
+    confidenceScore: normalizeConfidenceScore(result.confidenceScore, result.confidence),
+    confidenceRange: normalizeConfidenceRange(result.confidenceRange, result.confidenceScore, result.confidence),
+    confirmationNeed: normalizeConfirmationNeed(result.confirmationNeed),
     scanCategory: isScanCategory(result.scanCategory) ? result.scanCategory : categorizeScan(result, correction),
     candidateMatches: normalizeCandidateMatches(result.candidateMatches),
     whatItDoes: cleanText(result.whatItDoes, 500),

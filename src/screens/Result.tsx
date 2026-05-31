@@ -114,6 +114,10 @@ export default function Result() {
     navigate(`/result/${saved.value.id}/chat${query}`);
   }
 
+  function handleRetakeWithGuide() {
+    navigate("/scan?guide=retake");
+  }
+
   function handleLookupUpdate(result: ReturnType<typeof updateLookup>) {
     if (result.ok) {
       setLookup(result.value);
@@ -174,7 +178,9 @@ export default function Result() {
               result={scanState.result}
               capturedAt={capturedAt}
               canSaveForChat={canSaveForChat}
+              frame={frame}
               lookupId={lookup?.id ?? null}
+              onRetakeWithGuide={handleRetakeWithGuide}
               onSaveAndAsk={handleSaveAndAsk}
             />
           ) : null}
@@ -408,18 +414,17 @@ function SavedScanControls({
         </p>
       </div>
 
-      {lookup.rating === "down" ? (
-        <label className="mt-4 block">
-          <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">What was it actually?</span>
-          <textarea
-            className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[var(--ds-accent)]"
-            maxLength={240}
-            onChange={(event) => onCorrectionChange(event.target.value)}
-            placeholder="Example: coolant reservoir cap, not brake fluid cap"
-            value={lookup.correction ?? ""}
-          />
-        </label>
-      ) : null}
+      <label className="mt-4 block">
+        <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Correct label</span>
+        <textarea
+          aria-label="What was it actually?"
+          className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[var(--ds-accent)]"
+          maxLength={240}
+          onChange={(event) => onCorrectionChange(event.target.value)}
+          placeholder="Example: coolant reservoir cap, not brake fluid cap"
+          value={lookup.correction ?? ""}
+        />
+      </label>
 
       <label className="mt-4 block">
         <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Private notes</span>
@@ -475,13 +480,17 @@ function SavedScanControls({
 function AnalysisResult({
   canSaveForChat,
   capturedAt,
+  frame,
   lookupId,
+  onRetakeWithGuide,
   onSaveAndAsk,
   result,
 }: {
   canSaveForChat: boolean;
   capturedAt: string | null;
+  frame: CapturedFrame | null | undefined;
   lookupId: string | null;
+  onRetakeWithGuide: () => void;
   onSaveAndAsk: (question?: string) => void;
   result: IdentificationResult;
 }) {
@@ -489,6 +498,9 @@ function AnalysisResult({
   const showSafetyWarning = result.isSafetyCritical || result.safetyTriage === "needs_professional";
   const trustReview = getTrustReview(result);
   const needsBetterPhoto = result.needsBetterPhoto || result.safetyTriage === "needs_better_photo";
+  const confidenceRange = getConfidenceRange(result);
+  const confirmationMessage = getConfirmationMessage(result);
+  const shouldShowRetakeGuide = needsBetterPhoto || result.confidence !== "high" || result.confirmationNeed === "one_more_angle";
 
   return (
     <>
@@ -496,15 +508,18 @@ function AnalysisResult({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Best match</p>
-            <h2 className="mt-1 truncate text-2xl font-extrabold tracking-tight">{result.partName}</h2>
+            <h2 className="mt-1 truncate text-2xl font-extrabold tracking-tight">
+              Likely {result.partName} ({confidenceRange.low}-{confidenceRange.high}%)
+            </h2>
           </div>
-          <ConfidenceBadge confidence={result.confidence} />
+          <ConfidenceBadge confidence={result.confidence} range={confidenceRange} />
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           <MiniPill label={result.scanCategory} />
           <MiniPill label={trustReview.status} />
         </div>
         <p className="mt-3 text-sm leading-6 text-neutral-600">{trustReview.description}</p>
+        <p className="mt-2 text-sm font-bold leading-6 text-neutral-700">{confirmationMessage}</p>
         {capturedAt ? <p className="mt-3 text-xs font-semibold text-neutral-400">Captured {capturedAt}</p> : null}
         <QuickActions canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
       </section>
@@ -525,6 +540,10 @@ function AnalysisResult({
             Move closer, add light, and center any label, connector, hose, or damaged area in the lens frame.
           </p>
         </section>
+      ) : null}
+
+      {shouldShowRetakeGuide ? (
+        <GuidedRetakeSection frame={frame} onRetakeWithGuide={onRetakeWithGuide} result={result} />
       ) : null}
 
       <CompleteBrief result={result} />
@@ -591,6 +610,48 @@ function CompleteBrief({ result }: { result: IdentificationResult }) {
         <BriefList title="Still missing" items={missingData} emptyText="Enough data for a useful first pass. A second angle can still improve certainty." />
         <BriefList title="Ask before repair" items={questions} />
       </div>
+    </section>
+  );
+}
+
+function GuidedRetakeSection({
+  frame,
+  onRetakeWithGuide,
+  result,
+}: {
+  frame: CapturedFrame | null | undefined;
+  onRetakeWithGuide: () => void;
+  result: IdentificationResult;
+}) {
+  return (
+    <section className="rounded-[24px] border border-[var(--ds-accent-line)] bg-white p-4 shadow-sm">
+      <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Retake guide</p>
+      <h2 className="mt-1 text-xl font-extrabold tracking-tight">One more angle can confirm it</h2>
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50">
+          <div className="aspect-[4/3] bg-slate-950">
+            {frame?.imageBase64 ? (
+              <img alt="Current scan" className="h-full w-full object-cover" src={frame.imageBase64} />
+            ) : null}
+          </div>
+          <p className="px-3 py-2 text-xs font-black text-neutral-500">Current</p>
+        </div>
+        <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50">
+          <div className="grid aspect-[4/3] place-items-center bg-[linear-gradient(135deg,#07111f,#0d3b66)] px-3 text-center text-white">
+            <div>
+              <div className="mx-auto mb-2 aspect-[4/3] w-24 rounded-[14px] border-2 border-[var(--ds-accent)] shadow-[0_0_28px_rgba(11,116,255,0.42)]" />
+              <p className="text-[11px] font-black uppercase tracking-[0.14em]">Closer + slight angle</p>
+            </div>
+          </div>
+          <p className="px-3 py-2 text-xs font-black text-neutral-500">Better angle</p>
+        </div>
+      </div>
+      <p className="mt-3 text-sm leading-6 text-neutral-600">
+        Center the {result.partName}, keep labels or bolt heads visible, and avoid glare.
+      </p>
+      <Button className="mt-4 w-full" onClick={onRetakeWithGuide}>
+        Retake with guide
+      </Button>
     </section>
   );
 }
@@ -1128,7 +1189,56 @@ function ResultSection({
   );
 }
 
-function ConfidenceBadge({ confidence }: { confidence: Confidence }) {
+function getConfidenceRange(result: IdentificationResult) {
+  if (result.confidenceRange) {
+    const low = clampPercent(result.confidenceRange.low);
+    const high = clampPercent(result.confidenceRange.high);
+    return low <= high ? { low, high } : { low: high, high: low };
+  }
+
+  const score = result.confidenceScore ?? (result.confidence === "high" ? 84 : result.confidence === "medium" ? 72 : 48);
+  const spread = score >= 80 ? 6 : score >= 65 ? 8 : 12;
+  return {
+    high: clampPercent(score + spread),
+    low: clampPercent(score - spread),
+  };
+}
+
+function getConfirmationMessage(result: IdentificationResult) {
+  if (result.confirmationNeed === "reference_needed" || isFastenerResult(result)) {
+    return "Exact size needs a reference object on the same plane.";
+  }
+
+  if (result.confirmationNeed === "one_more_angle" || result.confidence !== "high" || result.needsBetterPhoto || result.safetyTriage === "needs_better_photo") {
+    return "Need one more angle to confirm.";
+  }
+
+  return "Enough evidence for a useful first pass.";
+}
+
+function isFastenerResult(result: IdentificationResult) {
+  return /\b(nut|bolt|screw|stud|thread|washer|fastener)\b/i.test(
+    [
+      result.partName,
+      result.whatItDoes,
+      result.nextAction,
+      ...result.visibleObservations,
+      ...result.evidence,
+    ].join(" "),
+  );
+}
+
+function clampPercent(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function ConfidenceBadge({
+  confidence,
+  range,
+}: {
+  confidence: Confidence;
+  range: { high: number; low: number };
+}) {
   const styles = {
     high: "bg-[var(--ds-ok-soft)] text-[var(--ds-ok-ink)] border-[var(--ds-ok-line)]",
     medium: "bg-[var(--ds-warn-soft)] text-[var(--ds-warn-ink)] border-[var(--ds-warn-line)]",
@@ -1137,7 +1247,7 @@ function ConfidenceBadge({ confidence }: { confidence: Confidence }) {
 
   return (
     <span className={`shrink-0 rounded-full border px-3 py-1 text-xs font-extrabold capitalize ${styles[confidence]}`}>
-      {confidence}
+      {range.low}-{range.high}%
     </span>
   );
 }

@@ -9,6 +9,8 @@ export type SafetyTriage = "can_help" | "needs_better_photo" | "needs_profession
 
 export type Confidence = "high" | "medium" | "low";
 
+export type ConfirmationNeed = "none" | "one_more_angle" | "reference_needed";
+
 export type LabelRescueTrigger = "too_blurry";
 
 export const SCAN_CATEGORIES = [
@@ -48,6 +50,12 @@ export type SourceLink = {
 export type IdentificationResult = {
   partName: string;
   confidence: Confidence;
+  confidenceScore?: number;
+  confidenceRange?: {
+    low: number;
+    high: number;
+  };
+  confirmationNeed?: ConfirmationNeed;
   scanCategory: ScanCategory;
   candidateMatches: CandidateMatch[];
   whatItDoes: string;

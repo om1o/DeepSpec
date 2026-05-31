@@ -215,6 +215,7 @@ describe("Scanner", () => {
     const reviewCard = reviewHeading.closest("section");
     expect(reviewCard).toBeTruthy();
     expect(screen.getByTestId("lens-primary-label")).toHaveTextContent("Alternator");
+    expect(screen.getByText("Great - sharp enough")).toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).getByText("AI detection")).toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Open details" })).toBeInTheDocument();
@@ -316,7 +317,7 @@ describe("Scanner", () => {
     expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Open details" })).toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Set reference" })).toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Estimate size" })).toBeInTheDocument();
-    expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Wrong match or wrong label?" })).toBeInTheDocument();
+    expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Correct label" })).toBeInTheDocument();
   }, 10000);
 
   it("requires a size reference before estimating AR size for fastener replacement", async () => {
@@ -464,6 +465,27 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Try camera again" }));
 
     expect(retryCamera).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps retake guide instructions visible when camera access is blocked", () => {
+    cameraHookState.current = {
+      cameraError: "Permission denied",
+      cameraRequestId: 4,
+      cameraState: "blocked",
+    };
+
+    render(
+      <MemoryRouter initialEntries={["/scan?guide=retake"]}>
+        <Routes>
+          <Route path="/scan" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("Retake guide")).toBeInTheDocument();
+    expect(screen.getByText("Fill the frame from a slight angle.")).toBeInTheDocument();
+    expect(screen.getByText("Use upload if camera access is blocked.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Upload photo")).toBeInTheDocument();
   });
 
   it("shows the camera loading state before the first frame is ready", () => {

@@ -233,6 +233,9 @@ function isIdentificationResult(value: unknown): value is IdentificationResult {
   return (
     typeof value.partName === "string" &&
     isConfidence(value.confidence) &&
+    isOptionalConfidenceScore(value.confidenceScore) &&
+    isOptionalConfidenceRange(value.confidenceRange) &&
+    isOptionalConfirmationNeed(value.confirmationNeed) &&
     isScanCategory(value.scanCategory) &&
     isCandidateMatchArray(value.candidateMatches) &&
     typeof value.whatItDoes === "string" &&
@@ -286,6 +289,31 @@ function isSourceLinkArray(value: unknown): value is SourceLink[] {
 
 function isConfidence(value: unknown) {
   return value === "high" || value === "medium" || value === "low";
+}
+
+function isOptionalConfidenceScore(value: unknown) {
+  return value === undefined || (typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100);
+}
+
+function isOptionalConfidenceRange(value: unknown) {
+  if (value === undefined) {
+    return true;
+  }
+
+  return (
+    isRecord(value) &&
+    typeof value.low === "number" &&
+    typeof value.high === "number" &&
+    Number.isFinite(value.low) &&
+    Number.isFinite(value.high) &&
+    value.low >= 0 &&
+    value.high <= 100 &&
+    value.low <= value.high
+  );
+}
+
+function isOptionalConfirmationNeed(value: unknown) {
+  return value === undefined || value === "none" || value === "one_more_angle" || value === "reference_needed";
 }
 
 function isSafetyTriage(value: unknown) {
