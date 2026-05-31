@@ -5,6 +5,7 @@ import { signOut } from "../services/auth";
 import { readCloudLookups } from "../services/cloudHistory";
 import { getScanQualityMetrics, type ScanQualityFailureReason, type ScanQualityMetrics } from "../services/scanQualityMetrics";
 import { MAX_SAVED_LOOKUPS, getLookups, scanStateFromLookup } from "../services/storage";
+import { getTrainingReadiness } from "../services/trainingReadiness";
 import { SCAN_CATEGORIES, type Lookup, type Rating, type ScanCategory, type TrainingStatus } from "../types";
 
 export default function History() {
@@ -298,6 +299,7 @@ function LookupCard({ lookup }: { lookup: Lookup }) {
   const title = lookup.result?.partName ?? (lookup.errorMessage ? "AI lookup failed" : "Captured frame");
   const createdAt = new Date(lookup.createdAt).toLocaleString();
   const status = getStatusLabel(lookup);
+  const readiness = getTrainingReadiness(lookup);
 
   return (
     <Link
@@ -317,10 +319,27 @@ function LookupCard({ lookup }: { lookup: Lookup }) {
         </div>
         <p className="mt-1 truncate text-xs font-semibold text-neutral-400">{createdAt}</p>
         <p className="mt-3 text-sm font-semibold text-neutral-500">{status}</p>
-        <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-neutral-400">{lookup.scanCategory}</p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-neutral-400">{lookup.scanCategory}</p>
+          <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${getReadinessChipClass(readiness.level)}`}>
+            {readiness.label}
+          </span>
+        </div>
       </div>
     </Link>
   );
+}
+
+function getReadinessChipClass(level: ReturnType<typeof getTrainingReadiness>["level"]) {
+  if (level === "ready") {
+    return "bg-[var(--ds-ok-soft)] text-[var(--ds-ok-ink)]";
+  }
+
+  if (level === "not_ready") {
+    return "bg-[var(--ds-warn-soft)] text-[var(--ds-warn-ink)]";
+  }
+
+  return "bg-[var(--ds-accent-soft)] text-[var(--ds-accent)]";
 }
 
 function getStatusLabel(lookup: Lookup) {

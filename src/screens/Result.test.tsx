@@ -309,6 +309,9 @@ describe("Result", () => {
 
     renderResult(null, `/result/${lookup.id}`);
 
+    expect(screen.getByText("Data use")).toBeInTheDocument();
+    expect(screen.getByText("Needs review")).toBeInTheDocument();
+    expect(screen.getByText("Private by default. This photo is not used for model training unless sharing is allowed.")).toBeInTheDocument();
     expect(screen.getByText("Scan report")).toBeInTheDocument();
     expect(screen.getByText("Cloud dataset sync")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sync this scan" })).toBeDisabled();

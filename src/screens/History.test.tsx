@@ -85,6 +85,7 @@ describe("History", () => {
 
     expect(screen.getByText("Alternator")).toBeInTheDocument();
     expect(screen.getByText("high confidence")).toBeInTheDocument();
+    expect(screen.getByText("Needs review")).toBeInTheDocument();
     const scanLink = screen.getByRole("link", { name: /Alternator/ });
     expect(scanLink).toHaveAttribute("href", "/result/lookup-1");
     expect(scanLink).toHaveTextContent("electrical");
