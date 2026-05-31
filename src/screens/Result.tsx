@@ -9,6 +9,7 @@ import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
 import { buildScanReport, downloadTextFile, getMechanicSearchUrl, getScanReportFilename } from "../services/report";
 import { recordManualCorrection, recordUserTrustScore } from "../services/scanQualityMetrics";
 import { createLookup, deleteLookup, getLookup, scanStateFromLookup, updateLookup, updateLookupResult } from "../services/storage";
+import { getTrainingReadiness, type TrainingReadiness } from "../services/trainingReadiness";
 import type { CandidateMatch, CapturedFrame, Confidence, EvidenceRegion, IdentificationResult, Lookup, Rating, ScanAnalysisState, SourceLink } from "../types";
 
 type DetectedTextFinding = {
@@ -304,6 +305,7 @@ function SavedScanControls({
   const [trustScore, setTrustScore] = useState<number | null>(null);
   const cloudSync = getCloudSyncStatus();
   const needsProfessional = lookup.result?.isSafetyCritical || lookup.result?.safetyTriage === "needs_professional";
+  const readiness = getTrainingReadiness(lookup);
 
   async function handleShareReport() {
     const report = buildScanReport(lookup);
@@ -358,6 +360,7 @@ function SavedScanControls({
         <TrustRow label="Training label" value={lookup.trainingLabel} />
         <TrustRow label="Review status" value={lookup.trainingStatus.replaceAll("_", " ")} />
       </div>
+      <TrainingReadinessCard readiness={readiness} />
 
       {lookup.result ? (
         <div className="mt-4 grid grid-cols-1 gap-3">
@@ -473,6 +476,38 @@ function SavedScanControls({
       <Button className="mt-4 w-full border border-[var(--ds-danger-line)] !bg-[var(--ds-danger-soft)] !text-[var(--ds-danger)] shadow-none" onClick={onDelete}>
         Delete saved scan
       </Button>
+    </section>
+  );
+}
+
+function TrainingReadinessCard({ readiness }: { readiness: TrainingReadiness }) {
+  const styles = {
+    not_ready: "border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] text-[var(--ds-warn-ink)]",
+    ready: "border-[var(--ds-ok-line)] bg-[var(--ds-ok-soft)] text-[var(--ds-ok-ink)]",
+    review: "border-[var(--ds-accent-line)] bg-[var(--ds-accent-soft)] text-[var(--ds-accent)]",
+  };
+
+  return (
+    <section className={`mt-4 rounded-[20px] border p-4 ${styles[readiness.level]}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-extrabold uppercase tracking-[0.16em] opacity-80">Data use</p>
+          <h3 className="mt-1 text-lg font-extrabold tracking-tight">{readiness.label}</h3>
+        </div>
+        <span className="rounded-full bg-white/70 px-3 py-1 text-xs font-black text-slate-800">
+          {readiness.score}/100
+        </span>
+      </div>
+      <p className="mt-2 text-sm font-semibold leading-6 text-slate-700">{readiness.summary}</p>
+      <p className="mt-2 text-sm font-black leading-6 text-slate-900">{readiness.action}</p>
+      <p className="mt-2 text-xs font-semibold leading-5 text-slate-600">{readiness.privacy}</p>
+      {readiness.reasons.length ? (
+        <ul className="mt-3 space-y-1 text-xs font-semibold leading-5 text-slate-600">
+          {readiness.reasons.slice(0, 3).map((reason) => (
+            <li key={reason}>{reason}</li>
+          ))}
+        </ul>
+      ) : null}
     </section>
   );
 }
