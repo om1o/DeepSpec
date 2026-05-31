@@ -1,9 +1,6 @@
-export type ScanQualityFailureReason =
-  | "too_dark"
-  | "too_bright"
-  | "too_blurry"
-  | "object_too_small"
-  | "needs_better_photo";
+import type { ScanQualityFailureReason } from "../types";
+
+export type { ScanQualityFailureReason };
 
 export type ScanQualityMetrics = {
   acceptableScans: number;

@@ -1,4 +1,4 @@
-import type { CandidateMatch, ChatMessage, Confidence, EvidenceRegion, IdentificationResult, Lookup, Rating, ScanAnalysisState, ScanCategory, SourceLink, TrainingStatus } from "../types";
+import type { CandidateMatch, ChatMessage, Confidence, EvidenceRegion, IdentificationResult, Lookup, Rating, ScanAnalysisState, ScanCategory, ScanQualityFailureReason, ScanQualitySnapshot, SourceLink, TrainingStatus } from "../types";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
 export const MAX_SAVED_LOOKUPS = 50;
@@ -25,6 +25,7 @@ export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup
     errorMessage: scanState.errorMessage,
     errorCode: scanState.errorCode,
     analyzedAt: scanState.analyzedAt,
+    scanQuality: scanState.scanQuality,
     rating: null,
     correction: null,
     notes: "",
@@ -115,6 +116,7 @@ export function updateLookupResult(
     errorMessage: undefined,
     errorCode: undefined,
     analyzedAt: new Date().toISOString(),
+    scanQuality: existing.scanQuality,
     scanCategory: categorizeScan(result, existing.correction ?? undefined),
     trainingLabel: getTrainingLabel(result, existing.correction),
     trainingStatus: getTrainingStatus(existing.rating, existing.correction),
@@ -202,6 +204,7 @@ export function scanStateFromLookup(lookup: Lookup): ScanAnalysisState {
     errorMessage: lookup.errorMessage,
     errorCode: lookup.errorCode,
     analyzedAt: lookup.analyzedAt,
+    scanQuality: lookup.scanQuality,
   };
 }
 
@@ -310,6 +313,7 @@ function normalizeLookup(value: unknown): Lookup | null {
   const correction = typeof lookup.correction === "string" ? lookup.correction : null;
   const notes = typeof lookup.notes === "string" ? lookup.notes : "";
   const result = normalizeStoredIdentificationResult(lookup.result, correction ?? undefined);
+  const scanQuality = normalizeScanQualitySnapshot(lookup.scanQuality);
   const scanCategory = isScanCategory(lookup.scanCategory) ? lookup.scanCategory : categorizeScan(result, correction ?? undefined);
   const trainingStatus = isTrainingStatus(lookup.trainingStatus)
     ? lookup.trainingStatus
@@ -323,6 +327,7 @@ function normalizeLookup(value: unknown): Lookup | null {
     errorMessage: lookup.errorMessage,
     errorCode: lookup.errorCode,
     analyzedAt: lookup.analyzedAt,
+    scanQuality,
     rating,
     correction,
     notes,
@@ -354,6 +359,52 @@ function isScanCategory(value: unknown): value is ScanCategory {
 
 function isConfidence(value: unknown): value is Confidence {
   return value === "high" || value === "medium" || value === "low";
+}
+
+function isScanQualityFailureReason(value: unknown): value is ScanQualityFailureReason {
+  return (
+    value === "too_dark" ||
+    value === "too_bright" ||
+    value === "too_blurry" ||
+    value === "object_too_small" ||
+    value === "needs_better_photo"
+  );
+}
+
+function normalizeScanQualitySnapshot(value: unknown): ScanQualitySnapshot | undefined {
+  if (!isRecord(value) || typeof value.checkedAt !== "string") {
+    return undefined;
+  }
+
+  return {
+    accepted: value.accepted === true,
+    averageLuminance: getNullableNumber(value.averageLuminance),
+    brightPixelRatio: getNullableNumber(value.brightPixelRatio),
+    brightnessScore: getNullableNumber(value.brightnessScore),
+    cameraId: typeof value.cameraId === "string" && value.cameraId.trim() ? value.cameraId : "unknown",
+    checkedAt: value.checkedAt,
+    darkPixelRatio: getNullableNumber(value.darkPixelRatio),
+    ...(isScanQualityFailureReason(value.failureReason) ? { failureReason: value.failureReason } : {}),
+    firstPass: value.firstPass !== false,
+    ...(typeof value.fixAction === "string" ? { fixAction: value.fixAction } : {}),
+    glareScore: getNullableNumber(value.glareScore),
+    gradientVariance: getNullableNumber(value.gradientVariance),
+    motionFallback: value.motionFallback === true,
+    motionScore: getNullableNumber(value.motionScore),
+    motionStable: value.motionStable === true,
+    objectSizeRatio: getNullableNumber(value.objectSizeRatio),
+    ...(isScanQualityFailureReason(value.previousFailureReason) ? { previousFailureReason: value.previousFailureReason } : {}),
+    sampleHeight: getNullableNumber(value.sampleHeight),
+    sampleWidth: getNullableNumber(value.sampleWidth),
+    sharpnessScore: getNullableNumber(value.sharpnessScore),
+    targetCenteredScore: getNullableNumber(value.targetCenteredScore),
+    targetConfidence: getNullableNumber(value.targetConfidence),
+    targetLocked: value.targetLocked === true,
+  };
+}
+
+function getNullableNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function normalizeConfidenceScore(value: unknown, confidence: Confidence) {

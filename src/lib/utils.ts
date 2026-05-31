@@ -1,4 +1,4 @@
-import type { CapturedFrame, ScanAnalysisState } from "../types";
+import type { CapturedFrame, ScanAnalysisState, ScanQualitySnapshot } from "../types";
 
 const LATEST_CAPTURED_FRAME_KEY = "deep-spec:latest-captured-frame";
 const LATEST_SCAN_STATE_KEY = "deep-spec:latest-scan-state";
@@ -59,6 +59,7 @@ export function readLatestScanState(): ScanAnalysisState | null {
       errorMessage: typeof state.errorMessage === "string" ? state.errorMessage : undefined,
       errorCode: typeof state.errorCode === "string" ? state.errorCode : undefined,
       analyzedAt: typeof state.analyzedAt === "string" ? state.analyzedAt : undefined,
+      scanQuality: isScanQualitySnapshot(state.scanQuality) ? state.scanQuality : undefined,
       storageWarning: typeof state.storageWarning === "string" ? state.storageWarning : undefined,
     };
   } catch {
@@ -99,6 +100,19 @@ function isCapturedFrame(value: unknown): value is CapturedFrame {
     "capturedAt" in value &&
     typeof value.imageBase64 === "string" &&
     typeof value.capturedAt === "string"
+  );
+}
+
+function isScanQualitySnapshot(value: unknown): value is ScanQualitySnapshot {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "accepted" in value &&
+    "cameraId" in value &&
+    "checkedAt" in value &&
+    typeof value.accepted === "boolean" &&
+    typeof value.cameraId === "string" &&
+    typeof value.checkedAt === "string"
   );
 }
 

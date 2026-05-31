@@ -1,86 +1,66 @@
 export type ImageQualityIssue = "too_dark" | "too_bright" | "too_blurry";
 
-export type ImageQualityResult =
-  | { ok: true }
-  | { ok: false; issue: ImageQualityIssue; message: string };
+export type ImageQualityMeasurements = {
+  averageLuminance: number;
+  brightPixelRatio: number;
+  brightnessScore: number;
+  darkPixelRatio: number;
+  glareScore: number;
+  gradientVariance: number;
+  sampleHeight: number;
+  sampleWidth: number;
+  sharpnessScore: number;
+};
 
-// Sample canvas dimensions — small enough to be instant, large enough for blur detection.
+export type ImageQualityResult =
+  | { ok: true; metrics: ImageQualityMeasurements }
+  | { ok: false; issue: ImageQualityIssue; message: string; metrics: ImageQualityMeasurements }
+  | { ok: true; metrics?: undefined };
+
 export const QUALITY_SAMPLE_W = 96;
 export const QUALITY_SAMPLE_H = 72;
 
-// Thresholds
-const DARK_THRESHOLD = 20;    // avg luminance 0–255; below this = too dark to see detail
-const BRIGHT_THRESHOLD = 235; // above this = overexposed / direct sunlight / reflective chrome
-const BLUR_THRESHOLD = 120;   // gradient variance; below this = insufficient texture/sharpness
+const DARK_THRESHOLD = 20;
+const BRIGHT_THRESHOLD = 235;
+const BLUR_THRESHOLD = 120;
 
-/**
- * Analyze pre-sampled luminance values for brightness and sharpness.
- * Pure function — no DOM. Pass the Uint8Array from sampleLuminance().
- */
 export function analyzeQuality(
   lum: Uint8Array,
   width: number,
   height: number,
 ): ImageQualityResult {
-  const pixels = width * height;
+  const metrics = measureImageQuality(lum, width, height);
 
-  // --- Brightness ---
-  let sumLum = 0;
-  for (let i = 0; i < pixels; i++) sumLum += lum[i];
-  const avgLum = sumLum / pixels;
-
-  if (avgLum < DARK_THRESHOLD) {
+  if (metrics.averageLuminance < DARK_THRESHOLD) {
     return {
+      metrics,
       ok: false,
       issue: "too_dark",
       message: "Too dark to scan. Add light or move to a brighter spot.",
     };
   }
 
-  if (avgLum > BRIGHT_THRESHOLD) {
+  if (metrics.averageLuminance > BRIGHT_THRESHOLD) {
     return {
+      metrics,
       ok: false,
       issue: "too_bright",
       message: "Too much glare or light. Shade the part or move out of direct sun.",
     };
   }
 
-  // --- Sharpness (gradient variance) ---
-  // For each interior pixel: |gx| + |gy|, then compute variance of those magnitudes.
-  let sumGrad = 0;
-  let sumGradSq = 0;
-  const gradCount = (width - 2) * (height - 2);
-
-  for (let y = 1; y < height - 1; y++) {
-    for (let x = 1; x < width - 1; x++) {
-      const idx = y * width + x;
-      const gx = lum[idx + 1] - lum[idx - 1];
-      const gy = lum[idx + width] - lum[idx - width];
-      const g = Math.abs(gx) + Math.abs(gy);
-      sumGrad += g;
-      sumGradSq += g * g;
-    }
-  }
-
-  const meanGrad = sumGrad / gradCount;
-  const varGrad = sumGradSq / gradCount - meanGrad * meanGrad;
-
-  if (varGrad < BLUR_THRESHOLD) {
+  if (metrics.gradientVariance < BLUR_THRESHOLD) {
     return {
+      metrics,
       ok: false,
       issue: "too_blurry",
       message: "Move closer and hold steady. Not enough detail to identify.",
     };
   }
 
-  return { ok: true };
+  return { ok: true, metrics };
 }
 
-/**
- * Downsample a data URL onto a small canvas and extract BT.601 luminance values.
- * Returns null if the canvas API is unavailable or the image can't be decoded —
- * callers should pass through to AI in that case.
- */
 export function sampleLuminance(dataUrl: string): Promise<Uint8Array | null> {
   return new Promise((resolve) => {
     const img = new Image();
@@ -91,7 +71,10 @@ export function sampleLuminance(dataUrl: string): Promise<Uint8Array | null> {
         canvas.width = QUALITY_SAMPLE_W;
         canvas.height = QUALITY_SAMPLE_H;
         const ctx = canvas.getContext("2d");
-        if (!ctx) { resolve(null); return; }
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
 
         ctx.drawImage(img, 0, 0, QUALITY_SAMPLE_W, QUALITY_SAMPLE_H);
         const { data } = ctx.getImageData(0, 0, QUALITY_SAMPLE_W, QUALITY_SAMPLE_H);
@@ -117,28 +100,81 @@ export function sampleLuminance(dataUrl: string): Promise<Uint8Array | null> {
   });
 }
 
-/**
- * Full pre-flight check: sample the image and analyze quality.
- * Safe to call in any browser — returns ok:true if the check can't run.
- */
 export async function assessImageQuality(dataUrl: string): Promise<ImageQualityResult> {
   const lum = await sampleLuminance(dataUrl);
-  if (!lum) return { ok: true }; // can't check → let AI handle it
+  if (!lum) return { ok: true };
+
   const result = analyzeQuality(lum, QUALITY_SAMPLE_W, QUALITY_SAMPLE_H);
   if (import.meta.env.DEV) {
-    const pixels = QUALITY_SAMPLE_W * QUALITY_SAMPLE_H;
-    let sum = 0; for (let i = 0; i < pixels; i++) sum += lum[i];
-    const avgLum = (sum / pixels).toFixed(1);
-    let sg = 0, sg2 = 0;
-    const gc = (QUALITY_SAMPLE_W - 2) * (QUALITY_SAMPLE_H - 2);
-    for (let y = 1; y < QUALITY_SAMPLE_H - 1; y++) for (let x = 1; x < QUALITY_SAMPLE_W - 1; x++) {
-      const idx = y * QUALITY_SAMPLE_W + x;
-      const g = Math.abs(lum[idx+1]-lum[idx-1]) + Math.abs(lum[idx+QUALITY_SAMPLE_W]-lum[idx-QUALITY_SAMPLE_W]);
-      sg += g; sg2 += g * g;
-    }
-    const mean = sg / gc;
-    const varGrad = (sg2 / gc - mean * mean).toFixed(0);
-    console.log("[deep-spec quality]", { avgLum, varGrad, verdict: result.ok ? "pass" : result.issue });
+    console.log("[deep-spec quality]", {
+      avgLum: result.metrics?.averageLuminance,
+      sharpnessScore: result.metrics?.sharpnessScore,
+      verdict: result.ok ? "pass" : result.issue,
+    });
   }
+
   return result;
+}
+
+function measureImageQuality(
+  lum: Uint8Array,
+  width: number,
+  height: number,
+): ImageQualityMeasurements {
+  const pixels = width * height;
+  let sumLum = 0;
+  let darkPixels = 0;
+  let brightPixels = 0;
+
+  for (let i = 0; i < pixels; i++) {
+    const value = lum[i];
+    sumLum += value;
+    if (value < DARK_THRESHOLD) darkPixels += 1;
+    if (value > BRIGHT_THRESHOLD) brightPixels += 1;
+  }
+
+  const avgLum = sumLum / pixels;
+  let sumGrad = 0;
+  let sumGradSq = 0;
+  const gradCount = (width - 2) * (height - 2);
+
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const idx = y * width + x;
+      const gx = lum[idx + 1] - lum[idx - 1];
+      const gy = lum[idx + width] - lum[idx - width];
+      const g = Math.abs(gx) + Math.abs(gy);
+      sumGrad += g;
+      sumGradSq += g * g;
+    }
+  }
+
+  const meanGrad = sumGrad / gradCount;
+  const varGrad = sumGradSq / gradCount - meanGrad * meanGrad;
+  const brightPixelRatio = brightPixels / pixels;
+  const darkPixelRatio = darkPixels / pixels;
+
+  return {
+    averageLuminance: roundMetric(avgLum),
+    brightPixelRatio: roundRatio(brightPixelRatio),
+    brightnessScore: clampScore(100 - (Math.abs(avgLum - 128) / 128) * 100),
+    darkPixelRatio: roundRatio(darkPixelRatio),
+    glareScore: clampScore(100 - brightPixelRatio * 500),
+    gradientVariance: roundMetric(varGrad),
+    sampleHeight: height,
+    sampleWidth: width,
+    sharpnessScore: clampScore((varGrad / BLUR_THRESHOLD) * 100),
+  };
+}
+
+function clampScore(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function roundMetric(value: number) {
+  return Math.round(value * 10) / 10;
+}
+
+function roundRatio(value: number) {
+  return Math.round(value * 1000) / 1000;
 }

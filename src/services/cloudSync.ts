@@ -312,6 +312,7 @@ async function insertScanModelRun(supabase: SupabaseClient, userId: string, look
         confirmationNeed: lookup.result?.confirmationNeed ?? null,
         hasResult: Boolean(lookup.result),
         safetyTriage: lookup.result?.safetyTriage ?? null,
+        scanQuality: lookup.scanQuality ?? null,
       },
       model: "unknown",
       ocr_used: hasOcrEvidence(lookup),

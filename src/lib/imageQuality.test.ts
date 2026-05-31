@@ -45,7 +45,32 @@ describe("analyzeQuality", () => {
 
   it("accepts a high-contrast image with strong edges", () => {
     const result = analyzeQuality(makeEdgeLum(), QUALITY_SAMPLE_W, QUALITY_SAMPLE_H);
-    expect(result).toEqual({ ok: true });
+    expect(result).toMatchObject({
+      ok: true,
+      metrics: {
+        brightnessScore: expect.any(Number),
+        glareScore: expect.any(Number),
+        sampleHeight: QUALITY_SAMPLE_H,
+        sampleWidth: QUALITY_SAMPLE_W,
+        sharpnessScore: 100,
+      },
+    });
+  });
+
+  it("returns scan-quality metrics on rejection", () => {
+    const result = analyzeQuality(makeLum(10), QUALITY_SAMPLE_W, QUALITY_SAMPLE_H);
+
+    expect(result).toMatchObject({
+      ok: false,
+      issue: "too_dark",
+      metrics: {
+        averageLuminance: 10,
+        brightnessScore: expect.any(Number),
+        darkPixelRatio: 1,
+        sampleHeight: QUALITY_SAMPLE_H,
+        sampleWidth: QUALITY_SAMPLE_W,
+      },
+    });
   });
 
   it("returns a human-readable message on rejection", () => {

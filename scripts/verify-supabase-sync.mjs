@@ -308,6 +308,14 @@ async function writeDatasetDetailRows(supabase, userId, scanLocalId) {
       error_message: null,
       latency_ms: 0,
       metadata_json: {
+        scanQuality: {
+          accepted: true,
+          brightnessScore: 90,
+          cameraId: "phase8-verifier",
+          checkedAt: new Date().toISOString(),
+          firstPass: true,
+          sharpnessScore: 95,
+        },
         source: "phase8-verifier",
       },
       model: "synthetic",

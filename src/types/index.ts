@@ -13,6 +13,39 @@ export type ConfirmationNeed = "none" | "one_more_angle" | "reference_needed";
 
 export type LabelRescueTrigger = "too_blurry";
 
+export type ScanQualityFailureReason =
+  | "too_dark"
+  | "too_bright"
+  | "too_blurry"
+  | "object_too_small"
+  | "needs_better_photo";
+
+export type ScanQualitySnapshot = {
+  accepted: boolean;
+  averageLuminance: number | null;
+  brightPixelRatio: number | null;
+  brightnessScore: number | null;
+  cameraId: string;
+  checkedAt: string;
+  darkPixelRatio: number | null;
+  failureReason?: ScanQualityFailureReason;
+  firstPass: boolean;
+  fixAction?: string;
+  glareScore: number | null;
+  gradientVariance: number | null;
+  motionFallback: boolean;
+  motionScore: number | null;
+  motionStable: boolean;
+  objectSizeRatio: number | null;
+  previousFailureReason?: ScanQualityFailureReason;
+  sampleHeight: number | null;
+  sampleWidth: number | null;
+  sharpnessScore: number | null;
+  targetCenteredScore: number | null;
+  targetConfidence: number | null;
+  targetLocked: boolean;
+};
+
 export const SCAN_CATEGORIES = [
   "engine",
   "electrical",
@@ -76,6 +109,7 @@ export type ScanAnalysisState = {
   errorMessage?: string;
   errorCode?: string;
   analyzedAt?: string;
+  scanQuality?: ScanQualitySnapshot;
   storageWarning?: string;
 };
 
@@ -108,6 +142,7 @@ export type Lookup = {
   errorMessage?: string;
   errorCode?: string;
   analyzedAt?: string;
+  scanQuality?: ScanQualitySnapshot;
   rating: Rating;
   correction: string | null;
   notes: string;
