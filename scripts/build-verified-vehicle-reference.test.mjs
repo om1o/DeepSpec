@@ -32,7 +32,7 @@ describe("buildVerifiedVehicleReference", () => {
       expect(requestedUrls).toHaveLength(2);
       expect(result.manifest).toMatchObject({
         datasetId: "verified-vehicle-reference-v1",
-        recordCount: 5,
+        recordCount: 6,
         target: {
           make: "toyota",
           model: "camry",
@@ -69,7 +69,7 @@ describe("buildVerifiedVehicleReference", () => {
 
       const camryIndex = JSON.parse(await readFile(join(root, "by-label", "camry", "records.json"), "utf8"));
       expect(camryIndex).toMatchObject({
-        count: 5,
+        count: 6,
         label: "camry",
       });
     } finally {

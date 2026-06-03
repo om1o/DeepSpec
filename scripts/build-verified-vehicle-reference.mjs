@@ -34,6 +34,17 @@ const OEM_SOURCE_POINTERS = [
       "Official Toyota parts and accessories storefront with VIN/vehicle selection for genuine Toyota parts.",
   },
   {
+    id: "toyota-owner-manuals",
+    labels: ["toyota", "camry", "owner manual", "maintenance", "vehicle documents"],
+    sourceLicense:
+      "OEM public vehicle document source. Store metadata and links only unless terms permit content storage or model training.",
+    sourceName: "Toyota Warranty and Owner Manuals",
+    sourceTier: "tier_1_oem",
+    sourceUrl: "https://www.toyota.com/owners/warranty-owners-manuals/",
+    summary:
+      "Toyota owner-facing source for warranty and owner manual documents by vehicle.",
+  },
+  {
     id: "nhtsa-vin-decoder",
     labels: ["nhtsa", "vin", "toyota", "camry", "vehicle identity"],
     sourceLicense: "Public U.S. government vehicle identity source; data is manufacturer-reported through NHTSA vPIC.",
