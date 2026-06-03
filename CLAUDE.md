@@ -16,17 +16,20 @@ Run the Real Website QA Agent for DeepSpec:
 npm run test:website
 ```
 
+This is an app QA run, not a QA doctor self-test. Use `qa:doctor` to separate environment, auth, browser, selector, and missing-env blockers before calling anything a product bug, then test DeepSpec like a human tester would: auth, frontend routes, scanner behavior, engine-image analysis with the repo fixture or generated fallback, saved results, chat, backend/API health, and database/Supabase reachability.
+
 The wrapper reads `QA_BASE_URL` from the shell, `.env.local`, or `.env`. If `QA_BASE_URL` is missing, it falls back to `http://localhost:3000`.
 
 Test these DeepSpec flows in order:
 
 1. auth-login
 2. scanner
-3. saved-history
-4. result-detail
-5. result-chat
-6. early-access
-7. api-cloud-health
+3. scanner-ai-engine
+4. saved-history
+5. result-detail
+6. result-chat
+7. early-access
+8. api-cloud-health
 
 Save results to `artifacts/qa/<timestamp>/`. The final response must include the report path, what passed, what failed, screenshots/evidence path, frontend bugs, backend bugs, auth/session bugs, environment issues, suggested fixes, and likely files to edit.
 
@@ -42,3 +45,4 @@ Safety rules:
 - If credentials are missing, classify it as missing env.
 - If a browser selector fails, classify it as a test bug unless the UI is actually broken.
 - Always run `qa:doctor` before saying something is a real product bug.
+- Do not report files to edit for passing scenarios; likely edit files should come from failed or blocked findings only.

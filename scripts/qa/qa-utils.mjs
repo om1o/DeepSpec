@@ -6,6 +6,7 @@ export const DEFAULT_QA_BASE_URL = "http://localhost:3000";
 export const DEEPSPEC_QA_SCENARIOS = [
   "auth-login",
   "scanner",
+  "scanner-ai-engine",
   "saved-history",
   "result-detail",
   "result-chat",

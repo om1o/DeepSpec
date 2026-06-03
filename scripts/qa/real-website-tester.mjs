@@ -1,3 +1,4 @@
+import { copyFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   DEEPSPEC_QA_SCENARIOS,
@@ -52,6 +53,7 @@ const scenarioHandlers = {
   "early-access": runEarlyAccess,
   "result-chat": runResultChat,
   "result-detail": runResultDetail,
+  "scanner-ai-engine": runScannerAiEngine,
   "saved-history": runSavedHistory,
   scanner: runScanner,
 };
@@ -76,8 +78,13 @@ try {
   page = await context.newPage();
   attachLoggers(page);
 
-  for (const scenario of scenarioOrder) {
-    await runScenario(scenario);
+  const reachability = await checkBaseUrlReachability();
+  if (!reachability.ok) {
+    addEnvironmentBlockedResults(reachability);
+  } else {
+    for (const scenario of scenarioOrder) {
+      await runScenario(scenario);
+    }
   }
 } catch (error) {
   results.push({
@@ -123,6 +130,64 @@ try {
   }
 
   await writeRunReports();
+}
+
+async function checkBaseUrlReachability() {
+  try {
+    const response = await fetchWithTimeout(baseUrl, { method: "GET" }, 30_000);
+    if (response.status >= 500) {
+      return {
+        details: `GET ${baseUrl} returned HTTP ${response.status}.`,
+        ok: false,
+        type: "backend",
+      };
+    }
+
+    return {
+      details: `GET ${baseUrl} returned HTTP ${response.status}.`,
+      ok: true,
+      type: "environment",
+    };
+  } catch (error) {
+    return {
+      details: `The app is not reachable at ${baseUrl}: ${formatError(error)}.`,
+      ok: false,
+      type: "environment",
+    };
+  }
+}
+
+function addEnvironmentBlockedResults(reachability) {
+  const category = reachability.type === "backend" ? "backend" : "environment";
+  const suggestedFix = category === "backend"
+    ? "Fix the server error at the configured QA_BASE_URL, then rerun `npm run qa:doctor` before calling any scenario a product bug."
+    : "Start DeepSpec at the configured QA_BASE_URL or set QA_BASE_URL to the running app URL, then rerun `npm run qa:doctor` before product triage.";
+
+  results.push({
+    category,
+    details: reachability.details,
+    evidence: {},
+    likelyFiles: category === "backend" ? ["vite.config.ts", "api/identify.shared.ts", "api/chat.shared.ts"] : [],
+    name: "environment-preflight",
+    status: "fail",
+    suggestedFix,
+    finishedAt: new Date().toISOString(),
+    startedAt,
+  });
+
+  for (const scenario of scenarioOrder) {
+    results.push({
+      category,
+      details: `${scenario} was not run because the app server is not reachable. ${reachability.details}`,
+      evidence: {},
+      likelyFiles: [],
+      name: scenario,
+      status: "blocked",
+      suggestedFix,
+      finishedAt: new Date().toISOString(),
+      startedAt,
+    });
+  }
 }
 
 async function runScenario(scenario) {
@@ -233,17 +298,130 @@ async function runAuthLogin() {
 
 async function runScanner() {
   await requireAuthForProtectedRoute("scanner");
+  const startedAtMs = Date.now();
   await gotoPath("/scan");
   await waitForAny([
     page.getByRole("button", { name: /Scan now/i }),
     page.getByLabel(/Upload photo/i),
   ], "scanner controls");
+  const controlsReadyMs = Date.now() - startedAtMs;
+
+  if (controlsReadyMs > 5_000) {
+    throw new QaIssue(
+      "frontend",
+      `Scanner controls took ${controlsReadyMs}ms to become usable; expected <= 5000ms.`,
+      {
+        likelyFiles: ["src/screens/Scanner.tsx", "src/components/scanner/IdentifyButton.tsx"],
+        suggestedFix: "Profile scanner route startup, camera fallback state, and heavy client modules before adding scanner UI scope.",
+      },
+    );
+  }
 
   return {
-    details: "Scanner route rendered the scan/upload controls.",
+    details: `Scanner route rendered scan/upload controls in ${controlsReadyMs}ms.`,
     likelyFiles: ["src/screens/Scanner.tsx", "src/components/scanner/IdentifyButton.tsx"],
     status: "pass",
   };
+}
+
+async function runScannerAiEngine() {
+  await requireAuthForProtectedRoute("scanner-ai-engine");
+  const routeStartedAtMs = Date.now();
+  await gotoPath("/scan");
+  const uploadInput = page.getByLabel(/Upload photo/i);
+  await uploadInput.waitFor({ state: "attached", timeout: 7_000 });
+  const controlsReadyMs = Date.now() - routeStartedAtMs;
+  const fixture = await createEngineFixture();
+
+  const uploadStartedAtMs = Date.now();
+  await uploadInput.setInputFiles(fixture.path);
+  const outcome = await waitForScannerAiOutcome();
+  const analysisMs = Date.now() - uploadStartedAtMs;
+  const lastIdentifyResponse = getLastNetworkResponse("/api/identify");
+  const timingSummary = `scanner controls=${controlsReadyMs}ms, engine upload+AI=${analysisMs}ms, /api/identify=${lastIdentifyResponse?.status ?? "not observed"}`;
+
+  if (controlsReadyMs > 5_000) {
+    throw new QaIssue(
+      "frontend",
+      `Scanner controls were slow before AI upload: ${timingSummary}.`,
+      {
+        likelyFiles: ["src/screens/Scanner.tsx"],
+        suggestedFix: "Profile scanner route startup and camera fallback work; keep upload controls usable quickly even when camera setup is slow.",
+      },
+    );
+  }
+
+  if (outcome.type === "result") {
+    if (analysisMs > 90_000) {
+      throw new QaIssue(
+        "backend",
+        `Engine scan completed but was too slow: ${timingSummary}. Visible result: ${outcome.text}`,
+        {
+          likelyFiles: ["src/screens/Scanner.tsx", "src/services/aiService.ts", "api/identify.shared.ts"],
+          suggestedFix: "Profile /api/identify provider latency, image payload size, fallback model order, and scanner save/render work.",
+        },
+      );
+    }
+
+    if (isEngineRecognitionMiss(outcome.text)) {
+      throw new QaIssue(
+        "backend",
+        `Engine scan completed but returned a generic or low-confidence result. Fixture=${fixture.source}. ${timingSummary}. Visible result: ${outcome.text}`,
+        {
+          likelyFiles: ["api/identify.shared.ts", "src/services/systemPrompts.ts", "src/services/aiService.ts"],
+          suggestedFix: "Tune the identify prompt, dataset grounding, or provider fallback so a clear engine-bay fixture returns a specific engine-related part with usable confidence.",
+        },
+      );
+    }
+
+    return {
+      details: `Engine fixture uploaded through scanner and produced a usable AI result. Fixture=${fixture.source}. ${timingSummary}. Visible result: ${outcome.text}`,
+      likelyFiles: ["src/screens/Scanner.tsx", "src/services/aiService.ts", "api/identify.shared.ts"],
+      status: "pass",
+    };
+  }
+
+  if (outcome.type === "quality") {
+    throw new QaIssue(
+      "test_bug",
+      `Engine fixture was rejected before AI analysis. Fixture=${fixture.source}. ${timingSummary}. Visible state: ${outcome.text}`,
+      {
+        likelyFiles: ["scripts/qa/real-website-tester.mjs", "src/lib/imageQuality.ts"],
+        suggestedFix: "Improve the engine fixture or scan-quality gate so a clear real engine-bay photo can reach AI analysis.",
+      },
+    );
+  }
+
+  if (/not configured|missing/i.test(outcome.text)) {
+    throw new QaIssue(
+      "missing_env",
+      `Engine scan could not reach configured AI. Fixture=${fixture.source}. ${timingSummary}. Visible state: ${outcome.text}`,
+      {
+        likelyFiles: [".env.local", ".env.example", "api/identify.shared.ts"],
+        suggestedFix: "Set the server-side AI provider key and rerun `npm run qa:doctor` before judging scanner model quality.",
+      },
+    );
+  }
+
+  if (/rate.?limit|provider|quota|unavailable|network/i.test(outcome.text)) {
+    throw new QaIssue(
+      "environment",
+      `Engine scan was blocked by provider availability. Fixture=${fixture.source}. ${timingSummary}. Visible state: ${outcome.text}`,
+      {
+        likelyFiles: ["api/identify.shared.ts", "src/services/aiService.ts"],
+        suggestedFix: "Retry when the provider is healthy, or review provider fallback order if this happens repeatedly.",
+      },
+    );
+  }
+
+  throw new QaIssue(
+    "backend",
+    `Engine scan did not produce a usable AI result. Fixture=${fixture.source}. ${timingSummary}. Visible state: ${outcome.text}`,
+    {
+      likelyFiles: ["src/screens/Scanner.tsx", "src/services/aiService.ts", "api/identify.shared.ts"],
+      suggestedFix: "Use the saved trace, network log, and HTML snapshot to inspect the upload, /api/identify response, and result-card render path.",
+    },
+  );
 }
 
 async function runSavedHistory() {
@@ -498,6 +676,129 @@ async function captureEvidence(scenario) {
   return evidence;
 }
 
+async function createEngineFixture() {
+  const fixtureDir = join(artifactDir, "fixtures");
+  const sourcePath = join(process.cwd(), "public", "test-fixtures", "engine-scan-test.jpg");
+  if (existsSync(sourcePath)) {
+    ensureDir(fixtureDir);
+    const path = join(fixtureDir, "engine-scan-test.jpg");
+    copyFileSync(sourcePath, path);
+    return { path, source: "public/test-fixtures/engine-scan-test.jpg" };
+  }
+
+  return createGeneratedEngineFixture();
+}
+
+async function createGeneratedEngineFixture() {
+  const dataUrl = await page.evaluate(() => {
+    const canvas = globalThis.document.createElement("canvas");
+    canvas.width = 1280;
+    canvas.height = 900;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Canvas context is not available.");
+    }
+
+    context.fillStyle = "#f7fafc";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+
+    context.fillStyle = "#e5e7eb";
+    context.fillRect(120, 110, 1040, 640);
+    context.strokeStyle = "#111827";
+    context.lineWidth = 18;
+    context.strokeRect(120, 110, 1040, 640);
+
+    context.fillStyle = "#374151";
+    roundRect(context, 270, 240, 740, 280, 42);
+    context.fill();
+    context.stroke();
+
+    context.fillStyle = "#111827";
+    for (let index = 0; index < 6; index += 1) {
+      const x = 330 + index * 106;
+      roundRect(context, x, 190, 62, 120, 16);
+      context.fill();
+    }
+
+    context.fillStyle = "#6b7280";
+    for (let index = 0; index < 4; index += 1) {
+      const x = 360 + index * 145;
+      roundRect(context, x, 390, 98, 86, 18);
+      context.fill();
+      context.stroke();
+    }
+
+    context.beginPath();
+    context.arc(230, 385, 86, 0, Math.PI * 2);
+    context.fillStyle = "#1f2937";
+    context.fill();
+    context.stroke();
+    context.beginPath();
+    context.arc(230, 385, 42, 0, Math.PI * 2);
+    context.fillStyle = "#f9fafb";
+    context.fill();
+    context.stroke();
+
+    context.strokeStyle = "#2563eb";
+    context.lineWidth = 16;
+    context.beginPath();
+    context.moveTo(170, 650);
+    context.bezierCurveTo(360, 560, 720, 590, 1060, 650);
+    context.stroke();
+
+    context.fillStyle = "#111827";
+    context.font = "700 64px Arial";
+    context.fillText("QA GENERATED ENGINE", 285, 645);
+    context.font = "700 38px Arial";
+    context.fillText("V6 intake, pulley, valve cover, hoses", 312, 700);
+
+    return canvas.toDataURL("image/png");
+
+    function roundRect(ctx, x, y, width, height, radius) {
+      ctx.beginPath();
+      ctx.moveTo(x + radius, y);
+      ctx.lineTo(x + width - radius, y);
+      ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+      ctx.lineTo(x + width, y + height - radius);
+      ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+      ctx.lineTo(x + radius, y + height);
+      ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+      ctx.lineTo(x, y + radius);
+      ctx.quadraticCurveTo(x, y, x + radius, y);
+      ctx.closePath();
+    }
+  });
+  const [, base64 = ""] = dataUrl.split(",");
+  const buffer = Buffer.from(base64, "base64");
+  const fixtureDir = join(artifactDir, "fixtures");
+  const path = join(fixtureDir, "generated-engine.png");
+  ensureDir(fixtureDir);
+  writeFileSync(path, buffer);
+  return { path, source: "generated-fallback" };
+}
+
+async function waitForScannerAiOutcome() {
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    const text = await getBodyText();
+    if (/Lens result|Best match|Complete brief|Tell me more/i.test(text)) {
+      return { text: compactText(text), type: "result" };
+    }
+
+    if (/Retake guide|Add light|Hold steady|Fill the frame|too dark|too bright|too blurry|too small/i.test(text)) {
+      return { text: compactText(text), type: "quality" };
+    }
+
+    if (/AI provider|rate.?limit|quota|not configured|unreadable|could not analyze|could not complete|Try again later|Scan again to identify this/i.test(text)) {
+      return { text: compactText(text), type: "error" };
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  return { text: compactText(await getBodyText()), type: "timeout" };
+}
+
 async function seedSavedScans() {
   await page.evaluate((lookups) => {
     localStorage.setItem("deep-spec:lookups", JSON.stringify(lookups));
@@ -698,6 +999,12 @@ function attachLoggers(activePage) {
   });
 }
 
+function getLastNetworkResponse(path) {
+  return networkLogs
+    .filter((entry) => entry.type === "response" && entry.url.includes(path))
+    .at(-1);
+}
+
 async function writeRunReports() {
   const finishedAt = new Date().toISOString();
   const report = buildReport(finishedAt);
@@ -727,7 +1034,9 @@ function buildReport(finishedAt) {
     testBugs: collectProblems("test_bug"),
   };
   const suggestedFixes = unique(results.map((result) => result.suggestedFix).filter(Boolean));
-  const likelyFiles = unique(results.flatMap((result) => result.likelyFiles ?? []));
+  const likelyFiles = unique(results
+    .filter((result) => result.status !== "pass")
+    .flatMap((result) => result.likelyFiles ?? []));
 
   return {
     artifactDir,
@@ -827,6 +1136,7 @@ function likelyFilesForScenario(scenario) {
     "result-detail": ["src/screens/Result.tsx", "src/services/storage.ts"],
     "saved-history": ["src/screens/History.tsx", "src/services/storage.ts"],
     scanner: ["src/screens/Scanner.tsx"],
+    "scanner-ai-engine": ["src/screens/Scanner.tsx", "src/services/aiService.ts", "api/identify.shared.ts"],
   };
 
   return mapping[scenario] ?? ["scripts/qa/real-website-tester.mjs"];
@@ -850,6 +1160,22 @@ function renderProblemList(items) {
 
 function unique(items) {
   return [...new Set(items)];
+}
+
+function compactText(value) {
+  return value.replace(/\s+/g, " ").trim().slice(0, 600);
+}
+
+function isEngineRecognitionMiss(text) {
+  const lower = text.toLowerCase();
+  if (
+    /\b(unknown component|unidentified|vehicle component|placeholder|does not depict a real car part|please upload a clear photograph)\b/.test(lower)
+    || /\b(20-40%|25-40%|low confidence)\b/.test(lower)
+  ) {
+    return true;
+  }
+
+  return !/\b(engine|motor|alternator|intake|manifold|oil cap|valve cover|serpentine|pulley|engine bay)\b/.test(lower);
 }
 
 function escapeMarkdownTable(value) {
