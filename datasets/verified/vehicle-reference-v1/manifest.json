@@ -1,0 +1,50 @@
+{
+  "datasetId": "verified-vehicle-reference-v1",
+  "generatedAt": "2026-06-03T01:08:37.072Z",
+  "target": {
+    "make": "toyota",
+    "model": "camry",
+    "years": [
+      2018,
+      2019,
+      2020,
+      2021,
+      2022,
+      2023,
+      2024,
+      2025,
+      2026
+    ]
+  },
+  "outDir": "datasets/verified/vehicle-reference-v1",
+  "recordCount": 12,
+  "skipped": [],
+  "sourcePolicy": "docs/VERIFIED_SOURCE_POLICY.md",
+  "sources": [
+    {
+      "sourceName": "NHTSA vPIC API",
+      "sourceTier": "tier_1_government",
+      "sourceUrl": "https://vpic.nhtsa.dot.gov/api/",
+      "use": "Downloaded manufacturer-reported make/model/model-year records to constrain vehicle identity."
+    },
+    {
+      "sourceName": "Toyota Technical Information System",
+      "sourceTier": "tier_1_oem",
+      "sourceUrl": "https://techinfo.toyota.com/tis/",
+      "use": "Stored as metadata-only pointer. Content is not downloaded for training until usage rights are verified."
+    },
+    {
+      "sourceName": "Toyota Parts Center Online",
+      "sourceTier": "tier_1_oem",
+      "sourceUrl": "https://autoparts.toyota.com/",
+      "use": "Stored as metadata-only pointer. Content is not downloaded for training until usage rights are verified."
+    },
+    {
+      "sourceName": "NHTSA VIN Decoder",
+      "sourceTier": "tier_1_government",
+      "sourceUrl": "https://www.nhtsa.gov/vin-decoder",
+      "use": "Stored as metadata-only pointer. Content is not downloaded for training until usage rights are verified."
+    }
+  ],
+  "totalLabels": 23
+}
