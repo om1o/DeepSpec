@@ -37,6 +37,9 @@ const SCAN_CARD_SAFE_HEIGHT_PX = 560;
 const MIN_TARGET_WIDTH_PX = 96;
 const MIN_TARGET_HEIGHT_PX = 72;
 const MIN_TARGET_AREA_RATIO = 0.018;
+const MIN_AUTOSCAN_OBJECT_AREA_RATIO = 0.035;
+const MIN_AUTOSCAN_CENTERED_SCORE = 58;
+const MIN_AUTOSCAN_CONFIDENCE = 0.48;
 const METRIC_FASTENER_WIDTHS_MM = [6, 7, 8, 10, 12, 13, 14, 16, 17, 18, 19, 21, 22, 24];
 const SAE_FASTENER_WIDTHS = [
   { label: "1/4 in", mm: 6.35 },
@@ -95,6 +98,8 @@ type ScanRewardState = {
   detail: string;
   message: string;
 };
+
+type AutoScanGuide = "move_closer" | "center_part" | "hold_still" | null;
 
 type SizeReferencePreset = "card_short_edge" | "card_long_edge" | "us_quarter" | "us_nickel";
 
@@ -158,8 +163,16 @@ export default function Scanner() {
   const targetProgress = objectTarget?.holdProgress ?? 0;
   const hasTargetLock = Boolean(objectTarget?.isLocked);
   const isTargetTooSmallNow = objectTarget ? isObjectTargetTooSmall(objectTarget) : false;
+  const autoScanReadiness = getAutoScanReadiness(objectTarget, {
+    isStable,
+    isTargetTooSmall: isTargetTooSmallNow,
+    usesFallback,
+  });
+  const isAutoScanReady = autoScanReadiness.isReady;
+  const autoScanGuide = autoScanReadiness.guide;
   const autoScanSeconds = Math.max(1, Math.ceil((1 - targetProgress) * (AUTO_SCAN_HOLD_MS / 1000)));
   const scannerStatus = getScannerStatus({
+    autoScanGuide,
     autoScanPaused,
     autoScanSeconds,
     cameraState,
@@ -682,7 +695,7 @@ export default function Scanner() {
   }, [location.pathname, scanCardPrefs.hideConfidence]);
 
   useEffect(() => {
-    if (!hasTargetLock || cameraState !== "ready" || isAnalyzing || autoScanPaused || scanReview || isTargetTooSmallNow) {
+    if (!isAutoScanReady || cameraState !== "ready" || isAnalyzing || autoScanPaused || scanReview) {
       return;
     }
 
@@ -693,7 +706,7 @@ export default function Scanner() {
     autoScanStartedRef.current = true;
     pulseTargetLock();
     void handleIdentify();
-  }, [autoScanPaused, cameraState, handleIdentify, hasTargetLock, isAnalyzing, isTargetTooSmallNow, scanReview]);
+  }, [autoScanPaused, cameraState, handleIdentify, isAnalyzing, isAutoScanReady, scanReview]);
 
   useEffect(() => {
     if (!hasTargetLock && !isAnalyzing) {
@@ -784,9 +797,10 @@ export default function Scanner() {
       {cameraState !== "blocked" ? (
         <>
           <Reticle
-            isLocked={hasTargetLock}
+            isLocked={isAutoScanReady}
             isVisible={cameraState === "ready" && !scanReview}
             label={getReticleLabel({
+              autoScanGuide,
               autoScanSeconds,
               hasTarget: Boolean(objectTarget),
               hasTargetLock,
@@ -797,7 +811,7 @@ export default function Scanner() {
           />
           {cameraState === "ready" && objectTarget && !scanReview && !isAnalyzing ? (
             <TapTargetButton
-              isLocked={hasTargetLock}
+              isLocked={isAutoScanReady}
               isTooSmall={isTargetTooSmallNow}
               onSelect={() => void handleIdentify(objectTarget)}
               target={objectTarget}
@@ -870,6 +884,7 @@ export default function Scanner() {
 }
 
 function getScannerStatus({
+  autoScanGuide,
   autoScanPaused,
   autoScanSeconds,
   cameraState,
@@ -882,6 +897,7 @@ function getScannerStatus({
   targetProgress,
   usesFallback,
 }: {
+  autoScanGuide: AutoScanGuide;
   autoScanPaused: boolean;
   autoScanSeconds: number;
   cameraState: string;
@@ -914,8 +930,20 @@ function getScannerStatus({
     return "Move closer";
   }
 
-  if (hasTargetLock) {
+  if (autoScanGuide === "move_closer") {
+    return "Move closer";
+  }
+
+  if (autoScanGuide === "center_part") {
+    return "Center one part";
+  }
+
+  if (autoScanGuide === "hold_still") {
     return "Hold still";
+  }
+
+  if (hasTargetLock) {
+    return "Locked";
   }
 
   if (hasTarget) {
@@ -927,6 +955,51 @@ function getScannerStatus({
   }
 
   return autoScanSeconds > 1 ? "Center part" : "Hold still";
+}
+
+function getAutoScanReadiness(
+  target: CameraObjectTarget | null,
+  {
+    isStable,
+    isTargetTooSmall,
+    usesFallback,
+  }: {
+    isStable: boolean;
+    isTargetTooSmall: boolean;
+    usesFallback: boolean;
+  },
+): { guide: AutoScanGuide; isReady: boolean } {
+  if (!target) {
+    return { guide: null, isReady: false };
+  }
+
+  if (isTargetTooSmall) {
+    return { guide: "move_closer", isReady: false };
+  }
+
+  const objectSizeRatio = getObjectSizeRatio(target);
+  if (objectSizeRatio !== null && objectSizeRatio < MIN_AUTOSCAN_OBJECT_AREA_RATIO) {
+    return { guide: "move_closer", isReady: false };
+  }
+
+  const centeredScore = getTargetCenteredScore(target);
+  if (centeredScore !== null && centeredScore < MIN_AUTOSCAN_CENTERED_SCORE) {
+    return { guide: "center_part", isReady: false };
+  }
+
+  if (target.confidence < MIN_AUTOSCAN_CONFIDENCE) {
+    return { guide: "center_part", isReady: false };
+  }
+
+  if (!target.isLocked || target.holdProgress < 1) {
+    return { guide: null, isReady: false };
+  }
+
+  if (!usesFallback && !isStable) {
+    return { guide: "hold_still", isReady: false };
+  }
+
+  return { guide: null, isReady: true };
 }
 
 function getVideoConstraints(deviceId: string): MediaTrackConstraints {
@@ -1037,12 +1110,14 @@ function vibrate(pattern: VibratePattern) {
 }
 
 function getReticleLabel({
+  autoScanGuide,
   autoScanSeconds,
   hasTarget,
   hasTargetLock,
   isTargetTooSmall,
   qualityCoach,
 }: {
+  autoScanGuide: AutoScanGuide;
   autoScanSeconds: number;
   hasTarget: boolean;
   hasTargetLock: boolean;
@@ -1057,8 +1132,20 @@ function getReticleLabel({
     return "Move closer";
   }
 
-  if (hasTargetLock) {
+  if (autoScanGuide === "move_closer") {
+    return "Move closer";
+  }
+
+  if (autoScanGuide === "center_part") {
+    return "Center part";
+  }
+
+  if (autoScanGuide === "hold_still") {
     return "Hold still";
+  }
+
+  if (hasTargetLock) {
+    return "Locked";
   }
 
   if (hasTarget) {
