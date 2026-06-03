@@ -1,6 +1,6 @@
 {
   "datasetId": "verified-vehicle-reference-v1",
-  "generatedAt": "2026-06-03T01:08:37.072Z",
+  "generatedAt": "2026-06-03T01:13:20.525Z",
   "target": {
     "make": "toyota",
     "model": "camry",
@@ -17,7 +17,7 @@
     ]
   },
   "outDir": "datasets/verified/vehicle-reference-v1",
-  "recordCount": 12,
+  "recordCount": 13,
   "skipped": [],
   "sourcePolicy": "docs/VERIFIED_SOURCE_POLICY.md",
   "sources": [
@@ -40,11 +40,17 @@
       "use": "Stored as metadata-only pointer. Content is not downloaded for training until usage rights are verified."
     },
     {
+      "sourceName": "Toyota Warranty and Owner Manuals",
+      "sourceTier": "tier_1_oem",
+      "sourceUrl": "https://www.toyota.com/owners/warranty-owners-manuals/",
+      "use": "Stored as metadata-only pointer. Content is not downloaded for training until usage rights are verified."
+    },
+    {
       "sourceName": "NHTSA VIN Decoder",
       "sourceTier": "tier_1_government",
       "sourceUrl": "https://www.nhtsa.gov/vin-decoder",
       "use": "Stored as metadata-only pointer. Content is not downloaded for training until usage rights are verified."
     }
   ],
-  "totalLabels": 23
+  "totalLabels": 26
 }
