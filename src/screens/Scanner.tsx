@@ -1238,14 +1238,24 @@ function GalleryScanButton({
   isDisabled: boolean;
   onFileSelected: (file: File) => void;
 }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
   return (
-    <label
-      className={`fixed bottom-[112px] left-1/2 z-40 -translate-x-1/2 rounded-full bg-slate-950/62 px-4 py-2 text-xs font-extrabold text-white ring-1 ring-white/14 backdrop-blur-xl transition ${
-        isDisabled ? "pointer-events-none opacity-45" : "cursor-pointer opacity-100"
-      }`}
-    >
-      Upload photo
+    <>
+      <button
+        type="button"
+        aria-controls="scanner-gallery-upload"
+        className={`fixed bottom-[112px] left-1/2 z-40 -translate-x-1/2 rounded-full bg-slate-950/62 px-4 py-2 text-xs font-extrabold text-white ring-1 ring-white/14 backdrop-blur-xl transition ${
+          isDisabled ? "pointer-events-none opacity-45" : "cursor-pointer opacity-100"
+        }`}
+        disabled={isDisabled}
+        onClick={() => inputRef.current?.click()}
+      >
+        Upload photo
+      </button>
       <input
+        ref={inputRef}
+        id="scanner-gallery-upload"
         aria-label="Upload photo"
         accept="image/jpeg,image/png,image/webp"
         className="sr-only"
@@ -1259,7 +1269,7 @@ function GalleryScanButton({
         }}
         type="file"
       />
-    </label>
+    </>
   );
 }
 

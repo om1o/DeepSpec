@@ -302,7 +302,7 @@ async function runScanner() {
   await gotoPath("/scan");
   await waitForAny([
     page.getByRole("button", { name: /Scan now/i }),
-    page.getByLabel(/Upload photo/i),
+    getUploadPhotoButton(),
   ], "scanner controls");
   const controlsReadyMs = Date.now() - startedAtMs;
 
@@ -328,6 +328,7 @@ async function runScannerAiEngine() {
   await requireAuthForProtectedRoute("scanner-ai-engine");
   const routeStartedAtMs = Date.now();
   await gotoPath("/scan");
+  await getUploadPhotoButton().waitFor({ state: "visible", timeout: 7_000 });
   const uploadInput = page.getByLabel(/Upload photo/i);
   await uploadInput.waitFor({ state: "attached", timeout: 7_000 });
   const controlsReadyMs = Date.now() - routeStartedAtMs;
@@ -557,7 +558,6 @@ async function requireAuthForProtectedRoute(scenario) {
 async function gotoPath(path) {
   const target = new URL(path, `${baseUrl}/`).toString();
   const response = await page.goto(target, { timeout: 30_000, waitUntil: "domcontentloaded" });
-  await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
 
   if (response?.status() >= 500) {
     throw new QaIssue(
@@ -641,6 +641,10 @@ async function waitForAny(locators, label) {
       },
     );
   }
+}
+
+function getUploadPhotoButton() {
+  return page.locator("button", { hasText: /Upload photo/i }).first();
 }
 
 async function captureEvidence(scenario) {
