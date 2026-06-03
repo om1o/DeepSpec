@@ -10,6 +10,7 @@ Deep Spec should feel professional, responsive, and trustworthy: no broken scan 
 - Users always know where they are, what happened, what to do next, and whether saving, syncing, retrying, sharing, or feedback submission succeeded or failed.
 - Saved scan data keeps the photo, AI answer, category, timestamp, confidence, rating, correction, notes, chat history, and review/training status.
 - Optional Supabase sync must preserve the same dataset fields with private image storage, auth ownership, row-level security, and narrow migrations.
+- Exact vehicle, engine, and replacement-part claims must follow the verified-source policy in [VERIFIED_SOURCE_POLICY.md](VERIFIED_SOURCE_POLICY.md). Unverified matches must stay framed as likely, with visible evidence and uncertainty.
 - Public-facing screens must be readable, responsive, and usable on mobile first, with desktop layouts still clean and stable.
 
 ## Engineering Standard
