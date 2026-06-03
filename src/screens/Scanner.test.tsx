@@ -300,6 +300,44 @@ describe("Scanner", () => {
     expect(identifyCapturedFrame.mock.calls[0][1]).toBeUndefined();
   }, 10000);
 
+  it("lets the user tap the selected object to scan before auto lock", async () => {
+    objectTargetState.current = {
+      confidence: 0.72,
+      id: "target-tap",
+      height: 160,
+      holdProgress: 0.34,
+      isLocked: false,
+      left: 72,
+      top: 150,
+      width: 220,
+      normalized: {
+        x: 0.18,
+        y: 0.28,
+        width: 0.24,
+        height: 0.18,
+      },
+    };
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Scan selected part" }));
+
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    expect(createFocusedScanCrop).toHaveBeenCalledWith("data:image/jpeg;base64,compressed-frame", {
+      x: 0.18,
+      y: 0.28,
+      width: 0.24,
+      height: 0.18,
+    });
+    expect(await screen.findByRole("heading", { level: 3, name: "Alternator" })).toBeInTheDocument();
+  }, 10000);
+
   it("falls back to a second camera frame when a focused target crop is unavailable", async () => {
     createFocusedScanCrop.mockResolvedValueOnce(null);
     captureFrame
@@ -323,7 +361,7 @@ describe("Scanner", () => {
     });
   }, 10000);
 
-  it("keeps the anchored result card usable in a mobile viewport", async () => {
+  it("keeps the bottom-sheet result card usable in a mobile viewport", async () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
     Object.defineProperty(window, "innerHeight", { configurable: true, value: 667 });
 
@@ -338,14 +376,13 @@ describe("Scanner", () => {
     const reviewHeading = await screen.findByRole("heading", { level: 3, name: "Alternator" });
     const reviewCard = reviewHeading.closest("section") as HTMLElement | null;
     expect(reviewCard).toBeTruthy();
-    expect(Number.parseFloat(reviewCard?.style.left ?? "999")).toBeLessThanOrEqual(14);
-    expect(Number.parseFloat(reviewCard?.style.top ?? "999")).toBeLessThanOrEqual(120);
-    expect(reviewCard?.style.maxHeight).toContain("72dvh");
-    expect(reviewCard?.style.maxWidth).toContain("92vw");
+    expect(reviewCard).toHaveAttribute("data-anchor-side");
+    expect(reviewCard?.className).toContain("bottom-[max(16px,env(safe-area-inset-bottom))]");
+    expect(reviewCard?.className).toContain("max-h-[min(58dvh,520px)]");
     expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Open details" })).toBeInTheDocument();
-    expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Set reference" })).toBeInTheDocument();
-    expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Estimate size" })).toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Correct label" })).toBeInTheDocument();
+    expect(within(reviewCard as HTMLElement).queryByRole("button", { name: "Set reference" })).not.toBeInTheDocument();
+    expect(within(reviewCard as HTMLElement).queryByRole("button", { name: "Estimate size" })).not.toBeInTheDocument();
   }, 10000);
 
   it("requires a size reference before estimating AR size for fastener replacement", async () => {
