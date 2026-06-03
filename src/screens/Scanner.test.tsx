@@ -508,6 +508,83 @@ describe("Scanner", () => {
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
   });
 
+  it("waits for a prominent target before autoscan but keeps manual scan available", async () => {
+    objectTargetState.current = {
+      confidence: 0.82,
+      id: "target-small-auto",
+      height: 150,
+      holdProgress: 1,
+      isLocked: true,
+      left: 360,
+      top: 260,
+      width: 140,
+      normalized: {
+        x: 0.36,
+        y: 0.32,
+        width: 0.18,
+        height: 0.15,
+      },
+    };
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getAllByText("Move closer").length).toBeGreaterThan(0);
+    expect(captureFrame).not.toHaveBeenCalled();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("heading", { level: 3, name: "Alternator" })).toBeInTheDocument();
+  }, 10000);
+
+  it("waits for a centered target before autoscan but lets the user tap the object", async () => {
+    objectTargetState.current = {
+      confidence: 0.82,
+      id: "target-edge-auto",
+      height: 220,
+      holdProgress: 1,
+      isLocked: true,
+      left: 20,
+      top: 260,
+      width: 220,
+      normalized: {
+        x: 0.03,
+        y: 0.35,
+        width: 0.22,
+        height: 0.22,
+      },
+    };
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("Center one part")).toBeInTheDocument();
+    expect(captureFrame).not.toHaveBeenCalled();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Scan selected part" }));
+
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    expect(createFocusedScanCrop).toHaveBeenCalledWith("data:image/jpeg;base64,compressed-frame", {
+      x: 0.03,
+      y: 0.35,
+      width: 0.22,
+      height: 0.22,
+    });
+  }, 10000);
+
   it("shows camera permission denial and lets the user retry camera access", async () => {
     cameraHookState.current = {
       cameraError: "Permission denied",
