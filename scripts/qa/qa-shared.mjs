@@ -4,8 +4,10 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const REPO_ROOT = process.cwd();
-export const QA_ARTIFACT_DIR = join(REPO_ROOT, "artifacts", "qa");
-export const DEFAULT_QA_BASE_URL = "http://127.0.0.1:5173";
+export const QA_ARTIFACT_DIR = process.env.QA_ARTIFACT_DIR
+  ? resolve(process.env.QA_ARTIFACT_DIR)
+  : join(REPO_ROOT, "artifacts", "qa", new Date().toISOString().replace(/[:.]/g, "-"));
+export const DEFAULT_QA_BASE_URL = "http://localhost:3000";
 
 export function ensureDir(path) {
   mkdirSync(path, { recursive: true });

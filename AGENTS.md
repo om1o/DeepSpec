@@ -56,3 +56,81 @@ Turn imperative tasks into verifiable goals.
 - For "fix the bug", write or run a test that reproduces it, then make it pass.
 - For "refactor X", make sure tests pass before and after.
 - For multi-step work, state a brief plan and commit to GitHub after verification.
+
+## Active QA Trigger
+
+When the user types:
+
+```text
+test the website
+```
+
+Run the Real Website QA Agent for DeepSpec.
+
+Use this shortcut command:
+
+```bash
+npm run test:website
+```
+
+The cross-platform wrapper reads `QA_BASE_URL` from the shell, `.env.local`, or `.env`. If `QA_BASE_URL` is missing, use:
+
+```text
+http://localhost:3000
+```
+
+The underlying default command is:
+
+```bash
+npm run qa:doctor && npm run qa:real -- --url "$QA_BASE_URL" --headed
+```
+
+With no `QA_BASE_URL`, the fallback command is:
+
+```bash
+npm run qa:doctor && npm run qa:real -- --url http://localhost:3000 --headed
+```
+
+Do not ask follow-up questions unless the app URL is completely unknown and `QA_BASE_URL` is missing. In this repo, the URL is not completely unknown because the fallback is `http://localhost:3000`.
+
+Test these DeepSpec flows in order:
+
+1. auth-login
+2. scanner
+3. saved-history
+4. result-detail
+5. result-chat
+6. early-access
+7. api-cloud-health
+
+Save results to:
+
+```text
+artifacts/qa/<timestamp>/
+```
+
+The final message must include:
+
+- report path
+- what passed
+- what failed
+- screenshots/evidence path
+- frontend bugs
+- backend bugs
+- auth/session bugs
+- environment issues
+- suggested fixes
+- likely files to edit
+
+Safety rules:
+
+- Do not make real payments.
+- Do not delete real data.
+- Do not wipe files.
+- Do not run destructive git commands.
+- Do not auto-merge.
+- Do not edit code unless the user explicitly says "fix it."
+- If the app is not running, classify it as an environment issue.
+- If credentials are missing, classify it as missing env.
+- If a browser selector fails, classify it as a test bug unless the UI is actually broken.
+- Always run `qa:doctor` before saying something is a real product bug.

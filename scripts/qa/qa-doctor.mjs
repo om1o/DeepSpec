@@ -31,6 +31,9 @@ if (isMainModule(import.meta.url)) {
   console.log(`Wrote ${repoRelative(OUTPUT_MD)}`);
   console.log(`Wrote ${repoRelative(OUTPUT_JSON)}`);
   console.log(`QA doctor: ${result.overall} (${result.primaryClassification})`);
+  if (result.overall !== "passed") {
+    process.exitCode = 1;
+  }
 }
 
 export async function runDoctor(options = {}) {
@@ -175,7 +178,7 @@ async function checkDatabaseReachable(config) {
 
 function checkTestAccountConfigured() {
   const hasPasswordAccount = Boolean(process.env.DEEPSPEC_AUTH_TEST_EMAIL?.trim() && process.env.DEEPSPEC_AUTH_TEST_PASSWORD?.trim());
-  const usesAnonymous = process.env.DEEPSPEC_QA_AUTH_MODE?.trim().toLowerCase() === "anonymous";
+  const usesAnonymous = process.env.DEEPSPEC_QA_AUTH_MODE?.trim().toLowerCase() !== "password";
 
   return checkResult(
     "test account exists or is configured",
@@ -183,8 +186,8 @@ function checkTestAccountConfigured() {
     hasPasswordAccount
       ? "DEEPSPEC_AUTH_TEST_EMAIL and DEEPSPEC_AUTH_TEST_PASSWORD are configured."
       : usesAnonymous
-        ? "DEEPSPEC_QA_AUTH_MODE=anonymous is configured."
-        : "Set DEEPSPEC_AUTH_TEST_EMAIL and DEEPSPEC_AUTH_TEST_PASSWORD, or DEEPSPEC_QA_AUTH_MODE=anonymous for the supported no-email QA path.",
+        ? "Using DeepSpec no-email Supabase auth for QA."
+        : "Set DEEPSPEC_AUTH_TEST_EMAIL and DEEPSPEC_AUTH_TEST_PASSWORD, or use the supported no-email QA path.",
     "missing env",
     { authMode: usesAnonymous ? "anonymous" : hasPasswordAccount ? "password" : "missing" },
   );
@@ -208,7 +211,7 @@ async function checkAuthSession(config) {
     },
   });
 
-  const authMode = process.env.DEEPSPEC_QA_AUTH_MODE?.trim().toLowerCase();
+  const authMode = process.env.DEEPSPEC_QA_AUTH_MODE?.trim().toLowerCase() || "anonymous";
   const email = process.env.DEEPSPEC_AUTH_TEST_EMAIL?.trim();
   const password = process.env.DEEPSPEC_AUTH_TEST_PASSWORD?.trim();
 
