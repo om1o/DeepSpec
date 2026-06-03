@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import Webcam from "react-webcam";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import IdentifyButton from "../components/scanner/IdentifyButton";
@@ -795,6 +795,14 @@ export default function Scanner() {
             })}
             progress={targetProgress}
           />
+          {cameraState === "ready" && objectTarget && !scanReview && !isAnalyzing ? (
+            <TapTargetButton
+              isLocked={hasTargetLock}
+              isTooSmall={isTargetTooSmallNow}
+              onSelect={() => void handleIdentify(objectTarget)}
+              target={objectTarget}
+            />
+          ) : null}
 
           {needsPermission ? <MotionPermissionModal error={motionError} onAllow={requestPermission} /> : null}
           {qualityCoach ? (
@@ -1235,6 +1243,40 @@ function RetakeGuideNotice() {
   );
 }
 
+function TapTargetButton({
+  isLocked,
+  isTooSmall,
+  onSelect,
+  target,
+}: {
+  isLocked: boolean;
+  isTooSmall: boolean;
+  onSelect: () => void;
+  target: CameraObjectTarget;
+}) {
+  const style = getTapTargetStyle(target);
+  const label = isTooSmall ? "Move closer" : isLocked ? "Scan this part" : "Tap part";
+
+  return (
+    <button
+      aria-label={isTooSmall ? "Selected part is too small" : "Scan selected part"}
+      className={`fixed z-20 rounded-[22px] border-2 bg-black/10 transition-[border-color,box-shadow,background-color] ${
+        isLocked
+          ? "border-[var(--ds-ok-line)] shadow-[0_0_38px_rgba(16,185,129,0.36)]"
+          : "border-[var(--ds-accent)] shadow-[0_0_34px_rgba(11,116,255,0.34)]"
+      }`}
+      disabled={isTooSmall}
+      onClick={onSelect}
+      style={style}
+      type="button"
+    >
+      <span className="absolute left-1/2 top-[-38px] -translate-x-1/2 whitespace-nowrap rounded-full bg-slate-950/82 px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.14em] text-white shadow-[0_12px_30px_rgba(2,6,23,0.35)] ring-1 ring-white/12 backdrop-blur-md">
+        {label}
+      </span>
+    </button>
+  );
+}
+
 type LensDetection = {
   id: string;
   label: string;
@@ -1323,6 +1365,15 @@ function targetToLensBox(target: ScanReviewTarget) {
     top: clampNumber(target.y, 84, Math.max(84, window.innerHeight - 120)),
     width: clampNumber(target.width, 96, Math.min(420, window.innerWidth - 16)),
     height: clampNumber(target.height, 82, Math.min(360, window.innerHeight - 140)),
+  };
+}
+
+function getTapTargetStyle(target: CameraObjectTarget): CSSProperties {
+  return {
+    height: target.height,
+    left: target.left,
+    top: target.top,
+    width: target.width,
   };
 }
 
@@ -1425,27 +1476,15 @@ function ScanResultCard({
   const referenceSummary = sizeCalibration
     ? `${getSizeReferenceLabel(sizeCalibration.preset)} (${sizeCalibration.referenceMm.toFixed(2)} mm)`
     : "Exact size needs a reference object.";
+  const showPrecisionTools = isFastener || isExpanded;
 
   return (
     <section
       aria-live="polite"
-      className="pointer-events-auto fixed z-50 flex origin-top-left flex-col rounded-[22px] border border-white/14 bg-slate-950/96 px-4 py-4 text-white shadow-[0_24px_64px_rgba(2,6,23,0.72)] backdrop-blur-xl transition-[top,left,opacity]"
-      style={{
-        left: placement.left,
-        maxHeight: `min(72dvh, ${SCAN_CARD_SAFE_HEIGHT_PX}px)`,
-        overflowY: "auto",
-        top: placement.top,
-        width: `${SCAN_CARD_WIDTH_PX}px`,
-        maxWidth: "min(92vw, 340px)",
-      }}
+      data-anchor-side={placement.anchorSide}
+      className="pointer-events-auto fixed inset-x-3 bottom-[max(16px,env(safe-area-inset-bottom))] z-50 mx-auto flex max-h-[min(58dvh,520px)] max-w-[520px] flex-col overflow-y-auto rounded-[30px] border border-white/14 bg-slate-950/96 px-4 pb-4 pt-3 text-white shadow-[0_24px_64px_rgba(2,6,23,0.72)] backdrop-blur-xl"
     >
-      <div
-        className={`pointer-events-none absolute top-6 h-0 w-0 border-t-[8px] border-b-[8px] border-transparent ${
-          placement.anchorSide === "right"
-            ? "left-[-10px] border-r-[10px] border-r-white/12"
-            : "right-[-10px] border-l-[10px] border-l-white/12"
-        }`}
-      />
+      <div className="mx-auto mb-3 h-1.5 w-12 shrink-0 rounded-full bg-white/24" />
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
           <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--ds-accent)]">Lens result</p>
@@ -1501,25 +1540,29 @@ function ScanResultCard({
                 <p>{summarize(result.whatItDoes, isCompact ? 150 : 220)}</p>
               </BubbleSection>
             ) : null}
-            <BubbleSection title="What I can see">
-              <FactList facts={visibleFacts} />
-            </BubbleSection>
-            <BubbleSection title="Why Deep Spec matched it">
-              <FactList facts={evidenceFacts} />
-            </BubbleSection>
-            <BubbleSection title="Cautions">
-              <FactList facts={concernFacts} emptyText="No visible damage or safety concern was called out in this photo." />
-            </BubbleSection>
             {result?.nextAction ? (
               <BubbleSection title="Next step">
                 <p>{summarize(result.nextAction, 170)}</p>
               </BubbleSection>
             ) : null}
+            {isExpanded ? (
+              <>
+                <BubbleSection title="What I can see">
+                  <FactList facts={visibleFacts} />
+                </BubbleSection>
+                <BubbleSection title="Why Deep Spec matched it">
+                  <FactList facts={evidenceFacts} />
+                </BubbleSection>
+                <BubbleSection title="Cautions">
+                  <FactList facts={concernFacts} emptyText="No visible damage or safety concern was called out in this photo." />
+                </BubbleSection>
+              </>
+            ) : null}
           </>
         )}
       </div>
 
-      {result?.candidateMatches.length ? (
+      {isExpanded && result?.candidateMatches.length ? (
         <BubbleSection title="Related parts to compare">
           <div className="space-y-2">
             {result.candidateMatches.slice(0, isExpanded ? 4 : 2).map((candidate) => (
@@ -1532,29 +1575,31 @@ function ScanResultCard({
         </BubbleSection>
       ) : null}
 
-      <BubbleSection title="Image area">
-        <div className="relative mt-2 overflow-hidden rounded-xl border border-white/12 bg-black/30">
-          <img
-            alt={`Scan photo for ${label}`}
-            className="h-32 w-full object-cover"
-            src={review.scanState.frame.imageBase64}
-          />
-          {targetOverlayStyle ? (
-            <span
-              aria-hidden
-              className="absolute rounded-sm border-2 border-[var(--ds-accent)] bg-[var(--ds-accent)]/25 shadow-[0_0_0_1px_rgba(11,116,255,0.45)]"
-              style={{
-                height: `${targetOverlayStyle.height}%`,
-                left: `${targetOverlayStyle.left}%`,
-                top: `${targetOverlayStyle.top}%`,
-                width: `${targetOverlayStyle.width}%`,
-              }}
+      {isExpanded ? (
+        <BubbleSection title="Image area">
+          <div className="relative mt-2 overflow-hidden rounded-xl border border-white/12 bg-black/30">
+            <img
+              alt={`Scan photo for ${label}`}
+              className="h-32 w-full object-cover"
+              src={review.scanState.frame.imageBase64}
             />
-          ) : null}
-        </div>
-      </BubbleSection>
+            {targetOverlayStyle ? (
+              <span
+                aria-hidden
+                className="absolute rounded-sm border-2 border-[var(--ds-accent)] bg-[var(--ds-accent)]/25 shadow-[0_0_0_1px_rgba(11,116,255,0.45)]"
+                style={{
+                  height: `${targetOverlayStyle.height}%`,
+                  left: `${targetOverlayStyle.left}%`,
+                  top: `${targetOverlayStyle.top}%`,
+                  width: `${targetOverlayStyle.width}%`,
+                }}
+              />
+            ) : null}
+          </div>
+        </BubbleSection>
+      ) : null}
 
-      {isFastener ? (
+      {isFastener && isExpanded ? (
         <BubbleSection title="Fastener mode">
           <p>
             Reference required. Put the card or coin on the same flat plane as the fastener, then estimate size.
@@ -1574,45 +1619,51 @@ function ScanResultCard({
           >
             Open details
           </button>
-          <label className="col-span-2 block">
-            <span className="mb-1 block text-[10px] font-black uppercase tracking-[0.12em] text-white/64">Size reference</span>
-            <select
-              aria-label="Size reference preset"
-              className="h-10 w-full rounded-full border border-white/12 bg-slate-950/92 px-3 text-[11px] font-black text-white outline-none focus:border-[var(--ds-accent)]"
-              onChange={(event) => onSizeReferencePresetChange(event.target.value as SizeReferencePreset)}
-              value={sizeReferencePreset}
+          {showPrecisionTools ? (
+            <>
+              <label className="col-span-2 block">
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-[0.12em] text-white/64">Size reference</span>
+                <select
+                  aria-label="Size reference preset"
+                  className="h-10 w-full rounded-full border border-white/12 bg-slate-950/92 px-3 text-[11px] font-black text-white outline-none focus:border-[var(--ds-accent)]"
+                  onChange={(event) => onSizeReferencePresetChange(event.target.value as SizeReferencePreset)}
+                  value={sizeReferencePreset}
+                >
+                  <option value="card_short_edge">Card short edge (53.98 mm)</option>
+                  <option value="card_long_edge">Card long edge (85.60 mm)</option>
+                  <option value="us_quarter">US quarter (24.26 mm)</option>
+                  <option value="us_nickel">US nickel (21.21 mm)</option>
+                </select>
+              </label>
+              <button
+                className="min-h-10 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
+                onClick={onSetSizeReference}
+                type="button"
+              >
+                Set reference
+              </button>
+              <button
+                className="min-h-10 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
+                onClick={onMeasure}
+                type="button"
+              >
+                Estimate size
+              </button>
+              <p className="col-span-2 text-[10px] font-semibold leading-5 text-white/66">
+                {referenceSummary}
+              </p>
+            </>
+          ) : null}
+          {isExpanded ? (
+            <button
+              className="col-span-2 min-h-10 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
+              onClick={onCopyValue}
+              type="button"
             >
-              <option value="card_short_edge">Card short edge (53.98 mm)</option>
-              <option value="card_long_edge">Card long edge (85.60 mm)</option>
-              <option value="us_quarter">US quarter (24.26 mm)</option>
-              <option value="us_nickel">US nickel (21.21 mm)</option>
-            </select>
-          </label>
-          <button
-            className="min-h-10 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
-            onClick={onSetSizeReference}
-            type="button"
-          >
-            Set reference
-          </button>
-          <button
-            className="min-h-10 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
-            onClick={onMeasure}
-            type="button"
-          >
-            Estimate size
-          </button>
-          <p className="col-span-2 text-[10px] font-semibold leading-5 text-white/66">
-            {referenceSummary}
-          </p>
-          <button
-            className="col-span-2 min-h-10 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
-            onClick={onCopyValue}
-            type="button"
-          >
-            Copy match
-          </button>
-          {review.scanState.result ? (
+              Copy match
+            </button>
+          ) : null}
+          {isExpanded && review.scanState.result ? (
             <a
               className="col-span-2 rounded-full border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 py-2 text-center text-[11px] font-black uppercase tracking-[0.12em] text-white/78"
               href={threeDSearchUrl}
