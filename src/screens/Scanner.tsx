@@ -105,6 +105,7 @@ type SizeReferencePreset = "card_short_edge" | "card_long_edge" | "us_quarter" |
 
 type SizeCalibration = {
   capturedAt: string;
+  guidance: string;
   preset: SizeReferencePreset;
   referenceMm: number;
   referencePx: number;
@@ -618,7 +619,7 @@ export default function Scanner() {
     }
 
     const referenceMm = getSizeReferenceMm(sizeReferencePreset);
-    const referencePx = Math.max(scanReview.reviewTarget.width, scanReview.reviewTarget.height);
+    const referencePx = getReferencePixels(scanReview.reviewTarget, sizeReferencePreset);
     if (referencePx < 36) {
       setScanCardStatusMessage("Reference target is too small. Move closer and lock the object.");
       return;
@@ -626,11 +627,12 @@ export default function Scanner() {
 
     setSizeCalibration({
       capturedAt: new Date().toISOString(),
+      guidance: getSizeReferenceGuidance(sizeReferencePreset),
       preset: sizeReferencePreset,
       referenceMm,
       referencePx,
     });
-    setScanCardStatusMessage(`${getSizeReferenceLabel(sizeReferencePreset)} saved for AR size estimates.`);
+    setScanCardStatusMessage(`${getSizeReferenceLabel(sizeReferencePreset)} saved. ${getSizeReferenceGuidance(sizeReferencePreset)}`);
   }, [scanReview, sizeReferencePreset]);
 
   const handleReviewMeasure = useCallback(async () => {
@@ -646,14 +648,15 @@ export default function Scanner() {
 
     const widthMm = estimateMm(scanReview.reviewTarget.width, sizeCalibration);
     const heightMm = estimateMm(scanReview.reviewTarget.height, sizeCalibration);
+    const longestEdgeMm = Math.max(widthMm, heightMm);
     const label = getReviewDisplayLabel(scanReview);
     const fastenerHint = /nut|bolt|screw|stud|thread|fastener/i.test(label)
       ? getFastenerSizeHint(Math.max(widthMm, heightMm))
       : null;
     const uncertainty = getMeasurementUncertainty(scanReview.reviewTarget, sizeCalibration);
     const summary = fastenerHint
-      ? `${label}: ${widthMm.toFixed(1)} x ${heightMm.toFixed(1)} mm (approx). ${fastenerHint} Uncertainty: ${uncertainty}.`
-      : `${label}: ${widthMm.toFixed(1)} x ${heightMm.toFixed(1)} mm (approx). Uncertainty: ${uncertainty}.`;
+      ? `${label}: ${widthMm.toFixed(1)} x ${heightMm.toFixed(1)} mm (approx). Longest edge ${longestEdgeMm.toFixed(1)} mm. ${fastenerHint} ${sizeCalibration.guidance} Uncertainty: ${uncertainty}.`
+      : `${label}: ${widthMm.toFixed(1)} x ${heightMm.toFixed(1)} mm (approx). Longest edge ${longestEdgeMm.toFixed(1)} mm. ${sizeCalibration.guidance} Uncertainty: ${uncertainty}.`;
 
     const copied = await copyText(summary);
     setScanCardStatusMessage(
@@ -782,8 +785,8 @@ export default function Scanner() {
         </p>
       </header>
 
-      {cameraState === "loading" ? <CameraLoading /> : null}
-      {cameraState === "blocked" ? (
+      {cameraState === "loading" && !scanReview ? <CameraLoading /> : null}
+      {cameraState === "blocked" && !scanReview ? (
         <CameraBlocked
           devices={cameraDevices}
           isRetakeGuide={isRetakeGuide}
@@ -910,16 +913,16 @@ function getScannerStatus({
   targetProgress: number;
   usesFallback: boolean;
 }) {
+  if (scanReview) {
+    return "Review scan";
+  }
+
   if (cameraState !== "ready") {
     return "Opening camera";
   }
 
   if (qualityCoach) {
     return qualityCoach.action;
-  }
-
-  if (scanReview) {
-    return "Review scan";
   }
 
   if (autoScanPaused) {
@@ -1571,7 +1574,7 @@ function ScanResultCard({
   const targetOverlayStyle = getReviewTargetOverlayStyle(target);
   const threeDSearchUrl = get3DSearchUrl(label);
   const referenceSummary = sizeCalibration
-    ? `${getSizeReferenceLabel(sizeCalibration.preset)} (${sizeCalibration.referenceMm.toFixed(2)} mm)`
+    ? `${getSizeReferenceLabel(sizeCalibration.preset)} (${sizeCalibration.referenceMm.toFixed(2)} mm). ${sizeCalibration.guidance}`
     : "Exact size needs a reference object.";
   const showPrecisionTools = isFastener || isExpanded;
 
@@ -2115,6 +2118,33 @@ function getSizeReferenceLabel(preset: SizeReferencePreset) {
     case "card_short_edge":
     default:
       return "Card short edge";
+  }
+}
+
+function getReferencePixels(target: ScanReviewTarget, preset: SizeReferencePreset) {
+  switch (preset) {
+    case "card_short_edge":
+      return Math.min(target.width, target.height);
+    case "card_long_edge":
+      return Math.max(target.width, target.height);
+    case "us_quarter":
+    case "us_nickel":
+    default:
+      return Math.max(target.width, target.height);
+  }
+}
+
+function getSizeReferenceGuidance(preset: SizeReferencePreset) {
+  switch (preset) {
+    case "card_short_edge":
+      return "Best for height when the short card edge matches the vertical edge in frame.";
+    case "card_long_edge":
+      return "Best for width when the long card edge matches the horizontal edge in frame.";
+    case "us_quarter":
+    case "us_nickel":
+      return "Best when the coin is flat to the camera and on the same depth plane.";
+    default:
+      return "Keep the reference and target on the same depth plane.";
   }
 }
 

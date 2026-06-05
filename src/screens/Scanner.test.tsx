@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { afterEach, vi } from "vitest";
+import { afterEach, expect, vi } from "vitest";
 import Scanner from "./Scanner";
 
 const captureFrame = vi.fn(async () => "data:image/jpeg;base64,compressed-frame");
@@ -404,7 +404,37 @@ describe("Scanner", () => {
     expect(await screen.findByText("Set a reference first (card or coin) to estimate mm size.")).toBeInTheDocument();
 
     await userEvent.click(within(reviewCard as HTMLElement).getByRole("button", { name: "Set reference" }));
-    expect(await screen.findByText("Card short edge saved for AR size estimates.")).toBeInTheDocument();
+    expect(await screen.findByText("Card short edge saved. Best for height when the short card edge matches the vertical edge in frame.")).toBeInTheDocument();
+  }, 10000);
+
+  it("uses the short edge reference to improve height and width estimates", async () => {
+    identifyCapturedFrame.mockResolvedValueOnce(makeScanResult("Hex nut"));
+    const writeText = vi.fn(async () => undefined);
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: {
+        writeText,
+      },
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const reviewHeading = await screen.findByRole("heading", { level: 3, name: "Hex nut" });
+    const reviewCard = reviewHeading.closest("section") as HTMLElement | null;
+    expect(reviewCard).toBeTruthy();
+
+    await userEvent.click(within(reviewCard as HTMLElement).getByRole("button", { name: "Set reference" }));
+    await userEvent.click(within(reviewCard as HTMLElement).getByRole("button", { name: "Estimate size" }));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(expect.stringContaining("72.0 x 54.0 mm"));
+    });
   }, 10000);
 
   it("lets the user run a manual scan when target lock is not available", async () => {
@@ -425,6 +455,8 @@ describe("Scanner", () => {
     const reviewHeading = await screen.findByRole("heading", { level: 3, name: "Alternator" });
     const reviewCard = reviewHeading.closest("section");
     expect(reviewCard).toBeTruthy();
+    expect(screen.getByText("Review scan")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 1, name: "Camera access needed" })).not.toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Open details" })).toBeInTheDocument();
   }, 10000);
 
