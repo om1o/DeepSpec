@@ -264,7 +264,7 @@ async function runAuthLogin() {
     );
   }
 
-  await clickByRole("tab", /Account/i, "account auth tab");
+  await selectTabIfNeeded(/Account/i, "account auth tab");
   await clickByRole("button", /^No email$/i, "no-email auth mode");
   await clickByRole("button", /Continue without email/i, "continue without email");
 
@@ -619,6 +619,25 @@ async function clickByRole(role, name, label) {
     throw new QaIssue(
       "test_bug",
       `Could not click ${label}: ${formatError(error)}`,
+      {
+        likelyFiles: ["scripts/qa/real-website-tester.mjs"],
+        suggestedFix: "Confirm the selector against the saved HTML before changing product code.",
+      },
+    );
+  }
+}
+
+async function selectTabIfNeeded(name, label) {
+  try {
+    const tab = page.getByRole("tab", { name }).first();
+    await tab.waitFor({ state: "visible", timeout: 7_000 });
+    if (await tab.getAttribute("aria-selected") !== "true") {
+      await tab.click({ timeout: 7_000 });
+    }
+  } catch (error) {
+    throw new QaIssue(
+      "test_bug",
+      `Could not select ${label}: ${formatError(error)}`,
       {
         likelyFiles: ["scripts/qa/real-website-tester.mjs"],
         suggestedFix: "Confirm the selector against the saved HTML before changing product code.",

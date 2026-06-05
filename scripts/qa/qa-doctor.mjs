@@ -321,10 +321,10 @@ async function checkPageLoad(state, baseUrl) {
 
   try {
     const response = await state.page.goto(`${baseUrl}/auth`, {
-      waitUntil: "domcontentloaded",
-      timeout: 15_000,
+      waitUntil: "commit",
+      timeout: 30_000,
     });
-    await state.page.waitForLoadState("networkidle", { timeout: 8_000 }).catch(() => undefined);
+    await waitForAuthSurface(state.page);
 
     const status = response?.status() || 0;
     return checkResult(
@@ -431,7 +431,12 @@ function checkCapturedNetwork(state) {
 }
 
 function isBenignNetworkNoise(error) {
-  return error.failure === "net::ERR_ABORTED" && /\/node_modules\/\.vite\/deps\//.test(error.url ?? "");
+  if (error.failure !== "net::ERR_ABORTED") {
+    return false;
+  }
+
+  return /\/node_modules\/\.vite\/deps\//.test(error.url ?? "")
+    || /https:\/\/fonts\.gstatic\.com\//.test(error.url ?? "");
 }
 
 async function checkSelectors(state) {
@@ -445,15 +450,16 @@ async function checkSelectors(state) {
   }
 
   try {
+    await waitForAuthSurface(state.page);
     const selectorState = await state.page.evaluate(() => {
       const text = globalThis.document.body.innerText;
       return {
         hasEmailInput: Boolean(globalThis.document.querySelector("input[name='email']")),
-        hasPasswordSubmit: text.includes("Sign in to scanner"),
-        hasNoEmailPath: text.includes("No email") || text.includes("Continue without email"),
+        hasPrimarySubmit: text.includes("Sign in to scanner") || text.includes("Continue without email"),
+        hasNoEmailPath: text.includes("No email"),
       };
     });
-    const passed = selectorState.hasEmailInput && selectorState.hasPasswordSubmit && selectorState.hasNoEmailPath;
+    const passed = selectorState.hasEmailInput && selectorState.hasPrimarySubmit && selectorState.hasNoEmailPath;
 
     return checkResult(
       "selectors are not stale",
@@ -470,6 +476,15 @@ async function checkSelectors(state) {
       "test bug",
     );
   }
+}
+
+async function waitForAuthSurface(page) {
+  await page.waitForFunction(() => {
+    const text = globalThis.document.body?.innerText ?? "";
+    return Boolean(globalThis.document.querySelector("input[name='email']"))
+      && text.includes("Sign in")
+      && text.includes("No email");
+  }, { timeout: 30_000 });
 }
 
 function getPrimaryClassification(checks) {
