@@ -1415,12 +1415,12 @@ function LensPartOverlays({ result, target }: { result: IdentificationResult; ta
           }}
         >
           <div
-            className={`absolute left-2 top-2 max-w-[min(220px,62vw)] rounded-full px-3 py-1.5 text-[11px] font-black tracking-tight text-white shadow-[0_10px_24px_rgba(0,0,0,0.3)] backdrop-blur-md ${
+            className={`absolute left-2 top-2 flex max-w-[min(220px,62vw)] items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-black tracking-tight text-white shadow-[0_10px_24px_rgba(0,0,0,0.3)] backdrop-blur-md ${
               detection.primary ? "bg-[var(--ds-accent)]" : "bg-slate-950/78"
             }`}
           >
-            <span data-testid={detection.primary ? "lens-primary-label" : undefined}>{detection.label}</span>
-            <span className="ml-2 font-extrabold text-white/72">{detection.detail}</span>
+            <span data-testid={detection.primary ? "lens-primary-label" : undefined} className="min-w-0 truncate">{detection.label}</span>
+            <span className="shrink-0 rounded-full bg-black/30 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-[0.04em] text-white/85">{detection.detail}</span>
           </div>
         </div>
       ))}

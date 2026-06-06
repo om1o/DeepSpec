@@ -4,6 +4,7 @@ import { getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../
 import CloudHealthCard from "../components/CloudHealthCard";
 import Button from "../components/ui/Button";
 import HistoryDockButton from "../components/ui/HistoryDockButton";
+import ScanThumb from "../components/ui/ScanThumb";
 import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } from "../lib/utils";
 import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
 import { buildScanReport, downloadTextFile, getMechanicSearchUrl, getScanReportFilename } from "../services/report";
@@ -137,7 +138,7 @@ export default function Result() {
       <div className="mx-auto grid min-h-dvh w-full max-w-6xl lg:grid-cols-[minmax(0,1fr)_430px] lg:p-4">
         <section className="relative min-h-[48dvh] overflow-hidden bg-[#020617] text-white lg:sticky lg:top-4 lg:min-h-[calc(100dvh-32px)] lg:rounded-[30px]">
           {frame?.imageBase64 ? (
-            <img
+            <ScanThumb
               alt="Captured car part"
               className="absolute inset-0 h-full w-full object-contain"
               src={frame.imageBase64}
@@ -543,8 +544,8 @@ function AnalysisResult({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Best match</p>
-            <h2 className="mt-1 truncate text-2xl font-extrabold tracking-tight">
-              Likely {result.partName} ({confidenceRange.low}-{confidenceRange.high}%)
+            <h2 className="mt-1 text-2xl font-extrabold tracking-tight">
+              Likely {result.partName}
             </h2>
           </div>
           <ConfidenceBadge confidence={result.confidence} range={confidenceRange} />
@@ -666,7 +667,7 @@ function GuidedRetakeSection({
         <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50">
           <div className="aspect-[4/3] bg-slate-950">
             {frame?.imageBase64 ? (
-              <img alt="Current scan" className="h-full w-full object-cover" src={frame.imageBase64} />
+              <ScanThumb alt="Current scan" className="h-full w-full object-cover" src={frame.imageBase64} />
             ) : null}
           </div>
           <p className="px-3 py-2 text-xs font-black text-neutral-500">Current</p>
