@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import Button from "../components/ui/Button";
 import HistoryDockButton from "../components/ui/HistoryDockButton";
+import ScanThumb from "../components/ui/ScanThumb";
 import { AIServiceError, getAIErrorDetails, getAIErrorMessage, sendFollowUp } from "../services/aiService";
 import { appendChatMessages, createChatMessage, getLookup } from "../services/storage";
 import type { Lookup } from "../types";
@@ -140,7 +141,7 @@ export default function Chat() {
         </header>
 
         <section className="mt-5 grid grid-cols-[76px_1fr] gap-3 rounded-[24px] border border-slate-200 bg-white p-3 shadow-sm">
-          <img alt="" className="aspect-square w-full rounded-[18px] border border-neutral-200 bg-neutral-100 object-cover" src={lookup.frame.imageBase64} />
+          <ScanThumb alt="" className="aspect-square w-full rounded-[18px] border border-neutral-200 bg-neutral-100 object-cover" src={lookup.frame.imageBase64} />
           <div className="min-w-0 py-1">
             <h2 className="truncate text-base font-extrabold tracking-tight">{partName}</h2>
             <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-neutral-400">{lookup.scanCategory}</p>

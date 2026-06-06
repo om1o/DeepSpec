@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Button from "../components/ui/Button";
+import ScanThumb from "../components/ui/ScanThumb";
 import { signOut } from "../services/auth";
 import { readCloudLookups } from "../services/cloudHistory";
 import { getScanQualityMetrics, type ScanQualityFailureReason, type ScanQualityMetrics } from "../services/scanQualityMetrics";
@@ -307,7 +308,7 @@ function LookupCard({ lookup }: { lookup: Lookup }) {
       state={scanStateFromLookup(lookup)}
       className="grid grid-cols-[88px_1fr] gap-3 rounded-[24px] border border-slate-200 bg-white p-3 text-slate-950 shadow-sm transition hover:border-blue-200"
     >
-      <img
+      <ScanThumb
         alt=""
         className="aspect-square w-full rounded-[18px] border border-neutral-200 bg-neutral-100 object-cover"
         src={lookup.frame.imageBase64}
