@@ -134,6 +134,29 @@ export function createTimestamp() {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
 
+export function classifyIdentifyApiIssue({ status, text = "" } = {}) {
+  const normalizedText = String(text ?? "");
+
+  if (/\b(not configured|GEMINI_API_KEY|missing (api|provider|server|gemini|ai|env|key))\b/i.test(normalizedText)) {
+    return {
+      category: "missing_env",
+      reason: "Identify provider configuration is missing.",
+    };
+  }
+
+  if (
+    Number(status) === 429 ||
+    /\b(AI provider|rate.?limit|quota|provider unavailable|too many AI lookups|try again in a few minutes|could not reach Gemini|network)\b/i.test(normalizedText)
+  ) {
+    return {
+      category: "environment",
+      reason: "Identify provider availability or quota blocked the scan.",
+    };
+  }
+
+  return null;
+}
+
 function loadEnvFile(filename) {
   let contents;
 
