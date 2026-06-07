@@ -127,14 +127,17 @@ describe("cloudSync", () => {
       { onConflict: "user_id,scan_local_id" },
     );
     expect(modelRunInsert).toHaveBeenCalledWith(expect.objectContaining({
+      latency_ms: 1234,
       metadata_json: expect.objectContaining({
+        fallbackReason: "rate_limited",
         scanQuality: expect.objectContaining({
           brightnessScore: 98,
           sharpnessScore: 100,
         }),
       }),
-      model: "unknown",
-      provider: "unknown",
+      model: "Qwen/Qwen2.5-VL-7B-Instruct",
+      ocr_used: false,
+      provider: "huggingface",
       scan_local_id: "lookup-1",
     }));
     expect(syncEventInsert).toHaveBeenCalledWith(expect.objectContaining({ event_type: "upsert", status: "success" }));
@@ -454,6 +457,13 @@ function makeLookup(): Lookup {
           url: "https://example.com/alternator.jpg",
         },
       ],
+      modelRun: {
+        provider: "huggingface",
+        model: "Qwen/Qwen2.5-VL-7B-Instruct",
+        latencyMs: 1234,
+        fallbackReason: "rate_limited",
+        ocrUsed: false,
+      },
     },
     scanQuality: {
       accepted: true,

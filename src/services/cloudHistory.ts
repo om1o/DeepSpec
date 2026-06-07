@@ -5,6 +5,8 @@ import type {
   Confidence,
   EvidenceRegion,
   IdentificationResult,
+  IdentifyModelRun,
+  IdentifyProvider,
   Lookup,
   Rating,
   ScanCategory,
@@ -176,7 +178,35 @@ function parseIdentificationResult(value: unknown, fallbackCategory: ScanCategor
     needsBetterPhoto: value.needsBetterPhoto === true,
     evidence: parseStringList(value.evidence, 12, 320),
     sourceLinks: parseSourceLinks(value.sourceLinks),
+    ...(parseIdentifyModelRun(value.modelRun) ? { modelRun: parseIdentifyModelRun(value.modelRun) } : {}),
   };
+}
+
+function parseIdentifyModelRun(value: unknown): IdentifyModelRun | undefined {
+  if (!isObject(value) || !isIdentifyProvider(value.provider) || !isString(value.model)) {
+    return undefined;
+  }
+
+  const model = value.model.trim();
+  if (!model) {
+    return undefined;
+  }
+
+  return {
+    provider: value.provider,
+    model: model.slice(0, 160),
+    latencyMs: typeof value.latencyMs === "number" && Number.isFinite(value.latencyMs) && value.latencyMs >= 0
+      ? Math.round(value.latencyMs)
+      : 0,
+    ...(isString(value.fallbackReason) && value.fallbackReason.trim()
+      ? { fallbackReason: value.fallbackReason.trim().slice(0, 120) }
+      : {}),
+    ocrUsed: value.ocrUsed === true,
+  };
+}
+
+function isIdentifyProvider(value: unknown): value is IdentifyProvider {
+  return value === "gemini" || value === "huggingface" || value === "ollama";
 }
 
 function parseCandidateMatches(value: unknown): CandidateMatch[] {

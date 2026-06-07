@@ -112,10 +112,15 @@ describe("createIdentifyResponse", () => {
       ),
     );
 
-    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toEqual({
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
       status: 200,
       body: {
         result,
+        modelRun: {
+          provider: "gemini",
+          model: "gemini-2.5-flash",
+          ocrUsed: false,
+        },
       },
     });
 
@@ -148,7 +153,7 @@ describe("createIdentifyResponse", () => {
         ),
       );
 
-    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toEqual({
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
       status: 200,
       body: {
         result,
@@ -181,7 +186,7 @@ describe("createIdentifyResponse", () => {
         ),
       );
 
-    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toEqual({
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
       status: 200,
       body: {
         result,
@@ -230,7 +235,7 @@ describe("createIdentifyResponse", () => {
           DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK: "true",
         },
       ),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       status: 200,
       body: {
         result,
@@ -268,7 +273,7 @@ describe("createIdentifyResponse", () => {
           DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK: "true",
         },
       ),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       status: 200,
       body: {
         result,
@@ -352,6 +357,210 @@ describe("createIdentifyResponse", () => {
     expect(fetchSpy.mock.calls[1][0]).toEqual(expect.stringContaining("/models/gemini-custom-fast:generateContent"));
   });
 
+  it("falls back to Hugging Face after Gemini identify models are rate limited", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "quota exhausted" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "fallback quota exhausted" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: JSON.stringify(result) } }],
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+
+    await expect(
+      createIdentifyResponse(
+        { imageBase64 },
+        {
+          DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true",
+          GEMINI_API_KEY: "test-key",
+          HF_TOKEN: "hf-test",
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          ...result,
+          modelRun: {
+            provider: "huggingface",
+            model: "Qwen/Qwen2.5-VL-7B-Instruct",
+            fallbackReason: "rate_limited",
+            ocrUsed: false,
+          },
+        },
+        modelRun: {
+          provider: "huggingface",
+          model: "Qwen/Qwen2.5-VL-7B-Instruct",
+          fallbackReason: "rate_limited",
+          ocrUsed: false,
+        },
+      },
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(fetchSpy.mock.calls[2][0]).toBe("https://router.huggingface.co/v1/chat/completions");
+    expect(fetchSpy.mock.calls[2][1]).toMatchObject({
+      method: "POST",
+      headers: expect.objectContaining({
+        Authorization: "Bearer hf-test",
+      }),
+    });
+    const body = JSON.parse((fetchSpy.mock.calls[2][1] as RequestInit).body as string);
+    expect(body.model).toBe("Qwen/Qwen2.5-VL-7B-Instruct");
+    expect(body.messages[1].content).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "image_url",
+        image_url: {
+          url: imageBase64,
+        },
+      }),
+    ]));
+  });
+
+  it("does not use Hugging Face when fallback is disabled", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify({ error: { message: "quota exhausted" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key", HF_TOKEN: "hf-test" })).resolves.toMatchObject({
+      status: 429,
+      body: {
+        error: {
+          code: "rate_limited",
+        },
+      },
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("can force Hugging Face identify for provider health checks", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: JSON.stringify(result) } }],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(
+      createIdentifyResponse(
+        { imageBase64 },
+        {
+          DEEPSPEC_FORCE_HF_IDENTIFY: "true",
+          HF_IDENTIFY_MODEL: "Qwen/Qwen2.5-VL-3B-Instruct",
+          HF_TOKEN: "hf-test",
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: 200,
+      body: {
+        modelRun: {
+          provider: "huggingface",
+          model: "Qwen/Qwen2.5-VL-3B-Instruct",
+          fallbackReason: "forced_hf_health",
+        },
+      },
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports missing Hugging Face token as setup failure in forced mode", async () => {
+    await expect(
+      createIdentifyResponse(
+        { imageBase64 },
+        {
+          DEEPSPEC_FORCE_HF_IDENTIFY: "true",
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: 500,
+      body: {
+        error: {
+          code: "not_configured",
+        },
+      },
+    });
+  });
+
+  it("maps Hugging Face rate limit and invalid JSON responses", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: { message: "Too many requests" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(
+      createIdentifyResponse(
+        { imageBase64 },
+        {
+          DEEPSPEC_FORCE_HF_IDENTIFY: "true",
+          HF_TOKEN: "hf-test",
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: 429,
+      body: {
+        error: {
+          code: "rate_limited",
+        },
+      },
+    });
+
+    vi.restoreAllMocks();
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ choices: [{ message: { content: "not json" } }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(
+      createIdentifyResponse(
+        { imageBase64 },
+        {
+          DEEPSPEC_FORCE_HF_IDENTIFY: "true",
+          HF_TOKEN: "hf-test",
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: 502,
+      body: {
+        error: {
+          code: "invalid_response",
+        },
+      },
+    });
+  });
+
   it("uses local Ollama vision only after Gemini identify models are rate limited", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
@@ -389,7 +598,7 @@ describe("createIdentifyResponse", () => {
           GEMINI_API_KEY: "test-key",
         },
       ),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       status: 200,
       body: {
         result,
@@ -493,7 +702,7 @@ describe("createIdentifyResponse", () => {
       ),
     );
 
-    await expect(createIdentifyResponse({ imageBase64: engineFixtureBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toEqual({
+    await expect(createIdentifyResponse({ imageBase64: engineFixtureBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
       status: 200,
       body: {
         result,

@@ -81,6 +81,16 @@ export type SourceLink = {
   sourceType: "dataset" | "reference" | "search" | "safety";
 };
 
+export type IdentifyProvider = "gemini" | "huggingface" | "ollama";
+
+export type IdentifyModelRun = {
+  provider: IdentifyProvider;
+  model: string;
+  latencyMs: number;
+  fallbackReason?: string;
+  ocrUsed: boolean;
+};
+
 export type IdentificationResult = {
   partName: string;
   confidence: Confidence;
@@ -102,6 +112,7 @@ export type IdentificationResult = {
   needsBetterPhoto: boolean;
   evidence: string[];
   sourceLinks: SourceLink[];
+  modelRun?: IdentifyModelRun;
 };
 
 export type ScanAnalysisState = {

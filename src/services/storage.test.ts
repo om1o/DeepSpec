@@ -74,6 +74,13 @@ const scanState: ScanAnalysisState = {
         sourceType: "search",
       },
     ],
+    modelRun: {
+      provider: "huggingface",
+      model: "Qwen/Qwen2.5-VL-7B-Instruct",
+      latencyMs: 1234,
+      fallbackReason: "rate_limited",
+      ocrUsed: false,
+    },
   },
 };
 
@@ -95,6 +102,13 @@ describe("storage", () => {
         brightnessScore: 98,
         cameraId: "rear-camera",
         sharpnessScore: 100,
+      },
+      result: {
+        modelRun: {
+          provider: "huggingface",
+          model: "Qwen/Qwen2.5-VL-7B-Instruct",
+          fallbackReason: "rate_limited",
+        },
       },
       trainingLabel: "Alternator",
       trainingStatus: "raw_unreviewed",
