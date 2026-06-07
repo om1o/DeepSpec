@@ -622,6 +622,7 @@ function CompleteBrief({ result }: { result: IdentificationResult }) {
   const coverage = getDataCoverage(result);
   const missingData = getMissingData(result);
   const questions = getMechanicQuestions(result);
+  const uncertaintyReasons = getUncertaintyReasons(result);
 
   return (
     <section aria-labelledby="complete-brief-heading" className="rounded-[24px] border border-[var(--ds-accent-line)] bg-white p-4 shadow-sm">
@@ -642,7 +643,8 @@ function CompleteBrief({ result }: { result: IdentificationResult }) {
         <BriefRow label="Do next" value={result.nextAction} />
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <BriefList title="What could be wrong" items={uncertaintyReasons} emptyText="No major uncertainty flagged, but confirm fit and symptoms before repair." />
         <BriefList title="Still missing" items={missingData} emptyText="Enough data for a useful first pass. A second angle can still improve certainty." />
         <BriefList title="Ask before repair" items={questions} />
       </div>
@@ -1392,6 +1394,38 @@ function getMissingData(result: IdentificationResult) {
   }
 
   return missing;
+}
+
+function getUncertaintyReasons(result: IdentificationResult) {
+  const reasons = [];
+
+  if (result.confidence === "low") {
+    reasons.push("Deep Spec found weak visual clues, so the label may be a nearby or similar-looking part.");
+  } else if (result.confidence === "medium") {
+    reasons.push("One more angle could separate this from a similar part.");
+  }
+
+  if (result.needsBetterPhoto || result.safetyTriage === "needs_better_photo") {
+    reasons.push("The photo may hide the label, connector, mounting point, or damaged area needed to confirm it.");
+  }
+
+  if (result.candidateMatches.length > 0) {
+    reasons.push(`${result.candidateMatches[0].partName} is close enough that it should be ruled out before repair.`);
+  }
+
+  if (!result.evidenceRegions.length) {
+    reasons.push("The answer is not tied to a specific image region yet.");
+  }
+
+  if (!getDetectedTextFindings(result).length) {
+    reasons.push("No visible part number or label was detected.");
+  }
+
+  if (result.isSafetyCritical || result.safetyTriage === "needs_professional") {
+    reasons.push("A photo cannot prove this safety-related system is safe to drive.");
+  }
+
+  return [...new Set(reasons)].slice(0, 4);
 }
 
 function getMechanicQuestions(result: IdentificationResult) {
