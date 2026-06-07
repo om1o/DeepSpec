@@ -2,6 +2,7 @@ import { copyFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   DEEPSPEC_QA_SCENARIOS,
+  classifyIdentifyApiIssue,
   ensureDir,
   fetchWithTimeout,
   formatError,
@@ -352,6 +353,33 @@ async function runScannerAiEngine() {
     );
   }
 
+  const identifyApiIssue = classifyIdentifyApiIssue({
+    status: lastIdentifyResponse?.status,
+    text: outcome.text,
+  });
+
+  if (identifyApiIssue?.category === "missing_env") {
+    throw new QaIssue(
+      "missing_env",
+      `Engine scan could not reach configured AI. ${identifyApiIssue.reason} Fixture=${fixture.source}. ${timingSummary}. Visible state: ${outcome.text}`,
+      {
+        likelyFiles: [".env.local", ".env.example", "api/identify.shared.ts"],
+        suggestedFix: "Set the server-side AI provider key and rerun `npm run qa:doctor` before judging scanner model quality.",
+      },
+    );
+  }
+
+  if (identifyApiIssue?.category === "environment") {
+    throw new QaIssue(
+      "environment",
+      `Engine scan was blocked by provider availability. ${identifyApiIssue.reason} Fixture=${fixture.source}. ${timingSummary}. Visible state: ${outcome.text}`,
+      {
+        likelyFiles: [],
+        suggestedFix: "Retry when the provider is healthy, or review provider fallback order if this happens repeatedly.",
+      },
+    );
+  }
+
   if (outcome.type === "result") {
     if (analysisMs > 90_000) {
       throw new QaIssue(
@@ -389,28 +417,6 @@ async function runScannerAiEngine() {
       {
         likelyFiles: ["scripts/qa/real-website-tester.mjs", "src/lib/imageQuality.ts"],
         suggestedFix: "Improve the engine fixture or scan-quality gate so a clear real engine-bay photo can reach AI analysis.",
-      },
-    );
-  }
-
-  if (/not configured|missing/i.test(outcome.text)) {
-    throw new QaIssue(
-      "missing_env",
-      `Engine scan could not reach configured AI. Fixture=${fixture.source}. ${timingSummary}. Visible state: ${outcome.text}`,
-      {
-        likelyFiles: [".env.local", ".env.example", "api/identify.shared.ts"],
-        suggestedFix: "Set the server-side AI provider key and rerun `npm run qa:doctor` before judging scanner model quality.",
-      },
-    );
-  }
-
-  if (/rate.?limit|provider|quota|unavailable|network/i.test(outcome.text)) {
-    throw new QaIssue(
-      "environment",
-      `Engine scan was blocked by provider availability. Fixture=${fixture.source}. ${timingSummary}. Visible state: ${outcome.text}`,
-      {
-        likelyFiles: ["api/identify.shared.ts", "src/services/aiService.ts"],
-        suggestedFix: "Retry when the provider is healthy, or review provider fallback order if this happens repeatedly.",
       },
     );
   }
@@ -812,7 +818,7 @@ async function waitForScannerAiOutcome() {
       return { text: compactText(text), type: "quality" };
     }
 
-    if (/AI provider|rate.?limit|quota|not configured|unreadable|could not analyze|could not complete|Try again later|Scan again to identify this/i.test(text)) {
+    if (classifyIdentifyApiIssue({ text }) || /unreadable|could not analyze|could not complete|Try again later|Scan again to identify this/i.test(text)) {
       return { text: compactText(text), type: "error" };
     }
 
