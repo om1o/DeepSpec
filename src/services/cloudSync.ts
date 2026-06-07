@@ -60,13 +60,13 @@ export function getCloudSyncStatus(): CloudSyncStatus {
   if (!config) {
     return {
       configured: false,
-      message: "Cloud sync is off. Add Supabase public config after parent-approved privacy setup.",
+      message: "Your scans are saved on this device. Cloud sync is off for this build.",
     };
   }
 
   return {
     configured: true,
-    message: "Cloud sync is configured but not verified. Run the Supabase verifier before calling storage, RLS, and dataset tables ready.",
+    message: "Cloud sync is set up. Run a quick check to confirm your scans save and stay private.",
   };
 }
 
@@ -86,15 +86,15 @@ export async function verifyCloudHealth(): Promise<CloudHealthReport> {
   let report = createCloudHealthReport(config, checkedAt);
 
   if (!config) {
-    report = updateCloudHealthCheck(report, "configured", "fail", "Missing Supabase public config.");
+    report = updateCloudHealthCheck(report, "configured", "fail", "Cloud sync isn't connected yet.");
     return saveCloudHealthReport({
       ...report,
-      message: "Cloud sync is not configured.",
+      message: "Cloud sync isn't set up yet.",
       overall: "unconfigured",
     });
   }
 
-  report = updateCloudHealthCheck(report, "configured", "pass", "Supabase public config is present.");
+  report = updateCloudHealthCheck(report, "configured", "pass", "Cloud sync is connected.");
   let ownerClient: SupabaseClient | null = null;
   let userId: string | null = null;
   let imagePath: string | null = null;
@@ -104,7 +104,7 @@ export async function verifyCloudHealth(): Promise<CloudHealthReport> {
     ownerClient = await createVerificationClient(config);
     const owner = await signInForHealthCheck(ownerClient);
     userId = owner.id;
-    report = updateCloudHealthCheck(report, "anonymousAuth", "pass", "Anonymous Auth created a runtime user.");
+    report = updateCloudHealthCheck(report, "anonymousAuth", "pass", "Signed you in securely.");
 
     imagePath = `${userId}/${testId}.jpg`;
     await assertCloudResult(
@@ -114,7 +114,7 @@ export async function verifyCloudHealth(): Promise<CloudHealthReport> {
       }),
       "Private image upload failed",
     );
-    report = updateCloudHealthCheck(report, "storageUpload", "pass", "Private scan image upload passed.");
+    report = updateCloudHealthCheck(report, "storageUpload", "pass", "Your scan photo uploaded privately.");
 
     await assertCloudResult(
       await ownerClient.from("scan_lookups").upsert(
@@ -144,20 +144,20 @@ export async function verifyCloudHealth(): Promise<CloudHealthReport> {
       ),
       "scan_lookups upsert failed",
     );
-    report = updateCloudHealthCheck(report, "rowUpsert", "pass", "scan_lookups upsert passed through RLS.");
+    report = updateCloudHealthCheck(report, "rowUpsert", "pass", "Your scan saved to the cloud.");
 
     await writeCloudHealthDatasetDetails(ownerClient, userId, testId);
-    report = updateCloudHealthCheck(report, "datasetDetails", "pass", "Durable dataset detail writes passed through RLS.");
+    report = updateCloudHealthCheck(report, "datasetDetails", "pass", "Scan details saved.");
 
     const otherClient = await createVerificationClient(config);
     await signInForHealthCheck(otherClient);
     await assertCloudHealthRlsIsolation(otherClient, testId);
-    report = updateCloudHealthCheck(report, "rlsIsolation", "pass", "Another anonymous user could not read this scan dataset.");
+    report = updateCloudHealthCheck(report, "rlsIsolation", "pass", "Your scans stay private to you.");
 
     return saveCloudHealthReport({
       ...report,
       lastVerifiedAt: checkedAt,
-      message: "Cloud sync passed runtime health checks.",
+      message: "Cloud sync is working. Your scans save and stay private to you.",
       overall: "ready",
     });
   } catch (error) {
@@ -675,7 +675,7 @@ function getFriendlySyncError(error: unknown) {
   }
 
   if (/row-level security|policy|permission|not authorized|unauthorized/i.test(message)) {
-    return "Cloud sync was blocked by Supabase security policy. Check the migration and RLS policies.";
+    return "Cloud sync was blocked by a security check. Your scan is still saved on this device.";
   }
 
   if (/storage|bucket/i.test(message)) {
@@ -702,21 +702,21 @@ function createCloudHealthReport(config: CloudSyncConfig | null, checkedAt: stri
     checks: {
       configured: createCloudHealthCheck(
         "configured",
-        "Configured",
-        configured ? "Supabase public config is present." : "Missing Supabase public config.",
+        "Cloud connection",
+        configured ? "Cloud sync is connected." : "Cloud sync isn't connected yet.",
         configured ? "pass" : "fail",
       ),
-      anonymousAuth: createCloudHealthCheck("anonymousAuth", "Anonymous auth", "Not checked yet.", "unknown"),
-      storageUpload: createCloudHealthCheck("storageUpload", "Image upload", "Not checked yet.", "unknown"),
-      rowUpsert: createCloudHealthCheck("rowUpsert", "Row upsert", "Not checked yet.", "unknown"),
-      datasetDetails: createCloudHealthCheck("datasetDetails", "Dataset details", "Not checked yet.", "unknown"),
-      rlsIsolation: createCloudHealthCheck("rlsIsolation", "RLS isolation", "Not checked yet.", "unknown"),
+      anonymousAuth: createCloudHealthCheck("anonymousAuth", "Secure sign-in", "Not checked yet.", "unknown"),
+      storageUpload: createCloudHealthCheck("storageUpload", "Photo upload", "Not checked yet.", "unknown"),
+      rowUpsert: createCloudHealthCheck("rowUpsert", "Saving scans", "Not checked yet.", "unknown"),
+      datasetDetails: createCloudHealthCheck("datasetDetails", "Scan details", "Not checked yet.", "unknown"),
+      rlsIsolation: createCloudHealthCheck("rlsIsolation", "Private to you", "Not checked yet.", "unknown"),
     },
     configured,
     lastVerifiedAt: null,
     message: configured
-      ? "Cloud sync is configured, but runtime health has not passed yet."
-      : "Cloud sync is not configured.",
+      ? "Cloud sync is set up. Run a quick check to confirm everything's working."
+      : "Cloud sync isn't set up yet.",
     overall: configured ? "unknown" : "unconfigured",
     projectUrl: config?.url ?? null,
   };

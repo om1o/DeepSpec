@@ -26,7 +26,7 @@ describe("cloudSync", () => {
 
     expect(getCloudSyncStatus()).toEqual({
       configured: false,
-      message: "Cloud sync is off. Add Supabase public config after parent-approved privacy setup.",
+      message: "Your scans are saved on this device. Cloud sync is off for this build.",
     });
     expect(getCloudHealthSnapshot()).toMatchObject({
       configured: false,
@@ -147,7 +147,7 @@ describe("cloudSync", () => {
 
     expect(getCloudSyncStatus()).toEqual({
       configured: true,
-      message: "Cloud sync is configured but not verified. Run the Supabase verifier before calling storage, RLS, and dataset tables ready.",
+      message: "Cloud sync is set up. Run a quick check to confirm your scans save and stay private.",
     });
   });
 

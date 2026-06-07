@@ -28,7 +28,7 @@ export default function CloudHealthCard({ className = "" }: { className?: string
     try {
       setReport(await verifyCloudHealth());
     } catch (error) {
-      setCheckError(error instanceof Error ? error.message : "Cloud health check failed.");
+      setCheckError(error instanceof Error ? error.message : "Cloud sync check failed.");
     } finally {
       setIsChecking(false);
     }
@@ -38,7 +38,7 @@ export default function CloudHealthCard({ className = "" }: { className?: string
     <section className={`rounded-[20px] border border-neutral-200 bg-neutral-50 p-4 ${className}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-sm font-extrabold text-neutral-900">Cloud health</p>
+          <p className="text-sm font-extrabold text-neutral-900">Cloud sync</p>
           <p className="mt-2 text-sm leading-6 text-neutral-500">{report.message}</p>
         </div>
         <StatusPill status={report.overall === "ready" ? "pass" : report.overall === "unknown" ? "unknown" : "fail"} />
@@ -50,7 +50,7 @@ export default function CloudHealthCard({ className = "" }: { className?: string
         ))}
         <div className="rounded-2xl border border-neutral-200 bg-white px-3 py-3">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Last verified</p>
+            <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Last checked</p>
             <StatusPill status={report.lastVerifiedAt ? "pass" : "unknown"} />
           </div>
           <p className="mt-1 text-sm leading-6 text-neutral-700">
@@ -64,7 +64,7 @@ export default function CloudHealthCard({ className = "" }: { className?: string
         disabled={!report.configured || isChecking}
         onClick={handleCheckHealth}
       >
-        {isChecking ? "Checking..." : "Check cloud health"}
+        {isChecking ? "Checking..." : "Check cloud sync"}
       </Button>
       {checkError ? <p className="mt-3 text-sm font-semibold text-[var(--ds-danger-ink)]">{checkError}</p> : null}
     </section>
@@ -84,7 +84,7 @@ function HealthRow({ check }: { check: CloudHealthCheck }) {
 }
 
 function StatusPill({ status }: { status: CloudHealthStepStatus }) {
-  const label = status === "pass" ? "OK" : status === "fail" ? "Blocked" : "Unknown";
+  const label = status === "pass" ? "OK" : status === "fail" ? "Blocked" : "Not checked";
   const className =
     status === "pass"
       ? "border-[var(--ds-ok-line)] bg-[var(--ds-ok-soft)] text-[var(--ds-ok-ink)]"
