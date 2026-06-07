@@ -30,6 +30,7 @@ import type { Confidence, IdentificationResult, CapturedFrame, Lookup, ScanAnaly
 
 const AUTO_SCAN_HOLD_MS = 5000;
 const SECOND_FRAME_DELAY_MS = 120;
+const IDENTIFY_BUDGET_WARN_MS = 15000;
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
 const MATCH_THRESHOLD = 0.18;
 const SCAN_CARD_WIDTH_PX = 340;
@@ -412,7 +413,12 @@ export default function Scanner() {
 
     try {
       setAnalysisStep("Matching vehicle data");
+      const identifyStartedAt = performance.now();
       const result = await identifyCapturedFrame(focusedFrame ?? frame, focusedFrame ? undefined : secondFrame);
+      const identifyMs = Math.round(performance.now() - identifyStartedAt);
+      if (identifyMs > IDENTIFY_BUDGET_WARN_MS) {
+        console.warn(`[DeepSpec] Identify took ${identifyMs}ms (over ${IDENTIFY_BUDGET_WARN_MS}ms budget).`);
+      }
       if (!isScanRequestActive(requestId)) return;
       if (imageHash) setCachedScanResult(imageHash, result);
       recordScanOutcome(result);
@@ -1276,7 +1282,17 @@ function GalleryScanButton({
   );
 }
 
-function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; step: string | null }) {
+export function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; step: string | null }) {
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  useEffect(() => {
+    const startedAt = Date.now();
+    const interval = setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+  const stillWorking = elapsedSeconds >= 8;
+
   return (
     <div className="fixed inset-0 z-40 grid place-items-center bg-slate-950/78 px-6 text-center backdrop-blur-md">
       <div className="w-full max-w-xs overflow-hidden rounded-[24px] border border-white/12 bg-slate-950/94 p-6 shadow-2xl">
@@ -1287,7 +1303,10 @@ function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; step: stri
           <div className="scanner-analysis-sweep absolute inset-x-3 top-1/2 h-0.5 rounded-full bg-[var(--ds-accent)]" />
         </div>
         <p className="mt-5 text-lg font-extrabold tracking-tight text-white">Analyzing photo</p>
-        <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">{step ?? "Matching the scan against vehicle data."}</p>
+        <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">
+          {stillWorking ? "Still working — larger photos take a few more seconds." : step ?? "Matching the scan against vehicle data."}
+        </p>
+        <p className="mt-2 text-xs font-semibold tabular-nums text-white/45">{elapsedSeconds}s elapsed</p>
         <Button className="mt-5 w-full" variant="ghost" onClick={onCancel}>
           Cancel scan
         </Button>
