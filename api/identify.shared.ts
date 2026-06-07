@@ -681,23 +681,77 @@ function isSafetyCriticalCategory(category: ScanCategory) {
   return category === "airbag" || category === "brakes" || category === "fuel" || category === "leak" || category === "steering" || category === "suspension";
 }
 
+function normalizeSafetyFlags(result: IdentificationResult, scanCategory: ScanCategory) {
+  const modelMarkedProfessional = result.isSafetyCritical || result.safetyTriage === "needs_professional";
+  const hasSpecificSafetyEvidence = hasSafetyCriticalEvidence(result);
+  const isSafetyCritical = isSafetyCriticalCategory(scanCategory) || (modelMarkedProfessional && hasSpecificSafetyEvidence);
+
+  if (isSafetyCritical) {
+    return {
+      isSafetyCritical,
+      safetyTriage: "needs_professional" as const,
+    };
+  }
+
+  return {
+    isSafetyCritical,
+    safetyTriage: result.safetyTriage === "needs_better_photo" ? "needs_better_photo" as const : "can_help" as const,
+  };
+}
+
+function normalizeNeedsBetterPhoto(
+  result: IdentificationResult,
+  safetyTriage: IdentificationResult["safetyTriage"],
+  partName: string,
+  confidence: Confidence,
+) {
+  if (safetyTriage === "needs_better_photo") {
+    return true;
+  }
+
+  if (!result.needsBetterPhoto) {
+    return false;
+  }
+
+  return confidence === "low" || isGenericPartName(partName);
+}
+
+function normalizeNextAction(
+  nextAction: string,
+  safetyTriage: IdentificationResult["safetyTriage"],
+  needsBetterPhoto: boolean,
+) {
+  if (safetyTriage === "needs_professional") {
+    return ensureProfessionalNextAction(nextAction);
+  }
+
+  if (needsBetterPhoto) {
+    return cleanText(nextAction, "Take a clearer photo from another angle before acting on this result.");
+  }
+
+  const cleaned = cleanText(nextAction, "Use this as a visual identification and inspect the area more closely before making repair decisions.");
+  return /mechanic|professional|shop|before driving|unsafe/i.test(cleaned)
+    ? "Use this as a visual identification and inspect the area more closely before making repair decisions."
+    : cleaned;
+}
+
 function normalizeIdentificationResult(
   result: IdentificationResult,
   ocrText: string | null = null,
   env: Record<string, string | undefined> = {},
 ): IdentificationResult {
-  const safetyTriage = result.isSafetyCritical ? "needs_professional" : result.safetyTriage;
-  const needsBetterPhoto = result.needsBetterPhoto || safetyTriage === "needs_better_photo";
   const datasetMatches = findDatasetMatches(result, env);
   const cleanEvidence = appendDatasetEvidence(appendOcrEvidence(cleanList(result.evidence), ocrText), datasetMatches);
   const originalPartName = cleanText(result.partName, "Unidentified car part");
   const partName = resolvePrimaryPartName(originalPartName, datasetMatches);
   const scanCategory = getTrustedCategory(result);
+  const safety = normalizeSafetyFlags(result, scanCategory);
   const visibleObservations = cleanList(result.visibleObservations);
   const confidence = resolvePrimaryConfidence(result.confidence, originalPartName, partName, datasetMatches);
   const confidenceScore = normalizeConfidenceScore(result.confidenceScore);
   const confidenceRange = normalizeConfidenceRange(result.confidenceRange);
   const confirmationNeed = normalizeConfirmationNeed(result.confirmationNeed);
+  const needsBetterPhoto = normalizeNeedsBetterPhoto(result, safety.safetyTriage, partName, confidence);
 
   return {
     ...result,
@@ -714,11 +768,9 @@ function normalizeIdentificationResult(
     concerns: cleanList(result.concerns),
     evidence: cleanEvidence,
     sourceLinks: normalizeSourceLinks(result.sourceLinks, datasetMatches, partName),
-    nextAction:
-      safetyTriage === "needs_professional"
-        ? ensureProfessionalNextAction(result.nextAction)
-        : cleanText(result.nextAction, "Take a clearer photo from another angle before acting on this result."),
-    safetyTriage,
+    nextAction: normalizeNextAction(result.nextAction, safety.safetyTriage, needsBetterPhoto),
+    safetyTriage: safety.safetyTriage,
+    isSafetyCritical: safety.isSafetyCritical,
     needsBetterPhoto,
   };
 }
@@ -1438,6 +1490,11 @@ function isSourceType(value: unknown): value is SourceLink["sourceType"] {
 }
 
 function getTrustedCategory(result: IdentificationResult): ScanCategory {
+  if (result.scanCategory === "leak" && !hasLeakEvidence(result)) {
+    const inferredCategory = categorizeIdentificationText(result);
+    return inferredCategory === "unknown" || inferredCategory === "leak" ? "body" : inferredCategory;
+  }
+
   if (result.scanCategory !== "unknown") {
     return result.scanCategory;
   }
@@ -1477,4 +1534,38 @@ function categorizeText(text: string): ScanCategory {
   if (/engine|belt|hose|radiator|thermostat|filter|intake|manifold/.test(normalized)) return "engine";
 
   return "unknown";
+}
+
+function hasLeakEvidence(result: IdentificationResult) {
+  const text = normalizeWhitespace([
+    result.partName,
+    result.whatItDoes,
+    ...result.visibleObservations,
+    ...result.concerns,
+    ...result.evidence,
+    result.nextAction,
+  ].join(" "));
+
+  if (/\b(no|not|without|free of)\b.{0,24}\b(leak|leaking|fluid|oil|coolant|fuel|gas|wet|drip|pool|stain|seep)/i.test(text)) {
+    return false;
+  }
+
+  return /\b(active leak|fluid leak|oil leak|coolant leak|fuel leak|gas leak|leaking|fluid|oil|coolant|fuel|wet stain|dripping|pooling|seeping)\b/i.test(text);
+}
+
+function hasSafetyCriticalEvidence(result: IdentificationResult) {
+  const text = normalizeWhitespace([
+    result.partName,
+    result.whatItDoes,
+    ...result.visibleObservations,
+    ...result.concerns,
+    ...result.evidence,
+    result.nextAction,
+  ].join(" "));
+
+  return /\b(airbag|srs|airbag deployment|brake|caliper|rotor|steering|tie rod|rack and pinion|suspension|control arm|strut|shock|ball joint|fuel line|fuel leak|gas leak|active leak|fluid leak|oil leak|coolant leak|electrical burning|burn mark|melted wire|smoke|fire|loose wheel|cracked wheel|flat tire|tire sidewall|frame rail|crumple zone)\b/i.test(text);
+}
+
+function normalizeWhitespace(value: string) {
+  return value.trim().replace(/\s+/g, " ");
 }
