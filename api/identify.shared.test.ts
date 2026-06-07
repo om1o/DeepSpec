@@ -620,6 +620,121 @@ describe("createIdentifyResponse", () => {
     });
   });
 
+  it("does not keep an unsupported professional safety flag for ordinary body damage", async () => {
+    const bodyDamageResult = {
+      ...result,
+      partName: "Front right collision damage",
+      scanCategory: "body",
+      safetyTriage: "needs_professional",
+      isSafetyCritical: true,
+      concerns: ["The bumper cover and hood are visibly dented, with possible structural damage."],
+      evidence: ["Front bumper and hood collision deformation are visible."],
+      nextAction: "Have a mechanic inspect this before driving.",
+    };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(bodyDamageResult) }] } }],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          scanCategory: "body",
+          safetyTriage: "can_help",
+          isSafetyCritical: false,
+          nextAction: "Use this as a visual identification and inspect the area more closely before making repair decisions.",
+        },
+      },
+    });
+  });
+
+  it("does not trust a leak category without visible fluid evidence", async () => {
+    const bodyPanelResult = {
+      ...result,
+      partName: "Rocker-panel",
+      scanCategory: "leak",
+      candidateMatches: [],
+      whatItDoes: "The rocker panel is a lower exterior body panel below the door opening.",
+      safetyTriage: "can_help",
+      isSafetyCritical: false,
+      visibleObservations: ["The lower body panel below the door is centered in the photo."],
+      concerns: ["The lower body panel has visible dents and scrape marks."],
+      evidence: ["The rocker panel below the door is visibly deformed."],
+    };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(bodyPanelResult) }] } }],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          partName: "Rocker-panel",
+          scanCategory: "body",
+          safetyTriage: "can_help",
+          isSafetyCritical: false,
+        },
+      },
+    });
+  });
+
+  it("clears needsBetterPhoto when the model returns a usable medium-confidence part", async () => {
+    const usableMediumResult = {
+      ...result,
+      partName: "Front-door",
+      confidence: "medium",
+      scanCategory: "body",
+      safetyTriage: "can_help",
+      isSafetyCritical: false,
+      needsBetterPhoto: true,
+      visibleObservations: ["The front door panel is centered and visible."],
+      evidence: ["Door seam and handle location point to the front door."],
+      nextAction: "Take another angle if you need more damage detail.",
+    };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(usableMediumResult) }] } }],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          partName: "Front-door",
+          confidence: "medium",
+          safetyTriage: "can_help",
+          needsBetterPhoto: false,
+        },
+      },
+    });
+  });
+
   it("returns a network error when fetch fails", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Network error"));
 
