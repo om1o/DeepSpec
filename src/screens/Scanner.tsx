@@ -135,6 +135,19 @@ export default function Scanner() {
   const lastQualityFailureRef = useRef<ScanQualityCoachIssue | null>(null);
   const activeScanStartedAtRef = useRef(0);
   const scanRequestIdRef = useRef(0);
+
+  useEffect(() => {
+    performance.mark("scanner:route-ready");
+    if (import.meta.env.DEV) {
+      try {
+        const measure = performance.measure("boot-to-scanner", "app:boot", "scanner:route-ready");
+        console.log(`[DeepSpec] scanner route ready in ${Math.round(measure.duration)}ms`);
+      } catch {
+        // app:boot may be absent outside a full app boot (e.g. unit tests).
+      }
+    }
+  }, []);
+
   const {
     cameraDevices,
     cameraError,
