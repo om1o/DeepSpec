@@ -24,7 +24,7 @@ describe("EarlyAccess", () => {
     expect(screen.getByRole("heading", { name: "Early access" })).toBeInTheDocument();
     expect(screen.getByText("Business experiment")).toBeInTheDocument();
     expect(screen.getByText("Off")).toBeInTheDocument();
-    expect(screen.getByText("Cloud sync is off. Add Supabase public config after parent-approved privacy setup.")).toBeInTheDocument();
+    expect(screen.getByText("Your scans are saved on this device. Cloud sync is off for this build.")).toBeInTheDocument();
   });
 
   it("saves waitlist and feedback entries locally", async () => {

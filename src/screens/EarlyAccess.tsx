@@ -17,14 +17,12 @@ export default function EarlyAccess() {
   const [waitlistStatus, setWaitlistStatus] = useState<string | null>(null);
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
   const cloudSync = getCloudSyncStatus();
-  const cloudStatusMessage = cloudSync.configured
-    ? "Cloud sync is configured, but production readiness still depends on the Supabase verifier passing."
-    : cloudSync.message;
+  const cloudStatusMessage = cloudSync.message;
   const demandSignals = useMemo(
     () => [
       { label: "Local waitlist entries", value: String(stats.waitlist.length) },
       { label: "Feedback notes", value: String(stats.feedback.length) },
-      { label: "Cloud sync", value: cloudSync.configured ? "Verify" : "Off" },
+      { label: "Cloud sync", value: cloudSync.configured ? "On" : "Off" },
     ],
     [cloudSync.configured, stats],
   );
