@@ -16,6 +16,7 @@ Deep Spec should not depend on a live provider call for every QA check. Provider
 
 ```powershell
 npm run check
+npm run eval:identify:provider-health
 npm run eval:identify:release
 npm run eval:identify:public
 npm run verify:supabase
@@ -24,6 +25,7 @@ npm run verify:supabase
 Useful eval knobs:
 
 ```powershell
+npm run eval:identify:provider-health
 npm run eval:identify -- --sample-size 6 --delay-ms 30000 --max-provider-failures 1
 npm run eval:identify -- --sample-size 50 --delay-ms 0 --dataset-root datasets/raw/drbimmer-car-parts-and-damage-dataset
 npm run eval:identify -- --sample-set public --sample-size 300 --delay-ms 0 --provider-timeout-ms 90000 --max-provider-failures 1
@@ -31,6 +33,7 @@ npm run eval:identify -- --sample-set public --sample-size 300 --delay-ms 0 --pr
 
 `DEEPSPEC_DATASET_ROOT`, `DEEPSPEC_DATASET_INDEX_PATH`, `DEEPSPEC_EVAL_DELAY_MS`, `DEEPSPEC_EVAL_MAX_PROVIDER_FAILURES`, `DEEPSPEC_IDENTIFY_PROVIDER_TIMEOUT_MS`, `GEMINI_FALLBACK_MODELS`, and `GEMINI_CHAT_FALLBACK_MODELS` can set the same defaults for release runs.
 For a fast provider smoke where rate limits should fail immediately instead of waiting through release backoff, add `--rate-limit-retries 0`.
+`npm run eval:identify:provider-health` is the standard fast smoke for that case. It writes `artifacts/release-gates/provider-health-summary.json` and exits `2` when provider quota or availability blocks the release gate.
 
 Optional local identify fallback:
 

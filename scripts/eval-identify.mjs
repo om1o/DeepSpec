@@ -166,7 +166,12 @@ export function isReviewableEvalFailure(error) {
 export function getEvalExitCode(summary) {
   if (
     summary.providerStatus === "blocked" ||
-    summary.providerFailureCount > 0 ||
+    summary.providerFailureCount > 0
+  ) {
+    return 2;
+  }
+
+  if (
     summary.failureCount > 0 ||
     summary.passCount !== summary.attemptedCount ||
     summary.attemptedCount !== summary.sampleSize

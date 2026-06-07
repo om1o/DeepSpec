@@ -216,7 +216,7 @@ describe("identify eval scoring", () => {
         providerStatus: "blocked",
         sampleSize: 6,
       }),
-    ).toBe(1);
+    ).toBe(2);
 
     expect(
       getEvalExitCode({
