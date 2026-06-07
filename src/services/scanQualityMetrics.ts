@@ -18,6 +18,7 @@ export type ScanQualityMetrics = {
 export const SCAN_QUALITY_METRICS_KEY = "deep-spec:scan-quality-metrics";
 
 const EMPTY_REASON_COUNTS: Record<ScanQualityFailureReason, number> = {
+  lens_covered: 0,
   needs_better_photo: 0,
   object_too_small: 0,
   too_bright: 0,

@@ -1,4 +1,4 @@
-export type ImageQualityIssue = "too_dark" | "too_bright" | "too_blurry";
+export type ImageQualityIssue = "too_dark" | "lens_covered" | "too_bright" | "too_blurry";
 
 export type ImageQualityMeasurements = {
   averageLuminance: number;
@@ -21,6 +21,7 @@ export const QUALITY_SAMPLE_W = 96;
 export const QUALITY_SAMPLE_H = 72;
 
 const DARK_THRESHOLD = 20;
+const COVERED_LENS_VARIANCE = 8;
 const BRIGHT_THRESHOLD = 235;
 const BLUR_THRESHOLD = 120;
 
@@ -32,6 +33,15 @@ export function analyzeQuality(
   const metrics = measureImageQuality(lum, width, height);
 
   if (metrics.averageLuminance < DARK_THRESHOLD) {
+    if (metrics.gradientVariance < COVERED_LENS_VARIANCE) {
+      return {
+        metrics,
+        ok: false,
+        issue: "lens_covered",
+        message: "Camera looks covered. Uncover the lens and try again.",
+      };
+    }
+
     return {
       metrics,
       ok: false,

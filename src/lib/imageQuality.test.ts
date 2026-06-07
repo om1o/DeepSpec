@@ -17,14 +17,31 @@ function makeEdgeLum(): Uint8Array {
   return lum;
 }
 
+function makeDarkTexturedLum(): Uint8Array {
+  // Near-black mean (~10) with faint 3px bands so gradientVariance clears the
+  // covered-lens floor (8) but the frame stays a genuinely dark scene (mean < 20).
+  const lum = new Uint8Array(QUALITY_SAMPLE_W * QUALITY_SAMPLE_H);
+  for (let y = 0; y < QUALITY_SAMPLE_H; y++) {
+    for (let x = 0; x < QUALITY_SAMPLE_W; x++) {
+      lum[y * QUALITY_SAMPLE_W + x] = Math.floor(x / 3) % 2 === 0 ? 20 : 0;
+    }
+  }
+  return lum;
+}
+
 describe("analyzeQuality", () => {
-  it("rejects a completely dark image", () => {
+  it("flags a flat black frame as a covered lens", () => {
     const result = analyzeQuality(makeLum(0), QUALITY_SAMPLE_W, QUALITY_SAMPLE_H);
-    expect(result).toMatchObject({ ok: false, issue: "too_dark" });
+    expect(result).toMatchObject({ ok: false, issue: "lens_covered" });
   });
 
-  it("rejects a near-black image below the brightness threshold", () => {
+  it("flags a flat near-black frame as a covered lens", () => {
     const result = analyzeQuality(makeLum(10), QUALITY_SAMPLE_W, QUALITY_SAMPLE_H);
+    expect(result).toMatchObject({ ok: false, issue: "lens_covered" });
+  });
+
+  it("rejects a textured dark scene as too dark, not a covered lens", () => {
+    const result = analyzeQuality(makeDarkTexturedLum(), QUALITY_SAMPLE_W, QUALITY_SAMPLE_H);
     expect(result).toMatchObject({ ok: false, issue: "too_dark" });
   });
 
@@ -62,7 +79,7 @@ describe("analyzeQuality", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      issue: "too_dark",
+      issue: "lens_covered",
       metrics: {
         averageLuminance: 10,
         brightnessScore: expect.any(Number),
@@ -74,7 +91,10 @@ describe("analyzeQuality", () => {
   });
 
   it("returns a human-readable message on rejection", () => {
-    const dark = analyzeQuality(makeLum(5), QUALITY_SAMPLE_W, QUALITY_SAMPLE_H);
+    const covered = analyzeQuality(makeLum(5), QUALITY_SAMPLE_W, QUALITY_SAMPLE_H);
+    expect(covered).toMatchObject({ ok: false, message: expect.stringContaining("cover") });
+
+    const dark = analyzeQuality(makeDarkTexturedLum(), QUALITY_SAMPLE_W, QUALITY_SAMPLE_H);
     expect(dark).toMatchObject({ ok: false, message: expect.stringContaining("dark") });
 
     const blurry = analyzeQuality(makeLum(100), QUALITY_SAMPLE_W, QUALITY_SAMPLE_H);

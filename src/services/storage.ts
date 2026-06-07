@@ -364,6 +364,7 @@ function isConfidence(value: unknown): value is Confidence {
 function isScanQualityFailureReason(value: unknown): value is ScanQualityFailureReason {
   return (
     value === "too_dark" ||
+    value === "lens_covered" ||
     value === "too_bright" ||
     value === "too_blurry" ||
     value === "object_too_small" ||
