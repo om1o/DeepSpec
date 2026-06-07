@@ -2,6 +2,8 @@
 
 Deep Spec should not depend on a live provider call for every QA check. Provider quota, temporary `429` responses, and API outages must be separated from model-quality failures.
 
+For the non-Gemini backup strategy, see [AI_PROVIDER_FALLBACK_PLAN.md](AI_PROVIDER_FALLBACK_PLAN.md).
+
 ## Release-Safe Rules
 
 1. Scanner QA uses the real camera or upload path against the real identify path. There is no user-facing fixture mode; local smoke tests should upload a known image or use automated component tests.

@@ -67,6 +67,8 @@ npm run eval:identify:release
 
 The eval reads `DEEPSPEC_DATASET_ROOT` locally first, falls back to Hugging Face if a sample is missing, and records latency, invalid response rate, safety false-positive rate, and provider availability in `.deepspec-eval/identify-summary.json`.
 
+If Gemini is rate-limited or unavailable, run `npm run eval:identify:provider-health` first and use `docs/AI_PROVIDER_FALLBACK_PLAN.md` before adding or enabling any backup provider.
+
 For a broader benchmark built from the sorted local dataset index, run:
 
 ```bash

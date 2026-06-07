@@ -83,6 +83,9 @@ describe("Result", () => {
     expect(screen.getByRole("heading", { name: "Complete brief" })).toBeInTheDocument();
     expect(screen.getByText("Data coverage")).toBeInTheDocument();
     expect(screen.getByText("6/6")).toBeInTheDocument();
+    expect(screen.getByText("What could be wrong")).toBeInTheDocument();
+    expect(screen.getByText("Starter motor is close enough that it should be ruled out before repair.")).toBeInTheDocument();
+    expect(screen.getByText("No visible part number or label was detected.")).toBeInTheDocument();
     expect(screen.getByText("Alternator / electrical / high confidence")).toBeInTheDocument();
     expect(screen.getAllByText("Take another photo of the label if you need more detail.").length).toBeGreaterThan(0);
     expect(screen.getByText("Can you confirm this is the Alternator from the photo?")).toBeInTheDocument();
@@ -156,6 +159,9 @@ describe("Result", () => {
     expect(screen.getByText("Image callouts that tie the answer to exact visible areas.")).toBeInTheDocument();
     expect(screen.getByText("Related comparison parts to rule out close matches.")).toBeInTheDocument();
     expect(screen.getByText("Reference links or dataset examples for outside checking.")).toBeInTheDocument();
+    expect(screen.getByText("Deep Spec found weak visual clues, so the label may be a nearby or similar-looking part.")).toBeInTheDocument();
+    expect(screen.getByText("The photo may hide the label, connector, mounting point, or damaged area needed to confirm it.")).toBeInTheDocument();
+    expect(screen.getByText("The answer is not tied to a specific image region yet.")).toBeInTheDocument();
   });
 
   it("turns matched dataset source evidence into a reference link", () => {
