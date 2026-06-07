@@ -301,6 +301,7 @@ async function upsertScanCorrection(supabase: SupabaseClient, userId: string, lo
 }
 
 async function insertScanModelRun(supabase: SupabaseClient, userId: string, lookup: Lookup) {
+  const modelRun = lookup.result?.modelRun;
   await assertCloudResult(
     await supabase.from("scan_model_runs").insert({
       error_code: lookup.errorCode ?? null,
@@ -310,14 +311,16 @@ async function insertScanModelRun(supabase: SupabaseClient, userId: string, look
         confidenceRange: lookup.result?.confidenceRange ?? null,
         confidenceScore: lookup.result?.confidenceScore ?? null,
         confirmationNeed: lookup.result?.confirmationNeed ?? null,
+        fallbackReason: modelRun?.fallbackReason ?? null,
         hasResult: Boolean(lookup.result),
         safetyTriage: lookup.result?.safetyTriage ?? null,
         scanQuality: lookup.scanQuality ?? null,
       },
-      model: "unknown",
-      ocr_used: hasOcrEvidence(lookup),
+      latency_ms: modelRun?.latencyMs ?? null,
+      model: modelRun?.model ?? "unknown",
+      ocr_used: modelRun?.ocrUsed ?? hasOcrEvidence(lookup),
       prompt_version: null,
-      provider: "unknown",
+      provider: modelRun?.provider ?? "unknown",
       scan_local_id: lookup.id,
       user_id: userId,
     }),

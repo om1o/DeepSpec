@@ -6,6 +6,8 @@ import {
   type Confidence,
   type EvidenceRegion,
   type IdentificationResult,
+  type IdentifyModelRun,
+  type IdentifyProvider,
   type ScanCategory,
   type SourceLink,
 } from "../src/types";
@@ -14,12 +16,21 @@ import { resolve } from "node:path";
 
 type JsonObject = Record<string, unknown>;
 type LabelRescueTrigger = "too_blurry";
+type ParsedIdentifyRequest = {
+  base64: string;
+  mimeType: string;
+  base64_2: string | null;
+  mimeType_2: string | null;
+  userMessage: string;
+  labelRescueTrigger: LabelRescueTrigger | null;
+};
 
 export type IdentifyResponse =
   | {
       status: 200;
       body: {
         result: IdentificationResult;
+        modelRun: IdentifyModelRun;
       };
     }
   | {
@@ -34,12 +45,16 @@ export type IdentifyResponse =
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
 const DEFAULT_FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
+const DEFAULT_HF_IDENTIFY_MODEL = "Qwen/Qwen2.5-VL-7B-Instruct";
+const DEFAULT_HF_ROUTER_CHAT_COMPLETIONS_URL = "https://router.huggingface.co/v1/chat/completions";
 const DEFAULT_OLLAMA_IDENTIFY_MODEL = "llava:latest";
 const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 const DEFAULT_OCR_MODEL = "microsoft/trocr-large-printed";
 const IDENTIFY_MAX_OUTPUT_TOKENS = 2048;
+const HF_IDENTIFY_MAX_OUTPUT_TOKENS = 2048;
 const OLLAMA_IDENTIFY_MAX_OUTPUT_TOKENS = 900;
 const DEFAULT_IDENTIFY_PROVIDER_TIMEOUT_MS = 25_000;
+const DEFAULT_HF_IDENTIFY_TIMEOUT_MS = 45_000;
 const DEFAULT_OLLAMA_IDENTIFY_TIMEOUT_MS = 180_000;
 const DEFAULT_DATASET_ROOT = "datasets/raw/drbimmer-car-parts-and-damage-dataset";
 const DEFAULT_DATASET_INDEX_PATH = "datasets/derived/drbimmer-car-parts-and-damage-dataset/records.jsonl";
@@ -149,6 +164,12 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
 
   const ocr = shouldRunOcr(parsed) ? await runOcrFallback(parsed, env) : null;
   const sourceContext = buildDatasetSourceContext(env);
+  const forceHfIdentify = isHfIdentifyForced(env);
+  if (forceHfIdentify) {
+    return createHfIdentifyResponse(parsed, ocr, sourceContext, env, "forced_hf_health");
+  }
+
+  const hasHfFallback = isHfIdentifyFallbackConfigured(env);
   const hasOllamaFallback = isOllamaIdentifyFallbackEnabled(env);
   const apiKey = env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -164,7 +185,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
   for (let index = 0; index < models.length; index += 1) {
     const model = models[index];
     const hasFallback = index < models.length - 1;
-    const fallbackAvailable = hasFallback || hasOllamaFallback;
+    const fallbackAvailable = hasFallback || hasHfFallback || hasOllamaFallback;
     const startedAt = Date.now();
     const response = await fetchGeminiIdentify(model, parsed, ocr, sourceContext, apiKey, env);
 
@@ -173,7 +194,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
       lastRetryableError = networkError;
       logIdentifyAttempt("gemini", model, startedAt, networkError, fallbackAvailable);
       if (hasFallback) continue;
-      if (hasOllamaFallback) break;
+      if (hasHfFallback || hasOllamaFallback) break;
       return networkError;
     }
 
@@ -183,7 +204,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
       lastRetryableError = retryError;
       logIdentifyAttempt("gemini", model, startedAt, retryError, fallbackAvailable);
       if (hasFallback) continue;
-      if (hasOllamaFallback) break;
+      if (hasHfFallback || hasOllamaFallback) break;
       return retryError;
     }
 
@@ -196,7 +217,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
         lastRetryableError = providerError;
         logIdentifyAttempt("gemini", model, startedAt, providerError, fallbackAvailable);
         if (hasFallback) continue;
-        if (hasOllamaFallback) break;
+        if (hasHfFallback || hasOllamaFallback) break;
       }
 
       return providerError;
@@ -221,11 +242,12 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
     }
 
     const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env);
+    const latencyMs = Date.now() - startedAt;
 
     console.info("[DeepSpec AI]", {
       provider: "gemini",
       model,
-      latencyMs: Date.now() - startedAt,
+      latencyMs,
       success: true,
       confidence: normalizedResult.confidence,
       scanCategory: normalizedResult.scanCategory,
@@ -236,9 +258,25 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
     return {
       status: 200,
       body: {
-        result: normalizedResult,
+        ...withModelRun(normalizedResult, {
+          provider: "gemini",
+          model,
+          latencyMs,
+          ocrUsed: Boolean(ocr?.text),
+        }),
       },
     };
+  }
+
+  if (hasHfFallback && lastRetryableError) {
+    const response = await createHfIdentifyResponse(parsed, ocr, sourceContext, env, getIdentifyErrorCode(lastRetryableError) ?? "provider_unavailable");
+    if (response.status === 200) {
+      return response;
+    }
+
+    if ("error" in response.body && response.body.error.code === "invalid_response") {
+      return response;
+    }
   }
 
   if (hasOllamaFallback && lastRetryableError) {
@@ -255,12 +293,28 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
     : lastRetryableError ?? errorResponse(502, "provider_error", "The AI provider rejected this request.");
 }
 
+function getIdentifyErrorCode(response: IdentifyResponse) {
+  return "error" in response.body ? response.body.error.code : null;
+}
+
 function getIdentifyModels(env: Record<string, string | undefined>) {
   return uniqueStrings([
     env.GEMINI_MODEL || DEFAULT_MODEL,
     ...splitModelList(env.GEMINI_FALLBACK_MODELS),
     ...DEFAULT_FALLBACK_MODELS,
   ]);
+}
+
+function withModelRun(result: IdentificationResult, modelRun: IdentifyModelRun) {
+  const resultWithModelRun: IdentificationResult = {
+    ...result,
+    modelRun,
+  };
+
+  return {
+    result: resultWithModelRun,
+    modelRun,
+  };
 }
 
 function splitModelList(value: string | undefined) {
@@ -285,7 +339,7 @@ function uniqueStrings(values: string[]) {
 }
 
 function logIdentifyAttempt(
-  provider: "gemini" | "ollama",
+  provider: IdentifyProvider,
   model: string,
   startedAt: number,
   response: IdentifyResponse,
@@ -307,13 +361,206 @@ function logIdentifyAttempt(
   });
 }
 
+async function createHfIdentifyResponse(
+  parsed: ParsedIdentifyRequest,
+  ocr: { text: string; model: string } | null,
+  sourceContext: string | null,
+  env: Record<string, string | undefined>,
+  fallbackReason: string,
+): Promise<IdentifyResponse> {
+  const token = getHfToken(env);
+  if (!token) {
+    return errorResponse(500, "not_configured", "Hugging Face identify fallback is enabled, but no HF_TOKEN is configured.");
+  }
+
+  const model = getHfIdentifyModel(env);
+  const startedAt = Date.now();
+  const response = await fetchHfIdentify(model, token, parsed, ocr, sourceContext, env);
+
+  if (!response) {
+    const networkError = errorResponse(502, "network", "Deep Spec could not reach Hugging Face.");
+    logIdentifyAttempt("huggingface", model, startedAt, networkError, false);
+    return networkError;
+  }
+
+  const isJson = (response.headers.get("content-type") ?? "").includes("application/json");
+  const responseBody = isJson ? ((await response.json().catch(() => null)) as JsonObject | null) : null;
+
+  if (response.status === 429) {
+    const retryError = errorResponse(429, "rate_limited", "Hugging Face is rate-limited right now. Try again in a few minutes.");
+    logIdentifyAttempt("huggingface", model, startedAt, retryError, false);
+    return retryError;
+  }
+
+  if (!response.ok) {
+    const providerError = errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
+    logIdentifyAttempt("huggingface", model, startedAt, providerError, false);
+    return providerError;
+  }
+
+  const text = extractHfText(responseBody);
+  const result = text ? parseIdentificationResult(text) : null;
+  if (!result) {
+    const invalidResponse = errorResponse(502, "invalid_response", "Hugging Face returned JSON that Deep Spec could not read.");
+    logIdentifyAttempt("huggingface", model, startedAt, invalidResponse, false);
+    return invalidResponse;
+  }
+
+  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env);
+  const latencyMs = Date.now() - startedAt;
+
+  console.info("[DeepSpec AI]", {
+    provider: "huggingface",
+    model,
+    latencyMs,
+    success: true,
+    confidence: normalizedResult.confidence,
+    scanCategory: normalizedResult.scanCategory,
+    safetyTriage: normalizedResult.safetyTriage,
+    fallbackReason,
+    ocrUsed: Boolean(ocr?.text),
+  });
+
+  return {
+    status: 200,
+    body: {
+      ...withModelRun(normalizedResult, {
+        provider: "huggingface",
+        model,
+        latencyMs,
+        fallbackReason,
+        ocrUsed: Boolean(ocr?.text),
+      }),
+    },
+  };
+}
+
+function fetchHfIdentify(
+  model: string,
+  token: string,
+  parsed: ParsedIdentifyRequest,
+  ocr: { text: string; model: string } | null,
+  sourceContext: string | null,
+  env: Record<string, string | undefined>,
+) {
+  const endpoint = getHfIdentifyEndpoint(env);
+  const provider = env.HF_IDENTIFY_PROVIDER?.trim();
+  const content = [
+    {
+      type: "text",
+      text: [
+        parsed.userMessage,
+        ocr?.text ? buildOcrContext(ocr.text) : "",
+        sourceContext ?? "",
+      ].filter(Boolean).join("\n\n"),
+    },
+    {
+      type: "image_url",
+      image_url: {
+        url: `data:${parsed.mimeType};base64,${parsed.base64}`,
+      },
+    },
+    ...(parsed.base64_2 && parsed.mimeType_2
+      ? [{
+          type: "image_url",
+          image_url: {
+            url: `data:${parsed.mimeType_2};base64,${parsed.base64_2}`,
+          },
+        }]
+      : []),
+  ];
+
+  return fetch(endpoint, {
+    method: "POST",
+    signal: AbortSignal.timeout(getHfIdentifyTimeoutMs(env)),
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      ...(provider ? { provider } : {}),
+      messages: [
+        {
+          role: "system",
+          content: `${IDENTIFY_PROMPT}\nReturn only JSON that matches the Deep Spec identify schema.`,
+        },
+        {
+          role: "user",
+          content,
+        },
+      ],
+      max_tokens: HF_IDENTIFY_MAX_OUTPUT_TOKENS,
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+    }),
+  }).catch(() => null);
+}
+
+function isHfIdentifyForced(env: Record<string, string | undefined>) {
+  return env.DEEPSPEC_FORCE_HF_IDENTIFY === "true";
+}
+
+function isHfIdentifyFallbackConfigured(env: Record<string, string | undefined>) {
+  return env.DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK === "true" && Boolean(getHfToken(env));
+}
+
+function getHfToken(env: Record<string, string | undefined>) {
+  return env.HF_TOKEN?.trim() || env.HF_API_TOKEN?.trim() || env.HUGGINGFACE_API_KEY?.trim() || "";
+}
+
+function getHfIdentifyModel(env: Record<string, string | undefined>) {
+  return env.HF_IDENTIFY_MODEL?.trim() || DEFAULT_HF_IDENTIFY_MODEL;
+}
+
+function getHfIdentifyEndpoint(env: Record<string, string | undefined>) {
+  const raw = env.HF_IDENTIFY_ENDPOINT_URL?.trim();
+  if (!raw) {
+    return DEFAULT_HF_ROUTER_CHAT_COMPLETIONS_URL;
+  }
+
+  return raw.endsWith("/chat/completions") ? raw : `${raw.replace(/\/$/, "")}/v1/chat/completions`;
+}
+
+function getHfIdentifyTimeoutMs(env: Record<string, string | undefined>) {
+  const value = env.DEEPSPEC_HF_IDENTIFY_TIMEOUT_MS;
+  if (!value) {
+    return DEFAULT_HF_IDENTIFY_TIMEOUT_MS;
+  }
+
+  const timeoutMs = Number(value);
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 5_000 || timeoutMs > 120_000) {
+    return DEFAULT_HF_IDENTIFY_TIMEOUT_MS;
+  }
+
+  return timeoutMs;
+}
+
+function extractHfText(responseBody: JsonObject | null) {
+  const choices = Array.isArray(responseBody?.choices) ? responseBody.choices : [];
+  const firstChoice = choices[0];
+  if (!isRecord(firstChoice) || !isRecord(firstChoice.message)) {
+    return null;
+  }
+
+  const content = firstChoice.message.content;
+  if (typeof content === "string") {
+    return content.trim();
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .map((item) => isRecord(item) && typeof item.text === "string" ? item.text : "")
+      .join("")
+      .trim();
+  }
+
+  return null;
+}
+
 async function createOllamaIdentifyResponse(
-  parsed: {
-    base64: string;
-    mimeType: string;
-    base64_2: string | null;
-    userMessage: string;
-  },
+  parsed: ParsedIdentifyRequest,
   ocr: { text: string; model: string } | null,
   env: Record<string, string | undefined>,
 ): Promise<IdentifyResponse> {
@@ -345,11 +592,12 @@ async function createOllamaIdentifyResponse(
   }
 
   const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env);
+  const latencyMs = Date.now() - startedAt;
 
   console.info("[DeepSpec AI]", {
     provider: "ollama",
     model,
-    latencyMs: Date.now() - startedAt,
+    latencyMs,
     success: true,
     confidence: normalizedResult.confidence,
     scanCategory: normalizedResult.scanCategory,
@@ -360,19 +608,19 @@ async function createOllamaIdentifyResponse(
   return {
     status: 200,
     body: {
-      result: normalizedResult,
+      ...withModelRun(normalizedResult, {
+        provider: "ollama",
+        model,
+        latencyMs,
+        ocrUsed: Boolean(ocr?.text),
+      }),
     },
   };
 }
 
 function fetchOllamaIdentify(
   model: string,
-  parsed: {
-    base64: string;
-    mimeType: string;
-    base64_2: string | null;
-    userMessage: string;
-  },
+  parsed: ParsedIdentifyRequest,
   ocr: { text: string; model: string } | null,
   env: Record<string, string | undefined>,
 ) {
@@ -526,16 +774,7 @@ function getIdentifyProviderTimeoutMs(env: Record<string, string | undefined>) {
   return timeoutMs;
 }
 
-function parseIdentifyRequest(body: unknown):
-  | {
-      base64: string;
-      mimeType: string;
-      base64_2: string | null;
-      mimeType_2: string | null;
-      userMessage: string;
-      labelRescueTrigger: LabelRescueTrigger | null;
-    }
-  | { error: IdentifyResponse } {
+function parseIdentifyRequest(body: unknown): ParsedIdentifyRequest | { error: IdentifyResponse } {
   if (!isRecord(body) || typeof body.imageBase64 !== "string") {
     return { error: errorResponse(400, "invalid_input", "A captured image is required.") };
   }

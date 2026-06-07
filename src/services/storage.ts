@@ -1,4 +1,4 @@
-import type { CandidateMatch, ChatMessage, Confidence, EvidenceRegion, IdentificationResult, Lookup, Rating, ScanAnalysisState, ScanCategory, ScanQualityFailureReason, ScanQualitySnapshot, SourceLink, TrainingStatus } from "../types";
+import type { CandidateMatch, ChatMessage, Confidence, EvidenceRegion, IdentificationResult, IdentifyModelRun, IdentifyProvider, Lookup, Rating, ScanAnalysisState, ScanCategory, ScanQualityFailureReason, ScanQualitySnapshot, SourceLink, TrainingStatus } from "../types";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
 export const MAX_SAVED_LOOKUPS = 50;
@@ -543,7 +543,36 @@ function normalizeStoredIdentificationResult(value: unknown, correction?: string
     needsBetterPhoto: result.needsBetterPhoto,
     evidence: cleanStringArray(result.evidence, 8, 320),
     sourceLinks: normalizeSourceLinks(result.sourceLinks),
+    ...(normalizeIdentifyModelRun(result.modelRun) ? { modelRun: normalizeIdentifyModelRun(result.modelRun) } : {}),
   };
+}
+
+function normalizeIdentifyModelRun(value: unknown): IdentifyModelRun | undefined {
+  if (!isRecord(value) || !isIdentifyProvider(value.provider) || typeof value.model !== "string") {
+    return undefined;
+  }
+
+  const latencyMs = typeof value.latencyMs === "number" && Number.isFinite(value.latencyMs) && value.latencyMs >= 0
+    ? Math.round(value.latencyMs)
+    : 0;
+  const model = cleanText(value.model, 160);
+  if (!model) {
+    return undefined;
+  }
+
+  return {
+    provider: value.provider,
+    model,
+    latencyMs,
+    ...(typeof value.fallbackReason === "string" && value.fallbackReason.trim()
+      ? { fallbackReason: cleanText(value.fallbackReason, 120) }
+      : {}),
+    ocrUsed: value.ocrUsed === true,
+  };
+}
+
+function isIdentifyProvider(value: unknown): value is IdentifyProvider {
+  return value === "gemini" || value === "huggingface" || value === "ollama";
 }
 
 function normalizeCandidateMatches(value: unknown): CandidateMatch[] {

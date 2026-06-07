@@ -6,6 +6,7 @@ import {
   type CapturedFrame,
   type EvidenceRegion,
   type IdentificationResult,
+  type IdentifyModelRun,
   type LabelRescueTrigger,
   type Lookup,
   type ScanCategory,
@@ -33,6 +34,7 @@ export type AIErrorDetails = {
 
 type IdentifyApiSuccess = {
   result: IdentificationResult;
+  modelRun?: IdentifyModelRun;
 };
 
 type ChatApiSuccess = {
@@ -84,7 +86,10 @@ export async function runAI(input: AIInput): Promise<string | object> {
       responseAsJson: input.responseAsJson ?? true,
     });
 
-    return body.result;
+    return {
+      ...body.result,
+      ...(body.modelRun ? { modelRun: body.modelRun } : {}),
+    };
   }
 
   throw new AIServiceError("unsupported", "Deep Spec does not support that AI request yet.");

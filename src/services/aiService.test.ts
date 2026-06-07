@@ -64,6 +64,41 @@ describe("aiService", () => {
     );
   });
 
+  it("preserves identify provider metadata from the API response", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          result,
+          modelRun: {
+            provider: "huggingface",
+            model: "Qwen/Qwen2.5-VL-7B-Instruct",
+            latencyMs: 1234,
+            fallbackReason: "rate_limited",
+            ocrUsed: false,
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(
+      identifyCapturedFrame({
+        imageBase64: "data:image/jpeg;base64,test",
+        capturedAt: "2026-05-16T00:00:00.000Z",
+      }),
+    ).resolves.toMatchObject({
+      partName: "Alternator",
+      modelRun: {
+        provider: "huggingface",
+        model: "Qwen/Qwen2.5-VL-7B-Instruct",
+        fallbackReason: "rate_limited",
+      },
+    });
+  });
+
   it("passes blurry label rescue hints to the identify API", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ result }), {

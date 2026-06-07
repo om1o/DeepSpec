@@ -13,6 +13,7 @@ import {
   isReviewableEvalFailure,
   isSafetyFalsePositive,
   loadEvalSample,
+  parseArgs,
   scoreIdentificationResult,
   summarizeEvalMetrics,
 } from "./eval-identify.mjs";
@@ -191,8 +192,16 @@ describe("identify eval scoring", () => {
   it("keeps provider availability failures out of training review rows", () => {
     expect(isReviewableEvalFailure({ code: "rate_limited" })).toBe(false);
     expect(isReviewableEvalFailure({ code: "network" })).toBe(false);
+    expect(isReviewableEvalFailure({ code: "not_configured" })).toBe(false);
     expect(isReviewableEvalFailure({ code: "invalid_response" })).toBe(true);
     expect(isReviewableEvalFailure(null)).toBe(true);
+  });
+
+  it("parses provider mode for Hugging Face health checks", () => {
+    expect(parseArgs(["--provider", "hf"])).toMatchObject({
+      provider: "hf",
+    });
+    expect(() => parseArgs(["--provider", "bad"])).toThrow(/provider must be auto, gemini, or hf/);
   });
 
   it("fails the release gate when provider availability or scoring blocks the eval", () => {
@@ -292,21 +301,30 @@ describe("identify eval scoring", () => {
             invalidResponse: true,
             safetyFalsePositive: true,
           },
+          {
+            status: 500,
+            failureReasons: ["not_configured"],
+            providerMs: 20,
+            totalMs: 25,
+            invalidResponse: false,
+            safetyFalsePositive: false,
+          },
         ],
         4,
       ),
     ).toMatchObject({
       requestedSampleCount: 4,
-      attemptedCount: 2,
-      attemptedRate: 0.5,
-      passRate: 0.5,
+      attemptedCount: 3,
+      attemptedRate: 0.75,
+      passRate: 0.3333,
+      providerAvailabilityFailureRate: 0.3333,
       invalidResponseCount: 1,
-      invalidResponseRate: 0.5,
+      invalidResponseRate: 0.3333,
       safetyFalsePositiveCount: 1,
-      safetyFalsePositiveRate: 0.5,
+      safetyFalsePositiveRate: 0.3333,
       latencyMs: {
         provider: {
-          average: 200,
+          average: 140,
           p50: 100,
           p95: 300,
           max: 300,

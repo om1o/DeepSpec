@@ -10,6 +10,7 @@
     "dataset:sort": "node scripts/sort-drbimmer-dataset.mjs",
     "dataset:verified-sources": "node scripts/build-verified-vehicle-reference.mjs",
     "eval:identify": "node scripts/eval-identify.mjs",
+    "eval:identify:hf-health": "node scripts/eval-identify.mjs --provider hf --sample-size 1 --delay-ms 0 --rate-limit-retries 0 --max-provider-failures 1 --output artifacts/release-gates/hf-health.jsonl --summary artifacts/release-gates/hf-health-summary.json",
     "eval:identify:provider-health": "node scripts/eval-identify.mjs --sample-size 1 --delay-ms 0 --rate-limit-retries 0 --max-provider-failures 1 --output artifacts/release-gates/provider-health.jsonl --summary artifacts/release-gates/provider-health-summary.json",
     "eval:identify:release": "node scripts/eval-identify.mjs --sample-size 50 --max-provider-failures 1 && node scripts/verify-identify-eval-summary.mjs --min-sample-size 50",
     "eval:identify:public": "node scripts/eval-identify.mjs --sample-set public --sample-size 300 --delay-ms 0 --provider-timeout-ms 90000 --max-provider-failures 1 && node scripts/verify-identify-eval-summary.mjs --min-sample-size 300",

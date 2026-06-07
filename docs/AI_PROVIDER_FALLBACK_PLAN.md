@@ -1,6 +1,6 @@
 # AI Provider Fallback Plan
 
-Deep Spec needs a real backup path for `/api/identify` when Gemini returns `429`, network failures, provider errors, or invalid responses. The goal is not to make a weak model silently pass as production-ready. The goal is to keep the user flow recoverable, preserve dataset evidence, and prove each provider with separate gates.
+Deep Spec needs a real backup path for `/api/identify` when Gemini returns `429`, network failures, or retryable provider errors. Gemini invalid JSON or weak model output should remain a model/prompt failure, not something silently hidden by fallback. The goal is to keep the user flow recoverable, preserve dataset evidence, and prove each provider with separate gates.
 
 ## Current State
 
@@ -49,6 +49,7 @@ Hugging Face `InferenceClient` supports image-plus-text chat completion with a b
    - Send image input as an image URL data URI plus text instructions.
    - Normalize the response through the existing `normalizeIdentificationResult`.
    - Return the same error codes: `rate_limited`, `network`, `provider_error`, and `invalid_response`.
+   - Only invoke HF after provider availability failures from Gemini, not after Gemini `invalid_response`.
 
 3. Preserve dataset fields:
    - Store `provider`, `model`, `latencyMs`, and fallback reason in `scan_model_runs`.
@@ -57,7 +58,7 @@ Hugging Face `InferenceClient` supports image-plus-text chat completion with a b
 
 4. Add gates:
    - `npm run eval:identify:hf-health` for one no-retry HF provider smoke.
-   - `npm run eval:identify:provider-health` should report each enabled provider separately.
+   - `npm run eval:identify:provider-health` remains the Gemini provider smoke.
    - `npm run eval:identify:release` must still fail if the backup provider is unavailable or model quality drops.
 
 5. Add tests:
