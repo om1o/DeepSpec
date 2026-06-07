@@ -1978,6 +1978,13 @@ function getScanQualityCoach(issue: ScanQualityCoachIssue): ScanQualityCoachStat
         progress: "You're close",
         title: "Too dark",
       };
+    case "lens_covered":
+      return {
+        action: "Uncover lens",
+        issue,
+        progress: "You're close",
+        title: "Lens covered",
+      };
     case "too_bright":
       return {
         action: "Reduce glare",

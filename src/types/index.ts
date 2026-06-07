@@ -15,6 +15,7 @@ export type LabelRescueTrigger = "too_blurry";
 
 export type ScanQualityFailureReason =
   | "too_dark"
+  | "lens_covered"
   | "too_bright"
   | "too_blurry"
   | "object_too_small"
