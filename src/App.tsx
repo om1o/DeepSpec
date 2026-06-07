@@ -1,13 +1,14 @@
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import Auth from "./screens/Auth";
 import Chat from "./screens/Chat";
 import EarlyAccess from "./screens/EarlyAccess";
 import History from "./screens/History";
 import Result from "./screens/Result";
-import Scanner from "./screens/Scanner";
 import { getVerifiedAuthUser, subscribeToAuthChanges } from "./services/auth";
+
+const Scanner = lazy(() => import("./screens/Scanner"));
 
 type AuthStatus = "checking" | "allowed" | "blocked";
 
@@ -70,6 +71,14 @@ function RequireAuth({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+function ScannerRouteFallback() {
+  return (
+    <main className="flex min-h-dvh items-center justify-center bg-[var(--ds-bg)] px-4 text-center text-sm font-bold text-[var(--ds-fg-3)]">
+      Opening camera...
+    </main>
+  );
+}
+
 export default function App() {
   return (
     <Routes>
@@ -79,7 +88,9 @@ export default function App() {
         path="/scan"
         element={
           <RequireAuth>
-            <Scanner />
+            <Suspense fallback={<ScannerRouteFallback />}>
+              <Scanner />
+            </Suspense>
           </RequireAuth>
         }
       />
