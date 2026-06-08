@@ -105,6 +105,45 @@ describe("Result", () => {
     );
   });
 
+  it("flags when a backup AI model produced the result", () => {
+    renderResult({
+      ...successfulScan,
+      result: {
+        ...successfulScan.result!,
+        modelRun: {
+          provider: "huggingface",
+          model: "google/gemma-4-31b-it:free",
+          latencyMs: 1234,
+          fallbackReason: "rate_limited",
+          ocrUsed: false,
+        },
+      },
+    });
+
+    expect(
+      screen.getByText(
+        "Identified with a backup AI model because the main model was busy. Double-check this result before relying on it.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("does not flag a backup model on the normal Gemini path", () => {
+    renderResult({
+      ...successfulScan,
+      result: {
+        ...successfulScan.result!,
+        modelRun: {
+          provider: "gemini",
+          model: "gemini-2.5-flash",
+          latencyMs: 1000,
+          ocrUsed: false,
+        },
+      },
+    });
+
+    expect(screen.queryByText(/backup AI model/i)).not.toBeInTheDocument();
+  });
+
   it("groups OCR label text into an organized Lens-style sheet", () => {
     renderResult({
       ...successfulScan,
