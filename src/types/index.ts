@@ -81,7 +81,7 @@ export type SourceLink = {
   sourceType: "dataset" | "reference" | "search" | "safety";
 };
 
-export type IdentifyProvider = "gemini" | "huggingface" | "groq" | "ollama";
+export type IdentifyProvider = "gemini" | "huggingface" | "groq" | "ollama" | "on-device";
 
 export type IdentifyModelRun = {
   provider: IdentifyProvider;

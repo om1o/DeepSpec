@@ -29,6 +29,7 @@
     "qa:run": "node scripts/qa/run-user-impact-qa.mjs"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "@supabase/supabase-js": "^2.105.4",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",

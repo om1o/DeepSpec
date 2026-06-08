@@ -144,6 +144,27 @@ describe("Result", () => {
     expect(screen.queryByText(/backup AI model/i)).not.toBeInTheDocument();
   });
 
+  it("flags an on-device offline estimate distinctly from a cloud backup", () => {
+    renderResult({
+      ...successfulScan,
+      result: {
+        ...successfulScan.result!,
+        modelRun: {
+          provider: "on-device",
+          model: "SmolVLM-256M",
+          latencyMs: 10,
+          fallbackReason: "offline",
+          ocrUsed: false,
+        },
+      },
+    });
+
+    expect(
+      screen.getByText("Offline estimate from the on-device model. Reconnect for a full Deep Spec analysis."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/backup AI model/i)).not.toBeInTheDocument();
+  });
+
   it("groups OCR label text into an organized Lens-style sheet", () => {
     renderResult({
       ...successfulScan,
