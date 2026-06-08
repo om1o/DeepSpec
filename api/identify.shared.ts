@@ -47,6 +47,8 @@ const DEFAULT_MODEL = "gemini-2.5-flash";
 const DEFAULT_FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
 const DEFAULT_HF_IDENTIFY_MODEL = "Qwen/Qwen2.5-VL-7B-Instruct";
 const DEFAULT_HF_ROUTER_CHAT_COMPLETIONS_URL = "https://router.huggingface.co/v1/chat/completions";
+const DEFAULT_GROQ_IDENTIFY_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
+const DEFAULT_GROQ_CHAT_COMPLETIONS_URL = "https://api.groq.com/openai/v1/chat/completions";
 const DEFAULT_OLLAMA_IDENTIFY_MODEL = "llava:latest";
 const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 const DEFAULT_OCR_MODEL = "microsoft/trocr-large-printed";
@@ -55,10 +57,13 @@ const HF_IDENTIFY_MAX_OUTPUT_TOKENS = 2048;
 const OLLAMA_IDENTIFY_MAX_OUTPUT_TOKENS = 900;
 const DEFAULT_IDENTIFY_PROVIDER_TIMEOUT_MS = 25_000;
 const DEFAULT_HF_IDENTIFY_TIMEOUT_MS = 45_000;
+const DEFAULT_GROQ_IDENTIFY_TIMEOUT_MS = 45_000;
 const DEFAULT_OLLAMA_IDENTIFY_TIMEOUT_MS = 180_000;
 const DEFAULT_DATASET_ROOT = "datasets/raw/drbimmer-car-parts-and-damage-dataset";
 const DEFAULT_DATASET_INDEX_PATH = "datasets/derived/drbimmer-car-parts-and-damage-dataset/records.jsonl";
 const RETRYABLE_PROVIDER_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+const DEFAULT_BACKUP_RATE_LIMIT_RETRIES = 1;
+const DEFAULT_BACKUP_RETRY_BACKOFF_MS = 800;
 
 const OLLAMA_IDENTIFY_PROMPT = [
   "Identify the main visible car part or car damage.",
@@ -170,6 +175,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
   }
 
   const hasHfFallback = isHfIdentifyFallbackConfigured(env);
+  const hasGroqFallback = isGroqIdentifyFallbackConfigured(env);
   const hasOllamaFallback = isOllamaIdentifyFallbackEnabled(env);
   const apiKey = env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -185,7 +191,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
   for (let index = 0; index < models.length; index += 1) {
     const model = models[index];
     const hasFallback = index < models.length - 1;
-    const fallbackAvailable = hasFallback || hasHfFallback || hasOllamaFallback;
+    const fallbackAvailable = hasFallback || hasHfFallback || hasGroqFallback || hasOllamaFallback;
     const startedAt = Date.now();
     const response = await fetchGeminiIdentify(model, parsed, ocr, sourceContext, apiKey, env);
 
@@ -194,7 +200,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
       lastRetryableError = networkError;
       logIdentifyAttempt("gemini", model, startedAt, networkError, fallbackAvailable);
       if (hasFallback) continue;
-      if (hasHfFallback || hasOllamaFallback) break;
+      if (hasHfFallback || hasGroqFallback || hasOllamaFallback) break;
       return networkError;
     }
 
@@ -204,7 +210,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
       lastRetryableError = retryError;
       logIdentifyAttempt("gemini", model, startedAt, retryError, fallbackAvailable);
       if (hasFallback) continue;
-      if (hasHfFallback || hasOllamaFallback) break;
+      if (hasHfFallback || hasGroqFallback || hasOllamaFallback) break;
       return retryError;
     }
 
@@ -217,7 +223,7 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
         lastRetryableError = providerError;
         logIdentifyAttempt("gemini", model, startedAt, providerError, fallbackAvailable);
         if (hasFallback) continue;
-        if (hasHfFallback || hasOllamaFallback) break;
+        if (hasHfFallback || hasGroqFallback || hasOllamaFallback) break;
       }
 
       return providerError;
@@ -268,8 +274,25 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
     };
   }
 
+  if (hasGroqFallback && lastRetryableError) {
+    const reason = getIdentifyErrorCode(lastRetryableError) ?? "provider_unavailable";
+    const response = await withBackupRateLimitRetry(env, () =>
+      createGroqIdentifyResponse(parsed, ocr, sourceContext, env, reason),
+    );
+    if (response.status === 200) {
+      return response;
+    }
+
+    if ("error" in response.body && response.body.error.code === "invalid_response") {
+      return response;
+    }
+  }
+
   if (hasHfFallback && lastRetryableError) {
-    const response = await createHfIdentifyResponse(parsed, ocr, sourceContext, env, getIdentifyErrorCode(lastRetryableError) ?? "provider_unavailable");
+    const reason = getIdentifyErrorCode(lastRetryableError) ?? "provider_unavailable";
+    const response = await withBackupRateLimitRetry(env, () =>
+      createHfIdentifyResponse(parsed, ocr, sourceContext, env, reason),
+    );
     if (response.status === 200) {
       return response;
     }
@@ -361,6 +384,16 @@ function logIdentifyAttempt(
   });
 }
 
+type IdentifyBackend = {
+  provider: IdentifyProvider;
+  label: string;
+  token: string;
+  model: string;
+  endpoint: string;
+  routingProvider?: string;
+  timeoutMs: number;
+};
+
 async function createHfIdentifyResponse(
   parsed: ParsedIdentifyRequest,
   ocr: { text: string; model: string } | null,
@@ -373,13 +406,68 @@ async function createHfIdentifyResponse(
     return errorResponse(500, "not_configured", "Hugging Face identify fallback is enabled, but no HF_TOKEN is configured.");
   }
 
-  const model = getHfIdentifyModel(env);
+  return createBackendIdentifyResponse(
+    {
+      provider: "huggingface",
+      label: "Hugging Face",
+      token,
+      model: getHfIdentifyModel(env),
+      endpoint: getHfIdentifyEndpoint(env),
+      routingProvider: env.HF_IDENTIFY_PROVIDER?.trim() || undefined,
+      timeoutMs: getHfIdentifyTimeoutMs(env),
+    },
+    parsed,
+    ocr,
+    sourceContext,
+    env,
+    fallbackReason,
+  );
+}
+
+async function createGroqIdentifyResponse(
+  parsed: ParsedIdentifyRequest,
+  ocr: { text: string; model: string } | null,
+  sourceContext: string | null,
+  env: Record<string, string | undefined>,
+  fallbackReason: string,
+): Promise<IdentifyResponse> {
+  const token = getGroqToken(env);
+  if (!token) {
+    return errorResponse(500, "not_configured", "Groq identify fallback is enabled, but no GROQ_API_KEY is configured.");
+  }
+
+  return createBackendIdentifyResponse(
+    {
+      provider: "groq",
+      label: "Groq",
+      token,
+      model: getGroqIdentifyModel(env),
+      endpoint: getGroqIdentifyEndpoint(env),
+      timeoutMs: getGroqIdentifyTimeoutMs(env),
+    },
+    parsed,
+    ocr,
+    sourceContext,
+    env,
+    fallbackReason,
+  );
+}
+
+async function createBackendIdentifyResponse(
+  backend: IdentifyBackend,
+  parsed: ParsedIdentifyRequest,
+  ocr: { text: string; model: string } | null,
+  sourceContext: string | null,
+  env: Record<string, string | undefined>,
+  fallbackReason: string,
+): Promise<IdentifyResponse> {
+  const { provider, label, model } = backend;
   const startedAt = Date.now();
-  const response = await fetchHfIdentify(model, token, parsed, ocr, sourceContext, env);
+  const response = await fetchBackendIdentify(backend, parsed, ocr, sourceContext);
 
   if (!response) {
-    const networkError = errorResponse(502, "network", "Deep Spec could not reach Hugging Face.");
-    logIdentifyAttempt("huggingface", model, startedAt, networkError, false);
+    const networkError = errorResponse(502, "network", `Deep Spec could not reach ${label}.`);
+    logIdentifyAttempt(provider, model, startedAt, networkError, false);
     return networkError;
   }
 
@@ -387,22 +475,22 @@ async function createHfIdentifyResponse(
   const responseBody = isJson ? ((await response.json().catch(() => null)) as JsonObject | null) : null;
 
   if (response.status === 429) {
-    const retryError = errorResponse(429, "rate_limited", "Hugging Face is rate-limited right now. Try again in a few minutes.");
-    logIdentifyAttempt("huggingface", model, startedAt, retryError, false);
+    const retryError = errorResponse(429, "rate_limited", `${label} is rate-limited right now. Try again in a few minutes.`);
+    logIdentifyAttempt(provider, model, startedAt, retryError, false);
     return retryError;
   }
 
   if (!response.ok) {
     const providerError = errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
-    logIdentifyAttempt("huggingface", model, startedAt, providerError, false);
+    logIdentifyAttempt(provider, model, startedAt, providerError, false);
     return providerError;
   }
 
-  const text = extractHfText(responseBody);
+  const text = extractOpenAiChatText(responseBody);
   const result = text ? parseIdentificationResult(text) : null;
   if (!result) {
-    const invalidResponse = errorResponse(502, "invalid_response", "Hugging Face returned JSON that Deep Spec could not read.");
-    logIdentifyAttempt("huggingface", model, startedAt, invalidResponse, false);
+    const invalidResponse = errorResponse(502, "invalid_response", `${label} returned JSON that Deep Spec could not read.`);
+    logIdentifyAttempt(provider, model, startedAt, invalidResponse, false);
     return invalidResponse;
   }
 
@@ -410,7 +498,7 @@ async function createHfIdentifyResponse(
   const latencyMs = Date.now() - startedAt;
 
   console.info("[DeepSpec AI]", {
-    provider: "huggingface",
+    provider,
     model,
     latencyMs,
     success: true,
@@ -425,7 +513,7 @@ async function createHfIdentifyResponse(
     status: 200,
     body: {
       ...withModelRun(normalizedResult, {
-        provider: "huggingface",
+        provider,
         model,
         latencyMs,
         fallbackReason,
@@ -435,16 +523,12 @@ async function createHfIdentifyResponse(
   };
 }
 
-function fetchHfIdentify(
-  model: string,
-  token: string,
+function fetchBackendIdentify(
+  backend: IdentifyBackend,
   parsed: ParsedIdentifyRequest,
   ocr: { text: string; model: string } | null,
   sourceContext: string | null,
-  env: Record<string, string | undefined>,
 ) {
-  const endpoint = getHfIdentifyEndpoint(env);
-  const provider = env.HF_IDENTIFY_PROVIDER?.trim();
   const content = [
     {
       type: "text",
@@ -470,17 +554,17 @@ function fetchHfIdentify(
       : []),
   ];
 
-  return fetch(endpoint, {
+  return fetch(backend.endpoint, {
     method: "POST",
-    signal: AbortSignal.timeout(getHfIdentifyTimeoutMs(env)),
+    signal: AbortSignal.timeout(backend.timeoutMs),
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${backend.token}`,
       "Content-Type": "application/json",
       Accept: "application/json",
     },
     body: JSON.stringify({
-      model,
-      ...(provider ? { provider } : {}),
+      model: backend.model,
+      ...(backend.routingProvider ? { provider: backend.routingProvider } : {}),
       messages: [
         {
           role: "system",
@@ -537,7 +621,70 @@ function getHfIdentifyTimeoutMs(env: Record<string, string | undefined>) {
   return timeoutMs;
 }
 
-function extractHfText(responseBody: JsonObject | null) {
+function isGroqIdentifyFallbackConfigured(env: Record<string, string | undefined>) {
+  return Boolean(getGroqToken(env));
+}
+
+function getGroqToken(env: Record<string, string | undefined>) {
+  return env.GROQ_API_KEY?.trim() || "";
+}
+
+function getGroqIdentifyModel(env: Record<string, string | undefined>) {
+  return env.GROQ_IDENTIFY_MODEL?.trim() || DEFAULT_GROQ_IDENTIFY_MODEL;
+}
+
+function getGroqIdentifyEndpoint(env: Record<string, string | undefined>) {
+  const raw = env.GROQ_IDENTIFY_ENDPOINT_URL?.trim();
+  if (!raw) {
+    return DEFAULT_GROQ_CHAT_COMPLETIONS_URL;
+  }
+
+  return raw.endsWith("/chat/completions") ? raw : `${raw.replace(/\/$/, "")}/v1/chat/completions`;
+}
+
+function getGroqIdentifyTimeoutMs(env: Record<string, string | undefined>) {
+  const value = env.DEEPSPEC_GROQ_IDENTIFY_TIMEOUT_MS;
+  if (!value) {
+    return DEFAULT_GROQ_IDENTIFY_TIMEOUT_MS;
+  }
+
+  const timeoutMs = Number(value);
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 5_000 || timeoutMs > 120_000) {
+    return DEFAULT_GROQ_IDENTIFY_TIMEOUT_MS;
+  }
+
+  return timeoutMs;
+}
+
+async function withBackupRateLimitRetry(
+  env: Record<string, string | undefined>,
+  run: () => Promise<IdentifyResponse>,
+): Promise<IdentifyResponse> {
+  const maxRetries = getBackupRateLimitRetries(env);
+  let response = await run();
+  for (let attempt = 0; attempt < maxRetries && response.status === 429; attempt += 1) {
+    await delay(getBackupRetryBackoffMs(env) * (attempt + 1));
+    response = await run();
+  }
+
+  return response;
+}
+
+function getBackupRateLimitRetries(env: Record<string, string | undefined>) {
+  const value = Number(env.DEEPSPEC_BACKUP_RATE_LIMIT_RETRIES);
+  return Number.isInteger(value) && value >= 0 && value <= 5 ? value : DEFAULT_BACKUP_RATE_LIMIT_RETRIES;
+}
+
+function getBackupRetryBackoffMs(env: Record<string, string | undefined>) {
+  const value = Number(env.DEEPSPEC_BACKUP_RETRY_BACKOFF_MS);
+  return Number.isInteger(value) && value >= 0 && value <= 10_000 ? value : DEFAULT_BACKUP_RETRY_BACKOFF_MS;
+}
+
+function delay(ms: number) {
+  return ms > 0 ? new Promise<void>((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
+}
+
+function extractOpenAiChatText(responseBody: JsonObject | null) {
   const choices = Array.isArray(responseBody?.choices) ? responseBody.choices : [];
   const firstChoice = choices[0];
   if (!isRecord(firstChoice) || !isRecord(firstChoice.message)) {
