@@ -39,7 +39,10 @@ let generatorPromise: Promise<OnDeviceGenerator> | null = null;
 
 async function getGenerator(): Promise<OnDeviceGenerator> {
   if (!generatorPromise) {
-    generatorPromise = loadGenerator();
+    generatorPromise = loadGenerator().catch((error: unknown) => {
+      generatorPromise = null;
+      throw error;
+    });
   }
 
   return generatorPromise;

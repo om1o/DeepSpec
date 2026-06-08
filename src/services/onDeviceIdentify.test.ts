@@ -59,4 +59,27 @@ describe("onDeviceIdentify", () => {
     vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "false");
     expect(isOnDeviceFallbackEnabled()).toBe(false);
   });
+
+  it("retries model loading after a failed first attempt", async () => {
+    vi.resetModules();
+    const pipeline = vi.fn()
+      .mockRejectedValueOnce(new Error("download failed"))
+      .mockResolvedValueOnce(async () => [
+        { generated_text: "part: Fuse box; category: electrical; note: label visible" },
+      ]);
+    vi.doMock("@huggingface/transformers", () => ({ pipeline }));
+
+    const { identifyOnDevice } = await import("./onDeviceIdentify");
+    const frame = { imageBase64: "data:image/jpeg;base64,test", capturedAt: "2026-05-16T00:00:00.000Z" };
+
+    await expect(identifyOnDevice(frame)).rejects.toThrow("download failed");
+    await expect(identifyOnDevice(frame)).resolves.toMatchObject({
+      partName: "Fuse box",
+      scanCategory: "electrical",
+    });
+    expect(pipeline).toHaveBeenCalledTimes(2);
+
+    vi.doUnmock("@huggingface/transformers");
+    vi.resetModules();
+  });
 });

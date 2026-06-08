@@ -3,6 +3,8 @@ import { isOnDeviceFallbackEnabled } from "./onDeviceIdentify";
 import { getLookups, updateLookupResult } from "./storage";
 import type { Lookup } from "../types";
 
+let upgradePromise: Promise<number> | null = null;
+
 // Saved scans that were identified by the on-device model while offline.
 export function getOfflineEstimateLookups(): Lookup[] {
   return getLookups().filter((lookup) => lookup.result?.modelRun?.provider === "on-device");
@@ -12,6 +14,18 @@ export function getOfflineEstimateLookups(): Lookup[] {
 // A scan is only replaced when the cloud actually answers with a non-on-device result,
 // so a still-offline retry never overwrites the estimate with another estimate.
 export async function upgradeOfflineEstimates(): Promise<number> {
+  if (upgradePromise) {
+    return upgradePromise;
+  }
+
+  upgradePromise = runOfflineEstimateUpgrade().finally(() => {
+    upgradePromise = null;
+  });
+
+  return upgradePromise;
+}
+
+async function runOfflineEstimateUpgrade(): Promise<number> {
   if (typeof navigator !== "undefined" && navigator.onLine === false) {
     return 0;
   }
