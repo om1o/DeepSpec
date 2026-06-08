@@ -1,4 +1,9 @@
-import { extractGeneratedText, isOnDeviceFallbackEnabled, mapOnDeviceTextToResult } from "./onDeviceIdentify";
+import {
+  extractGeneratedText,
+  isOnDeviceFallbackEnabled,
+  mapOnDeviceTextToResult,
+  onOnDeviceModelProgress,
+} from "./onDeviceIdentify";
 
 describe("onDeviceIdentify", () => {
   afterEach(() => {
@@ -38,6 +43,13 @@ describe("onDeviceIdentify", () => {
     ).toBe("part: Hood");
     expect(extractGeneratedText([{ generated_text: "part: Hood" }])).toBe("part: Hood");
     expect(extractGeneratedText(null)).toBe("");
+  });
+
+  it("registers and unregisters model-download progress listeners", () => {
+    const unsubscribe = onOnDeviceModelProgress(() => {});
+    expect(typeof unsubscribe).toBe("function");
+    expect(() => unsubscribe()).not.toThrow();
+    expect(() => unsubscribe()).not.toThrow();
   });
 
   it("reads the enable flag from the environment", () => {

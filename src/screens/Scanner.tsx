@@ -16,6 +16,7 @@ import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../l
 import { getScanCardPreferences, type ScanCardPreferences, updateScanCardPreferences } from "../lib/scanResultCardSettings";
 import { saveLatestScanState } from "../lib/utils";
 import { AIServiceError, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
+import { onOnDeviceModelProgress } from "../services/onDeviceIdentify";
 import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
 import {
   recordAcceptableScan,
@@ -1297,6 +1298,7 @@ function GalleryScanButton({
 
 export function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; step: string | null }) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [downloadPercent, setDownloadPercent] = useState<number | null>(null);
   useEffect(() => {
     const startedAt = Date.now();
     const interval = setInterval(() => {
@@ -1304,7 +1306,17 @@ export function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; ste
     }, 1000);
     return () => clearInterval(interval);
   }, []);
+  useEffect(
+    () => onOnDeviceModelProgress((progress) => setDownloadPercent(progress.stage === "ready" ? null : progress.percent)),
+    [],
+  );
   const stillWorking = elapsedSeconds >= 8;
+  const message =
+    downloadPercent !== null
+      ? `Downloading offline model… ${downloadPercent}% — one-time, keep this screen open.`
+      : stillWorking
+        ? "Still working — larger photos take a few more seconds."
+        : step ?? "Matching the scan against vehicle data.";
 
   return (
     <div className="fixed inset-0 z-40 grid place-items-center bg-slate-950/78 px-6 text-center backdrop-blur-md">
@@ -1317,7 +1329,7 @@ export function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; ste
         </div>
         <p className="mt-5 text-lg font-extrabold tracking-tight text-white">Analyzing photo</p>
         <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">
-          {stillWorking ? "Still working — larger photos take a few more seconds." : step ?? "Matching the scan against vehicle data."}
+          {message}
         </p>
         <p className="mt-2 text-xs font-semibold tabular-nums text-white/45">{elapsedSeconds}s elapsed</p>
         <Button className="mt-5 w-full" variant="ghost" onClick={onCancel}>

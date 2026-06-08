@@ -16,6 +16,22 @@ export function isOnDeviceFallbackEnabled() {
   return import.meta.env.VITE_ENABLE_ON_DEVICE_FALLBACK === "true";
 }
 
+export type OnDeviceModelProgress = { stage: "downloading" | "ready"; percent: number };
+type ProgressListener = (progress: OnDeviceModelProgress) => void;
+const progressListeners = new Set<ProgressListener>();
+
+// Lets the UI show first-run download progress (the model is ~150-250MB the first time).
+export function onOnDeviceModelProgress(listener: ProgressListener) {
+  progressListeners.add(listener);
+  return () => {
+    progressListeners.delete(listener);
+  };
+}
+
+function emitProgress(progress: OnDeviceModelProgress) {
+  progressListeners.forEach((listener) => listener(progress));
+}
+
 type OnDeviceGenerator = (imageUrl: string, prompt: string) => Promise<string>;
 
 // Lazy singleton: transformers.js and the model load only the first time we need them.
@@ -43,7 +59,13 @@ async function loadGenerator(): Promise<OnDeviceGenerator> {
   const pipe = await transformers.pipeline("image-text-to-text", ON_DEVICE_MODEL, {
     device,
     dtype: "q4",
+    progress_callback: (event: { status?: string; progress?: number }) => {
+      if (event?.status === "progress" && typeof event.progress === "number") {
+        emitProgress({ stage: "downloading", percent: Math.min(100, Math.max(0, Math.round(event.progress))) });
+      }
+    },
   });
+  emitProgress({ stage: "ready", percent: 100 });
 
   return async (imageUrl, prompt) => {
     const messages = [
