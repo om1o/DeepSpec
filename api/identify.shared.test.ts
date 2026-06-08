@@ -561,6 +561,141 @@ describe("createIdentifyResponse", () => {
     });
   });
 
+  it("retries the OpenRouter/HF backup on a transient 429 before succeeding", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "quota exhausted" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "fallback quota exhausted" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "busy" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+    await expect(
+      createIdentifyResponse(
+        { imageBase64 },
+        {
+          DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true",
+          GEMINI_API_KEY: "test-key",
+          HF_TOKEN: "hf-test",
+          DEEPSPEC_BACKUP_RETRY_BACKOFF_MS: "0",
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: 200,
+      body: { modelRun: { provider: "huggingface" } },
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
+  });
+
+  it("tries Groq first, then falls through to the OpenRouter/HF backup when Groq is rate limited", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "quota exhausted" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "fallback quota exhausted" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "groq busy" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+    await expect(
+      createIdentifyResponse(
+        { imageBase64 },
+        {
+          DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true",
+          GEMINI_API_KEY: "test-key",
+          HF_TOKEN: "hf-test",
+          GROQ_API_KEY: "groq-test",
+          DEEPSPEC_BACKUP_RATE_LIMIT_RETRIES: "0",
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: 200,
+      body: { modelRun: { provider: "huggingface" } },
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
+    expect(fetchSpy.mock.calls[2][0]).toBe("https://api.groq.com/openai/v1/chat/completions");
+    expect(fetchSpy.mock.calls[3][0]).toBe("https://router.huggingface.co/v1/chat/completions");
+  });
+
+  it("uses Groq when configured and the Hugging Face backup is not", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "quota exhausted" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "fallback quota exhausted" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+    await expect(
+      createIdentifyResponse(
+        { imageBase64 },
+        {
+          GEMINI_API_KEY: "test-key",
+          GROQ_API_KEY: "groq-test",
+          DEEPSPEC_BACKUP_RATE_LIMIT_RETRIES: "0",
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: 200,
+      body: { modelRun: { provider: "groq" } },
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(fetchSpy.mock.calls[2][0]).toBe("https://api.groq.com/openai/v1/chat/completions");
+  });
+
   it("uses local Ollama vision only after Gemini identify models are rate limited", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
