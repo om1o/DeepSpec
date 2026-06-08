@@ -7,6 +7,7 @@ import EarlyAccess from "./screens/EarlyAccess";
 import History from "./screens/History";
 import Result from "./screens/Result";
 import { getVerifiedAuthUser, subscribeToAuthChanges } from "./services/auth";
+import { startOfflineUpgradeWatcher } from "./services/offlineUpgrade";
 
 const Scanner = lazy(() => import("./screens/Scanner"));
 
@@ -80,6 +81,8 @@ function ScannerRouteFallback() {
 }
 
 export default function App() {
+  useEffect(() => startOfflineUpgradeWatcher(), []);
+
   return (
     <Routes>
       <Route path="/auth" element={<Auth />} />
