@@ -1,4 +1,5 @@
 import { FOLLOWUP_PROMPT, IDENTIFY_PROMPT } from "./systemPrompts";
+import { identifyOnDevice, isOnDeviceFallbackEnabled } from "./onDeviceIdentify";
 import {
   SCAN_CATEGORIES,
   type AIInput,
@@ -121,17 +122,29 @@ export async function identifyCapturedFrame(
   secondFrame?: CapturedFrame,
   labelRescueTrigger?: LabelRescueTrigger,
 ): Promise<IdentificationResult> {
-  const result = await runAI({
-    type: "vision",
-    imageBase64: frame.imageBase64,
-    imageBase64_2: secondFrame?.imageBase64,
-    labelRescueTrigger,
-    userMessage: "Identify this car part from the captured photo.",
-    systemPrompt: IDENTIFY_PROMPT,
-    responseAsJson: true,
-  });
+  if (isOnDeviceFallbackEnabled() && typeof navigator !== "undefined" && navigator.onLine === false) {
+    return identifyOnDevice(frame);
+  }
 
-  return assertIdentificationResult(result);
+  try {
+    const result = await runAI({
+      type: "vision",
+      imageBase64: frame.imageBase64,
+      imageBase64_2: secondFrame?.imageBase64,
+      labelRescueTrigger,
+      userMessage: "Identify this car part from the captured photo.",
+      systemPrompt: IDENTIFY_PROMPT,
+      responseAsJson: true,
+    });
+
+    return assertIdentificationResult(result);
+  } catch (error) {
+    if (isOnDeviceFallbackEnabled() && error instanceof AIServiceError && error.code === "network") {
+      return identifyOnDevice(frame);
+    }
+
+    throw error;
+  }
 }
 
 export async function sendFollowUp(lookup: Lookup, question: string): Promise<string> {

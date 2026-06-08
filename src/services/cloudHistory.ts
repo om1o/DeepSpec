@@ -206,7 +206,7 @@ function parseIdentifyModelRun(value: unknown): IdentifyModelRun | undefined {
 }
 
 function isIdentifyProvider(value: unknown): value is IdentifyProvider {
-  return value === "gemini" || value === "huggingface" || value === "groq" || value === "ollama";
+  return value === "gemini" || value === "huggingface" || value === "groq" || value === "ollama" || value === "on-device";
 }
 
 function parseCandidateMatches(value: unknown): CandidateMatch[] {

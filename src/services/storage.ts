@@ -572,7 +572,7 @@ function normalizeIdentifyModelRun(value: unknown): IdentifyModelRun | undefined
 }
 
 function isIdentifyProvider(value: unknown): value is IdentifyProvider {
-  return value === "gemini" || value === "huggingface" || value === "groq" || value === "ollama";
+  return value === "gemini" || value === "huggingface" || value === "groq" || value === "ollama" || value === "on-device";
 }
 
 function normalizeCandidateMatches(value: unknown): CandidateMatch[] {

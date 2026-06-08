@@ -554,7 +554,11 @@ function AnalysisResult({
           <MiniPill label={result.scanCategory} />
           <MiniPill label={trustReview.status} />
         </div>
-        {shouldShowBackupModelNotice(result) ? (
+        {isOnDeviceResult(result) ? (
+          <p className="mt-3 rounded-2xl border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-3 py-2 text-xs font-semibold leading-5 text-neutral-700">
+            Offline estimate from the on-device model. Reconnect for a full Deep Spec analysis.
+          </p>
+        ) : shouldShowBackupModelNotice(result) ? (
           <p className="mt-3 rounded-2xl border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-3 py-2 text-xs font-semibold leading-5 text-neutral-700">
             Identified with a backup AI model because the main model was busy. Double-check this result before relying on it.
           </p>
@@ -658,8 +662,12 @@ function CompleteBrief({ result }: { result: IdentificationResult }) {
 }
 
 function shouldShowBackupModelNotice(result: IdentificationResult) {
-  const run = result.modelRun;
-  return Boolean(run && (run.provider !== "gemini" || run.fallbackReason));
+  const provider = result.modelRun?.provider;
+  return provider === "huggingface" || provider === "groq" || provider === "ollama";
+}
+
+function isOnDeviceResult(result: IdentificationResult) {
+  return result.modelRun?.provider === "on-device";
 }
 
 function GuidedRetakeSection({
