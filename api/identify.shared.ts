@@ -1518,7 +1518,13 @@ async function runOcrFallback(
     body: Buffer.from(parsed.base64, "base64"),
   }).catch(() => null);
 
-  if (!response?.ok) {
+  if (!response) {
+    console.warn("[DeepSpec AI]", { stage: "ocr", model, success: false, reason: "network" });
+    return null;
+  }
+
+  if (!response.ok) {
+    console.warn("[DeepSpec AI]", { stage: "ocr", model, success: false, status: response.status });
     return null;
   }
 
