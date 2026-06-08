@@ -75,6 +75,24 @@ describe("offlineUpgrade", () => {
     expect(getLookup(created.value!.id)?.result?.modelRun?.provider).toBe("on-device");
   });
 
+  it("deduplicates overlapping reconnect upgrades", async () => {
+    const created = createLookup({ frame, result: makeResult("on-device") });
+    let resolveCloud!: (result: IdentificationResult) => void;
+    vi.mocked(identifyCapturedFrame).mockReturnValue(new Promise((resolve) => {
+      resolveCloud = resolve;
+    }));
+
+    const firstUpgrade = upgradeOfflineEstimates();
+    const secondUpgrade = upgradeOfflineEstimates();
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
+
+    resolveCloud(makeResult("gemini"));
+
+    await expect(firstUpgrade).resolves.toBe(1);
+    await expect(secondUpgrade).resolves.toBe(1);
+    expect(getLookup(created.value!.id)?.result?.modelRun?.provider).toBe("gemini");
+  });
+
   it("only attaches the reconnect watcher when the fallback is enabled", () => {
     const addSpy = vi.spyOn(window, "addEventListener");
 
