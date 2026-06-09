@@ -17,7 +17,7 @@ import type {
 const SCAN_BUCKET = "scan-images";
 const SIGNED_URL_TTL_SECONDS = 60 * 60;
 const DEFAULT_HISTORY_LIMIT = 200;
-const FALLBACK_IMAGE = "/brand/deepspec-logo.png";
+const FALLBACK_IMAGE = "/brand/deepspec-logo.webp";
 
 type CloudHistoryRow = {
   local_id: unknown;

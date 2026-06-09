@@ -7,6 +7,7 @@ export type ScanQualityMetrics = {
   attempts: number;
   failuresByReason: Record<ScanQualityFailureReason, number>;
   firstPassSuccesses: number;
+  identifyLatency: { count: number; totalMs: number; maxMs: number; overBudget: number };
   manualCorrections: number;
   needsBetterPhotoByCamera: Record<string, { needsBetterPhoto: number; total: number }>;
   retakesByReason: Record<ScanQualityFailureReason, number>;
@@ -113,6 +114,19 @@ export function recordNeedsBetterPhoto(cameraId: string) {
   });
 }
 
+export function recordIdentifyLatency(latencyMs: number, overBudget: boolean) {
+  const normalized = Math.max(0, Math.round(latencyMs));
+  updateMetrics((metrics) => ({
+    ...metrics,
+    identifyLatency: {
+      count: metrics.identifyLatency.count + 1,
+      totalMs: metrics.identifyLatency.totalMs + normalized,
+      maxMs: Math.max(metrics.identifyLatency.maxMs, normalized),
+      overBudget: metrics.identifyLatency.overBudget + (overBudget ? 1 : 0),
+    },
+  }));
+}
+
 export function recordManualCorrection() {
   updateMetrics((metrics) => ({
     ...metrics,
@@ -158,6 +172,14 @@ function normalizeMetrics(value: unknown): ScanQualityMetrics {
     attempts: getCount(value.attempts),
     failuresByReason: normalizeReasonCounts(value.failuresByReason),
     firstPassSuccesses: getCount(value.firstPassSuccesses),
+    identifyLatency: isRecord(value.identifyLatency)
+      ? {
+          count: getCount(value.identifyLatency.count),
+          totalMs: getCount(value.identifyLatency.totalMs),
+          maxMs: getCount(value.identifyLatency.maxMs),
+          overBudget: getCount(value.identifyLatency.overBudget),
+        }
+      : empty.identifyLatency,
     manualCorrections: getCount(value.manualCorrections),
     needsBetterPhotoByCamera: normalizeCameraStats(value.needsBetterPhotoByCamera),
     retakesByReason: normalizeReasonCounts(value.retakesByReason),
@@ -221,6 +243,7 @@ function createEmptyMetrics(): ScanQualityMetrics {
     attempts: 0,
     failuresByReason: { ...EMPTY_REASON_COUNTS },
     firstPassSuccesses: 0,
+    identifyLatency: { count: 0, totalMs: 0, maxMs: 0, overBudget: 0 },
     manualCorrections: 0,
     needsBetterPhotoByCamera: {},
     retakesByReason: { ...EMPTY_REASON_COUNTS },

@@ -20,6 +20,7 @@ import { onOnDeviceModelProgress } from "../services/onDeviceIdentify";
 import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
 import {
   recordAcceptableScan,
+  recordIdentifyLatency,
   recordManualCorrection,
   recordNeedsBetterPhoto,
   recordScanAttempt,
@@ -445,6 +446,7 @@ export default function Scanner() {
       const identifyStartedAt = performance.now();
       const result = await identifyCapturedFrame(focusedFrame ?? frame, focusedFrame ? undefined : secondFrame);
       const identifyMs = Math.round(performance.now() - identifyStartedAt);
+      recordIdentifyLatency(identifyMs, identifyMs > IDENTIFY_BUDGET_WARN_MS);
       if (identifyMs > IDENTIFY_BUDGET_WARN_MS) {
         console.warn(`[DeepSpec] Identify took ${identifyMs}ms (over ${IDENTIFY_BUDGET_WARN_MS}ms budget).`);
       }
@@ -821,7 +823,7 @@ export default function Scanner() {
       <header className="fixed left-0 right-0 top-0 z-20 px-5 pt-[max(18px,env(safe-area-inset-top))]">
         <div className="grid grid-cols-[96px_1fr_44px] items-center gap-3">
           <div className="grid h-11 w-24 place-items-center overflow-hidden rounded-full bg-white/94 px-2 ring-1 ring-white/30 backdrop-blur-xl">
-            <img src="/brand/deepspec-logo.png" alt="Deep Spec" className="h-9 w-full object-contain" />
+            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-9 w-full object-contain" />
           </div>
           <div className="rounded-full bg-slate-950/54 px-4 py-2 text-center ring-1 ring-white/12 backdrop-blur-xl">
             <p className="text-[13px] font-extrabold tracking-tight text-white">Deep Spec</p>

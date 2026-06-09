@@ -62,7 +62,7 @@ export default defineConfig(async ({ mode }) => {
       },
       VitePWA({
         registerType: "autoUpdate",
-        includeAssets: ["icon-192.png", "icon-512.png", "brand/deepspec-logo.png"],
+        includeAssets: ["icon-192.png", "icon-512.png", "brand/deepspec-logo.webp"],
         manifest: {
           name: "Deep Spec",
           short_name: "Deep Spec",
@@ -89,7 +89,13 @@ export default defineConfig(async ({ mode }) => {
           ],
         },
         workbox: {
-          globPatterns: ["**/*.{js,css,html,png,svg,ico}"],
+          globPatterns: ["**/*.{js,css,html,png,svg,ico,webp}"],
+          // The transformers.js chunk (~540KB) backs the optional on-device
+          // fallback (VITE_ENABLE_ON_DEVICE_FALLBACK). Keep it out of the
+          // install-time precache; it loads on demand when the feature runs.
+          // The logo PNG stays only for social-share/og:image tags; the app
+          // itself uses the precached WebP.
+          globIgnores: ["**/transformers.web-*.js", "**/brand/deepspec-logo.png"],
         },
         devOptions: {
           enabled: false,

@@ -263,7 +263,7 @@ export default function Auth() {
           <div className="scanner-corner scanner-corner-bl bottom-6 left-6" />
           <div className="scanner-corner scanner-corner-br bottom-6 right-6" />
           <div className="absolute left-8 right-8 top-8 flex items-center justify-between">
-            <img src="/brand/deepspec-logo.png" alt="Deep Spec" className="h-14 w-44 rounded-[8px] bg-white object-contain p-1.5 shadow-sm ring-1 ring-white/20" />
+            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-14 w-44 rounded-[8px] bg-white object-contain p-1.5 shadow-sm ring-1 ring-white/20" />
             <span className="rounded-[8px] border border-white/20 bg-white/10 px-4 py-2 text-xs font-black uppercase text-white backdrop-blur-md">
               Supabase auth
             </span>
@@ -286,7 +286,7 @@ export default function Auth() {
 
         <section className="mx-auto flex w-full max-w-[540px] flex-col rounded-[8px] border border-white/12 bg-white/[0.07] p-5 shadow-[0_20px_70px_rgba(0,0,0,0.26)] backdrop-blur-xl sm:p-7">
           <div className="flex items-center justify-between gap-4">
-            <img src="/brand/deepspec-logo.png" alt="Deep Spec" className="h-14 w-44 rounded-[8px] bg-white object-contain p-1 shadow-sm ring-1 ring-white/20" />
+            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-14 w-44 rounded-[8px] bg-white object-contain p-1 shadow-sm ring-1 ring-white/20" />
             <span className={supabaseConfigured ? "rounded-[8px] border border-[var(--ds-ok-line)] bg-[var(--ds-ok-soft)] px-3 py-1.5 text-xs font-black text-sky-100" : "rounded-[8px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-3 py-1.5 text-xs font-black text-amber-100"}>
               {supabaseConfigured ? "Cloud ready" : "Auth offline"}
             </span>
