@@ -129,7 +129,10 @@ describe("cloudSync", () => {
     expect(modelRunInsert).toHaveBeenCalledWith(expect.objectContaining({
       latency_ms: 1234,
       metadata_json: expect.objectContaining({
+        analysisSource: "ai_detection",
+        captureMode: "camera",
         fallbackReason: "rate_limited",
+        savedAt: "2026-05-18T00:00:03.000Z",
         scanQuality: expect.objectContaining({
           brightnessScore: 98,
           sharpnessScore: 100,
@@ -140,7 +143,15 @@ describe("cloudSync", () => {
       provider: "huggingface",
       scan_local_id: "lookup-1",
     }));
-    expect(syncEventInsert).toHaveBeenCalledWith(expect.objectContaining({ event_type: "upsert", status: "success" }));
+    expect(syncEventInsert).toHaveBeenCalledWith(expect.objectContaining({
+      event_type: "upsert",
+      metadata_json: expect.objectContaining({
+        analysisSource: "ai_detection",
+        captureMode: "camera",
+        savedAt: "2026-05-18T00:00:03.000Z",
+      }),
+      status: "success",
+    }));
   });
 
   it("does not call configured cloud sync ready before the verifier proves it", async () => {
@@ -490,5 +501,10 @@ function makeLookup(): Lookup {
     scanCategory: "electrical",
     trainingLabel: "Alternator",
     trainingStatus: "raw_unreviewed",
+    provenance: {
+      analysisSource: "ai_detection",
+      captureMode: "camera",
+      savedAt: "2026-05-18T00:00:03.000Z",
+    },
   };
 }

@@ -18,6 +18,11 @@ const scanState: ScanAnalysisState = {
     capturedAt: "2026-05-16T00:00:00.000Z",
   },
   analyzedAt: "2026-05-16T00:00:05.000Z",
+  provenance: {
+    analysisSource: "ai_detection",
+    captureMode: "camera",
+    savedAt: "2026-05-16T00:00:05.000Z",
+  },
   scanQuality: {
     accepted: true,
     averageLuminance: 126,
@@ -110,6 +115,11 @@ describe("storage", () => {
           fallbackReason: "rate_limited",
         },
       },
+      provenance: {
+        analysisSource: "ai_detection",
+        captureMode: "camera",
+        savedAt: "2026-05-16T00:00:05.000Z",
+      },
       trainingLabel: "Alternator",
       trainingStatus: "raw_unreviewed",
     });
@@ -149,13 +159,21 @@ describe("storage", () => {
     expect(lookup.result).toBeUndefined();
     expect(lookup.errorMessage).toBe("Connection timed out");
 
-    const result = updateLookupResult(lookup.id, scanState.result!);
+    const result = updateLookupResult(lookup.id, scanState.result!, {
+      analysisSource: "manual_retry",
+      savedAt: "2026-05-16T00:00:06.000Z",
+    });
 
     expect(result.ok).toBe(true);
     const updated = getLookup(lookup.id);
     expect(updated).toMatchObject({
       errorMessage: undefined,
       errorCode: undefined,
+      provenance: {
+        analysisSource: "manual_retry",
+        captureMode: "camera",
+        savedAt: "2026-05-16T00:00:06.000Z",
+      },
       scanCategory: "electrical",
       trainingLabel: "Alternator",
     });

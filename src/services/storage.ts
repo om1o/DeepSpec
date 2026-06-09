@@ -1,4 +1,4 @@
-import type { CandidateMatch, ChatMessage, Confidence, EvidenceRegion, IdentificationResult, IdentifyModelRun, IdentifyProvider, Lookup, Rating, ScanAnalysisState, ScanCategory, ScanQualityFailureReason, ScanQualitySnapshot, SourceLink, TrainingStatus } from "../types";
+import type { CandidateMatch, ChatMessage, Confidence, EvidenceRegion, IdentificationResult, IdentifyModelRun, IdentifyProvider, Lookup, Rating, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanCategory, ScanProvenance, ScanQualityFailureReason, ScanQualitySnapshot, SourceLink, TrainingStatus } from "../types";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
 export const MAX_SAVED_LOOKUPS = 50;
@@ -17,9 +17,10 @@ type StorageResult<T> =
     };
 
 export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup> {
+  const createdAt = new Date().toISOString();
   const lookup: Lookup = {
     id: createId(),
-    createdAt: new Date().toISOString(),
+    createdAt,
     frame: scanState.frame,
     result: scanState.result,
     errorMessage: scanState.errorMessage,
@@ -33,6 +34,7 @@ export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup
     trainingLabel: scanState.result?.partName ?? "unlabeled",
     trainingStatus: "raw_unreviewed",
     chatHistory: [],
+    provenance: normalizeScanProvenance(scanState.provenance, createdAt),
   };
 
   const lookups = [lookup, ...getLookups()];
@@ -101,6 +103,7 @@ export function updateLookup(
 export function updateLookupResult(
   id: string,
   result: IdentificationResult,
+  provenance?: Partial<ScanProvenance>,
 ): StorageResult<Lookup | null> {
   const lookups = getLookups();
   const index = lookups.findIndex((lookup) => lookup.id === id);
@@ -120,6 +123,10 @@ export function updateLookupResult(
     scanCategory: categorizeScan(result, existing.correction ?? undefined),
     trainingLabel: getTrainingLabel(result, existing.correction),
     trainingStatus: getTrainingStatus(existing.rating, existing.correction),
+    provenance: normalizeScanProvenance({
+      ...existing.provenance,
+      ...provenance,
+    }, existing.createdAt),
   };
 
   const updatedLookups = [...lookups];
@@ -205,6 +212,7 @@ export function scanStateFromLookup(lookup: Lookup): ScanAnalysisState {
     errorCode: lookup.errorCode,
     analyzedAt: lookup.analyzedAt,
     scanQuality: lookup.scanQuality,
+    provenance: lookup.provenance,
   };
 }
 
@@ -335,6 +343,16 @@ function normalizeLookup(value: unknown): Lookup | null {
     trainingLabel: typeof lookup.trainingLabel === "string" ? lookup.trainingLabel : getTrainingLabel(result, correction),
     trainingStatus,
     chatHistory: normalizeChatHistory(lookup.chatHistory),
+    provenance: normalizeScanProvenance(lookup.provenance, lookup.createdAt),
+  };
+}
+
+function normalizeScanProvenance(value: unknown, fallbackSavedAt: string): ScanProvenance {
+  const record = isRecord(value) ? value : {};
+  return {
+    analysisSource: isScanAnalysisSource(record.analysisSource) ? record.analysisSource : "ai_detection",
+    captureMode: isScanCaptureMode(record.captureMode) ? record.captureMode : "camera",
+    savedAt: typeof record.savedAt === "string" && record.savedAt.trim() ? record.savedAt : fallbackSavedAt,
   };
 }
 
@@ -447,6 +465,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isTrainingStatus(value: unknown): value is TrainingStatus {
   return value === "raw_unreviewed" || value === "user_confirmed" || value === "user_corrected";
+}
+
+function isScanCaptureMode(value: unknown): value is ScanCaptureMode {
+  return value === "camera" || value === "upload";
+}
+
+function isScanAnalysisSource(value: unknown): value is ScanAnalysisSource {
+  return value === "ai_detection" || value === "cached_match" || value === "manual_retry" || value === "offline_upgrade";
 }
 
 function isSourceType(value: unknown): value is SourceLink["sourceType"] {

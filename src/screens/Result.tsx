@@ -103,6 +103,8 @@ export default function Result() {
       frame: scanState.frame,
       result: scanState.result,
       analyzedAt: scanState.analyzedAt ?? new Date().toISOString(),
+      scanQuality: scanState.scanQuality,
+      provenance: scanState.provenance,
     });
 
     if (!saved.ok) {
@@ -189,6 +191,7 @@ export default function Result() {
           {scanState?.errorMessage ? (
             <AnalysisError 
               code={scanState.errorCode}
+              captureMode={scanState.provenance?.captureMode ?? lookup?.provenance.captureMode ?? "camera"}
               message={scanState.errorMessage} 
               capturedAt={capturedAt} 
               frame={frame}
@@ -1107,6 +1110,7 @@ function SourceFinePrint({ urls }: { urls: string[] }) {
 
 function AnalysisError({
   capturedAt,
+  captureMode,
   code,
   frame,
   lookup,
@@ -1115,6 +1119,7 @@ function AnalysisError({
   onScanRetrySuccess,
 }: {
   capturedAt: string | null;
+  captureMode: "camera" | "upload";
   code?: string;
   frame: CapturedFrame | null | undefined;
   lookup: Lookup | null;
@@ -1150,7 +1155,10 @@ function AnalysisError({
     try {
       const result = await identifyCapturedFrame(retryFrame);
       if (lookup) {
-        const updateResult = updateLookupResult(lookup.id, result);
+        const updateResult = updateLookupResult(lookup.id, result, {
+          analysisSource: "manual_retry",
+          savedAt: new Date().toISOString(),
+        });
         if (updateResult.ok) {
           if (updateResult.value) {
             onLookupRetrySuccess(updateResult.value);
@@ -1165,6 +1173,11 @@ function AnalysisError({
           frame: retryFrame,
           result,
           analyzedAt: new Date().toISOString(),
+          provenance: {
+            analysisSource: "manual_retry",
+            captureMode,
+            savedAt: new Date().toISOString(),
+          },
         });
       }
     } catch (err) {

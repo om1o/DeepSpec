@@ -55,6 +55,7 @@ describe("offlineUpgrade", () => {
 
     expect(upgraded).toBe(1);
     expect(getLookup(created.value!.id)?.result?.modelRun?.provider).toBe("gemini");
+    expect(getLookup(created.value!.id)?.provenance.analysisSource).toBe("offline_upgrade");
   });
 
   it("does nothing while offline", async () => {

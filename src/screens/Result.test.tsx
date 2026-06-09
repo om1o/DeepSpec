@@ -16,6 +16,11 @@ const frame = {
 const successfulScan: ScanAnalysisState = {
   frame,
   analyzedAt: "2026-05-16T00:00:05.000Z",
+  provenance: {
+    analysisSource: "ai_detection",
+    captureMode: "camera",
+    savedAt: "2026-05-16T00:00:05.000Z",
+  },
   result: {
     partName: "Alternator",
     confidence: "high",
@@ -333,6 +338,7 @@ describe("Result", () => {
     const savedLookups = JSON.parse(localStorage.getItem(LOOKUPS_STORAGE_KEY) ?? "[]") as Lookup[];
     expect(savedLookups).toHaveLength(1);
     expect(savedLookups[0].result?.partName).toBe("Alternator");
+    expect(savedLookups[0].provenance).toMatchObject(successfulScan.provenance!);
     expect(savedLookups[0].trainingStatus).toBe("raw_unreviewed");
   });
 
@@ -502,6 +508,7 @@ describe("Result", () => {
     const savedLookups = JSON.parse(localStorage.getItem(LOOKUPS_STORAGE_KEY) ?? "[]") as Lookup[];
     expect(savedLookups[0].result?.partName).toBe("Alternator");
     expect(savedLookups[0].errorMessage).toBeUndefined();
+    expect(savedLookups[0].provenance.analysisSource).toBe("manual_retry");
 
     expect(screen.queryByText("Provider unavailable")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
@@ -563,6 +570,11 @@ function makeLookup(patch: Partial<Lookup> = {}): Lookup {
     trainingLabel: "Alternator",
     trainingStatus: "raw_unreviewed",
     chatHistory: [],
+    provenance: {
+      analysisSource: "ai_detection",
+      captureMode: "camera",
+      savedAt: "2026-05-16T00:00:05.000Z",
+    },
     ...patch,
   };
 }

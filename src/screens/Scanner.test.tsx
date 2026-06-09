@@ -236,6 +236,10 @@ describe("Scanner", () => {
     const savedLookups = JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]");
     expect(savedLookups).toHaveLength(1);
     expect(savedLookups[0]).toMatchObject({
+      provenance: {
+        analysisSource: "ai_detection",
+        captureMode: "camera",
+      },
       scanQuality: {
         accepted: true,
         brightnessScore: 98,
@@ -486,6 +490,13 @@ describe("Scanner", () => {
     const reviewCard = reviewHeading.closest("section");
     expect(reviewCard).toBeTruthy();
     expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Open details" })).toBeInTheDocument();
+    const savedLookups = JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]");
+    expect(savedLookups[0]).toMatchObject({
+      provenance: {
+        analysisSource: "ai_detection",
+        captureMode: "upload",
+      },
+    });
   }, 10000);
 
   it("requires a five-second hold before auto capture locks", () => {

@@ -27,7 +27,7 @@ import {
   recordScanQualityRetake,
 } from "../services/scanQualityMetrics";
 import { createLookup, updateLookup } from "../services/storage";
-import type { Confidence, IdentificationResult, CapturedFrame, Lookup, ScanAnalysisState, ScanQualitySnapshot } from "../types";
+import type { Confidence, IdentificationResult, CapturedFrame, Lookup, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanQualitySnapshot } from "../types";
 
 const AUTO_SCAN_HOLD_MS = 5000;
 const SECOND_FRAME_DELAY_MS = 120;
@@ -285,9 +285,11 @@ export default function Scanner() {
   const persistAndShowReview = useCallback((
     scanState: ScanAnalysisState,
     options: {
+      captureMode: ScanCaptureMode;
       requestId: number;
       reviewTarget: ScanReviewTarget | null;
       source: ScanReviewResultSource;
+      analysisSource: ScanAnalysisSource;
       sourceUpdatedAt: string;
       correction?: string | null;
     },
@@ -333,6 +335,7 @@ export default function Scanner() {
   const analyzeImageBase64 = useCallback(async (
     imageBase64: string,
     requestId: number,
+    captureMode: ScanCaptureMode,
     secondFrameProvider?: () => Promise<string>,
     reviewTargetOverride?: CameraObjectTarget,
   ) => {
@@ -381,10 +384,22 @@ export default function Scanner() {
         setAnalysisStep("Opening review");
         recordScanOutcome(cached);
         await persistAndShowReview(
-          { frame, result: cached, analyzedAt: new Date().toISOString(), scanQuality },
           {
+            frame,
+            result: cached,
+            analyzedAt: new Date().toISOString(),
+            scanQuality,
+            provenance: {
+              analysisSource: "cached_match",
+              captureMode,
+              savedAt: new Date().toISOString(),
+            },
+          },
+          {
+            captureMode,
             requestId,
             reviewTarget,
+            analysisSource: "cached_match",
             source: "metadata",
             sourceUpdatedAt,
           },
@@ -442,10 +457,17 @@ export default function Scanner() {
           result,
           analyzedAt: new Date().toISOString(),
           scanQuality,
+          provenance: {
+            analysisSource: "ai_detection",
+            captureMode,
+            savedAt: new Date().toISOString(),
+          },
         },
         {
+          captureMode,
           requestId,
           reviewTarget,
+          analysisSource: "ai_detection",
           source: "AI detection",
           sourceUpdatedAt,
         },
@@ -459,10 +481,17 @@ export default function Scanner() {
           errorCode: analysisError instanceof AIServiceError ? analysisError.code : "analysis_failed",
           analyzedAt: new Date().toISOString(),
           scanQuality,
+          provenance: {
+            analysisSource: "ai_detection",
+            captureMode,
+            savedAt: new Date().toISOString(),
+          },
         },
         {
+          captureMode,
           requestId,
           reviewTarget,
+          analysisSource: "ai_detection",
           source: "AI detection",
           sourceUpdatedAt,
         },
@@ -484,7 +513,7 @@ export default function Scanner() {
       const imageBase64 = await captureFrame();
       if (!isScanRequestActive(requestId)) return;
 
-      await analyzeImageBase64(imageBase64, requestId, captureFrame, reviewTarget);
+      await analyzeImageBase64(imageBase64, requestId, "camera", captureFrame, reviewTarget);
     } catch (error) {
       if (isScanRequestActive(requestId)) {
         pauseAutoScan(error instanceof Error ? error.message : "Capture failed. Try again.");
@@ -510,7 +539,7 @@ export default function Scanner() {
       setCaptureError(null);
       const imageBase64 = await readImageFileAsDataUrl(file);
       if (!isScanRequestActive(requestId)) return;
-      await analyzeImageBase64(imageBase64, requestId);
+      await analyzeImageBase64(imageBase64, requestId, "upload");
     } catch (error) {
       if (isScanRequestActive(requestId)) {
         pauseAutoScan(error instanceof Error ? error.message : "Could not read that photo.");

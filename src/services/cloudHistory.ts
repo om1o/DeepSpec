@@ -147,6 +147,11 @@ function mapCloudRowToLookup(
     trainingStatus: parseTrainingStatus(row.training_status),
     chatHistory: parseChatHistory(row.chat_history),
     result,
+    provenance: {
+      analysisSource: "ai_detection",
+      captureMode: "camera",
+      savedAt: createdAt,
+    },
   };
 }
 

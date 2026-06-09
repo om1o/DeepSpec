@@ -242,7 +242,7 @@ async function syncDatasetDetailTables(supabase: SupabaseClient, userId: string,
   await replaceScanEvidence(supabase, userId, lookup);
   await upsertScanCorrection(supabase, userId, lookup);
   await insertScanModelRun(supabase, userId, lookup);
-  await insertSyncEvent(supabase, userId, lookup.id, "upsert", "success", "Scan dataset details synced.");
+  await insertSyncEvent(supabase, userId, lookup, "upsert", "success", "Scan dataset details synced.");
 }
 
 async function replaceScanCandidates(supabase: SupabaseClient, userId: string, lookup: Lookup) {
@@ -307,12 +307,15 @@ async function insertScanModelRun(supabase: SupabaseClient, userId: string, look
       error_code: lookup.errorCode ?? null,
       error_message: lookup.errorMessage ?? null,
       metadata_json: {
+        analysisSource: lookup.provenance.analysisSource,
+        captureMode: lookup.provenance.captureMode,
         confidence: lookup.result?.confidence ?? null,
         confidenceRange: lookup.result?.confidenceRange ?? null,
         confidenceScore: lookup.result?.confidenceScore ?? null,
         confirmationNeed: lookup.result?.confirmationNeed ?? null,
         fallbackReason: modelRun?.fallbackReason ?? null,
         hasResult: Boolean(lookup.result),
+        savedAt: lookup.provenance.savedAt,
         safetyTriage: lookup.result?.safetyTriage ?? null,
         scanQuality: lookup.scanQuality ?? null,
       },
@@ -331,17 +334,24 @@ async function insertScanModelRun(supabase: SupabaseClient, userId: string, look
 async function insertSyncEvent(
   supabase: SupabaseClient,
   userId: string,
-  scanLocalId: string,
+  lookupOrId: Lookup | string,
   eventType: "upload" | "upsert" | "delete" | "verify",
   status: "success" | "failure",
   message: string,
 ) {
+  const metadata = typeof lookupOrId === "string"
+    ? {}
+    : {
+        analysisSource: lookupOrId.provenance.analysisSource,
+        captureMode: lookupOrId.provenance.captureMode,
+        savedAt: lookupOrId.provenance.savedAt,
+      };
   await assertCloudResult(
     await supabase.from("sync_events").insert({
       event_type: eventType,
       message,
-      metadata_json: {},
-      scan_local_id: scanLocalId,
+      metadata_json: metadata,
+      scan_local_id: typeof lookupOrId === "string" ? lookupOrId : lookupOrId.id,
       status,
       user_id: userId,
     }),

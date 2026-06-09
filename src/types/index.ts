@@ -123,6 +123,7 @@ export type ScanAnalysisState = {
   analyzedAt?: string;
   scanQuality?: ScanQualitySnapshot;
   storageWarning?: string;
+  provenance?: ScanProvenance;
 };
 
 export type AIInput = {
@@ -146,6 +147,16 @@ export type ChatMessage = {
   timestamp: string;
 };
 
+export type ScanCaptureMode = "camera" | "upload";
+
+export type ScanAnalysisSource = "ai_detection" | "cached_match" | "manual_retry" | "offline_upgrade";
+
+export type ScanProvenance = {
+  analysisSource: ScanAnalysisSource;
+  captureMode: ScanCaptureMode;
+  savedAt: string;
+};
+
 export type Lookup = {
   id: string;
   createdAt: string;
@@ -162,6 +173,7 @@ export type Lookup = {
   trainingLabel: string;
   trainingStatus: TrainingStatus;
   chatHistory: ChatMessage[];
+  provenance: ScanProvenance;
 };
 
 export type WaitlistSignup = {

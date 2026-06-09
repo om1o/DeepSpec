@@ -35,7 +35,10 @@ async function runOfflineEstimateUpgrade(): Promise<number> {
     try {
       const result = await identifyCapturedFrame(lookup.frame);
       if (result.modelRun?.provider && result.modelRun.provider !== "on-device") {
-        updateLookupResult(lookup.id, result);
+        updateLookupResult(lookup.id, result, {
+          analysisSource: "offline_upgrade",
+          savedAt: new Date().toISOString(),
+        });
         upgraded += 1;
       }
     } catch {
