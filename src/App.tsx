@@ -9,7 +9,11 @@ import Result from "./screens/Result";
 import { getVerifiedAuthUser, subscribeToAuthChanges } from "./services/auth";
 import { startOfflineUpgradeWatcher } from "./services/offlineUpgrade";
 
-const Scanner = lazy(() => import("./screens/Scanner"));
+const loadScanner = () => import("./screens/Scanner");
+const Scanner = lazy(loadScanner);
+// Warm the Scanner chunk alongside app boot so navigating to /scan doesn't
+// stall on the chunk download behind the "Opening camera..." fallback.
+void loadScanner().catch(() => {});
 
 type AuthStatus = "checking" | "allowed" | "blocked";
 

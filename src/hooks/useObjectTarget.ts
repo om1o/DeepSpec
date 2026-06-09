@@ -75,7 +75,7 @@ export function useObjectTarget(
       lockRef.current = { box: detected, id, startedAt };
 
       const holdProgress = holdEnabled ? Math.min(1, (now - startedAt) / holdDurationMs) : 0;
-      setTarget({
+      const next: CameraObjectTarget = {
         id,
         ...viewportTarget,
         confidence: detected.confidence,
@@ -87,13 +87,28 @@ export function useObjectTarget(
           height: detected.height,
         },
         isLocked: holdProgress >= 1,
-      });
+      };
+      // Reuse the previous state object when the target hasn't meaningfully
+      // moved, so consumers don't re-render every sample interval.
+      setTarget((previous) => (previous && isSameEmittedTarget(previous, next) ? previous : next));
     }, SAMPLE_INTERVAL_MS);
 
     return () => window.clearInterval(timer);
   }, [enabled, holdDurationMs, holdEnabled, webcamRef]);
 
   return enabled ? target : null;
+}
+
+function isSameEmittedTarget(a: CameraObjectTarget, b: CameraObjectTarget) {
+  return (
+    a.id === b.id
+    && a.isLocked === b.isLocked
+    && Math.round(a.holdProgress * 100) === Math.round(b.holdProgress * 100)
+    && Math.abs(a.left - b.left) < 1
+    && Math.abs(a.top - b.top) < 1
+    && Math.abs(a.width - b.width) < 1
+    && Math.abs(a.height - b.height) < 1
+  );
 }
 
 function makeObjectTargetId(box: ObjectTargetBox) {

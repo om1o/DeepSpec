@@ -14,7 +14,7 @@ import { assessImageQuality, type ImageQualityIssue, type ImageQualityResult } f
 import { createFocusedScanCrop } from "../lib/focusCrop";
 import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
 import { getScanCardPreferences, type ScanCardPreferences, updateScanCardPreferences } from "../lib/scanResultCardSettings";
-import { saveLatestScanState } from "../lib/utils";
+import { compressImageDataUrl, saveLatestScanState } from "../lib/utils";
 import { AIServiceError, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
 import { onOnDeviceModelProgress } from "../services/onDeviceIdentify";
 import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
@@ -33,6 +33,7 @@ const AUTO_SCAN_HOLD_MS = 5000;
 const SECOND_FRAME_DELAY_MS = 120;
 const IDENTIFY_BUDGET_WARN_MS = 15000;
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
+const COMPRESS_UPLOAD_OVER_BYTES = 1024 * 1024;
 const MATCH_THRESHOLD = 0.18;
 const SCAN_CARD_WIDTH_PX = 340;
 const SCAN_CARD_SAFE_HEIGHT_PX = 560;
@@ -537,7 +538,13 @@ export default function Scanner() {
       setIsAnalyzing(true);
       setAnalysisStep("Loading photo");
       setCaptureError(null);
-      const imageBase64 = await readImageFileAsDataUrl(file);
+      const rawImageBase64 = await readImageFileAsDataUrl(file);
+      if (!isScanRequestActive(requestId)) return;
+      // Match the camera path: shrink large photos to 1024px before hashing,
+      // quality checks, persistence, and upload, so they don't stall the UI.
+      const imageBase64 = file.size > COMPRESS_UPLOAD_OVER_BYTES
+        ? await compressImageDataUrl(rawImageBase64, 1024, 0.8)
+        : rawImageBase64;
       if (!isScanRequestActive(requestId)) return;
       await analyzeImageBase64(imageBase64, requestId, "upload");
     } catch (error) {
