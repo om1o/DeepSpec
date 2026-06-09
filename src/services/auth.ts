@@ -7,6 +7,7 @@ type SupabaseAuthConfig = {
 };
 
 const AUTH_VERIFY_TIMEOUT_MS = 8_000;
+const DEFAULT_POST_AUTH_PATH = "/scan";
 let clientPromise: Promise<SupabaseClient> | null = null;
 let authRedirectPromise: Promise<boolean> | null = null;
 
@@ -50,9 +51,9 @@ async function verifyAuthUser(client: SupabaseClient): Promise<User | null> {
   return data.user;
 }
 
-export async function sendEmailSignInLink(email: string) {
+export async function sendEmailSignInLink(email: string, redirectPath?: string) {
   const client = await getRequiredAuthClient();
-  const emailRedirectTo = getAuthRedirectUrl();
+  const emailRedirectTo = getAuthRedirectUrl(redirectPath);
   const result = await client.auth.signInWithOtp({
     email,
     options: {
@@ -105,13 +106,13 @@ export async function signInWithPassword(email: string, password: string) {
   return user;
 }
 
-export async function signUpWithPassword(email: string, password: string) {
+export async function signUpWithPassword(email: string, password: string, redirectPath?: string) {
   const client = await getRequiredAuthClient();
   const result = await client.auth.signUp({
     email,
     password,
     options: {
-      emailRedirectTo: getAuthRedirectUrl(),
+      emailRedirectTo: getAuthRedirectUrl(redirectPath),
     },
   });
 
@@ -147,20 +148,20 @@ export async function signInAnonymously() {
   return user;
 }
 
-export async function signInWithGoogle() {
-  return signInWithOAuthProvider("google");
+export async function signInWithGoogle(redirectPath?: string) {
+  return signInWithOAuthProvider("google", redirectPath);
 }
 
-export async function signInWithGitHub() {
-  return signInWithOAuthProvider("github");
+export async function signInWithGitHub(redirectPath?: string) {
+  return signInWithOAuthProvider("github", redirectPath);
 }
 
-async function signInWithOAuthProvider(provider: Provider) {
+async function signInWithOAuthProvider(provider: Provider, redirectPath?: string) {
   const client = await getRequiredAuthClient();
   const result = await client.auth.signInWithOAuth({
     provider,
     options: {
-      redirectTo: new URL("/scan", window.location.origin).toString(),
+      redirectTo: getAuthRedirectUrl(redirectPath),
     },
   });
 
@@ -241,6 +242,34 @@ function getSupabaseAuthConfig(): SupabaseAuthConfig | null {
   return { key, url };
 }
 
+export function normalizePostAuthRedirectPath(path: string | null | undefined) {
+  if (!path) {
+    return DEFAULT_POST_AUTH_PATH;
+  }
+
+  const trimmed = path.trim();
+  if (!trimmed) {
+    return DEFAULT_POST_AUTH_PATH;
+  }
+
+  if (trimmed.startsWith("/")) {
+    return trimmed.startsWith("//") ? DEFAULT_POST_AUTH_PATH : trimmed;
+  }
+
+  if (typeof window !== "undefined") {
+    try {
+      const parsed = new URL(trimmed, window.location.origin);
+      if (parsed.origin === window.location.origin) {
+        return `${parsed.pathname}${parsed.search}${parsed.hash}` || DEFAULT_POST_AUTH_PATH;
+      }
+    } catch {
+      return DEFAULT_POST_AUTH_PATH;
+    }
+  }
+
+  return DEFAULT_POST_AUTH_PATH;
+}
+
 function isOAuthProviderEnabled(flag: string | undefined) {
   if (!isSupabaseAuthConfigured()) {
     return false;
@@ -289,12 +318,15 @@ async function exchangeAuthCodeForSession(client: SupabaseClient, authCode: stri
   return true;
 }
 
-function getAuthRedirectUrl() {
+function getAuthRedirectUrl(redirectPath?: string) {
   if (typeof window === "undefined") {
     return undefined;
   }
 
-  return new URL("/scan", window.location.origin).toString();
+  const normalizedPath = normalizePostAuthRedirectPath(redirectPath);
+  const redirectUrl = new URL("/auth", window.location.origin);
+  redirectUrl.searchParams.set("next", normalizedPath);
+  return redirectUrl.toString();
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {

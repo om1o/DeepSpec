@@ -1,9 +1,10 @@
-import { ClipboardEvent, FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { ClipboardEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   getVerifiedAuthUser,
   isGitHubAuthEnabled,
   isGoogleAuthEnabled,
+  normalizePostAuthRedirectPath,
   isSupabaseAuthConfigured,
   sendEmailSignInLink,
   signInAnonymously,
@@ -17,11 +18,11 @@ import {
 type AuthStep = "email" | "sent" | "code";
 type AuthMode = "link" | "password";
 type PasswordMode = "signin" | "signup" | "anonymous";
-const SCAN_ROUTE = "/scan";
 const CODE_LENGTH = 6;
 const RESEND_COOLDOWN_SECONDS = 30;
 
 export default function Auth() {
+  const location = useLocation();
   const navigate = useNavigate();
   const supabaseConfigured = isSupabaseAuthConfigured();
   const googleAuthEnabled = isGoogleAuthEnabled();
@@ -43,6 +44,11 @@ export default function Auth() {
   const [resendCooldown, setResendCooldown] = useState(0);
   const codeInputRef = useRef<HTMLInputElement | null>(null);
   const autoSubmittedCodeRef = useRef<string | null>(null);
+  const postAuthPath = useMemo(() => {
+    const fromState = typeof location.state?.from === "string" ? location.state.from : null;
+    const fromQuery = new URLSearchParams(location.search).get("next");
+    return normalizePostAuthRedirectPath(fromState ?? fromQuery);
+  }, [location.search, location.state]);
 
   useEffect(() => {
     let isMounted = true;
@@ -50,7 +56,7 @@ export default function Auth() {
     getVerifiedAuthUser()
       .then((user) => {
         if (user) {
-          navigate(SCAN_ROUTE, { replace: true });
+          navigate(postAuthPath, { replace: true });
         }
       })
       .catch(() => undefined)
@@ -63,7 +69,7 @@ export default function Auth() {
     return () => {
       isMounted = false;
     };
-  }, [navigate]);
+  }, [navigate, postAuthPath]);
 
   useEffect(() => {
     if (step === "code") {
@@ -87,13 +93,13 @@ export default function Auth() {
     try {
       const normalizedEmail = email.trim().toLowerCase();
       await verifyEmailCode(normalizedEmail, code.trim());
-      navigate(SCAN_ROUTE, { replace: true });
+      navigate(postAuthPath, { replace: true });
     } catch (authError) {
       setError(authError instanceof Error ? authError.message : "Authentication failed. Try again.");
     } finally {
       setIsSubmitting(false);
     }
-  }, [code, email, isSubmitting, navigate, supabaseConfigured]);
+  }, [code, email, isSubmitting, navigate, postAuthPath, supabaseConfigured]);
 
   useEffect(() => {
     if (step !== "code" || !supabaseConfigured || isSubmitting) return;
@@ -123,10 +129,10 @@ export default function Auth() {
         const user = passwordMode === "anonymous"
           ? await signInAnonymously()
           : passwordMode === "signup"
-            ? await signUpWithPassword(normalizedEmail, password)
+            ? await signUpWithPassword(normalizedEmail, password, postAuthPath)
             : await signInWithPassword(normalizedEmail, password);
         if (user) {
-          navigate(SCAN_ROUTE, { replace: true });
+          navigate(postAuthPath, { replace: true });
           return;
         }
       } catch (authError) {
@@ -146,7 +152,7 @@ export default function Auth() {
 
     try {
       const normalizedEmail = email.trim().toLowerCase();
-      await sendEmailSignInLink(normalizedEmail);
+      await sendEmailSignInLink(normalizedEmail, postAuthPath);
       setStep("sent");
       setNotice(`Sign-in link sent to ${normalizedEmail}. Open it from your email to finish login.`);
       setResendCooldown(RESEND_COOLDOWN_SECONDS);
@@ -163,7 +169,7 @@ export default function Auth() {
     setIsGoogleLoading(true);
 
     try {
-      await signInWithGoogle();
+      await signInWithGoogle(postAuthPath);
     } catch (authError) {
       setError(authError instanceof Error ? authError.message : "Google sign in failed. Try again.");
       setIsGoogleLoading(false);
@@ -176,7 +182,7 @@ export default function Auth() {
     setIsGitHubLoading(true);
 
     try {
-      await signInWithGitHub();
+      await signInWithGitHub(postAuthPath);
     } catch (authError) {
       setError(authError instanceof Error ? authError.message : "GitHub sign in failed. Try again.");
       setIsGitHubLoading(false);
@@ -191,7 +197,7 @@ export default function Auth() {
 
     try {
       const normalizedEmail = email.trim().toLowerCase();
-      await sendEmailSignInLink(normalizedEmail);
+      await sendEmailSignInLink(normalizedEmail, postAuthPath);
       setNotice(`New sign-in link sent to ${normalizedEmail}.`);
       setResendCooldown(RESEND_COOLDOWN_SECONDS);
       autoSubmittedCodeRef.current = null;

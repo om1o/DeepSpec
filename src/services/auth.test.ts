@@ -84,7 +84,7 @@ describe("auth service", () => {
     expect(supabaseMock.auth.signInWithOtp).toHaveBeenCalledWith({
       email: "user@example.com",
       options: {
-        emailRedirectTo: "http://localhost:3000/scan",
+        emailRedirectTo: "http://localhost:3000/auth?next=%2Fscan",
         shouldCreateUser: true,
       },
     });
@@ -131,9 +131,18 @@ describe("auth service", () => {
       email: "new@example.com",
       password: "correct-password",
       options: {
-        emailRedirectTo: "http://localhost:3000/scan",
+        emailRedirectTo: "http://localhost:3000/auth?next=%2Fscan",
       },
     });
+  });
+
+  it("normalizes post-auth routes to same-origin app paths only", async () => {
+    const { normalizePostAuthRedirectPath } = await import("./auth");
+
+    expect(normalizePostAuthRedirectPath("/history?filter=recent#scan-1")).toBe("/history?filter=recent#scan-1");
+    expect(normalizePostAuthRedirectPath("http://localhost:3000/result/123")).toBe("/result/123");
+    expect(normalizePostAuthRedirectPath("https://evil.example.com/steal")).toBe("/scan");
+    expect(normalizePostAuthRedirectPath("//evil.example.com/steal")).toBe("/scan");
   });
 
   it("fails password account creation clearly when email confirmation is still required", async () => {

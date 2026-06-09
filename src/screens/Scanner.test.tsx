@@ -508,8 +508,7 @@ describe("Scanner", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("You're 10% there")).toBeInTheDocument();
-    expect(screen.getByText("Hold still 5s")).toBeInTheDocument();
+    expect(screen.getAllByText("Hold still 5s").length).toBeGreaterThan(0);
     expect(objectTargetOptions.latest?.holdDurationMs).toBe(5000);
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
   });
@@ -602,7 +601,7 @@ describe("Scanner", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("Center one part")).toBeInTheDocument();
+    expect(screen.getAllByText("Center part").length).toBeGreaterThan(0);
     expect(captureFrame).not.toHaveBeenCalled();
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
 

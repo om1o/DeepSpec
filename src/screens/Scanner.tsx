@@ -198,7 +198,6 @@ export default function Scanner() {
     isStable,
     qualityCoach,
     scanReview,
-    targetProgress,
     usesFallback,
   });
 
@@ -917,7 +916,6 @@ function getScannerStatus({
   isStable,
   qualityCoach,
   scanReview,
-  targetProgress,
   usesFallback,
 }: {
   autoScanGuide: AutoScanGuide;
@@ -930,7 +928,6 @@ function getScannerStatus({
   isStable: boolean;
   qualityCoach: ScanQualityCoachState | null;
   scanReview: ScanReviewState | null;
-  targetProgress: number;
   usesFallback: boolean;
 }) {
   if (scanReview) {
@@ -958,7 +955,7 @@ function getScannerStatus({
   }
 
   if (autoScanGuide === "center_part") {
-    return "Center one part";
+    return "Center part";
   }
 
   if (autoScanGuide === "hold_still") {
@@ -970,14 +967,14 @@ function getScannerStatus({
   }
 
   if (hasTarget) {
-    return `You're ${Math.max(10, Math.round(targetProgress * 100))}% there`;
+    return getHoldStillCommand(autoScanSeconds);
   }
 
   if (!usesFallback && !isStable) {
     return "Hold still";
   }
 
-  return autoScanSeconds > 1 ? "Center part" : "Hold still";
+  return "Center part";
 }
 
 function getAutoScanReadiness(
@@ -1172,10 +1169,14 @@ function getReticleLabel({
   }
 
   if (hasTarget) {
-    return `Hold still ${autoScanSeconds}s`;
+    return getHoldStillCommand(autoScanSeconds);
   }
 
   return "Center part";
+}
+
+function getHoldStillCommand(autoScanSeconds: number) {
+  return `Hold still ${Math.max(1, autoScanSeconds)}s`;
 }
 
 function CameraLoading() {

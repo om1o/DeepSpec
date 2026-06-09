@@ -94,7 +94,7 @@ describe("Auth", () => {
       expect(supabaseMock.auth.signInWithOtp).toHaveBeenCalledWith({
         email: "tester@example.com",
         options: {
-          emailRedirectTo: "http://localhost:3000/scan",
+          emailRedirectTo: "http://localhost:3000/auth?next=%2Fscan",
           shouldCreateUser: true,
         },
       });
@@ -141,7 +141,7 @@ describe("Auth", () => {
     expect(supabaseMock.auth.signInWithOAuth).toHaveBeenCalledWith({
       provider: "google",
       options: {
-        redirectTo: "http://localhost:3000/scan",
+        redirectTo: "http://localhost:3000/auth?next=%2Fscan",
       },
     });
     expect(screen.queryByText(/facebook/i)).not.toBeInTheDocument();
@@ -218,13 +218,13 @@ describe("Auth", () => {
     await user.click(screen.getByRole("button", { name: "Create account" }));
 
     await waitFor(() => {
-      expect(supabaseMock.auth.signUp).toHaveBeenCalledWith({
-        email: "new@example.com",
-        password: "correct-password",
-        options: {
-          emailRedirectTo: "http://localhost:3000/scan",
-        },
-      });
+    expect(supabaseMock.auth.signUp).toHaveBeenCalledWith({
+      email: "new@example.com",
+      password: "correct-password",
+      options: {
+        emailRedirectTo: "http://localhost:3000/auth?next=%2Fscan",
+      },
+    });
     });
     expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
   });
@@ -254,7 +254,7 @@ describe("Auth", () => {
     expect(supabaseMock.auth.signInWithOAuth).toHaveBeenCalledWith({
       provider: "github",
       options: {
-        redirectTo: "http://localhost:3000/scan",
+        redirectTo: "http://localhost:3000/auth?next=%2Fscan",
       },
     });
     expect(screen.queryByText(/facebook/i)).not.toBeInTheDocument();
@@ -331,16 +331,55 @@ describe("Auth", () => {
     expect(resendButton).toBeDisabled();
     expect(resendButton.textContent).toMatch(/Send in 30s/);
   });
+
+  it("returns the user to the protected route they originally requested", async () => {
+    const user = userEvent.setup();
+    supabaseMock.auth.getUser
+      .mockResolvedValueOnce({ data: { user: null }, error: null })
+      .mockResolvedValueOnce({ data: { user: makeUser("password-user") }, error: null });
+
+    await renderAuth({
+      authState: { from: "/history?filter=recent#scan-1" },
+    });
+
+    await user.type(await screen.findByPlaceholderText("Enter your email address"), "Tester@Example.com");
+    await user.type(screen.getByPlaceholderText("Enter your password"), "correct-password");
+    await user.click(screen.getByRole("button", { name: "Sign in to scanner" }));
+
+    expect(await screen.findByText("History opened")).toBeInTheDocument();
+  });
+
+  it("uses the protected route in provider redirects too", async () => {
+    vi.stubEnv("VITE_ENABLE_GOOGLE_AUTH", "true");
+    const user = userEvent.setup();
+
+    await renderAuth({
+      authState: { from: "/history?filter=recent#scan-1" },
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Continue with Google" }));
+
+    expect(supabaseMock.auth.signInWithOAuth).toHaveBeenCalledWith({
+      provider: "google",
+      options: {
+        redirectTo: "http://localhost:3000/auth?next=%2Fhistory%3Ffilter%3Drecent%23scan-1",
+      },
+    });
+  });
 });
 
-async function renderAuth() {
+async function renderAuth(options?: { authState?: { from: string } }) {
   const { default: Auth } = await import("./Auth");
 
   render(
-    <MemoryRouter initialEntries={["/auth"]}>
+    <MemoryRouter initialEntries={[{
+      pathname: "/auth",
+      state: options?.authState,
+    }]}>
       <Routes>
         <Route path="/auth" element={<Auth />} />
         <Route path="/scan" element={<div>Scanner opened</div>} />
+        <Route path="/history" element={<div>History opened</div>} />
       </Routes>
     </MemoryRouter>,
   );
