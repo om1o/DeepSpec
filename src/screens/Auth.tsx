@@ -21,6 +21,15 @@ type PasswordMode = "signin" | "signup" | "anonymous";
 const CODE_LENGTH = 6;
 const RESEND_COOLDOWN_SECONDS = 30;
 
+function formatAuthError(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  // Supabase returns a verbose policy dump for weak passwords — replace it.
+  if (/Password should contain/i.test(message) || /weak password/i.test(message)) {
+    return "Password must be at least 8 characters and include an uppercase letter, a lowercase letter, a number, and a special character.";
+  }
+  return message || "Authentication failed. Try again.";
+}
+
 export default function Auth() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -95,7 +104,7 @@ export default function Auth() {
       await verifyEmailCode(normalizedEmail, code.trim());
       navigate(postAuthPath, { replace: true });
     } catch (authError) {
-      setError(authError instanceof Error ? authError.message : "Authentication failed. Try again.");
+      setError(formatAuthError(authError));
     } finally {
       setIsSubmitting(false);
     }
@@ -136,7 +145,7 @@ export default function Auth() {
           return;
         }
       } catch (authError) {
-        setError(authError instanceof Error ? authError.message : "Password authentication failed. Try again.");
+        setError(formatAuthError(authError));
       } finally {
         setIsSubmitting(false);
       }
@@ -157,7 +166,7 @@ export default function Auth() {
       setNotice(`Sign-in link sent to ${normalizedEmail}. Open it from your email to finish login.`);
       setResendCooldown(RESEND_COOLDOWN_SECONDS);
     } catch (authError) {
-      setError(authError instanceof Error ? authError.message : "Authentication failed. Try again.");
+      setError(formatAuthError(authError));
     } finally {
       setIsSubmitting(false);
     }
@@ -171,7 +180,7 @@ export default function Auth() {
     try {
       await signInWithGoogle(postAuthPath);
     } catch (authError) {
-      setError(authError instanceof Error ? authError.message : "Google sign in failed. Try again.");
+      setError(formatAuthError(authError));
       setIsGoogleLoading(false);
     }
   }
@@ -184,7 +193,7 @@ export default function Auth() {
     try {
       await signInWithGitHub(postAuthPath);
     } catch (authError) {
-      setError(authError instanceof Error ? authError.message : "GitHub sign in failed. Try again.");
+      setError(formatAuthError(authError));
       setIsGitHubLoading(false);
     }
   }
@@ -202,7 +211,7 @@ export default function Auth() {
       setResendCooldown(RESEND_COOLDOWN_SECONDS);
       autoSubmittedCodeRef.current = null;
     } catch (authError) {
-      setError(authError instanceof Error ? authError.message : "Could not send another link. Try again.");
+      setError(formatAuthError(authError));
     } finally {
       setIsSubmitting(false);
     }
