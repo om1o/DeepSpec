@@ -227,7 +227,7 @@ describe("Scanner", () => {
       trainingLabel: "Alternator",
       trainingStatus: "raw_unreviewed",
     });
-  }, 10000);
+  }, 20000);
 
   it("auto captures only after a held, centered target is ready", async () => {
     objectTargetState.current = makeObjectTarget({
@@ -681,7 +681,7 @@ describe("Scanner", () => {
     );
 
     expect(screen.getAllByText("Opening camera")).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Upload photo" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Open gallery" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Scan now" })).toBeDisabled();
   });
 

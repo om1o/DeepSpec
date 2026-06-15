@@ -131,6 +131,47 @@ describe("Auth", () => {
     expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
   });
 
+  it("uses code entry immediately when the public email redirect is rejected", async () => {
+    const user = userEvent.setup();
+    supabaseMock.auth.signInWithOtp
+      .mockResolvedValueOnce({
+        data: {},
+        error: {
+          message: "Redirect URL is not allowed",
+        },
+      })
+      .mockResolvedValueOnce({ data: {}, error: null });
+    supabaseMock.auth.getUser
+      .mockResolvedValueOnce({ data: { user: null }, error: null })
+      .mockResolvedValueOnce({ data: { user: makeUser("code-user") }, error: null });
+
+    await renderAuth();
+
+    await user.click(await screen.findByRole("tab", { name: "Email link" }));
+    await user.type(await screen.findByPlaceholderText("Enter your email address"), "Tester@Example.com");
+    await user.click(screen.getByRole("button", { name: "Send sign-in link" }));
+
+    expect(await screen.findByText("Code sent to tester@example.com. Enter the 6-digit code from your email.")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Verification code")).toBeInTheDocument();
+    expect(supabaseMock.auth.signInWithOtp).toHaveBeenNthCalledWith(2, {
+      email: "tester@example.com",
+      options: {
+        shouldCreateUser: true,
+      },
+    });
+
+    await user.type(screen.getByLabelText("Verification code"), "123456");
+
+    await waitFor(() => {
+      expect(supabaseMock.auth.verifyOtp).toHaveBeenCalledWith({
+        email: "tester@example.com",
+        token: "123456",
+        type: "email",
+      });
+    });
+    expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
+  });
+
   it("does not open the scanner when code auth does not verify a user", async () => {
     const user = userEvent.setup();
     supabaseMock.auth.getUser.mockResolvedValue({ data: { user: null }, error: null });

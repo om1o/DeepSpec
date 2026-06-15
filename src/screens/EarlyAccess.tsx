@@ -97,6 +97,9 @@ export default function EarlyAccess() {
           <Link to="/scan" className="rounded-full bg-[var(--ds-accent)] px-4 py-2 text-sm font-bold text-white shadow-sm">
             Scan
           </Link>
+          <Link to="/pricing" className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-900 shadow-sm">
+            Pricing
+          </Link>
         </header>
 
         <section className="mt-6 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">

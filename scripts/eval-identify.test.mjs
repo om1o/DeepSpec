@@ -287,6 +287,7 @@ describe("identify eval scoring", () => {
         [
           {
             status: 200,
+            expectedLabels: ["alternator"],
             failureReasons: [],
             providerMs: 100,
             totalMs: 140,
@@ -295,6 +296,7 @@ describe("identify eval scoring", () => {
           },
           {
             status: 502,
+            expectedLabels: ["alternator"],
             failureReasons: ["invalid_response"],
             providerMs: 300,
             totalMs: 350,
@@ -303,6 +305,7 @@ describe("identify eval scoring", () => {
           },
           {
             status: 500,
+            expectedLabels: ["brake caliper"],
             failureReasons: ["not_configured"],
             providerMs: 20,
             totalMs: 25,
@@ -322,6 +325,24 @@ describe("identify eval scoring", () => {
       invalidResponseRate: 0.3333,
       safetyFalsePositiveCount: 1,
       safetyFalsePositiveRate: 0.3333,
+      failureModes: {
+        invalid_response: 1,
+        not_configured: 1,
+      },
+      labelBuckets: {
+        alternator: {
+          attemptedCount: 2,
+          failureCount: 1,
+          passCount: 1,
+          passRate: 0.5,
+        },
+        "brake caliper": {
+          attemptedCount: 1,
+          failureCount: 1,
+          passCount: 0,
+          passRate: 0,
+        },
+      },
       latencyMs: {
         provider: {
           average: 140,

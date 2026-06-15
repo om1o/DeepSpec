@@ -13,6 +13,8 @@ vi.mock("./screens/Auth", () => ({ default: () => <div>Auth screen</div> }));
 vi.mock("./screens/Chat", () => ({ default: () => <div>Chat screen</div> }));
 vi.mock("./screens/EarlyAccess", () => ({ default: () => <div>Early access screen</div> }));
 vi.mock("./screens/History", () => ({ default: () => <div>History screen</div> }));
+vi.mock("./screens/Account", () => ({ default: () => <div>Account screen</div> }));
+vi.mock("./screens/Pricing", () => ({ default: () => <div>Pricing screen</div> }));
 vi.mock("./screens/Result", () => ({ default: () => <div>Result screen</div> }));
 vi.mock("./screens/Scanner", () => ({ default: () => <div>Scanner screen</div> }));
 
@@ -89,6 +91,28 @@ describe("App auth guard", () => {
     renderApp("/");
 
     expect(await screen.findByText("Scanner screen")).toBeInTheDocument();
+  });
+
+  it("protects the pricing route behind verified auth", async () => {
+    authMock.getVerifiedAuthUser.mockResolvedValue(null);
+
+    renderApp("/pricing");
+
+    expect(await screen.findByText("Auth screen")).toBeInTheDocument();
+  });
+
+  it("opens account after the Supabase auth check passes", async () => {
+    authMock.getVerifiedAuthUser.mockResolvedValue({
+      app_metadata: {},
+      aud: "authenticated",
+      created_at: new Date(0).toISOString(),
+      id: "verified-user",
+      user_metadata: {},
+    });
+
+    renderApp("/account");
+
+    expect(await screen.findByText("Account screen")).toBeInTheDocument();
   });
 });
 
