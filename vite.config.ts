@@ -113,11 +113,13 @@ export default defineConfig(async ({ mode }) => {
       testTimeout: 15_000,
     },
     server: {
+      allowedHosts: [".trycloudflare.com"],
       host: "0.0.0.0",
       port: 5174,
       strictPort: false,
     },
     preview: {
+      allowedHosts: [".trycloudflare.com"],
       host: "0.0.0.0",
       port: 4174,
       strictPort: false,
