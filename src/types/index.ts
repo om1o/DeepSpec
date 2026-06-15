@@ -69,6 +69,54 @@ export type CandidateMatch = {
   reason: string;
 };
 
+export type VehicleContext = {
+  vin?: string;
+  year?: string;
+  make?: string;
+  model?: string;
+  engine?: string;
+  notes?: string;
+};
+
+export type MeasurementReferenceType = "card_short_edge" | "card_long_edge" | "us_quarter" | "us_nickel" | "known_fastener" | "custom";
+
+export type MeasurementContext = {
+  referenceType: MeasurementReferenceType;
+  referenceLabel: string;
+  referenceMm: number;
+  referencePx?: number;
+  selectedRegion?: {
+    height: number;
+    width: number;
+    x: number;
+    y: number;
+  };
+};
+
+export type CandidatePart = {
+  partName: string;
+  confidence: Confidence;
+  scanCategory: ScanCategory;
+  evidence: string[];
+  whyNotPrimary?: string;
+};
+
+export type PossibleVehicleContext = {
+  label: string;
+  confidence: Confidence;
+  evidence: string[];
+};
+
+export type PartMeasurement = {
+  label: string;
+  valueMm: number;
+  confidence: Confidence;
+  method: "reference_object" | "visible_marking" | "estimated";
+  caveat: string;
+};
+
+export type FitmentConfidence = "not_applicable" | "needs_vehicle_context" | "possible" | "supported";
+
 export type EvidenceRegion = {
   label: string;
   observation: string;
@@ -93,12 +141,18 @@ export type IdentifyModelRun = {
 
 export type IdentificationResult = {
   partName: string;
+  primaryPart?: CandidatePart;
   confidence: Confidence;
   confidenceScore?: number;
   confidenceRange?: {
     low: number;
     high: number;
   };
+  candidateParts?: CandidatePart[];
+  possibleVehicleContexts?: PossibleVehicleContext[];
+  measurements?: PartMeasurement[];
+  requiredNextEvidence?: string[];
+  fitmentConfidence?: FitmentConfidence;
   confirmationNeed?: ConfirmationNeed;
   scanCategory: ScanCategory;
   candidateMatches: CandidateMatch[];
@@ -131,7 +185,9 @@ export type AIInput = {
   imageBase64?: string;
   imageBase64_2?: string;
   labelRescueTrigger?: LabelRescueTrigger;
+  measurementContext?: MeasurementContext;
   userMessage: string;
+  vehicleContext?: VehicleContext;
   systemPrompt: string;
   responseAsJson?: boolean;
 };

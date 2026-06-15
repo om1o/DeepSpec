@@ -14,6 +14,8 @@ import {
   signUpWithPassword,
   verifyEmailCode,
 } from "../services/auth";
+import { syncLookupsToCloud } from "../services/cloudSync";
+import { getLookups } from "../services/storage";
 
 type AuthStep = "email" | "sent" | "code";
 type AuthMode = "link" | "password";
@@ -59,13 +61,30 @@ export default function Auth() {
     return normalizePostAuthRedirectPath(fromState ?? fromQuery);
   }, [location.search, location.state]);
 
+  const finishVerifiedLogin = useCallback(async () => {
+    const localLookups = getLookups();
+    if (localLookups.length) {
+      setNotice(`Syncing ${localLookups.length} saved scan${localLookups.length === 1 ? "" : "s"} to cloud.`);
+      try {
+        const syncResult = await syncLookupsToCloud(localLookups);
+        if (!syncResult.ok) {
+          console.warn("[DeepSpec] Local scan cloud sync after login was incomplete.", syncResult);
+        }
+      } catch (syncError) {
+        console.warn("[DeepSpec] Local scan cloud sync after login failed.", syncError);
+      }
+    }
+
+    navigate(postAuthPath, { replace: true });
+  }, [navigate, postAuthPath]);
+
   useEffect(() => {
     let isMounted = true;
 
     getVerifiedAuthUser()
       .then((user) => {
         if (user) {
-          navigate(postAuthPath, { replace: true });
+          void finishVerifiedLogin();
         }
       })
       .catch(() => undefined)
@@ -78,7 +97,7 @@ export default function Auth() {
     return () => {
       isMounted = false;
     };
-  }, [navigate, postAuthPath]);
+  }, [finishVerifiedLogin]);
 
   useEffect(() => {
     if (step === "code") {
@@ -102,13 +121,13 @@ export default function Auth() {
     try {
       const normalizedEmail = email.trim().toLowerCase();
       await verifyEmailCode(normalizedEmail, code.trim());
-      navigate(postAuthPath, { replace: true });
+      await finishVerifiedLogin();
     } catch (authError) {
       setError(formatAuthError(authError));
     } finally {
       setIsSubmitting(false);
     }
-  }, [code, email, isSubmitting, navigate, postAuthPath, supabaseConfigured]);
+  }, [code, email, finishVerifiedLogin, isSubmitting, supabaseConfigured]);
 
   useEffect(() => {
     if (step !== "code" || !supabaseConfigured || isSubmitting) return;
@@ -141,7 +160,7 @@ export default function Auth() {
             ? await signUpWithPassword(normalizedEmail, password, postAuthPath)
             : await signInWithPassword(normalizedEmail, password);
         if (user) {
-          navigate(postAuthPath, { replace: true });
+          await finishVerifiedLogin();
           return;
         }
       } catch (authError) {

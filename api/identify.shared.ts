@@ -1,6 +1,7 @@
 import { IDENTIFY_PROMPT } from "../src/services/systemPrompts";
 import {
   SCAN_CATEGORIES,
+  type CandidatePart,
   type CandidateMatch,
   type ConfirmationNeed,
   type Confidence,
@@ -8,8 +9,12 @@ import {
   type IdentificationResult,
   type IdentifyModelRun,
   type IdentifyProvider,
+  type MeasurementContext,
+  type PartMeasurement,
+  type PossibleVehicleContext,
   type ScanCategory,
   type SourceLink,
+  type VehicleContext,
 } from "../src/types";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -23,6 +28,8 @@ type ParsedIdentifyRequest = {
   mimeType_2: string | null;
   userMessage: string;
   labelRescueTrigger: LabelRescueTrigger | null;
+  measurementContext: MeasurementContext | null;
+  vehicleContext: VehicleContext | null;
 };
 
 export type IdentifyResponse =
@@ -101,6 +108,62 @@ const IDENTIFICATION_RESPONSE_SCHEMA = {
         required: ["partName", "confidence", "scanCategory", "reason"],
       },
     },
+    primaryPart: {
+      type: "object",
+      properties: {
+        partName: { type: "string" },
+        confidence: { type: "string", enum: ["high", "medium", "low"] },
+        scanCategory: { type: "string", enum: [...SCAN_CATEGORIES] },
+        evidence: { type: "array", items: { type: "string" } },
+        whyNotPrimary: { type: "string" },
+      },
+      required: ["partName", "confidence", "scanCategory", "evidence"],
+    },
+    candidateParts: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          partName: { type: "string" },
+          confidence: { type: "string", enum: ["high", "medium", "low"] },
+          scanCategory: { type: "string", enum: [...SCAN_CATEGORIES] },
+          evidence: { type: "array", items: { type: "string" } },
+          whyNotPrimary: { type: "string" },
+        },
+        required: ["partName", "confidence", "scanCategory", "evidence"],
+      },
+    },
+    possibleVehicleContexts: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          label: { type: "string" },
+          confidence: { type: "string", enum: ["high", "medium", "low"] },
+          evidence: { type: "array", items: { type: "string" } },
+        },
+        required: ["label", "confidence", "evidence"],
+      },
+    },
+    measurements: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          label: { type: "string" },
+          valueMm: { type: "number" },
+          confidence: { type: "string", enum: ["high", "medium", "low"] },
+          method: { type: "string", enum: ["reference_object", "visible_marking", "estimated"] },
+          caveat: { type: "string" },
+        },
+        required: ["label", "valueMm", "confidence", "method", "caveat"],
+      },
+    },
+    requiredNextEvidence: {
+      type: "array",
+      items: { type: "string" },
+    },
+    fitmentConfidence: { type: "string", enum: ["not_applicable", "needs_vehicle_context", "possible", "supported"] },
     whatItDoes: { type: "string" },
     visibleObservations: {
       type: "array",
@@ -534,6 +597,7 @@ function fetchBackendIdentify(
       type: "text",
       text: [
         parsed.userMessage,
+        buildIdentifyContextPrompt(parsed),
         ocr?.text ? buildOcrContext(ocr.text) : "",
         sourceContext ?? "",
       ].filter(Boolean).join("\n\n"),
@@ -782,6 +846,7 @@ function fetchOllamaIdentify(
       content: [
         OLLAMA_IDENTIFY_PROMPT,
         parsed.userMessage,
+        buildIdentifyContextPrompt(parsed),
         ocr?.text ? buildOcrContext(ocr.text) : "",
       ]
         .filter(Boolean)
@@ -853,13 +918,7 @@ function extractOllamaText(responseBody: JsonObject | null) {
 
 function fetchGeminiIdentify(
   model: string,
-  parsed: {
-    base64: string;
-    mimeType: string;
-    base64_2: string | null;
-    mimeType_2: string | null;
-    userMessage: string;
-  },
+  parsed: ParsedIdentifyRequest,
   ocr: { text: string; model: string } | null,
   sourceContext: string | null,
   apiKey: string,
@@ -893,6 +952,7 @@ function fetchGeminiIdentify(
               : []),
             ...(ocr?.text ? [{ text: buildOcrContext(ocr.text) }] : []),
             ...(sourceContext ? [{ text: sourceContext }] : []),
+            ...(buildIdentifyContextPrompt(parsed) ? [{ text: buildIdentifyContextPrompt(parsed) }] : []),
             { text: parsed.userMessage },
           ],
         },
@@ -948,19 +1008,153 @@ function parseIdentifyRequest(body: unknown): ParsedIdentifyRequest | { error: I
   }
 
   const hasSecond = base64_2 !== null;
+  const userMessage =
+    typeof body.userMessage === "string" && body.userMessage.trim()
+      ? body.userMessage.trim().slice(0, 500)
+      : hasSecond
+        ? "Identify this car part from two photos taken from slightly different angles."
+        : "Identify this car part from the captured photo.";
+
   return {
     base64: parsedImage.base64,
     mimeType: parsedImage.mimeType,
     base64_2,
     mimeType_2,
-    userMessage:
-      typeof body.userMessage === "string" && body.userMessage.trim()
-        ? body.userMessage.trim().slice(0, 500)
-        : hasSecond
-          ? "Identify this car part from two photos taken from slightly different angles."
-          : "Identify this car part from the captured photo.",
+    userMessage,
     labelRescueTrigger: body.labelRescueTrigger === "too_blurry" ? "too_blurry" : null,
+    measurementContext: parseMeasurementContext(body.measurementContext),
+    vehicleContext: parseVehicleContext(body.vehicleContext),
   };
+}
+
+function buildIdentifyContextPrompt(parsed: ParsedIdentifyRequest) {
+  const sections = [];
+
+  if (parsed.vehicleContext) {
+    const vehicleFacts = [
+      parsed.vehicleContext.vin ? `VIN: ${parsed.vehicleContext.vin}` : "",
+      parsed.vehicleContext.year ? `Year: ${parsed.vehicleContext.year}` : "",
+      parsed.vehicleContext.make ? `Make: ${parsed.vehicleContext.make}` : "",
+      parsed.vehicleContext.model ? `Model: ${parsed.vehicleContext.model}` : "",
+      parsed.vehicleContext.engine ? `Engine: ${parsed.vehicleContext.engine}` : "",
+      parsed.vehicleContext.notes ? `Notes: ${parsed.vehicleContext.notes}` : "",
+    ].filter(Boolean);
+
+    if (vehicleFacts.length) {
+      sections.push([
+        "Vehicle context supplied by the user or verifier:",
+        ...vehicleFacts.map((fact) => `- ${fact}`),
+        "Use this only to narrow likely candidates. Do not claim exact fitment unless visible labels or verified source context support it.",
+      ].join("\n"));
+    }
+  }
+
+  if (parsed.measurementContext) {
+    const context = parsed.measurementContext;
+    sections.push([
+      "Measurement context supplied by the scanner:",
+      `- Reference: ${context.referenceLabel} (${context.referenceType}), ${context.referenceMm} mm.`,
+      context.referencePx ? `- Reference pixels: ${context.referencePx}.` : "",
+      context.selectedRegion ? `- Selected image region: x=${context.selectedRegion.x}, y=${context.selectedRegion.y}, width=${context.selectedRegion.width}, height=${context.selectedRegion.height}.` : "",
+      "Return measurements only as approximate estimates. If no reliable same-plane reference exists, explain what evidence is still required.",
+    ].filter(Boolean).join("\n"));
+  }
+
+  return sections.join("\n\n");
+}
+
+function parseVehicleContext(value: unknown): VehicleContext | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const context: VehicleContext = {};
+  const vin = cleanOptionalContextText(value.vin, 24);
+  const year = cleanOptionalContextText(value.year, 12);
+  const make = cleanOptionalContextText(value.make, 48);
+  const model = cleanOptionalContextText(value.model, 64);
+  const engine = cleanOptionalContextText(value.engine, 80);
+  const notes = cleanOptionalContextText(value.notes, 180);
+
+  if (vin) context.vin = vin;
+  if (year) context.year = year;
+  if (make) context.make = make;
+  if (model) context.model = model;
+  if (engine) context.engine = engine;
+  if (notes) context.notes = notes;
+
+  return Object.keys(context).length ? context : null;
+}
+
+function parseMeasurementContext(value: unknown): MeasurementContext | null {
+  if (!isRecord(value) || !isMeasurementReferenceType(value.referenceType) || typeof value.referenceMm !== "number") {
+    return null;
+  }
+
+  const referenceMm = clampPositive(value.referenceMm, 0.1, 500);
+  if (!referenceMm) {
+    return null;
+  }
+
+  const referenceLabel = cleanOptionalContextText(value.referenceLabel, 64) || value.referenceType;
+  const referencePx = typeof value.referencePx === "number" ? clampPositive(value.referencePx, 1, 8000) : undefined;
+  const selectedRegion = parseMeasurementRegion(value.selectedRegion);
+
+  return {
+    referenceType: value.referenceType,
+    referenceLabel,
+    referenceMm,
+    ...(referencePx ? { referencePx } : {}),
+    ...(selectedRegion ? { selectedRegion } : {}),
+  };
+}
+
+function parseMeasurementRegion(value: unknown): MeasurementContext["selectedRegion"] | undefined {
+  if (
+    !isRecord(value) ||
+    typeof value.x !== "number" ||
+    typeof value.y !== "number" ||
+    typeof value.width !== "number" ||
+    typeof value.height !== "number"
+  ) {
+    return undefined;
+  }
+
+  return {
+    x: clampRatio(value.x),
+    y: clampRatio(value.y),
+    width: clampRatio(value.width),
+    height: clampRatio(value.height),
+  };
+}
+
+function isMeasurementReferenceType(value: unknown): value is MeasurementContext["referenceType"] {
+  return value === "card_short_edge" ||
+    value === "card_long_edge" ||
+    value === "us_quarter" ||
+    value === "us_nickel" ||
+    value === "known_fastener" ||
+    value === "custom";
+}
+
+function cleanOptionalContextText(value: unknown, maxLength: number) {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function clampPositive(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+
+  return Math.max(min, Math.min(max, value));
+}
+
+function clampRatio(value: number) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(1, value));
 }
 
 function parseDataUrl(dataUrl: string) {
@@ -1138,22 +1332,31 @@ function normalizeIdentificationResult(
   const confidenceRange = normalizeConfidenceRange(result.confidenceRange);
   const confirmationNeed = normalizeConfirmationNeed(result.confirmationNeed);
   const needsBetterPhoto = normalizeNeedsBetterPhoto(result, safety.safetyTriage, partName, confidence);
+  const candidateMatches = normalizeCandidateMatches(result, datasetMatches, partName, scanCategory);
+  const evidenceRegions = normalizeEvidenceRegions(result.evidenceRegions, visibleObservations, cleanEvidence);
+  const sourceLinks = normalizeSourceLinks(result.sourceLinks, datasetMatches, partName);
 
   return {
     ...result,
     partName,
+    primaryPart: normalizePrimaryPart(result.primaryPart, partName, confidence, scanCategory, cleanEvidence),
     confidence,
     ...(confidenceScore === undefined ? {} : { confidenceScore }),
     ...(confidenceRange === undefined ? {} : { confidenceRange }),
     ...(confirmationNeed === undefined ? {} : { confirmationNeed }),
+    candidateParts: normalizeCandidateParts(result.candidateParts, candidateMatches, partName, confidence, scanCategory),
+    possibleVehicleContexts: normalizePossibleVehicleContexts(result.possibleVehicleContexts),
+    measurements: normalizeMeasurements(result.measurements),
+    requiredNextEvidence: normalizeRequiredNextEvidence(result.requiredNextEvidence, confirmationNeed, needsBetterPhoto),
+    fitmentConfidence: normalizeFitmentConfidence(result.fitmentConfidence, result.possibleVehicleContexts),
     scanCategory,
-    candidateMatches: normalizeCandidateMatches(result, datasetMatches, partName, scanCategory),
+    candidateMatches,
     whatItDoes: cleanText(result.whatItDoes, "Deep Spec could not verify what this part does from this photo."),
     visibleObservations,
-    evidenceRegions: normalizeEvidenceRegions(result.evidenceRegions, visibleObservations, cleanEvidence),
+    evidenceRegions,
     concerns: cleanList(result.concerns),
     evidence: cleanEvidence,
-    sourceLinks: normalizeSourceLinks(result.sourceLinks, datasetMatches, partName),
+    sourceLinks,
     nextAction: normalizeNextAction(result.nextAction, safety.safetyTriage, needsBetterPhoto),
     safetyTriage: safety.safetyTriage,
     isSafetyCritical: safety.isSafetyCritical,
@@ -1276,6 +1479,157 @@ function uniqueCandidates(candidates: CandidateMatch[]) {
   }
 
   return unique;
+}
+
+function normalizePrimaryPart(
+  primaryPart: IdentificationResult["primaryPart"],
+  partName: string,
+  confidence: Confidence,
+  scanCategory: ScanCategory,
+  evidence: string[],
+): CandidatePart {
+  if (primaryPart?.partName) {
+    return {
+      partName: cleanText(primaryPart.partName, partName),
+      confidence: primaryPart.confidence,
+      scanCategory: getTrustedCandidateCategory(primaryPart.scanCategory, primaryPart.partName),
+      evidence: cleanList(primaryPart.evidence).slice(0, 4),
+      ...(primaryPart.whyNotPrimary ? { whyNotPrimary: cleanText(primaryPart.whyNotPrimary, "") } : {}),
+    };
+  }
+
+  return {
+    partName,
+    confidence,
+    scanCategory,
+    evidence: evidence.slice(0, 4),
+  };
+}
+
+function normalizeCandidateParts(
+  candidateParts: IdentificationResult["candidateParts"],
+  candidateMatches: CandidateMatch[],
+  primaryPartName: string,
+  primaryConfidence: Confidence,
+  primaryCategory: ScanCategory,
+): CandidatePart[] {
+  const cleanParts = (candidateParts ?? [])
+    .map((candidate) => ({
+      partName: cleanText(candidate.partName, ""),
+      confidence: candidate.confidence,
+      scanCategory: getTrustedCandidateCategory(candidate.scanCategory, candidate.partName),
+      evidence: cleanList(candidate.evidence).slice(0, 4),
+      ...(candidate.whyNotPrimary ? { whyNotPrimary: cleanText(candidate.whyNotPrimary, "") } : {}),
+    }))
+    .filter((candidate) => candidate.partName);
+
+  const fromMatches = candidateMatches.map((candidate) => ({
+    partName: candidate.partName,
+    confidence: candidate.confidence,
+    scanCategory: candidate.scanCategory,
+    evidence: [candidate.reason],
+    whyNotPrimary: candidate.confidence === primaryConfidence
+      ? "Similar visible candidate; compare against the primary evidence."
+      : candidate.reason,
+  }));
+
+  return uniqueCandidateParts([
+    {
+      partName: primaryPartName,
+      confidence: primaryConfidence,
+      scanCategory: primaryCategory,
+      evidence: [],
+    },
+    ...cleanParts,
+    ...fromMatches,
+  ]).slice(0, 5);
+}
+
+function uniqueCandidateParts(candidates: CandidatePart[]) {
+  const seen = new Set<string>();
+  const unique: CandidatePart[] = [];
+
+  for (const candidate of candidates) {
+    const key = candidate.partName.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(candidate);
+  }
+
+  return unique;
+}
+
+function normalizePossibleVehicleContexts(value: IdentificationResult["possibleVehicleContexts"]): PossibleVehicleContext[] {
+  return (value ?? [])
+    .map((context) => ({
+      label: cleanText(context.label, ""),
+      confidence: context.confidence,
+      evidence: cleanList(context.evidence).slice(0, 4),
+    }))
+    .filter((context) => context.label && context.evidence.length)
+    .slice(0, 3);
+}
+
+function normalizeMeasurements(value: IdentificationResult["measurements"]): PartMeasurement[] {
+  return (value ?? [])
+    .map((measurement) => ({
+      label: cleanText(measurement.label, ""),
+      valueMm: normalizeMeasurementValue(measurement.valueMm),
+      confidence: measurement.confidence,
+      method: measurement.method,
+      caveat: cleanText(measurement.caveat, "Approximate measurement; verify with a physical tool before ordering parts."),
+    }))
+    .filter((measurement): measurement is PartMeasurement => Boolean(measurement.label && measurement.valueMm))
+    .slice(0, 4);
+}
+
+function normalizeMeasurementValue(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+
+  return Math.round(value * 10) / 10;
+}
+
+function normalizeRequiredNextEvidence(
+  value: IdentificationResult["requiredNextEvidence"],
+  confirmationNeed: ConfirmationNeed | undefined,
+  needsBetterPhoto: boolean,
+) {
+  const supplied = cleanList(value ?? []).slice(0, 4);
+  if (supplied.length) {
+    return supplied;
+  }
+
+  if (needsBetterPhoto) {
+    return ["Clearer photo from another angle"];
+  }
+
+  if (confirmationNeed === "reference_needed") {
+    return ["Same-plane reference object or readable size marking"];
+  }
+
+  if (confirmationNeed === "one_more_angle") {
+    return ["Second angle showing connectors, label, or mounting point"];
+  }
+
+  return [];
+}
+
+function normalizeFitmentConfidence(
+  value: IdentificationResult["fitmentConfidence"],
+  possibleVehicleContexts: IdentificationResult["possibleVehicleContexts"],
+) {
+  if (
+    value === "not_applicable" ||
+    value === "needs_vehicle_context" ||
+    value === "possible" ||
+    value === "supported"
+  ) {
+    return value;
+  }
+
+  return possibleVehicleContexts?.length ? "possible" : "needs_vehicle_context";
 }
 
 function normalizeEvidenceRegions(evidenceRegions: EvidenceRegion[], observations: string[], evidence: string[]) {

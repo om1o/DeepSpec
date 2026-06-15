@@ -1,97 +1,152 @@
 @import "tailwindcss";
 
 /* ============================================================================
-   Deep Spec - Design Tokens
-   Logo-aligned palette: white field, DeepSpec blue, deep blue, and scanner ink.
+   Deep Spec – Design Tokens v2
+   Reference: DeepSpec Scanner.html design system
+   Ink-dark palette + electric-cyan scan color + Space Grotesk typography
    ========================================================================= */
 
 :root {
-  /* Surfaces */
-  --ds-bg:            #061522;
-  --ds-page:          #F7FAFF;
-  --ds-panel:         #F2F7FF;
-  --ds-surface-1:     #FFFFFF;
-  --ds-surface-2:     #EAF2FF;
-  --ds-surface-3:     #D6E6FF;
-  --ds-surface-input: #FFFFFF;
+  /* ── Ink (dark backgrounds) ─────────────────────────────────────── */
+  --ink-950: #04070E;
+  --ink-900: #07101E;
+  --ink-800: #0B1729;
+  --ink-700: #101F32;
+  --ink-600: #182B42;
+  --ink-500: #213A55;
+  --ink-400: #314F6B;
+  --ink-300: #4A6B87;
 
-  /* Foregrounds */
-  --ds-fg-1:    #FFFFFF;
-  --ds-fg-2:    rgba(255,255,255,0.92);
-  --ds-fg-3:    rgba(255,255,255,0.84);
-  --ds-fg-4:    rgba(255,255,255,0.70);
-  --ds-fg-5:    rgba(255,255,255,0.62);
-  --ds-fg-6:    rgba(255,255,255,0.42);
-  --ds-fg-7:    rgba(255,255,255,0.36);
-  --ds-fg-8:    rgba(255,255,255,0.32);
-  --ds-fg-mute: #5F7086;
-  --ds-fg-soft: #E5E7EB;
+  /* ── Slate (text on dark) ────────────────────────────────────────── */
+  --slate-500: #5A7A98;
+  --slate-400: #6E90AE;
+  --slate-300: #8BA9C4;
+  --slate-200: #B2CCDF;
+  --slate-100: #D4E4F0;
+  --slate-050: #EEF5FB;
 
-  /* Brand */
+  /* ── Electric cyan – scan / AR accent ───────────────────────────── */
+  --electric-500: #00AAFF;
+  --electric-400: #22B8FF;
+  --electric-300: #55C8FF;
+  --electric-200: #99DDFF;
+  --electric-600: #0088CC;
+
+  /* ── Brand blue ──────────────────────────────────────────────────── */
+  --blue-500: #1469EC;
+  --blue-400: #4B8FF8;
+  --blue-600: #1054C8;
+  --blue-700: #0A3E96;
+
+  /* ── Status ──────────────────────────────────────────────────────── */
+  --green-400: #22C55E;
+  --green-500: #16A34A;
+  --amber-400: #F5A623;
+  --amber-500: #D97706;
+  --red-400:   #EF4444;
+  --red-500:   #DC2626;
+
+  /* ── Semantic aliases ────────────────────────────────────────────── */
+  --ds-bg:            var(--ink-950);
+  --ds-surface:       var(--ink-900);
+  --ds-elevated:      var(--ink-800);
+  --ds-panel:         rgba(7, 16, 30, 0.96);
+  --ds-glass:         rgba(11, 23, 41, 0.88);
+  --ds-overlay:       var(--ink-600);
+
+  --ds-fg-1:          #FFFFFF;
+  --ds-fg-2:          var(--slate-100);
+  --ds-fg-3:          var(--slate-200);
+  --ds-fg-4:          var(--slate-300);
+  --ds-fg-mute:       var(--slate-400);
+  --ds-fg-sub:        var(--slate-500);
+
+  --ds-border-subtle: rgba(139, 169, 196, 0.09);
+  --ds-border:        rgba(139, 169, 196, 0.18);
+  --ds-border-em:     rgba(139, 169, 196, 0.35);
+
+  /* ── Scan / AR ───────────────────────────────────────────────────── */
+  --ds-scan:          var(--electric-500);
+  --ds-scan-dim:      rgba(0, 170, 255, 0.35);
+  --ds-scan-glow:     rgba(0, 170, 255, 0.45);
+  --ds-scan-soft:     rgba(0, 170, 255, 0.10);
+  --ds-scan-line:     rgba(0, 170, 255, 0.60);
+
+  /* ── Brand / CTA ─────────────────────────────────────────────────── */
+  --ds-accent:        var(--blue-500);
+  --ds-accent-soft:   rgba(20, 105, 236, 0.12);
+  --ds-accent-line:   rgba(20, 105, 236, 0.38);
+  --ds-accent-glow:   rgba(20, 105, 236, 0.40);
+
+  /* ── Typography ──────────────────────────────────────────────────── */
+  --font-ui:   'Space Grotesk', 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-data: 'JetBrains Mono', 'Courier New', ui-monospace, monospace;
+
+  /* ── Radius ──────────────────────────────────────────────────────── */
+  --ds-radius-xs:  2px;
+  --ds-radius-sm:  4px;
+  --ds-radius-md:  6px;
+  --ds-radius-lg:  10px;
+  --ds-radius-xl:  14px;
+  --ds-radius-2xl: 20px;
+  --ds-radius-3xl: 28px;
+  --ds-radius-pill: 9999px;
+
+  /* ── Shadows ─────────────────────────────────────────────────────── */
+  --ds-shadow-xs: 0 1px 2px rgba(0,0,0,0.35);
+  --ds-shadow-sm: 0 2px 6px rgba(0,0,0,0.45);
+  --ds-shadow-md: 0 4px 16px rgba(0,0,0,0.55);
+  --ds-shadow-lg: 0 8px 32px rgba(0,0,0,0.65);
+  --ds-shadow-xl: 0 16px 56px rgba(0,0,0,0.70);
+
+  --ds-glow-scan-sm: 0 0 8px rgba(0,170,255,0.50), 0 0 20px rgba(0,170,255,0.20);
+  --ds-glow-scan-md: 0 0 12px rgba(0,170,255,0.65), 0 0 36px rgba(0,170,255,0.25);
+  --ds-glow-brand:   0 0 12px rgba(20,105,236,0.65), 0 0 36px rgba(20,105,236,0.25);
+
+  /* ── Motion ──────────────────────────────────────────────────────── */
+  --ds-dur-fast:   100ms;
+  --ds-dur-base:   220ms;
+  --ds-dur-slow:   380ms;
+  --ds-dur-panel:  420ms;
+  --ds-dur-scan:   1800ms;
+  --ds-ease:       cubic-bezier(0.4, 0, 0.2, 1);
+  --ds-ease-out:   cubic-bezier(0.16, 1, 0.3, 1);
+  --ds-ease-back:  cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ds-ease-scan:  cubic-bezier(0.0, 0.0, 0.2, 1);
+
+  --ds-disabled-opacity: 0.38;
+
+  /* ── Legacy aliases (kept for components not yet updated) ────────── */
+  --ds-page:    var(--ink-950);
   --ds-logo-ink:      #07111E;
-  --ds-logo-blue:     #0B74FF;
-  --ds-logo-blue-deep:#0A4EAD;
-  --ds-accent:        var(--ds-logo-blue);
-  --ds-accent-pressed:#0757C8;
-  --ds-accent-soft:   rgba(11,116,255,0.12);
-  --ds-accent-line:   rgba(11,116,255,0.38);
-  --ds-accent-glow:   0 0 20px rgba(11,116,255,0.32);
-  --ds-accent-corner: rgba(11,116,255,0.94);
-  --ds-accent-corner-glow: drop-shadow(0 0 8px rgba(11,116,255,0.42));
-  --ds-feature-identify: #0B74FF;
-  --ds-feature-damage:   #07111E;
-  --ds-feature-leak:     #47B5FF;
-  --ds-feature-safety:   #0A4EAD;
-
-  /* Evidence */
-  --ds-evidence:      #0B74FF;
-  --ds-evidence-soft: rgba(11,116,255,0.10);
-  --ds-evidence-line: rgba(11,116,255,0.24);
-  --ds-evidence-ink:  #0A4EAD;
-
-  /* Triage */
-  --ds-ok:         #0B74FF;
-  --ds-ok-soft:    rgba(11,116,255,0.12);
-  --ds-ok-line:    rgba(11,116,255,0.28);
-  --ds-ok-ink:     #0A4EAD;
-
-  --ds-warn:       #F59E0B;
+  --ds-logo-blue:     var(--blue-500);
+  --ds-logo-blue-deep:var(--blue-700);
+  --ds-feature-identify: var(--blue-500);
+  --ds-evidence:      var(--blue-500);
+  --ds-evidence-soft: rgba(20,105,236,0.10);
+  --ds-evidence-line: rgba(20,105,236,0.24);
+  --ds-evidence-ink:  var(--blue-700);
+  --ds-ok:         var(--electric-500);
+  --ds-ok-soft:    rgba(0,170,255,0.12);
+  --ds-ok-line:    rgba(0,170,255,0.28);
+  --ds-ok-ink:     var(--electric-600);
+  --ds-warn:       var(--amber-400);
   --ds-warn-soft:  rgba(245,158,11,0.14);
   --ds-warn-line:  rgba(245,158,11,0.30);
-  --ds-warn-ink:   #B45309;
-  --ds-warn-ink-2: #D97706;
-
-  --ds-danger:      #EF4444;
+  --ds-warn-ink:   var(--amber-500);
+  --ds-warn-ink-2: var(--amber-400);
+  --ds-danger:      var(--red-400);
   --ds-danger-soft: rgba(239,68,68,0.10);
   --ds-danger-line: rgba(239,68,68,0.30);
-  --ds-danger-ink:  #B91C1C;
-
-  /* Borders */
-  --ds-border-1: rgba(15,23,42,0.10);
-  --ds-border-2: rgba(15,23,42,0.15);
-  --ds-border-3: rgba(15,23,42,0.20);
-
-  /* Shadows */
-  --ds-shadow-primary:      0 14px 34px rgba(11,116,255,0.24);
-  --ds-shadow-primary-soft: 0 12px 30px rgba(15,23,42,0.10);
-
-  /* Radii */
-  --ds-radius-pill: 9999px;
-  --ds-radius-xs:   12px;
-  --ds-radius-sm:   18px;
-  --ds-radius-md:   20px;
-  --ds-radius-lg:   22px;
-  --ds-radius-xl:   24px;
-  --ds-radius-2xl:  28px;
-
-  /* Motion */
-  --ds-dur-fast: 150ms;
-  --ds-dur-base: 200ms;
-  --ds-dur-slow: 300ms;
-  --ds-ease:     cubic-bezier(0.4, 0, 0.2, 1);
-  --ds-ease-out: cubic-bezier(0, 0, 0.2, 1);
-
-  --ds-disabled-opacity: 0.45;
+  --ds-danger-ink:  var(--red-500);
+  --ds-border-1: var(--ds-border-subtle);
+  --ds-border-2: var(--ds-border);
+  --ds-border-3: var(--ds-border-em);
+  --ds-shadow-primary:      0 14px 34px rgba(20,105,236,0.24);
+  --ds-shadow-primary-soft: 0 12px 30px rgba(7,16,30,0.60);
+  --ds-accent-pressed:      var(--blue-600);
+  --ds-accent-corner:       var(--electric-500);
+  --ds-accent-corner-glow:  drop-shadow(0 0 8px rgba(0,170,255,0.50));
 }
 
 /* ============================================================================
@@ -99,9 +154,9 @@
    ========================================================================= */
 
 :root {
-  color: var(--ds-logo-ink);
-  background: var(--ds-page);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: var(--ds-fg-1);
+  background: var(--ds-bg);
+  font-family: var(--font-ui);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -117,7 +172,7 @@ body,
 #root {
   min-height: 100%;
   margin: 0;
-  background: var(--ds-page);
+  background: var(--ds-bg);
 }
 
 body {
@@ -125,183 +180,269 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-button,
-a {
+button, a {
   touch-action: manipulation;
 }
 
 /* ============================================================================
-   Scanner reticle - corner brackets + helper tooltip
+   Scanner – bracket corners
    ========================================================================= */
 
 .scanner-corner {
   position: absolute;
-  width: 24px;
-  height: 24px;
-  border-color: var(--ds-accent-corner);
-  filter: var(--ds-accent-corner-glow);
+  width: 18px;
+  height: 18px;
+  border-color: var(--ds-scan);
+  filter: drop-shadow(0 0 6px rgba(0,170,255,0.55));
 }
 
 .scanner-corner-tl {
-  top: 0;
-  left: 0;
-  border-top-width: 3px;
-  border-left-width: 3px;
-  border-top-left-radius: var(--ds-radius-sm);
+  top: 0; left: 0;
+  border-top-width: 2px;
+  border-left-width: 2px;
+  border-top-left-radius: 3px;
 }
-
 .scanner-corner-tr {
-  top: 0;
-  right: 0;
-  border-top-width: 3px;
-  border-right-width: 3px;
-  border-top-right-radius: var(--ds-radius-sm);
+  top: 0; right: 0;
+  border-top-width: 2px;
+  border-right-width: 2px;
+  border-top-right-radius: 3px;
 }
-
 .scanner-corner-bl {
-  bottom: 0;
-  left: 0;
-  border-bottom-width: 3px;
-  border-left-width: 3px;
-  border-bottom-left-radius: var(--ds-radius-sm);
+  bottom: 0; left: 0;
+  border-bottom-width: 2px;
+  border-left-width: 2px;
+  border-bottom-left-radius: 3px;
+}
+.scanner-corner-br {
+  right: 0; bottom: 0;
+  border-right-width: 2px;
+  border-bottom-width: 2px;
+  border-bottom-right-radius: 3px;
 }
 
-.scanner-corner-br {
+/* ── Bracket pulse when analyzing ─────────────────────────────────── */
+.scanner-bracket-pulse .scanner-corner {
+  animation: ds-bracket-pulse 1.1s ease-in-out infinite;
+}
+
+/* ── Scan sweep line ───────────────────────────────────────────────── */
+.scanner-sweep-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1.5px;
+  background: linear-gradient(90deg, transparent 0%, var(--ds-scan) 40%, var(--ds-scan) 60%, transparent 100%);
+  box-shadow: 0 0 10px rgba(0,170,255,0.70), 0 0 24px rgba(0,170,255,0.30);
+  animation: ds-scan-sweep var(--ds-dur-scan) var(--ds-ease-scan) infinite;
+  pointer-events: none;
+}
+
+/* ── Analysis sweep ────────────────────────────────────────────────── */
+.scanner-analysis-sweep {
+  animation: ds-analysis-sweep 1.15s var(--ds-ease) infinite;
+  box-shadow: 0 0 20px rgba(0,170,255,0.72);
+}
+
+/* ── HUD overlay text ──────────────────────────────────────────────── */
+.scanner-hud {
+  position: fixed;
+  font-family: var(--font-data);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(139, 169, 196, 0.55);
+  pointer-events: none;
+  user-select: none;
+  line-height: 1.6;
+  z-index: 12;
+}
+
+.scanner-hud-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 9999px;
+  background: var(--ds-scan);
+  margin-right: 5px;
+  vertical-align: middle;
+  box-shadow: 0 0 6px rgba(0,170,255,0.7);
+  animation: ds-rec-pulse 2s ease-in-out infinite;
+}
+
+/* ── Status pill ───────────────────────────────────────────────────── */
+.scanner-status-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px;
+  border-radius: 24px;
+  background: rgba(7, 13, 23, 0.72);
+  border: 1px solid rgba(0, 194, 255, 0.20);
+  backdrop-filter: blur(12px);
+  font-family: var(--font-data);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  color: var(--electric-300);
+}
+
+/* ── Scan CTA button ───────────────────────────────────────────────── */
+.scanner-cta-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 56px;
+  padding: 0 30px;
+  border-radius: 16px;
+  border: 1px solid rgba(0, 194, 255, 0.6);
+  background: rgba(0, 194, 255, 0.08);
+  color: #39D0FF;
+  font-family: var(--font-ui);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  animation: ds-btn-pulse 2.4s ease-in-out infinite;
+}
+
+/* ── Result panel slide-up ─────────────────────────────────────────── */
+.scanner-result-panel {
+  position: fixed;
+  left: 0;
   right: 0;
   bottom: 0;
-  border-right-width: 3px;
-  border-bottom-width: 3px;
-  border-bottom-right-radius: var(--ds-radius-sm);
+  border-top-left-radius: 20px;
+  border-top-right-radius: 20px;
+  background: rgba(7, 13, 23, 0.94);
+  backdrop-filter: blur(30px) saturate(1.4);
+  border-top: 1px solid rgba(0, 194, 255, 0.18);
+  box-shadow: 0 -20px 60px rgba(0, 0, 0, 0.5);
+  animation: ds-slide-up var(--ds-dur-panel) var(--ds-ease-out) both;
+  z-index: 50;
 }
 
-.scanner-sweep {
-  position: absolute;
-  inset: 5px;
+/* ── Data row (monospace values) ───────────────────────────────────── */
+.scanner-data-label {
+  font-size: 12px;
+  color: var(--slate-400);
+  flex: 0 0 140px;
+}
+
+.scanner-data-value {
+  font-family: var(--font-data);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--slate-100);
+}
+
+.scanner-data-value-em {
+  font-family: var(--font-data);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--green-400);
+}
+
+.scanner-section-header {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--electric-500);
+}
+
+/* ── Progress bar track ────────────────────────────────────────────── */
+.scanner-progress-track {
+  width: 60px;
+  height: 3px;
+  border-radius: 9999px;
+  background: rgba(255,255,255,0.08);
   overflow: hidden;
-  border-radius: 14px;
 }
 
-.scanner-lens-grid {
-  position: absolute;
-  inset: 14px;
-  border-radius: 18px;
-  background:
-    linear-gradient(rgba(255,255,255,0.10), rgba(255,255,255,0.10)) 50% 0 / 1px 100% no-repeat,
-    linear-gradient(90deg, rgba(255,255,255,0.10), rgba(255,255,255,0.10)) 0 50% / 100% 1px no-repeat,
-    radial-gradient(circle at 50% 50%, rgba(11,116,255,0.16), transparent 34%);
-}
-
-.scanner-lock-ring {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 58%;
-  aspect-ratio: 1;
-  transform: translate(-50%, -50%);
-  border: 1px dashed rgba(255,255,255,0.24);
+.scanner-progress-fill {
+  height: 100%;
   border-radius: 9999px;
+  background: var(--green-400);
 }
 
-.scanner-lock-ring-locked {
-  border-color: rgba(11,116,255,0.88);
-  box-shadow: 0 0 26px rgba(11,116,255,0.30);
-}
-
-.scanner-center-pin {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 7px;
-  height: 7px;
-  transform: translate(-50%, -50%);
-  border-radius: 9999px;
-  background: #fff;
-  box-shadow: 0 0 0 4px rgba(11,116,255,0.22), 0 0 18px rgba(11,116,255,0.42);
-}
-
-.scanner-side-tick {
-  position: absolute;
-  top: 50%;
-  width: 34px;
-  height: 2px;
-  transform: translateY(-50%);
-  border-radius: 9999px;
-  background: rgba(255,255,255,0.52);
-}
-
-.scanner-side-tick-left {
-  left: -42px;
-}
-
-.scanner-side-tick-right {
-  right: -42px;
-}
-
-.scanner-sweep::before {
-  content: "";
-  position: absolute;
-  left: 8px;
-  right: 8px;
-  top: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, rgba(11,116,255,0.94), transparent);
-  box-shadow: 0 0 16px rgba(11,116,255,0.52);
-  animation: scanner-sweep 1.3s var(--ds-ease) infinite;
-}
-
-.scanner-error-flash {
-  animation: scanner-error-flash 900ms var(--ds-ease-out) 1;
-}
-
-.scanner-analysis-sweep {
-  animation: scanner-analysis-sweep 1.15s var(--ds-ease) infinite;
-  box-shadow: 0 0 20px rgba(11,116,255,0.72);
-}
-
-.scanner-helper {
-  animation: helper-fade 2.4s var(--ds-ease) forwards;
-}
-
-@keyframes helper-fade {
-  0%, 60% { opacity: 1; }
-  100%     { opacity: 0; }
-}
-
-@keyframes scanner-sweep {
-  0%   { top: 0; opacity: 0; }
-  12%  { opacity: 1; }
-  88%  { opacity: 1; }
-  100% { top: calc(100% - 2px); opacity: 0; }
-}
-
-@keyframes scanner-error-flash {
-  0%, 100% {
-    box-shadow: none;
-  }
-  20%, 60% {
-    box-shadow: 0 0 0 4px rgba(239,68,68,0.24), 0 0 28px rgba(239,68,68,0.22);
-  }
-}
-
-@keyframes scanner-analysis-sweep {
-  0%, 100% {
-    transform: translateY(-18px) scaleX(0.72);
-    opacity: 0.32;
-  }
-  50% {
-    transform: translateY(18px) scaleX(1);
-    opacity: 1;
-  }
-}
-
+/* ── No-scrollbar ───────────────────────────────────────────────────── */
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
 
-@keyframes ds-pulse-ring {
-  0%   { box-shadow: 0 0 0 0 rgba(11,116,255,0.52); }
-  70%  { box-shadow: 0 0 0 12px rgba(11,116,255,0.0); }
-  100% { box-shadow: 0 0 0 0 rgba(11,116,255,0.0); }
+/* ============================================================================
+   Keyframes
+   ========================================================================= */
+
+@keyframes ds-scan-sweep {
+  0%   { top: 0%;   opacity: 0; }
+  8%   { opacity: 0.9; }
+  92%  { opacity: 0.9; }
+  100% { top: 100%; opacity: 0; }
 }
+
+@keyframes ds-bracket-pulse {
+  0%, 100% { opacity: 0.55; filter: drop-shadow(0 0 4px rgba(0,170,255,0.35)); }
+  50%       { opacity: 1;    filter: drop-shadow(0 0 10px rgba(0,170,255,0.80)); }
+}
+
+@keyframes ds-rec-pulse {
+  0%, 100% { opacity: 0.6; }
+  50%       { opacity: 1; box-shadow: 0 0 10px rgba(0,170,255,0.9); }
+}
+
+@keyframes ds-btn-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0,170,255,0); }
+  50%       { box-shadow: 0 0 0 8px rgba(0,170,255,0), 0 0 14px rgba(0,170,255,0.35); }
+}
+
+@keyframes ds-slide-up {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
+@keyframes ds-fade-up {
+  from { transform: translateY(8px); opacity: 0; }
+  to   { transform: translateY(0);   opacity: 1; }
+}
+
+@keyframes ds-analysis-sweep {
+  0%, 100% { transform: translateY(-18px) scaleX(0.72); opacity: 0.32; }
+  50%       { transform: translateY(18px)  scaleX(1);    opacity: 1; }
+}
+
+@keyframes ds-ping {
+  0%   { transform: scale(1);    opacity: 0.55; }
+  100% { transform: scale(2.8);  opacity: 0; }
+}
+
+@keyframes ds-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes ds-pulse-ring {
+  0%   { box-shadow: 0 0 0 0 rgba(20,105,236,0.52); }
+  70%  { box-shadow: 0 0 0 12px rgba(20,105,236,0.0); }
+  100% { box-shadow: 0 0 0 0 rgba(20,105,236,0.0); }
+}
+
+@keyframes ds-history-dock-sheen {
+  0%, 58%, 100% { transform: translateX(-120%); }
+  72%            { transform: translateX(130%); }
+}
+
+@keyframes ds-history-dot-pulse {
+  0%   { box-shadow: 0 0 0 0 currentColor; }
+  72%  { box-shadow: 0 0 0 8px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* ============================================================================
+   History dock (legacy — kept for History screen)
+   ========================================================================= */
 
 .ds-history-dock {
   position: fixed;
@@ -312,15 +453,15 @@ a {
   min-width: 112px;
   gap: 2px;
   border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  border: 1px solid rgba(139, 169, 196, 0.22);
   background:
-    linear-gradient(160deg, rgba(12, 30, 52, 0.96), rgba(5, 16, 31, 0.94)),
-    radial-gradient(circle at 0% 0%, rgba(11, 116, 255, 0.30), rgba(11, 116, 255, 0));
+    linear-gradient(160deg, rgba(11, 23, 41, 0.96), rgba(4, 7, 14, 0.94)),
+    radial-gradient(circle at 0% 0%, rgba(20, 105, 236, 0.28), rgba(20, 105, 236, 0));
   padding: 10px 12px;
   text-decoration: none;
   transform: translateY(-50%);
   transition: transform var(--ds-dur-base) var(--ds-ease), border-color var(--ds-dur-base) var(--ds-ease), box-shadow var(--ds-dur-base) var(--ds-ease);
-  box-shadow: 0 14px 28px rgba(2, 6, 23, 0.38);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.60);
   overflow: hidden;
 }
 
@@ -328,7 +469,7 @@ a {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(110deg, transparent 20%, rgba(255, 255, 255, 0.28), transparent 72%);
+  background: linear-gradient(110deg, transparent 20%, rgba(255, 255, 255, 0.18), transparent 72%);
   transform: translateX(-120%);
   animation: ds-history-dock-sheen 4.8s ease-in-out infinite;
   pointer-events: none;
@@ -336,20 +477,20 @@ a {
 
 .ds-history-dock:hover,
 .ds-history-dock:focus-visible {
-  border-color: rgba(11, 116, 255, 0.66);
-  box-shadow: 0 16px 32px rgba(2, 6, 23, 0.42), 0 0 22px rgba(11, 116, 255, 0.24);
+  border-color: rgba(0, 170, 255, 0.52);
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.65), 0 0 22px rgba(0, 170, 255, 0.22);
   transform: translateY(-50%) translateX(-2px);
 }
 
 .ds-history-dock:focus-visible {
-  outline: 2px solid rgba(11, 116, 255, 0.78);
+  outline: 2px solid rgba(0, 170, 255, 0.70);
   outline-offset: 2px;
 }
 
 .ds-history-dock-title {
   position: relative;
   font-size: 13px;
-  font-weight: 850;
+  font-weight: 700;
   letter-spacing: 0;
   color: #fff;
 }
@@ -357,9 +498,9 @@ a {
 .ds-history-dock-subtitle {
   position: relative;
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0;
-  color: rgba(255, 255, 255, 0.74);
+  color: rgba(255, 255, 255, 0.65);
 }
 
 .ds-history-dock-dot {
@@ -372,45 +513,28 @@ a {
 }
 
 .ds-history-dock-dot-ready {
-  color: #22c55e;
-  background: #22c55e;
+  color: var(--green-400);
+  background: var(--green-400);
   box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.56);
   animation: ds-history-dot-pulse 2.1s ease-in-out infinite;
 }
 
 .ds-history-dock-dot-local {
-  color: #f59e0b;
-  background: #f59e0b;
+  color: var(--amber-400);
+  background: var(--amber-400);
   box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.42);
   animation: ds-history-dot-pulse 2.1s ease-in-out infinite;
-}
-
-@keyframes ds-history-dock-sheen {
-  0%, 58%, 100% {
-    transform: translateX(-120%);
-  }
-  72% {
-    transform: translateX(130%);
-  }
-}
-
-@keyframes ds-history-dot-pulse {
-  0% {
-    box-shadow: 0 0 0 0 currentColor;
-  }
-  72% {
-    box-shadow: 0 0 0 8px transparent;
-  }
-  100% {
-    box-shadow: 0 0 0 0 transparent;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .ds-history-dock,
   .ds-history-dock::before,
   .ds-history-dock-dot-ready,
-  .ds-history-dock-dot-local {
+  .ds-history-dock-dot-local,
+  .scanner-bracket-pulse .scanner-corner,
+  .scanner-sweep-line,
+  .scanner-cta-btn,
+  .scanner-hud-dot {
     animation: none;
     transition: none;
   }

@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, expect, vi } from "vitest";
@@ -60,30 +60,21 @@ const identifyCapturedFrame = vi.fn(async () => ({
   ],
 }));
 const objectTargetState = vi.hoisted(() => ({
-  current: {
-    confidence: 0.82,
-    id: "target-fast",
-    height: 180,
-    holdProgress: 1,
-    isLocked: true,
-    left: 80,
-    top: 160,
-    width: 240,
-  } as null | {
+  current: null as null | {
     confidence: number;
-    id: string;
     height: number;
     holdProgress: number;
+    id: string;
     isLocked: boolean;
     left: number;
-    top: number;
-    width: number;
     normalized?: {
+      height: number;
+      width: number;
       x: number;
       y: number;
-      width: number;
-      height: number;
     };
+    top: number;
+    width: number;
   },
 }));
 const objectTargetOptions = vi.hoisted(() => ({
@@ -166,6 +157,7 @@ vi.mock("../lib/scanCache", () => ({
 
 describe("Scanner", () => {
   afterEach(() => {
+    cleanup();
     vi.unstubAllGlobals();
     window.history.pushState({}, "", "/");
   });
@@ -189,28 +181,13 @@ describe("Scanner", () => {
       cameraRequestId: 0,
       cameraState: "ready",
     };
-    objectTargetState.current = {
-      confidence: 0.82,
-      id: "target-fast",
-      height: 180,
-      holdProgress: 1,
-      isLocked: true,
-      left: 80,
-      top: 160,
-      width: 240,
-      normalized: {
-        x: 0.2,
-        y: 0.3,
-        width: 0.25,
-        height: 0.2,
-      },
-    };
+    objectTargetState.current = null;
     objectTargetOptions.latest = null;
     localStorage.clear();
     sessionStorage.clear();
   });
 
-  it("auto captures a held target, identifies, saves it, and opens an in-place review", async () => {
+  it("scans on shutter press, identifies, saves it, and opens an in-place review", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <Routes>
@@ -221,15 +198,13 @@ describe("Scanner", () => {
 
     expect(screen.getByTestId("webcam-preview")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Scan now" })).toBeInTheDocument();
-    expect(screen.getByTestId("object-reticle")).toBeInTheDocument();
 
-    await waitFor(() => expect(captureFrame).toHaveBeenCalled());
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
     const reviewHeading = await screen.findByRole("heading", { level: 3, name: "Alternator" });
     const reviewCard = reviewHeading.closest("section");
     expect(reviewCard).toBeTruthy();
     expect(screen.getByTestId("lens-primary-label")).toHaveTextContent("Alternator");
-    expect(screen.getByText("Great - sharp enough")).toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).getByText("AI detection")).toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Open details" })).toBeInTheDocument();
@@ -244,10 +219,9 @@ describe("Scanner", () => {
         accepted: true,
         brightnessScore: 98,
         firstPass: true,
-        objectSizeRatio: 0.05,
+        motionFallback: true,
+        motionStable: true,
         sharpnessScore: 100,
-        targetConfidence: 0.82,
-        targetLocked: true,
       },
       scanCategory: "electrical",
       trainingLabel: "Alternator",
@@ -255,34 +229,21 @@ describe("Scanner", () => {
     });
   }, 10000);
 
-  it("syncs a new saved scan to the cloud dataset when Supabase is configured", async () => {
-    getCloudSyncStatus.mockReturnValue({ configured: true, message: "Cloud sync is configured." });
-
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <Routes>
-          <Route path="/" element={<Scanner />} />
-        </Routes>
-      </MemoryRouter>,
-    );
-
-    await screen.findByRole("heading", { level: 3, name: "Alternator" });
-
-    await waitFor(() => {
-      expect(syncLookupToCloud).toHaveBeenCalledWith(expect.objectContaining({
-        scanQuality: expect.objectContaining({
-          accepted: true,
-          brightnessScore: 98,
-          sharpnessScore: 100,
-        }),
-        scanCategory: "electrical",
-        trainingLabel: "Alternator",
-      }));
+  it("auto captures only after a held, centered target is ready", async () => {
+    objectTargetState.current = makeObjectTarget({
+      confidence: 0.82,
+      height: 180,
+      holdProgress: 1,
+      isLocked: true,
+      normalized: {
+        x: 0.28,
+        y: 0.32,
+        width: 0.28,
+        height: 0.22,
+      },
+      width: 240,
     });
-    expect(await screen.findByText("Saved to cloud dataset.")).toBeInTheDocument();
-  }, 10000);
 
-  it("sends a focused target crop as the AI image when the scanner has a locked object", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <Routes>
@@ -291,36 +252,25 @@ describe("Scanner", () => {
       </MemoryRouter>,
     );
 
+    expect(screen.getByTestId("object-reticle")).toBeInTheDocument();
+    await waitFor(() => expect(captureFrame).toHaveBeenCalled());
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
-    expect(createFocusedScanCrop).toHaveBeenCalledWith("data:image/jpeg;base64,compressed-frame", {
-      x: 0.2,
-      y: 0.3,
-      width: 0.25,
-      height: 0.2,
-    });
-    expect(identifyCapturedFrame.mock.calls[0][0]).toMatchObject({
-      imageBase64: "data:image/jpeg;base64,target-crop",
-    });
-    expect(identifyCapturedFrame.mock.calls[0][1]).toBeUndefined();
+    expect(screen.getByTestId("lens-primary-label")).toHaveTextContent("Alternator");
   }, 10000);
 
-  it("lets the user tap the selected object to scan before auto lock", async () => {
-    objectTargetState.current = {
+  it("sends a focused target crop as the AI image when the user taps the selected object", async () => {
+    objectTargetState.current = makeObjectTarget({
       confidence: 0.72,
-      id: "target-tap",
-      height: 160,
       holdProgress: 0.34,
+      id: "target-tap",
       isLocked: false,
-      left: 72,
-      top: 150,
-      width: 220,
       normalized: {
         x: 0.18,
         y: 0.28,
         width: 0.24,
         height: 0.18,
       },
-    };
+    });
 
     render(
       <MemoryRouter initialEntries={["/"]}>
@@ -339,11 +289,157 @@ describe("Scanner", () => {
       width: 0.24,
       height: 0.18,
     });
+    expect(identifyCapturedFrame.mock.calls[0][0]).toMatchObject({
+      imageBase64: "data:image/jpeg;base64,target-crop",
+    });
+  }, 10000);
+
+  it("requires a five-second hold before auto capture locks", () => {
+    objectTargetState.current = makeObjectTarget({
+      holdProgress: 0,
+      isLocked: false,
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getAllByText("Hold still 5s").length).toBeGreaterThan(0);
+    expect(objectTargetOptions.latest?.holdDurationMs).toBe(5000);
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+  });
+
+  it("blocks scan when the selected target is too small for AR measurement", () => {
+    objectTargetState.current = makeObjectTarget({
+      height: 40,
+      holdProgress: 1,
+      id: "target-tiny",
+      isLocked: true,
+      width: 40,
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getAllByText("Move closer").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Scan now" })).toBeDisabled();
+    expect(captureFrame).not.toHaveBeenCalled();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+  });
+
+  it("waits for a prominent target before autoscan but keeps manual scan available", async () => {
+    objectTargetState.current = makeObjectTarget({
+      height: 150,
+      holdProgress: 1,
+      id: "target-small-auto",
+      isLocked: true,
+      left: 360,
+      normalized: {
+        x: 0.36,
+        y: 0.32,
+        width: 0.18,
+        height: 0.15,
+      },
+      top: 260,
+      width: 140,
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getAllByText("Move closer").length).toBeGreaterThan(0);
+    expect(captureFrame).not.toHaveBeenCalled();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole("heading", { level: 3, name: "Alternator" })).toBeInTheDocument();
   }, 10000);
 
-  it("falls back to a second camera frame when a focused target crop is unavailable", async () => {
-    createFocusedScanCrop.mockResolvedValueOnce(null);
+  it("waits for a centered target before autoscan but lets the user tap the object", async () => {
+    objectTargetState.current = makeObjectTarget({
+      height: 220,
+      holdProgress: 1,
+      id: "target-edge-auto",
+      isLocked: true,
+      left: 20,
+      normalized: {
+        x: 0.03,
+        y: 0.35,
+        width: 0.22,
+        height: 0.22,
+      },
+      top: 260,
+      width: 220,
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getAllByText("Center part").length).toBeGreaterThan(0);
+    expect(captureFrame).not.toHaveBeenCalled();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Scan selected part" }));
+
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    expect(createFocusedScanCrop).toHaveBeenCalledWith("data:image/jpeg;base64,compressed-frame", {
+      x: 0.03,
+      y: 0.35,
+      width: 0.22,
+      height: 0.22,
+    });
+  }, 10000);
+
+  it("syncs a new saved scan to the cloud dataset when Supabase is configured", async () => {
+    getCloudSyncStatus.mockReturnValue({ configured: true, message: "Cloud sync is configured." });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await screen.findByRole("heading", { level: 3, name: "Alternator" });
+
+    await waitFor(() => {
+      expect(syncLookupToCloud).toHaveBeenCalledWith(expect.objectContaining({
+        scanQuality: expect.objectContaining({
+          accepted: true,
+          brightnessScore: 98,
+          sharpnessScore: 100,
+        }),
+        scanCategory: "electrical",
+        trainingLabel: "Alternator",
+      }));
+    });
+    expect(await screen.findByText("Saved to cloud dataset.")).toBeInTheDocument();
+  }, 10000);
+
+  it("captures a second camera frame as a confidence boost when no crop target is present", async () => {
     captureFrame
       .mockResolvedValueOnce("data:image/jpeg;base64,primary-frame")
       .mockResolvedValueOnce("data:image/jpeg;base64,second-frame");
@@ -356,6 +452,7 @@ describe("Scanner", () => {
       </MemoryRouter>,
     );
 
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
     expect(identifyCapturedFrame.mock.calls[0][0]).toMatchObject({
       imageBase64: "data:image/jpeg;base64,primary-frame",
@@ -377,12 +474,13 @@ describe("Scanner", () => {
       </MemoryRouter>,
     );
 
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     const reviewHeading = await screen.findByRole("heading", { level: 3, name: "Alternator" });
     const reviewCard = reviewHeading.closest("section") as HTMLElement | null;
     expect(reviewCard).toBeTruthy();
     expect(reviewCard).toHaveAttribute("data-anchor-side");
-    expect(reviewCard?.className).toContain("bottom-[max(16px,env(safe-area-inset-bottom))]");
-    expect(reviewCard?.className).toContain("max-h-[min(58dvh,520px)]");
+    expect(reviewCard?.className).toContain("scanner-result-panel");
+    expect(reviewCard?.className).toContain("max-h-[min(62dvh,560px)]");
     expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Open details" })).toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Correct label" })).toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).queryByRole("button", { name: "Set reference" })).not.toBeInTheDocument();
@@ -400,26 +498,17 @@ describe("Scanner", () => {
       </MemoryRouter>,
     );
 
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     const reviewHeading = await screen.findByRole("heading", { level: 3, name: "Hex nut" });
     const reviewCard = reviewHeading.closest("section") as HTMLElement | null;
     expect(reviewCard).toBeTruthy();
 
     await userEvent.click(within(reviewCard as HTMLElement).getByRole("button", { name: "Estimate size" }));
-    expect(await screen.findByText("Set a reference first (card or coin) to estimate mm size.")).toBeInTheDocument();
-
-    await userEvent.click(within(reviewCard as HTMLElement).getByRole("button", { name: "Set reference" }));
-    expect(await screen.findByText("Card short edge saved. Best for height when the short card edge matches the vertical edge in frame.")).toBeInTheDocument();
+    expect(await screen.findByText("No point to measure yet.")).toBeInTheDocument();
   }, 10000);
 
-  it("uses the short edge reference to improve height and width estimates", async () => {
+  it("shows the size reference dropdown options for fastener scans", async () => {
     identifyCapturedFrame.mockResolvedValueOnce(makeScanResult("Hex nut"));
-    const writeText = vi.fn(async () => undefined);
-    vi.stubGlobal("navigator", {
-      ...navigator,
-      clipboard: {
-        writeText,
-      },
-    });
 
     render(
       <MemoryRouter initialEntries={["/"]}>
@@ -429,21 +518,15 @@ describe("Scanner", () => {
       </MemoryRouter>,
     );
 
-    const reviewHeading = await screen.findByRole("heading", { level: 3, name: "Hex nut" });
-    const reviewCard = reviewHeading.closest("section") as HTMLElement | null;
-    expect(reviewCard).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await screen.findByRole("heading", { level: 3, name: "Hex nut" });
 
-    await userEvent.click(within(reviewCard as HTMLElement).getByRole("button", { name: "Set reference" }));
-    await userEvent.click(within(reviewCard as HTMLElement).getByRole("button", { name: "Estimate size" }));
-
-    await waitFor(() => {
-      expect(writeText).toHaveBeenCalledWith(expect.stringContaining("72.0 x 54.0 mm"));
-    });
+    expect(screen.getByRole("combobox", { name: "Size reference preset" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Set reference" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Estimate size" })).toBeInTheDocument();
   }, 10000);
 
-  it("lets the user run a manual scan when target lock is not available", async () => {
-    objectTargetState.current = null;
-
+  it("lets the user scan with the shutter button", async () => {
     render(
       <MemoryRouter initialEntries={["/"]}>
         <Routes>
@@ -452,14 +535,12 @@ describe("Scanner", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByTestId("object-reticle")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
 
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
     const reviewHeading = await screen.findByRole("heading", { level: 3, name: "Alternator" });
     const reviewCard = reviewHeading.closest("section");
     expect(reviewCard).toBeTruthy();
-    expect(screen.getByText("Review scan")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 1, name: "Camera access needed" })).not.toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Open details" })).toBeInTheDocument();
   }, 10000);
@@ -470,7 +551,6 @@ describe("Scanner", () => {
       cameraRequestId: 7,
       cameraState: "blocked",
     };
-    objectTargetState.current = null;
 
     render(
       <MemoryRouter initialEntries={["/"]}>
@@ -496,134 +576,6 @@ describe("Scanner", () => {
         analysisSource: "ai_detection",
         captureMode: "upload",
       },
-    });
-  }, 10000);
-
-  it("requires a five-second hold before auto capture locks", () => {
-    objectTargetState.current = {
-      confidence: 0.82,
-      id: "target-fast",
-      height: 180,
-      holdProgress: 0,
-      isLocked: false,
-      left: 80,
-      top: 160,
-      width: 240,
-    };
-
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <Routes>
-          <Route path="/" element={<Scanner />} />
-        </Routes>
-      </MemoryRouter>,
-    );
-
-    expect(screen.getAllByText("Hold still 5s").length).toBeGreaterThan(0);
-    expect(objectTargetOptions.latest?.holdDurationMs).toBe(5000);
-    expect(identifyCapturedFrame).not.toHaveBeenCalled();
-  });
-
-  it("blocks auto scan when the locked object is too small", () => {
-    objectTargetState.current = {
-      confidence: 0.82,
-      id: "target-tiny",
-      height: 40,
-      holdProgress: 1,
-      isLocked: true,
-      left: 80,
-      top: 160,
-      width: 40,
-    };
-
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <Routes>
-          <Route path="/" element={<Scanner />} />
-        </Routes>
-      </MemoryRouter>,
-    );
-
-    expect(screen.getAllByText("Move closer").length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: "Scan now" })).toBeDisabled();
-    expect(captureFrame).not.toHaveBeenCalled();
-    expect(identifyCapturedFrame).not.toHaveBeenCalled();
-  });
-
-  it("waits for a prominent target before autoscan but keeps manual scan available", async () => {
-    objectTargetState.current = {
-      confidence: 0.82,
-      id: "target-small-auto",
-      height: 150,
-      holdProgress: 1,
-      isLocked: true,
-      left: 360,
-      top: 260,
-      width: 140,
-      normalized: {
-        x: 0.36,
-        y: 0.32,
-        width: 0.18,
-        height: 0.15,
-      },
-    };
-
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <Routes>
-          <Route path="/" element={<Scanner />} />
-        </Routes>
-      </MemoryRouter>,
-    );
-
-    expect(screen.getAllByText("Move closer").length).toBeGreaterThan(0);
-    expect(captureFrame).not.toHaveBeenCalled();
-    expect(identifyCapturedFrame).not.toHaveBeenCalled();
-
-    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
-
-    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
-    expect(await screen.findByRole("heading", { level: 3, name: "Alternator" })).toBeInTheDocument();
-  }, 10000);
-
-  it("waits for a centered target before autoscan but lets the user tap the object", async () => {
-    objectTargetState.current = {
-      confidence: 0.82,
-      id: "target-edge-auto",
-      height: 220,
-      holdProgress: 1,
-      isLocked: true,
-      left: 20,
-      top: 260,
-      width: 220,
-      normalized: {
-        x: 0.03,
-        y: 0.35,
-        width: 0.22,
-        height: 0.22,
-      },
-    };
-
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <Routes>
-          <Route path="/" element={<Scanner />} />
-        </Routes>
-      </MemoryRouter>,
-    );
-
-    expect(screen.getAllByText("Center part").length).toBeGreaterThan(0);
-    expect(captureFrame).not.toHaveBeenCalled();
-    expect(identifyCapturedFrame).not.toHaveBeenCalled();
-
-    await userEvent.click(screen.getByRole("button", { name: "Scan selected part" }));
-
-    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
-    expect(createFocusedScanCrop).toHaveBeenCalledWith("data:image/jpeg;base64,compressed-frame", {
-      x: 0.03,
-      y: 0.35,
-      width: 0.22,
-      height: 0.22,
     });
   }, 10000);
 
@@ -687,7 +639,7 @@ describe("Scanner", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getAllByText("Opening camera")).toHaveLength(2);
+    expect(screen.getAllByText("Opening camera")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Upload photo" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Scan now" })).toBeDisabled();
   });
@@ -703,6 +655,8 @@ describe("Scanner", () => {
       </MemoryRouter>,
     );
 
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+
     expect(await screen.findByText("No camera frame was available.")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 1, name: "Camera access needed" })).not.toBeInTheDocument();
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
@@ -710,7 +664,6 @@ describe("Scanner", () => {
 
   it("keeps the real camera scanner active when a stale test query is present", async () => {
     window.history.pushState({}, "", "/scan?test=1");
-    objectTargetState.current = null;
 
     render(
       <MemoryRouter initialEntries={["/scan?test=1"]}>
@@ -727,7 +680,7 @@ describe("Scanner", () => {
     expect(localStorage.getItem("deep-spec:lookups")).toBeTruthy();
   }, 10000);
 
-  it("lets the user cancel an accidental auto scan before the result opens", async () => {
+  it("lets the user cancel a scan in progress before the result opens", async () => {
     identifyCapturedFrame.mockImplementationOnce(() => new Promise(() => undefined));
 
     render(
@@ -738,6 +691,7 @@ describe("Scanner", () => {
       </MemoryRouter>,
     );
 
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     await userEvent.click(await screen.findByRole("button", { name: "Cancel scan" }));
 
     expect(await screen.findByText("Scan canceled. Hold the right item steady to try again.")).toBeInTheDocument();
@@ -745,7 +699,6 @@ describe("Scanner", () => {
   }, 10000);
 
   it("prevents a canceled provider response from saving after cancel", async () => {
-    objectTargetState.current = null;
     let resolveScan: (value: ReturnType<typeof makeScanResult>) => void = () => undefined;
     identifyCapturedFrame.mockImplementationOnce(() => new Promise((resolve) => {
       resolveScan = resolve;
@@ -787,6 +740,8 @@ describe("Scanner", () => {
       </MemoryRouter>,
     );
 
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+
     expect(await screen.findByRole("heading", { level: 2, name: "Too blurry" })).toBeInTheDocument();
     expect(screen.getAllByText("Hold still 2s").length).toBeGreaterThan(0);
     expect(screen.getByText("Try this exact fix, then scan again.")).toBeInTheDocument();
@@ -794,6 +749,26 @@ describe("Scanner", () => {
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
   }, 10000);
 });
+
+function makeObjectTarget(overrides: Partial<NonNullable<typeof objectTargetState.current>>) {
+  return {
+    confidence: 0.82,
+    height: 180,
+    holdProgress: 1,
+    id: "target-fast",
+    isLocked: true,
+    left: 80,
+    normalized: {
+      x: 0.28,
+      y: 0.32,
+      width: 0.28,
+      height: 0.22,
+    },
+    top: 160,
+    width: 240,
+    ...overrides,
+  };
+}
 
 function makeScanResult(partName: string) {
   return {

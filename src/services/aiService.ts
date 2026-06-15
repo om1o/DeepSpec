@@ -10,8 +10,12 @@ import {
   type IdentifyModelRun,
   type LabelRescueTrigger,
   type Lookup,
+  type MeasurementContext,
+  type PartMeasurement,
+  type PossibleVehicleContext,
   type ScanCategory,
   type SourceLink,
+  type VehicleContext,
 } from "../types";
 
 type AIErrorCode =
@@ -83,6 +87,8 @@ export async function runAI(input: AIInput): Promise<string | object> {
       imageBase64: input.imageBase64,
       ...(input.imageBase64_2 ? { imageBase64_2: input.imageBase64_2 } : {}),
       ...(input.labelRescueTrigger ? { labelRescueTrigger: input.labelRescueTrigger } : {}),
+      ...(input.vehicleContext ? { vehicleContext: input.vehicleContext } : {}),
+      ...(input.measurementContext ? { measurementContext: input.measurementContext } : {}),
       userMessage: input.userMessage,
       responseAsJson: input.responseAsJson ?? true,
     });
@@ -121,6 +127,10 @@ export async function identifyCapturedFrame(
   frame: CapturedFrame,
   secondFrame?: CapturedFrame,
   labelRescueTrigger?: LabelRescueTrigger,
+  options: {
+    measurementContext?: MeasurementContext;
+    vehicleContext?: VehicleContext;
+  } = {},
 ): Promise<IdentificationResult> {
   if (isOnDeviceFallbackEnabled() && typeof navigator !== "undefined" && navigator.onLine === false) {
     return identifyOnDevice(frame);
@@ -132,7 +142,9 @@ export async function identifyCapturedFrame(
       imageBase64: frame.imageBase64,
       imageBase64_2: secondFrame?.imageBase64,
       labelRescueTrigger,
+      measurementContext: options.measurementContext,
       userMessage: "Identify this car part from the captured photo.",
+      vehicleContext: options.vehicleContext,
       systemPrompt: IDENTIFY_PROMPT,
       responseAsJson: true,
     });
@@ -256,6 +268,12 @@ function isIdentificationResult(value: unknown): value is IdentificationResult {
     isOptionalConfirmationNeed(value.confirmationNeed) &&
     isScanCategory(value.scanCategory) &&
     isCandidateMatchArray(value.candidateMatches) &&
+    isOptionalCandidatePart(value.primaryPart) &&
+    isOptionalCandidatePartArray(value.candidateParts) &&
+    isOptionalPossibleVehicleContextArray(value.possibleVehicleContexts) &&
+    isOptionalPartMeasurementArray(value.measurements) &&
+    isOptionalStringArray(value.requiredNextEvidence) &&
+    isOptionalFitmentConfidence(value.fitmentConfidence) &&
     typeof value.whatItDoes === "string" &&
     isStringArray(value.visibleObservations) &&
     isEvidenceRegionArray(value.evidenceRegions) &&
@@ -277,6 +295,10 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
+function isOptionalStringArray(value: unknown): value is string[] | undefined {
+  return value === undefined || isStringArray(value);
+}
+
 function isCandidateMatchArray(value: unknown): value is CandidateMatch[] {
   return Array.isArray(value) && value.every((item) => (
     isRecord(item) &&
@@ -294,6 +316,51 @@ function isEvidenceRegionArray(value: unknown): value is EvidenceRegion[] {
     typeof item.observation === "string" &&
     typeof item.regionLabel === "string"
   ));
+}
+
+function isOptionalCandidatePart(value: unknown) {
+  return value === undefined || (
+    isRecord(value) &&
+    typeof value.partName === "string" &&
+    isConfidence(value.confidence) &&
+    isScanCategory(value.scanCategory) &&
+    isStringArray(value.evidence) &&
+    (value.whyNotPrimary === undefined || typeof value.whyNotPrimary === "string")
+  );
+}
+
+function isOptionalCandidatePartArray(value: unknown) {
+  return value === undefined || (Array.isArray(value) && value.every(isOptionalCandidatePart));
+}
+
+function isOptionalPossibleVehicleContextArray(value: unknown): value is PossibleVehicleContext[] | undefined {
+  return value === undefined || (Array.isArray(value) && value.every((item) => (
+    isRecord(item) &&
+    typeof item.label === "string" &&
+    isConfidence(item.confidence) &&
+    isStringArray(item.evidence)
+  )));
+}
+
+function isOptionalPartMeasurementArray(value: unknown): value is PartMeasurement[] | undefined {
+  return value === undefined || (Array.isArray(value) && value.every((item) => (
+    isRecord(item) &&
+    typeof item.label === "string" &&
+    typeof item.valueMm === "number" &&
+    Number.isFinite(item.valueMm) &&
+    item.valueMm > 0 &&
+    isConfidence(item.confidence) &&
+    (item.method === "reference_object" || item.method === "visible_marking" || item.method === "estimated") &&
+    typeof item.caveat === "string"
+  )));
+}
+
+function isOptionalFitmentConfidence(value: unknown) {
+  return value === undefined ||
+    value === "not_applicable" ||
+    value === "needs_vehicle_context" ||
+    value === "possible" ||
+    value === "supported";
 }
 
 function isSourceLinkArray(value: unknown): value is SourceLink[] {

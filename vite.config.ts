@@ -2,7 +2,7 @@ import react from "@vitejs/plugin-react";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defineConfig } from "vitest/config";
 import { loadEnv } from "vite";
-import type { ViteDevServer } from "vite";
+import type { PreviewServer, ViteDevServer } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 
 type TailwindViteModule = typeof import("@tailwindcss/vite");
@@ -22,6 +22,10 @@ export default defineConfig(async ({ mode }) => {
       tailwindcss(),
       {
         name: "deep-spec-api",
+        configurePreviewServer(server: PreviewServer) {
+          registerPreviewMethodGuard(server, "/api/identify", "Use POST for AI identification.");
+          registerPreviewMethodGuard(server, "/api/chat", "Use POST for AI follow-up chat.");
+        },
         configureServer(server: ViteDevServer) {
           server.middlewares.use("/api/identify", async (request: IncomingMessage, response: ServerResponse) => {
             response.setHeader("Cache-Control", "no-store");
@@ -67,8 +71,8 @@ export default defineConfig(async ({ mode }) => {
           name: "Deep Spec",
           short_name: "Deep Spec",
           description: "Know what you're looking at.",
-          theme_color: "#061522",
-          background_color: "#F7FAFF",
+          theme_color: "#04070E",
+          background_color: "#04070E",
           display: "standalone",
           orientation: "portrait",
           start_url: "/",
@@ -129,4 +133,25 @@ async function readJsonBody(request: IncomingMessage) {
   }
 
   return rawBody ? JSON.parse(rawBody) : null;
+}
+
+function registerPreviewMethodGuard(server: PreviewServer, path: string, message: string) {
+  server.middlewares.use(path, (request: IncomingMessage, response: ServerResponse) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.setHeader("Content-Type", "application/json");
+
+    if (request.method !== "POST") {
+      response.statusCode = 405;
+      response.end(JSON.stringify({ error: { code: "method_not_allowed", message } }));
+      return;
+    }
+
+    response.statusCode = 501;
+    response.end(JSON.stringify({
+      error: {
+        code: "preview_api_unavailable",
+        message: "Run `npm run dev` or deploy the serverless API to analyze scans.",
+      },
+    }));
+  });
 }

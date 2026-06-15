@@ -1,12 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 import Webcam from "react-webcam";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import IdentifyButton from "../components/scanner/IdentifyButton";
-import MotionPermissionModal from "../components/scanner/MotionPermissionModal";
-import Reticle from "../components/scanner/Reticle";
 import Button from "../components/ui/Button";
-import HistoryDockButton from "../components/ui/HistoryDockButton";
 import { useCamera, type CameraDevice } from "../hooks/useCamera";
 import { useObjectTarget, type CameraObjectTarget } from "../hooks/useObjectTarget";
 import { useStillness } from "../hooks/useStillness";
@@ -35,15 +31,15 @@ const SECOND_FRAME_DELAY_MS = 120;
 const IDENTIFY_BUDGET_WARN_MS = 15000;
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
 const COMPRESS_UPLOAD_OVER_BYTES = 1024 * 1024;
-const MATCH_THRESHOLD = 0.18;
 const SCAN_CARD_WIDTH_PX = 340;
 const SCAN_CARD_SAFE_HEIGHT_PX = 560;
 const MIN_TARGET_WIDTH_PX = 96;
 const MIN_TARGET_HEIGHT_PX = 72;
 const MIN_TARGET_AREA_RATIO = 0.018;
-const MIN_AUTOSCAN_OBJECT_AREA_RATIO = 0.035;
-const MIN_AUTOSCAN_CENTERED_SCORE = 58;
-const MIN_AUTOSCAN_CONFIDENCE = 0.48;
+const MIN_AUTOSCAN_OBJECT_AREA_RATIO = 0.045;
+const MIN_AUTOSCAN_CENTERED_SCORE = 68;
+const MIN_AUTOSCAN_CONFIDENCE = 0.55;
+const MATCH_THRESHOLD = 140;
 const METRIC_FASTENER_WIDTHS_MM = [6, 7, 8, 10, 12, 13, 14, 16, 17, 18, 19, 21, 22, 24];
 const SAE_FASTENER_WIDTHS = [
   { label: "1/4 in", mm: 6.35 },
@@ -98,14 +94,9 @@ type ScanQualityCoachState = {
   title: string;
 };
 
-type ScanRewardState = {
-  detail: string;
-  message: string;
-};
+type SizeReferencePreset = "card_short_edge" | "card_long_edge" | "us_quarter" | "us_nickel";
 
 type AutoScanGuide = "move_closer" | "center_part" | "hold_still" | null;
-
-type SizeReferencePreset = "card_short_edge" | "card_long_edge" | "us_quarter" | "us_nickel";
 
 type SizeCalibration = {
   capturedAt: string;
@@ -129,11 +120,13 @@ export default function Scanner() {
   const [isReplacingLabel, setIsReplacingLabel] = useState(false);
   const [replacementLabel, setReplacementLabel] = useState("");
   const [qualityCoach, setQualityCoach] = useState<ScanQualityCoachState | null>(null);
-  const [scanReward, setScanReward] = useState<ScanRewardState | null>(null);
   const [sizeReferencePreset, setSizeReferencePreset] = useState<SizeReferencePreset>("card_short_edge");
   const [sizeCalibration, setSizeCalibration] = useState<SizeCalibration | null>(null);
-  const autoScanStartedRef = useRef(false);
   const cancelScanRef = useRef(false);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const activeIdentifyRef = useRef(false);
+  const autoScanStartedRef = useRef(false);
+  const lastAutoScanTargetIdRef = useRef<string | null>(null);
   const qualityFailureInAttemptRef = useRef(false);
   const lastQualityFailureRef = useRef<ScanQualityCoachIssue | null>(null);
   const activeScanStartedAtRef = useRef(0);
@@ -169,8 +162,7 @@ export default function Scanner() {
     [selectedCameraId],
   );
   const isRetakeGuide = useMemo(() => new URLSearchParams(location.search).get("guide") === "retake", [location.search]);
-  const { error: motionError, isStable, needsPermission, requestPermission, usesFallback } =
-    useStillness();
+  const { isStable, usesFallback } = useStillness();
   const objectTarget = useObjectTarget(webcamRef, {
     enabled: cameraState === "ready" && !isAnalyzing && !scanReview,
     holdDurationMs: cameraState === "ready" && isStable && !isAnalyzing && !autoScanPaused && !scanReview
@@ -196,8 +188,8 @@ export default function Scanner() {
     cameraState,
     hasTarget: Boolean(objectTarget),
     hasTargetLock,
-    isTargetTooSmall: isTargetTooSmallNow,
     isStable,
+    isTargetTooSmall: isTargetTooSmallNow,
     qualityCoach,
     scanReview,
     usesFallback,
@@ -212,24 +204,23 @@ export default function Scanner() {
     ? isTargetMismatch(scanReview.reviewTarget, objectTarget)
     : false;
 
+  const reviewCardPlacement = getReviewCardPlacement(anchoredReviewTarget);
+
   const pauseAutoScan = useCallback((message?: string) => {
     const shouldPause = Boolean(message);
     setAutoScanPaused(shouldPause);
-    setCaptureError(message ? message : null);
+    setCaptureError(message ?? null);
     autoScanStartedRef.current = false;
     if (shouldPause) {
       window.setTimeout(() => setAutoScanPaused(false), 1800);
     }
   }, []);
 
-  const reviewCardPlacement = getReviewCardPlacement(anchoredReviewTarget);
-
   const stopForQualityCoach = useCallback((issue: ScanQualityCoachIssue) => {
     qualityFailureInAttemptRef.current = true;
     lastQualityFailureRef.current = issue;
     recordScanQualityFailure(issue);
     setQualityCoach(getScanQualityCoach(issue));
-    setScanReward(null);
     setCaptureError(null);
     setAutoScanPaused(true);
     autoScanStartedRef.current = false;
@@ -240,7 +231,6 @@ export default function Scanner() {
     cancelScanRef.current = false;
     setAutoScanPaused(false);
     setCaptureError(null);
-    setScanReward(null);
     const previousQualityIssue = qualityCoach?.issue ?? null;
     if (qualityCoach) {
       recordScanQualityRetake(qualityCoach.issue);
@@ -359,17 +349,12 @@ export default function Scanner() {
     const scanQuality = buildScanQualitySnapshot({
       cameraId: selectedCameraId,
       firstPass: !qualityFailureInAttemptRef.current,
-      motionFallback: usesFallback,
-      motionStable: isStable,
+      motionFallback: true,
+      motionStable: true,
       previousFailureReason: lastQualityFailureRef.current,
       quality,
       target: reviewTargetOverride ?? null,
     });
-    setScanReward({
-      detail: "Deep Spec can identify from this frame.",
-      message: "Great - sharp enough",
-    });
-    pulseScanSuccess();
 
     const frame: CapturedFrame = {
       imageBase64,
@@ -500,13 +485,14 @@ export default function Scanner() {
         },
       );
     }
-  }, [isScanRequestActive, isStable, persistAndShowReview, recordScanOutcome, selectedCameraId, stopForQualityCoach, usesFallback]);
+  }, [isScanRequestActive, persistAndShowReview, recordScanOutcome, selectedCameraId, stopForQualityCoach]);
 
   const handleIdentify = useCallback(async (reviewTargetOverride?: CameraObjectTarget) => {
-    if (isAnalyzing) {
+    if (isAnalyzing || activeIdentifyRef.current) {
       return;
     }
 
+    activeIdentifyRef.current = true;
     const reviewTarget = reviewTargetOverride ?? objectTarget ?? undefined;
     const requestId = beginScanRequest();
     try {
@@ -526,6 +512,7 @@ export default function Scanner() {
         setIsAnalyzing(false);
         setAnalysisStep(null);
       }
+      activeIdentifyRef.current = false;
     }
   }, [analyzeImageBase64, beginScanRequest, captureFrame, isAnalyzing, isScanRequestActive, objectTarget, pauseAutoScan]);
 
@@ -536,14 +523,11 @@ export default function Scanner() {
 
     const requestId = beginScanRequest();
     try {
-      autoScanStartedRef.current = false;
       setIsAnalyzing(true);
       setAnalysisStep("Loading photo");
       setCaptureError(null);
       const rawImageBase64 = await readImageFileAsDataUrl(file);
       if (!isScanRequestActive(requestId)) return;
-      // Match the camera path: shrink large photos to 1024px before hashing,
-      // quality checks, persistence, and upload, so they don't stall the UI.
       const imageBase64 = file.size > COMPRESS_UPLOAD_OVER_BYTES
         ? await compressImageDataUrl(rawImageBase64, 1024, 0.8)
         : rawImageBase64;
@@ -570,6 +554,14 @@ export default function Scanner() {
     const override = getObjectTargetFromReviewTarget(scanReview.reviewTarget);
     await handleIdentify(override);
   }, [handleIdentify, scanReview]);
+
+  const handleFlipCamera = useCallback(() => {
+    if (cameraDevices.length < 2) return;
+    const currentIndex = cameraDevices.findIndex((d) => d.deviceId === selectedCameraId);
+    const nextIndex = (currentIndex + 1) % cameraDevices.length;
+    selectCamera(cameraDevices[nextIndex].deviceId);
+  }, [cameraDevices, selectedCameraId, selectCamera]);
+
   const applyLabelCorrection = useCallback((correction: string) => {
     if (!scanReview) return;
 
@@ -737,6 +729,29 @@ export default function Scanner() {
     navigate("/result", { state: scanReview.scanState });
   }, [navigate, scanReview]);
 
+  useEffect(() => {
+    if (!isAutoScanReady || cameraState !== "ready" || isAnalyzing || autoScanPaused || scanReview) {
+      return;
+    }
+
+    const autoTargetId = objectTarget?.id ?? null;
+    if (!autoTargetId || autoScanStartedRef.current || lastAutoScanTargetIdRef.current === autoTargetId) {
+      return;
+    }
+
+    autoScanStartedRef.current = true;
+    lastAutoScanTargetIdRef.current = autoTargetId;
+    pulseTargetLock();
+    void handleIdentify();
+  }, [autoScanPaused, cameraState, handleIdentify, isAnalyzing, isAutoScanReady, objectTarget?.id, scanReview]);
+
+  useEffect(() => {
+    if (!hasTargetLock && !isAnalyzing) {
+      autoScanStartedRef.current = false;
+      lastAutoScanTargetIdRef.current = null;
+    }
+  }, [hasTargetLock, isAnalyzing]);
+
   const toggleCompactCardMode = useCallback(() => {
     const updated = updateScanCardPreferences(location.pathname, {
       compactCardsByDefault: !scanCardPrefs.compactCardsByDefault,
@@ -754,26 +769,6 @@ export default function Scanner() {
     setScanCardPrefs(updated);
   }, [location.pathname, scanCardPrefs.hideConfidence]);
 
-  useEffect(() => {
-    if (!isAutoScanReady || cameraState !== "ready" || isAnalyzing || autoScanPaused || scanReview) {
-      return;
-    }
-
-    if (autoScanStartedRef.current) {
-      return;
-    }
-
-    autoScanStartedRef.current = true;
-    pulseTargetLock();
-    void handleIdentify();
-  }, [autoScanPaused, cameraState, handleIdentify, isAnalyzing, isAutoScanReady, scanReview]);
-
-  useEffect(() => {
-    if (!hasTargetLock && !isAnalyzing) {
-      autoScanStartedRef.current = false;
-    }
-  }, [hasTargetLock, isAnalyzing]);
-
   function cancelCurrentScan() {
     cancelScanRef.current = true;
     scanRequestIdRef.current += 1;
@@ -788,7 +783,6 @@ export default function Scanner() {
     setIsReplacingLabel(false);
     setReplacementLabel("");
     setScanCardStatusMessage(null);
-    setScanReward(null);
     pauseAutoScan();
     setIsCardExpanded(false);
   }
@@ -817,29 +811,51 @@ export default function Scanner() {
         />
       ) : null}
 
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(2,6,23,0.58),rgba(2,6,23,0)_30%,rgba(2,6,23,0)_58%,rgba(2,6,23,0.74))]" />
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[42dvh] bg-[radial-gradient(circle_at_50%_72%,rgba(11,116,255,0.18),rgba(2,6,23,0)_34%),linear-gradient(to_top,rgba(2,6,23,0.86),rgba(2,6,23,0))]" />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(4,7,14,0.72),rgba(4,7,14,0)_28%,rgba(4,7,14,0)_55%,rgba(4,7,14,0.78))]" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[46dvh] bg-[radial-gradient(ellipse_at_50%_80%,rgba(0,170,255,0.12),rgba(4,7,14,0)_42%),linear-gradient(to_top,rgba(4,7,14,0.90),rgba(4,7,14,0))]" />
 
-      <header className="fixed left-0 right-0 top-0 z-20 px-5 pt-[max(18px,env(safe-area-inset-top))]">
-        <div className="grid grid-cols-[96px_1fr_44px] items-center gap-3">
-          <div className="grid h-11 w-24 place-items-center overflow-hidden rounded-full bg-white/94 px-2 ring-1 ring-white/30 backdrop-blur-xl">
-            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-9 w-full object-contain" />
-          </div>
-          <div className="rounded-full bg-slate-950/54 px-4 py-2 text-center ring-1 ring-white/12 backdrop-blur-xl">
-            <p className="text-[13px] font-extrabold tracking-tight text-white">Deep Spec</p>
-            <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-[var(--ds-accent)]">AI part scanner</p>
-          </div>
-          <Link
-            to="/early-access"
-            aria-label="Early access"
-            className="grid size-11 place-items-center rounded-full bg-slate-950/54 text-lg font-black leading-none text-white ring-1 ring-white/12 backdrop-blur-xl"
+      <header className="fixed left-0 right-0 top-0 z-20 flex items-center justify-between px-4 pb-3 pt-[max(16px,env(safe-area-inset-top))]">
+        <Link
+          to="/history"
+          aria-label="Open saved scan history"
+          className="grid size-10 place-items-center rounded-full text-white"
+          style={{
+            background: "rgba(7,16,30,0.58)",
+            border: "1px solid rgba(255,255,255,0.14)",
+            backdropFilter: "blur(16px)",
+          }}
+        >
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden>
+            <rect x="2" y="2" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.85" />
+            <rect x="10" y="2" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.85" />
+            <rect x="2" y="10" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.85" />
+            <rect x="10" y="10" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.85" />
+          </svg>
+        </Link>
+        <div className="flex flex-col items-center">
+          <span
+            className="text-[15px] font-black tracking-[-0.02em] text-white"
+            style={{ textShadow: "0 1px 8px rgba(0,0,0,0.5)" }}
           >
-            +
-          </Link>
+            Deep Spec
+          </span>
         </div>
-        <p className="mx-auto mt-3 w-fit rounded-full bg-slate-950/42 px-3 py-2 text-center text-xs font-extrabold text-white/78 ring-1 ring-white/12 backdrop-blur-xl">
-          {scannerStatus}
-        </p>
+        <button
+          type="button"
+          aria-label="Switch camera"
+          onClick={handleFlipCamera}
+          className="grid size-10 place-items-center rounded-full text-white"
+          style={{
+            background: "rgba(7,16,30,0.58)",
+            border: "1px solid rgba(255,255,255,0.14)",
+            backdropFilter: "blur(16px)",
+          }}
+        >
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden>
+            <path d="M6 4H14M14 4L11 1M14 4L11 7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M14 16H6M6 16L9 19M6 16L9 13" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
       </header>
 
       {cameraState === "loading" && !scanReview ? <CameraLoading /> : null}
@@ -847,6 +863,7 @@ export default function Scanner() {
         <CameraBlocked
           devices={cameraDevices}
           isRetakeGuide={isRetakeGuide}
+          onGallery={() => galleryInputRef.current?.click()}
           message={cameraError}
           onRetry={retryCamera}
           onSelectCamera={selectCamera}
@@ -856,19 +873,20 @@ export default function Scanner() {
 
       {cameraState !== "blocked" ? (
         <>
-          <Reticle
-            isLocked={isAutoScanReady}
-            isVisible={cameraState === "ready" && !scanReview}
-            label={getReticleLabel({
-              autoScanGuide,
-              autoScanSeconds,
-              hasTarget: Boolean(objectTarget),
-              hasTargetLock,
-              isTargetTooSmall: isTargetTooSmallNow,
-              qualityCoach,
-            })}
-            progress={targetProgress}
-          />
+          {cameraState === "ready" && !scanReview ? <ScannerHUD isAnalyzing={isAnalyzing} /> : null}
+          {cameraState === "ready" && !scanReview ? (
+            <>
+              <LensViewfinderBrackets isAnalyzing={isAnalyzing} label={getReticleLabel({
+                autoScanGuide,
+                autoScanSeconds,
+                hasTarget: Boolean(objectTarget),
+                hasTargetLock,
+                isTargetTooSmall: isTargetTooSmallNow,
+                qualityCoach,
+              })} progress={targetProgress} />
+              <ScannerTargetStatus status={scannerStatus} />
+            </>
+          ) : null}
           {cameraState === "ready" && objectTarget && !scanReview && !isAnalyzing ? (
             <TapTargetButton
               isLocked={isAutoScanReady}
@@ -877,8 +895,6 @@ export default function Scanner() {
               target={objectTarget}
             />
           ) : null}
-
-          {needsPermission ? <MotionPermissionModal error={motionError} onAllow={requestPermission} /> : null}
           {qualityCoach ? (
             <ScanQualityCoachNotice
               coach={qualityCoach}
@@ -886,17 +902,13 @@ export default function Scanner() {
             />
           ) : null}
           {captureError ? <CaptureErrorNotice message={captureError} onTryAgain={() => setCaptureError(null)} /> : null}
-          {scanReward && !qualityCoach ? <ScanRewardBadge reward={scanReward} /> : null}
-          {isRetakeGuide && !scanReward && !qualityCoach && !isAnalyzing && !scanReview ? <RetakeGuideNotice /> : null}
+          {isRetakeGuide && !qualityCoach && !isAnalyzing && !scanReview ? <RetakeGuideNotice /> : null}
         </>
       ) : null}
+
       {scanReview?.scanState.result ? (
         <LensPartOverlays result={scanReview.scanState.result} target={anchoredReviewTarget} />
       ) : null}
-      <GalleryScanButton
-        isDisabled={isAnalyzing}
-        onFileSelected={(file) => void handleGalleryFile(file)}
-      />
       {isAnalyzing ? <AnalyzingOverlay onCancel={cancelCurrentScan} step={analysisStep} /> : null}
       {scanReview ? (
         <ScanResultCard
@@ -932,15 +944,43 @@ export default function Scanner() {
           onReplacementLabelChange={setReplacementLabel}
         />
       ) : null}
-      <IdentifyButton
-        isDisabled={cameraState !== "ready" || isAnalyzing || isTargetTooSmallNow}
-        isReady={cameraState === "ready" && !isAnalyzing && !scanReview && !isTargetTooSmallNow && (hasTargetLock || usesFallback || isStable)}
-        isVisible={cameraState !== "blocked" && !scanReview}
-        onIdentify={() => void handleIdentify()}
+
+      <input
+        ref={galleryInputRef}
+        aria-label="Upload photo"
+        accept="image/jpeg,image/png,image/webp"
+        className="sr-only"
+        disabled={isAnalyzing}
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          if (file) void handleGalleryFile(file);
+        }}
+        type="file"
       />
-      <HistoryDockButton />
+      {!scanReview ? (
+        <LensBottomBar
+          isAnalyzing={isAnalyzing}
+          isShutterDisabled={cameraState !== "ready" || isAnalyzing || isTargetTooSmallNow}
+          onShutter={() => void handleIdentify()}
+          onGallery={() => galleryInputRef.current?.click()}
+          onFlip={handleFlipCamera}
+        />
+      ) : null}
     </main>
   );
+}
+
+function getVideoConstraints(deviceId: string): MediaTrackConstraints {
+  if (!deviceId) {
+    return DEFAULT_VIDEO_CONSTRAINTS;
+  }
+
+  return {
+    deviceId: { exact: deviceId },
+    width: DEFAULT_VIDEO_CONSTRAINTS.width,
+    height: DEFAULT_VIDEO_CONSTRAINTS.height,
+  };
 }
 
 function getScannerStatus({
@@ -950,8 +990,8 @@ function getScannerStatus({
   cameraState,
   hasTarget,
   hasTargetLock,
-  isTargetTooSmall,
   isStable,
+  isTargetTooSmall,
   qualityCoach,
   scanReview,
   usesFallback,
@@ -962,8 +1002,8 @@ function getScannerStatus({
   cameraState: string;
   hasTarget: boolean;
   hasTargetLock: boolean;
-  isTargetTooSmall: boolean;
   isStable: boolean;
+  isTargetTooSmall: boolean;
   qualityCoach: ScanQualityCoachState | null;
   scanReview: ScanReviewState | null;
   usesFallback: boolean;
@@ -972,23 +1012,19 @@ function getScannerStatus({
     return "Review scan";
   }
 
-  if (cameraState !== "ready") {
+  if (cameraState === "loading") {
     return "Opening camera";
-  }
-
-  if (qualityCoach) {
-    return qualityCoach.action;
   }
 
   if (autoScanPaused) {
     return "Scan paused";
   }
 
-  if (isTargetTooSmall) {
-    return "Move closer";
+  if (qualityCoach) {
+    return qualityCoach.action;
   }
 
-  if (autoScanGuide === "move_closer") {
+  if (isTargetTooSmall || autoScanGuide === "move_closer") {
     return "Move closer";
   }
 
@@ -1050,7 +1086,7 @@ function getAutoScanReadiness(
   }
 
   if (!target.isLocked || target.holdProgress < 1) {
-    return { guide: null, isReady: false };
+    return { guide: !usesFallback && !isStable ? "hold_still" : null, isReady: false };
   }
 
   if (!usesFallback && !isStable) {
@@ -1060,16 +1096,50 @@ function getAutoScanReadiness(
   return { guide: null, isReady: true };
 }
 
-function getVideoConstraints(deviceId: string): MediaTrackConstraints {
-  if (!deviceId) {
-    return DEFAULT_VIDEO_CONSTRAINTS;
+function getReticleLabel({
+  autoScanGuide,
+  autoScanSeconds,
+  hasTarget,
+  hasTargetLock,
+  isTargetTooSmall,
+  qualityCoach,
+}: {
+  autoScanGuide: AutoScanGuide;
+  autoScanSeconds: number;
+  hasTarget: boolean;
+  hasTargetLock: boolean;
+  isTargetTooSmall: boolean;
+  qualityCoach: ScanQualityCoachState | null;
+}) {
+  if (qualityCoach) {
+    return qualityCoach.action;
   }
 
-  return {
-    deviceId: { exact: deviceId },
-    width: DEFAULT_VIDEO_CONSTRAINTS.width,
-    height: DEFAULT_VIDEO_CONSTRAINTS.height,
-  };
+  if (isTargetTooSmall || autoScanGuide === "move_closer") {
+    return "Move closer";
+  }
+
+  if (autoScanGuide === "center_part") {
+    return "Center part";
+  }
+
+  if (autoScanGuide === "hold_still") {
+    return "Hold still";
+  }
+
+  if (hasTargetLock) {
+    return "Locked";
+  }
+
+  if (hasTarget) {
+    return getHoldStillCommand(autoScanSeconds);
+  }
+
+  return "Center part";
+}
+
+function getHoldStillCommand(autoScanSeconds: number) {
+  return `Hold still ${Math.max(1, autoScanSeconds)}s`;
 }
 
 function buildScanQualitySnapshot({
@@ -1149,79 +1219,28 @@ function getTargetCenteredScore(target: CameraObjectTarget | null) {
   return Math.round(clampNumber((1 - distance / Math.SQRT1_2) * 100, 0, 100));
 }
 
+function pulseTargetLock() {
+  if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+    try {
+      navigator.vibrate([18, 36, 24]);
+    } catch {
+      // Haptics are optional scanner feedback.
+    }
+  }
+}
+
 function roundRatio(value: number) {
   return Math.round(value * 1000) / 1000;
-}
-
-function pulseTargetLock() {
-  vibrate([18, 36, 24]);
-}
-
-function pulseScanSuccess() {
-  vibrate([12, 28, 18]);
-}
-
-function vibrate(pattern: VibratePattern) {
-  if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
-    navigator.vibrate(pattern);
-  }
-}
-
-function getReticleLabel({
-  autoScanGuide,
-  autoScanSeconds,
-  hasTarget,
-  hasTargetLock,
-  isTargetTooSmall,
-  qualityCoach,
-}: {
-  autoScanGuide: AutoScanGuide;
-  autoScanSeconds: number;
-  hasTarget: boolean;
-  hasTargetLock: boolean;
-  isTargetTooSmall: boolean;
-  qualityCoach: ScanQualityCoachState | null;
-}) {
-  if (qualityCoach) {
-    return qualityCoach.action;
-  }
-
-  if (isTargetTooSmall) {
-    return "Move closer";
-  }
-
-  if (autoScanGuide === "move_closer") {
-    return "Move closer";
-  }
-
-  if (autoScanGuide === "center_part") {
-    return "Center part";
-  }
-
-  if (autoScanGuide === "hold_still") {
-    return "Hold still";
-  }
-
-  if (hasTargetLock) {
-    return "Locked";
-  }
-
-  if (hasTarget) {
-    return getHoldStillCommand(autoScanSeconds);
-  }
-
-  return "Center part";
-}
-
-function getHoldStillCommand(autoScanSeconds: number) {
-  return `Hold still ${Math.max(1, autoScanSeconds)}s`;
 }
 
 function CameraLoading() {
   return (
     <div className="fixed inset-0 z-10 grid place-items-center bg-[var(--ds-bg)] px-6 text-center">
-      <div className="rounded-[24px] border border-white/10 bg-white/10 p-5 shadow-2xl backdrop-blur-md">
-        <div className="mx-auto grid size-12 place-items-center rounded-full border-2 border-white/10 border-t-[var(--ds-accent)]" />
+      <div className="rounded-[24px] border border-white/10 bg-white/8 p-5 shadow-2xl backdrop-blur-md" style={{ borderColor: "rgba(0,194,255,0.18)" }}>
+        <div
+          className="mx-auto size-12 animate-spin rounded-full border-2"
+          style={{ borderColor: "rgba(0,194,255,0.14)", borderTopColor: "rgba(0,194,255,0.85)" }}
+        />
         <p className="mt-4 text-sm font-extrabold text-white">Opening camera</p>
       </div>
     </div>
@@ -1232,6 +1251,7 @@ function CameraBlocked({
   devices,
   isRetakeGuide,
   message,
+  onGallery,
   onRetry,
   onSelectCamera,
   selectedCameraId,
@@ -1239,6 +1259,7 @@ function CameraBlocked({
   devices: CameraDevice[];
   isRetakeGuide: boolean;
   message: string | null;
+  onGallery: () => void;
   onRetry: () => void;
   onSelectCamera: (deviceId: string) => void;
   selectedCameraId: string;
@@ -1282,56 +1303,19 @@ function CameraBlocked({
             </select>
           </label>
         ) : null}
-        <Button className="mt-6" onClick={onRetry}>
-          Try camera again
-        </Button>
+        <div className="mt-6 grid gap-3">
+          <Button onClick={onGallery}>
+            Upload photo
+          </Button>
+          <Button variant="ghost" onClick={onRetry}>
+            Try camera again
+          </Button>
+        </div>
         <button className="mx-auto mt-4 block text-xs font-bold text-white/48 underline underline-offset-4" onClick={() => window.location.reload()}>
           Reload app
         </button>
       </div>
     </div>
-  );
-}
-
-function GalleryScanButton({
-  isDisabled,
-  onFileSelected,
-}: {
-  isDisabled: boolean;
-  onFileSelected: (file: File) => void;
-}) {
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  return (
-    <>
-      <button
-        type="button"
-        aria-controls="scanner-gallery-upload"
-        className={`fixed bottom-[112px] left-1/2 z-40 -translate-x-1/2 rounded-full bg-slate-950/62 px-4 py-2 text-xs font-extrabold text-white ring-1 ring-white/14 backdrop-blur-xl transition ${
-          isDisabled ? "pointer-events-none opacity-45" : "cursor-pointer opacity-100"
-        }`}
-        disabled={isDisabled}
-        onClick={() => inputRef.current?.click()}
-      >
-        Upload photo
-      </button>
-      <input
-        ref={inputRef}
-        id="scanner-gallery-upload"
-        aria-label="Upload photo"
-        accept="image/jpeg,image/png,image/webp"
-        className="sr-only"
-        disabled={isDisabled}
-        onChange={(event) => {
-          const file = event.currentTarget.files?.[0];
-          event.currentTarget.value = "";
-          if (file) {
-            onFileSelected(file);
-          }
-        }}
-        type="file"
-      />
-    </>
   );
 }
 
@@ -1358,19 +1342,22 @@ export function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; ste
         : step ?? "Matching the scan against vehicle data.";
 
   return (
-    <div className="fixed inset-0 z-40 grid place-items-center bg-slate-950/78 px-6 text-center backdrop-blur-md">
-      <div className="w-full max-w-xs overflow-hidden rounded-[24px] border border-white/12 bg-slate-950/94 p-6 shadow-2xl">
+    <div className="fixed inset-0 z-40 grid place-items-center px-6 text-center" style={{ background: "rgba(4,7,14,0.82)", backdropFilter: "blur(16px)" }}>
+      <div className="w-full max-w-xs overflow-hidden rounded-[24px] p-6 shadow-2xl" style={{ background: "rgba(7,16,30,0.96)", border: "1px solid rgba(0,194,255,0.18)" }}>
         <div className="relative mx-auto grid size-24 place-items-center">
-          <div className="absolute inset-0 rounded-full border border-white/10" />
-          <div className="absolute inset-2 animate-spin rounded-full border-2 border-white/10 border-t-[var(--ds-accent)]" />
-          <div className="absolute inset-7 rounded-full bg-[var(--ds-accent)]/16 shadow-[0_0_38px_rgba(11,116,255,0.45)]" />
-          <div className="scanner-analysis-sweep absolute inset-x-3 top-1/2 h-0.5 rounded-full bg-[var(--ds-accent)]" />
+          <div className="absolute inset-0 rounded-full" style={{ border: "1px solid rgba(0,194,255,0.12)" }} />
+          <div
+            className="absolute inset-2 animate-spin rounded-full border-2"
+            style={{ borderColor: "rgba(0,194,255,0.10)", borderTopColor: "rgba(0,194,255,0.82)" }}
+          />
+          <div className="absolute inset-7 rounded-full" style={{ background: "rgba(0,194,255,0.12)", boxShadow: "0 0 28px rgba(0,170,255,0.40)" }} />
+          <div className="scanner-analysis-sweep absolute inset-x-3 top-1/2 h-0.5 rounded-full" style={{ background: "var(--electric-500)" }} />
         </div>
         <p className="mt-5 text-lg font-extrabold tracking-tight text-white">Analyzing photo</p>
-        <p className="mt-2 text-sm leading-6 text-[#A1A1AA]">
+        <p className="mt-2 text-sm leading-6" style={{ color: "var(--slate-300)" }}>
           {message}
         </p>
-        <p className="mt-2 text-xs font-semibold tabular-nums text-white/45">{elapsedSeconds}s elapsed</p>
+        <p className="mt-2 text-xs font-semibold tabular-nums" style={{ fontFamily: "var(--font-data)", color: "var(--slate-500)" }}>{elapsedSeconds}s elapsed</p>
         <Button className="mt-5 w-full" variant="ghost" onClick={onCancel}>
           Cancel scan
         </Button>
@@ -1387,76 +1374,58 @@ function ScanQualityCoachNotice({
   onTryAgain: () => void;
 }) {
   return (
-    <div className="fixed bottom-[210px] left-1/2 z-30 w-[calc(100%-32px)] max-w-sm -translate-x-1/2 overflow-hidden rounded-[24px] border border-white/14 bg-slate-950/94 text-center text-white shadow-[0_22px_70px_rgba(2,6,23,0.66)] backdrop-blur-xl">
-      <div className="bg-[var(--ds-accent)]/12 px-5 py-4">
-        <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">{coach.progress}</p>
-        <h2 className="mt-1 text-2xl font-black tracking-tight">{coach.title}</h2>
-      </div>
-      <div className="px-5 py-5">
-        <p className="text-lg font-black leading-7 text-white">
-          {coach.action}
+    <div
+      className="fixed bottom-[210px] left-1/2 z-30 w-[calc(100%-28px)] max-w-sm -translate-x-1/2 overflow-hidden rounded-[22px] text-center text-white"
+      style={{
+        background: "rgba(7,16,30,0.96)",
+        border: "1px solid rgba(0,194,255,0.18)",
+        backdropFilter: "blur(28px) saturate(1.4)",
+        boxShadow: "0 24px 60px rgba(0,0,0,0.55)",
+      }}
+    >
+      <div className="px-5 py-4" style={{ background: "rgba(0,194,255,0.07)", borderBottom: "1px solid rgba(0,194,255,0.12)" }}>
+        <p style={{ fontFamily: "var(--font-data)", fontSize: 10, fontWeight: 600, letterSpacing: "0.14em", color: "#55C8FF", textTransform: "uppercase" }}>
+          {coach.progress}
         </p>
-        <p className="mt-1 text-sm font-semibold leading-6 text-white/62">
+        <h2 className="mt-1 text-[22px] font-black tracking-tight">{coach.title}</h2>
+      </div>
+      <div className="px-5 py-4">
+        <p className="text-base font-black leading-6 text-white">{coach.action}</p>
+        <p className="mt-1 text-sm font-medium leading-6" style={{ color: "var(--slate-300)" }}>
           Try this exact fix, then scan again.
         </p>
-        <Button className="mt-4 w-full" onClick={onTryAgain}>
+        <button
+          className="mt-4 w-full rounded-[12px] py-3 text-[13px] font-bold text-white"
+          style={{ background: "var(--blue-500)", boxShadow: "0 4px 18px rgba(20,105,236,0.30)" }}
+          onClick={onTryAgain}
+          type="button"
+        >
           Scan again
-        </Button>
+        </button>
       </div>
-    </div>
-  );
-}
-
-function ScanRewardBadge({ reward }: { reward: ScanRewardState }) {
-  return (
-    <div className="fixed bottom-[198px] left-1/2 z-30 w-[calc(100%-32px)] max-w-xs -translate-x-1/2 rounded-[22px] border border-[var(--ds-ok-line)] bg-emerald-950/88 px-4 py-3 text-center text-white shadow-[0_20px_58px_rgba(16,185,129,0.28)] backdrop-blur-xl">
-      <p className="text-sm font-black tracking-tight text-[var(--ds-ok-ink)]">{reward.message}</p>
-      <p className="mt-1 text-xs font-semibold leading-5 text-white/68">{reward.detail}</p>
     </div>
   );
 }
 
 function RetakeGuideNotice() {
   return (
-    <div className="fixed bottom-[198px] left-1/2 z-20 w-[calc(100%-32px)] max-w-sm -translate-x-1/2 rounded-[22px] border border-white/14 bg-slate-950/86 px-4 py-3 text-center text-white shadow-[0_18px_54px_rgba(2,6,23,0.5)] backdrop-blur-xl">
-      <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Retake guide</p>
-      <p className="mt-1 text-sm font-black">Fill the frame from a slight angle.</p>
-      <p className="mt-1 text-xs font-semibold leading-5 text-white/64">Keep labels, bolt heads, or connectors visible.</p>
-    </div>
-  );
-}
-
-function TapTargetButton({
-  isLocked,
-  isTooSmall,
-  onSelect,
-  target,
-}: {
-  isLocked: boolean;
-  isTooSmall: boolean;
-  onSelect: () => void;
-  target: CameraObjectTarget;
-}) {
-  const style = getTapTargetStyle(target);
-  const label = isTooSmall ? "Move closer" : isLocked ? "Scan this part" : "Tap part";
-
-  return (
-    <button
-      aria-label={isTooSmall ? "Selected part is too small" : "Scan selected part"}
-      className={`fixed z-20 rounded-[22px] border-2 bg-black/10 transition-[border-color,box-shadow,background-color] ${
-        isLocked
-          ? "border-[var(--ds-ok-line)] shadow-[0_0_38px_rgba(16,185,129,0.36)]"
-          : "border-[var(--ds-accent)] shadow-[0_0_34px_rgba(11,116,255,0.34)]"
-      }`}
-      disabled={isTooSmall}
-      onClick={onSelect}
-      style={style}
-      type="button"
+    <div
+      className="fixed bottom-[198px] left-1/2 z-20 w-[calc(100%-28px)] max-w-sm -translate-x-1/2 rounded-[18px] px-4 py-3 text-center text-white"
+      style={{
+        background: "rgba(7,16,30,0.90)",
+        border: "1px solid rgba(0,194,255,0.16)",
+        backdropFilter: "blur(20px) saturate(1.3)",
+        boxShadow: "0 16px 44px rgba(0,0,0,0.45)",
+      }}
     >
-      <span className="absolute left-1/2 top-[-38px] -translate-x-1/2 whitespace-nowrap rounded-full bg-slate-950/82 px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.14em] text-white shadow-[0_12px_30px_rgba(2,6,23,0.35)] ring-1 ring-white/12 backdrop-blur-md">
-        {label}
-      </span>
-    </button>
+      <p style={{ fontFamily: "var(--font-data)", fontSize: 10, fontWeight: 600, letterSpacing: "0.14em", color: "#55C8FF", textTransform: "uppercase" }}>
+        Retake guide
+      </p>
+      <p className="mt-1 text-sm font-black">Fill the frame from a slight angle.</p>
+      <p className="mt-1 text-xs font-medium leading-5" style={{ color: "var(--slate-400)" }}>
+        Keep labels, bolt heads, or connectors visible.
+      </p>
+    </div>
   );
 }
 
@@ -1485,25 +1454,42 @@ function LensPartOverlays({ result, target }: { result: IdentificationResult; ta
         <div
           key={detection.id}
           data-testid={`lens-part-overlay-${index}`}
-          className={`absolute rounded-[18px] border-2 shadow-[0_0_0_999px_rgba(2,6,23,0.02)] ${
-            detection.primary
-              ? "border-[var(--ds-accent)] bg-[var(--ds-accent)]/10"
-              : "border-cyan-200/82 bg-cyan-300/8"
-          }`}
+          className="absolute rounded-[16px]"
           style={{
             height: detection.box.height,
             left: detection.box.left,
             top: detection.box.top,
             width: detection.box.width,
+            border: detection.primary
+              ? "1.5px solid rgba(0,194,255,0.70)"
+              : "1px solid rgba(0,194,255,0.35)",
+            background: detection.primary
+              ? "rgba(0,194,255,0.08)"
+              : "rgba(0,194,255,0.03)",
+            boxShadow: detection.primary
+              ? "0 0 18px rgba(0,170,255,0.22)"
+              : undefined,
           }}
         >
           <div
-            className={`absolute left-2 top-2 flex max-w-[min(220px,62vw)] items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-black tracking-tight text-white shadow-[0_10px_24px_rgba(0,0,0,0.3)] backdrop-blur-md ${
-              detection.primary ? "bg-[var(--ds-accent)]" : "bg-slate-950/78"
-            }`}
+            className="absolute left-2 top-2 flex max-w-[min(220px,62vw)] items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold text-white shadow-[0_8px_20px_rgba(0,0,0,0.40)]"
+            style={{
+              backdropFilter: "blur(14px)",
+              background: detection.primary
+                ? "rgba(0,170,255,0.82)"
+                : "rgba(7,16,30,0.82)",
+              border: detection.primary
+                ? "none"
+                : "1px solid rgba(0,194,255,0.28)",
+            }}
           >
             <span data-testid={detection.primary ? "lens-primary-label" : undefined} className="min-w-0 truncate">{detection.label}</span>
-            <span className="shrink-0 rounded-full bg-black/30 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-[0.04em] text-white/85">{detection.detail}</span>
+            <span
+              className="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.04em]"
+              style={{ background: "rgba(0,0,0,0.28)", color: "rgba(255,255,255,0.80)" }}
+            >
+              {detection.detail}
+            </span>
           </div>
         </div>
       ))}
@@ -1551,15 +1537,6 @@ function targetToLensBox(target: ScanReviewTarget) {
   };
 }
 
-function getTapTargetStyle(target: CameraObjectTarget): CSSProperties {
-  return {
-    height: target.height,
-    left: target.left,
-    top: target.top,
-    width: target.width,
-  };
-}
-
 function regionLabelToLensBox(regionLabel: string, index: number) {
   const label = regionLabel.toLowerCase();
   const width = Math.min(260, Math.max(126, window.innerWidth * 0.32));
@@ -1586,6 +1563,52 @@ function regionLabelToLensBox(regionLabel: string, index: number) {
     width,
     height,
   };
+}
+
+function StatTile({
+  accent,
+  label,
+  value,
+  warn,
+}: {
+  accent?: boolean;
+  label: string;
+  value: string;
+  warn?: boolean;
+}) {
+  return (
+    <div
+      className="flex flex-col gap-1 rounded-xl px-3 py-2.5"
+      style={{
+        background: accent ? "rgba(0,194,255,0.07)" : warn ? "rgba(239,68,68,0.07)" : "rgba(255,255,255,0.04)",
+        border: `1px solid ${accent ? "rgba(0,194,255,0.22)" : warn ? "rgba(239,68,68,0.20)" : "rgba(255,255,255,0.08)"}`,
+      }}
+    >
+      <span
+        style={{
+          fontFamily: "var(--font-data)",
+          fontSize: 9,
+          fontWeight: 600,
+          letterSpacing: "0.14em",
+          color: accent ? "rgba(85,200,255,0.70)" : warn ? "rgba(239,68,68,0.65)" : "var(--slate-500)",
+          textTransform: "uppercase",
+        }}
+      >
+        {label}
+      </span>
+      <span
+        style={{
+          fontFamily: "var(--font-data)",
+          fontSize: 12,
+          fontWeight: 600,
+          color: accent ? "#55C8FF" : warn ? "var(--red-400)" : "var(--slate-100)",
+          lineHeight: 1.2,
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  );
 }
 
 function ScanResultCard({
@@ -1653,57 +1676,109 @@ function ScanResultCard({
   const visibleFacts = getVisibleFacts(result, isCompact);
   const concernFacts = getConcernFacts(result, isCompact);
   const evidenceFacts = getEvidenceFacts(result, isCompact);
-  const lastUpdated = formatTimestamp(review.sourceUpdatedAt);
   const targetOverlayStyle = getReviewTargetOverlayStyle(target);
   const threeDSearchUrl = get3DSearchUrl(label);
   const referenceSummary = sizeCalibration
     ? `${getSizeReferenceLabel(sizeCalibration.preset)} (${sizeCalibration.referenceMm.toFixed(2)} mm). ${sizeCalibration.guidance}`
     : "Exact size needs a reference object.";
   const showPrecisionTools = isFastener || isExpanded;
+  const matchPct = result?.confidenceScore
+    ?? (confidence === "high" ? 84 : confidence === "medium" ? 72 : 48);
+  const dotColor = confidence === "high" ? "var(--green-400)" : confidence === "medium" ? "var(--amber-400)" : "var(--red-400)";
 
   return (
     <section
       aria-live="polite"
       data-anchor-side={placement.anchorSide}
-      className="pointer-events-auto fixed inset-x-3 bottom-[max(16px,env(safe-area-inset-bottom))] z-50 mx-auto flex max-h-[min(58dvh,520px)] max-w-[520px] flex-col overflow-y-auto rounded-[30px] border border-white/14 bg-slate-950/96 px-4 pb-4 pt-3 text-white shadow-[0_24px_64px_rgba(2,6,23,0.72)] backdrop-blur-xl"
+      className="scanner-result-panel no-scrollbar pointer-events-auto z-50 mx-auto flex max-h-[min(62dvh,560px)] max-w-[520px] flex-col overflow-y-auto px-4 pb-[max(20px,env(safe-area-inset-bottom))] pt-3 text-white"
     >
-      <div className="mx-auto mb-3 h-1.5 w-12 shrink-0 rounded-full bg-white/24" />
+      {/* Drag handle */}
+      <div className="mx-auto mb-3 h-1 w-10 shrink-0 rounded-full bg-white/18" />
+
+      {/* Header */}
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--ds-accent)]">Lens result</p>
-          <h3 className="mt-1 text-xl font-black leading-tight tracking-tight">{label}</h3>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <span className="rounded-full border border-[var(--ds-accent-line)] bg-[var(--ds-accent-soft)] px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-[0.08em] text-white">
-              {result?.scanCategory ?? "unknown"}
-            </span>
-            {!prefs.hideConfidence && confidence ? (
-              <span className={`rounded-full border px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-[0.08em] ${statusStyle.chip}`}>
-                {confidenceRange ? `${confidenceRange.low}-${confidenceRange.high}% likely` : `${confidence} confidence`}
+          {result && !review.scanState.errorMessage ? (
+            <div
+              className="mb-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1"
+              style={{ background: "rgba(0,194,255,0.08)", border: "1px solid rgba(0,194,255,0.24)" }}
+            >
+              <span className="block rounded-full" style={{ width: 5, height: 5, background: dotColor, flexShrink: 0 }} />
+              <span
+                style={{
+                  fontFamily: "var(--font-data)",
+                  fontSize: 10,
+                  fontWeight: 600,
+                  letterSpacing: "0.10em",
+                  color: "#55C8FF",
+                  textTransform: "uppercase",
+                }}
+              >
+                {confidenceRange
+                  ? `${confidenceRange.low}–${confidenceRange.high}% match`
+                  : `${confidence} confidence`}
               </span>
-            ) : null}
-            <span className="rounded-full border border-white/12 bg-white/6 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-[0.08em] text-white/78">
-              {review.source}
+            </div>
+          ) : null}
+          <h3 className="text-[18px] font-black leading-tight tracking-[-0.02em]">{label}</h3>
+          <p
+            className="mt-0.5"
+            style={{ fontFamily: "var(--font-data)", fontSize: 11, color: "var(--slate-400)", letterSpacing: "0.05em" }}
+          >
+            <span>{result?.scanCategory ?? "unknown"}</span>
+            <span aria-hidden="true"> · </span>
+            <span>{review.source}</span>
+          </p>
+          {!prefs.hideConfidence && confidence ? (
+            <span className={`mt-1.5 inline-block rounded-full border px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-[0.08em] ${statusStyle.chip}`}>
+              {confidenceRange ? `${confidenceRange.low}–${confidenceRange.high}% likely` : `${confidence}`}
             </span>
-          </div>
-          <p className="mt-2 text-[11px] text-white/50">Updated {lastUpdated}</p>
+          ) : null}
         </div>
         <button
-          className="grid size-8 shrink-0 place-items-center rounded-full border border-white/12 text-sm text-white/62 hover:bg-white/8"
+          className="grid size-8 shrink-0 place-items-center rounded-full text-white/50 transition-colors hover:text-white/80"
+          style={{ border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.05)" }}
           onClick={onClose}
           type="button"
           aria-label="Close result card"
         >
-          x
+          <svg width="11" height="11" viewBox="0 0 11 11" fill="none" aria-hidden>
+            <path d="M1 1l9 9M10 1L1 10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
         </button>
       </div>
 
-      <div className={`mt-4 border-t border-white/10 pt-3 text-xs leading-6 text-white/82 ${statusStyle.accent}`}>
+      {/* Key stat tiles */}
+      {result && !review.scanState.errorMessage ? (
+        <div className="mt-3 grid grid-cols-3 gap-1.5">
+          <StatTile label="CATEGORY" value={result.scanCategory} />
+          <StatTile
+            label="SCORE"
+            value={`${confidenceRange ? confidenceRange.low : matchPct}%`}
+            accent
+          />
+          <StatTile
+            label="CONCERNS"
+            value={result.concerns.length ? String(result.concerns.length) : "None"}
+            warn={result.concerns.length > 0}
+          />
+        </div>
+      ) : null}
+
+      {/* Content body */}
+      <div className={`mt-3 ${statusStyle.accent}`}>
         {isMismatch ? (
-          <div className="mb-3 border-l-2 border-[var(--ds-danger)] pl-3">
-            <SectionTitle>Target changed</SectionTitle>
-            <p className="text-[12px] text-[var(--ds-danger-ink)]">The current object moved away from the saved scan point.</p>
+          <div
+            className="mb-3 rounded-xl px-3 py-2.5"
+            style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.22)" }}
+          >
+            <p className="text-[10px] font-extrabold uppercase tracking-[0.14em]" style={{ color: "var(--red-400)" }}>Target changed</p>
+            <p className="mt-1 text-xs leading-5" style={{ color: "var(--red-400)", opacity: 0.85 }}>
+              The current object moved away from the saved scan point.
+            </p>
             <button
-              className="mt-2 rounded-full bg-[var(--ds-danger)] px-3 py-2 text-[10px] font-extrabold text-white"
+              className="mt-2 rounded-full px-3 py-1.5 text-[11px] font-extrabold text-white"
+              style={{ background: "var(--red-500)" }}
               onClick={onRetryMismatch}
               type="button"
             >
@@ -1711,11 +1786,15 @@ function ScanResultCard({
             </button>
           </div>
         ) : null}
+
         {review.scanState.errorMessage ? (
-          <>
-            <SectionTitle>Scan issue</SectionTitle>
-            <p className="text-[12px] text-[var(--ds-danger-ink)]">{review.scanState.errorMessage}</p>
-          </>
+          <div
+            className="rounded-xl px-3 py-2.5"
+            style={{ background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.18)" }}
+          >
+            <p className="mb-1 text-[10px] font-extrabold uppercase tracking-[0.14em]" style={{ color: "var(--red-400)" }}>Scan issue</p>
+            <p className="text-xs leading-5" style={{ color: "var(--red-400)", opacity: 0.9 }}>{review.scanState.errorMessage}</p>
+          </div>
         ) : (
           <>
             {result?.whatItDoes ? (
@@ -1747,11 +1826,15 @@ function ScanResultCard({
 
       {isExpanded && result?.candidateMatches.length ? (
         <BubbleSection title="Related parts to compare">
-          <div className="space-y-2">
-            {result.candidateMatches.slice(0, isExpanded ? 4 : 2).map((candidate) => (
-              <div className="border-l border-white/16 pl-3" key={candidate.partName}>
-                <p className="font-black text-white">{candidate.partName}</p>
-                <p className="text-white/64">{summarize(candidate.reason, isCompact ? 90 : 140)}</p>
+          <div className="space-y-1.5">
+            {result.candidateMatches.slice(0, 4).map((candidate) => (
+              <div
+                key={candidate.partName}
+                className="rounded-xl px-3 py-2"
+                style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
+              >
+                <p className="text-xs font-black text-white">{candidate.partName}</p>
+                <p className="mt-0.5 text-[11px]" style={{ color: "var(--slate-400)" }}>{summarize(candidate.reason, isCompact ? 90 : 140)}</p>
               </div>
             ))}
           </div>
@@ -1760,7 +1843,10 @@ function ScanResultCard({
 
       {isExpanded ? (
         <BubbleSection title="Image area">
-          <div className="relative mt-2 overflow-hidden rounded-xl border border-white/12 bg-black/30">
+          <div
+            className="relative mt-1.5 overflow-hidden rounded-xl"
+            style={{ border: "1px solid rgba(255,255,255,0.10)" }}
+          >
             <img
               alt={`Scan photo for ${label}`}
               className="h-32 w-full object-cover"
@@ -1769,8 +1855,10 @@ function ScanResultCard({
             {targetOverlayStyle ? (
               <span
                 aria-hidden
-                className="absolute rounded-sm border-2 border-[var(--ds-accent)] bg-[var(--ds-accent)]/25 shadow-[0_0_0_1px_rgba(11,116,255,0.45)]"
+                className="absolute rounded-sm"
                 style={{
+                  border: "2px solid rgba(0,194,255,0.80)",
+                  background: "rgba(0,194,255,0.15)",
                   height: `${targetOverlayStyle.height}%`,
                   left: `${targetOverlayStyle.left}%`,
                   top: `${targetOverlayStyle.top}%`,
@@ -1784,84 +1872,95 @@ function ScanResultCard({
 
       {isFastener && isExpanded ? (
         <BubbleSection title="Fastener mode">
-          <p>
-            Reference required. Put the card or coin on the same flat plane as the fastener, then estimate size.
-          </p>
-          <p className="mt-2 text-white/60">
-            Output stays an estimate until depth and angle are verified.
-          </p>
+          <p>Put a card or coin on the same flat plane as the fastener, then estimate size.</p>
+          <p className="mt-2 text-white/60">Output stays an estimate until depth and angle are verified.</p>
         </BubbleSection>
       ) : null}
 
-      <BubbleSection title="Actions">
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            className="col-span-2 min-h-11 rounded-full bg-[var(--ds-accent)] text-sm font-black tracking-tight text-white"
-            onClick={onOpenDetails}
-            type="button"
-          >
-            Open details
-          </button>
-          {showPrecisionTools ? (
-            <>
-              <label className="col-span-2 block">
-                <span className="mb-1 block text-[10px] font-black uppercase tracking-[0.12em] text-white/64">Size reference</span>
-                <select
-                  aria-label="Size reference preset"
-                  className="h-10 w-full rounded-full border border-white/12 bg-slate-950/92 px-3 text-[11px] font-black text-white outline-none focus:border-[var(--ds-accent)]"
-                  onChange={(event) => onSizeReferencePresetChange(event.target.value as SizeReferencePreset)}
-                  value={sizeReferencePreset}
-                >
-                  <option value="card_short_edge">Card short edge (53.98 mm)</option>
-                  <option value="card_long_edge">Card long edge (85.60 mm)</option>
-                  <option value="us_quarter">US quarter (24.26 mm)</option>
-                  <option value="us_nickel">US nickel (21.21 mm)</option>
-                </select>
-              </label>
+      {/* Actions */}
+      <div className="mt-3 space-y-2">
+        <button
+          className="w-full rounded-[12px] py-3 text-[13px] font-bold text-white"
+          style={{ background: "var(--blue-500)", boxShadow: "0 4px 20px rgba(20,105,236,0.32)" }}
+          onClick={onOpenDetails}
+          type="button"
+        >
+          Open details
+        </button>
+
+        {showPrecisionTools ? (
+          <>
+            <label className="block">
+              <span
+                className="mb-1 block text-[10px] font-bold uppercase tracking-[0.12em]"
+                style={{ color: "var(--slate-500)" }}
+              >
+                Size reference
+              </span>
+              <select
+                aria-label="Size reference preset"
+                className="h-10 w-full rounded-[10px] px-3 text-[11px] font-bold text-white outline-none"
+                style={{ border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.05)" }}
+                onChange={(event) => onSizeReferencePresetChange(event.target.value as SizeReferencePreset)}
+                value={sizeReferencePreset}
+              >
+                <option value="card_short_edge">Card short edge (53.98 mm)</option>
+                <option value="card_long_edge">Card long edge (85.60 mm)</option>
+                <option value="us_quarter">US quarter (24.26 mm)</option>
+                <option value="us_nickel">US nickel (21.21 mm)</option>
+              </select>
+            </label>
+            <div className="grid grid-cols-2 gap-2">
               <button
-                className="min-h-10 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
+                className="h-10 rounded-[10px] text-xs font-bold text-white/90"
+                style={{ border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.05)" }}
                 onClick={onSetSizeReference}
                 type="button"
               >
                 Set reference
               </button>
               <button
-                className="min-h-10 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
+                className="h-10 rounded-[10px] text-xs font-bold text-white/90"
+                style={{ border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.05)" }}
                 onClick={onMeasure}
                 type="button"
               >
                 Estimate size
               </button>
-              <p className="col-span-2 text-[10px] font-semibold leading-5 text-white/66">
-                {referenceSummary}
-              </p>
-            </>
-          ) : null}
-          {isExpanded ? (
-            <button
-              className="col-span-2 min-h-10 rounded-full border border-white/10 bg-white/8 text-xs font-black text-white/92"
-              onClick={onCopyValue}
-              type="button"
-            >
-              Copy match
-            </button>
-          ) : null}
-          {isExpanded && review.scanState.result ? (
-            <a
-              className="col-span-2 rounded-full border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 py-2 text-center text-[11px] font-black uppercase tracking-[0.12em] text-white/78"
-              href={threeDSearchUrl}
-              rel="noreferrer"
-              target="_blank"
-            >
-              Search 3D models for this part
-            </a>
-          ) : null}
-        </div>
+            </div>
+            <p className="text-[10px] leading-5" style={{ color: "var(--slate-500)" }}>{referenceSummary}</p>
+          </>
+        ) : null}
+
+        {isExpanded ? (
+          <button
+            className="h-10 w-full rounded-[10px] text-xs font-bold text-white/90"
+            style={{ border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.05)" }}
+            onClick={onCopyValue}
+            type="button"
+          >
+            Copy match
+          </button>
+        ) : null}
+
+        {isExpanded && review.scanState.result ? (
+          <a
+            className="flex h-10 items-center justify-center rounded-[10px] text-xs font-bold text-white/78"
+            style={{ border: "1px solid rgba(20,105,236,0.26)", background: "rgba(20,105,236,0.08)" }}
+            href={threeDSearchUrl}
+            rel="noreferrer"
+            target="_blank"
+          >
+            Search 3D models for this part
+          </a>
+        ) : null}
+
         {isReplacing ? (
-          <div className="mt-2 space-y-2">
+          <div className="space-y-2">
             <input
               aria-label="replacement label"
-              className="w-full rounded-xl border border-white/12 bg-slate-950 px-3 py-2 text-sm text-white outline-none placeholder:text-white/42"
+              className="w-full rounded-[10px] px-3 py-2.5 text-sm text-white outline-none placeholder:text-white/38"
+              style={{ border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.05)" }}
               maxLength={80}
               onChange={(event) => onReplacementLabelChange(event.target.value)}
               placeholder="Example: coolant reservoir cap"
@@ -1869,14 +1968,16 @@ function ScanResultCard({
             />
             <div className="grid grid-cols-2 gap-2">
               <button
-                className="rounded-full bg-white/85 px-3 py-2 text-xs font-black text-slate-900"
+                className="h-10 rounded-[10px] text-xs font-bold text-slate-900"
+                style={{ background: "rgba(255,255,255,0.90)" }}
                 onClick={onReportReplace}
                 type="button"
               >
                 Save correction
               </button>
               <button
-                className="rounded-full border border-white/15 px-3 py-2 text-xs font-black text-white/82"
+                className="h-10 rounded-[10px] text-xs font-bold text-white/80"
+                style={{ border: "1px solid rgba(255,255,255,0.14)" }}
                 onClick={onCancelReplace}
                 type="button"
               >
@@ -1886,37 +1987,51 @@ function ScanResultCard({
           </div>
         ) : (
           <button
-            className="mt-2 w-full rounded-full border border-[var(--ds-accent-line)] bg-[var(--ds-accent-soft)] px-3 py-2 text-xs font-black text-white"
+            className="h-10 w-full rounded-[10px] text-xs font-bold text-white/90"
+            style={{ border: "1px solid rgba(0,194,255,0.22)", background: "rgba(0,194,255,0.06)" }}
             onClick={onWrongLabel}
             type="button"
           >
             Correct label
           </button>
         )}
+
         {review.correction ? (
-          <div className="flex items-center justify-between gap-2 rounded-full border border-white/12 bg-white/8 px-3 py-2 text-xs">
-            <span className="font-black">Correction: {review.correction}</span>
-            <button className="font-black underline underline-offset-2" onClick={onUndoCorrection} type="button">
+          <div
+            className="flex items-center justify-between gap-2 rounded-[10px] px-3 py-2 text-xs"
+            style={{ border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.04)" }}
+          >
+            <span className="font-bold text-white/90">Correction: {review.correction}</span>
+            <button className="font-bold text-white/50 underline underline-offset-2" onClick={onUndoCorrection} type="button">
               Undo
             </button>
           </div>
         ) : null}
-      </BubbleSection>
+      </div>
 
-      <div className="mt-2 flex items-center justify-between gap-3 border-t border-white/10 pt-3 text-xs">
-        <button className="underline underline-offset-2" onClick={onToggleExpand} type="button">
+      {/* Footer controls */}
+      <div
+        className="mt-3 flex items-center justify-between gap-3 pt-3 text-[11px]"
+        style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}
+      >
+        <button className="text-white/40 underline underline-offset-2 hover:text-white/70" onClick={onToggleExpand} type="button">
           {isExpanded ? "Show less" : "Show more"}
         </button>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <button className="underline underline-offset-2" onClick={onToggleCompactMode} type="button">
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <button className="text-white/40 underline underline-offset-2 hover:text-white/70" onClick={onToggleCompactMode} type="button">
             {prefs.compactCardsByDefault ? "Compact cards on" : "Compact cards off"}
           </button>
-          <button className="underline underline-offset-2" onClick={onToggleHideConfidence} type="button">
+          <button className="text-white/40 underline underline-offset-2 hover:text-white/70" onClick={onToggleHideConfidence} type="button">
             {prefs.hideConfidence ? "Show confidence" : "Hide confidence"}
           </button>
         </div>
       </div>
-      {scanCardStatusMessage ? <p className="mt-2 text-xs font-extrabold text-white/72">{scanCardStatusMessage}</p> : null}
+
+      {scanCardStatusMessage ? (
+        <p className="mt-2 text-xs font-bold" style={{ color: "var(--electric-300)" }}>
+          {scanCardStatusMessage}
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -1999,11 +2114,24 @@ function FactList({ emptyText, facts }: { emptyText?: string; facts: string[] })
 
 function CaptureErrorNotice({ message, onTryAgain }: { message: string; onTryAgain: () => void }) {
   return (
-    <div className="fixed bottom-[220px] left-1/2 z-20 w-[calc(100%-32px)] max-w-sm -translate-x-1/2 rounded-2xl border border-[var(--ds-danger-line)] bg-[#2A0F12]/92 p-4 text-center shadow-2xl">
-      <p className="text-sm font-extrabold text-[var(--ds-danger-ink)]">{message}</p>
-      <Button className="mt-3 w-full" onClick={onTryAgain}>
+    <div
+      className="fixed bottom-[220px] left-1/2 z-20 w-[calc(100%-28px)] max-w-sm -translate-x-1/2 rounded-[18px] p-4 text-center"
+      style={{
+        background: "rgba(30,8,10,0.94)",
+        border: "1px solid rgba(239,68,68,0.28)",
+        backdropFilter: "blur(20px)",
+        boxShadow: "0 16px 44px rgba(0,0,0,0.50)",
+      }}
+    >
+      <p className="text-sm font-bold" style={{ color: "var(--red-400)" }}>{message}</p>
+      <button
+        className="mt-3 w-full rounded-[10px] py-2.5 text-[13px] font-bold text-white"
+        style={{ background: "rgba(239,68,68,0.18)", border: "1px solid rgba(239,68,68,0.30)" }}
+        onClick={onTryAgain}
+        type="button"
+      >
         Try again
-      </Button>
+      </button>
     </div>
   );
 }
@@ -2090,6 +2218,17 @@ function isTargetBoxTooSmall(width: number, height: number) {
   );
 }
 
+function clampReviewTarget(target: ScanReviewTarget): ScanReviewTarget {
+  return {
+    ...target,
+    x: clampNumber(target.x, 6, Math.max(6, window.innerWidth - 60)),
+    y: clampNumber(target.y, 6, Math.max(6, window.innerHeight - 60)),
+    width: clampNumber(target.width, 48, window.innerWidth),
+    height: clampNumber(target.height, 48, window.innerHeight),
+    confidence: clampNumber(target.confidence, 0, 1),
+  };
+}
+
 function isTargetMismatch(storedTarget: ScanReviewTarget, objectTarget: CameraObjectTarget) {
   const current = getReviewTargetFromObject(objectTarget);
   const distance = getTargetDistance(storedTarget, current);
@@ -2121,17 +2260,6 @@ function getAnchoredReviewTarget(
   return clampReviewTarget(nextTarget);
 }
 
-function clampReviewTarget(target: ScanReviewTarget): ScanReviewTarget {
-  return {
-    ...target,
-    x: clampNumber(target.x, 6, Math.max(6, window.innerWidth - 60)),
-    y: clampNumber(target.y, 6, Math.max(6, window.innerHeight - 60)),
-    width: clampNumber(target.width, 48, window.innerWidth),
-    height: clampNumber(target.height, 48, window.innerHeight),
-    confidence: clampNumber(target.confidence, 0, 1),
-  };
-}
-
 function getReviewTargetFromObject(target: CameraObjectTarget): ScanReviewTarget {
   return {
     confidence: target.confidence,
@@ -2141,6 +2269,16 @@ function getReviewTargetFromObject(target: CameraObjectTarget): ScanReviewTarget
     x: target.left,
     y: target.top,
   };
+}
+
+function getTargetDistance(a: ScanReviewTarget, b: ScanReviewTarget) {
+  const centerXA = a.x + a.width / 2;
+  const centerXB = b.x + b.width / 2;
+  const centerYA = a.y + a.height / 2;
+  const centerYB = b.y + b.height / 2;
+  const centerDistance = Math.hypot(centerXA - centerXB, centerYA - centerYB);
+  const sizeDistance = Math.abs(a.width - b.width) * 0.35 + Math.abs(a.height - b.height) * 0.35;
+  return centerDistance + sizeDistance;
 }
 
 function getObjectTargetFromReviewTarget(reviewTarget: ScanReviewTarget): CameraObjectTarget {
@@ -2384,29 +2522,6 @@ function getReviewCardPlacement(target: ScanReviewTarget | null): ReviewCardPlac
   return { anchorSide, left, top };
 }
 
-function formatTimestamp(value: string) {
-  try {
-    return new Date(value).toLocaleString();
-  } catch {
-    return "just now";
-  }
-}
-
-function getTargetDistance(a: ScanReviewTarget, b: ScanReviewTarget) {
-  const centerXA = a.x + a.width / 2;
-  const centerXB = b.x + b.width / 2;
-  const centerYA = a.y + a.height / 2;
-  const centerYB = b.y + b.height / 2;
-  const widthDelta = Math.abs(a.width - b.width) / Math.max(1, window.innerWidth);
-  const heightDelta = Math.abs(a.height - b.height) / Math.max(1, window.innerHeight);
-  return (
-    Math.abs(centerXA - centerXB) / Math.max(1, window.innerWidth)
-    + Math.abs(centerYA - centerYB) / Math.max(1, window.innerHeight)
-    + widthDelta
-    + heightDelta
-  ) / 4;
-}
-
 async function copyText(value: string) {
   try {
     if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
@@ -2438,4 +2553,184 @@ function summarize(value: string, limit: number) {
 
 function clampNumber(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+function ScannerHUD({ isAnalyzing }: { isAnalyzing: boolean }) {
+  const statusLabel = isAnalyzing ? "CAPTURING" : "READY";
+  return (
+    <>
+      <div className="scanner-hud" style={{ top: "max(52px, calc(env(safe-area-inset-top) + 52px))", left: 16 }}>
+        <span className="scanner-hud-dot" />
+        DEEPSPEC·LIVE
+      </div>
+      <div className="scanner-hud" style={{ top: "max(52px, calc(env(safe-area-inset-top) + 52px))", right: 16, textAlign: "right" }}>
+        f/1.8·AUTO ISO
+      </div>
+      <div className="scanner-hud" style={{ bottom: "calc(env(safe-area-inset-bottom) + 130px)", left: 16 }}>
+        SCAN MODE<br />IDENTIFY
+      </div>
+      <div className="scanner-hud" style={{ bottom: "calc(env(safe-area-inset-bottom) + 130px)", right: 16, textAlign: "right" }}>
+        {statusLabel}
+      </div>
+    </>
+  );
+}
+
+function ScannerTargetStatus({ status }: { status: string }) {
+  return (
+    <div className="pointer-events-none fixed left-1/2 top-[max(112px,calc(env(safe-area-inset-top)+88px))] z-20 -translate-x-1/2">
+      <p className="scanner-status-pill">{status}</p>
+    </div>
+  );
+}
+
+function LensViewfinderBrackets({
+  isAnalyzing,
+  label,
+  progress,
+}: {
+  isAnalyzing?: boolean;
+  label: string;
+  progress: number;
+}) {
+  const progressPercent = `${Math.round(clampNumber(progress, 0, 1) * 100)}%`;
+  return (
+    <div className="pointer-events-none fixed inset-0 z-10 flex items-center justify-center" data-testid="object-reticle">
+      <div
+        style={{ width: "min(72vw, 320px)", height: "min(52vw, 240px)" }}
+        className={`relative${isAnalyzing ? " scanner-bracket-pulse" : ""}`}
+      >
+        <span className="scanner-corner scanner-corner-tl" />
+        <span className="scanner-corner scanner-corner-tr" />
+        <span className="scanner-corner scanner-corner-bl" />
+        <span className="scanner-corner scanner-corner-br" />
+        {isAnalyzing ? <div className="scanner-sweep-line" /> : null}
+        <div className="absolute -bottom-9 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full bg-black/35 px-3 py-1.5 text-[11px] font-bold text-white backdrop-blur-md">
+          <span>{label}</span>
+          <span className="scanner-progress-track" aria-hidden>
+            <span className="scanner-progress-fill block" style={{ width: progressPercent }} />
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TapTargetButton({
+  isLocked,
+  isTooSmall,
+  onSelect,
+  target,
+}: {
+  isLocked: boolean;
+  isTooSmall: boolean;
+  onSelect: () => void;
+  target: CameraObjectTarget;
+}) {
+  const label = isTooSmall ? "Move closer" : isLocked ? "Scan this part" : "Tap part";
+
+  return (
+    <button
+      aria-label={isTooSmall ? "Selected part is too small" : "Scan selected part"}
+      className="fixed z-20 rounded-[18px] border-2 bg-black/10 transition-[border-color,box-shadow,background-color]"
+      disabled={isTooSmall}
+      onClick={onSelect}
+      style={{
+        borderColor: isLocked ? "rgba(16,185,129,0.78)" : "rgba(0,194,255,0.58)",
+        boxShadow: isLocked ? "0 0 38px rgba(16,185,129,0.34)" : "0 0 26px rgba(0,170,255,0.24)",
+        height: target.height,
+        left: target.left,
+        top: target.top,
+        width: target.width,
+      }}
+      type="button"
+    >
+      <span className="absolute left-1/2 top-full mt-2 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/72 px-3 py-1.5 text-xs font-black text-white shadow-lg">
+        {label}
+      </span>
+    </button>
+  );
+}
+
+function LensBottomBar({
+  isAnalyzing,
+  isShutterDisabled,
+  onFlip,
+  onGallery,
+  onShutter,
+}: {
+  isAnalyzing: boolean;
+  isShutterDisabled: boolean;
+  onFlip: () => void;
+  onGallery: () => void;
+  onShutter: () => void;
+}) {
+  return (
+    <div className="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-between px-8 pb-[max(28px,env(safe-area-inset-bottom))] pt-4">
+      <button
+        type="button"
+        aria-label="Open gallery"
+        onClick={onGallery}
+        disabled={isAnalyzing}
+        className="grid size-12 place-items-center rounded-2xl text-white disabled:opacity-40"
+        style={{
+          background: "rgba(7,16,30,0.62)",
+          border: "1px solid rgba(255,255,255,0.16)",
+          backdropFilter: "blur(16px)",
+        }}
+      >
+        <span className="sr-only">Upload photo</span>
+        <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden>
+          <rect x="2" y="5" width="18" height="14" rx="2.5" stroke="currentColor" strokeWidth="1.7" />
+          <circle cx="7.5" cy="10.5" r="1.5" fill="currentColor" />
+          <path d="M2 15l4-4 3 3 4-5 7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M7 5V3.5A1.5 1.5 0 018.5 2h5A1.5 1.5 0 0115 3.5V5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+      </button>
+
+      <div className="flex items-center justify-center" style={{ width: 86, height: 86 }}>
+        <div className="flex items-center justify-center rounded-full" style={{ width: 86, height: 86, background: "rgba(0,194,255,0.06)", border: "1px solid rgba(0,194,255,0.22)" }}>
+          <button
+            type="button"
+            aria-label="Scan now"
+            onClick={onShutter}
+            disabled={isShutterDisabled}
+            className="grid place-items-center rounded-full disabled:opacity-40"
+            style={{
+              width: 68,
+              height: 68,
+              border: "1px solid rgba(0, 194, 255, 0.60)",
+              background: "rgba(0, 194, 255, 0.08)",
+              color: "#39D0FF",
+              boxShadow: "0 0 18px rgba(0,170,255,0.30)",
+              animation: "ds-btn-pulse 2.4s ease-in-out infinite",
+            }}
+          >
+            <svg width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden>
+              <circle cx="13" cy="13" r="5" fill="currentColor" opacity="0.90" />
+              <circle cx="13" cy="13" r="10" stroke="currentColor" strokeWidth="1.8" opacity="0.45" />
+              <path d="M9 3.5C9 3.5 10.8 2 13 2s4 1.5 4 1.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" opacity="0.6" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        aria-label="Switch camera"
+        onClick={onFlip}
+        className="grid size-12 place-items-center rounded-full text-white"
+        style={{
+          background: "rgba(7,16,30,0.62)",
+          border: "1px solid rgba(255,255,255,0.16)",
+          backdropFilter: "blur(16px)",
+        }}
+      >
+        <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden>
+          <path d="M7 4H15M15 4L12 1M15 4L12 7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M15 18H7M7 18L10 21M7 18L10 15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+    </div>
+  );
 }

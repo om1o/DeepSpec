@@ -15,9 +15,16 @@ const supabaseMock = vi.hoisted(() => ({
   },
   createClient: vi.fn(),
 }));
+const cloudSyncMock = vi.hoisted(() => ({
+  syncLookupsToCloud: vi.fn(),
+}));
 
 vi.mock("@supabase/supabase-js", () => ({
   createClient: supabaseMock.createClient,
+}));
+
+vi.mock("../services/cloudSync", () => ({
+  syncLookupsToCloud: (...args: unknown[]) => cloudSyncMock.syncLookupsToCloud(...args),
 }));
 
 describe("Auth", () => {
@@ -37,6 +44,15 @@ describe("Auth", () => {
     supabaseMock.auth.signUp.mockReset();
     supabaseMock.auth.verifyOtp.mockReset();
     supabaseMock.createClient.mockReset();
+    cloudSyncMock.syncLookupsToCloud.mockReset();
+    cloudSyncMock.syncLookupsToCloud.mockResolvedValue({
+      attempted: 0,
+      failed: 0,
+      failures: [],
+      message: "No saved scans need cloud sync.",
+      ok: true,
+      synced: 0,
+    });
 
     supabaseMock.createClient.mockReturnValue({ auth: supabaseMock.auth });
     supabaseMock.auth.getUser.mockResolvedValue({ data: { user: null }, error: null });
@@ -166,6 +182,39 @@ describe("Auth", () => {
         email: "tester@example.com",
         password: "correct-password",
       });
+    });
+    expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
+  });
+
+  it("syncs all local saved scans to cloud after a verified login", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("deep-spec:lookups", JSON.stringify([
+      makeSavedLookup("lookup-1", "Alternator"),
+      makeSavedLookup("lookup-2", "Starter"),
+    ]));
+    cloudSyncMock.syncLookupsToCloud.mockResolvedValueOnce({
+      attempted: 2,
+      failed: 0,
+      failures: [],
+      message: "2 saved scans synced to the cloud.",
+      ok: true,
+      synced: 2,
+    });
+    supabaseMock.auth.getUser
+      .mockResolvedValueOnce({ data: { user: null }, error: null })
+      .mockResolvedValueOnce({ data: { user: makeUser("password-user") }, error: null });
+
+    await renderAuth();
+
+    await user.type(await screen.findByPlaceholderText("Enter your email address"), "Tester@Example.com");
+    await user.type(screen.getByPlaceholderText("Enter your password"), "correct-password");
+    await user.click(screen.getByRole("button", { name: "Sign in to scanner" }));
+
+    await waitFor(() => {
+      expect(cloudSyncMock.syncLookupsToCloud).toHaveBeenCalledWith([
+        expect.objectContaining({ id: "lookup-1", trainingLabel: "Alternator" }),
+        expect.objectContaining({ id: "lookup-2", trainingLabel: "Starter" }),
+      ]);
     });
     expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
   });
@@ -392,5 +441,45 @@ function makeUser(id: string) {
     created_at: new Date(0).toISOString(),
     id,
     user_metadata: {},
+  };
+}
+
+function makeSavedLookup(id: string, partName: string) {
+  return {
+    analyzedAt: "2026-05-18T00:00:03.000Z",
+    chatHistory: [],
+    correction: null,
+    createdAt: "2026-05-18T00:00:00.000Z",
+    frame: {
+      capturedAt: "2026-05-18T00:00:00.000Z",
+      imageBase64: "data:image/jpeg;base64,aGVsbG8=",
+    },
+    id,
+    notes: "",
+    provenance: {
+      analysisSource: "ai_detection",
+      captureMode: "camera",
+      savedAt: "2026-05-18T00:00:03.000Z",
+    },
+    rating: null,
+    result: {
+      candidateMatches: [],
+      confidence: "high",
+      concerns: [],
+      evidence: ["Pulley and housing are visible."],
+      evidenceRegions: [],
+      isSafetyCritical: false,
+      needsBetterPhoto: false,
+      nextAction: "Take another angle if needed.",
+      partName,
+      safetyTriage: "can_help",
+      scanCategory: "electrical",
+      sourceLinks: [],
+      visibleObservations: ["Engine-bay part is visible."],
+      whatItDoes: "It is a saved local scan fixture.",
+    },
+    scanCategory: "electrical",
+    trainingLabel: partName,
+    trainingStatus: "raw_unreviewed",
   };
 }

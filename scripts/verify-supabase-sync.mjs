@@ -30,13 +30,15 @@ if (!config.url || !config.key) {
 }
 
 const testId = `phase8-${randomUUID()}`;
+const secondTestId = `${testId}-second`;
 let userId;
 let imagePath;
+let secondImagePath;
 let ownerClient;
 let failureMessage;
 
 try {
-  console.log("[0/8] Checking Supabase Auth settings...");
+  console.log("[0/9] Checking Supabase Auth settings...");
   await runPreflight(config);
   console.log("      Anonymous sign-ins are enabled in Supabase Auth settings.");
 
@@ -48,12 +50,13 @@ try {
     },
   });
 
-  console.log("[1/8] Signing in as an anonymous Supabase user...");
+  console.log("[1/9] Signing in as an anonymous Supabase user...");
   const firstUser = await signInAnonymously(ownerClient, config);
   userId = firstUser.id;
   imagePath = `${userId}/${testId}.jpg`;
+  secondImagePath = `${userId}/${secondTestId}.jpg`;
 
-  console.log("[2/8] Uploading a private test scan image...");
+  console.log("[2/9] Uploading private test scan images...");
   await assertNoError(
     await ownerClient.storage.from(SCAN_BUCKET).upload(imagePath, TEST_IMAGE_BYTES, {
       contentType: TEST_IMAGE_MIME_TYPE,
@@ -61,44 +64,23 @@ try {
     }),
     "Storage upload failed",
   );
-
-  console.log("[3/8] Writing a scan_lookups row through RLS...");
   await assertNoError(
-    await ownerClient.from("scan_lookups").upsert(
-      {
-        analyzed_at: new Date().toISOString(),
-        captured_at: new Date().toISOString(),
-        chat_history: [],
-        correction: null,
-        created_at: new Date().toISOString(),
-        error_code: null,
-        error_message: null,
-        image_path: imagePath,
-        image_byte_length: TEST_IMAGE_BYTES.length,
-        image_hash: TEST_IMAGE_HASH,
-        image_mime_type: TEST_IMAGE_MIME_TYPE,
-        local_id: testId,
-        notes: "Phase 8 verification row. Safe to delete.",
-        rating: null,
-        result_json: {
-          confidence: "high",
-          partName: "Phase 8 Test Part",
-          safetyTriage: "can_help",
-        },
-        scan_category: "unknown",
-        training_label: "Phase 8 Test Part",
-        training_status: "raw_unreviewed",
-        user_id: userId,
-      },
-      { onConflict: "user_id,local_id" },
-    ),
-    "scan_lookups upsert failed",
+    await ownerClient.storage.from(SCAN_BUCKET).upload(secondImagePath, TEST_IMAGE_BYTES, {
+      contentType: TEST_IMAGE_MIME_TYPE,
+      upsert: false,
+    }),
+    "Second storage upload failed",
   );
 
-  console.log("[4/8] Writing durable dataset detail rows through RLS...");
-  await writeDatasetDetailRows(ownerClient, userId, testId);
+  console.log("[3/9] Writing multiple scan_lookups rows through RLS...");
+  await writeScanLookupRow(ownerClient, userId, testId, imagePath, "Phase 8 Test Part");
+  await writeScanLookupRow(ownerClient, userId, secondTestId, secondImagePath, "Phase 8 Second Test Part");
 
-  console.log("[5/8] Reading the scan and detail rows back as the owning user...");
+  console.log("[4/9] Writing durable dataset detail rows through RLS...");
+  await writeDatasetDetailRows(ownerClient, userId, testId);
+  await writeDatasetDetailRows(ownerClient, userId, secondTestId);
+
+  console.log("[5/9] Reading both scans and detail rows back as the owning user...");
   const ownRead = await ownerClient
     .from("scan_lookups")
     .select("local_id,user_id,image_path,image_hash,image_mime_type,image_byte_length,scan_category,training_status")
@@ -117,8 +99,10 @@ try {
   }
 
   await assertOwnerDatasetRows(ownerClient, testId);
+  await assertOwnerDatasetRows(ownerClient, secondTestId);
+  await assertOwnerScanCount(ownerClient, [testId, secondTestId]);
 
-  console.log("[6/8] Proving another anonymous user cannot read that scan dataset...");
+  console.log("[6/9] Proving another anonymous user cannot read those scan datasets...");
   const otherClient = createClient(config.url, config.key, {
     auth: {
       autoRefreshToken: false,
@@ -133,10 +117,18 @@ try {
   await assertCrossUserCannotRead(otherClient, "scan_corrections", "scan_local_id", testId);
   await assertCrossUserCannotRead(otherClient, "scan_model_runs", "scan_local_id", testId);
   await assertCrossUserCannotRead(otherClient, "sync_events", "scan_local_id", testId);
+  await assertCrossUserCannotRead(otherClient, "scan_lookups", "local_id", secondTestId);
+  await assertCrossUserCannotRead(otherClient, "scan_candidates", "scan_local_id", secondTestId);
+  await assertCrossUserCannotRead(otherClient, "scan_evidence", "scan_local_id", secondTestId);
+  await assertCrossUserCannotRead(otherClient, "scan_corrections", "scan_local_id", secondTestId);
+  await assertCrossUserCannotRead(otherClient, "scan_model_runs", "scan_local_id", secondTestId);
+  await assertCrossUserCannotRead(otherClient, "sync_events", "scan_local_id", secondTestId);
 
-  console.log("[7/8] Downloading the private image as the owner...");
+  console.log("[7/9] Downloading the private images as the owner...");
   await assertNoError(await ownerClient.storage.from(SCAN_BUCKET).download(imagePath), "Owner storage download failed");
+  await assertNoError(await ownerClient.storage.from(SCAN_BUCKET).download(secondImagePath), "Second owner storage download failed");
 
+  console.log("[8/9] Confirmed one user can save multiple private scan records.");
   console.log("Phase 8 cloud sync verification passed.");
 } catch (error) {
   failureMessage = error instanceof Error ? error.message : "Unknown verification error.";
@@ -144,10 +136,47 @@ try {
   if (ownerClient && userId && imagePath) {
     await cleanupTestData(ownerClient, userId, testId, imagePath);
   }
+  if (ownerClient && userId && secondImagePath) {
+    await cleanupTestData(ownerClient, userId, secondTestId, secondImagePath);
+  }
 
   if (failureMessage) {
     fail(failureMessage);
   }
+}
+
+async function writeScanLookupRow(supabase, userId, localId, rowImagePath, trainingLabel) {
+  await assertNoError(
+    await supabase.from("scan_lookups").upsert(
+      {
+        analyzed_at: new Date().toISOString(),
+        captured_at: new Date().toISOString(),
+        chat_history: [],
+        correction: null,
+        created_at: new Date().toISOString(),
+        error_code: null,
+        error_message: null,
+        image_path: rowImagePath,
+        image_byte_length: TEST_IMAGE_BYTES.length,
+        image_hash: TEST_IMAGE_HASH,
+        image_mime_type: TEST_IMAGE_MIME_TYPE,
+        local_id: localId,
+        notes: "Phase 8 verification row. Safe to delete.",
+        rating: null,
+        result_json: {
+          confidence: "high",
+          partName: trainingLabel,
+          safetyTriage: "can_help",
+        },
+        scan_category: "unknown",
+        training_label: trainingLabel,
+        training_status: "raw_unreviewed",
+        user_id: userId,
+      },
+      { onConflict: "user_id,local_id" },
+    ),
+    "scan_lookups upsert failed",
+  );
 }
 
 async function signInAnonymously(supabase, config) {
@@ -369,6 +398,19 @@ async function assertOwnerDatasetRows(supabase, scanLocalId) {
     "sync_events owner read failed",
     1,
   );
+}
+
+async function assertOwnerScanCount(supabase, scanLocalIds) {
+  const result = await supabase
+    .from("scan_lookups")
+    .select("local_id")
+    .in("local_id", scanLocalIds);
+  await assertNoError(result, "Owner multi-scan read failed");
+
+  const found = new Set((result.data ?? []).map((row) => row.local_id));
+  if (scanLocalIds.some((localId) => !found.has(localId))) {
+    throw new Error(`Owner multi-scan read did not return every saved scan. Expected ${scanLocalIds.join(", ")}.`);
+  }
 }
 
 async function assertTableRowCount(result, label, expectedCount) {

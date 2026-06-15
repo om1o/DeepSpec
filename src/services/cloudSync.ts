@@ -54,6 +54,15 @@ export type CloudSyncResult =
       message: string;
     };
 
+export type CloudBatchSyncResult = {
+  attempted: number;
+  failed: number;
+  failures: Array<{ id: string; message: string }>;
+  message: string;
+  ok: boolean;
+  synced: number;
+};
+
 export function getCloudSyncStatus(): CloudSyncStatus {
   const config = getCloudSyncConfig();
 
@@ -235,6 +244,54 @@ export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult
       message: getFriendlySyncError(error),
     };
   }
+}
+
+export async function syncLookupsToCloud(lookups: Lookup[]): Promise<CloudBatchSyncResult> {
+  const uniqueLookups = [...new Map(lookups.map((lookup) => [lookup.id, lookup])).values()];
+  if (!uniqueLookups.length) {
+    return {
+      attempted: 0,
+      failed: 0,
+      failures: [],
+      message: "No saved scans need cloud sync.",
+      ok: true,
+      synced: 0,
+    };
+  }
+
+  if (!getCloudSyncConfig()) {
+    return {
+      attempted: uniqueLookups.length,
+      failed: uniqueLookups.length,
+      failures: uniqueLookups.map((lookup) => ({ id: lookup.id, message: "Cloud sync is not configured yet." })),
+      message: "Cloud sync is not configured yet.",
+      ok: false,
+      synced: 0,
+    };
+  }
+
+  const failures: CloudBatchSyncResult["failures"] = [];
+  let synced = 0;
+
+  for (const lookup of uniqueLookups) {
+    const result = await syncLookupToCloud(lookup);
+    if (result.ok) {
+      synced += 1;
+    } else {
+      failures.push({ id: lookup.id, message: result.message });
+    }
+  }
+
+  return {
+    attempted: uniqueLookups.length,
+    failed: failures.length,
+    failures,
+    message: failures.length
+      ? `Synced ${synced}/${uniqueLookups.length} saved scans to the cloud.`
+      : `${synced} saved scan${synced === 1 ? "" : "s"} synced to the cloud.`,
+    ok: failures.length === 0,
+    synced,
+  };
 }
 
 async function syncDatasetDetailTables(supabase: SupabaseClient, userId: string, lookup: Lookup) {

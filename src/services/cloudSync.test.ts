@@ -154,6 +154,72 @@ describe("cloudSync", () => {
     }));
   });
 
+  it("syncs multiple saved scans as separate cloud rows and images", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    const scanLookupUpsert = vi.fn().mockResolvedValue({ error: null });
+    const correctionUpsert = vi.fn().mockResolvedValue({ error: null });
+    const candidateInsert = vi.fn().mockResolvedValue({ error: null });
+    const evidenceInsert = vi.fn().mockResolvedValue({ error: null });
+    const modelRunInsert = vi.fn().mockResolvedValue({ error: null });
+    const syncEventInsert = vi.fn().mockResolvedValue({ error: null });
+    const from = vi.fn((table: string) => {
+      if (table === "scan_lookups") return { upsert: scanLookupUpsert };
+      if (table === "scan_candidates") return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert: candidateInsert };
+      if (table === "scan_evidence") return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert: evidenceInsert };
+      if (table === "scan_corrections") return { upsert: correctionUpsert };
+      if (table === "scan_model_runs") return { insert: modelRunInsert };
+      if (table === "sync_events") return { insert: syncEventInsert };
+      throw new Error(`Unexpected table ${table}`);
+    });
+    mocks.createClient.mockReturnValue({
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
+        signInAnonymously: vi.fn(),
+      },
+      from,
+      storage: {
+        from: vi.fn().mockReturnValue({ upload }),
+      },
+    });
+    const { syncLookupsToCloud } = await import("./cloudSync");
+    const secondLookup = {
+      ...makeLookup(),
+      createdAt: "2026-05-18T00:01:00.000Z",
+      id: "lookup-2",
+      trainingLabel: "Starter",
+    };
+
+    await expect(syncLookupsToCloud([makeLookup(), secondLookup])).resolves.toMatchObject({
+      attempted: 2,
+      failed: 0,
+      ok: true,
+      synced: 2,
+    });
+
+    expect(upload).toHaveBeenCalledWith(
+      "user-1/lookup-1.jpg",
+      expect.any(Blob),
+      expect.objectContaining({ contentType: "image/jpeg", upsert: true }),
+    );
+    expect(upload).toHaveBeenCalledWith(
+      "user-1/lookup-2.jpg",
+      expect.any(Blob),
+      expect.objectContaining({ contentType: "image/jpeg", upsert: true }),
+    );
+    expect(scanLookupUpsert).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ local_id: "lookup-1", user_id: "user-1" }),
+      { onConflict: "user_id,local_id" },
+    );
+    expect(scanLookupUpsert).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ local_id: "lookup-2", training_label: "Starter", user_id: "user-1" }),
+      { onConflict: "user_id,local_id" },
+    );
+  });
+
   it("does not call configured cloud sync ready before the verifier proves it", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
