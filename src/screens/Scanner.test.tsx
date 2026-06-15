@@ -204,7 +204,7 @@ describe("Scanner", () => {
     const reviewHeading = await screen.findByRole("heading", { level: 3, name: "Alternator" });
     const reviewCard = reviewHeading.closest("section");
     expect(reviewCard).toBeTruthy();
-    expect(screen.getByTestId("lens-primary-label")).toHaveTextContent("Alternator");
+    expect(screen.queryByTestId("lens-primary-label")).not.toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).getByText("AI detection")).toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Open details" })).toBeInTheDocument();
@@ -256,6 +256,47 @@ describe("Scanner", () => {
     await waitFor(() => expect(captureFrame).toHaveBeenCalled());
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
     expect(screen.getByTestId("lens-primary-label")).toHaveTextContent("Alternator");
+    expect(screen.getByTestId("lens-part-overlay-0")).toHaveStyle({
+      height: "180px",
+      left: "80px",
+      top: "160px",
+      width: "240px",
+    });
+  }, 10000);
+
+  it("does not turn text-only evidence regions into fake AR boxes", async () => {
+    objectTargetState.current = makeObjectTarget({
+      confidence: 0.82,
+      height: 180,
+      holdProgress: 1,
+      isLocked: true,
+      left: 80,
+      top: 160,
+      width: 240,
+    });
+    identifyCapturedFrame.mockResolvedValueOnce({
+      ...makeScanResult("Alternator"),
+      evidenceRegions: [
+        {
+          label: "Pulley",
+          observation: "Belt pulley visible near the front.",
+          regionLabel: "upper left",
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+
+    expect(screen.getAllByTestId(/lens-part-overlay-/)).toHaveLength(1);
+    expect(screen.getByTestId("lens-evidence-chip")).toHaveTextContent(/Pulley: Belt pulley visible/);
   }, 10000);
 
   it("sends a focused target crop as the AI image when the user taps the selected object", async () => {

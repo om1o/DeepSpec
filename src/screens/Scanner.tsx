@@ -106,6 +106,16 @@ type SizeCalibration = {
   referencePx: number;
 };
 
+type MeasurementGateResult =
+  | {
+      ok: true;
+      uncertainty: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
 export default function Scanner() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -695,6 +705,12 @@ export default function Scanner() {
       return;
     }
 
+    const measurementGate = getMeasurementGate(scanReview.reviewTarget, sizeCalibration);
+    if (!measurementGate.ok) {
+      setScanCardStatusMessage(measurementGate.message);
+      return;
+    }
+
     const widthMm = estimateMm(scanReview.reviewTarget.width, sizeCalibration);
     const heightMm = estimateMm(scanReview.reviewTarget.height, sizeCalibration);
     const longestEdgeMm = Math.max(widthMm, heightMm);
@@ -702,15 +718,14 @@ export default function Scanner() {
     const fastenerHint = /nut|bolt|screw|stud|thread|fastener/i.test(label)
       ? getFastenerSizeHint(Math.max(widthMm, heightMm))
       : null;
-    const uncertainty = getMeasurementUncertainty(scanReview.reviewTarget, sizeCalibration);
     const summary = fastenerHint
-      ? `${label}: ${widthMm.toFixed(1)} x ${heightMm.toFixed(1)} mm (approx). Longest edge ${longestEdgeMm.toFixed(1)} mm. ${fastenerHint} ${sizeCalibration.guidance} Uncertainty: ${uncertainty}.`
-      : `${label}: ${widthMm.toFixed(1)} x ${heightMm.toFixed(1)} mm (approx). Longest edge ${longestEdgeMm.toFixed(1)} mm. ${sizeCalibration.guidance} Uncertainty: ${uncertainty}.`;
+      ? `${label}: ${widthMm.toFixed(1)} x ${heightMm.toFixed(1)} mm (same-plane estimate). Longest edge ${longestEdgeMm.toFixed(1)} mm. ${fastenerHint} ${sizeCalibration.guidance} Uncertainty: ${measurementGate.uncertainty}.`
+      : `${label}: ${widthMm.toFixed(1)} x ${heightMm.toFixed(1)} mm (same-plane estimate). Longest edge ${longestEdgeMm.toFixed(1)} mm. ${sizeCalibration.guidance} Uncertainty: ${measurementGate.uncertainty}.`;
 
     const copied = await copyText(summary);
     setScanCardStatusMessage(
       copied
-        ? "AR size estimate copied. Keep reference and target on the same depth plane."
+        ? "Same-plane size estimate copied. Verify with a caliper before ordering parts."
         : summary,
     );
   }, [scanReview, sizeCalibration]);
@@ -1429,139 +1444,106 @@ function RetakeGuideNotice() {
   );
 }
 
-type LensDetection = {
+type LensEvidenceChip = {
   id: string;
   label: string;
   detail: string;
-  box: {
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-  };
-  primary: boolean;
 };
 
 function LensPartOverlays({ result, target }: { result: IdentificationResult; target: ScanReviewTarget | null }) {
-  const detections = getLensDetections(result, target);
-  if (!detections.length) {
+  if (!target) {
     return null;
   }
 
+  const targetBox = targetToLensBox(target);
+  const evidenceChips = getLensEvidenceChips(result);
+
   return (
-    <div className="pointer-events-none fixed inset-0 z-40" aria-label="Detected part overlays">
-      {detections.map((detection, index) => (
+    <div className="pointer-events-none fixed inset-0 z-40" aria-label="Detected target overlay">
+      <div
+        data-testid="lens-part-overlay-0"
+        className="absolute rounded-[16px]"
+        style={{
+          height: targetBox.height,
+          left: targetBox.left,
+          top: targetBox.top,
+          width: targetBox.width,
+          border: "1.5px solid rgba(0,194,255,0.78)",
+          background: "rgba(0,194,255,0.045)",
+          boxShadow: "0 0 18px rgba(0,170,255,0.22)",
+        }}
+      >
         <div
-          key={detection.id}
-          data-testid={`lens-part-overlay-${index}`}
-          className="absolute rounded-[16px]"
+          className="absolute left-2 top-2 flex max-w-[min(220px,62vw)] items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold text-white shadow-[0_8px_20px_rgba(0,0,0,0.40)]"
           style={{
-            height: detection.box.height,
-            left: detection.box.left,
-            top: detection.box.top,
-            width: detection.box.width,
-            border: detection.primary
-              ? "1.5px solid rgba(0,194,255,0.70)"
-              : "1px solid rgba(0,194,255,0.35)",
-            background: detection.primary
-              ? "rgba(0,194,255,0.08)"
-              : "rgba(0,194,255,0.03)",
-            boxShadow: detection.primary
-              ? "0 0 18px rgba(0,170,255,0.22)"
-              : undefined,
+            backdropFilter: "blur(14px)",
+            background: "rgba(0,170,255,0.82)",
           }}
         >
-          <div
-            className="absolute left-2 top-2 flex max-w-[min(220px,62vw)] items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold text-white shadow-[0_8px_20px_rgba(0,0,0,0.40)]"
-            style={{
-              backdropFilter: "blur(14px)",
-              background: detection.primary
-                ? "rgba(0,170,255,0.82)"
-                : "rgba(7,16,30,0.82)",
-              border: detection.primary
-                ? "none"
-                : "1px solid rgba(0,194,255,0.28)",
-            }}
+          <span data-testid="lens-primary-label" className="min-w-0 truncate">{result.partName}</span>
+          <span
+            className="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.04em]"
+            style={{ background: "rgba(0,0,0,0.28)", color: "rgba(255,255,255,0.80)" }}
           >
-            <span data-testid={detection.primary ? "lens-primary-label" : undefined} className="min-w-0 truncate">{detection.label}</span>
-            <span
-              className="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.04em]"
-              style={{ background: "rgba(0,0,0,0.28)", color: "rgba(255,255,255,0.80)" }}
-            >
-              {detection.detail}
-            </span>
-          </div>
+            {result.confidence}
+          </span>
         </div>
-      ))}
+
+        <div className="absolute left-1/2 top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/70 shadow-[0_0_18px_rgba(255,255,255,0.32)]">
+          <span className="absolute left-1/2 top-[-10px] h-2.5 w-px -translate-x-1/2 bg-white/70" />
+          <span className="absolute bottom-[-10px] left-1/2 h-2.5 w-px -translate-x-1/2 bg-white/70" />
+          <span className="absolute left-[-10px] top-1/2 h-px w-2.5 -translate-y-1/2 bg-white/70" />
+          <span className="absolute right-[-10px] top-1/2 h-px w-2.5 -translate-y-1/2 bg-white/70" />
+        </div>
+
+        {evidenceChips.length ? (
+          <div className="absolute left-0 top-full mt-2 flex max-w-[min(320px,88vw)] flex-wrap gap-1.5">
+            {evidenceChips.map((chip) => (
+              <span
+                key={chip.id}
+                data-testid="lens-evidence-chip"
+                className="rounded-full px-2.5 py-1 text-[10px] font-bold text-white shadow-[0_8px_18px_rgba(0,0,0,0.35)]"
+                style={{
+                  backdropFilter: "blur(12px)",
+                  background: "rgba(7,16,30,0.82)",
+                  border: "1px solid rgba(0,194,255,0.22)",
+                }}
+              >
+                {chip.label}: {chip.detail}
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
 
-function getLensDetections(result: IdentificationResult, target: ScanReviewTarget | null): LensDetection[] {
-  const primaryBox = target ? targetToLensBox(target) : regionLabelToLensBox("center", 0);
-  const detections: LensDetection[] = [
-    {
-      id: `primary:${result.partName}`,
-      label: result.partName,
-      detail: result.confidence,
-      box: primaryBox,
-      primary: true,
-    },
-  ];
-
+function getLensEvidenceChips(result: IdentificationResult): LensEvidenceChip[] {
   const primaryLabel = result.partName.trim().toLowerCase();
-  result.evidenceRegions
+  return result.evidenceRegions
     .filter((region) => region.label.trim().toLowerCase() !== primaryLabel)
     .slice(0, 5)
-    .forEach((region, index) => {
-      detections.push({
-        id: `region:${region.regionLabel}:${region.label}`,
-        label: region.label,
-        detail: summarize(region.observation || region.regionLabel, 34),
-        box: target
-          ? regionToTargetSubBox(region.regionLabel, index, primaryBox)
-          : regionLabelToLensBox(region.regionLabel, index + 1),
-        primary: false,
-      });
-    });
-
-  return detections.slice(0, 6);
+    .map((region) => ({
+      id: `region:${region.regionLabel}:${region.label}`,
+      label: region.label,
+      detail: summarize(region.observation || region.regionLabel, 34),
+    }));
 }
 
 function targetToLensBox(target: ScanReviewTarget) {
+  const viewportWidth = Math.max(1, window.innerWidth);
+  const viewportHeight = Math.max(1, window.innerHeight);
+  const left = clampNumber(target.x, 0, viewportWidth - 1);
+  const top = clampNumber(target.y, 0, viewportHeight - 1);
+  const right = clampNumber(target.x + target.width, left + 1, viewportWidth);
+  const bottom = clampNumber(target.y + target.height, top + 1, viewportHeight);
+
   return {
-    left: clampNumber(target.x, 8, Math.max(8, window.innerWidth - 80)),
-    top: clampNumber(target.y, 84, Math.max(84, window.innerHeight - 120)),
-    width: clampNumber(target.width, 96, Math.min(420, window.innerWidth - 16)),
-    height: clampNumber(target.height, 82, Math.min(360, window.innerHeight - 140)),
-  };
-}
-
-function regionLabelToLensBox(regionLabel: string, index: number) {
-  const label = regionLabel.toLowerCase();
-  const width = Math.min(260, Math.max(126, window.innerWidth * 0.32));
-  const height = Math.min(150, Math.max(82, window.innerHeight * 0.14));
-  const leftColumn = Math.max(14, window.innerWidth * 0.08);
-  const rightColumn = Math.max(14, window.innerWidth - width - window.innerWidth * 0.08);
-  const topRow = Math.max(92, window.innerHeight * 0.2);
-  const middleRow = Math.max(112, window.innerHeight * 0.42);
-  const lowerRow = Math.min(window.innerHeight - height - 110, window.innerHeight * 0.64);
-
-  if (/upper|top/.test(label) && /left/.test(label)) return { left: leftColumn, top: topRow, width, height };
-  if (/upper|top/.test(label) && /right/.test(label)) return { left: rightColumn, top: topRow, width, height };
-  if (/lower|bottom/.test(label) && /left/.test(label)) return { left: leftColumn, top: lowerRow, width, height };
-  if (/lower|bottom/.test(label) && /right/.test(label)) return { left: rightColumn, top: lowerRow, width, height };
-  if (/left/.test(label)) return { left: leftColumn, top: middleRow, width, height };
-  if (/right/.test(label)) return { left: rightColumn, top: middleRow, width, height };
-  if (/lower|bottom/.test(label)) return { left: (window.innerWidth - width) / 2, top: lowerRow, width, height };
-  if (/upper|top/.test(label)) return { left: (window.innerWidth - width) / 2, top: topRow, width, height };
-
-  const offset = index % 2 === 0 ? -0.13 : 0.13;
-  return {
-    left: clampNumber((window.innerWidth - width) * (0.5 + offset), 14, window.innerWidth - width - 14),
-    top: clampNumber(middleRow + index * 12, 92, window.innerHeight - height - 110),
-    width,
-    height,
+    left,
+    top,
+    width: right - left,
+    height: bottom - top,
   };
 }
 
@@ -2036,54 +2018,6 @@ function ScanResultCard({
   );
 }
 
-function regionToTargetSubBox(regionLabel: string, index: number, primaryBox: LensDetection["box"]) {
-  const inset = 6;
-  const innerLeft = primaryBox.left + inset;
-  const innerTop = primaryBox.top + inset;
-  const innerWidth = Math.max(64, primaryBox.width - inset * 2);
-  const innerHeight = Math.max(58, primaryBox.height - inset * 2);
-  const halfWidth = Math.max(52, innerWidth * 0.47);
-  const halfHeight = Math.max(46, innerHeight * 0.46);
-  const lowerTop = innerTop + Math.max(8, innerHeight - halfHeight);
-  const rightLeft = innerLeft + Math.max(8, innerWidth - halfWidth);
-  const label = regionLabel.toLowerCase();
-
-  if (/upper|top/.test(label) && /left/.test(label)) {
-    return { left: innerLeft, top: innerTop, width: halfWidth, height: halfHeight };
-  }
-  if (/upper|top/.test(label) && /right/.test(label)) {
-    return { left: rightLeft, top: innerTop, width: halfWidth, height: halfHeight };
-  }
-  if (/lower|bottom/.test(label) && /left/.test(label)) {
-    return { left: innerLeft, top: lowerTop, width: halfWidth, height: halfHeight };
-  }
-  if (/lower|bottom/.test(label) && /right/.test(label)) {
-    return { left: rightLeft, top: lowerTop, width: halfWidth, height: halfHeight };
-  }
-  if (/left/.test(label)) {
-    return { left: innerLeft, top: innerTop + innerHeight * 0.24, width: halfWidth, height: halfHeight };
-  }
-  if (/right/.test(label)) {
-    return { left: rightLeft, top: innerTop + innerHeight * 0.24, width: halfWidth, height: halfHeight };
-  }
-  if (/upper|top/.test(label)) {
-    return { left: innerLeft + (innerWidth - halfWidth) / 2, top: innerTop, width: halfWidth, height: halfHeight };
-  }
-  if (/lower|bottom/.test(label)) {
-    return { left: innerLeft + (innerWidth - halfWidth) / 2, top: lowerTop, width: halfWidth, height: halfHeight };
-  }
-
-  const slots = [
-    { left: innerLeft, top: innerTop },
-    { left: rightLeft, top: innerTop },
-    { left: innerLeft, top: lowerTop },
-    { left: rightLeft, top: lowerTop },
-    { left: innerLeft + (innerWidth - halfWidth) / 2, top: innerTop + (innerHeight - halfHeight) / 2 },
-  ];
-  const slot = slots[index % slots.length];
-  return { left: slot.left, top: slot.top, width: halfWidth, height: halfHeight };
-}
-
 function BubbleSection({ children, title }: { children: ReactNode; title: string }) {
   return (
     <div className="border-t border-white/10 py-3 first:border-t-0 first:pt-0">
@@ -2219,12 +2153,17 @@ function isTargetBoxTooSmall(width: number, height: number) {
 }
 
 function clampReviewTarget(target: ScanReviewTarget): ScanReviewTarget {
+  const viewportWidth = Math.max(1, window.innerWidth);
+  const viewportHeight = Math.max(1, window.innerHeight);
+  const width = clampNumber(target.width, 1, viewportWidth);
+  const height = clampNumber(target.height, 1, viewportHeight);
+
   return {
     ...target,
-    x: clampNumber(target.x, 6, Math.max(6, window.innerWidth - 60)),
-    y: clampNumber(target.y, 6, Math.max(6, window.innerHeight - 60)),
-    width: clampNumber(target.width, 48, window.innerWidth),
-    height: clampNumber(target.height, 48, window.innerHeight),
+    x: clampNumber(target.x, 0, Math.max(0, viewportWidth - width)),
+    y: clampNumber(target.y, 0, Math.max(0, viewportHeight - height)),
+    width,
+    height,
     confidence: clampNumber(target.confidence, 0, 1),
   };
 }
@@ -2387,16 +2326,42 @@ function getFastenerSizeHint(acrossMm: number) {
   return `Fastener guess: ${metric} wrench / ${sae} (approx).`;
 }
 
-function getMeasurementUncertainty(target: ScanReviewTarget, calibration: SizeCalibration) {
+function getMeasurementGate(target: ScanReviewTarget, calibration: SizeCalibration): MeasurementGateResult {
   const targetPx = Math.max(target.width, target.height);
   const ratio = targetPx / Math.max(1, calibration.referencePx);
-  if (targetPx < 80) {
-    return "target small";
+
+  if (target.confidence < 0.72) {
+    return {
+      ok: false,
+      message: "Target lock is not confident enough for AR sizing. Center the part and hold still again.",
+    };
   }
-  if (ratio < 0.45 || ratio > 2.2) {
-    return "reference scale far from target size";
+
+  if (targetPx < 96) {
+    return {
+      ok: false,
+      message: "Target is too small for a useful AR size estimate. Move closer and lock it again.",
+    };
   }
-  return "same-plane depth and angle still need visual check";
+
+  if (calibration.referencePx < 64) {
+    return {
+      ok: false,
+      message: "Reference is too small. Fill more of the frame with the card or coin.",
+    };
+  }
+
+  if (ratio < 0.6 || ratio > 1.7) {
+    return {
+      ok: false,
+      message: "Reference scale is too different from the target. Use a same-plane card or coin closer to the part.",
+    };
+  }
+
+  return {
+    ok: true,
+    uncertainty: "same-plane depth, camera angle, and target edge still need physical verification",
+  };
 }
 
 function isFastenerResult(result: IdentificationResult, label: string) {
