@@ -343,6 +343,74 @@ describe("Scanner", () => {
     });
   }, 10000);
 
+  it("uses focused AR overlays for engine assembly and radiator results", async () => {
+    objectTargetState.current = makeObjectTarget({
+      confidence: 0.86,
+      height: 360,
+      holdProgress: 1,
+      isLocked: true,
+      left: 20,
+      top: 140,
+      width: 360,
+    });
+    identifyCapturedFrame.mockResolvedValueOnce({
+      ...makeScanResult("Engine"),
+      scanCategory: "engine",
+      whatItDoes: "The engine assembly is the main power unit.",
+    });
+
+    const { unmount } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId("lens-context-overlay")).toBeInTheDocument();
+    expect(screen.getByTestId("lens-part-overlay-0")).toHaveStyle({
+      height: "194.39999999999998px",
+      left: "74px",
+      top: "233.60000000000002px",
+      width: "252px",
+    });
+
+    unmount();
+    identifyCapturedFrame.mockClear();
+    objectTargetState.current = makeObjectTarget({
+      confidence: 0.86,
+      height: 300,
+      holdProgress: 1,
+      isLocked: true,
+      left: 40,
+      top: 180,
+      width: 340,
+    });
+    identifyCapturedFrame.mockResolvedValueOnce({
+      ...makeScanResult("Radiator"),
+      scanCategory: "engine",
+      whatItDoes: "The radiator removes heat from engine coolant.",
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId("lens-context-overlay")).toBeInTheDocument();
+    expect(screen.getByTestId("lens-part-overlay-0")).toHaveStyle({
+      height: "126px",
+      left: "114.8px",
+      top: "282px",
+      width: "190.39999999999998px",
+    });
+  }, 10000);
+
   it("does not turn text-only evidence regions into fake AR boxes", async () => {
     objectTargetState.current = makeObjectTarget({
       confidence: 0.82,

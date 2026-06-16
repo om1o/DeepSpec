@@ -5,6 +5,8 @@ import { chromium } from "playwright";
 const DEFAULT_BASE_URL = "http://127.0.0.1:5175";
 const COMMONS_API = "https://commons.wikimedia.org/w/api.php";
 const IMAGE_DIR = path.resolve("artifacts", "qa", "web-images-commons");
+const BETWEEN_CASE_DELAY_MS = Number(process.env.QA_WEB_AR_CASE_DELAY_MS ?? 15_000);
+const RETRY_DELAYS_MS = parseRetryDelays(process.env.QA_WEB_AR_RETRY_DELAYS_MS);
 
 const CASES = [
   {
@@ -31,9 +33,40 @@ const CASES = [
     expectedLabels: ["disc brake", "disk brake", "brake rotor", "brake disc", "rotor"],
     forbiddenPatterns: ["wheel cover", "hubcap"],
   },
+  {
+    slug: "commons-broken-side-mirror",
+    fileTitle: "File:Broken car side mirror with wires and parts exposed in a garage.jpg",
+    expectedLabels: ["side mirror", "mirror"],
+    forbiddenPatterns: ["headlight", "tail\\s*light", "taillight"],
+  },
+  {
+    slug: "commons-broken-taillight",
+    fileTitle: "File:Damaged red car with broken taillight on a gravel surface near other vehicles in a repair area.jpg",
+    expectedLabels: ["tail light", "taillight", "tail lamp", "rear light"],
+    forbiddenPatterns: ["headlight", "front bumper"],
+  },
+  {
+    slug: "commons-radiator",
+    fileTitle: "File:Radiateur de voiture - 2.jpg",
+    expectedLabels: ["radiator"],
+    forbiddenPatterns: ["grille", "bumper"],
+  },
+  {
+    slug: "commons-engine-bay",
+    fileTitle: "File:2023 Subaru Outback Limited 2.5 liter 4 cyl engine bay.jpg",
+    expectedLabels: ["engine", "engine assembly", "engine bay"],
+    forbiddenPatterns: ["unknown component", "vehicle component"],
+  },
 ];
 
 const baseUrl = process.env.QA_BASE_URL?.trim() || DEFAULT_BASE_URL;
+const selectedCaseSlugs = parseSelectedCaseSlugs(process.env.QA_WEB_AR_CASES);
+const selectedCases = selectedCaseSlugs.length
+  ? CASES.filter((testCase) => selectedCaseSlugs.includes(testCase.slug))
+  : CASES;
+if (!selectedCases.length) {
+  throw new Error(`No web AR cases matched QA_WEB_AR_CASES=${process.env.QA_WEB_AR_CASES}`);
+}
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 const outputDir = path.resolve("artifacts", "qa", `web-public-ar-${stamp}`);
 const screenshotDir = path.join(outputDir, "screenshots");
@@ -44,7 +77,7 @@ await mkdir(downloadedDir, { recursive: true });
 await mkdir(IMAGE_DIR, { recursive: true });
 
 const hydratedCases = [];
-for (const testCase of CASES) {
+for (const testCase of selectedCases) {
   hydratedCases.push(await hydrateCase(testCase));
 }
 
@@ -53,7 +86,8 @@ const results = [];
 
 try {
   for (const testCase of hydratedCases) {
-    results.push(await runCase(browser, testCase));
+    results.push(await runCaseWithRetries(browser, testCase));
+    await new Promise((resolve) => setTimeout(resolve, BETWEEN_CASE_DELAY_MS));
   }
 } finally {
   await browser.close();
@@ -93,12 +127,32 @@ console.log(JSON.stringify({
 
 process.exitCode = passed === results.length ? 0 : 1;
 
+async function runCaseWithRetries(browserInstance, testCase) {
+  const attempts = [];
+  for (const delayMs of RETRY_DELAYS_MS) {
+    if (delayMs) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    const result = await runCase(browserInstance, {
+      ...testCase,
+      slug: attempts.length ? `${testCase.slug}-retry-${attempts.length}` : testCase.slug,
+    });
+    attempts.push(result);
+    if (result.passed || !isRetryableProviderResult(result)) {
+      return attempts.length === 1 ? result : { ...result, attempts };
+    }
+  }
+
+  const finalResult = attempts.at(-1);
+  return { ...finalResult, attempts };
+}
+
 async function hydrateCase(testCase) {
   const source = await fetchCommonsSource(testCase.fileTitle);
   const ext = getExtension(source.mime);
   const cachedImage = path.join(IMAGE_DIR, `${testCase.slug}${ext}`);
   const localImage = path.join(downloadedDir, `${testCase.slug}${ext}`);
-  const imageBytes = await getOrDownloadImage(source.thumbUrl ?? source.url, cachedImage);
+  const imageBytes = await getOrDownloadImage([source.thumbUrl, source.url].filter(Boolean), cachedImage);
   await writeFile(localImage, imageBytes);
 
   return {
@@ -149,31 +203,33 @@ async function fetchCommonsSource(fileTitle) {
   };
 }
 
-async function getOrDownloadImage(url, cachedImage) {
+async function getOrDownloadImage(urls, cachedImage) {
   try {
     return await readFile(cachedImage);
   } catch {
     let lastStatus = 0;
-    for (const delayMs of [0, 1_000, 3_000]) {
-      if (delayMs) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-      }
-      const response = await fetch(url, {
-        headers: { "User-Agent": "DeepSpec QA/1.0 (local release verification; contact local QA)" },
-      });
-      lastStatus = response.status;
-      if (response.ok) {
-        const bytes = Buffer.from(await response.arrayBuffer());
-        await writeFile(cachedImage, bytes);
-        return bytes;
-      }
+    for (const url of urls) {
+      for (const delayMs of [0, 1_000, 3_000, 7_000]) {
+        if (delayMs) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+        const response = await fetch(url, {
+          headers: { "User-Agent": "DeepSpec QA/1.0 (local release verification; contact local QA)" },
+        });
+        lastStatus = response.status;
+        if (response.ok) {
+          const bytes = Buffer.from(await response.arrayBuffer());
+          await writeFile(cachedImage, bytes);
+          return bytes;
+        }
 
-      if (response.status !== 429 && response.status < 500) {
-        break;
+        if (response.status !== 429 && response.status < 500) {
+          break;
+        }
       }
     }
 
-    throw new Error(`Image download failed for ${url}: HTTP ${lastStatus}`);
+    throw new Error(`Image download failed: HTTP ${lastStatus}`);
   }
 }
 
@@ -190,6 +246,19 @@ function toSourceSummary(testCase) {
     sourceAuthor: testCase.sourceAuthor,
     thumbUrl: testCase.thumbUrl,
   };
+}
+
+function parseSelectedCaseSlugs(value) {
+  return value
+    ? value.split(",").map((slug) => slug.trim()).filter(Boolean)
+    : [];
+}
+
+function parseRetryDelays(value) {
+  const parsed = value
+    ? value.split(",").map((delay) => Number(delay.trim())).filter((delay) => Number.isFinite(delay) && delay >= 0)
+    : [];
+  return parsed.length ? parsed : [0, 30_000, 90_000];
 }
 
 async function runCase(browserInstance, testCase) {
@@ -213,7 +282,10 @@ async function runCase(browserInstance, testCase) {
   try {
     await enterNoEmailSession(page);
     await page.getByLabel("Upload photo").setInputFiles(testCase.localImage);
-    await page.waitForSelector("[data-testid=\"lens-primary-label\"]", { timeout: 60_000 });
+    await waitForScanResultOrIssue(page);
+    if (await hasScanIssue(page)) {
+      throw new Error("Scan completed with a visible AI service issue.");
+    }
     await page.waitForSelector("[data-testid=\"lens-part-overlay-0\"]", { timeout: 10_000 });
     await page.waitForSelector("[data-testid=\"lens-context-overlay\"]", { timeout: 10_000 });
 
@@ -284,6 +356,19 @@ async function getPartialState(page) {
   };
 }
 
+async function waitForScanResultOrIssue(page) {
+  await page.waitForFunction(() => {
+    const hasLabel = Boolean(globalThis.document.querySelector("[data-testid=\"lens-primary-label\"]"));
+    const text = globalThis.document.body?.innerText ?? "";
+    return hasLabel || /SCAN ISSUE|Too many AI lookups|Could not reach the Deep Spec AI service/i.test(text);
+  }, { timeout: 75_000 });
+}
+
+async function hasScanIssue(page) {
+  const text = await page.locator("body").innerText({ timeout: 500 }).catch(() => "");
+  return /SCAN ISSUE|Too many AI lookups|Could not reach the Deep Spec AI service/i.test(text);
+}
+
 async function enterNoEmailSession(page) {
   await page.goto(`${baseUrl}/auth`, { timeout: 45_000, waitUntil: "domcontentloaded" });
   await page.getByText("No email", { exact: true }).click({ timeout: 45_000 });
@@ -299,6 +384,15 @@ function isSpecificOverlay(partBox, contextBox) {
   const partArea = partBox.width * partBox.height;
   const contextArea = contextBox.width * contextBox.height;
   return partBox.width > 24 && partBox.height > 24 && contextArea > partArea * 1.4;
+}
+
+function isRetryableProviderResult(result) {
+  if (result.identifyResponses?.some((response) => response.status === 429 || response.status >= 500)) {
+    return true;
+  }
+
+  return !result.identifyResponses?.length
+    && /could not reach|too many ai lookups|timeout|network/i.test([result.error, result.text].filter(Boolean).join(" "));
 }
 
 function getExtension(mime) {

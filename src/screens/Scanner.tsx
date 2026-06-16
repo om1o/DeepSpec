@@ -1615,6 +1615,14 @@ function getPartFocusBox(partName: string) {
     return { height: 0.32, width: 0.58, x: 0.22, y: 0.20 };
   }
 
+  if (/^engine$|\bengine assembly\b|\bengine bay\b/.test(partName)) {
+    return { height: 0.54, width: 0.70, x: 0.15, y: 0.26 };
+  }
+
+  if (/\bradiator\b/.test(partName)) {
+    return { height: 0.42, width: 0.56, x: 0.22, y: 0.34 };
+  }
+
   if (/\bmirror\b/.test(partName)) {
     return { height: 0.22, width: 0.24, x: 0.18, y: 0.24 };
   }
