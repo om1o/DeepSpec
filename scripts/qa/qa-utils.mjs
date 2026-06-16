@@ -30,6 +30,7 @@ export function parseQaArgs(argv) {
     headless: false,
     scenarios: [],
     url: "",
+    viewport: "",
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -55,6 +56,17 @@ export function parseQaArgs(argv) {
     if (arg === "--headless") {
       parsed.headless = true;
       parsed.headed = false;
+      continue;
+    }
+
+    if (arg === "--viewport") {
+      parsed.viewport = argv[index + 1] ?? "";
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--viewport=")) {
+      parsed.viewport = arg.slice("--viewport=".length);
       continue;
     }
 

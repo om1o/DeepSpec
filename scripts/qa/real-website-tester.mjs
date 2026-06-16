@@ -35,6 +35,7 @@ const htmlDir = join(artifactDir, "html");
 const videoDir = join(artifactDir, "videos");
 const tracePath = join(artifactDir, "trace.zip");
 const scenarioOrder = getScenarioOrder(parsedArgs.scenarios);
+const viewportProfile = resolveViewportProfile(parsedArgs);
 const startedAt = new Date().toISOString();
 const results = [];
 const consoleLogs = [];
@@ -74,9 +75,11 @@ try {
   context = await browser.newContext({
     recordVideo: {
       dir: videoDir,
-      size: { height: 900, width: 1440 },
+      size: viewportProfile.viewport,
     },
-    viewport: { height: 900, width: 1440 },
+    isMobile: viewportProfile.isMobile,
+    hasTouch: viewportProfile.hasTouch,
+    viewport: viewportProfile.viewport,
   });
   await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
   page = await context.newPage();
@@ -1164,6 +1167,7 @@ function buildReport(finishedAt) {
     suggestedFixes,
     tracePath,
     videoPath: videoDir,
+    viewport: viewportProfile,
     failed: results.filter((result) => result.status !== "pass").map((result) => ({
       category: result.category,
       details: result.details,
@@ -1179,6 +1183,7 @@ function renderMarkdownReport(report) {
     "",
     `- Report path: ${join(artifactDir, "report.md")}`,
     `- Base URL: ${report.baseUrl}`,
+    `- Viewport: ${report.viewport.name} (${report.viewport.viewport.width} x ${report.viewport.viewport.height})`,
     `- Started: ${report.startedAt}`,
     `- Finished: ${report.finishedAt}`,
     `- Screenshots/evidence path: ${report.evidencePath}`,
@@ -1229,6 +1234,25 @@ function collectProblems(category) {
       name: result.name,
       suggestedFix: result.suggestedFix,
     }));
+}
+
+function resolveViewportProfile(args) {
+  const requested = (args.viewport || process.env.QA_VIEWPORT || "desktop").trim().toLowerCase();
+  if (requested === "mobile" || requested === "phone") {
+    return {
+      hasTouch: true,
+      isMobile: true,
+      name: "mobile-emulated",
+      viewport: { height: 844, width: 390 },
+    };
+  }
+
+  return {
+    hasTouch: false,
+    isMobile: false,
+    name: "desktop",
+    viewport: { height: 900, width: 1440 },
+  };
 }
 
 function getScenarioOrder(requestedScenarios) {
