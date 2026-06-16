@@ -42,8 +42,49 @@ type WebhookResponse =
   | BillingErrorResponse;
 
 type BillingEnv = Record<string, string | undefined>;
-type SupabaseClient = ReturnType<typeof createClient>;
 type SupabaseRow = Record<string, unknown>;
+type BillingSupabaseClient = {
+  auth: {
+    getUser: (token: string) => Promise<{
+      data: {
+        user?: {
+          id: string;
+        } | null;
+      };
+      error: unknown;
+    }>;
+  };
+  from: (table: string) => BillingSupabaseTable;
+};
+type BillingSupabaseOptions = {
+  auth: {
+    autoRefreshToken: boolean;
+    persistSession: boolean;
+  };
+};
+type BillingSupabaseTable = {
+  select: (columns: string) => {
+    eq: (column: string, value: string) => {
+      maybeSingle: () => PromiseLike<{
+        data: unknown;
+        error: unknown;
+      }>;
+    };
+  };
+  update: (values: Record<string, unknown>) => {
+    eq: (column: string, value: string) => PromiseLike<{
+      error: unknown;
+    }>;
+  };
+  upsert: (values: Record<string, unknown>, options?: { onConflict?: string }) => PromiseLike<{
+    error: unknown;
+  }>;
+};
+const createBillingClient = createClient as unknown as (
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  options: BillingSupabaseOptions,
+) => BillingSupabaseClient;
 
 const STRIPE_CHECKOUT_URL = "https://api.stripe.com/v1/checkout/sessions";
 const STRIPE_PORTAL_URL = "https://api.stripe.com/v1/billing_portal/sessions";
@@ -145,7 +186,7 @@ export async function createWebhookResponse(
     return parsedEvent.error;
   }
 
-  const supabase = createClient(supabaseUrl, serviceRoleKey, {
+  const supabase = createBillingClient(supabaseUrl, serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
@@ -181,7 +222,7 @@ export async function createAccountEntitlementResponse(
     return entitlementErrorResponse(401, "missing_session", "Sign in before checking DeepSpec paid access.");
   }
 
-  const supabase = createClient(supabaseUrl, serviceRoleKey, {
+  const supabase = createBillingClient(supabaseUrl, serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
@@ -241,7 +282,7 @@ export function listConfiguredPlans(env: BillingEnv) {
 
 async function handleStripeEvent(
   event: { data?: { object?: unknown }; type: string },
-  supabase: SupabaseClient,
+  supabase: BillingSupabaseClient,
   env: BillingEnv,
 ): Promise<{ handled: boolean } | { error: BillingErrorResponse }> {
   const stripeObject = isRecord(event.data?.object) ? event.data.object : null;
@@ -262,7 +303,7 @@ async function handleStripeEvent(
 
 async function writeCheckoutEntitlement(
   session: SupabaseRow,
-  supabase: SupabaseClient,
+  supabase: BillingSupabaseClient,
 ): Promise<{ handled: boolean } | { error: BillingErrorResponse }> {
   const planId = getStringValue(getMetadata(session).deepspec_plan_id);
   const plan = getRevenuePlan(planId);
@@ -315,7 +356,7 @@ async function writeCheckoutEntitlement(
 
 async function updateSubscriptionEntitlement(
   subscription: SupabaseRow,
-  supabase: SupabaseClient,
+  supabase: BillingSupabaseClient,
   env: BillingEnv,
 ): Promise<{ handled: boolean } | { error: BillingErrorResponse }> {
   const subscriptionId = getStringValue(subscription.id);
@@ -371,7 +412,7 @@ async function updateSubscriptionEntitlement(
 }
 
 async function readExistingEntitlement(
-  supabase: SupabaseClient,
+  supabase: BillingSupabaseClient,
   userId: string,
 ): Promise<{ row: SupabaseRow | null } | { error: BillingErrorResponse }> {
   const { data, error } = await supabase
@@ -390,7 +431,7 @@ async function readExistingEntitlement(
 }
 
 async function updateEntitlementByStripeKey(
-  supabase: SupabaseClient,
+  supabase: BillingSupabaseClient,
   subscriptionId: string,
   customerId: string,
   payload: Record<string, unknown>,
@@ -521,7 +562,7 @@ async function verifyBillingUser(
     };
   }
 
-  const supabase = createClient(supabaseUrl, serviceRoleKey, {
+  const supabase = createBillingClient(supabaseUrl, serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
