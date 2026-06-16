@@ -10,6 +10,7 @@ import { assessImageQuality, type ImageQualityIssue, type ImageQualityResult } f
 import { createFocusedScanCrop } from "../lib/focusCrop";
 import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
 import { getScanCardPreferences, type ScanCardPreferences, updateScanCardPreferences } from "../lib/scanResultCardSettings";
+import { detectObjectTargetFromImageData, type ObjectTargetBox } from "../lib/objectTargeting";
 import { compressImageDataUrl, saveLatestScanState } from "../lib/utils";
 import { AIServiceError, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
 import { onOnDeviceModelProgress } from "../services/onDeviceIdentify";
@@ -342,7 +343,11 @@ export default function Scanner() {
     reviewTargetOverride?: CameraObjectTarget,
   ) => {
     const sourceUpdatedAt = new Date().toISOString();
-    const reviewTarget = reviewTargetOverride ? getReviewTargetFromObject(reviewTargetOverride) : null;
+    const uploadReviewTarget = !reviewTargetOverride && captureMode === "upload"
+      ? await getReviewTargetFromUploadedImage(imageBase64)
+      : null;
+    if (!isScanRequestActive(requestId)) return;
+    const reviewTarget = reviewTargetOverride ? getReviewTargetFromObject(reviewTargetOverride) : uploadReviewTarget;
 
     if (reviewTarget && isReviewTargetTooSmall(reviewTarget)) {
       stopForQualityCoach("object_too_small");
@@ -1455,7 +1460,7 @@ function LensPartOverlays({ result, target }: { result: IdentificationResult; ta
     return null;
   }
 
-  const targetBox = targetToLensBox(target);
+  const targetBox = targetToLensBox(getPartFocusedReviewTarget(target, result.partName));
   const evidenceChips = getLensEvidenceChips(result);
 
   return (
@@ -1529,6 +1534,79 @@ function getLensEvidenceChips(result: IdentificationResult): LensEvidenceChip[] 
       label: region.label,
       detail: summarize(region.observation || region.regionLabel, 34),
     }));
+}
+
+function getPartFocusedReviewTarget(target: ScanReviewTarget, partName: string): ScanReviewTarget {
+  const normalized = partName.toLowerCase().replace(/[-_]/g, " ");
+  const focus = getPartFocusBox(normalized);
+
+  if (!focus || target.width < 220 || target.height < 180) {
+    return target;
+  }
+
+  return clampReviewTarget({
+    ...target,
+    height: target.height * focus.height,
+    width: target.width * focus.width,
+    x: target.x + target.width * focus.x,
+    y: target.y + target.height * focus.y,
+  });
+}
+
+function getPartFocusBox(partName: string) {
+  if (/\b(front |rear |back )?bumper\b/.test(partName)) {
+    return { height: 0.28, width: 0.72, x: 0.14, y: 0.64 };
+  }
+
+  if (/\bfront door\b/.test(partName)) {
+    return { height: 0.44, width: 0.34, x: 0.50, y: 0.32 };
+  }
+
+  if (/\b(rear|back) door\b/.test(partName)) {
+    return { height: 0.44, width: 0.34, x: 0.36, y: 0.34 };
+  }
+
+  if (/\b(car )?door\b/.test(partName)) {
+    return { height: 0.42, width: 0.46, x: 0.26, y: 0.34 };
+  }
+
+  if (/\bquarter panel\b/.test(partName)) {
+    return { height: 0.46, width: 0.32, x: 0.64, y: 0.36 };
+  }
+
+  if (/\bfender\b/.test(partName)) {
+    return { height: 0.42, width: 0.32, x: 0.16, y: 0.40 };
+  }
+
+  if (/\bhead\s*light|headlamp\b/.test(partName)) {
+    return { height: 0.22, width: 0.34, x: 0.50, y: 0.36 };
+  }
+
+  if (/\btail\s*light|taillight\b/.test(partName)) {
+    return { height: 0.24, width: 0.30, x: 0.66, y: 0.38 };
+  }
+
+  if (/\bgrille\b/.test(partName)) {
+    return { height: 0.30, width: 0.36, x: 0.34, y: 0.42 };
+  }
+
+  if (/\bhood\b/.test(partName)) {
+    return { height: 0.32, width: 0.58, x: 0.22, y: 0.20 };
+  }
+
+  if (/\bmirror\b/.test(partName)) {
+    return { height: 0.22, width: 0.24, x: 0.18, y: 0.24 };
+  }
+
+  if (/\b(front |rear |back )?wheel\b/.test(partName)) {
+    return { height: 0.34, width: 0.28, x: 0.10, y: 0.58 };
+  }
+
+  if (/\brocker panel\b/.test(partName)) {
+    return { height: 0.18, width: 0.54, x: 0.24, y: 0.70 };
+  }
+
+  return null;
 }
 
 function targetToLensBox(target: ScanReviewTarget) {
@@ -1673,6 +1751,14 @@ function ScanResultCard({
       aria-live="polite"
       data-anchor-side={placement.anchorSide}
       className="scanner-result-panel no-scrollbar pointer-events-auto z-50 mx-auto flex max-h-[min(62dvh,560px)] max-w-[520px] flex-col overflow-y-auto px-4 pb-[max(20px,env(safe-area-inset-bottom))] pt-3 text-white"
+      style={{
+        bottom: "auto",
+        left: placement.left,
+        maxHeight: target && window.innerWidth < 520 ? "min(38dvh, 320px)" : target ? "min(62dvh, 560px)" : "min(42dvh, 420px)",
+        right: "auto",
+        top: placement.top,
+        width: `min(calc(100vw - 28px), ${SCAN_CARD_WIDTH_PX}px)`,
+      }}
     >
       {/* Drag handle */}
       <div className="mx-auto mb-3 h-1 w-10 shrink-0 rounded-full bg-white/18" />
@@ -2210,6 +2296,66 @@ function getReviewTargetFromObject(target: CameraObjectTarget): ScanReviewTarget
   };
 }
 
+async function getReviewTargetFromUploadedImage(imageBase64: string): Promise<ScanReviewTarget | null> {
+  if (typeof Image === "undefined" || typeof document === "undefined") {
+    return null;
+  }
+
+  try {
+    const image = await loadImageElement(imageBase64);
+    const canvas = document.createElement("canvas");
+    const maxAnalysisWidth = 480;
+    const scale = Math.min(1, maxAnalysisWidth / Math.max(1, image.naturalWidth));
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      return null;
+    }
+
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const detected = detectObjectTargetFromImageData(context.getImageData(0, 0, canvas.width, canvas.height));
+    return detected ? mapImageTargetToViewport(detected, image.naturalWidth, image.naturalHeight) : null;
+  } catch {
+    return null;
+  }
+}
+
+function loadImageElement(src: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    const timeoutId = window.setTimeout(() => reject(new Error("Timed out decoding uploaded scan image.")), 250);
+    image.onload = () => {
+      window.clearTimeout(timeoutId);
+      resolve(image);
+    };
+    image.onerror = () => {
+      window.clearTimeout(timeoutId);
+      reject(new Error("Could not decode uploaded scan image."));
+    };
+    image.src = src;
+  });
+}
+
+function mapImageTargetToViewport(target: ObjectTargetBox, imageWidth: number, imageHeight: number): ScanReviewTarget {
+  const viewportWidth = Math.max(1, window.innerWidth);
+  const viewportHeight = Math.max(1, window.innerHeight);
+  const scale = Math.max(viewportWidth / Math.max(1, imageWidth), viewportHeight / Math.max(1, imageHeight));
+  const renderedWidth = imageWidth * scale;
+  const renderedHeight = imageHeight * scale;
+  const offsetX = (viewportWidth - renderedWidth) / 2;
+  const offsetY = (viewportHeight - renderedHeight) / 2;
+
+  return clampReviewTarget({
+    confidence: target.confidence,
+    height: target.height * renderedHeight,
+    id: "upload-target",
+    width: target.width * renderedWidth,
+    x: offsetX + target.x * renderedWidth,
+    y: offsetY + target.y * renderedHeight,
+  });
+}
+
 function getTargetDistance(a: ScanReviewTarget, b: ScanReviewTarget) {
   const centerXA = a.x + a.width / 2;
   const centerXB = b.x + b.width / 2;
@@ -2466,11 +2612,19 @@ function getConfidenceStyle(confidence: Confidence | undefined) {
 }
 
 function getReviewCardPlacement(target: ScanReviewTarget | null): ReviewCardPlacement {
+  if (window.innerWidth < 520 && target) {
+    return {
+      anchorSide: "right",
+      left: 14,
+      top: Math.max(72, window.innerHeight - 320),
+    };
+  }
+
   if (!target) {
     return {
       anchorSide: "right",
       left: 14,
-      top: Math.max(72, window.innerHeight - SCAN_CARD_SAFE_HEIGHT_PX),
+      top: Math.max(72, window.innerHeight - 420),
     };
   }
 

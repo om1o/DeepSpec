@@ -6,10 +6,18 @@ type SupabaseAuthConfig = {
   url: string;
 };
 
+export type EmailSignInDelivery = "link" | "code";
+export type EmailSignInResult = {
+  delivery: EmailSignInDelivery;
+  emailRedirectTo?: string;
+};
+
 const AUTH_VERIFY_TIMEOUT_MS = 8_000;
+const AUTH_VERIFIED_CACHE_MS = 30_000;
 const DEFAULT_POST_AUTH_PATH = "/scan";
 let clientPromise: Promise<SupabaseClient> | null = null;
 let authRedirectPromise: Promise<boolean> | null = null;
+let verifiedAuthUserCache: { user: User; verifiedAt: number } | null = null;
 
 export function isSupabaseAuthConfigured() {
   return Boolean(getSupabaseAuthConfig());
@@ -35,23 +43,32 @@ export async function getVerifiedAuthUser(): Promise<User | null> {
 async function verifyAuthUser(client: SupabaseClient): Promise<User | null> {
   const redirectReady = await completeAuthRedirectIfNeeded(client);
   if (!redirectReady) {
+    clearVerifiedAuthUserCache();
     return null;
+  }
+
+  const cachedUser = getCachedVerifiedAuthUser();
+  if (cachedUser) {
+    return cachedUser;
   }
 
   const result = await withTimeout(client.auth.getUser().catch(() => null), AUTH_VERIFY_TIMEOUT_MS);
   if (!result) {
+    clearVerifiedAuthUserCache();
     return null;
   }
 
   const { data, error } = result;
   if (error || !data.user) {
+    clearVerifiedAuthUserCache();
     return null;
   }
 
+  verifiedAuthUserCache = { user: data.user, verifiedAt: Date.now() };
   return data.user;
 }
 
-export async function sendEmailSignInLink(email: string, redirectPath?: string) {
+export async function sendEmailSignInLink(email: string, redirectPath?: string): Promise<EmailSignInResult> {
   const client = await getRequiredAuthClient();
   const emailRedirectTo = getAuthRedirectUrl(redirectPath);
   const result = await client.auth.signInWithOtp({
@@ -62,9 +79,33 @@ export async function sendEmailSignInLink(email: string, redirectPath?: string) 
     },
   });
 
+  if (!result.error) {
+    return {
+      delivery: emailRedirectTo ? "link" : "code",
+      ...(emailRedirectTo ? { emailRedirectTo } : {}),
+    };
+  }
+
+  if (emailRedirectTo && isEmailRedirectRejected(result.error.message)) {
+    const codeOnlyResult = await client.auth.signInWithOtp({
+      email,
+      options: {
+        shouldCreateUser: true,
+      },
+    });
+
+    if (!codeOnlyResult.error) {
+      return { delivery: "code" };
+    }
+
+    throw new Error(codeOnlyResult.error.message);
+  }
+
   if (result.error) {
     throw new Error(result.error.message);
   }
+
+  return { delivery: "code" };
 }
 
 export async function verifyEmailCode(email: string, token: string) {
@@ -180,6 +221,8 @@ export async function signOut() {
   if (result.error) {
     throw new Error(result.error.message);
   }
+
+  clearVerifiedAuthUserCache();
 }
 
 export async function getAuthClient() {
@@ -215,14 +258,17 @@ export async function subscribeToAuthChanges(onChange: (user: User | null) => vo
 
   const subscription = client.auth.onAuthStateChange((_event: AuthChangeEvent, session: Session | null) => {
     if (!session?.user) {
+      clearVerifiedAuthUserCache();
       onChange(null);
       return;
     }
 
     setTimeout(() => {
+      clearVerifiedAuthUserCache();
       void verifyAuthUser(client)
         .then(onChange)
         .catch(() => {
+          clearVerifiedAuthUserCache();
           onChange(null);
         });
     }, 0);
@@ -276,6 +322,28 @@ function isOAuthProviderEnabled(flag: string | undefined) {
   }
 
   return flag?.trim().toLowerCase() === "true";
+}
+
+function isEmailRedirectRejected(message: string) {
+  return /redirect|redirect_to|emailRedirectTo|site url|url/i.test(message)
+    && /not allowed|not.*allow|invalid|unauthori[sz]ed|forbidden/i.test(message);
+}
+
+function getCachedVerifiedAuthUser() {
+  if (!verifiedAuthUserCache) {
+    return null;
+  }
+
+  if (Date.now() - verifiedAuthUserCache.verifiedAt > AUTH_VERIFIED_CACHE_MS) {
+    clearVerifiedAuthUserCache();
+    return null;
+  }
+
+  return verifiedAuthUserCache.user;
+}
+
+function clearVerifiedAuthUserCache() {
+  verifiedAuthUserCache = null;
 }
 
 async function getRequiredAuthClient() {

@@ -54,6 +54,9 @@ const scenarioHandlers = {
   "early-access": runEarlyAccess,
   "result-chat": runResultChat,
   "result-detail": runResultDetail,
+  "account-entitlements": runAccountEntitlements,
+  checkout: runCheckout,
+  pricing: runPricing,
   "scanner-ai-engine": runScannerAiEngine,
   "saved-history": runSavedHistory,
   scanner: runScanner,
@@ -489,10 +492,78 @@ async function runEarlyAccess() {
   };
 }
 
+async function runPricing() {
+  await requireAuthForProtectedRoute("pricing");
+  await gotoPath("/pricing");
+  await expectText(/DeepSpec paid beta/i, "pricing heading", "frontend", ["src/screens/Pricing.tsx"]);
+  await expectText(/DeepSpec Plus/i, "plus plan", "frontend", ["src/screens/Pricing.tsx", "src/services/revenue.ts"]);
+  await expectText(/\$9\.99/i, "monthly price", "frontend", ["src/screens/Pricing.tsx", "src/services/revenue.ts"]);
+  await expectText(/Scan Pack/i, "scan pack", "frontend", ["src/screens/Pricing.tsx", "src/services/revenue.ts"]);
+  await expectText(/fake certainty/i, "uncertainty copy", "frontend", ["src/screens/Pricing.tsx"]);
+
+  return {
+    details: "Pricing rendered Plus, yearly, scan-pack, and Pro paid-beta offers with uncertainty-safe copy.",
+    likelyFiles: ["src/screens/Pricing.tsx", "src/services/revenue.ts"],
+    status: "pass",
+  };
+}
+
+async function runCheckout() {
+  await requireAuthForProtectedRoute("checkout");
+  await gotoPath("/pricing");
+  const status = await page.evaluate(async () => {
+    const response = await fetch("/api/billing-checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ planId: "fake-plan", origin: globalThis.location.origin }),
+    });
+    const body = await response.json().catch(() => null);
+    return {
+      body,
+      status: response.status,
+    };
+  });
+
+  if (status.status !== 400 || status.body?.error?.code !== "invalid_plan") {
+    throw new QaIssue(
+      "backend",
+      `Checkout did not fail closed for an invalid plan. HTTP ${status.status}.`,
+      {
+        likelyFiles: ["api/billing.shared.ts", "src/services/revenue.ts"],
+        suggestedFix: "Reject invalid checkout plan ids before contacting Stripe or redirecting a user.",
+      },
+    );
+  }
+
+  return {
+    category: "backend",
+    details: "Checkout endpoint rejected an invalid plan without creating a Stripe session or redirect.",
+    likelyFiles: ["api/billing.shared.ts", "src/screens/Pricing.tsx"],
+    status: "pass",
+  };
+}
+
+async function runAccountEntitlements() {
+  await requireAuthForProtectedRoute("account-entitlements");
+  await seedSavedScans();
+  await gotoPath("/account");
+  await expectText(/Your DeepSpec access/i, "account heading", "frontend", ["src/screens/Account.tsx"]);
+  await expectText(/Free preview/i, "default entitlement", "frontend", ["src/screens/Account.tsx", "src/services/revenue.ts"]);
+  await expectText(/Paid access remains fail-closed/i, "fail-closed paid copy", "frontend", ["src/screens/Account.tsx"]);
+
+  return {
+    details: "Account entitlements rendered the free preview state and fail-closed paid-access copy.",
+    likelyFiles: ["src/screens/Account.tsx", "src/services/revenue.ts"],
+    status: "pass",
+  };
+}
+
 async function runApiCloudHealth() {
   const failures = [];
   const identifyStatus = await getStatus(`${baseUrl}/api/identify`);
   const chatStatus = await getStatus(`${baseUrl}/api/chat`);
+  const checkoutStatus = await getStatus(`${baseUrl}/api/billing-checkout`);
+  const portalStatus = await getStatus(`${baseUrl}/api/billing-portal`);
 
   if (identifyStatus !== 405) {
     failures.push(`/api/identify returned HTTP ${identifyStatus}; expected 405 for safe GET.`);
@@ -500,6 +571,14 @@ async function runApiCloudHealth() {
 
   if (chatStatus !== 405) {
     failures.push(`/api/chat returned HTTP ${chatStatus}; expected 405 for safe GET.`);
+  }
+
+  if (checkoutStatus !== 405) {
+    failures.push(`/api/billing-checkout returned HTTP ${checkoutStatus}; expected 405 for safe GET.`);
+  }
+
+  if (portalStatus !== 405) {
+    failures.push(`/api/billing-portal returned HTTP ${portalStatus}; expected 405 for safe GET.`);
   }
 
   const supabaseUrl = process.env.VITE_SUPABASE_URL?.trim();
@@ -654,9 +733,9 @@ async function selectTabIfNeeded(name, label) {
 
 async function waitForAny(locators, label) {
   const attempts = locators.map((locator) => locator.waitFor({ state: "visible", timeout: 7_000 }));
-  const settled = await Promise.allSettled(attempts);
-
-  if (settled.every((result) => result.status === "rejected")) {
+  try {
+    await Promise.any(attempts);
+  } catch {
     throw new QaIssue(
       "frontend",
       `Expected one of the ${label}, but none were visible.`,
@@ -810,7 +889,7 @@ async function waitForScannerAiOutcome() {
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     const text = await getBodyText();
-    if (/Lens result|Best match|Complete brief|Tell me more/i.test(text)) {
+    if (/Lens result|Best match|Complete brief|Tell me more|What this is|Next step|Open details/i.test(text)) {
       return { text: compactText(text), type: "result" };
     }
 
