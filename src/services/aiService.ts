@@ -53,6 +53,8 @@ type AIApiFailure = {
   };
 };
 
+const ON_DEVICE_PROVIDER_FALLBACK_TIMEOUT_MS = 90_000;
+
 export class AIServiceError extends Error {
   code: AIErrorCode | string;
 
@@ -138,7 +140,7 @@ export async function identifyCapturedFrame(
 
   const result = await runCloudIdentify(frame, secondFrame, labelRescueTrigger, options).catch((error: unknown) => {
     if (shouldUseOnDeviceAfterCloudError(error)) {
-      return identifyOnDevice(frame);
+      return identifyOnDeviceWithTimeout(frame, error);
     }
 
     throw error;
@@ -175,6 +177,21 @@ function shouldUseOnDeviceAfterCloudError(error: unknown) {
   }
 
   return getAIErrorDetails(error.code).category === "provider_unavailable";
+}
+
+async function identifyOnDeviceWithTimeout(frame: CapturedFrame, cloudError: unknown) {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = setTimeout(() => reject(cloudError), ON_DEVICE_PROVIDER_FALLBACK_TIMEOUT_MS);
+  });
+
+  try {
+    return await Promise.race([identifyOnDevice(frame), timeout]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
 }
 
 export async function sendFollowUp(lookup: Lookup, question: string): Promise<string> {

@@ -372,7 +372,7 @@ async function runScannerAiEngine() {
     );
   }
 
-  if (identifyApiIssue?.category === "environment") {
+  if (identifyApiIssue?.category === "environment" && outcome.type !== "result") {
     throw new QaIssue(
       "environment",
       `Engine scan was blocked by provider availability. ${identifyApiIssue.reason} Fixture=${fixture.source}. ${timingSummary}. Visible state: ${outcome.text}`,

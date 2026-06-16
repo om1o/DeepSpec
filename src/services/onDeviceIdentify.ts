@@ -15,7 +15,6 @@ const ON_DEVICE_LABELS = [
   "broken car front bumper",
   "damaged front bumper",
   "front bumper",
-  "car headlamp",
   "headlight",
   "broken car tail light",
   "tail light",
@@ -27,16 +26,9 @@ const ON_DEVICE_LABELS = [
   "brake rotor",
   "brake caliper",
   "car radiator close up",
-  "radiator in engine bay",
   "car radiator",
   "radiator",
   "engine assembly",
-  "alternator",
-  "starter motor",
-  "battery",
-  "door panel",
-  "quarter panel",
-  "grille",
 ];
 
 export function isOnDeviceFallbackEnabled() {

@@ -56,7 +56,7 @@ const CASES = [
     slug: "commons-engine-bay",
     fileTitle: "File:2023 Subaru Outback Limited 2.5 liter 4 cyl engine bay.jpg",
     expectedLabels: ["engine", "engine assembly", "engine bay"],
-    forbiddenPatterns: ["unknown component", "vehicle component"],
+    forbiddenPatterns: ["unknown component", "vehicle component", "^radiator", "radiator in engine bay"],
   },
 ];
 

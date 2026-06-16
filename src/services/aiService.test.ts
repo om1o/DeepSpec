@@ -116,6 +116,38 @@ describe("aiService", () => {
     expect(identifyOnDevice).not.toHaveBeenCalled();
   });
 
+  it("returns the provider error when the online on-device fallback stalls", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "true");
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: "rate_limited",
+            message: "Too many AI lookups right now. Try again in a few minutes.",
+          },
+        }),
+        {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    vi.mocked(identifyOnDevice).mockReset().mockReturnValue(new Promise(() => undefined) as never);
+
+    const scan = identifyCapturedFrame({
+      imageBase64: "data:image/jpeg;base64,test",
+      capturedAt: "2026-05-16T00:00:00.000Z",
+    });
+    const rejection = expect(scan).rejects.toMatchObject({ code: "rate_limited" });
+    await vi.advanceTimersByTimeAsync(90_000);
+
+    await rejection;
+    expect(identifyOnDevice).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+  });
+
   it("routes vision calls through the identify API", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ result }), {
