@@ -1460,11 +1460,30 @@ function LensPartOverlays({ result, target }: { result: IdentificationResult; ta
     return null;
   }
 
-  const targetBox = targetToLensBox(getPartFocusedReviewTarget(target, result.partName));
+  const focusTarget = getPartFocusedReviewTarget(target, result.partName);
+  const contextBox = targetToLensBox(target);
+  const targetBox = targetToLensBox(focusTarget);
+  const showContextBox = isFocusedTargetDifferent(target, focusTarget);
   const evidenceChips = getLensEvidenceChips(result);
 
   return (
     <div className="pointer-events-none fixed inset-0 z-40" aria-label="Detected target overlay">
+      {showContextBox ? (
+        <div
+          data-testid="lens-context-overlay"
+          className="absolute rounded-[18px]"
+          style={{
+            height: contextBox.height,
+            left: contextBox.left,
+            top: contextBox.top,
+            width: contextBox.width,
+            border: "1px dashed rgba(125,211,252,0.34)",
+            background: "rgba(0,194,255,0.018)",
+            boxShadow: "inset 0 0 28px rgba(0,170,255,0.08)",
+          }}
+        />
+      ) : null}
+
       <div
         data-testid="lens-part-overlay-0"
         className="absolute rounded-[16px]"
@@ -1607,6 +1626,13 @@ function getPartFocusBox(partName: string) {
   }
 
   return null;
+}
+
+function isFocusedTargetDifferent(target: ScanReviewTarget, focusTarget: ScanReviewTarget) {
+  const widthDelta = Math.abs(target.width - focusTarget.width);
+  const heightDelta = Math.abs(target.height - focusTarget.height);
+  const positionDelta = Math.hypot(target.x - focusTarget.x, target.y - focusTarget.y);
+  return widthDelta > 8 || heightDelta > 8 || positionDelta > 8;
 }
 
 function targetToLensBox(target: ScanReviewTarget) {

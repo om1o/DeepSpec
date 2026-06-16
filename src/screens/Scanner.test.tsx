@@ -264,6 +264,42 @@ describe("Scanner", () => {
     });
   }, 10000);
 
+  it("shows a context AR outline when a body part uses a tighter focus overlay", async () => {
+    objectTargetState.current = makeObjectTarget({
+      confidence: 0.82,
+      height: 340,
+      holdProgress: 1,
+      isLocked: true,
+      left: 24,
+      top: 120,
+      width: 340,
+    });
+    identifyCapturedFrame.mockResolvedValueOnce({
+      ...makeScanResult("front bumper"),
+      scanCategory: "body",
+      whatItDoes: "The front bumper is the front impact cover.",
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(captureFrame).toHaveBeenCalled());
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId("lens-context-overlay")).toBeInTheDocument();
+    expect(screen.getByTestId("lens-primary-label")).toHaveTextContent("front bumper");
+    expect(screen.getByTestId("lens-part-overlay-0")).toHaveStyle({
+      height: "95.19999999999999px",
+      left: "71.6px",
+      top: "337.6px",
+      width: "244.79999999999998px",
+    });
+  }, 10000);
+
   it("does not turn text-only evidence regions into fake AR boxes", async () => {
     objectTargetState.current = makeObjectTarget({
       confidence: 0.82,
