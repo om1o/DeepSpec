@@ -1954,7 +1954,7 @@ function normalizeIdentificationResult(
   const cleanEvidence = appendDatasetEvidence(appendOcrEvidence(cleanList(result.evidence), ocrText), datasetMatches);
   const originalPartName = cleanText(result.partName, "Unidentified car part");
   const scanCategory = getTrustedCategory(result);
-  const partName = resolvePrimaryPartName(originalPartName, datasetMatches, result, scanCategory);
+  const partName = resolvePrimaryPartName(originalPartName, datasetMatches, result);
   const resolvedScanCategory = resolvePartScanCategory(scanCategory, partName);
   const safety = normalizeSafetyFlags(result, scanCategory);
   const visibleObservations = cleanList(result.visibleObservations);
@@ -1999,7 +1999,6 @@ function resolvePrimaryPartName(
   partName: string,
   datasetMatches: DatasetMatch[],
   result?: IdentificationResult,
-  scanCategory?: ScanCategory,
 ) {
   if (
     isGenericEnginePartName(partName) &&

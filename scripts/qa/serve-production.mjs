@@ -1,6 +1,6 @@
 import { createServer as createHttpServer } from "node:http";
 import { createReadStream, existsSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { basename, extname, join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createServer as createViteServer } from "vite";

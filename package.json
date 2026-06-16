@@ -17,6 +17,7 @@
     "eval:identify:public": "node scripts/eval-identify.mjs --sample-set public --sample-size 300 --delay-ms 0 --provider-timeout-ms 90000 --max-provider-failures 1 && node scripts/verify-identify-eval-summary.mjs --min-sample-size 300",
     "lint": "eslint .",
     "qa:doctor": "node scripts/qa/qa-doctor.mjs",
+    "qa:external-ar": "node scripts/qa/external-ar-tester.mjs",
     "qa:real": "node scripts/qa/real-website-tester.mjs",
     "qa:serve-production": "node scripts/qa/serve-production.mjs",
     "test": "vitest run --configLoader native --pool threads --maxWorkers=1 --no-file-parallelism",
