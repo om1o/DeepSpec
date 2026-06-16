@@ -10,6 +10,7 @@ const outputDir = path.join(qaRoot, `phone-test-card-${stamp}`);
 await mkdir(outputDir, { recursive: true });
 
 const latestWebsiteReport = await findLatestFile(/^20.*Z$/, "report.md");
+const latestWebArReport = await findLatestArReport("web-public-ar-", "web-public-ar-qa.md");
 const latestExternalArReport = await findLatestExternalArReport();
 const payload = {
   baseUrl,
@@ -20,6 +21,7 @@ const payload = {
   grade: 0,
   gradeReason: "Actual phone scan has not been performed from this machine.",
   latestWebsiteReport,
+  latestWebArReport,
   latestExternalArReport,
   checks: [
     "Open the URL on the real phone over cellular or Wi-Fi.",
@@ -68,6 +70,7 @@ function renderMarkdown(data) {
     `- Reason: ${data.gradeReason}`,
     `- QR code: ${data.qrCodeUrl}`,
     data.latestWebsiteReport ? `- Latest website QA: ${data.latestWebsiteReport}` : "- Latest website QA: not found",
+    data.latestWebArReport ? `- Latest strict web AR QA: ${data.latestWebArReport}` : "- Latest strict web AR QA: not found",
     data.latestExternalArReport ? `- Latest external AR QA: ${data.latestExternalArReport}` : "- Latest external AR QA: not found",
     "",
     "## Required Real Phone Checks",
@@ -158,13 +161,17 @@ function escapeHtml(value) {
 }
 
 async function findLatestExternalArReport() {
+  return findLatestArReport("external-public-ar-", "external-public-ar-qa.md");
+}
+
+async function findLatestArReport(prefix, reportFileName) {
   const entries = await safeReadQaDirs();
   const dirs = entries
-    .filter((entry) => entry.isDirectory() && entry.name.startsWith("external-public-ar-"))
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith(prefix))
     .sort((a, b) => b.name.localeCompare(a.name));
 
   for (const dir of dirs) {
-    const reportPath = path.join(qaRoot, dir.name, "external-public-ar-qa.md");
+    const reportPath = path.join(qaRoot, dir.name, reportFileName);
     if (await fileExists(reportPath)) {
       return reportPath;
     }
