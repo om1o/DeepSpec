@@ -73,21 +73,17 @@ describe("aiService", () => {
     onlineSpy.mockRestore();
   });
 
-  it("falls back to the on-device model when the cloud chain is unreachable", async () => {
+  it("does not use the on-device model for online cloud network errors", async () => {
     vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "true");
     vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network down"));
-    const offlineResult = {
-      ...result,
-      modelRun: { provider: "on-device", model: "SmolVLM-256M", latencyMs: 12, fallbackReason: "offline", ocrUsed: false },
-    };
-    vi.mocked(identifyOnDevice).mockReset().mockResolvedValue(offlineResult as never);
+    vi.mocked(identifyOnDevice).mockReset();
 
     await expect(
       identifyCapturedFrame({ imageBase64: "data:image/jpeg;base64,test", capturedAt: "2026-05-16T00:00:00.000Z" }),
-    ).resolves.toMatchObject({ modelRun: { provider: "on-device" } });
+    ).rejects.toMatchObject({ code: "network" });
 
-    expect(identifyOnDevice).toHaveBeenCalledOnce();
+    expect(identifyOnDevice).not.toHaveBeenCalled();
   });
 
   it("routes vision calls through the identify API", async () => {

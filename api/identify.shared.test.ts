@@ -589,7 +589,7 @@ describe("createIdentifyResponse", () => {
       status: 200,
       body: {
         result: {
-          partName: "Engine",
+          partName: "Engine assembly",
           confidence: "high",
           scanCategory: "engine",
           visibleObservations: ["Engine bay components are visible."],
@@ -1574,6 +1574,160 @@ describe("createIdentifyResponse", () => {
     );
   });
 
+  it("replaces a branded generic engine label with an engine assembly result", async () => {
+    const brandedGenericEngineResult = {
+      ...result,
+      partName: "Deep Spec Engine",
+      scanCategory: "electrical",
+      primaryPart: {
+        partName: "Deep Spec Engine",
+        confidence: "high",
+        scanCategory: "electrical",
+        evidence: ["The model returned a branded generic engine label."],
+      },
+      candidateMatches: [],
+      whatItDoes: "This is a visible vehicle component that should be verified with vehicle-specific context before ordering or repair.",
+      visibleObservations: [],
+      evidence: [],
+      evidenceRegions: [],
+      concerns: [],
+      nextAction: "Take another photo of the engine from a different angle to gather more information.",
+      safetyTriage: "can_help",
+      isSafetyCritical: false,
+    };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(brandedGenericEngineResult) }] } }],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    const response = await createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" });
+
+    expect(response).toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          partName: "Engine assembly",
+          scanCategory: "engine",
+          whatItDoes: expect.stringContaining("engine assembly"),
+          nextAction: expect.stringContaining("vehicle year"),
+          primaryPart: {
+            partName: "Engine assembly",
+            scanCategory: "engine",
+          },
+        },
+      },
+    });
+  });
+
+  it("replaces a plain generic engine retry result with an engine assembly result", async () => {
+    const genericEngineResult = {
+      ...result,
+      partName: "Engine",
+      scanCategory: "electrical",
+      primaryPart: {
+        partName: "Engine",
+        confidence: "high",
+        scanCategory: "electrical",
+        evidence: [],
+      },
+      candidateMatches: [],
+      whatItDoes: "This is a visible vehicle component that should be verified with vehicle-specific context before ordering or repair.",
+      visibleObservations: [],
+      evidence: [],
+      evidenceRegions: [],
+      concerns: [],
+      nextAction: "Take another photo of the engine from a different angle to gather more information.",
+      safetyTriage: "can_help",
+      isSafetyCritical: false,
+    };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(genericEngineResult) }] } }],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          partName: "Engine assembly",
+          scanCategory: "engine",
+          whatItDoes: expect.stringContaining("engine assembly"),
+          nextAction: expect.stringContaining("vehicle year"),
+        },
+      },
+    });
+  });
+
+  it("strips a Deep Spec prefix from a specific engine part label", async () => {
+    const brandedValveCoverResult = {
+      ...result,
+      partName: "Deep Spec valve cover",
+      scanCategory: "electrical",
+      primaryPart: {
+        partName: "Deep Spec valve cover",
+        confidence: "high",
+        scanCategory: "electrical",
+        evidence: ["The valve cover and gasket area are visible at the top of the engine."],
+      },
+      candidateMatches: [],
+      whatItDoes: "This is a visible vehicle component that should be verified with vehicle-specific context before ordering or repair.",
+      visibleObservations: ["A valve cover is visible across the top of the engine."],
+      evidence: ["The top engine cover area and gasket edge are visible."],
+      evidenceRegions: [],
+      concerns: [],
+      nextAction: "Check the valve cover gasket for any signs of wear or damage.",
+      safetyTriage: "can_help",
+      isSafetyCritical: false,
+    };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(brandedValveCoverResult) }] } }],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    const response = await createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" });
+
+    expect(response).toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          partName: "valve cover",
+          scanCategory: "engine",
+          whatItDoes: expect.stringContaining("seals the top of the cylinder head"),
+          primaryPart: {
+            partName: "valve cover",
+            scanCategory: "engine",
+          },
+        },
+      },
+    });
+    expect(response.body.result.partName).not.toMatch(/deep spec/i);
+    expect(response.body.result.whatItDoes).not.toMatch(/visible vehicle component/i);
+  });
+
   it("replaces generic body-part explanation with a specific recognized-part description", async () => {
     const bumperResult = {
       ...result,
@@ -1624,6 +1778,141 @@ describe("createIdentifyResponse", () => {
       },
     });
     expect(response.body.result.whatItDoes).not.toMatch(/visible vehicle component/i);
+  });
+
+  it("normalizes a quarter-panel label to front fender when the evidence is the front wheel arch", async () => {
+    const frontFenderResult = {
+      ...result,
+      partName: "Quarter-panel",
+      scanCategory: "body",
+      primaryPart: {
+        partName: "Quarter-panel",
+        confidence: "high",
+        scanCategory: "body",
+        evidence: [
+          "The front wheel arch, hood seam, and headlight edge are visible around the damaged panel.",
+        ],
+      },
+      candidateMatches: [],
+      whatItDoes: "The damaged body panel sits beside the front wheel opening.",
+      visibleObservations: [
+        "The front wheel and tire are visible below the damaged area.",
+        "The hood seam and headlight are adjacent to the panel.",
+      ],
+      evidence: [
+        "Front-end clues place this around the front wheel opening, not the rear quarter.",
+      ],
+      evidenceRegions: [
+        {
+          label: "Quarter Panel",
+          observation: "Damage is above the front wheel opening near the headlight.",
+          regionLabel: "front wheel arch",
+        },
+      ],
+      concerns: ["Dent visible near the front wheel arch."],
+      safetyTriage: "can_help",
+      isSafetyCritical: false,
+      nextAction: "Take a closer photo of the front wheel arch and hood gap.",
+    };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(frontFenderResult) }] } }],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    const response = await createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" });
+
+    expect(response).toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          partName: "Front fender",
+          primaryPart: {
+            partName: "Front fender",
+          },
+          scanCategory: "body",
+          whatItDoes: expect.stringContaining("outer body panel around the wheel opening"),
+        },
+      },
+    });
+    expect(response.body.result.evidenceRegions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "Front fender",
+          observation: expect.not.stringMatching(/quarter[- ]panel/i),
+        }),
+      ]),
+    );
+  });
+
+  it("normalizes a front wheel arch dent into a specific front fender dent label", async () => {
+    const frontFenderDentResult = {
+      ...result,
+      partName: "Dent",
+      scanCategory: "body",
+      primaryPart: {
+        partName: "Dent",
+        confidence: "high",
+        scanCategory: "body",
+        evidence: [
+          "The dent is located around the front wheel arch beside the headlight.",
+        ],
+      },
+      candidateMatches: [],
+      whatItDoes: "Dent is the specific exterior body area identified in this scan.",
+      visibleObservations: [
+        "The front wheel, headlight, and hood seam frame the damaged area.",
+      ],
+      evidence: [
+        "The damage sits on the front fender area above the tire.",
+      ],
+      evidenceRegions: [
+        {
+          label: "Dent",
+          observation: "Small dent above the front wheel arch.",
+          regionLabel: "front fender",
+        },
+      ],
+      concerns: ["Dent visible near the front wheel arch."],
+      safetyTriage: "can_help",
+      isSafetyCritical: false,
+      nextAction: "Inspect the front fender dent from a closer angle.",
+    };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(frontFenderDentResult) }] } }],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    const response = await createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" });
+
+    expect(response).toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          partName: "Front fender dent",
+          primaryPart: {
+            partName: "Front fender dent",
+          },
+          scanCategory: "body",
+          whatItDoes: expect.stringContaining("outer body panel around the wheel opening"),
+        },
+      },
+    });
   });
 
   it("keeps a complete engine assembly in the engine category when fuel is mentioned generically", async () => {

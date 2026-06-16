@@ -136,27 +136,19 @@ export async function identifyCapturedFrame(
     return identifyOnDevice(frame);
   }
 
-  try {
-    const result = await runAI({
-      type: "vision",
-      imageBase64: frame.imageBase64,
-      imageBase64_2: secondFrame?.imageBase64,
-      labelRescueTrigger,
-      measurementContext: options.measurementContext,
-      userMessage: "Identify this car part from the captured photo.",
-      vehicleContext: options.vehicleContext,
-      systemPrompt: IDENTIFY_PROMPT,
-      responseAsJson: true,
-    });
+  const result = await runAI({
+    type: "vision",
+    imageBase64: frame.imageBase64,
+    imageBase64_2: secondFrame?.imageBase64,
+    labelRescueTrigger,
+    measurementContext: options.measurementContext,
+    userMessage: "Identify this car part from the captured photo.",
+    vehicleContext: options.vehicleContext,
+    systemPrompt: IDENTIFY_PROMPT,
+    responseAsJson: true,
+  });
 
-    return assertIdentificationResult(result);
-  } catch (error) {
-    if (isOnDeviceFallbackEnabled() && error instanceof AIServiceError && error.code === "network") {
-      return identifyOnDevice(frame);
-    }
-
-    throw error;
-  }
+  return assertIdentificationResult(result);
 }
 
 export async function sendFollowUp(lookup: Lookup, question: string): Promise<string> {

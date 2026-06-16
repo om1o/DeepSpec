@@ -22,6 +22,7 @@ const passingQuality = {
   ok: true,
 };
 const createFocusedScanCrop = vi.fn(async () => "data:image/jpeg;base64,target-crop");
+const detectObjectTargetFromImageData = vi.fn(() => null);
 const getCloudSyncStatus = vi.fn(() => ({ configured: false, message: "Cloud sync is off." }));
 const syncLookupToCloud = vi.fn(async () => ({ ok: true, message: "Scan synced." }));
 const identifyCapturedFrame = vi.fn(async () => ({
@@ -148,6 +149,10 @@ vi.mock("../lib/focusCrop", () => ({
   createFocusedScanCrop: (...args: unknown[]) => createFocusedScanCrop(...args),
 }));
 
+vi.mock("../lib/objectTargeting", () => ({
+  detectObjectTargetFromImageData: (...args: unknown[]) => detectObjectTargetFromImageData(...args),
+}));
+
 // Cache always misses in scanner tests - cache logic tested in scanCache.test.ts
 vi.mock("../lib/scanCache", () => ({
   hashImageDataUrl: vi.fn(async () => null),
@@ -170,6 +175,8 @@ describe("Scanner", () => {
     assessImageQuality.mockResolvedValue(passingQuality);
     createFocusedScanCrop.mockReset();
     createFocusedScanCrop.mockResolvedValue("data:image/jpeg;base64,target-crop");
+    detectObjectTargetFromImageData.mockReset();
+    detectObjectTargetFromImageData.mockReturnValue(null);
     getCloudSyncStatus.mockReset();
     getCloudSyncStatus.mockReturnValue({ configured: false, message: "Cloud sync is off." });
     syncLookupToCloud.mockReset();
@@ -653,6 +660,74 @@ describe("Scanner", () => {
         analysisSource: "ai_detection",
         captureMode: "upload",
       },
+    });
+  }, 10000);
+
+  it("sends a focused detector crop as the AI image for uploaded photos", async () => {
+    cameraHookState.current = {
+      cameraError: "Permission denied",
+      cameraRequestId: 7,
+      cameraState: "blocked",
+    };
+    detectObjectTargetFromImageData.mockReturnValue({
+      confidence: 0.81,
+      height: 0.18,
+      width: 0.16,
+      x: 0.42,
+      y: 0.22,
+    });
+
+    class TestImage {
+      naturalHeight = 600;
+      naturalWidth = 1000;
+      onerror: null | (() => void) = null;
+      onload: null | (() => void) = null;
+
+      set src(_value: string) {
+        window.setTimeout(() => this.onload?.(), 0);
+      }
+    }
+
+    vi.stubGlobal("Image", TestImage);
+    const originalCreateElement = document.createElement.bind(document);
+    vi.spyOn(document, "createElement").mockImplementation((tagName, options) => {
+      if (tagName.toLowerCase() === "canvas") {
+        return {
+          getContext: () => ({
+            drawImage: vi.fn(),
+            getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(4), height: 1, width: 1 })),
+          }),
+          height: 0,
+          width: 0,
+        } as unknown as HTMLCanvasElement;
+      }
+
+      return originalCreateElement(tagName, options);
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await userEvent.upload(
+      screen.getByLabelText("Upload photo"),
+      new File(["test-image"], "front-fender.jpg", { type: "image/jpeg" }),
+    );
+
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    expect(createFocusedScanCrop).toHaveBeenCalledWith(expect.stringMatching(/^data:image\/jpeg;base64,/), {
+      confidence: 0.81,
+      height: 0.18,
+      width: 0.16,
+      x: 0.42,
+      y: 0.22,
+    });
+    expect(identifyCapturedFrame.mock.calls[0][0]).toMatchObject({
+      imageBase64: "data:image/jpeg;base64,target-crop",
     });
   }, 10000);
 

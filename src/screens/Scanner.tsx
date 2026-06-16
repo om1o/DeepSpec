@@ -69,6 +69,7 @@ type ScanReviewTarget = {
   width: number;
   height: number;
   confidence: number;
+  normalized?: ObjectTargetBox;
 };
 
 type ScanReviewState = {
@@ -412,8 +413,9 @@ export default function Scanner() {
 
     let focusedFrame: CapturedFrame | undefined;
     let secondFrame: CapturedFrame | undefined;
-    const focusedCrop = reviewTargetOverride?.normalized
-      ? await createFocusedScanCrop(imageBase64, reviewTargetOverride.normalized)
+    const focusedCropTarget = reviewTargetOverride?.normalized ?? uploadReviewTarget?.normalized ?? null;
+    const focusedCrop = focusedCropTarget
+      ? await createFocusedScanCrop(imageBase64, focusedCropTarget)
       : null;
     if (!isScanRequestActive(requestId)) return;
     if (focusedCrop) {
@@ -2376,6 +2378,7 @@ function mapImageTargetToViewport(target: ObjectTargetBox, imageWidth: number, i
     confidence: target.confidence,
     height: target.height * renderedHeight,
     id: "upload-target",
+    normalized: target,
     width: target.width * renderedWidth,
     x: offsetX + target.x * renderedWidth,
     y: offsetY + target.y * renderedHeight,
@@ -2400,6 +2403,7 @@ function getObjectTargetFromReviewTarget(reviewTarget: ScanReviewTarget): Camera
     id: reviewTarget.id,
     isLocked: true,
     left: reviewTarget.x,
+    normalized: reviewTarget.normalized,
     top: reviewTarget.y,
     width: reviewTarget.width,
   };

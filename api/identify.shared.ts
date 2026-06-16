@@ -1866,7 +1866,7 @@ function normalizeNextAction(
 
   if (partName.toLowerCase() === "engine assembly") {
     const cleaned = cleanText(nextAction, "");
-    if (!cleaned || /owner.?s manual|visible identification|specific engine details|vehicle component|another photo of the label/i.test(cleaned)) {
+    if (!cleaned || /owner.?s manual|visible identification|specific engine details|vehicle component|another photo of (?:the )?(?:label|engine)/i.test(cleaned)) {
       return "Use the vehicle year, make, model, or VIN before ordering engine-bay parts; inspect the exact cover, intake, belt, hose, or wiring area you need.";
     }
   }
@@ -1883,7 +1883,10 @@ function normalizeNextAction(
 
 function normalizeWhatItDoes(whatItDoes: string, partName: string, scanCategory: ScanCategory) {
   const cleaned = cleanText(whatItDoes, "");
-  const generic = !cleaned || /visible vehicle component|vehicle-specific context|could not verify/i.test(cleaned);
+  const normalizedPartName = partName.toLowerCase();
+  const generic = !cleaned
+    || /visible vehicle component|vehicle-specific context|could not verify|damaged body panel|body panel sits/i.test(cleaned)
+    || (/\bfender\b/.test(normalizedPartName) && /quarter[- ]panel|rear-side|tail-?light edge|trunk\/side|\b(dent|scratch|broken part) is the specific exterior body area/i.test(cleaned));
 
   if (partName.toLowerCase() === "engine assembly") {
     if (generic) {
@@ -1923,6 +1926,11 @@ function describeRecognizedPart(partName: string, scanCategory: ScanCategory) {
     [/\brocker panel\b/, `${partName} is the lower side body panel below the doors; it supports side sealing and is commonly checked for dents, corrosion, and structural damage.`],
     [/\btrunk\b/, `${partName} is the rear cargo closure panel; alignment with quarter panels, bumper, tail lights, and latch hardware matters for repair.`],
     [/\broof\b/, `${partName} is the upper body panel; dents, glass edges, rails, and weather sealing determine repair scope.`],
+    [/\bvalve cover\b/, `${partName} seals the top of the cylinder head and keeps engine oil contained around the valvetrain; gasket leaks, fasteners, hoses, and wiring nearby should be inspected.`],
+    [/\bengine cover\b/, `${partName} is the visible cover over the engine assembly; remove or inspect surrounding intake, hose, wiring, and fastener areas before identifying the exact service part.`],
+    [/\bintake (manifold|duct|hose|tube|boot)\b/, `${partName} routes intake air into the engine; cracks, loose clamps, sensor wiring, and adjacent hoses affect diagnosis and fitment.`],
+    [/\bradiator hose\b/, `${partName} carries coolant between the engine and radiator; swelling, cracks, clamp position, and coolant residue should be checked before replacement.`],
+    [/\bserpentine belt|drive belt\b/, `${partName} drives engine accessories; inspect ribs, cracks, routing, tensioner alignment, and nearby pulleys before replacing it.`],
   ];
 
   const match = descriptions.find(([pattern]) => pattern.test(normalized));
@@ -1947,6 +1955,7 @@ function normalizeIdentificationResult(
   const originalPartName = cleanText(result.partName, "Unidentified car part");
   const scanCategory = getTrustedCategory(result);
   const partName = resolvePrimaryPartName(originalPartName, datasetMatches, result, scanCategory);
+  const resolvedScanCategory = resolvePartScanCategory(scanCategory, partName);
   const safety = normalizeSafetyFlags(result, scanCategory);
   const visibleObservations = cleanList(result.visibleObservations);
   const confidence = resolvePrimaryConfidence(result.confidence, originalPartName, partName, datasetMatches);
@@ -1954,26 +1963,26 @@ function normalizeIdentificationResult(
   const confidenceRange = normalizeConfidenceRange(result.confidenceRange);
   const confirmationNeed = normalizeConfirmationNeed(result.confirmationNeed);
   const needsBetterPhoto = normalizeNeedsBetterPhoto(result, safety.safetyTriage, partName, confidence);
-  const candidateMatches = normalizeCandidateMatches(result, datasetMatches, partName, scanCategory);
+  const candidateMatches = normalizeCandidateMatches(result, datasetMatches, partName, resolvedScanCategory);
   const evidenceRegions = normalizeEvidenceRegions(result.evidenceRegions, visibleObservations, cleanEvidence, partName);
   const sourceLinks = normalizeSourceLinks(result.sourceLinks, datasetMatches, partName);
 
   return {
     ...result,
     partName,
-    primaryPart: normalizePrimaryPart(result.primaryPart, partName, confidence, scanCategory, cleanEvidence),
+    primaryPart: normalizePrimaryPart(result.primaryPart, partName, confidence, resolvedScanCategory, cleanEvidence),
     confidence,
     ...(confidenceScore === undefined ? {} : { confidenceScore }),
     ...(confidenceRange === undefined ? {} : { confidenceRange }),
     ...(confirmationNeed === undefined ? {} : { confirmationNeed }),
-    candidateParts: normalizeCandidateParts(result.candidateParts, candidateMatches, partName, confidence, scanCategory),
+    candidateParts: normalizeCandidateParts(result.candidateParts, candidateMatches, partName, confidence, resolvedScanCategory),
     possibleVehicleContexts: normalizePossibleVehicleContexts(result.possibleVehicleContexts),
     measurements: normalizeMeasurements(result.measurements),
     requiredNextEvidence: normalizeRequiredNextEvidence(result.requiredNextEvidence, confirmationNeed, needsBetterPhoto),
     fitmentConfidence: normalizeFitmentConfidence(result.fitmentConfidence, result.possibleVehicleContexts),
-    scanCategory,
+    scanCategory: resolvedScanCategory,
     candidateMatches,
-    whatItDoes: normalizeWhatItDoes(result.whatItDoes, partName, scanCategory),
+    whatItDoes: normalizeWhatItDoes(result.whatItDoes, partName, resolvedScanCategory),
     visibleObservations,
     evidenceRegions,
     concerns: cleanList(result.concerns),
@@ -1992,16 +2001,38 @@ function resolvePrimaryPartName(
   result?: IdentificationResult,
   scanCategory?: ScanCategory,
 ) {
-  if (scanCategory === "engine" && isGenericEnginePartName(partName) && result && hasEngineBayAssemblyEvidence(result)) {
+  if (
+    isGenericEnginePartName(partName) &&
+    result &&
+    (hasEngineBayAssemblyEvidence(result) || isBrandedGenericEnginePartName(partName) || isGenericEngineRetryOutput(partName, result))
+  ) {
     return "Engine assembly";
   }
 
-  if (!isGenericPartName(partName)) {
-    return partName;
+  const cleanedPartName = stripDeepSpecPartPrefix(partName);
+
+  if (result && isFrontFenderDamageOnlyLabel(cleanedPartName, result)) {
+    return `Front fender ${cleanedPartName.trim().toLowerCase()}`;
+  }
+
+  if (result && isFrontFenderMisreadAsQuarterPanel(cleanedPartName, result)) {
+    return "Front fender";
+  }
+
+  if (!isGenericPartName(cleanedPartName)) {
+    return cleanedPartName;
   }
 
   const supportedPartMatch = datasetMatches.find((match) => isDatasetPartMatch(match) && match.score >= 5);
-  return supportedPartMatch?.label ?? partName;
+  return supportedPartMatch?.label ?? cleanedPartName;
+}
+
+function resolvePartScanCategory(scanCategory: ScanCategory, partName: string): ScanCategory {
+  if (partName === "Engine assembly" || isKnownEnginePartName(partName)) {
+    return "engine";
+  }
+
+  return scanCategory;
 }
 
 function resolvePrimaryConfidence(
@@ -2075,7 +2106,71 @@ function isGenericPartName(partName: string) {
 }
 
 function isGenericEnginePartName(partName: string) {
-  return /^(engine|engine bay|engine compartment|powertrain)$/i.test(partName.trim());
+  return /^(engine|deep spec engine|engine bay|engine compartment|powertrain)$/i.test(partName.trim());
+}
+
+function isBrandedGenericEnginePartName(partName: string) {
+  return /^deep spec engine$/i.test(partName.trim());
+}
+
+function isGenericEngineRetryOutput(partName: string, result: IdentificationResult) {
+  if (!/^engine$/i.test(partName.trim())) {
+    return false;
+  }
+
+  return /visible vehicle component|vehicle-specific context|another photo of (?:the )?engine/i.test(
+    [result.whatItDoes, result.nextAction].join(" "),
+  );
+}
+
+function stripDeepSpecPartPrefix(partName: string) {
+  const stripped = partName.trim().replace(/^deep spec\s+/i, "").trim();
+  return stripped || partName;
+}
+
+function isKnownEnginePartName(partName: string) {
+  return /\b(valve cover|engine cover|timing cover|intake manifold|intake duct|radiator hose|serpentine belt|drive belt|oil pan|air filter box|throttle body)\b/i.test(partName);
+}
+
+function isFrontFenderMisreadAsQuarterPanel(partName: string, result: IdentificationResult) {
+  if (!/\bquarter[- ]panel\b/i.test(partName)) {
+    return false;
+  }
+
+  const evidenceText = getBodyEvidenceText(partName, result);
+  return hasFrontFenderEvidence(evidenceText) && !hasRearQuarterEvidence(evidenceText);
+}
+
+function isFrontFenderDamageOnlyLabel(partName: string, result: IdentificationResult) {
+  if (!/^(dent|scratch|broken part|corrosion)$/i.test(partName.trim())) {
+    return false;
+  }
+
+  const evidenceText = getBodyEvidenceText(partName, result);
+  return hasFrontFenderEvidence(evidenceText) && !hasRearQuarterEvidence(evidenceText);
+}
+
+function getBodyEvidenceText(partName: string, result: IdentificationResult) {
+  return normalizeMatchText(
+    [
+      partName,
+      result.whatItDoes,
+      result.nextAction,
+      ...result.visibleObservations,
+      ...result.concerns,
+      ...result.evidence,
+      ...result.evidenceRegions.flatMap((region) => [region.label, region.observation, region.regionLabel]),
+    ].join(" "),
+  );
+}
+
+function hasFrontFenderEvidence(evidenceText: string) {
+  return /\bfront\b|head\s*light|headlamp|\bhood\b|front bumper|front wheel|front tire|front fender|wheel arch|grille/.test(evidenceText);
+}
+
+function hasRearQuarterEvidence(evidenceText: string) {
+  const rearEvidenceText = evidenceText.replace(/\bnot (?:the )?rear quarter\b/g, "");
+  return /\brear\b|\bback\b|tail\s*light|taillight|\btrunk\b|rear bumper|rear wheel|rear tire/.test(rearEvidenceText);
 }
 
 function isDatasetPartMatch(match: DatasetMatch) {
@@ -2147,11 +2242,17 @@ function normalizePrimaryPart(
     const rawPrimaryPartName = cleanText(primaryPart.partName, partName);
     const primaryPartName = isGenericEnginePartName(rawPrimaryPartName) && partName === "Engine assembly"
       ? partName
+      : /^deep spec\s+/i.test(rawPrimaryPartName)
+      ? partName
+      : /\bquarter[- ]panel\b/i.test(rawPrimaryPartName) && /\bfender\b/i.test(partName)
+      ? partName
+      : /^(dent|scratch|broken part|corrosion)$/i.test(rawPrimaryPartName) && /\bfender\b/i.test(partName)
+      ? partName
       : rawPrimaryPartName;
     return {
       partName: primaryPartName,
       confidence: primaryPart.confidence,
-      scanCategory: partName === "Engine assembly" && primaryPartName === partName
+      scanCategory: primaryPartName === partName && (partName === "Engine assembly" || /^deep spec\s+/i.test(rawPrimaryPartName))
         ? scanCategory
         : getTrustedCandidateCategory(primaryPart.scanCategory, primaryPart.partName),
       evidence: cleanList(primaryPart.evidence).slice(0, 4),
@@ -2309,6 +2410,21 @@ function normalizeEvidenceRegions(
 
   if (partName.toLowerCase() === "engine assembly") {
     return normalizeEngineAssemblyRegions(cleanRegions, observations, evidence);
+  }
+
+  if (/\bfender\b/i.test(partName)) {
+    const normalizedFenderRegions = cleanRegions.map((region) => (
+      /\bquarter[- ]panel\b/i.test(region.label)
+        ? {
+            ...region,
+            label: partName,
+            observation: region.observation.replace(/\bquarter[- ]panel\b/gi, partName),
+          }
+        : region
+    ));
+    if (normalizedFenderRegions.length) {
+      return normalizedFenderRegions.slice(0, 4);
+    }
   }
 
   if (cleanRegions.length) {
