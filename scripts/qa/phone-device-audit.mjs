@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -13,7 +15,7 @@ const outputDir = path.join(qaRoot, `phone-device-audit-${stamp}`);
 await mkdir(outputDir, { recursive: true });
 
 const tunnel = await checkUrl(baseUrl);
-const adb = await auditCommand("adb", ["devices"]);
+const adb = await auditCommand(await resolveAdbCommand(), ["devices"]);
 const idevice = await auditCommand("idevice_id", ["-l"]);
 const windowsDevices = process.platform === "win32" ? await auditWindowsPhoneDevices() : {
   ok: false,
@@ -83,6 +85,18 @@ async function checkUrl(url) {
 }
 
 async function auditCommand(command, args) {
+  if (!command) {
+    return {
+      command: "",
+      args,
+      available: false,
+      ok: false,
+      error: "Command was not found.",
+      stderr: "",
+      stdout: "",
+    };
+  }
+
   try {
     const result = await execFileAsync(command, args, {
       timeout: 20_000,
@@ -106,6 +120,31 @@ async function auditCommand(command, args) {
       stderr: typeof error.stderr === "string" ? error.stderr.trim() : "",
       stdout: typeof error.stdout === "string" ? error.stdout.trim() : "",
     };
+  }
+}
+
+async function resolveAdbCommand() {
+  const candidates = [
+    process.env.ADB_PATH,
+    path.join(os.homedir(), "AppData", "Local", "Microsoft", "WinGet", "Packages", "Google.PlatformTools_Microsoft.Winget.Source_8wekyb3d8bbwe", "platform-tools", "adb.exe"),
+    "adb",
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (candidate === "adb" || await isExecutable(candidate)) {
+      return candidate;
+    }
+  }
+
+  return "";
+}
+
+async function isExecutable(filePath) {
+  try {
+    await access(filePath, constants.X_OK);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -142,7 +181,7 @@ function renderMarkdown(data) {
     `- Grade: ${data.grade}/10`,
     `- Reason: ${data.gradeReason}`,
     `- Tunnel reachable: ${formatCheck(data.checks.tunnel)}`,
-    `- adb: ${formatTool(data.checks.adb)}`,
+    `- adb: ${formatAdb(data.checks.adb)}`,
     `- idevice_id: ${formatTool(data.checks.idevice)}`,
     `- Windows phone-like devices: ${formatTool(data.checks.windowsDevices)}`,
     "",
@@ -188,6 +227,22 @@ function formatTool(check) {
   }
 
   return check.stdout ? "available with output" : "available with no device output";
+}
+
+function formatAdb(check) {
+  if (!check.available) {
+    return "not installed or not on PATH";
+  }
+
+  if (!check.ok) {
+    return `available but failed: ${check.error || check.stderr || "unknown error"}`;
+  }
+
+  if (!hasAndroidDevice(check.stdout)) {
+    return "available, no Android devices attached or authorized";
+  }
+
+  return "available with Android device output";
 }
 
 function formatError(error) {
