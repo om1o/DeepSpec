@@ -19,6 +19,7 @@
     "qa:doctor": "node scripts/qa/qa-doctor.mjs",
     "qa:external-ar": "node scripts/qa/external-ar-tester.mjs",
     "qa:phone-card": "node scripts/qa/phone-test-card.mjs",
+    "qa:phone-audit": "node scripts/qa/phone-device-audit.mjs",
     "qa:real": "node scripts/qa/real-website-tester.mjs",
     "qa:serve-production": "node scripts/qa/serve-production.mjs",
     "qa:web-ar": "node scripts/qa/web-ar-tester.mjs",
