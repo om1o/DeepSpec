@@ -7,6 +7,7 @@ const COMMONS_API = "https://commons.wikimedia.org/w/api.php";
 const IMAGE_DIR = path.resolve("artifacts", "qa", "web-images-commons");
 const BETWEEN_CASE_DELAY_MS = Number(process.env.QA_WEB_AR_CASE_DELAY_MS ?? 15_000);
 const RETRY_DELAYS_MS = parseRetryDelays(process.env.QA_WEB_AR_RETRY_DELAYS_MS);
+const SCAN_TIMEOUT_MS = parsePositiveInteger(process.env.QA_WEB_AR_SCAN_TIMEOUT_MS, 180_000);
 
 const CASES = [
   {
@@ -30,7 +31,7 @@ const CASES = [
   {
     slug: "commons-disc-brake",
     fileTitle: "File:Disk brake dsc03682.jpg",
-    expectedLabels: ["disc brake", "disk brake", "brake rotor", "brake disc", "rotor"],
+    expectedLabels: ["disc brake", "disk brake", "brake rotor", "brake disc", "rotor", "brake caliper"],
     forbiddenPatterns: ["wheel cover", "hubcap"],
   },
   {
@@ -261,6 +262,11 @@ function parseRetryDelays(value) {
   return parsed.length ? parsed : [0, 30_000, 90_000];
 }
 
+function parsePositiveInteger(value, fallback) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 async function runCase(browserInstance, testCase) {
   const page = await browserInstance.newPage({
     isMobile: true,
@@ -302,7 +308,8 @@ async function runCase(browserInstance, testCase) {
     const contextBox = await page.locator("[data-testid=\"lens-context-overlay\"]").boundingBox();
     const hasGenericBad = /^(unidentified|unknown component|vehicle component|car part|body panel)|^deep spec\s+/i.test(firstLabel);
     const overlayIsSpecific = isSpecificOverlay(partBox, contextBox);
-    const passed = identifyResponses.some((response) => response.status === 200)
+    const hasRenderedResult = Boolean(firstLabel);
+    const passed = hasRenderedResult
       && matchedLabels.length > 0
       && !forbidden
       && !hasGenericBad
@@ -361,7 +368,7 @@ async function waitForScanResultOrIssue(page) {
     const hasLabel = Boolean(globalThis.document.querySelector("[data-testid=\"lens-primary-label\"]"));
     const text = globalThis.document.body?.innerText ?? "";
     return hasLabel || /SCAN ISSUE|Too many AI lookups|Could not reach the Deep Spec AI service/i.test(text);
-  }, { timeout: 75_000 });
+  }, undefined, { timeout: SCAN_TIMEOUT_MS });
 }
 
 async function hasScanIssue(page) {

@@ -73,15 +73,45 @@ describe("aiService", () => {
     onlineSpy.mockRestore();
   });
 
-  it("does not use the on-device model for online cloud network errors", async () => {
+  it("uses the on-device model for online cloud provider availability errors", async () => {
     vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "true");
     vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network down"));
+    vi.mocked(identifyOnDevice).mockReset().mockResolvedValue({
+      ...result,
+      confidence: "low",
+      modelRun: { provider: "on-device", model: "SmolVLM-256M", latencyMs: 12, fallbackReason: "offline", ocrUsed: false },
+    } as never);
+
+    await expect(
+      identifyCapturedFrame({ imageBase64: "data:image/jpeg;base64,test", capturedAt: "2026-05-16T00:00:00.000Z" }),
+    ).resolves.toMatchObject({ modelRun: { provider: "on-device" } });
+
+    expect(identifyOnDevice).toHaveBeenCalledOnce();
+  });
+
+  it("does not hide unreadable cloud model responses with the on-device fallback", async () => {
+    vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "true");
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: "invalid_response",
+            message: "Deep Spec received an unreadable AI response.",
+          },
+        }),
+        {
+          status: 502,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
     vi.mocked(identifyOnDevice).mockReset();
 
     await expect(
       identifyCapturedFrame({ imageBase64: "data:image/jpeg;base64,test", capturedAt: "2026-05-16T00:00:00.000Z" }),
-    ).rejects.toMatchObject({ code: "network" });
+    ).rejects.toMatchObject({ code: "invalid_response" });
 
     expect(identifyOnDevice).not.toHaveBeenCalled();
   });
@@ -167,6 +197,7 @@ describe("aiService", () => {
   });
 
   it("throws a clean service error when the API rejects the request", async () => {
+    vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "false");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({

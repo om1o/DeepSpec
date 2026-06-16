@@ -136,7 +136,27 @@ export async function identifyCapturedFrame(
     return identifyOnDevice(frame);
   }
 
-  const result = await runAI({
+  const result = await runCloudIdentify(frame, secondFrame, labelRescueTrigger, options).catch((error: unknown) => {
+    if (shouldUseOnDeviceAfterCloudError(error)) {
+      return identifyOnDevice(frame);
+    }
+
+    throw error;
+  });
+
+  return assertIdentificationResult(result);
+}
+
+function runCloudIdentify(
+  frame: CapturedFrame,
+  secondFrame: CapturedFrame | undefined,
+  labelRescueTrigger: LabelRescueTrigger | undefined,
+  options: {
+    measurementContext?: MeasurementContext;
+    vehicleContext?: VehicleContext;
+  },
+) {
+  return runAI({
     type: "vision",
     imageBase64: frame.imageBase64,
     imageBase64_2: secondFrame?.imageBase64,
@@ -147,8 +167,14 @@ export async function identifyCapturedFrame(
     systemPrompt: IDENTIFY_PROMPT,
     responseAsJson: true,
   });
+}
 
-  return assertIdentificationResult(result);
+function shouldUseOnDeviceAfterCloudError(error: unknown) {
+  if (!isOnDeviceFallbackEnabled() || !(error instanceof AIServiceError)) {
+    return false;
+  }
+
+  return getAIErrorDetails(error.code).category === "provider_unavailable";
 }
 
 export async function sendFollowUp(lookup: Lookup, question: string): Promise<string> {
