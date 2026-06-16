@@ -1619,6 +1619,10 @@ function getPartFocusBox(partName: string) {
     return { height: 0.22, width: 0.24, x: 0.18, y: 0.24 };
   }
 
+  if (/\bbrake\b|\brotor\b|\bcaliper\b|\bdisc\b|\bdisk\b/.test(partName)) {
+    return { height: 0.62, width: 0.70, x: 0.04, y: 0.18 };
+  }
+
   if (/\b(front |rear |back )?wheel\b/.test(partName)) {
     return { height: 0.34, width: 0.28, x: 0.10, y: 0.58 };
   }

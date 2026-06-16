@@ -307,6 +307,42 @@ describe("Scanner", () => {
     });
   }, 10000);
 
+  it("uses a focused AR overlay for brake assemblies instead of the whole scan area", async () => {
+    objectTargetState.current = makeObjectTarget({
+      confidence: 0.84,
+      height: 305,
+      holdProgress: 1,
+      isLocked: true,
+      left: 3,
+      top: 203,
+      width: 409,
+    });
+    identifyCapturedFrame.mockResolvedValueOnce({
+      ...makeScanResult("Brake Disc and Caliper Assembly"),
+      scanCategory: "brakes",
+      whatItDoes: "The brake disc works with the caliper and pads to stop the vehicle.",
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(captureFrame).toHaveBeenCalled());
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId("lens-context-overlay")).toBeInTheDocument();
+    expect(screen.getByTestId("lens-primary-label")).toHaveTextContent("Brake Disc and Caliper Assembly");
+    expect(screen.getByTestId("lens-part-overlay-0")).toHaveStyle({
+      height: "189.10000000000002px",
+      left: "19.36px",
+      top: "257.9px",
+      width: "286.29999999999995px",
+    });
+  }, 10000);
+
   it("does not turn text-only evidence regions into fake AR boxes", async () => {
     objectTargetState.current = makeObjectTarget({
       confidence: 0.82,
