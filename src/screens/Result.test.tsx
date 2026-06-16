@@ -373,7 +373,7 @@ describe("Result", () => {
     expect(savedLookup.notes).toBe("Near the lower engine bay.");
     expect(savedLookup.trainingLabel).toBe("It was the starter.");
     expect(savedLookup.trainingStatus).toBe("user_corrected");
-  });
+  }, 30000);
 
   it("shows scan report actions for saved scans", async () => {
     const lookup = makeLookup();

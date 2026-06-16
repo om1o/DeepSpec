@@ -211,11 +211,58 @@ export function summarizeEvalMetrics(results, requestedSampleCount = results.len
     safetyFalsePositiveRate: rate(safetyFalsePositiveCount, attemptedCount),
     wrongResultCount: results.filter((result) => result.failureReasons.includes("wrong_result")).length,
     tooVagueCount: results.filter((result) => result.failureReasons.includes("too_vague")).length,
+    failureModes: summarizeFailureModes(results),
+    labelBuckets: summarizeLabelBuckets(results),
     latencyMs: {
       provider: summarizeLatency(providerLatencies),
       total: summarizeLatency(totalLatencies),
     },
   };
+}
+
+function summarizeFailureModes(results) {
+  const counts = new Map();
+  for (const result of results) {
+    for (const reason of result.failureReasons) {
+      counts.set(reason, (counts.get(reason) ?? 0) + 1);
+    }
+  }
+
+  return Object.fromEntries([...counts.entries()].sort((a, b) => a[0].localeCompare(b[0])));
+}
+
+function summarizeLabelBuckets(results) {
+  const buckets = new Map();
+  for (const result of results) {
+    const labels = Array.isArray(result.expectedLabels) && result.expectedLabels.length ? result.expectedLabels : ["unknown"];
+    const label = String(labels[0]).toLowerCase();
+    const existing = buckets.get(label) ?? {
+      attemptedCount: 0,
+      passCount: 0,
+      failureCount: 0,
+      failureModes: {},
+    };
+    existing.attemptedCount += 1;
+    if (result.status === 200 && result.failureReasons.length === 0) {
+      existing.passCount += 1;
+    } else {
+      existing.failureCount += 1;
+    }
+    for (const reason of result.failureReasons) {
+      existing.failureModes[reason] = (existing.failureModes[reason] ?? 0) + 1;
+    }
+    buckets.set(label, existing);
+  }
+
+  return Object.fromEntries([...buckets.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([label, bucket]) => [
+      label,
+      {
+        ...bucket,
+        passRate: rate(bucket.passCount, bucket.attemptedCount),
+      },
+    ]));
 }
 
 async function main() {

@@ -5,6 +5,8 @@ import Auth from "./screens/Auth";
 import Chat from "./screens/Chat";
 import EarlyAccess from "./screens/EarlyAccess";
 import History from "./screens/History";
+import Account from "./screens/Account";
+import Pricing from "./screens/Pricing";
 import Result from "./screens/Result";
 import { getVerifiedAuthUser, subscribeToAuthChanges } from "./services/auth";
 import { startOfflineUpgradeWatcher } from "./services/offlineUpgrade";
@@ -114,6 +116,22 @@ export default function App() {
         element={
           <RequireAuth>
             <EarlyAccess />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/pricing"
+        element={
+          <RequireAuth>
+            <Pricing />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/account"
+        element={
+          <RequireAuth>
+            <Account />
           </RequireAuth>
         }
       />

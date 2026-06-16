@@ -25,6 +25,10 @@ export default defineConfig(async ({ mode }) => {
         configurePreviewServer(server: PreviewServer) {
           registerPreviewMethodGuard(server, "/api/identify", "Use POST for AI identification.");
           registerPreviewMethodGuard(server, "/api/chat", "Use POST for AI follow-up chat.");
+          registerPreviewMethodGuard(server, "/api/billing-checkout", "Use POST to start DeepSpec checkout.");
+          registerPreviewMethodGuard(server, "/api/billing-portal", "Use POST to open DeepSpec billing.");
+          registerPreviewMethodGuard(server, "/api/billing-webhook", "Use POST for Stripe billing webhooks.");
+          registerPreviewMethodGuard(server, "/api/account-entitlement", "Use GET to verify DeepSpec account access.", "GET");
         },
         configureServer(server: ViteDevServer) {
           server.middlewares.use("/api/identify", async (request: IncomingMessage, response: ServerResponse) => {
@@ -58,6 +62,77 @@ export default defineConfig(async ({ mode }) => {
             const body = await readJsonBody(request).catch(() => null);
             const { createChatResponse } = (await server.ssrLoadModule("/api/chat.shared.ts")) as typeof import("./api/chat.shared");
             const result = await createChatResponse(body, serverEnv);
+            response.statusCode = result.status;
+            response.setHeader("Content-Type", "application/json");
+            response.end(JSON.stringify(result.body));
+          });
+
+          server.middlewares.use("/api/billing-checkout", async (request: IncomingMessage, response: ServerResponse) => {
+            response.setHeader("Cache-Control", "no-store");
+
+            if (request.method !== "POST") {
+              response.statusCode = 405;
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify({ error: { code: "method_not_allowed", message: "Use POST to start DeepSpec checkout." } }));
+              return;
+            }
+
+            const body = await readJsonBody(request).catch(() => null);
+            const { createCheckoutResponse } = (await server.ssrLoadModule("/api/billing.shared.ts")) as typeof import("./api/billing.shared");
+            const result = await createCheckoutResponse(body, serverEnv, request.headers);
+            response.statusCode = result.status;
+            response.setHeader("Content-Type", "application/json");
+            response.end(JSON.stringify(result.body));
+          });
+
+          server.middlewares.use("/api/billing-portal", async (request: IncomingMessage, response: ServerResponse) => {
+            response.setHeader("Cache-Control", "no-store");
+
+            if (request.method !== "POST") {
+              response.statusCode = 405;
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify({ error: { code: "method_not_allowed", message: "Use POST to open DeepSpec billing." } }));
+              return;
+            }
+
+            const body = await readJsonBody(request).catch(() => null);
+            const { createPortalResponse } = (await server.ssrLoadModule("/api/billing.shared.ts")) as typeof import("./api/billing.shared");
+            const result = await createPortalResponse(body, serverEnv);
+            response.statusCode = result.status;
+            response.setHeader("Content-Type", "application/json");
+            response.end(JSON.stringify(result.body));
+          });
+
+          server.middlewares.use("/api/billing-webhook", async (request: IncomingMessage, response: ServerResponse) => {
+            response.setHeader("Cache-Control", "no-store");
+
+            if (request.method !== "POST") {
+              response.statusCode = 405;
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify({ error: { code: "method_not_allowed", message: "Use POST for Stripe billing webhooks." } }));
+              return;
+            }
+
+            const rawBody = await readRawBody(request).catch(() => "");
+            const { createWebhookResponse } = (await server.ssrLoadModule("/api/billing.shared.ts")) as typeof import("./api/billing.shared");
+            const result = await createWebhookResponse(rawBody, request.headers, serverEnv);
+            response.statusCode = result.status;
+            response.setHeader("Content-Type", "application/json");
+            response.end(JSON.stringify(result.body));
+          });
+
+          server.middlewares.use("/api/account-entitlement", async (request: IncomingMessage, response: ServerResponse) => {
+            response.setHeader("Cache-Control", "no-store");
+
+            if (request.method !== "GET") {
+              response.statusCode = 405;
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify({ error: { code: "method_not_allowed", message: "Use GET to verify DeepSpec account access." } }));
+              return;
+            }
+
+            const { createAccountEntitlementResponse } = (await server.ssrLoadModule("/api/billing.shared.ts")) as typeof import("./api/billing.shared");
+            const result = await createAccountEntitlementResponse(request.headers, serverEnv);
             response.statusCode = result.status;
             response.setHeader("Content-Type", "application/json");
             response.end(JSON.stringify(result.body));
@@ -117,6 +192,9 @@ export default defineConfig(async ({ mode }) => {
       host: "0.0.0.0",
       port: 5174,
       strictPort: false,
+      watch: {
+        ignored: ["**/artifacts/**"],
+      },
     },
     preview: {
       allowedHosts: [".trycloudflare.com"],
@@ -128,21 +206,26 @@ export default defineConfig(async ({ mode }) => {
 });
 
 async function readJsonBody(request: IncomingMessage) {
+  const rawBody = await readRawBody(request);
+  return rawBody ? JSON.parse(rawBody) : null;
+}
+
+async function readRawBody(request: IncomingMessage) {
   let rawBody = "";
 
   for await (const chunk of request) {
     rawBody += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
   }
 
-  return rawBody ? JSON.parse(rawBody) : null;
+  return rawBody;
 }
 
-function registerPreviewMethodGuard(server: PreviewServer, path: string, message: string) {
+function registerPreviewMethodGuard(server: PreviewServer, path: string, message: string, allowedMethod = "POST") {
   server.middlewares.use(path, (request: IncomingMessage, response: ServerResponse) => {
     response.setHeader("Cache-Control", "no-store");
     response.setHeader("Content-Type", "application/json");
 
-    if (request.method !== "POST") {
+    if (request.method !== allowedMethod) {
       response.statusCode = 405;
       response.end(JSON.stringify({ error: { code: "method_not_allowed", message } }));
       return;
