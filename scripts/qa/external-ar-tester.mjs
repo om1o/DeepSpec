@@ -146,18 +146,34 @@ async function runCase(browserInstance, testCase) {
   } catch (error) {
     const screenshot = path.join(screenshotDir, `${testCase.slug}-error.png`);
     await page.screenshot({ fullPage: true, path: screenshot }).catch(() => undefined);
+    const partialState = await getPartialState(page).catch(() => ({}));
 
     return {
       ...testCase,
       elapsedMs: Date.now() - started,
       error: error instanceof Error ? error.stack ?? error.message : String(error),
       identifyResponses,
+      ...partialState,
       passed: false,
       screenshot,
     };
   } finally {
     await page.close();
   }
+}
+
+async function getPartialState(page) {
+  const firstLabel = await page.locator("[data-testid=\"lens-primary-label\"]").first().innerText({ timeout: 500 }).catch(() => undefined);
+  const text = await page.locator("body").innerText({ timeout: 500 }).catch(() => undefined);
+  const partBox = await page.locator("[data-testid=\"lens-part-overlay-0\"]").boundingBox({ timeout: 500 }).catch(() => null);
+  const contextBox = await page.locator("[data-testid=\"lens-context-overlay\"]").boundingBox({ timeout: 500 }).catch(() => null);
+  return {
+    ...(firstLabel ? { firstLabel: firstLabel.trim() } : {}),
+    ...(text ? { text } : {}),
+    partBox,
+    contextBox,
+    overlayIsSpecific: isSpecificOverlay(partBox, contextBox),
+  };
 }
 
 async function enterNoEmailSession(page) {

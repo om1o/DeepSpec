@@ -446,7 +446,7 @@ export default function Scanner() {
     try {
       setAnalysisStep("Matching vehicle data");
       const identifyStartedAt = performance.now();
-      const result = await identifyCapturedFrame(focusedFrame ?? frame, focusedFrame ? undefined : secondFrame);
+      const result = await identifyCapturedFrame(frame, focusedFrame ?? secondFrame);
       const identifyMs = Math.round(performance.now() - identifyStartedAt);
       recordIdentifyLatency(identifyMs, identifyMs > IDENTIFY_BUDGET_WARN_MS);
       if (identifyMs > IDENTIFY_BUDGET_WARN_MS) {

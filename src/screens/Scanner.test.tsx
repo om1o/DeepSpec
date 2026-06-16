@@ -374,6 +374,9 @@ describe("Scanner", () => {
       height: 0.18,
     });
     expect(identifyCapturedFrame.mock.calls[0][0]).toMatchObject({
+      imageBase64: expect.stringMatching(/^data:image\/jpeg;base64,/),
+    });
+    expect(identifyCapturedFrame.mock.calls[0][1]).toMatchObject({
       imageBase64: "data:image/jpeg;base64,target-crop",
     });
   }, 10000);
@@ -727,6 +730,9 @@ describe("Scanner", () => {
       y: 0.22,
     });
     expect(identifyCapturedFrame.mock.calls[0][0]).toMatchObject({
+      imageBase64: expect.stringMatching(/^data:image\/jpeg;base64,/),
+    });
+    expect(identifyCapturedFrame.mock.calls[0][1]).toMatchObject({
       imageBase64: "data:image/jpeg;base64,target-crop",
     });
   }, 10000);
