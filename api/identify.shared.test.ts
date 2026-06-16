@@ -1852,6 +1852,126 @@ describe("createIdentifyResponse", () => {
     );
   });
 
+  it("does not keep a quarter-panel label when no rear-side visual evidence supports it", async () => {
+    const unsupportedQuarterPanelResult = {
+      ...result,
+      partName: "Quarter Panel",
+      scanCategory: "body",
+      primaryPart: {
+        partName: "Quarter Panel",
+        confidence: "high",
+        scanCategory: "body",
+        evidence: [
+          "The image shows a body panel around a wheel opening.",
+        ],
+      },
+      candidateMatches: [],
+      whatItDoes: "Quarter Panel is a fixed rear-side body panel around the wheel opening, tail-light edge, and trunk/side structure.",
+      visibleObservations: [
+        "A white painted panel and wheel opening are visible.",
+      ],
+      evidence: [
+        "The image shows a body panel around a wheel opening.",
+      ],
+      evidenceRegions: [
+        {
+          label: "Quarter Panel",
+          observation: "Wheel-opening body panel is centered.",
+          regionLabel: "right side",
+        },
+      ],
+      concerns: ["Small dent visible on the body panel."],
+      safetyTriage: "can_help",
+      isSafetyCritical: false,
+      nextAction: "Take another photo of the damaged area from a different angle.",
+    };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(unsupportedQuarterPanelResult) }] } }],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          partName: "Fender",
+          primaryPart: {
+            partName: "Fender",
+          },
+          scanCategory: "body",
+        },
+      },
+    });
+  });
+
+  it("removes quarter-panel next-action copy from unsupported fender results", async () => {
+    const unsupportedQuarterPanelResult = {
+      ...result,
+      partName: "Quarter Panel",
+      scanCategory: "body",
+      primaryPart: {
+        partName: "Quarter Panel",
+        confidence: "high",
+        scanCategory: "body",
+        evidence: [
+          "The image shows a body panel around a wheel opening.",
+        ],
+      },
+      candidateMatches: [],
+      whatItDoes: "Quarter Panel is a fixed rear-side body panel around the wheel opening, tail-light edge, and trunk/side structure.",
+      visibleObservations: [
+        "A white painted panel and wheel opening are visible.",
+      ],
+      evidence: [
+        "The image shows a body panel around a wheel opening.",
+      ],
+      evidenceRegions: [
+        {
+          label: "Quarter Panel",
+          observation: "Wheel-opening body panel is centered.",
+          regionLabel: "right side",
+        },
+      ],
+      concerns: ["Small dent visible on the body panel."],
+      safetyTriage: "can_help",
+      isSafetyCritical: false,
+      nextAction: "Inspect the damage to the quarter panel and assess the extent of the damage.",
+    };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify(unsupportedQuarterPanelResult) }] } }],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    const response = await createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" });
+
+    expect(response).toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          partName: "Fender",
+          nextAction: expect.stringContaining("fender damage"),
+        },
+      },
+    });
+    expect(response.body.result.nextAction).not.toMatch(/quarter[- ]panel/i);
+  });
+
   it("normalizes a front wheel arch dent into a specific front fender dent label", async () => {
     const frontFenderDentResult = {
       ...result,

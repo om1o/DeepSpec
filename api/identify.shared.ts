@@ -1871,6 +1871,13 @@ function normalizeNextAction(
     }
   }
 
+  if (/\bfender\b/i.test(partName)) {
+    const cleaned = cleanText(nextAction, "");
+    if (/quarter[- ]panel/i.test(cleaned)) {
+      return "Inspect the fender damage from a closer angle and check nearby bumper, hood, wheel-opening, and door gaps.";
+    }
+  }
+
   if (needsBetterPhoto) {
     return cleanText(nextAction, "Take a clearer photo from another angle before acting on this result.");
   }
@@ -2018,6 +2025,10 @@ function resolvePrimaryPartName(
     return "Front fender";
   }
 
+  if (result && isUnsupportedQuarterPanelLabel(cleanedPartName, result)) {
+    return "Fender";
+  }
+
   if (!isGenericPartName(cleanedPartName)) {
     return cleanedPartName;
   }
@@ -2136,8 +2147,16 @@ function isFrontFenderMisreadAsQuarterPanel(partName: string, result: Identifica
     return false;
   }
 
-  const evidenceText = getBodyEvidenceText(partName, result);
+  const evidenceText = getVisualBodyEvidenceText(partName, result);
   return hasFrontFenderEvidence(evidenceText) && !hasRearQuarterEvidence(evidenceText);
+}
+
+function isUnsupportedQuarterPanelLabel(partName: string, result: IdentificationResult) {
+  if (!/\bquarter[- ]panel\b/i.test(partName)) {
+    return false;
+  }
+
+  return !hasRearQuarterEvidence(getVisualBodyEvidenceText(partName, result));
 }
 
 function isFrontFenderDamageOnlyLabel(partName: string, result: IdentificationResult) {
@@ -2147,6 +2166,18 @@ function isFrontFenderDamageOnlyLabel(partName: string, result: IdentificationRe
 
   const evidenceText = getBodyEvidenceText(partName, result);
   return hasFrontFenderEvidence(evidenceText) && !hasRearQuarterEvidence(evidenceText);
+}
+
+function getVisualBodyEvidenceText(partName: string, result: IdentificationResult) {
+  return normalizeMatchText(
+    [
+      partName,
+      ...result.visibleObservations,
+      ...result.concerns,
+      ...result.evidence,
+      ...result.evidenceRegions.flatMap((region) => [region.label, region.observation, region.regionLabel]),
+    ].join(" "),
+  );
 }
 
 function getBodyEvidenceText(partName: string, result: IdentificationResult) {
