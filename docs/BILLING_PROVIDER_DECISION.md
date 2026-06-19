@@ -113,6 +113,14 @@ npm run verify:billing-provider -- --provider polar --network
 
 This verifier does not make a real payment. It checks server-only key placement, required product IDs, webhook-secret format, sandbox-vs-production safety, and optional read-only provider product lookup. Live production checks require an explicit `--allow-production` flag.
 
+After the app server is running with `BILLING_PROVIDER=polar`, replay one signed synthetic sandbox webhook through the real API route:
+
+```bash
+npm run verify:billing-webhook-replay -- --url http://127.0.0.1:5175 --plan scan_pack
+```
+
+This replay creates a fresh anonymous Supabase user, posts a signed synthetic Polar `order.paid` event to `/api/billing-webhook`, verifies `/api/account-entitlement` returns an active Polar-backed entitlement, and then deletes only that synthetic billing entitlement row. It still does not make a payment.
+
 ## Implementation Order After Dad Picks
 
 1. Add provider adapter:

@@ -30,6 +30,7 @@
     "verify:identify-eval": "node scripts/verify-identify-eval-summary.mjs",
     "verify:auth": "node scripts/verify-auth-flows.mjs",
     "verify:billing-provider": "node scripts/verify-billing-provider.mjs",
+    "verify:billing-webhook-replay": "node scripts/verify-billing-webhook-replay.mjs",
     "verify:supabase": "node scripts/verify-supabase-sync.mjs",
     "preview": "vite preview --host 0.0.0.0 --configLoader native",
     "qa:impact": "node scripts/qa/user-impact-plan.mjs",
