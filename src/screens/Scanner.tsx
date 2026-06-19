@@ -15,6 +15,7 @@ import { compressImageDataUrl, saveLatestScanState } from "../lib/utils";
 import { AIServiceError, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
 import { onOnDeviceModelProgress } from "../services/onDeviceIdentify";
 import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
+import { attachScanToJob, buildCustomerVisibleReport, getShopJob, getVehicleContextForJob } from "../services/shop";
 import {
   recordAcceptableScan,
   recordIdentifyLatency,
@@ -25,7 +26,7 @@ import {
   recordScanQualityRetake,
 } from "../services/scanQualityMetrics";
 import { createLookup, updateLookup } from "../services/storage";
-import type { Confidence, IdentificationResult, CapturedFrame, Lookup, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanQualitySnapshot } from "../types";
+import type { Confidence, IdentificationResult, CapturedFrame, Lookup, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanQualitySnapshot, ShopJob, ShopVehicleContext } from "../types";
 
 const AUTO_SCAN_HOLD_MS = 5000;
 const SECOND_FRAME_DELAY_MS = 120;
@@ -118,9 +119,49 @@ type MeasurementGateResult =
       message: string;
     };
 
+function buildShopScanContext(job: ShopJob | null, vehicleContext: ShopVehicleContext | undefined): Partial<ScanAnalysisState> {
+  if (!job) {
+    return {};
+  }
+
+  return {
+    customerVisibleReport: buildCustomerVisibleReport(job),
+    jobId: job.id,
+    orgId: job.orgId,
+    reviewStatus: "needs_review",
+    vehicleContext,
+  };
+}
+
+function applyShopFitmentContext(result: IdentificationResult, vehicleContext: ShopVehicleContext | undefined): IdentificationResult {
+  if (!vehicleContext) {
+    return result;
+  }
+
+  const requiredNextEvidence = Array.from(new Set([
+    ...(result.requiredNextEvidence ?? []),
+    ...(!vehicleContext.vin ? ["VIN"] : []),
+    "label photo or second angle if the part number is not visible",
+  ]));
+
+  return {
+    ...result,
+    fitmentConfidence: vehicleContext.vin ? result.fitmentConfidence ?? "possible" : "needs_vehicle_context",
+    requiredNextEvidence,
+  };
+}
+
 export default function Scanner() {
   const location = useLocation();
   const navigate = useNavigate();
+  const activeShopJob = useMemo(() => {
+    const jobId = new URLSearchParams(location.search).get("jobId");
+    return jobId ? getShopJob(jobId) : null;
+  }, [location.search]);
+  const activeShopVehicleContext = useMemo(
+    () => (activeShopJob ? getVehicleContextForJob(activeShopJob) : undefined),
+    [activeShopJob],
+  );
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisStep, setAnalysisStep] = useState<string | null>(null);
   const [autoScanPaused, setAutoScanPaused] = useState(false);
@@ -306,6 +347,9 @@ export default function Scanner() {
 
     const saved = createLookup(scanState);
     if (saved.ok) {
+      if (activeShopJob) {
+        attachScanToJob(activeShopJob.id, saved.value.id);
+      }
       saveLatestScanState(scanState);
       setIsCardExpanded(!scanCardPrefs.compactCardsByDefault);
       setScanReview({
@@ -334,7 +378,7 @@ export default function Scanner() {
       source,
       sourceUpdatedAt,
     });
-  }, [isScanRequestActive, scanCardPrefs.compactCardsByDefault, syncSavedLookup]);
+  }, [activeShopJob, isScanRequestActive, scanCardPrefs.compactCardsByDefault, syncSavedLookup]);
 
   const analyzeImageBase64 = useCallback(async (
     imageBase64: string,
@@ -381,17 +425,20 @@ export default function Scanner() {
     setAnalysisStep("Checking saved matches");
     const imageHash = await hashImageDataUrl(imageBase64);
     if (!isScanRequestActive(requestId)) return;
-    if (imageHash) {
+    if (imageHash && !activeShopJob) {
       const cached = getCachedScanResult(imageHash);
       if (cached) {
+        const shopScanContext = buildShopScanContext(activeShopJob, activeShopVehicleContext);
+        const contextualResult = applyShopFitmentContext(cached, activeShopVehicleContext);
         setAnalysisStep("Opening review");
-        recordScanOutcome(cached);
+        recordScanOutcome(contextualResult);
         await persistAndShowReview(
           {
             frame,
-            result: cached,
+            result: contextualResult,
             analyzedAt: new Date().toISOString(),
             scanQuality,
+            ...shopScanContext,
             provenance: {
               analysisSource: "cached_match",
               captureMode,
@@ -446,22 +493,29 @@ export default function Scanner() {
     try {
       setAnalysisStep("Matching vehicle data");
       const identifyStartedAt = performance.now();
-      const result = await identifyCapturedFrame(frame, focusedFrame ?? secondFrame);
+      const result = applyShopFitmentContext(
+        await identifyCapturedFrame(frame, focusedFrame ?? secondFrame, undefined, {
+          vehicleContext: activeShopVehicleContext,
+        }),
+        activeShopVehicleContext,
+      );
       const identifyMs = Math.round(performance.now() - identifyStartedAt);
       recordIdentifyLatency(identifyMs, identifyMs > IDENTIFY_BUDGET_WARN_MS);
       if (identifyMs > IDENTIFY_BUDGET_WARN_MS) {
         console.warn(`[DeepSpec] Identify took ${identifyMs}ms (over ${IDENTIFY_BUDGET_WARN_MS}ms budget).`);
       }
       if (!isScanRequestActive(requestId)) return;
-      if (imageHash) setCachedScanResult(imageHash, result);
+      if (imageHash && !activeShopJob) setCachedScanResult(imageHash, result);
       recordScanOutcome(result);
       setAnalysisStep("Saving result");
+      const shopScanContext = buildShopScanContext(activeShopJob, activeShopVehicleContext);
       await persistAndShowReview(
         {
           frame,
           result,
           analyzedAt: new Date().toISOString(),
           scanQuality,
+          ...shopScanContext,
           provenance: {
             analysisSource: "ai_detection",
             captureMode,
@@ -486,6 +540,7 @@ export default function Scanner() {
           errorCode: analysisError instanceof AIServiceError ? analysisError.code : "analysis_failed",
           analyzedAt: new Date().toISOString(),
           scanQuality,
+          ...buildShopScanContext(activeShopJob, activeShopVehicleContext),
           provenance: {
             analysisSource: "ai_detection",
             captureMode,
@@ -502,7 +557,7 @@ export default function Scanner() {
         },
       );
     }
-  }, [isScanRequestActive, persistAndShowReview, recordScanOutcome, selectedCameraId, stopForQualityCoach]);
+  }, [activeShopJob, activeShopVehicleContext, isScanRequestActive, persistAndShowReview, recordScanOutcome, selectedCameraId, stopForQualityCoach]);
 
   const handleIdentify = useCallback(async (reviewTargetOverride?: CameraObjectTarget) => {
     if (isAnalyzing || activeIdentifyRef.current) {
@@ -879,6 +934,19 @@ export default function Scanner() {
           </svg>
         </button>
       </header>
+
+      {activeShopJob ? (
+        <Link
+          to={`/shop/jobs/${encodeURIComponent(activeShopJob.id)}`}
+          className="fixed left-4 right-4 top-[calc(max(16px,env(safe-area-inset-top))+56px)] z-20 rounded-[8px] border border-white/14 bg-slate-950/68 px-3 py-2 text-white shadow-[0_14px_34px_rgba(0,0,0,0.24)] backdrop-blur-md"
+        >
+          <p className="truncate text-xs font-extrabold uppercase tracking-[0.14em] text-[var(--ds-accent)]">Shop job</p>
+          <p className="mt-1 truncate text-sm font-black">{activeShopJob.title}</p>
+          <p className="mt-0.5 truncate text-xs font-semibold text-white/72">
+            {activeShopJob.year} {activeShopJob.make} {activeShopJob.model} / {activeShopJob.technicianName}
+          </p>
+        </Link>
+      ) : null}
 
       {cameraState === "loading" && !scanReview ? <CameraLoading /> : null}
       {cameraState === "blocked" && !scanReview ? (

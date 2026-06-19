@@ -25,7 +25,7 @@ export default async function handler(request: VercelRequest, response: VercelRe
     response.status(405).json({
       error: {
         code: "method_not_allowed",
-        message: "Use POST for Stripe billing webhooks.",
+        message: "Use POST for billing provider webhooks.",
       },
     });
     return;

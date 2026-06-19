@@ -17,6 +17,9 @@ vi.mock("./screens/Account", () => ({ default: () => <div>Account screen</div> }
 vi.mock("./screens/Pricing", () => ({ default: () => <div>Pricing screen</div> }));
 vi.mock("./screens/Result", () => ({ default: () => <div>Result screen</div> }));
 vi.mock("./screens/Scanner", () => ({ default: () => <div>Scanner screen</div> }));
+vi.mock("./screens/Shop", () => ({ default: () => <div>Shop screen</div> }));
+vi.mock("./screens/ShopJob", () => ({ default: () => <div>Shop job screen</div> }));
+vi.mock("./screens/ShopNewJob", () => ({ default: () => <div>Shop new job screen</div> }));
 
 describe("App auth guard", () => {
   beforeEach(() => {
@@ -113,6 +116,28 @@ describe("App auth guard", () => {
     renderApp("/account");
 
     expect(await screen.findByText("Account screen")).toBeInTheDocument();
+  });
+
+  it("protects shop mode behind verified auth", async () => {
+    authMock.getVerifiedAuthUser.mockResolvedValue(null);
+
+    renderApp("/shop");
+
+    expect(await screen.findByText("Auth screen")).toBeInTheDocument();
+  });
+
+  it("opens shop job creation after the Supabase auth check passes", async () => {
+    authMock.getVerifiedAuthUser.mockResolvedValue({
+      app_metadata: {},
+      aud: "authenticated",
+      created_at: new Date(0).toISOString(),
+      id: "verified-user",
+      user_metadata: {},
+    });
+
+    renderApp("/shop/new");
+
+    expect(await screen.findByText("Shop new job screen")).toBeInTheDocument();
   });
 });
 

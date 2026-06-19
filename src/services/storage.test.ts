@@ -145,6 +145,68 @@ describe("storage", () => {
     });
   });
 
+  it("preserves shop job context and mechanic-grade result fields", () => {
+    const lookup = createLookup({
+      ...scanState,
+      customerVisibleReport: {
+        generatedAt: "2026-05-16T00:00:06.000Z",
+        summary: "Customer safe summary.",
+        title: "Customer report",
+      },
+      jobId: "11111111-1111-4111-8111-111111111111",
+      orgId: "00000000-0000-4000-8000-000000000001",
+      reviewStatus: "needs_review",
+      vehicleContext: {
+        jobTitle: "Alternator job",
+        make: "Toyota",
+        model: "Camry",
+        symptom: "Battery light.",
+        technicianName: "Sam",
+        year: "2014",
+      },
+      result: {
+        ...scanState.result!,
+        candidateParts: [
+          {
+            confidence: "high",
+            evidence: ["Pulley and vented housing."],
+            partName: "Alternator",
+            scanCategory: "electrical",
+          },
+        ],
+        fitmentConfidence: "needs_vehicle_context",
+        primaryPart: {
+          confidence: "high",
+          evidence: ["Pulley and vented housing."],
+          partName: "Alternator",
+          scanCategory: "electrical",
+        },
+        requiredNextEvidence: ["VIN", "label photo"],
+      },
+    }).value;
+
+    expect(getLookup(lookup.id)).toMatchObject({
+      customerVisibleReport: {
+        title: "Customer report",
+      },
+      jobId: "11111111-1111-4111-8111-111111111111",
+      orgId: "00000000-0000-4000-8000-000000000001",
+      reviewStatus: "needs_review",
+      result: {
+        candidateParts: [
+          {
+            partName: "Alternator",
+          },
+        ],
+        fitmentConfidence: "needs_vehicle_context",
+        requiredNextEvidence: ["VIN", "label photo"],
+      },
+      vehicleContext: {
+        technicianName: "Sam",
+      },
+    });
+  });
+
   it("updates AI result on successful retry", () => {
     const failedScanState: ScanAnalysisState = {
       frame: {

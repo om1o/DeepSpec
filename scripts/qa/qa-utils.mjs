@@ -15,6 +15,16 @@ export const DEEPSPEC_QA_SCENARIOS = [
   "pricing",
   "checkout",
   "account-entitlements",
+  "shop-onboarding",
+  "create-job",
+  "job-scan",
+  "job-result-correction",
+  "add-vin-after-result",
+  "second-angle-refinement",
+  "shop-history-search",
+  "customer-report-export",
+  "org-member-permissions",
+  "billing-provider-fail-closed",
 ];
 
 const originalEnvKeys = new Set(Object.keys(process.env));

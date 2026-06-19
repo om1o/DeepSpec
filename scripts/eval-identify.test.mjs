@@ -189,6 +189,54 @@ describe("identify eval scoring", () => {
     });
   });
 
+  it("scores mechanic-grade candidate parts and damage observations without accepting negated damage", () => {
+    expect(
+      scoreIdentificationResult(
+        {
+          ...result,
+          partName: "Front bumper",
+          primaryPart: {
+            partName: "Front bumper",
+            confidence: "high",
+            scanCategory: "body",
+            evidence: ["The bumper cover is detached and hanging near the mounting point."],
+          },
+          candidateParts: [
+            {
+              partName: "Front bumper cover",
+              confidence: "medium",
+              scanCategory: "body",
+              evidence: ["Returned as an alternate visible candidate."],
+            },
+          ],
+          visibleObservations: ["The front fender has damage near the wheel opening."],
+          requiredNextEvidence: ["Second angle showing connectors or mounting tabs."],
+        },
+        ["Broken part", "Missing part"],
+      ),
+    ).toMatchObject({
+      ok: true,
+      matchedLabels: ["Broken part", "Missing part"],
+      failureReasons: [],
+    });
+
+    expect(
+      scoreIdentificationResult(
+        {
+          ...result,
+          partName: "Front bumper",
+          visibleObservations: ["Bumper appears intact with no visible damage."],
+          evidence: ["Local dataset match: Front-bumper (damage, 693 labeled samples)."],
+        },
+        ["Broken part"],
+      ),
+    ).toMatchObject({
+      ok: false,
+      matchedLabels: [],
+      failureReasons: ["wrong_result"],
+    });
+  });
+
   it("keeps provider availability failures out of training review rows", () => {
     expect(isReviewableEvalFailure({ code: "rate_limited" })).toBe(false);
     expect(isReviewableEvalFailure({ code: "network" })).toBe(false);
@@ -275,6 +323,17 @@ describe("identify eval scoring", () => {
   it("marks safety false positives only when the expected label is not safety-critical", () => {
     expect(isSafetyFalsePositive({ ...result, isSafetyCritical: true, safetyTriage: "needs_professional" }, ["Back-bumper"])).toBe(true);
     expect(isSafetyFalsePositive({ ...result, isSafetyCritical: true, safetyTriage: "needs_professional" }, ["Brake caliper"])).toBe(false);
+    expect(
+      isSafetyFalsePositive(
+        {
+          ...result,
+          isSafetyCritical: true,
+          safetyTriage: "needs_professional",
+          visibleObservations: ["Rear bumper is damaged and detached from the mount."],
+        },
+        ["Broken part"],
+      ),
+    ).toBe(false);
     expect(scoreIdentificationResult({ ...result, isSafetyCritical: true, safetyTriage: "needs_professional" }, ["Back-bumper"])).toMatchObject({
       ok: false,
       failureReasons: ["safety_false_positive"],

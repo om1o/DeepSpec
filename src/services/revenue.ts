@@ -8,6 +8,11 @@ export type RevenuePlan = {
   scanAllowance: number;
   audience: string;
   value: string[];
+  billingMode: "payment" | "subscription";
+  /**
+   * @deprecated Use billingMode. Kept temporarily so older tests/build paths do
+   * not misread persisted plan objects during the provider-neutral migration.
+   */
   stripeMode: "payment" | "subscription";
 };
 
@@ -21,6 +26,7 @@ export type EntitlementState = {
 };
 
 export type ServerEntitlement = {
+  billingProvider?: string;
   currentPeriodEnd?: string;
   planId?: PlanId;
   planName?: string;
@@ -38,6 +44,7 @@ export const REVENUE_PLANS: RevenuePlan[] = [
     cadence: "monthly",
     scanAllowance: 100,
     audience: "DIY owners who scan more than once",
+    billingMode: "subscription",
     stripeMode: "subscription",
     value: [
       "Ranked likely part candidates",
@@ -53,6 +60,7 @@ export const REVENUE_PLANS: RevenuePlan[] = [
     cadence: "yearly",
     scanAllowance: 1200,
     audience: "Returning owners and weekend wrenchers",
+    billingMode: "subscription",
     stripeMode: "subscription",
     value: [
       "All Plus features",
@@ -67,6 +75,7 @@ export const REVENUE_PLANS: RevenuePlan[] = [
     cadence: "one time",
     scanAllowance: 20,
     audience: "One-off diagnosis before buying parts",
+    billingMode: "payment",
     stripeMode: "payment",
     value: [
       "20 AI part scans",
@@ -81,6 +90,7 @@ export const REVENUE_PLANS: RevenuePlan[] = [
     cadence: "monthly",
     scanAllowance: 500,
     audience: "Small shops and inspection workflows",
+    billingMode: "subscription",
     stripeMode: "subscription",
     value: [
       "500 scans per month",

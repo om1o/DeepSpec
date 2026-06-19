@@ -76,7 +76,7 @@ export default function Account() {
           <h1 className="mt-3 text-3xl font-black tracking-tight">Your DeepSpec access</h1>
           {checkoutState === "success" ? (
             <p className="mt-3 rounded-[8px] bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-900">
-              Checkout returned successfully. Paid scans unlock only after server entitlement verification returns an active Stripe-backed plan.
+              Checkout returned successfully. Paid scans unlock only after server entitlement verification returns an active provider-backed plan.
             </p>
           ) : null}
           <div className="mt-5 grid gap-3 sm:grid-cols-3">

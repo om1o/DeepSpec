@@ -13,7 +13,7 @@ export default function Pricing() {
 
   async function startCheckout(planId: PlanId) {
     setActivePlanId(planId);
-    setCheckoutStatus("Starting secure Stripe checkout...");
+    setCheckoutStatus("Starting secure provider checkout...");
 
     const client = await getAuthClient();
     const session = client ? await client.auth.getSession().catch(() => null) : null;

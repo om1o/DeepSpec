@@ -78,18 +78,7 @@ export function scoreIdentificationResult(result, expectedLabels) {
     };
   }
 
-  const resultText = normalizeText(
-    [
-      result.partName,
-      result.scanCategory,
-      result.whatItDoes,
-      ...(Array.isArray(result.candidateMatches) ? result.candidateMatches.map(formatCandidateForScoring) : []),
-      ...(Array.isArray(result.visibleObservations) ? result.visibleObservations : []),
-      ...(Array.isArray(result.evidenceRegions) ? result.evidenceRegions.map(formatEvidenceRegionForScoring) : []),
-      ...(Array.isArray(result.concerns) ? result.concerns : []),
-      ...(Array.isArray(result.evidence) ? result.evidence : []),
-    ].join(" "),
-  );
+  const resultText = buildResultScoringText(result);
   const matchedLabels = expectedLabels.filter((label) => labelAliases(label).some((alias) => resultText.includes(alias)));
   const failureReasons = [];
 
@@ -184,6 +173,10 @@ export function getEvalExitCode(summary) {
 
 export function isSafetyFalsePositive(result, expectedLabels) {
   if (!result || isSafetyCriticalExpected(expectedLabels)) {
+    return false;
+  }
+
+  if (hasSevereBodyDamageSignal(result)) {
     return false;
   }
 
@@ -935,6 +928,36 @@ function labelAliases(label) {
     aliases.add("broken");
     aliases.add("cracked");
     aliases.add("crack");
+    aliases.add("damaged");
+    aliases.add("severely damaged");
+    aliases.add("detached");
+    aliases.add("hanging");
+    aliases.add("has damage");
+    aliases.add("impact damage");
+  }
+
+  if (normalized === "missing part") {
+    aliases.add("missing");
+    aliases.add("absent");
+    aliases.add("detached");
+    aliases.add("hanging");
+  }
+
+  if (normalized === "cracked") {
+    aliases.add("crack");
+    aliases.add("cracks");
+  }
+
+  if (normalized === "paint chip") {
+    aliases.add("paint chipped");
+    aliases.add("chipped");
+    aliases.add("chips");
+  }
+
+  if (normalized === "corrosion") {
+    aliases.add("corroded");
+    aliases.add("rust");
+    aliases.add("rusted");
   }
 
   if (normalized === "scratch") {
@@ -946,6 +969,29 @@ function labelAliases(label) {
   }
 
   return [...aliases].filter((alias) => alias.length >= 4);
+}
+
+function buildResultScoringText(result) {
+  return normalizeText(
+    [
+      result.partName,
+      result.scanCategory,
+      result.whatItDoes,
+      formatPartForScoring(result.primaryPart),
+      ...(Array.isArray(result.candidateMatches) ? result.candidateMatches.map(formatCandidateForScoring) : []),
+      ...(Array.isArray(result.candidateParts) ? result.candidateParts.map(formatPartForScoring) : []),
+      ...(Array.isArray(result.visibleObservations) ? result.visibleObservations : []),
+      ...(Array.isArray(result.evidenceRegions) ? result.evidenceRegions.map(formatEvidenceRegionForScoring) : []),
+      ...(Array.isArray(result.concerns) ? result.concerns : []),
+      ...(Array.isArray(result.evidence) ? result.evidence : []),
+      ...(Array.isArray(result.requiredNextEvidence) ? result.requiredNextEvidence : []),
+    ].join(" "),
+  );
+}
+
+function hasSevereBodyDamageSignal(result) {
+  const text = buildResultScoringText(result);
+  return /\b(detached|hanging|missing|exposed structure|severely damaged|structural damage)\b/.test(text);
 }
 
 function isTooVague(result) {
@@ -963,6 +1009,19 @@ function formatCandidateForScoring(candidate) {
   }
 
   return [candidate.partName, candidate.scanCategory, candidate.reason].filter(Boolean).join(" ");
+}
+
+function formatPartForScoring(part) {
+  if (!part || typeof part !== "object") {
+    return "";
+  }
+
+  return [
+    part.partName,
+    part.scanCategory,
+    part.whyNotPrimary,
+    ...(Array.isArray(part.evidence) ? part.evidence : []),
+  ].filter(Boolean).join(" ");
 }
 
 function formatEvidenceRegionForScoring(region) {

@@ -8,6 +8,9 @@ import History from "./screens/History";
 import Account from "./screens/Account";
 import Pricing from "./screens/Pricing";
 import Result from "./screens/Result";
+import Shop from "./screens/Shop";
+import ShopJob from "./screens/ShopJob";
+import ShopNewJob from "./screens/ShopNewJob";
 import { getVerifiedAuthUser, subscribeToAuthChanges } from "./services/auth";
 import { startOfflineUpgradeWatcher } from "./services/offlineUpgrade";
 
@@ -124,6 +127,30 @@ export default function App() {
         element={
           <RequireAuth>
             <Pricing />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/shop"
+        element={
+          <RequireAuth>
+            <Shop />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/shop/new"
+        element={
+          <RequireAuth>
+            <ShopNewJob />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/shop/jobs/:jobId"
+        element={
+          <RequireAuth>
+            <ShopJob />
           </RequireAuth>
         }
       />

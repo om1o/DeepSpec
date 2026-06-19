@@ -1,6 +1,8 @@
 import { createIdentifyResponse } from "./identify.shared";
+import { consumeReservedScanCredit, reserveScanCredit } from "./billing.shared";
 
 type VercelRequest = {
+  headers?: Record<string, string | string[] | undefined>;
   method?: string;
   body?: unknown;
 };
@@ -24,6 +26,15 @@ export default async function handler(request: VercelRequest, response: VercelRe
     return;
   }
 
+  const reservation = await reserveScanCredit(request.headers ?? {}, process.env);
+  if (!reservation.ok) {
+    response.status(reservation.error.status).json(reservation.error.body);
+    return;
+  }
+
   const result = await createIdentifyResponse(request.body, process.env);
+  if (result.status === 200) {
+    await consumeReservedScanCredit(reservation, process.env);
+  }
   response.status(result.status).json(result.body);
 }

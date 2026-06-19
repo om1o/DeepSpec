@@ -154,6 +154,89 @@ describe("cloudSync", () => {
     }));
   });
 
+  it("upserts the shop job bridge row when a synced scan has valid org and job context", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    const scanLookupUpsert = vi.fn().mockResolvedValue({ error: null });
+    const jobScanUpsert = vi.fn().mockResolvedValue({ error: null });
+    const correctionUpsert = vi.fn().mockResolvedValue({ error: null });
+    const candidateInsert = vi.fn().mockResolvedValue({ error: null });
+    const evidenceInsert = vi.fn().mockResolvedValue({ error: null });
+    const modelRunInsert = vi.fn().mockResolvedValue({ error: null });
+    const syncEventInsert = vi.fn().mockResolvedValue({ error: null });
+    const from = vi.fn((table: string) => {
+      if (table === "scan_lookups") return { upsert: scanLookupUpsert };
+      if (table === "job_scans") return { upsert: jobScanUpsert };
+      if (table === "scan_candidates") return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert: candidateInsert };
+      if (table === "scan_evidence") return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert: evidenceInsert };
+      if (table === "scan_corrections") return { upsert: correctionUpsert };
+      if (table === "scan_model_runs") return { insert: modelRunInsert };
+      if (table === "sync_events") return { insert: syncEventInsert };
+      throw new Error(`Unexpected table ${table}`);
+    });
+    mocks.createClient.mockReturnValue({
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
+        signInAnonymously: vi.fn(),
+      },
+      from,
+      storage: {
+        from: vi.fn().mockReturnValue({ upload }),
+      },
+    });
+    const { syncLookupToCloud } = await import("./cloudSync");
+    const orgId = "00000000-0000-4000-8000-000000000001";
+    const jobId = "00000000-0000-4000-8000-000000000101";
+    const customerVisibleReport = {
+      generatedAt: "2026-05-18T00:00:04.000Z",
+      summary: "Alternator result ready for customer report.",
+      title: "Customer report",
+    };
+
+    await expect(syncLookupToCloud({
+      ...makeLookup(),
+      customerVisibleReport,
+      jobId,
+      orgId,
+      reviewStatus: "confirmed",
+      technicianUserId: "00000000-0000-4000-8000-000000000201",
+      vehicleContext: {
+        make: "Toyota",
+        model: "Camry",
+        symptom: "Battery warning light",
+        technicianName: "Alex",
+        year: "2012",
+      },
+    })).resolves.toMatchObject({ ok: true });
+
+    expect(scanLookupUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customer_visible_report_json: customerVisibleReport,
+        job_id: jobId,
+        org_id: orgId,
+        review_status: "confirmed",
+        technician_user_id: "00000000-0000-4000-8000-000000000201",
+        vehicle_context: expect.objectContaining({
+          make: "Toyota",
+          model: "Camry",
+        }),
+      }),
+      { onConflict: "user_id,local_id" },
+    );
+    expect(jobScanUpsert).toHaveBeenCalledWith(
+      {
+        customer_visible_report_json: customerVisibleReport,
+        job_id: jobId,
+        org_id: orgId,
+        review_status: "confirmed",
+        scan_local_id: "lookup-1",
+        user_id: "user-1",
+      },
+      { onConflict: "job_id,user_id,scan_local_id" },
+    );
+  });
+
   it("syncs multiple saved scans as separate cloud rows and images", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");

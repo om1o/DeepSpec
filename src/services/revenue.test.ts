@@ -63,11 +63,11 @@ describe("revenue", () => {
     expect(getRevenuePlan("plus_monthly")).toMatchObject({
       name: "DeepSpec Plus",
       scanAllowance: 100,
-      stripeMode: "subscription",
+      billingMode: "subscription",
     });
     expect(getRevenuePlan("scan_pack")).toMatchObject({
       scanAllowance: 20,
-      stripeMode: "payment",
+      billingMode: "payment",
     });
     expect(getRevenuePlan("bad-plan")).toBeNull();
   });

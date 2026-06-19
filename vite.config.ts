@@ -27,7 +27,7 @@ export default defineConfig(async ({ mode }) => {
           registerPreviewMethodGuard(server, "/api/chat", "Use POST for AI follow-up chat.");
           registerPreviewMethodGuard(server, "/api/billing-checkout", "Use POST to start DeepSpec checkout.");
           registerPreviewMethodGuard(server, "/api/billing-portal", "Use POST to open DeepSpec billing.");
-          registerPreviewMethodGuard(server, "/api/billing-webhook", "Use POST for Stripe billing webhooks.");
+          registerPreviewMethodGuard(server, "/api/billing-webhook", "Use POST for billing provider webhooks.");
           registerPreviewMethodGuard(server, "/api/account-entitlement", "Use GET to verify DeepSpec account access.", "GET");
         },
         configureServer(server: ViteDevServer) {
@@ -43,7 +43,18 @@ export default defineConfig(async ({ mode }) => {
 
             const body = await readJsonBody(request).catch(() => null);
             const { createIdentifyResponse } = (await server.ssrLoadModule("/api/identify.shared.ts")) as typeof import("./api/identify.shared");
+            const { consumeReservedScanCredit, reserveScanCredit } = (await server.ssrLoadModule("/api/billing.shared.ts")) as typeof import("./api/billing.shared");
+            const reservation = await reserveScanCredit(request.headers, serverEnv);
+            if (!reservation.ok) {
+              response.statusCode = reservation.error.status;
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify(reservation.error.body));
+              return;
+            }
             const result = await createIdentifyResponse(body, serverEnv);
+            if (result.status === 200) {
+              await consumeReservedScanCredit(reservation, serverEnv);
+            }
             response.statusCode = result.status;
             response.setHeader("Content-Type", "application/json");
             response.end(JSON.stringify(result.body));
@@ -109,7 +120,7 @@ export default defineConfig(async ({ mode }) => {
             if (request.method !== "POST") {
               response.statusCode = 405;
               response.setHeader("Content-Type", "application/json");
-              response.end(JSON.stringify({ error: { code: "method_not_allowed", message: "Use POST for Stripe billing webhooks." } }));
+              response.end(JSON.stringify({ error: { code: "method_not_allowed", message: "Use POST for billing provider webhooks." } }));
               return;
             }
 

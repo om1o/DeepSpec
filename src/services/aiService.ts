@@ -1,5 +1,6 @@
 import { FOLLOWUP_PROMPT, IDENTIFY_PROMPT } from "./systemPrompts";
 import { identifyOnDevice, isOnDeviceFallbackEnabled } from "./onDeviceIdentify";
+import { getAuthClient } from "./auth";
 import {
   SCAN_CATEGORIES,
   type AIInput,
@@ -105,9 +106,11 @@ export async function runAI(input: AIInput): Promise<string | object> {
 }
 
 async function postAI<TSuccess extends object>(path: string, payload: object): Promise<TSuccess> {
+  const authHeader = await getAuthHeader();
   const response = await fetch(path, {
     method: "POST",
     headers: {
+      ...(authHeader ? { Authorization: authHeader } : {}),
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
@@ -147,6 +150,17 @@ export async function identifyCapturedFrame(
   });
 
   return assertIdentificationResult(result);
+}
+
+async function getAuthHeader() {
+  const client = await getAuthClient().catch(() => null);
+  if (!client) {
+    return "";
+  }
+
+  const session = await client.auth.getSession().catch(() => null);
+  const token = session?.data.session?.access_token;
+  return token ? `Bearer ${token}` : "";
 }
 
 function runCloudIdentify(

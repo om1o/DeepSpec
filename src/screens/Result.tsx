@@ -9,9 +9,10 @@ import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } fro
 import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
 import { buildScanReport, downloadTextFile, getMechanicSearchUrl, getScanReportFilename } from "../services/report";
 import { recordManualCorrection, recordUserTrustScore } from "../services/scanQualityMetrics";
+import { getShopJob } from "../services/shop";
 import { createLookup, deleteLookup, getLookup, scanStateFromLookup, updateLookup, updateLookupResult } from "../services/storage";
 import { getTrainingReadiness, type TrainingReadiness } from "../services/trainingReadiness";
-import type { CandidateMatch, CapturedFrame, Confidence, EvidenceRegion, IdentificationResult, Lookup, Rating, ScanAnalysisState, SourceLink } from "../types";
+import type { CandidateMatch, CapturedFrame, Confidence, EvidenceRegion, IdentificationResult, Lookup, Rating, ScanAnalysisState, ShopJob as ShopJobRecord, SourceLink } from "../types";
 
 type DetectedTextFinding = {
   codes: string[];
@@ -31,6 +32,7 @@ export default function Result() {
   const frame = scanState?.frame ?? readLatestCapturedFrame();
   const capturedAt = frame?.capturedAt ? new Date(frame.capturedAt).toLocaleString() : null;
   const storageWarning = scanState?.storageWarning;
+  const shopJob = scanState?.jobId ? getShopJob(scanState.jobId) : null;
   const canSaveForChat = Boolean(scanState?.frame && scanState.result);
   const datasetSourceUrls = scanState?.result ? getDatasetSourceUrls(scanState.result.evidence) : [];
   const manualCorrectionTrackedRef = useRef(false);
@@ -105,6 +107,12 @@ export default function Result() {
       analyzedAt: scanState.analyzedAt ?? new Date().toISOString(),
       scanQuality: scanState.scanQuality,
       provenance: scanState.provenance,
+      customerVisibleReport: scanState.customerVisibleReport,
+      jobId: scanState.jobId,
+      orgId: scanState.orgId,
+      reviewStatus: scanState.reviewStatus,
+      technicianUserId: scanState.technicianUserId,
+      vehicleContext: scanState.vehicleContext,
     });
 
     if (!saved.ok) {
@@ -119,7 +127,8 @@ export default function Result() {
   }
 
   function handleRetakeWithGuide() {
-    navigate("/scan?guide=retake");
+    const jobQuery = scanState?.jobId ? `jobId=${encodeURIComponent(scanState.jobId)}&` : "";
+    navigate(`/scan?${jobQuery}guide=retake`);
   }
 
   function handleLookupUpdate(result: ReturnType<typeof updateLookup>) {
@@ -177,12 +186,14 @@ export default function Result() {
           <div className="space-y-3">
           {storageWarning ? <StorageWarning message={storageWarning} /> : null}
           {!lookup && saveError ? <StorageWarning message={saveError} /> : null}
+          {shopJob ? <ShopJobBanner job={shopJob} /> : null}
           {scanState?.result ? (
             <AnalysisResult
               result={scanState.result}
               capturedAt={capturedAt}
               canSaveForChat={canSaveForChat}
               frame={frame}
+              jobId={scanState.jobId ?? null}
               lookupId={lookup?.id ?? null}
               onRetakeWithGuide={handleRetakeWithGuide}
               onSaveAndAsk={handleSaveAndAsk}
@@ -224,6 +235,25 @@ export default function Result() {
       </div>
       <HistoryDockButton />
     </main>
+  );
+}
+
+function ShopJobBanner({ job }: { job: ShopJobRecord }) {
+  return (
+    <section className="rounded-[8px] border border-[var(--ds-accent-line)] bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Saved to shop job</p>
+          <h2 className="mt-1 truncate text-lg font-black tracking-tight">{job.title}</h2>
+          <p className="mt-1 text-sm font-semibold text-slate-500">
+            {job.year} {job.make} {job.model} / {job.technicianName}
+          </p>
+        </div>
+        <Link to={`/shop/jobs/${encodeURIComponent(job.id)}`} className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-900">
+          Open job
+        </Link>
+      </div>
+    </section>
   );
 }
 
@@ -354,10 +384,12 @@ function SavedScanControls({
   }
 
   return (
-    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
+    <section id="shop-feedback" className="rounded-[22px] border border-neutral-200 bg-white p-4">
       <p className="text-sm font-extrabold text-neutral-900">Saved scan</p>
       <p className="mt-2 text-sm leading-6 text-neutral-500">
-        Your rating, correction, and notes stay on this device and help improve future results.
+        {lookup.jobId
+          ? "Your rating, correction, and notes stay private to this shop unless shop learning is enabled."
+          : "Your rating, correction, and notes stay on this device and help improve future results."}
       </p>
       <div className="mt-4 grid grid-cols-1 gap-3">
         <TrustRow label="Dataset category" value={lookup.scanCategory} />
@@ -520,6 +552,7 @@ function AnalysisResult({
   canSaveForChat,
   capturedAt,
   frame,
+  jobId,
   lookupId,
   onRetakeWithGuide,
   onSaveAndAsk,
@@ -528,6 +561,7 @@ function AnalysisResult({
   canSaveForChat: boolean;
   capturedAt: string | null;
   frame: CapturedFrame | null | undefined;
+  jobId: string | null;
   lookupId: string | null;
   onRetakeWithGuide: () => void;
   onSaveAndAsk: (question?: string) => void;
@@ -596,6 +630,8 @@ function AnalysisResult({
 
       <CompleteBrief result={result} />
 
+      <MechanicResultPanel jobId={jobId} lookupId={lookupId} result={result} />
+
       <section className="rounded-[22px] border border-neutral-200 bg-white p-2 shadow-sm">
         <div className="grid grid-cols-4 gap-1" role="tablist" aria-label="Result sections">
           {RESULT_PANELS.map((panel) => (
@@ -662,6 +698,102 @@ function CompleteBrief({ result }: { result: IdentificationResult }) {
       </div>
     </section>
   );
+}
+
+function MechanicResultPanel({
+  jobId,
+  lookupId,
+  result,
+}: {
+  jobId: string | null;
+  lookupId: string | null;
+  result: IdentificationResult;
+}) {
+  const candidates = getMechanicCandidates(result);
+  const nextEvidence = result.requiredNextEvidence?.length
+    ? result.requiredNextEvidence
+    : ["VIN", "label photo", "second angle", "measurement reference"];
+
+  return (
+    <section className="rounded-[24px] border border-[var(--ds-accent-line)] bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Mechanic verification</p>
+          <h2 className="mt-1 text-xl font-extrabold tracking-tight">Ranked answer</h2>
+        </div>
+        <span className="rounded-full bg-[var(--ds-accent-soft)] px-3 py-1 text-xs font-black capitalize text-[var(--ds-accent)]">
+          {(result.fitmentConfidence ?? "needs_vehicle_context").replaceAll("_", " ")}
+        </span>
+      </div>
+
+      <div className="mt-4 rounded-[8px] border border-slate-200 bg-slate-50 px-3 py-3">
+        <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-400">Top answer</p>
+        <p className="mt-1 text-lg font-black tracking-tight">{result.primaryPart?.partName ?? result.partName}</p>
+        <p className="mt-2 text-sm leading-6 text-slate-600">
+          {(result.visibleObservations[0] || result.whatItDoes)}
+        </p>
+      </div>
+
+      {candidates.length ? (
+        <div className="mt-3 grid gap-2">
+          {candidates.map((candidate, index) => (
+            <div key={`${candidate.partName}-${index}`} className="rounded-[8px] border border-slate-200 bg-white px-3 py-3">
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-sm font-black text-slate-950">{index + 1}. {candidate.partName}</p>
+                <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[11px] font-black capitalize text-slate-500">{candidate.confidence}</span>
+              </div>
+              <p className="mt-2 text-sm leading-5 text-slate-600">Why this: {candidate.whyThis}</p>
+              <p className="mt-1 text-sm leading-5 text-slate-500">Why not: {candidate.whyNot}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="mt-4 rounded-[8px] bg-[var(--ds-warn-soft)] px-3 py-3">
+        <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--ds-warn-ink)]">Required next evidence</p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {nextEvidence.slice(0, 5).map((item) => (
+            <span key={item} className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-700 ring-1 ring-[var(--ds-warn-line)]">
+              {item}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <a className="rounded-full bg-[var(--ds-ok)] px-3 py-2 text-center text-xs font-extrabold text-white" href={lookupId ? "#shop-feedback" : "#"}>
+          Confirm
+        </a>
+        <a className="rounded-full bg-neutral-100 px-3 py-2 text-center text-xs font-extrabold text-neutral-900" href={lookupId ? "#shop-feedback" : "#"}>
+          Correct
+        </a>
+        <Link className="rounded-full bg-neutral-100 px-3 py-2 text-center text-xs font-extrabold text-neutral-900" to={jobId ? `/scan?jobId=${encodeURIComponent(jobId)}&guide=retake` : "/scan?guide=retake"}>
+          Add second angle
+        </Link>
+        <Link className="rounded-full bg-neutral-100 px-3 py-2 text-center text-xs font-extrabold text-neutral-900" to={jobId ? `/shop/jobs/${encodeURIComponent(jobId)}` : "/history"}>
+          Add VIN
+        </Link>
+      </div>
+    </section>
+  );
+}
+
+function getMechanicCandidates(result: IdentificationResult) {
+  if (result.candidateParts?.length) {
+    return result.candidateParts.slice(0, 3).map((candidate) => ({
+      confidence: candidate.confidence,
+      partName: candidate.partName,
+      whyNot: candidate.whyNotPrimary || "Needs VIN, label, second angle, or measurement reference before exact fitment.",
+      whyThis: candidate.evidence[0] || "Visible shape and location match this candidate.",
+    }));
+  }
+
+  return result.candidateMatches.slice(0, 3).map((candidate) => ({
+    confidence: candidate.confidence,
+    partName: candidate.partName,
+    whyNot: "Candidate is ranked below the top answer until more evidence is added.",
+    whyThis: candidate.reason,
+  }));
 }
 
 function shouldShowBackupModelNotice(result: IdentificationResult) {

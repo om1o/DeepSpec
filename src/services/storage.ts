@@ -1,4 +1,4 @@
-import type { CandidateMatch, ChatMessage, Confidence, EvidenceRegion, IdentificationResult, IdentifyModelRun, IdentifyProvider, Lookup, Rating, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanCategory, ScanProvenance, ScanQualityFailureReason, ScanQualitySnapshot, SourceLink, TrainingStatus } from "../types";
+import type { CandidateMatch, CandidatePart, ChatMessage, Confidence, CustomerVisibleReport, EvidenceRegion, FitmentConfidence, IdentificationResult, IdentifyModelRun, IdentifyProvider, Lookup, PartMeasurement, PossibleVehicleContext, Rating, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanCategory, ScanProvenance, ScanQualityFailureReason, ScanQualitySnapshot, ShopReviewStatus, ShopVehicleContext, SourceLink, TrainingStatus } from "../types";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
 export const MAX_SAVED_LOOKUPS = 50;
@@ -35,6 +35,12 @@ export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup
     trainingStatus: "raw_unreviewed",
     chatHistory: [],
     provenance: normalizeScanProvenance(scanState.provenance, createdAt),
+    ...(normalizeCustomerVisibleReport(scanState.customerVisibleReport) ? { customerVisibleReport: normalizeCustomerVisibleReport(scanState.customerVisibleReport) } : {}),
+    ...(cleanTextValue(scanState.jobId, 120) ? { jobId: cleanTextValue(scanState.jobId, 120) } : {}),
+    ...(cleanTextValue(scanState.orgId, 120) ? { orgId: cleanTextValue(scanState.orgId, 120) } : {}),
+    ...(isShopReviewStatus(scanState.reviewStatus) ? { reviewStatus: scanState.reviewStatus } : scanState.jobId ? { reviewStatus: "needs_review" as const } : {}),
+    ...(cleanTextValue(scanState.technicianUserId, 120) ? { technicianUserId: cleanTextValue(scanState.technicianUserId, 120) } : {}),
+    ...(normalizeShopVehicleContext(scanState.vehicleContext) ? { vehicleContext: normalizeShopVehicleContext(scanState.vehicleContext) } : {}),
   };
 
   const lookups = [lookup, ...getLookups()];
@@ -90,6 +96,7 @@ export function updateLookup(
   updatedLookup.trainingStatus = getTrainingStatus(updatedLookup.rating, updatedLookup.correction);
   updatedLookup.trainingLabel = getTrainingLabel(updatedLookup.result, updatedLookup.correction);
   updatedLookup.scanCategory = categorizeScan(updatedLookup.result, updatedLookup.correction ?? undefined);
+  updatedLookup.reviewStatus = getShopReviewStatus(updatedLookup);
 
   const updatedLookups = [...lookups];
   updatedLookups[index] = updatedLookup;
@@ -127,6 +134,12 @@ export function updateLookupResult(
       ...existing.provenance,
       ...provenance,
     }, existing.createdAt),
+    customerVisibleReport: existing.customerVisibleReport,
+    jobId: existing.jobId,
+    orgId: existing.orgId,
+    reviewStatus: getShopReviewStatus(existing),
+    technicianUserId: existing.technicianUserId,
+    vehicleContext: existing.vehicleContext,
   };
 
   const updatedLookups = [...lookups];
@@ -213,6 +226,12 @@ export function scanStateFromLookup(lookup: Lookup): ScanAnalysisState {
     analyzedAt: lookup.analyzedAt,
     scanQuality: lookup.scanQuality,
     provenance: lookup.provenance,
+    customerVisibleReport: lookup.customerVisibleReport,
+    jobId: lookup.jobId,
+    orgId: lookup.orgId,
+    reviewStatus: lookup.reviewStatus,
+    technicianUserId: lookup.technicianUserId,
+    vehicleContext: lookup.vehicleContext,
   };
 }
 
@@ -344,6 +363,12 @@ function normalizeLookup(value: unknown): Lookup | null {
     trainingStatus,
     chatHistory: normalizeChatHistory(lookup.chatHistory),
     provenance: normalizeScanProvenance(lookup.provenance, lookup.createdAt),
+    ...(normalizeCustomerVisibleReport(lookup.customerVisibleReport) ? { customerVisibleReport: normalizeCustomerVisibleReport(lookup.customerVisibleReport) } : {}),
+    ...(cleanTextValue(lookup.jobId, 120) ? { jobId: cleanTextValue(lookup.jobId, 120) } : {}),
+    ...(cleanTextValue(lookup.orgId, 120) ? { orgId: cleanTextValue(lookup.orgId, 120) } : {}),
+    ...(isShopReviewStatus(lookup.reviewStatus) ? { reviewStatus: lookup.reviewStatus } : lookup.jobId ? { reviewStatus: getShopReviewStatus({ ...lookup, rating, correction, trainingStatus }) } : {}),
+    ...(cleanTextValue(lookup.technicianUserId, 120) ? { technicianUserId: cleanTextValue(lookup.technicianUserId, 120) } : {}),
+    ...(normalizeShopVehicleContext(lookup.vehicleContext) ? { vehicleContext: normalizeShopVehicleContext(lookup.vehicleContext) } : {}),
   };
 }
 
@@ -467,6 +492,10 @@ function isTrainingStatus(value: unknown): value is TrainingStatus {
   return value === "raw_unreviewed" || value === "user_confirmed" || value === "user_corrected";
 }
 
+function isShopReviewStatus(value: unknown): value is ShopReviewStatus {
+  return value === "needs_review" || value === "confirmed" || value === "corrected";
+}
+
 function isScanCaptureMode(value: unknown): value is ScanCaptureMode {
   return value === "camera" || value === "upload";
 }
@@ -559,6 +588,12 @@ function normalizeStoredIdentificationResult(value: unknown, correction?: string
     confirmationNeed: normalizeConfirmationNeed(result.confirmationNeed),
     scanCategory: isScanCategory(result.scanCategory) ? result.scanCategory : categorizeScan(result, correction),
     candidateMatches: normalizeCandidateMatches(result.candidateMatches),
+    primaryPart: normalizeCandidatePart(result.primaryPart, result.partName, result.confidence, result.scanCategory),
+    candidateParts: normalizeCandidateParts(result.candidateParts),
+    possibleVehicleContexts: normalizePossibleVehicleContexts(result.possibleVehicleContexts),
+    measurements: normalizePartMeasurements(result.measurements),
+    requiredNextEvidence: cleanStringArray(result.requiredNextEvidence ?? [], 6, 220),
+    ...(isFitmentConfidence(result.fitmentConfidence) ? { fitmentConfidence: result.fitmentConfidence } : {}),
     whatItDoes: cleanText(result.whatItDoes, 500),
     visibleObservations: cleanStringArray(result.visibleObservations, 6, 180),
     evidenceRegions: normalizeEvidenceRegions(result.evidenceRegions, result.visibleObservations, result.evidence),
@@ -616,6 +651,88 @@ function normalizeCandidateMatches(value: unknown): CandidateMatch[] {
     }))
     .filter((candidate) => candidate.partName && candidate.reason)
     .slice(0, 4);
+}
+
+function normalizeCandidatePart(
+  value: unknown,
+  fallbackPartName?: string,
+  fallbackConfidence?: Confidence,
+  fallbackCategory?: ScanCategory,
+): CandidatePart | undefined {
+  if (!isRecord(value)) {
+    return fallbackPartName && fallbackConfidence && fallbackCategory
+      ? {
+          partName: cleanText(fallbackPartName, 80),
+          confidence: fallbackConfidence,
+          scanCategory: fallbackCategory,
+          evidence: [],
+        }
+      : undefined;
+  }
+
+  const partName = typeof value.partName === "string" ? cleanText(value.partName, 80) : "";
+  if (!partName) {
+    return undefined;
+  }
+
+  return {
+    partName,
+    confidence: isConfidence(value.confidence) ? value.confidence : "low",
+    scanCategory: isScanCategory(value.scanCategory) ? value.scanCategory : categorizeText(partName),
+    evidence: Array.isArray(value.evidence) ? cleanStringArray(value.evidence, 4, 180) : [],
+    ...(typeof value.whyNotPrimary === "string" && value.whyNotPrimary.trim()
+      ? { whyNotPrimary: cleanText(value.whyNotPrimary, 180) }
+      : {}),
+  };
+}
+
+function normalizeCandidateParts(value: unknown): CandidatePart[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((candidate) => normalizeCandidatePart(candidate))
+    .filter((candidate): candidate is CandidatePart => Boolean(candidate))
+    .slice(0, 4);
+}
+
+function normalizePossibleVehicleContexts(value: unknown): PossibleVehicleContext[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is Partial<PossibleVehicleContext> => isRecord(item))
+    .map((item) => ({
+      label: typeof item.label === "string" ? cleanText(item.label, 100) : "",
+      confidence: isConfidence(item.confidence) ? item.confidence : "low",
+      evidence: Array.isArray(item.evidence) ? cleanStringArray(item.evidence, 4, 180) : [],
+    }))
+    .filter((item) => item.label)
+    .slice(0, 3);
+}
+
+function normalizePartMeasurements(value: unknown): PartMeasurement[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is Partial<PartMeasurement> => isRecord(item))
+    .map((item) => ({
+      label: typeof item.label === "string" ? cleanText(item.label, 80) : "",
+      valueMm: typeof item.valueMm === "number" && Number.isFinite(item.valueMm) ? Math.max(0, item.valueMm) : 0,
+      confidence: isConfidence(item.confidence) ? item.confidence : "low",
+      method: item.method === "reference_object" || item.method === "visible_marking" || item.method === "estimated" ? item.method : "estimated",
+      caveat: typeof item.caveat === "string" ? cleanText(item.caveat, 180) : "Estimated; verify before ordering parts.",
+    }))
+    .filter((item) => item.label && item.valueMm > 0)
+    .slice(0, 4);
+}
+
+function isFitmentConfidence(value: unknown): value is FitmentConfidence {
+  return value === "not_applicable" || value === "needs_vehicle_context" || value === "possible" || value === "supported";
 }
 
 function normalizeEvidenceRegions(regions: unknown, observations: unknown[], evidence: unknown[]): EvidenceRegion[] {
@@ -690,6 +807,58 @@ function isChatRole(value: unknown): value is ChatMessage["role"] {
 
 function cleanText(value: string, maxLength: number) {
   return value.trim().replace(/\s+/g, " ").slice(0, maxLength);
+}
+
+function cleanTextValue(value: unknown, maxLength: number) {
+  return typeof value === "string" ? cleanText(value, maxLength) : "";
+}
+
+function normalizeShopVehicleContext(value: unknown): ShopVehicleContext | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const context: ShopVehicleContext = {};
+  const fields: Array<keyof ShopVehicleContext> = ["bayOrRo", "customerName", "engine", "jobTitle", "make", "mileage", "model", "notes", "plate", "symptom", "technicianName", "vin", "year"];
+  for (const field of fields) {
+    const clean = cleanTextValue(value[field], field === "notes" || field === "symptom" ? 300 : 120);
+    if (clean) {
+      (context as Record<string, string>)[field] = clean;
+    }
+  }
+
+  return Object.keys(context).length ? context : undefined;
+}
+
+function normalizeCustomerVisibleReport(value: unknown): CustomerVisibleReport | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const title = cleanTextValue(value.title, 140);
+  const summary = cleanTextValue(value.summary, 600);
+  const generatedAt = cleanTextValue(value.generatedAt, 80);
+  if (!title || !summary || !generatedAt) {
+    return undefined;
+  }
+
+  return { generatedAt, summary, title };
+}
+
+function getShopReviewStatus(lookup: Pick<Lookup, "correction" | "jobId" | "rating" | "reviewStatus" | "trainingStatus">): ShopReviewStatus | undefined {
+  if (!lookup.jobId && !lookup.reviewStatus) {
+    return undefined;
+  }
+
+  if (lookup.correction?.trim() || lookup.trainingStatus === "user_corrected") {
+    return "corrected";
+  }
+
+  if (lookup.rating === "up" || lookup.trainingStatus === "user_confirmed") {
+    return "confirmed";
+  }
+
+  return "needs_review";
 }
 
 function cleanStringArray(value: unknown[], maxItems: number, maxItemLength: number) {

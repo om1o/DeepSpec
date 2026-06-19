@@ -78,6 +78,7 @@ const GEMINI_IDENTIFY_PROMPT = [
   "Identify the main visible vehicle part or damage from the photo.",
   `Return only JSON with: partName, confidence, confidenceScore, confidenceRange, confirmationNeed, scanCategory, whatItDoes, visibleObservations, evidence, evidenceRegions, concerns, candidateMatches, primaryPart, candidateParts, possibleVehicleContexts, measurements, requiredNextEvidence, fitmentConfidence, safetyTriage, isSafetyCritical, nextAction, needsBetterPhoto, sourceLinks.`,
   `scanCategory must be one of: ${SCAN_CATEGORIES.join(", ")}.`,
+  "When visible exterior damage exists, name the damage type explicitly in visibleObservations, concerns, or evidence: dent, scratch, cracked, broken/damaged, missing/detached, paint chip, corrosion/rust. Do not say no visible damage when any of those are visible.",
   "Use only visible evidence. Do not invent OEM fitment, part numbers, prices, or exact engine codes.",
   "For complete engines, prefer category engine unless visible active leaking fuel/fluid or a specific safety system is the main subject.",
   "Use leak only for visible active fluid, wet staining, dripping, pooling, oil, coolant, fuel, or other fluid evidence.",
@@ -777,7 +778,7 @@ function getHfIdentifyTimeoutMs(env: Record<string, string | undefined>) {
 }
 
 function isGroqIdentifyFallbackConfigured(env: Record<string, string | undefined>) {
-  return Boolean(getGroqToken(env));
+  return env.DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK === "true" && Boolean(getGroqToken(env));
 }
 
 function getGroqToken(env: Record<string, string | undefined>) {

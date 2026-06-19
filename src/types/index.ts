@@ -78,6 +78,74 @@ export type VehicleContext = {
   notes?: string;
 };
 
+export type ShopRole = "owner" | "admin" | "technician" | "viewer";
+
+export type ShopJobStatus = "open" | "in_progress" | "ready_for_review" | "closed";
+
+export type ShopReviewStatus = "needs_review" | "confirmed" | "corrected";
+
+export type Organization = {
+  id: string;
+  createdAt: string;
+  name: string;
+  ownerUserId?: string;
+  slug: string;
+};
+
+export type OrganizationMember = {
+  id: string;
+  createdAt: string;
+  orgId: string;
+  role: ShopRole;
+  userId: string;
+};
+
+export type ShopVehicleContext = VehicleContext & {
+  bayOrRo?: string;
+  customerName?: string;
+  jobTitle?: string;
+  mileage?: string;
+  plate?: string;
+  symptom?: string;
+  technicianName?: string;
+};
+
+export type ShopJob = {
+  id: string;
+  bayOrRo?: string;
+  createdAt: string;
+  createdByUserId?: string;
+  customerName?: string;
+  engine?: string;
+  make: string;
+  mileage?: string;
+  model: string;
+  notes?: string;
+  orgId: string;
+  plate?: string;
+  reviewStatus: ShopReviewStatus;
+  scanIds: string[];
+  status: ShopJobStatus;
+  symptom: string;
+  technicianName: string;
+  title: string;
+  updatedAt: string;
+  vin?: string;
+  year: string;
+};
+
+export type CustomerVisibleReport = {
+  generatedAt: string;
+  summary: string;
+  title: string;
+};
+
+export type ShopFeedbackPermission = {
+  orgId: string;
+  learningOptIn: boolean;
+  updatedAt: string;
+};
+
 export type MeasurementReferenceType = "card_short_edge" | "card_long_edge" | "us_quarter" | "us_nickel" | "known_fastener" | "custom";
 
 export type MeasurementContext = {
@@ -178,6 +246,12 @@ export type ScanAnalysisState = {
   scanQuality?: ScanQualitySnapshot;
   storageWarning?: string;
   provenance?: ScanProvenance;
+  customerVisibleReport?: CustomerVisibleReport;
+  jobId?: string;
+  orgId?: string;
+  reviewStatus?: ShopReviewStatus;
+  technicianUserId?: string;
+  vehicleContext?: ShopVehicleContext;
 };
 
 export type AIInput = {
@@ -230,6 +304,12 @@ export type Lookup = {
   trainingStatus: TrainingStatus;
   chatHistory: ChatMessage[];
   provenance: ScanProvenance;
+  customerVisibleReport?: CustomerVisibleReport;
+  jobId?: string;
+  orgId?: string;
+  reviewStatus?: ShopReviewStatus;
+  technicianUserId?: string;
+  vehicleContext?: ShopVehicleContext;
 };
 
 export type WaitlistSignup = {

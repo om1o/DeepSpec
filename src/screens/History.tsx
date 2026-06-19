@@ -82,6 +82,9 @@ export default function History() {
             <Link to="/early-access" className="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200">
               Join
             </Link>
+            <Link to="/shop" className="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200">
+              Shop
+            </Link>
             <Link to="/scan" className="rounded-full bg-[var(--ds-accent)] px-4 py-2 text-sm font-bold text-white shadow-sm">
               Scan
             </Link>
@@ -320,6 +323,12 @@ function LookupCard({ lookup }: { lookup: Lookup }) {
         </div>
         <p className="mt-1 truncate text-xs font-semibold text-neutral-400">{createdAt}</p>
         <p className="mt-3 text-sm font-semibold text-neutral-500">{status}</p>
+        {lookup.jobId || lookup.vehicleContext?.technicianName ? (
+          <p className="mt-2 truncate text-xs font-bold text-[var(--ds-accent)]">
+            {lookup.vehicleContext?.jobTitle ?? "Shop job"}
+            {lookup.vehicleContext?.technicianName ? ` / ${lookup.vehicleContext.technicianName}` : ""}
+          </p>
+        ) : null}
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-neutral-400">{lookup.scanCategory}</p>
           <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${getReadinessChipClass(readiness.level)}`}>
@@ -376,6 +385,18 @@ function matchesQuery(lookup: Lookup, query: string) {
       lookup.correction,
       lookup.notes,
       lookup.scanCategory,
+      lookup.jobId,
+      lookup.orgId,
+      lookup.vehicleContext?.bayOrRo,
+      lookup.vehicleContext?.customerName,
+      lookup.vehicleContext?.jobTitle,
+      lookup.vehicleContext?.make,
+      lookup.vehicleContext?.model,
+      lookup.vehicleContext?.plate,
+      lookup.vehicleContext?.symptom,
+      lookup.vehicleContext?.technicianName,
+      lookup.vehicleContext?.vin,
+      lookup.vehicleContext?.year,
       lookup.result?.whatItDoes,
       ...(lookup.result?.visibleObservations ?? []),
       ...(lookup.result?.concerns ?? []),

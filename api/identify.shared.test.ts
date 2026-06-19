@@ -902,6 +902,7 @@ describe("createIdentifyResponse", () => {
         { imageBase64 },
         {
           DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true",
+          DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK: "true",
           HF_TOKEN: "hf-test",
           GROQ_API_KEY: "groq-test",
           DEEPSPEC_BACKUP_RATE_LIMIT_RETRIES: "0",
@@ -917,7 +918,7 @@ describe("createIdentifyResponse", () => {
     expect(fetchSpy.mock.calls[1][0]).toBe("https://router.huggingface.co/v1/chat/completions");
   });
 
-  it("uses Groq before Gemini when Groq is configured", async () => {
+  it("uses Groq before Gemini when Groq is explicitly enabled", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(
@@ -931,6 +932,7 @@ describe("createIdentifyResponse", () => {
       createIdentifyResponse(
         { imageBase64 },
         {
+          DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK: "true",
           GEMINI_API_KEY: "test-key",
           GROQ_API_KEY: "groq-test",
           DEEPSPEC_BACKUP_RATE_LIMIT_RETRIES: "0",
@@ -943,6 +945,38 @@ describe("createIdentifyResponse", () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(fetchSpy.mock.calls[0][0]).toBe("https://api.groq.com/openai/v1/chat/completions");
+  });
+
+  it("ignores a Groq key unless the Groq fallback is explicitly enabled", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+
+    await expect(
+      createIdentifyResponse(
+        { imageBase64 },
+        {
+          GEMINI_API_KEY: "test-key",
+          GROQ_API_KEY: "groq-test",
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: 200,
+      body: { modelRun: { provider: "gemini" } },
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0][0]).toEqual(expect.stringContaining("/models/gemini-2.5-flash:generateContent"));
   });
 
   it("falls back to Gemini when the configured Groq provider is unavailable", async () => {
@@ -980,6 +1014,7 @@ describe("createIdentifyResponse", () => {
       createIdentifyResponse(
         { imageBase64 },
         {
+          DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK: "true",
           GEMINI_API_KEY: "test-key",
           GROQ_API_KEY: "groq-test",
         },
@@ -1231,6 +1266,8 @@ describe("createIdentifyResponse", () => {
     expect(body.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
     expect(body.generationConfig.responseSchema).toBeUndefined();
     expect(body.generationConfig.responseJsonSchema).toBeUndefined();
+    expect(JSON.stringify(body)).toContain("Do not say no visible damage");
+    expect(JSON.stringify(body)).toContain("paint chip");
   });
 
   it("normalizes inconsistent safety-critical model output", async () => {

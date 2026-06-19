@@ -70,6 +70,7 @@ describe("billing shared", () => {
     await expect(createCheckoutResponse(
       { planId: "plus_monthly", origin: "https://deepspec.app" },
       {
+        BILLING_PROVIDER: "stripe",
         STRIPE_SECRET_KEY: "sk_test",
         STRIPE_PRICE_DEEPSPEC_PLUS_MONTHLY: "price_plus",
         SUPABASE_SERVICE_ROLE_KEY: "service-role",
@@ -89,6 +90,7 @@ describe("billing shared", () => {
     await expect(createCheckoutResponse(
       { planId: "plus_monthly", origin: "https://deepspec.app" },
       {
+        BILLING_PROVIDER: "stripe",
         STRIPE_SECRET_KEY: "sk_test",
         STRIPE_PRICE_DEEPSPEC_PLUS_MONTHLY: "price_plus",
         SUPABASE_SERVICE_ROLE_KEY: "service-role",
@@ -106,7 +108,7 @@ describe("billing shared", () => {
   });
 
   it("requires a customer id for the customer portal", async () => {
-    await expect(createPortalResponse({}, { STRIPE_SECRET_KEY: "sk_test" })).resolves.toMatchObject({
+    await expect(createPortalResponse({}, { BILLING_PROVIDER: "stripe", STRIPE_SECRET_KEY: "sk_test" })).resolves.toMatchObject({
       status: 400,
       body: {
         error: {
@@ -263,6 +265,9 @@ describe("billing shared", () => {
       stripe_checkout_session_id: "cs_123",
       stripe_customer_id: "cus_123",
       stripe_subscription_id: "sub_123",
+      provider_checkout_id: "cs_123",
+      provider_customer_id: "cus_123",
+      provider_subscription_id: "sub_123",
       user_id: "user-1",
     }), { onConflict: "user_id" });
   });
@@ -326,16 +331,20 @@ describe("billing shared", () => {
 
     expect(table.update).toHaveBeenCalledWith(expect.objectContaining({
       current_period_end: "2026-06-21T00:00:00.000Z",
+      billing_provider: "stripe",
+      provider_customer_id: "cus_123",
+      provider_subscription_id: "sub_123",
       status: "canceled",
       stripe_customer_id: "cus_123",
       stripe_subscription_id: "sub_123",
     }));
-    expect(table.updateEq).toHaveBeenCalledWith("stripe_subscription_id", "sub_123");
+    expect(table.updateEq).toHaveBeenCalledWith("provider_subscription_id", "sub_123");
   });
 });
 
 function webhookEnv() {
   return {
+    BILLING_PROVIDER: "stripe",
     STRIPE_WEBHOOK_SECRET: "whsec_test",
     SUPABASE_SERVICE_ROLE_KEY: "service-role",
     SUPABASE_URL: "https://deep-spec.supabase.co",

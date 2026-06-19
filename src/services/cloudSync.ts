@@ -215,14 +215,20 @@ export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult
         image_hash: imageHash,
         image_mime_type: image.contentType,
         image_path: imagePath,
+        customer_visible_report_json: lookup.customerVisibleReport ?? null,
+        job_id: asUuid(lookup.jobId),
         local_id: lookup.id,
         notes: lookup.notes,
+        org_id: asUuid(lookup.orgId),
         rating: lookup.rating,
         result_json: lookup.result ?? null,
+        review_status: lookup.reviewStatus ?? null,
         scan_category: lookup.scanCategory,
+        technician_user_id: asUuid(lookup.technicianUserId),
         training_label: lookup.trainingLabel,
         training_status: lookup.trainingStatus,
         user_id: user.id,
+        vehicle_context: lookup.vehicleContext ?? null,
       },
       { onConflict: "user_id,local_id" },
     );
@@ -231,6 +237,7 @@ export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult
       throw new Error(saved.error.message);
     }
 
+    await upsertShopJobScan(supabase, user.id, lookup);
     await syncDatasetDetailTables(supabase, user.id, lookup);
 
     return {
@@ -300,6 +307,29 @@ async function syncDatasetDetailTables(supabase: SupabaseClient, userId: string,
   await upsertScanCorrection(supabase, userId, lookup);
   await insertScanModelRun(supabase, userId, lookup);
   await insertSyncEvent(supabase, userId, lookup, "upsert", "success", "Scan dataset details synced.");
+}
+
+async function upsertShopJobScan(supabase: SupabaseClient, userId: string, lookup: Lookup) {
+  const orgId = asUuid(lookup.orgId);
+  const jobId = asUuid(lookup.jobId);
+  if (!orgId || !jobId) {
+    return;
+  }
+
+  await assertCloudResult(
+    await supabase.from("job_scans").upsert(
+      {
+        customer_visible_report_json: lookup.customerVisibleReport ?? null,
+        job_id: jobId,
+        org_id: orgId,
+        review_status: lookup.reviewStatus ?? "needs_review",
+        scan_local_id: lookup.id,
+        user_id: userId,
+      },
+      { onConflict: "job_id,user_id,scan_local_id" },
+    ),
+    "job_scans upsert failed",
+  );
 }
 
 async function replaceScanCandidates(supabase: SupabaseClient, userId: string, lookup: Lookup) {
@@ -372,6 +402,9 @@ async function insertScanModelRun(supabase: SupabaseClient, userId: string, look
         confirmationNeed: lookup.result?.confirmationNeed ?? null,
         fallbackReason: modelRun?.fallbackReason ?? null,
         hasResult: Boolean(lookup.result),
+        jobId: lookup.jobId ?? null,
+        orgId: lookup.orgId ?? null,
+        reviewStatus: lookup.reviewStatus ?? null,
         savedAt: lookup.provenance.savedAt,
         safetyTriage: lookup.result?.safetyTriage ?? null,
         scanQuality: lookup.scanQuality ?? null,
@@ -753,6 +786,12 @@ function getFriendlySyncError(error: unknown) {
   }
 
   return `Cloud sync failed: ${message}`;
+}
+
+function asUuid(value: string | undefined) {
+  return value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+    ? value
+    : null;
 }
 
 async function cleanupCloudHealthCheck(supabase: SupabaseClient, userId: string, testId: string, imagePath: string) {

@@ -30,6 +30,22 @@ type EntitlementResponse =
     }
   | BillingErrorResponse;
 
+type ScanCreditReservation =
+  | {
+      enforced: false;
+      ok: true;
+    }
+  | {
+      enforced: true;
+      ok: true;
+      scansUsed: number;
+      userId: string;
+    }
+  | {
+      error: BillingErrorResponse;
+      ok: false;
+    };
+
 type WebhookResponse =
   | {
       status: 200;
@@ -42,6 +58,7 @@ type WebhookResponse =
   | BillingErrorResponse;
 
 type BillingEnv = Record<string, string | undefined>;
+type BillingProvider = "stripe" | "unconfigured";
 type SupabaseRow = Record<string, unknown>;
 type BillingSupabaseClient = {
   auth: {
@@ -112,14 +129,19 @@ export async function createCheckoutResponse(
     return errorResponse(400, "invalid_plan", "Choose a valid DeepSpec plan.");
   }
 
+  const provider = resolveBillingProvider(env);
+  if (provider !== "stripe") {
+    return errorResponse(500, "not_configured", "Billing provider checkout is not configured on this server.");
+  }
+
   const secretKey = env.STRIPE_SECRET_KEY?.trim();
   if (!secretKey) {
-    return errorResponse(500, "not_configured", "Stripe checkout is not configured on this server.");
+    return errorResponse(500, "not_configured", "Billing provider checkout is not configured on this server.");
   }
 
   const priceId = env[PRICE_ENV_KEYS[plan.id]]?.trim();
   if (!priceId) {
-    return errorResponse(500, "not_configured", `Stripe price is missing for ${plan.name}.`);
+    return errorResponse(500, "not_configured", `Billing provider price is missing for ${plan.name}.`);
   }
 
   const verifiedUser = await verifyBillingUser(headers, env);
@@ -129,7 +151,7 @@ export async function createCheckoutResponse(
 
   const origin = parsed.origin || env.DEEPSPEC_PUBLIC_URL || "http://localhost:5174";
   const params = new URLSearchParams({
-    mode: plan.stripeMode,
+    mode: plan.billingMode,
     "line_items[0][price]": priceId,
     "line_items[0][quantity]": "1",
     client_reference_id: verifiedUser.userId,
@@ -145,13 +167,18 @@ export async function createCheckoutResponse(
 }
 
 export async function createPortalResponse(body: unknown, env: BillingEnv): Promise<BillingResponse> {
+  const provider = resolveBillingProvider(env);
+  if (provider !== "stripe") {
+    return errorResponse(500, "not_configured", "Billing provider customer portal is not configured on this server.");
+  }
+
   const secretKey = env.STRIPE_SECRET_KEY?.trim();
   if (!secretKey) {
-    return errorResponse(500, "not_configured", "Stripe customer portal is not configured on this server.");
+    return errorResponse(500, "not_configured", "Billing provider customer portal is not configured on this server.");
   }
 
   if (!isRecord(body) || typeof body.stripeCustomerId !== "string" || !body.stripeCustomerId.trim()) {
-    return errorResponse(400, "missing_customer", "A Stripe customer id is required for the billing portal.");
+    return errorResponse(400, "missing_customer", "A provider customer id is required for the billing portal.");
   }
 
   const origin = typeof body.origin === "string" && body.origin.trim()
@@ -170,9 +197,14 @@ export async function createWebhookResponse(
   headers: Record<string, string | string[] | undefined>,
   env: BillingEnv,
 ): Promise<WebhookResponse> {
+  const provider = resolveBillingProvider(env);
+  if (provider !== "stripe") {
+    return errorResponse(500, "not_configured", "Billing provider webhook verification is not configured on this server.");
+  }
+
   const webhookSecret = env.STRIPE_WEBHOOK_SECRET?.trim();
   if (!webhookSecret) {
-    return errorResponse(500, "not_configured", "Stripe webhook verification is not configured on this server.");
+    return errorResponse(500, "not_configured", "Billing provider webhook verification is not configured on this server.");
   }
 
   const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
@@ -235,7 +267,7 @@ export async function createAccountEntitlementResponse(
 
   const { data, error } = await supabase
     .from("billing_entitlements")
-    .select("plan_id,status,scan_allowance,scans_used,current_period_end")
+    .select("billing_provider,plan_id,status,scan_allowance,scans_used,current_period_end")
     .eq("user_id", userData.user.id)
     .maybeSingle();
 
@@ -262,6 +294,7 @@ export async function createAccountEntitlementResponse(
     body: {
       entitlement: {
         currentPeriodEnd: typeof data.current_period_end === "string" ? data.current_period_end : undefined,
+        billingProvider: typeof data.billing_provider === "string" ? data.billing_provider : undefined,
         planId,
         planName: plan?.name,
         scanAllowance: Number(data.scan_allowance ?? 0),
@@ -271,6 +304,87 @@ export async function createAccountEntitlementResponse(
       },
     },
   };
+}
+
+export async function reserveScanCredit(
+  headers: Record<string, string | string[] | undefined>,
+  env: BillingEnv,
+): Promise<ScanCreditReservation> {
+  if (env.DEEPSPEC_ENFORCE_SCAN_CREDITS !== "true") {
+    return { enforced: false, ok: true };
+  }
+
+  const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
+  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!supabaseUrl || !serviceRoleKey) {
+    return { ok: false, error: errorResponse(500, "not_configured", "Server-side scan credit enforcement is not configured.") };
+  }
+
+  const token = parseBearerToken(headers.authorization ?? headers.Authorization);
+  if (!token) {
+    return { ok: false, error: errorResponse(401, "missing_session", "Sign in before using paid DeepSpec scans.") };
+  }
+
+  const supabase = createBillingClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+  const { data: userData, error: userError } = await supabase.auth.getUser(token);
+  if (userError || !userData.user) {
+    return { ok: false, error: errorResponse(401, "invalid_session", "DeepSpec could not verify this account session.") };
+  }
+
+  const { data, error } = await supabase
+    .from("billing_entitlements")
+    .select("status,scan_allowance,scans_used")
+    .eq("user_id", userData.user.id)
+    .maybeSingle();
+
+  if (error) {
+    return { ok: false, error: errorResponse(502, "entitlement_unavailable", "DeepSpec could not read scan credit state.") };
+  }
+
+  const allowance = Number(isRecord(data) ? data.scan_allowance : 0);
+  const scansUsed = Number(isRecord(data) ? data.scans_used : 0);
+  const status = isRecord(data) ? data.status : "";
+  if (status !== "active" || !Number.isFinite(allowance) || !Number.isFinite(scansUsed) || scansUsed >= allowance) {
+    return { ok: false, error: errorResponse(402, "scan_limit_reached", "No verified paid scan credits are available.") };
+  }
+
+  return {
+    enforced: true,
+    ok: true,
+    scansUsed,
+    userId: userData.user.id,
+  };
+}
+
+export async function consumeReservedScanCredit(reservation: ScanCreditReservation, env: BillingEnv) {
+  if (!reservation.ok || !reservation.enforced) {
+    return;
+  }
+
+  const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
+  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!supabaseUrl || !serviceRoleKey) {
+    return;
+  }
+
+  const supabase = createBillingClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+  await supabase
+    .from("billing_entitlements")
+    .update({
+      scans_used: reservation.scansUsed + 1,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("user_id", reservation.userId);
 }
 
 export function listConfiguredPlans(env: BillingEnv) {
@@ -287,7 +401,7 @@ async function handleStripeEvent(
 ): Promise<{ handled: boolean } | { error: BillingErrorResponse }> {
   const stripeObject = isRecord(event.data?.object) ? event.data.object : null;
   if (!stripeObject) {
-    return { error: errorResponse(400, "invalid_event", "Stripe event is missing its data object.") };
+    return { error: errorResponse(400, "invalid_event", "Billing provider event is missing its data object.") };
   }
 
   if (event.type === "checkout.session.completed") {
@@ -308,17 +422,17 @@ async function writeCheckoutEntitlement(
   const planId = getStringValue(getMetadata(session).deepspec_plan_id);
   const plan = getRevenuePlan(planId);
   if (!plan) {
-    return { error: errorResponse(400, "invalid_plan", "Stripe checkout session has no valid DeepSpec plan.") };
+    return { error: errorResponse(400, "invalid_plan", "Billing checkout session has no valid DeepSpec plan.") };
   }
 
   const userId = getStringValue(getMetadata(session).supabase_user_id) || getStringValue(session.client_reference_id);
   if (!userId) {
-    return { error: errorResponse(400, "missing_user", "Stripe checkout session has no DeepSpec user reference.") };
+    return { error: errorResponse(400, "missing_user", "Billing checkout session has no DeepSpec user reference.") };
   }
 
   const customerId = getStringValue(session.customer);
   if (!customerId) {
-    return { error: errorResponse(400, "missing_customer", "Stripe checkout session has no customer id.") };
+    return { error: errorResponse(400, "missing_customer", "Billing checkout session has no customer id.") };
   }
 
   const existing = await readExistingEntitlement(supabase, userId);
@@ -328,7 +442,7 @@ async function writeCheckoutEntitlement(
 
   const currentAllowance = Math.max(0, Number(existing.row?.scan_allowance ?? 0));
   const currentScansUsed = Math.max(0, Number(existing.row?.scans_used ?? 0));
-  const scanAllowance = plan.stripeMode === "payment" && Number.isFinite(currentAllowance)
+  const scanAllowance = plan.billingMode === "payment" && Number.isFinite(currentAllowance)
     ? currentAllowance + plan.scanAllowance
     : plan.scanAllowance;
 
@@ -336,7 +450,11 @@ async function writeCheckoutEntitlement(
     .from("billing_entitlements")
     .upsert({
       current_period_end: getStripeTimestampIso(session.current_period_end),
+      billing_provider: "stripe",
       plan_id: plan.id,
+      provider_checkout_id: getStringValue(session.id) || null,
+      provider_customer_id: customerId,
+      provider_subscription_id: getStringValue(session.subscription) || null,
       scan_allowance: scanAllowance,
       scans_used: Number.isFinite(currentScansUsed) ? currentScansUsed : 0,
       status: getCheckoutStatus(session),
@@ -362,7 +480,7 @@ async function updateSubscriptionEntitlement(
   const subscriptionId = getStringValue(subscription.id);
   const customerId = getStringValue(subscription.customer);
   if (!subscriptionId && !customerId) {
-    return { error: errorResponse(400, "missing_subscription", "Stripe subscription event has no subscription key.") };
+    return { error: errorResponse(400, "missing_subscription", "Billing subscription event has no subscription key.") };
   }
 
   const planId = resolvePlanIdFromStripeObject(subscription, env);
@@ -370,7 +488,10 @@ async function updateSubscriptionEntitlement(
   const userId = getStringValue(getMetadata(subscription).supabase_user_id);
   const updatePayload = removeUndefinedValues({
     current_period_end: getStripeTimestampIso(subscription.current_period_end),
+    billing_provider: "stripe",
     plan_id: plan?.id,
+    provider_customer_id: customerId || undefined,
+    provider_subscription_id: subscriptionId || undefined,
     scan_allowance: plan?.scanAllowance,
     status: mapStripeSubscriptionStatus(getStringValue(subscription.status)),
     stripe_customer_id: customerId || undefined,
@@ -389,7 +510,10 @@ async function updateSubscriptionEntitlement(
       .from("billing_entitlements")
       .upsert({
         ...updatePayload,
+        billing_provider: "stripe",
         plan_id: plan.id,
+        provider_customer_id: customerId,
+        provider_subscription_id: subscriptionId || undefined,
         scan_allowance: plan.scanAllowance,
         scans_used: Number.isFinite(currentScansUsed) ? currentScansUsed : 0,
         stripe_customer_id: customerId,
@@ -438,8 +562,8 @@ async function updateEntitlementByStripeKey(
 ): Promise<{ handled: boolean } | { error: BillingErrorResponse }> {
   const table = supabase.from("billing_entitlements");
   const query = subscriptionId
-    ? table.update(payload).eq("stripe_subscription_id", subscriptionId)
-    : table.update(payload).eq("stripe_customer_id", customerId);
+    ? table.update(payload).eq("provider_subscription_id", subscriptionId)
+    : table.update(payload).eq("provider_customer_id", customerId);
   const { error } = await query;
 
   if (error) {
@@ -471,16 +595,16 @@ function parseSignedStripeEvent(
 ): { event: { data?: { object?: unknown }; type: string } } | { error: BillingErrorResponse } {
   const signatureHeader = getHeaderValue(headers["stripe-signature"] ?? headers["Stripe-Signature"]);
   if (!signatureHeader) {
-    return { error: errorResponse(400, "missing_signature", "Stripe webhook signature is missing.") };
+    return { error: errorResponse(400, "missing_signature", "Billing provider webhook signature is missing.") };
   }
 
   if (!isValidStripeSignature(rawBody, signatureHeader, webhookSecret)) {
-    return { error: errorResponse(400, "invalid_signature", "Stripe webhook signature could not be verified.") };
+    return { error: errorResponse(400, "invalid_signature", "Billing provider webhook signature could not be verified.") };
   }
 
   const payload = parseJson(rawBody);
   if (!isRecord(payload) || typeof payload.type !== "string") {
-    return { error: errorResponse(400, "invalid_payload", "Stripe webhook payload is invalid.") };
+    return { error: errorResponse(400, "invalid_payload", "Billing provider webhook payload is invalid.") };
   }
 
   return {
@@ -580,6 +704,11 @@ async function verifyBillingUser(
   };
 }
 
+function resolveBillingProvider(env: BillingEnv): BillingProvider {
+  const configured = env.BILLING_PROVIDER?.trim().toLowerCase();
+  return configured === "stripe" ? "stripe" : "unconfigured";
+}
+
 function isServerEntitlementStatus(value: unknown): value is ServerEntitlement["status"] {
   return value === "active" || value === "past_due" || value === "canceled" || value === "inactive" || value === "free";
 }
@@ -595,7 +724,7 @@ async function postStripeSession(url: string, params: URLSearchParams, secretKey
   }).catch(() => null);
 
   if (!response) {
-    return errorResponse(502, "stripe_unreachable", "DeepSpec could not reach Stripe.");
+    return errorResponse(502, "provider_unreachable", "DeepSpec could not reach the billing provider.");
   }
 
   const payload = await response.json().catch(() => null);
@@ -704,7 +833,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function getStripeErrorMessage(payload: unknown) {
   if (!isRecord(payload) || !isRecord(payload.error) || typeof payload.error.message !== "string") {
-    return "Stripe could not create a billing session.";
+    return "The billing provider could not create a billing session.";
   }
 
   return payload.error.message;
