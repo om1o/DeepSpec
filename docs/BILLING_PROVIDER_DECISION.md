@@ -83,6 +83,7 @@ Do not start live charging now:
 - Provider-specific adapter work is still needed if Dad picks Lemon Squeezy or Paddle.
 - Polar still needs Dad's sandbox account, product IDs, webhook secret, and end-to-end sandbox verification.
 - Live payments should remain fail-closed until scan credits, refunds, webhook replay, account portal, and provider outage behavior are verified.
+- The server refuses live Polar/Stripe traffic unless `DEEPSPEC_ENABLE_LIVE_BILLING=true` is intentionally set.
 
 ## Polar Sandbox Environment
 
@@ -98,6 +99,7 @@ If Dad picks Polar, configure only server-side environment variables:
 - `POLAR_PRODUCT_DEEPSPEC_PRO_BETA=<sandbox product id>`
 
 Do not put Polar access tokens or webhook secrets in `VITE_` variables.
+Do not set `DEEPSPEC_ENABLE_LIVE_BILLING=true` during sandbox setup. That flag is the final real-money switch and production provider traffic fails closed without it.
 
 Then run:
 

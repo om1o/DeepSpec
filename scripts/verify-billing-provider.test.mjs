@@ -39,6 +39,26 @@ describe("verifyBillingProviderConfig", () => {
     expect(result.issues.join("\n")).toContain("--allow-production");
   });
 
+  it("requires the live billing flag for Polar production checks", () => {
+    const result = verifyBillingProviderConfig({
+      ...VALID_POLAR_ENV,
+      POLAR_ENVIRONMENT: "production",
+    }, { allowProduction: true });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues.join("\n")).toContain("DEEPSPEC_ENABLE_LIVE_BILLING");
+  });
+
+  it("accepts Polar production checks only with explicit production flags", () => {
+    const result = verifyBillingProviderConfig({
+      ...VALID_POLAR_ENV,
+      DEEPSPEC_ENABLE_LIVE_BILLING: "true",
+      POLAR_ENVIRONMENT: "production",
+    }, { allowProduction: true });
+
+    expect(result.ok).toBe(true);
+  });
+
   it("rejects Polar product ids that are not UUIDs", () => {
     const result = verifyBillingProviderConfig({
       ...VALID_POLAR_ENV,

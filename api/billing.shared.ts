@@ -141,6 +141,11 @@ export async function createCheckoutResponse(
 
   const provider = resolveBillingProvider(env);
   if (provider === "polar") {
+    const liveGuard = blockLiveBillingUnlessEnabled(env, provider);
+    if (liveGuard) {
+      return liveGuard;
+    }
+
     return createPolarCheckoutResponse(parsed.planId, parsed.origin, env, headers);
   }
 
@@ -151,6 +156,11 @@ export async function createCheckoutResponse(
   const secretKey = env.STRIPE_SECRET_KEY?.trim();
   if (!secretKey) {
     return errorResponse(500, "not_configured", "Billing provider checkout is not configured on this server.");
+  }
+
+  const liveGuard = blockLiveBillingUnlessEnabled(env, provider);
+  if (liveGuard) {
+    return liveGuard;
   }
 
   const priceId = env[STRIPE_PRICE_ENV_KEYS[plan.id]]?.trim();
@@ -225,6 +235,11 @@ export async function createPortalResponse(
 ): Promise<BillingResponse> {
   const provider = resolveBillingProvider(env);
   if (provider === "polar") {
+    const liveGuard = blockLiveBillingUnlessEnabled(env, provider);
+    if (liveGuard) {
+      return liveGuard;
+    }
+
     return createPolarPortalResponse(body, env, headers);
   }
 
@@ -235,6 +250,11 @@ export async function createPortalResponse(
   const secretKey = env.STRIPE_SECRET_KEY?.trim();
   if (!secretKey) {
     return errorResponse(500, "not_configured", "Billing provider customer portal is not configured on this server.");
+  }
+
+  const liveGuard = blockLiveBillingUnlessEnabled(env, provider);
+  if (liveGuard) {
+    return liveGuard;
   }
 
   const entitlement = await readVerifiedBillingEntitlement(headers, env);
@@ -291,6 +311,11 @@ export async function createWebhookResponse(
 ): Promise<WebhookResponse> {
   const provider = resolveBillingProvider(env);
   if (provider === "polar") {
+    const liveGuard = blockLiveBillingUnlessEnabled(env, provider);
+    if (liveGuard) {
+      return liveGuard;
+    }
+
     return createPolarWebhookResponse(rawBody, headers, env);
   }
 
@@ -312,6 +337,10 @@ export async function createWebhookResponse(
   const parsedEvent = parseSignedStripeEvent(rawBody, headers, webhookSecret);
   if ("error" in parsedEvent) {
     return parsedEvent.error;
+  }
+
+  if (parsedEvent.event.livemode === true && env.DEEPSPEC_ENABLE_LIVE_BILLING !== "true") {
+    return errorResponse(403, "live_billing_disabled", "Live billing is disabled on this server.");
   }
 
   const supabase = createBillingClient(supabaseUrl, serviceRoleKey, {
@@ -540,7 +569,7 @@ export function listConfiguredPlans(env: BillingEnv) {
 }
 
 async function handleStripeEvent(
-  event: { data?: { object?: unknown }; type: string },
+  event: { data?: { object?: unknown }; livemode?: boolean; type: string },
   supabase: BillingSupabaseClient,
   env: BillingEnv,
 ): Promise<{ handled: boolean } | { error: BillingErrorResponse }> {
@@ -888,7 +917,7 @@ function parseSignedStripeEvent(
   rawBody: string,
   headers: Record<string, string | string[] | undefined>,
   webhookSecret: string,
-): { event: { data?: { object?: unknown }; type: string } } | { error: BillingErrorResponse } {
+): { event: { data?: { object?: unknown }; livemode?: boolean; type: string } } | { error: BillingErrorResponse } {
   const signatureHeader = getHeaderValue(headers["stripe-signature"] ?? headers["Stripe-Signature"]);
   if (!signatureHeader) {
     return { error: errorResponse(400, "missing_signature", "Billing provider webhook signature is missing.") };
@@ -906,6 +935,7 @@ function parseSignedStripeEvent(
   return {
     event: {
       data: isRecord(payload.data) ? { object: payload.data.object } : undefined,
+      livemode: typeof payload.livemode === "boolean" ? payload.livemode : undefined,
       type: payload.type,
     },
   };
@@ -1158,6 +1188,28 @@ function resolveBillingProvider(env: BillingEnv): BillingProvider {
   return configured === "stripe" ? "stripe" : "unconfigured";
 }
 
+function blockLiveBillingUnlessEnabled(env: BillingEnv, provider: BillingProvider) {
+  if (!isLiveBillingMode(env, provider)) {
+    return null;
+  }
+
+  return env.DEEPSPEC_ENABLE_LIVE_BILLING === "true"
+    ? null
+    : errorResponse(403, "live_billing_disabled", "Live billing is disabled on this server.");
+}
+
+function isLiveBillingMode(env: BillingEnv, provider: BillingProvider) {
+  if (provider === "polar") {
+    return env.POLAR_ENVIRONMENT?.trim().toLowerCase() === "production";
+  }
+
+  if (provider === "stripe") {
+    return env.STRIPE_SECRET_KEY?.trim().startsWith("sk_live_") === true;
+  }
+
+  return false;
+}
+
 function isServerEntitlementStatus(value: unknown): value is ServerEntitlement["status"] {
   return value === "active" || value === "past_due" || value === "canceled" || value === "inactive" || value === "free";
 }
@@ -1229,9 +1281,9 @@ function getPolarApiBaseUrl(env: BillingEnv) {
     return configured;
   }
 
-  return env.POLAR_ENVIRONMENT?.trim().toLowerCase() === "sandbox"
-    ? POLAR_SANDBOX_API_BASE_URL
-    : POLAR_API_BASE_URL;
+  return env.POLAR_ENVIRONMENT?.trim().toLowerCase() === "production"
+    ? POLAR_API_BASE_URL
+    : POLAR_SANDBOX_API_BASE_URL;
 }
 
 function resolvePlanIdFromStripeObject(value: SupabaseRow, env: BillingEnv) {

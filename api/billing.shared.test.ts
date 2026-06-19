@@ -131,6 +131,66 @@ describe("billing shared", () => {
     });
   });
 
+  it("blocks Polar production checkout unless live billing is explicitly enabled", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await expect(createCheckoutResponse(
+      { planId: "plus_monthly", origin: "https://deepspec.app" },
+      {
+        BILLING_PROVIDER: "polar",
+        POLAR_ACCESS_TOKEN: "polar-token",
+        POLAR_ENVIRONMENT: "production",
+        POLAR_PRODUCT_DEEPSPEC_PLUS_MONTHLY: "polar-product-plus",
+      },
+      { authorization: "Bearer verified-token" },
+    )).resolves.toMatchObject({
+      status: 403,
+      body: {
+        error: {
+          code: "live_billing_disabled",
+        },
+      },
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(supabaseMock.createClient).not.toHaveBeenCalled();
+  });
+
+  it("allows Polar production checkout only behind the live billing flag", async () => {
+    supabaseMock.createClient.mockReturnValue({
+      auth: {
+        getUser: vi.fn(async () => ({
+          data: { user: { id: "user-1" } },
+          error: null,
+        })),
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn(async (url) => {
+      expect(url).toBe("https://api.polar.sh/v1/checkouts/");
+      return new Response(JSON.stringify({ url: "https://polar.sh/checkout/live-session" }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      });
+    }));
+
+    await expect(createCheckoutResponse(
+      { planId: "plus_monthly", origin: "https://deepspec.app" },
+      {
+        BILLING_PROVIDER: "polar",
+        DEEPSPEC_ENABLE_LIVE_BILLING: "true",
+        POLAR_ACCESS_TOKEN: "polar-token",
+        POLAR_ENVIRONMENT: "production",
+        POLAR_PRODUCT_DEEPSPEC_PLUS_MONTHLY: "polar-product-plus",
+        SUPABASE_SERVICE_ROLE_KEY: "service-role",
+        SUPABASE_URL: "https://deep-spec.supabase.co",
+      },
+      { authorization: "Bearer verified-token" },
+    )).resolves.toEqual({
+      status: 200,
+      body: { url: "https://polar.sh/checkout/live-session" },
+    });
+  });
+
   it("requires a verified session before creating a configured checkout", async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
@@ -153,6 +213,29 @@ describe("billing shared", () => {
       },
     });
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("blocks Stripe live checkout unless live billing is explicitly enabled", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await expect(createCheckoutResponse(
+      { planId: "plus_monthly", origin: "https://deepspec.app" },
+      {
+        BILLING_PROVIDER: "stripe",
+        STRIPE_SECRET_KEY: "sk_live_123",
+      },
+      { authorization: "Bearer verified-token" },
+    )).resolves.toMatchObject({
+      status: 403,
+      body: {
+        error: {
+          code: "live_billing_disabled",
+        },
+      },
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(supabaseMock.createClient).not.toHaveBeenCalled();
   });
 
   it("requires a verified session before opening a billing portal", async () => {
@@ -428,6 +511,32 @@ describe("billing shared", () => {
     expect(table.upsert).not.toHaveBeenCalled();
   });
 
+  it("blocks signed live Stripe webhooks unless live billing is explicitly enabled", async () => {
+    const body = JSON.stringify({
+      data: {
+        object: {
+          id: "cs_live",
+        },
+      },
+      livemode: true,
+      type: "checkout.session.completed",
+    });
+
+    await expect(createWebhookResponse(
+      body,
+      { "stripe-signature": signStripeBody(body) },
+      webhookEnv(),
+    )).resolves.toMatchObject({
+      status: 403,
+      body: {
+        error: {
+          code: "live_billing_disabled",
+        },
+      },
+    });
+    expect(supabaseMock.createClient).not.toHaveBeenCalled();
+  });
+
   it("activates entitlement rows from completed Checkout sessions", async () => {
     const table = createBillingTableMock({ existingRow: { scan_allowance: 100, scans_used: 4 } });
     supabaseMock.createClient.mockReturnValue({ from: table.from });
@@ -497,6 +606,37 @@ describe("billing shared", () => {
     });
     expect(supabaseMock.createClient).not.toHaveBeenCalled();
     expect(table.upsert).not.toHaveBeenCalled();
+  });
+
+  it("blocks Polar production webhooks unless live billing is explicitly enabled", async () => {
+    const body = JSON.stringify({
+      data: {
+        customer_id: "polar-customer-1",
+        metadata: {
+          deepspec_plan_id: "scan_pack",
+          supabase_user_id: "user-1",
+        },
+        paid: true,
+      },
+      type: "order.paid",
+    });
+
+    await expect(createWebhookResponse(
+      body,
+      signStandardWebhookBody(body),
+      {
+        ...polarWebhookEnv(),
+        POLAR_ENVIRONMENT: "production",
+      },
+    )).resolves.toMatchObject({
+      status: 403,
+      body: {
+        error: {
+          code: "live_billing_disabled",
+        },
+      },
+    });
+    expect(supabaseMock.createClient).not.toHaveBeenCalled();
   });
 
   it("activates entitlement rows from paid Polar orders", async () => {
@@ -671,6 +811,7 @@ function webhookEnv() {
 function polarWebhookEnv() {
   return {
     BILLING_PROVIDER: "polar",
+    POLAR_ENVIRONMENT: "sandbox",
     POLAR_WEBHOOK_SECRET: `whsec_${Buffer.from("polar-webhook-secret").toString("base64")}`,
     SUPABASE_SERVICE_ROLE_KEY: "service-role",
     SUPABASE_URL: "https://deep-spec.supabase.co",

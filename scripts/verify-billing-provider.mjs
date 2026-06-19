@@ -99,6 +99,8 @@ function verifyPolar(env, options, checks, issues, warnings) {
   const environment = String(env.POLAR_ENVIRONMENT ?? "production").trim().toLowerCase();
   if (environment !== "sandbox" && !options.allowProduction) {
     issues.push("Set POLAR_ENVIRONMENT=sandbox. Production Polar checks require --allow-production.");
+  } else if (environment !== "sandbox" && env.DEEPSPEC_ENABLE_LIVE_BILLING !== "true") {
+    issues.push("Set DEEPSPEC_ENABLE_LIVE_BILLING=true before production Polar checks. Leave it unset for sandbox.");
   } else {
     checks.push(`Polar environment is ${environment}.`);
   }
@@ -141,6 +143,8 @@ function verifyStripe(env, options, checks, issues, warnings) {
     issues.push("Missing STRIPE_SECRET_KEY.");
   } else if (secretKey.startsWith("sk_live_") && !options.allowProduction) {
     issues.push("STRIPE_SECRET_KEY is live. Production Stripe checks require --allow-production.");
+  } else if (secretKey.startsWith("sk_live_") && env.DEEPSPEC_ENABLE_LIVE_BILLING !== "true") {
+    issues.push("Set DEEPSPEC_ENABLE_LIVE_BILLING=true before production Stripe checks. Leave it unset for sandbox.");
   } else {
     checks.push("Stripe secret key is present.");
   }
