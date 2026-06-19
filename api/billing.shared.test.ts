@@ -83,6 +83,54 @@ describe("billing shared", () => {
     });
   });
 
+  it("creates Polar checkout sessions with provider products and metadata", async () => {
+    supabaseMock.createClient.mockReturnValue({
+      auth: {
+        getUser: vi.fn(async () => ({
+          data: { user: { id: "user-1" } },
+          error: null,
+        })),
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn(async (url, init: { body?: unknown; headers?: Record<string, string>; method?: string }) => {
+      expect(url).toBe("https://sandbox-api.polar.sh/v1/checkouts/");
+      expect(init.method).toBe("POST");
+      expect(init.headers?.Authorization).toBe("Bearer polar-token");
+      const body = JSON.parse(String(init.body));
+      expect(body).toMatchObject({
+        allow_discount_codes: true,
+        external_customer_id: "user-1",
+        products: ["polar-product-plus"],
+        metadata: {
+          deepspec_plan_id: "plus_monthly",
+          scan_allowance: 100,
+          supabase_user_id: "user-1",
+        },
+      });
+      expect(body.success_url).toContain("checkout_id={CHECKOUT_ID}");
+      return new Response(JSON.stringify({ url: "https://polar.sh/checkout/session" }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      });
+    }));
+
+    await expect(createCheckoutResponse(
+      { planId: "plus_monthly", origin: "https://deepspec.app" },
+      {
+        BILLING_PROVIDER: "polar",
+        POLAR_ACCESS_TOKEN: "polar-token",
+        POLAR_ENVIRONMENT: "sandbox",
+        POLAR_PRODUCT_DEEPSPEC_PLUS_MONTHLY: "polar-product-plus",
+        SUPABASE_SERVICE_ROLE_KEY: "service-role",
+        SUPABASE_URL: "https://deep-spec.supabase.co",
+      },
+      { authorization: "Bearer verified-token" },
+    )).resolves.toEqual({
+      status: 200,
+      body: { url: "https://polar.sh/checkout/session" },
+    });
+  });
+
   it("requires a verified session before creating a configured checkout", async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
@@ -107,8 +155,157 @@ describe("billing shared", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("requires a customer id for the customer portal", async () => {
-    await expect(createPortalResponse({}, { BILLING_PROVIDER: "stripe", STRIPE_SECRET_KEY: "sk_test" })).resolves.toMatchObject({
+  it("requires a verified session before opening a billing portal", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await expect(createPortalResponse({}, {
+      BILLING_PROVIDER: "stripe",
+      STRIPE_SECRET_KEY: "sk_test",
+      SUPABASE_SERVICE_ROLE_KEY: "service-role",
+      SUPABASE_URL: "https://deep-spec.supabase.co",
+    })).resolves.toMatchObject({
+      status: 401,
+      body: {
+        error: {
+          code: "missing_session",
+        },
+      },
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("opens a Stripe customer portal only from the server entitlement customer", async () => {
+    supabaseMock.createClient.mockReturnValue({
+      auth: {
+        getUser: vi.fn(async () => ({
+          data: { user: { id: "user-1" } },
+          error: null,
+        })),
+      },
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            maybeSingle: vi.fn(async () => ({
+              data: {
+                billing_provider: "stripe",
+                provider_customer_id: "cus_server",
+                stripe_customer_id: "cus_legacy",
+              },
+              error: null,
+            })),
+          })),
+        })),
+      })),
+    });
+    vi.stubGlobal("fetch", vi.fn(async (_url, init: { body?: unknown }) => {
+      expect(String(init.body)).toContain("customer=cus_server");
+      expect(String(init.body)).not.toContain("cus_attacker");
+      return new Response(JSON.stringify({ url: "https://billing.stripe.test/session" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }));
+
+    await expect(createPortalResponse(
+      { origin: "https://deepspec.app", stripeCustomerId: "cus_attacker" },
+      {
+        BILLING_PROVIDER: "stripe",
+        STRIPE_SECRET_KEY: "sk_test",
+        SUPABASE_SERVICE_ROLE_KEY: "service-role",
+        SUPABASE_URL: "https://deep-spec.supabase.co",
+      },
+      { authorization: "Bearer verified-token" },
+    )).resolves.toMatchObject({
+      status: 200,
+      body: { url: "https://billing.stripe.test/session" },
+    });
+  });
+
+  it("opens a Polar customer portal from the verified account", async () => {
+    supabaseMock.createClient.mockReturnValue({
+      auth: {
+        getUser: vi.fn(async () => ({
+          data: { user: { id: "user-1" } },
+          error: null,
+        })),
+      },
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            maybeSingle: vi.fn(async () => ({
+              data: {
+                billing_provider: "polar",
+                provider_customer_id: "polar-customer-1",
+              },
+              error: null,
+            })),
+          })),
+        })),
+      })),
+    });
+    vi.stubGlobal("fetch", vi.fn(async (url, init: { body?: unknown; headers?: Record<string, string>; method?: string }) => {
+      expect(url).toBe("https://sandbox-api.polar.sh/v1/customer-sessions/");
+      expect(init.method).toBe("POST");
+      expect(init.headers?.Authorization).toBe("Bearer polar-token");
+      expect(JSON.parse(String(init.body))).toMatchObject({
+        customer_id: "polar-customer-1",
+        return_url: "https://deepspec.app/account",
+      });
+      return new Response(JSON.stringify({ customer_portal_url: "https://polar.sh/customer-portal/session" }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      });
+    }));
+
+    await expect(createPortalResponse(
+      { origin: "https://deepspec.app" },
+      {
+        BILLING_PROVIDER: "polar",
+        POLAR_ACCESS_TOKEN: "polar-token",
+        POLAR_ENVIRONMENT: "sandbox",
+        SUPABASE_SERVICE_ROLE_KEY: "service-role",
+        SUPABASE_URL: "https://deep-spec.supabase.co",
+      },
+      { authorization: "Bearer verified-token" },
+    )).resolves.toEqual({
+      status: 200,
+      body: { url: "https://polar.sh/customer-portal/session" },
+    });
+  });
+
+  it("requires a provider customer id for the Stripe customer portal", async () => {
+    supabaseMock.createClient.mockReturnValue({
+      auth: {
+        getUser: vi.fn(async () => ({
+          data: { user: { id: "user-1" } },
+          error: null,
+        })),
+      },
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            maybeSingle: vi.fn(async () => ({
+              data: {
+                billing_provider: "stripe",
+              },
+              error: null,
+            })),
+          })),
+        })),
+      })),
+    });
+
+    await expect(createPortalResponse(
+      {},
+      {
+        BILLING_PROVIDER: "stripe",
+        STRIPE_SECRET_KEY: "sk_test",
+        SUPABASE_SERVICE_ROLE_KEY: "service-role",
+        SUPABASE_URL: "https://deep-spec.supabase.co",
+      },
+      { authorization: "Bearer verified-token" },
+    )).resolves.toMatchObject({
       status: 400,
       body: {
         error: {
@@ -120,8 +317,14 @@ describe("billing shared", () => {
 
   it("reports configured plan price ids without exposing secrets", () => {
     expect(listConfiguredPlans({
+      BILLING_PROVIDER: "stripe",
       STRIPE_SECRET_KEY: "sk_test",
       STRIPE_PRICE_DEEPSPEC_PLUS_MONTHLY: "price_plus",
+    })).toContainEqual({ id: "plus_monthly", configured: true });
+    expect(listConfiguredPlans({
+      BILLING_PROVIDER: "polar",
+      POLAR_ACCESS_TOKEN: "polar-token",
+      POLAR_PRODUCT_DEEPSPEC_PLUS_MONTHLY: "polar-plus",
     })).toContainEqual({ id: "plus_monthly", configured: true });
     expect(listConfiguredPlans({})).toContainEqual({ id: "plus_monthly", configured: false });
   });
@@ -272,6 +475,120 @@ describe("billing shared", () => {
     }), { onConflict: "user_id" });
   });
 
+  it("rejects Polar webhooks with an invalid signature before writing entitlements", async () => {
+    const table = createBillingTableMock();
+    supabaseMock.createClient.mockReturnValue({ from: table.from });
+
+    await expect(createWebhookResponse(
+      "{}",
+      {
+        "webhook-id": "msg_bad",
+        "webhook-signature": "v1,bad",
+        "webhook-timestamp": String(Math.floor(Date.now() / 1000)),
+      },
+      polarWebhookEnv(),
+    )).resolves.toMatchObject({
+      status: 400,
+      body: {
+        error: {
+          code: "invalid_signature",
+        },
+      },
+    });
+    expect(supabaseMock.createClient).not.toHaveBeenCalled();
+    expect(table.upsert).not.toHaveBeenCalled();
+  });
+
+  it("activates entitlement rows from paid Polar orders", async () => {
+    const table = createBillingTableMock({ existingRow: { scan_allowance: 5, scans_used: 2 } });
+    supabaseMock.createClient.mockReturnValue({ from: table.from });
+    const body = JSON.stringify({
+      data: {
+        checkout_id: "polar-checkout-1",
+        customer: {
+          external_id: "user-1",
+          id: "polar-customer-1",
+        },
+        customer_id: "polar-customer-1",
+        id: "polar-order-1",
+        metadata: {
+          deepspec_plan_id: "scan_pack",
+          supabase_user_id: "user-1",
+        },
+        paid: true,
+      },
+      timestamp: "2026-06-19T00:00:00Z",
+      type: "order.paid",
+    });
+
+    await expect(createWebhookResponse(
+      body,
+      signStandardWebhookBody(body),
+      polarWebhookEnv(),
+    )).resolves.toMatchObject({
+      status: 200,
+      body: {
+        eventType: "order.paid",
+        handled: true,
+        received: true,
+      },
+    });
+
+    expect(table.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      billing_provider: "polar",
+      plan_id: "scan_pack",
+      provider_checkout_id: "polar-checkout-1",
+      provider_customer_id: "polar-customer-1",
+      provider_subscription_id: null,
+      scan_allowance: 25,
+      scans_used: 2,
+      status: "active",
+      user_id: "user-1",
+    }), { onConflict: "user_id" });
+  });
+
+  it("updates entitlement rows from Polar subscription lifecycle events", async () => {
+    const table = createBillingTableMock();
+    supabaseMock.createClient.mockReturnValue({ from: table.from });
+    const body = JSON.stringify({
+      data: {
+        customer_id: "polar-customer-1",
+        current_period_end: "2026-07-19T00:00:00Z",
+        id: "polar-subscription-1",
+        product_id: "polar-product-pro",
+      },
+      timestamp: "2026-06-19T00:00:00Z",
+      type: "subscription.revoked",
+    });
+
+    await expect(createWebhookResponse(
+      body,
+      signStandardWebhookBody(body),
+      {
+        ...polarWebhookEnv(),
+        POLAR_PRODUCT_DEEPSPEC_PRO_BETA: "polar-product-pro",
+      },
+    )).resolves.toMatchObject({
+      status: 200,
+      body: {
+        eventType: "subscription.revoked",
+        handled: true,
+        received: true,
+      },
+    });
+
+    expect(table.update).toHaveBeenCalledWith(expect.objectContaining({
+      billing_provider: "polar",
+      current_period_end: "2026-07-19T00:00:00.000Z",
+      plan_id: "pro_beta",
+      provider_customer_id: "polar-customer-1",
+      provider_subscription_id: "polar-subscription-1",
+      scan_allowance: 500,
+      status: "canceled",
+    }));
+    expect(table.updateEq).toHaveBeenCalledWith("provider_subscription_id", "polar-subscription-1");
+  });
+
   it("adds one-time scan pack credits to an existing entitlement", async () => {
     const table = createBillingTableMock({ existingRow: { scan_allowance: 5, scans_used: 2 } });
     supabaseMock.createClient.mockReturnValue({ from: table.from });
@@ -351,11 +668,32 @@ function webhookEnv() {
   };
 }
 
+function polarWebhookEnv() {
+  return {
+    BILLING_PROVIDER: "polar",
+    POLAR_WEBHOOK_SECRET: `whsec_${Buffer.from("polar-webhook-secret").toString("base64")}`,
+    SUPABASE_SERVICE_ROLE_KEY: "service-role",
+    SUPABASE_URL: "https://deep-spec.supabase.co",
+  };
+}
+
 function signStripeBody(body: string, timestamp = Math.floor(Date.now() / 1000)) {
   const signature = createHmac("sha256", webhookEnv().STRIPE_WEBHOOK_SECRET)
     .update(`${timestamp}.${body}`, "utf8")
     .digest("hex");
   return `t=${timestamp},v1=${signature}`;
+}
+
+function signStandardWebhookBody(body: string, timestamp = Math.floor(Date.now() / 1000)) {
+  const webhookId = "msg_test";
+  const signature = createHmac("sha256", Buffer.from("polar-webhook-secret"))
+    .update(`${webhookId}.${timestamp}.${body}`, "utf8")
+    .digest("base64");
+  return {
+    "webhook-id": webhookId,
+    "webhook-signature": `v1,${signature}`,
+    "webhook-timestamp": String(timestamp),
+  };
 }
 
 function createBillingTableMock({ existingRow = null }: { existingRow?: Record<string, unknown> | null } = {}) {

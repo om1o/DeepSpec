@@ -1,6 +1,7 @@
 import { createPortalResponse } from "./billing.shared";
 
 type VercelRequest = {
+  headers?: Record<string, string | string[] | undefined>;
   method?: string;
   body?: unknown;
 };
@@ -24,6 +25,6 @@ export default async function handler(request: VercelRequest, response: VercelRe
     return;
   }
 
-  const result = await createPortalResponse(request.body, process.env);
+  const result = await createPortalResponse(request.body, process.env, request.headers ?? {});
   response.status(result.status).json(result.body);
 }

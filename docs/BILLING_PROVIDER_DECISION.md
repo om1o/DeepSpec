@@ -25,7 +25,9 @@ The repo now has provider-neutral billing fields and fail-closed behavior:
 
 - `BILLING_PROVIDER=` defaults to unconfigured.
 - `/api/billing-checkout` and related endpoints fail closed unless a provider adapter is configured.
-- The only implemented adapter today is the Stripe adapter.
+- Implemented adapters in this branch:
+  - `stripe`
+  - `polar`
 - Supabase entitlement rows now include generic provider IDs:
   - `billing_provider`
   - `provider_customer_id`
@@ -33,7 +35,7 @@ The repo now has provider-neutral billing fields and fail-closed behavior:
   - `provider_checkout_id`
 - Scan credits reserve before identify and only consume after provider success when `DEEPSPEC_ENFORCE_SCAN_CREDITS=true`.
 
-This means the architecture is ready for Lemon Squeezy, Polar, Paddle, or Stripe, but the next implementation step depends on which provider Dad picks.
+This means the architecture is ready for Lemon Squeezy, Polar, Paddle, or Stripe, and Polar is now the first Merchant of Record adapter path to test in sandbox.
 
 ## Comparison
 
@@ -78,8 +80,24 @@ Start provider setup now:
 Do not start live charging now:
 
 - `npm run eval:identify:release` is blocked by provider availability.
-- Provider-specific adapter work is still needed if Dad picks Polar, Lemon Squeezy, or Paddle.
+- Provider-specific adapter work is still needed if Dad picks Lemon Squeezy or Paddle.
+- Polar still needs Dad's sandbox account, product IDs, webhook secret, and end-to-end sandbox verification.
 - Live payments should remain fail-closed until scan credits, refunds, webhook replay, account portal, and provider outage behavior are verified.
+
+## Polar Sandbox Environment
+
+If Dad picks Polar, configure only server-side environment variables:
+
+- `BILLING_PROVIDER=polar`
+- `POLAR_ENVIRONMENT=sandbox`
+- `POLAR_ACCESS_TOKEN=<server-only organization access token>`
+- `POLAR_WEBHOOK_SECRET=<server-only webhook secret>`
+- `POLAR_PRODUCT_DEEPSPEC_PLUS_MONTHLY=<sandbox product id>`
+- `POLAR_PRODUCT_DEEPSPEC_PLUS_YEARLY=<sandbox product id>`
+- `POLAR_PRODUCT_DEEPSPEC_SCAN_PACK=<sandbox product id>`
+- `POLAR_PRODUCT_DEEPSPEC_PRO_BETA=<sandbox product id>`
+
+Do not put Polar access tokens or webhook secrets in `VITE_` variables.
 
 ## Implementation Order After Dad Picks
 

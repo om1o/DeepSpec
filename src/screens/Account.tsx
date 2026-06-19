@@ -12,6 +12,7 @@ type EntitlementVerification =
 export default function Account() {
   const [params] = useSearchParams();
   const [verification, setVerification] = useState<EntitlementVerification>({ status: "checking" });
+  const [portalStatus, setPortalStatus] = useState<string | null>(null);
   const scansUsed = getLookups().length;
   const entitlement = getEntitlementState(scansUsed, verification.status === "verified" ? verification.entitlement : null);
   const remaining = getRemainingScans(entitlement);
@@ -59,6 +60,36 @@ export default function Account() {
     };
   }, []);
 
+  async function openBillingPortal() {
+    setPortalStatus("Opening secure billing portal...");
+
+    const client = await getAuthClient();
+    const session = client ? await client.auth.getSession().catch(() => null) : null;
+    const token = session?.data.session?.access_token;
+    if (!token) {
+      setPortalStatus("Sign in again before opening billing. Paid access stays locked without a verified session.");
+      return;
+    }
+
+    const response = await fetch("/api/billing-portal", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        origin: window.location.origin,
+      }),
+    }).catch(() => null);
+    const body = await response?.json().catch(() => null);
+    if (!response?.ok || !body?.url) {
+      setPortalStatus(body?.error?.message ?? "Billing portal is not configured yet. Paid access remains fail-closed.");
+      return;
+    }
+
+    window.location.assign(body.url);
+  }
+
   return (
     <main className="min-h-dvh bg-[var(--ds-page)] px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-slate-950">
       <div className="mx-auto w-full max-w-2xl">
@@ -89,6 +120,17 @@ export default function Account() {
             {" "}
             {verification.status === "checking" ? "Checking server entitlement..." : getVerificationMessage(verification, entitlement.status)}
           </p>
+          <button
+            className="mt-5 h-11 rounded-full bg-slate-950 px-4 text-sm font-bold text-white disabled:opacity-50"
+            disabled={verification.status === "checking"}
+            onClick={() => void openBillingPortal()}
+            type="button"
+          >
+            Manage billing
+          </button>
+          {portalStatus ? (
+            <p className="mt-3 text-sm font-semibold text-slate-600">{portalStatus}</p>
+          ) : null}
         </section>
 
         <section className="mt-4 rounded-[8px] border border-slate-200 bg-white p-6 text-sm leading-6 text-slate-600 shadow-sm">
