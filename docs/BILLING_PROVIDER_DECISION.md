@@ -99,6 +99,20 @@ If Dad picks Polar, configure only server-side environment variables:
 
 Do not put Polar access tokens or webhook secrets in `VITE_` variables.
 
+Then run:
+
+```bash
+npm run verify:billing-provider -- --provider polar
+```
+
+After the sandbox products exist and Dad has pasted real sandbox IDs/tokens, run the read-only product lookup:
+
+```bash
+npm run verify:billing-provider -- --provider polar --network
+```
+
+This verifier does not make a real payment. It checks server-only key placement, required product IDs, webhook-secret format, sandbox-vs-production safety, and optional read-only provider product lookup. Live production checks require an explicit `--allow-production` flag.
+
 ## Implementation Order After Dad Picks
 
 1. Add provider adapter:
