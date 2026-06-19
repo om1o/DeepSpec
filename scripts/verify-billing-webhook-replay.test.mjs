@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   buildPolarOrderPaidPayload,
+  classifyProviderPortalUrl,
   signStandardWebhookBody,
 } from "./verify-billing-webhook-replay.mjs";
 
@@ -55,5 +56,37 @@ describe("billing webhook replay helpers", () => {
       planId: "fake",
       userId: "00000000-0000-4000-8000-000000000001",
     })).toThrow("Unsupported plan id");
+  });
+
+  it("accepts HTTPS provider-owned Polar portal URLs", () => {
+    expect(classifyProviderPortalUrl("https://polar.sh/customer-portal/session", "polar")).toEqual({
+      ok: true,
+      message: "Billing portal response URL is provider-owned and HTTPS.",
+      origin: "https://polar.sh",
+    });
+  });
+
+  it("rejects non-provider billing portal URLs", () => {
+    expect(classifyProviderPortalUrl("https://example.com/customer-portal/session", "polar")).toEqual({
+      ok: false,
+      message: "Billing portal response host mismatch: expected polar.sh, got example.com.",
+      origin: "",
+    });
+  });
+
+  it("rejects lookalike provider billing portal domains", () => {
+    expect(classifyProviderPortalUrl("https://fakepolar.sh/customer-portal/session", "polar")).toEqual({
+      ok: false,
+      message: "Billing portal response host mismatch: expected polar.sh, got fakepolar.sh.",
+      origin: "",
+    });
+  });
+
+  it("rejects insecure billing portal URLs", () => {
+    expect(classifyProviderPortalUrl("http://polar.sh/customer-portal/session", "polar")).toEqual({
+      ok: false,
+      message: "Billing portal response URL must use HTTPS.",
+      origin: "",
+    });
   });
 });

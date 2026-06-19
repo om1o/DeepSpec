@@ -129,7 +129,7 @@ Then replay one signed synthetic sandbox webhook through the real API route:
 npm run verify:billing-webhook-replay -- --url http://127.0.0.1:5175 --plan scan_pack
 ```
 
-This replay creates a fresh anonymous Supabase user, posts a signed synthetic Polar `order.paid` event to `/api/billing-webhook`, verifies `/api/account-entitlement` returns an active Polar-backed entitlement, and then deletes only that synthetic billing entitlement row. It still does not make a payment.
+This replay creates a fresh anonymous Supabase user, posts a signed synthetic Polar `order.paid` event to `/api/billing-webhook`, verifies `/api/account-entitlement` returns an active Polar-backed entitlement, verifies `/api/billing-portal` returns an HTTPS Polar customer portal URL from the server-owned entitlement record, and then deletes only that synthetic billing entitlement row. It still does not make a payment.
 
 Final go/no-go command:
 
@@ -137,7 +137,7 @@ Final go/no-go command:
 npm run verify:paid-launch-readiness -- --target live
 ```
 
-This command combines billing provider config, identify release summary, billing checkout summary, billing webhook replay summary, and the latest website QA report. If it fails, the answer is still sandbox only. If it passes, live charging is allowed from a technical gate perspective, subject to Dad owning the legal/business account and production keys.
+This command combines billing provider config, identify release summary, billing checkout summary, billing webhook replay plus portal summary, and the latest website QA report. If it fails, the answer is still sandbox only. If it passes, live charging is allowed from a technical gate perspective, subject to Dad owning the legal/business account and production keys.
 
 ## Implementation Order After Dad Picks
 

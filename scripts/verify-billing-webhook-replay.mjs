@@ -140,12 +140,30 @@ async function main() {
       throw new Error(`Account entitlement mismatch: ${JSON.stringify(entitlement)}`);
     }
 
-    console.log("[4/5] Entitlement replay verified.");
+    console.log("[4/5] Verifying billing portal handoff from server entitlement...");
+    const portalResponse = await postJson(`${baseUrl.replace(/\/$/, "")}/api/billing-portal`, {
+      origin: baseUrl,
+    }, {
+      Authorization: `Bearer ${data.session.access_token}`,
+    });
+    if (!portalResponse.ok) {
+      throw new Error(`Billing portal check failed: HTTP ${portalResponse.status} ${portalResponse.bodyText}`);
+    }
+
+    const portal = classifyProviderPortalUrl(portalResponse.body?.url, entitlement.billingProvider);
+    if (!portal.ok) {
+      throw new Error(portal.message);
+    }
+
+    console.log("      Portal handoff verified.");
+    console.log("[5/5] Entitlement replay verified.");
     console.log(`      Plan=${entitlement.planId} allowance=${entitlement.scanAllowance} provider=${entitlement.billingProvider}`);
     writeSummary(options.summaryPath, {
       baseUrl,
       ok: true,
       planId: entitlement.planId,
+      portalOrigin: portal.origin,
+      portalVerified: true,
       provider: entitlement.billingProvider,
       scanAllowance: entitlement.scanAllowance,
       verifiedAt: new Date().toISOString(),
@@ -153,9 +171,9 @@ async function main() {
   } finally {
     if (userId && !options.keepEntitlement) {
       await adminClient.from("billing_entitlements").delete().eq("user_id", userId);
-      console.log("[5/5] Cleaned up synthetic billing entitlement row.");
+      console.log("[cleanup] Cleaned up synthetic billing entitlement row.");
     } else if (userId) {
-      console.log("[5/5] Kept synthetic billing entitlement row because --keep-entitlement was set.");
+      console.log("[cleanup] Kept synthetic billing entitlement row because --keep-entitlement was set.");
     }
   }
 }
@@ -212,6 +230,24 @@ async function postJsonAsRawText(url, rawBody, headers) {
   };
 }
 
+async function postJson(url, body, headers) {
+  const response = await fetch(url, {
+    body: JSON.stringify(body),
+    headers: {
+      ...headers,
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+  });
+  const bodyText = await response.text();
+  return {
+    body: parseJson(bodyText),
+    bodyText,
+    ok: response.ok,
+    status: response.status,
+  };
+}
+
 async function fetchJson(url, headers) {
   const response = await fetch(url, { headers });
   const bodyText = await response.text();
@@ -221,6 +257,58 @@ async function fetchJson(url, headers) {
     ok: response.ok,
     status: response.status,
   };
+}
+
+export function classifyProviderPortalUrl(rawUrl, provider) {
+  if (typeof rawUrl !== "string" || !rawUrl.trim()) {
+    return {
+      ok: false,
+      message: "Billing portal response did not include a provider URL.",
+      origin: "",
+    };
+  }
+
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return {
+      ok: false,
+      message: "Billing portal response URL is invalid.",
+      origin: "",
+    };
+  }
+
+  if (url.protocol !== "https:") {
+    return {
+      ok: false,
+      message: "Billing portal response URL must use HTTPS.",
+      origin: "",
+    };
+  }
+
+  const providerHostSuffixes = {
+    polar: "polar.sh",
+    stripe: "stripe.com",
+  };
+  const expectedHostSuffix = providerHostSuffixes[String(provider ?? "").trim().toLowerCase()];
+  if (expectedHostSuffix && !isExpectedProviderHost(url.hostname, expectedHostSuffix)) {
+    return {
+      ok: false,
+      message: `Billing portal response host mismatch: expected ${expectedHostSuffix}, got ${url.hostname}.`,
+      origin: "",
+    };
+  }
+
+  return {
+    ok: true,
+    message: "Billing portal response URL is provider-owned and HTTPS.",
+    origin: url.origin,
+  };
+}
+
+function isExpectedProviderHost(hostname, expectedHostSuffix) {
+  return hostname === expectedHostSuffix || hostname.endsWith(`.${expectedHostSuffix}`);
 }
 
 function decodeStandardWebhookSecret(webhookSecret) {

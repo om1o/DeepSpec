@@ -37,6 +37,8 @@ const BLOCKED_IDENTIFY_SUMMARY = {
 const PASSING_REPLAY_SUMMARY = {
   ok: true,
   planId: "scan_pack",
+  portalOrigin: "https://polar.sh",
+  portalVerified: true,
   provider: "polar",
   scanAllowance: 20,
   verifiedAt: "2026-06-19T00:00:00.000Z",
@@ -87,6 +89,58 @@ describe("classifyPaidLaunchReadiness", () => {
 
     expect(result.ok).toBe(false);
     expect(result.blockers.join("\n")).toContain("Billing webhook replay summary is missing");
+  });
+
+  it("blocks live launch when the billing replay summary does not prove portal handoff", () => {
+    const result = classifyPaidLaunchReadiness({
+      checkoutSummary: PASSING_CHECKOUT_SUMMARY,
+      env: VALID_POLAR_ENV,
+      identifySummary: PASSING_IDENTIFY_SUMMARY,
+      options: { target: "live" },
+      websiteQaReportText: PASSING_QA_REPORT,
+      webhookReplaySummary: {
+        ...PASSING_REPLAY_SUMMARY,
+        portalOrigin: undefined,
+        portalVerified: undefined,
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.blockers.join("\n")).toContain("does not prove billing portal handoff");
+  });
+
+  it("blocks live launch when the billing replay portal origin is not provider-owned", () => {
+    const result = classifyPaidLaunchReadiness({
+      checkoutSummary: PASSING_CHECKOUT_SUMMARY,
+      env: VALID_POLAR_ENV,
+      identifySummary: PASSING_IDENTIFY_SUMMARY,
+      options: { target: "live" },
+      websiteQaReportText: PASSING_QA_REPORT,
+      webhookReplaySummary: {
+        ...PASSING_REPLAY_SUMMARY,
+        portalOrigin: "https://example.com",
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.blockers.join("\n")).toContain("expected polar.sh");
+  });
+
+  it("blocks live launch when the billing replay portal origin uses a lookalike provider domain", () => {
+    const result = classifyPaidLaunchReadiness({
+      checkoutSummary: PASSING_CHECKOUT_SUMMARY,
+      env: VALID_POLAR_ENV,
+      identifySummary: PASSING_IDENTIFY_SUMMARY,
+      options: { target: "live" },
+      websiteQaReportText: PASSING_QA_REPORT,
+      webhookReplaySummary: {
+        ...PASSING_REPLAY_SUMMARY,
+        portalOrigin: "https://fakepolar.sh",
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.blockers.join("\n")).toContain("got fakepolar.sh");
   });
 
   it("blocks live launch when the checkout summary is missing", () => {

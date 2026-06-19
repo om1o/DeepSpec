@@ -167,10 +167,69 @@ function classifyWebhookReplaySummary(summary, provider) {
     };
   }
 
+  if (summary.portalVerified !== true) {
+    return {
+      ok: false,
+      message: "Billing webhook replay summary does not prove billing portal handoff. Rerun `npm run verify:billing-webhook-replay`.",
+    };
+  }
+
+  const portalOrigin = classifyProviderOrigin(summary.portalOrigin, provider);
+  if (!portalOrigin.ok) {
+    return portalOrigin;
+  }
+
   return {
     ok: true,
-    message: `Billing webhook replay passed for ${summary.provider} ${summary.planId ?? "unknown plan"}.`,
+    message: `Billing webhook replay and portal handoff passed for ${summary.provider} ${summary.planId ?? "unknown plan"}.`,
   };
+}
+
+function classifyProviderOrigin(rawOrigin, provider) {
+  if (typeof rawOrigin !== "string" || !rawOrigin.trim()) {
+    return {
+      ok: false,
+      message: "Billing webhook replay summary is missing a billing portal origin.",
+    };
+  }
+
+  let origin;
+  try {
+    origin = new URL(rawOrigin);
+  } catch {
+    return {
+      ok: false,
+      message: "Billing webhook replay summary has an invalid billing portal origin.",
+    };
+  }
+
+  if (origin.protocol !== "https:") {
+    return {
+      ok: false,
+      message: "Billing webhook replay portal origin must use HTTPS.",
+    };
+  }
+
+  const expectedHostSuffixes = {
+    polar: "polar.sh",
+    stripe: "stripe.com",
+  };
+  const expectedHostSuffix = expectedHostSuffixes[String(provider ?? "").trim().toLowerCase()];
+  if (expectedHostSuffix && !isExpectedProviderHost(origin.hostname, expectedHostSuffix)) {
+    return {
+      ok: false,
+      message: `Billing webhook replay portal origin mismatch: expected ${expectedHostSuffix}, got ${origin.hostname}.`,
+    };
+  }
+
+  return {
+    ok: true,
+    message: "Billing webhook replay portal origin is provider-owned and HTTPS.",
+  };
+}
+
+function isExpectedProviderHost(hostname, expectedHostSuffix) {
+  return hostname === expectedHostSuffix || hostname.endsWith(`.${expectedHostSuffix}`);
 }
 
 function classifyWebsiteQaReport(reportText) {
