@@ -21,14 +21,14 @@ export function classifyCheckoutUrl(url, provider) {
   }
 
   const hostname = parsed.hostname.toLowerCase();
-  if (provider === "polar" && !hostname.endsWith("polar.sh")) {
+  if (provider === "polar" && !isExpectedProviderHost(hostname, "polar.sh")) {
     return {
       ok: false,
       message: `Expected a Polar checkout URL, got ${parsed.origin}.`,
     };
   }
 
-  if (provider === "stripe" && !hostname.endsWith("stripe.com")) {
+  if (provider === "stripe" && !isExpectedProviderHost(hostname, "stripe.com")) {
     return {
       ok: false,
       message: `Expected a Stripe checkout URL, got ${parsed.origin}.`,
@@ -46,6 +46,10 @@ export function classifyCheckoutUrl(url, provider) {
     ok: true,
     origin: parsed.origin,
   };
+}
+
+function isExpectedProviderHost(hostname, expectedHostSuffix) {
+  return hostname === expectedHostSuffix || hostname.endsWith(`.${expectedHostSuffix}`);
 }
 
 async function main() {

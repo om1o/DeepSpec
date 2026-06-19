@@ -89,7 +89,7 @@ export function classifyPaidLaunchReadiness({
   };
 }
 
-function classifyCheckoutSummary(summary, provider) {
+export function classifyCheckoutSummary(summary, provider) {
   if (!summary || typeof summary !== "object") {
     return {
       ok: false,
@@ -138,7 +138,7 @@ function addLiveProviderBlockers(env, provider, blockers) {
   }
 }
 
-function classifyWebhookReplaySummary(summary, provider) {
+export function classifyWebhookReplaySummary(summary, provider) {
   if (!summary || typeof summary !== "object") {
     return {
       ok: false,

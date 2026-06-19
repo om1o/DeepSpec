@@ -139,6 +139,14 @@ npm run verify:billing-webhook-replay -- --url http://127.0.0.1:5175 --plan scan
 
 This replay creates a fresh anonymous Supabase user, posts a signed synthetic Polar `order.paid` event to `/api/billing-webhook`, verifies `/api/account-entitlement` returns an active Polar-backed entitlement, verifies `/api/billing-portal` returns an HTTPS Polar customer portal URL from the server-owned entitlement record, and then deletes only that synthetic billing entitlement row. It still does not make a payment.
 
+Then verify provider-only sandbox readiness:
+
+```bash
+npm run verify:billing-sandbox-readiness -- --provider polar
+```
+
+This command checks billing provider config, checkout evidence, webhook replay evidence, and billing portal handoff evidence. It does not approve live payments and it intentionally does not judge AI identify quality.
+
 Final go/no-go command:
 
 ```bash

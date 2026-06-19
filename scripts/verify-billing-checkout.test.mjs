@@ -28,4 +28,11 @@ describe("classifyCheckoutUrl", () => {
       message: expect.stringContaining("Expected a Polar checkout URL"),
     });
   });
+
+  it("rejects lookalike provider checkout domains", () => {
+    expect(classifyCheckoutUrl("https://fakepolar.sh/checkout/session", "polar")).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("Expected a Polar checkout URL"),
+    });
+  });
 });
