@@ -23,6 +23,7 @@ describe("buildBillingProviderRunbook", () => {
     expect(runbook).toContain("Kid Can Do");
     expect(runbook).toContain("npm run verify:billing-provider -- --provider polar");
     expect(runbook).toContain("npm run verify:billing-sandbox-readiness -- --provider polar");
+    expect(runbook).toContain("npm run billing:evidence -- --provider polar");
     expect(runbook).toContain("Live payments now: no.");
   });
 

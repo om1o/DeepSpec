@@ -155,6 +155,14 @@ npm run verify:billing-sandbox-readiness -- --provider polar
 
 This command checks billing provider config, checkout evidence, webhook replay evidence, and billing portal handoff evidence. It does not approve live payments and it intentionally does not judge AI identify quality.
 
+Then print the no-secret evidence bundle:
+
+```bash
+npm run billing:evidence -- --provider polar
+```
+
+This writes `artifacts/release-gates/billing-provider-evidence.md` and `artifacts/release-gates/billing-provider-evidence.json`. Share the markdown result, not real provider keys or dashboard screenshots.
+
 Final go/no-go command:
 
 ```bash
