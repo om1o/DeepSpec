@@ -30,6 +30,7 @@
     "verify:identify-eval": "node scripts/verify-identify-eval-summary.mjs",
     "verify:auth": "node scripts/verify-auth-flows.mjs",
     "verify:billing-provider": "node scripts/verify-billing-provider.mjs",
+    "billing:setup-runbook": "node scripts/print-billing-provider-runbook.mjs",
     "verify:billing-checkout": "node scripts/verify-billing-checkout.mjs",
     "verify:billing-webhook-replay": "node scripts/verify-billing-webhook-replay.mjs",
     "verify:paid-launch-readiness": "node scripts/verify-paid-launch-readiness.mjs",

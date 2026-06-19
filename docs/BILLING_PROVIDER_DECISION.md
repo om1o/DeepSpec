@@ -103,6 +103,12 @@ Do not put Polar access tokens or webhook secrets in `VITE_` variables.
 Do not set `DEEPSPEC_ENABLE_LIVE_BILLING=true` during sandbox setup. That flag is the final real-money switch and production provider traffic fails closed without it.
 Use `.env.example` as the copy/paste checklist, then paste real sandbox values into `.env.local`.
 
+Before copying real values, print the no-secret setup runbook:
+
+```bash
+npm run billing:setup-runbook -- --provider polar
+```
+
 Then run:
 
 ```bash
