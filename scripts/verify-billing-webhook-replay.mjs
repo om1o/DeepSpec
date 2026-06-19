@@ -55,6 +55,59 @@ export function buildPolarOrderPaidPayload({
   };
 }
 
+export function buildStripeCheckoutCompletedPayload({
+  customerId,
+  planId = "scan_pack",
+  subscriptionId = "",
+  testId = randomUUID(),
+  timestamp = Math.floor(Date.now() / 1000),
+  userId,
+}) {
+  if (!userId) {
+    throw new Error("userId is required.");
+  }
+
+  const scanAllowance = PLAN_ALLOWANCE[planId];
+  if (!scanAllowance) {
+    throw new Error(`Unsupported plan id: ${planId}`);
+  }
+
+  const safeTestId = testId.replace(/[^a-zA-Z0-9_-]/g, "-");
+  const providerCustomerId = customerId || `cus_${safeTestId}`;
+
+  return {
+    created: timestamp,
+    data: {
+      object: {
+        client_reference_id: userId,
+        customer: providerCustomerId,
+        current_period_end: timestamp + 30 * 24 * 60 * 60,
+        id: `cs_test_${safeTestId}`,
+        metadata: {
+          deepspec_plan_id: planId,
+          scan_allowance: scanAllowance,
+          supabase_user_id: userId,
+        },
+        payment_status: "paid",
+        subscription: subscriptionId || null,
+      },
+    },
+    livemode: false,
+    type: "checkout.session.completed",
+  };
+}
+
+export function signStripeWebhookBody(rawBody, webhookSecret, options = {}) {
+  const timestamp = String(options.timestamp ?? Math.floor(Date.now() / 1000));
+  const signature = createHmac("sha256", webhookSecret)
+    .update(`${timestamp}.${rawBody}`, "utf8")
+    .digest("hex");
+
+  return {
+    "stripe-signature": `t=${timestamp},v1=${signature}`,
+  };
+}
+
 export function signStandardWebhookBody(rawBody, webhookSecret, options = {}) {
   const webhookId = options.webhookId || `msg_${randomUUID()}`;
   const webhookTimestamp = String(options.timestamp ?? Math.floor(Date.now() / 1000));
@@ -77,10 +130,14 @@ export function signStandardWebhookBody(rawBody, webhookSecret, options = {}) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const baseUrl = options.url || process.env.QA_BASE_URL || process.env.DEEPSPEC_PUBLIC_URL || "http://127.0.0.1:5175";
-  const env = readRequiredEnv();
+  const env = readRequiredEnv(options);
 
   console.log(`[0/5] Target: ${baseUrl}`);
+  console.log(`      Provider: ${env.provider}`);
   console.log("      This verifier creates a synthetic anonymous Supabase user and cleans up only that user's synthetic billing entitlement.");
+  if (env.provider === "stripe") {
+    console.log("      Stripe mode also creates and deletes one test-mode Stripe customer. It does not make a payment.");
+  }
 
   const publicClient = createClient(env.supabaseUrl, env.publishableKey, {
     auth: {
@@ -97,6 +154,7 @@ async function main() {
   });
 
   let userId = "";
+  let providerCustomerId = "";
   try {
     console.log("[1/5] Creating synthetic anonymous test user...");
     const { data, error } = await publicClient.auth.signInAnonymously();
@@ -105,17 +163,34 @@ async function main() {
     }
     userId = data.user.id;
 
-    console.log("[2/5] Posting signed synthetic Polar order.paid webhook...");
+    console.log(`[2/5] Posting signed synthetic ${env.provider} webhook...`);
     const testId = `billing-replay-${randomUUID()}`;
-    const payload = buildPolarOrderPaidPayload({
-      planId: options.planId,
-      testId,
-      userId,
-    });
+    if (env.provider === "stripe") {
+      const customer = await createStripeTestCustomer(env.stripeSecretKey, {
+        testId,
+        userId,
+      });
+      providerCustomerId = customer.id;
+    }
+
+    const payload = env.provider === "stripe"
+      ? buildStripeCheckoutCompletedPayload({
+          customerId: providerCustomerId,
+          planId: options.planId,
+          testId,
+          userId,
+        })
+      : buildPolarOrderPaidPayload({
+          planId: options.planId,
+          testId,
+          userId,
+        });
     const rawBody = JSON.stringify(payload);
-    const webhookHeaders = signStandardWebhookBody(rawBody, env.polarWebhookSecret, {
-      webhookId: `msg_${testId}`,
-    });
+    const webhookHeaders = env.provider === "stripe"
+      ? signStripeWebhookBody(rawBody, env.stripeWebhookSecret, { timestamp: payload.created })
+      : signStandardWebhookBody(rawBody, env.polarWebhookSecret, {
+          webhookId: `msg_${testId}`,
+        });
     const webhookResponse = await postJsonAsRawText(`${baseUrl.replace(/\/$/, "")}/api/billing-webhook`, rawBody, webhookHeaders);
     if (!webhookResponse.ok || webhookResponse.body?.received !== true || webhookResponse.body?.handled !== true) {
       throw new Error(`Webhook replay failed: HTTP ${webhookResponse.status} ${webhookResponse.bodyText}`);
@@ -135,7 +210,7 @@ async function main() {
       entitlement?.status !== "active" ||
       entitlement?.planId !== options.planId ||
       Number(entitlement?.scanAllowance) !== expectedAllowance ||
-      entitlement?.billingProvider !== "polar"
+      entitlement?.billingProvider !== env.provider
     ) {
       throw new Error(`Account entitlement mismatch: ${JSON.stringify(entitlement)}`);
     }
@@ -169,6 +244,13 @@ async function main() {
       verifiedAt: new Date().toISOString(),
     });
   } finally {
+    if (providerCustomerId && env.provider === "stripe" && !options.keepProviderCustomer) {
+      await deleteStripeTestCustomer(env.stripeSecretKey, providerCustomerId);
+      console.log("[cleanup] Deleted synthetic Stripe test customer.");
+    } else if (providerCustomerId && env.provider === "stripe") {
+      console.log("[cleanup] Kept synthetic Stripe test customer because --keep-provider-customer was set.");
+    }
+
     if (userId && !options.keepEntitlement) {
       await adminClient.from("billing_entitlements").delete().eq("user_id", userId);
       console.log("[cleanup] Cleaned up synthetic billing entitlement row.");
@@ -178,36 +260,54 @@ async function main() {
   }
 }
 
-function readRequiredEnv() {
-  const billingProvider = String(process.env.BILLING_PROVIDER ?? "").trim().toLowerCase();
-  if (billingProvider !== "polar") {
-    throw new Error("Set BILLING_PROVIDER=polar before running the Polar webhook replay.");
+function readRequiredEnv(options) {
+  const billingProvider = String(options.provider || process.env.BILLING_PROVIDER || "").trim().toLowerCase();
+  if (billingProvider !== "polar" && billingProvider !== "stripe") {
+    throw new Error("Set BILLING_PROVIDER to polar or stripe before running the billing webhook replay.");
   }
 
   const supabaseUrl = String(process.env.VITE_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "").trim();
   const publishableKey = String(process.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "").trim();
   const serviceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
   const polarWebhookSecret = String(process.env.POLAR_WEBHOOK_SECRET ?? "").trim();
+  const stripeSecretKey = String(process.env.STRIPE_SECRET_KEY ?? "").trim();
+  const stripeWebhookSecret = String(process.env.STRIPE_WEBHOOK_SECRET ?? "").trim();
 
   const missing = [
     ["VITE_SUPABASE_URL or SUPABASE_URL", supabaseUrl],
     ["VITE_SUPABASE_PUBLISHABLE_KEY", publishableKey],
     ["SUPABASE_SERVICE_ROLE_KEY", serviceRoleKey],
-    ["POLAR_WEBHOOK_SECRET", polarWebhookSecret],
+    ...(billingProvider === "polar"
+      ? [["POLAR_WEBHOOK_SECRET", polarWebhookSecret]]
+      : [
+          ["STRIPE_SECRET_KEY", stripeSecretKey],
+          ["STRIPE_WEBHOOK_SECRET", stripeWebhookSecret],
+        ]),
   ].filter(([, value]) => !value);
 
   if (missing.length) {
     throw new Error(`Missing required env: ${missing.map(([key]) => key).join(", ")}`);
   }
 
-  if (!decodeStandardWebhookSecret(polarWebhookSecret)) {
+  if (billingProvider === "polar" && !decodeStandardWebhookSecret(polarWebhookSecret)) {
     throw new Error("POLAR_WEBHOOK_SECRET is not a valid Standard Webhooks base64 secret.");
+  }
+
+  if (billingProvider === "stripe" && !stripeSecretKey.startsWith("sk_test_")) {
+    throw new Error("Stripe webhook replay requires a test-mode STRIPE_SECRET_KEY. Do not run synthetic replay against live Stripe.");
+  }
+
+  if (billingProvider === "stripe" && !stripeWebhookSecret.startsWith("whsec_")) {
+    throw new Error("STRIPE_WEBHOOK_SECRET must use the expected whsec_ prefix.");
   }
 
   return {
     polarWebhookSecret,
+    provider: billingProvider,
     publishableKey,
     serviceRoleKey,
+    stripeSecretKey,
+    stripeWebhookSecret,
     supabaseUrl,
   };
 }
@@ -257,6 +357,44 @@ async function fetchJson(url, headers) {
     ok: response.ok,
     status: response.status,
   };
+}
+
+async function createStripeTestCustomer(secretKey, { testId, userId }) {
+  const response = await fetch("https://api.stripe.com/v1/customers", {
+    body: new URLSearchParams({
+      description: `DeepSpec synthetic billing replay ${testId}`,
+      "metadata[deepspec_test_id]": testId,
+      "metadata[supabase_user_id]": userId,
+    }),
+    headers: {
+      Authorization: `Bearer ${secretKey}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    method: "POST",
+  });
+  const bodyText = await response.text();
+  const body = parseJson(bodyText);
+  if (!response.ok || typeof body?.id !== "string") {
+    throw new Error(`Stripe test customer creation failed: HTTP ${response.status} ${bodyText}`);
+  }
+
+  return {
+    id: body.id,
+  };
+}
+
+async function deleteStripeTestCustomer(secretKey, customerId) {
+  const response = await fetch(`https://api.stripe.com/v1/customers/${encodeURIComponent(customerId)}`, {
+    headers: {
+      Authorization: `Bearer ${secretKey}`,
+    },
+    method: "DELETE",
+  }).catch(() => null);
+
+  if (!response?.ok) {
+    const bodyText = response ? await response.text() : "network_error";
+    console.warn(`[cleanup] Stripe test customer cleanup failed for ${customerId}: ${bodyText}`);
+  }
 }
 
 export function classifyProviderPortalUrl(rawUrl, provider) {
@@ -332,7 +470,9 @@ function parseJson(bodyText) {
 function parseArgs(args) {
   const options = {
     keepEntitlement: false,
+    keepProviderCustomer: false,
     planId: "scan_pack",
+    provider: "",
     summaryPath: DEFAULT_SUMMARY_PATH,
     url: "",
   };
@@ -345,6 +485,12 @@ function parseArgs(args) {
     if (name === "--url") {
       options.url = value;
       if (!inlineValue) index += 1;
+    } else if (name === "--provider") {
+      if (value !== "polar" && value !== "stripe") {
+        throw new Error("--provider must be polar or stripe.");
+      }
+      options.provider = value;
+      if (!inlineValue) index += 1;
     } else if (name === "--plan") {
       if (!PLAN_ALLOWANCE[value]) {
         throw new Error(`--plan must be one of ${Object.keys(PLAN_ALLOWANCE).join(", ")}.`);
@@ -353,6 +499,8 @@ function parseArgs(args) {
       if (!inlineValue) index += 1;
     } else if (name === "--keep-entitlement") {
       options.keepEntitlement = true;
+    } else if (name === "--keep-provider-customer") {
+      options.keepProviderCustomer = true;
     } else if (name === "--summary") {
       options.summaryPath = value;
       if (!inlineValue) index += 1;
@@ -368,13 +516,15 @@ function parseArgs(args) {
 }
 
 function printHelp() {
-  console.log(`Replay a signed synthetic Polar billing webhook through DeepSpec.
+  console.log(`Replay a signed synthetic billing webhook through DeepSpec.
 
 Options:
   --url <base-url>          App base URL. Default: QA_BASE_URL, DEEPSPEC_PUBLIC_URL, or http://127.0.0.1:5175.
+  --provider <polar|stripe> Provider to replay. Default: BILLING_PROVIDER.
   --plan <plan-id>          Plan to activate. Default: scan_pack.
   --summary <path>          Summary artifact path. Default: ${DEFAULT_SUMMARY_PATH}.
   --keep-entitlement        Do not delete the synthetic billing entitlement row after verification.
+  --keep-provider-customer  Stripe only: do not delete the synthetic Stripe test customer after verification.
 `);
 }
 

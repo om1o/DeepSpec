@@ -45,7 +45,7 @@ describe("buildBillingProviderRunbook", () => {
     expect(runbook).not.toContain("prod_fake_secret");
   });
 
-  it("warns that Stripe webhook replay evidence is not automated yet", () => {
+  it("prints the Stripe webhook replay command for the Stripe fallback path", () => {
     const runbook = buildBillingProviderRunbook({
       BILLING_PROVIDER: "stripe",
       STRIPE_PRICE_DEEPSPEC_PLUS_MONTHLY: "price_plus_monthly",
@@ -56,7 +56,7 @@ describe("buildBillingProviderRunbook", () => {
       STRIPE_WEBHOOK_SECRET: "whsec_secret",
     }, { provider: "stripe" });
 
-    expect(runbook).toContain("Current automated replay verifier is Polar-only");
+    expect(runbook).toContain("npm run verify:billing-webhook-replay -- --provider stripe");
     expect(runbook).not.toContain("sk_test_secret");
   });
 });

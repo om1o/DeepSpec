@@ -2,7 +2,9 @@ import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   buildPolarOrderPaidPayload,
+  buildStripeCheckoutCompletedPayload,
   classifyProviderPortalUrl,
+  signStripeWebhookBody,
   signStandardWebhookBody,
 } from "./verify-billing-webhook-replay.mjs";
 
@@ -51,8 +53,55 @@ describe("billing webhook replay helpers", () => {
     });
   });
 
+  it("builds a paid Stripe checkout session payload with DeepSpec entitlement metadata", () => {
+    const payload = buildStripeCheckoutCompletedPayload({
+      customerId: "cus_test_123",
+      planId: "scan_pack",
+      testId: "test-123",
+      timestamp: 1782000000,
+      userId: "00000000-0000-4000-8000-000000000001",
+    });
+
+    expect(payload).toMatchObject({
+      created: 1782000000,
+      data: {
+        object: {
+          client_reference_id: "00000000-0000-4000-8000-000000000001",
+          customer: "cus_test_123",
+          id: "cs_test_test-123",
+          metadata: {
+            deepspec_plan_id: "scan_pack",
+            scan_allowance: 20,
+            supabase_user_id: "00000000-0000-4000-8000-000000000001",
+          },
+          payment_status: "paid",
+        },
+      },
+      livemode: false,
+      type: "checkout.session.completed",
+    });
+  });
+
+  it("signs Stripe webhook bodies with the Stripe HMAC format", () => {
+    const rawBody = JSON.stringify({ data: { object: { id: "cs_test_1" } }, type: "checkout.session.completed" });
+    const headers = signStripeWebhookBody(rawBody, "whsec_test", {
+      timestamp: 1782000000,
+    });
+    const expectedSignature = createHmac("sha256", "whsec_test")
+      .update(`1782000000.${rawBody}`, "utf8")
+      .digest("hex");
+
+    expect(headers).toEqual({
+      "stripe-signature": `t=1782000000,v1=${expectedSignature}`,
+    });
+  });
+
   it("rejects unsupported DeepSpec plans", () => {
     expect(() => buildPolarOrderPaidPayload({
+      planId: "fake",
+      userId: "00000000-0000-4000-8000-000000000001",
+    })).toThrow("Unsupported plan id");
+    expect(() => buildStripeCheckoutCompletedPayload({
       planId: "fake",
       userId: "00000000-0000-4000-8000-000000000001",
     })).toThrow("Unsupported plan id");

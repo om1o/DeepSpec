@@ -139,6 +139,14 @@ npm run verify:billing-webhook-replay -- --url http://127.0.0.1:5175 --plan scan
 
 This replay creates a fresh anonymous Supabase user, posts a signed synthetic Polar `order.paid` event to `/api/billing-webhook`, verifies `/api/account-entitlement` returns an active Polar-backed entitlement, verifies `/api/billing-portal` returns an HTTPS Polar customer portal URL from the server-owned entitlement record, and then deletes only that synthetic billing entitlement row. It still does not make a payment.
 
+If Dad chooses the Stripe fallback instead, use:
+
+```bash
+npm run verify:billing-webhook-replay -- --provider stripe --url http://127.0.0.1:5175 --plan scan_pack
+```
+
+Stripe replay requires a test-mode `STRIPE_SECRET_KEY`, creates and deletes one Stripe test customer, posts a signed synthetic `checkout.session.completed` webhook, verifies entitlement activation, and verifies Stripe customer-portal handoff. It still does not make a payment.
+
 Then verify provider-only sandbox readiness:
 
 ```bash

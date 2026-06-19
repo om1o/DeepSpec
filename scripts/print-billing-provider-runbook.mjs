@@ -79,10 +79,10 @@ export function buildBillingProviderRunbook(env = {}, options = {}) {
     "   npm run verify:billing-checkout -- --url http://127.0.0.1:5175 --plan scan_pack",
     provider === "polar"
       ? "4. Replay a signed synthetic sandbox webhook and portal handoff:"
-      : "4. Replay a provider webhook and portal handoff when the adapter verifier supports it:",
+      : "4. Replay a signed synthetic Stripe sandbox webhook and portal handoff:",
     provider === "polar"
       ? "   npm run verify:billing-webhook-replay -- --url http://127.0.0.1:5175 --plan scan_pack"
-      : "   Current automated replay verifier is Polar-only; do not treat Stripe live as ready without equivalent webhook replay evidence.",
+      : "   npm run verify:billing-webhook-replay -- --provider stripe --url http://127.0.0.1:5175 --plan scan_pack",
     "5. Verify billing sandbox readiness without judging model quality:",
     `   npm run verify:billing-sandbox-readiness -- --provider ${providerCommand}`,
     "6. Final live go/no-go:",
