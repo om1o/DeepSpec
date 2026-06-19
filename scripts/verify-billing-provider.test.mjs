@@ -29,6 +29,16 @@ describe("verifyBillingProviderConfig", () => {
     expect(result.issues).toEqual([]);
   });
 
+  it("blocks sandbox setup when the live billing flag is enabled", () => {
+    const result = verifyBillingProviderConfig({
+      ...VALID_POLAR_ENV,
+      DEEPSPEC_ENABLE_LIVE_BILLING: "true",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues.join("\n")).toContain("only allowed with --allow-production");
+  });
+
   it("blocks Polar production checks unless explicitly allowed", () => {
     const result = verifyBillingProviderConfig({
       ...VALID_POLAR_ENV,

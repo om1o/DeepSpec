@@ -90,6 +90,7 @@ Do not start live charging now:
 If Dad picks Polar, configure only server-side environment variables:
 
 - `BILLING_PROVIDER=polar`
+- `DEEPSPEC_ENABLE_LIVE_BILLING=false`
 - `POLAR_ENVIRONMENT=sandbox`
 - `POLAR_ACCESS_TOKEN=<server-only organization access token>`
 - `POLAR_WEBHOOK_SECRET=<server-only webhook secret>`
@@ -100,6 +101,7 @@ If Dad picks Polar, configure only server-side environment variables:
 
 Do not put Polar access tokens or webhook secrets in `VITE_` variables.
 Do not set `DEEPSPEC_ENABLE_LIVE_BILLING=true` during sandbox setup. That flag is the final real-money switch and production provider traffic fails closed without it.
+Use `.env.example` as the copy/paste checklist, then paste real sandbox values into `.env.local`.
 
 Then run:
 

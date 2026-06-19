@@ -36,6 +36,10 @@ export function verifyBillingProviderConfig(env, options = {}) {
 
   checks.push("Loaded billing provider configuration.");
 
+  if (env.DEEPSPEC_ENABLE_LIVE_BILLING === "true" && !options.allowProduction) {
+    issues.push("DEEPSPEC_ENABLE_LIVE_BILLING=true is only allowed with --allow-production. Leave it false or unset for sandbox setup.");
+  }
+
   for (const key of Object.keys(env)) {
     if (/^VITE_(POLAR|STRIPE)_/i.test(key)) {
       issues.push(`${key} must not exist. Billing provider keys and product IDs must stay server-side.`);
