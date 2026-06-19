@@ -1,6 +1,6 @@
 import { createHmac, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 
@@ -10,6 +10,7 @@ const PLAN_ALLOWANCE = {
   scan_pack: 20,
   pro_beta: 500,
 };
+const DEFAULT_SUMMARY_PATH = "artifacts/release-gates/billing-webhook-replay-summary.json";
 
 loadLocalEnv(".env.local");
 loadLocalEnv(".env");
@@ -141,6 +142,14 @@ async function main() {
 
     console.log("[4/5] Entitlement replay verified.");
     console.log(`      Plan=${entitlement.planId} allowance=${entitlement.scanAllowance} provider=${entitlement.billingProvider}`);
+    writeSummary(options.summaryPath, {
+      baseUrl,
+      ok: true,
+      planId: entitlement.planId,
+      provider: entitlement.billingProvider,
+      scanAllowance: entitlement.scanAllowance,
+      verifiedAt: new Date().toISOString(),
+    });
   } finally {
     if (userId && !options.keepEntitlement) {
       await adminClient.from("billing_entitlements").delete().eq("user_id", userId);
@@ -236,6 +245,7 @@ function parseArgs(args) {
   const options = {
     keepEntitlement: false,
     planId: "scan_pack",
+    summaryPath: DEFAULT_SUMMARY_PATH,
     url: "",
   };
 
@@ -255,6 +265,9 @@ function parseArgs(args) {
       if (!inlineValue) index += 1;
     } else if (name === "--keep-entitlement") {
       options.keepEntitlement = true;
+    } else if (name === "--summary") {
+      options.summaryPath = value;
+      if (!inlineValue) index += 1;
     } else if (name === "--help") {
       printHelp();
       process.exit(0);
@@ -272,8 +285,16 @@ function printHelp() {
 Options:
   --url <base-url>          App base URL. Default: QA_BASE_URL, DEEPSPEC_PUBLIC_URL, or http://127.0.0.1:5175.
   --plan <plan-id>          Plan to activate. Default: scan_pack.
+  --summary <path>          Summary artifact path. Default: ${DEFAULT_SUMMARY_PATH}.
   --keep-entitlement        Do not delete the synthetic billing entitlement row after verification.
 `);
+}
+
+function writeSummary(path, summary) {
+  const fullPath = join(process.cwd(), path);
+  mkdirSync(dirname(fullPath), { recursive: true });
+  writeFileSync(fullPath, `${JSON.stringify(summary, null, 2)}\n`);
+  console.log(`      Wrote ${path}`);
 }
 
 function loadLocalEnv(filename) {
