@@ -158,10 +158,11 @@ This command checks billing provider config, checkout evidence, webhook replay e
 Then print the no-secret evidence bundle:
 
 ```bash
+npm run identify:evidence
 npm run billing:evidence -- --provider polar
 ```
 
-This writes `artifacts/release-gates/billing-provider-evidence.md` and `artifacts/release-gates/billing-provider-evidence.json`. Share the markdown result, not real provider keys or dashboard screenshots.
+These write no-secret evidence bundles under `artifacts/release-gates/`. Share the markdown results, not real provider keys or dashboard screenshots.
 
 Final go/no-go command:
 
