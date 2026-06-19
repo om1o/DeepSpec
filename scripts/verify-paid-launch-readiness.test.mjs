@@ -42,6 +42,14 @@ const PASSING_REPLAY_SUMMARY = {
   verifiedAt: "2026-06-19T00:00:00.000Z",
 };
 
+const PASSING_CHECKOUT_SUMMARY = {
+  checkoutOrigin: "https://polar.sh",
+  ok: true,
+  planId: "scan_pack",
+  provider: "polar",
+  verifiedAt: "2026-06-19T00:00:00.000Z",
+};
+
 const PASSING_QA_REPORT = `# DeepSpec Real Website QA Report
 
 ## What Passed
@@ -54,6 +62,7 @@ const PASSING_QA_REPORT = `# DeepSpec Real Website QA Report
 describe("classifyPaidLaunchReadiness", () => {
   it("blocks live launch when identify release is provider-blocked", () => {
     const result = classifyPaidLaunchReadiness({
+      checkoutSummary: PASSING_CHECKOUT_SUMMARY,
       env: VALID_POLAR_ENV,
       identifySummary: BLOCKED_IDENTIFY_SUMMARY,
       options: { target: "live" },
@@ -68,6 +77,7 @@ describe("classifyPaidLaunchReadiness", () => {
 
   it("blocks live launch when the billing replay summary is missing", () => {
     const result = classifyPaidLaunchReadiness({
+      checkoutSummary: PASSING_CHECKOUT_SUMMARY,
       env: VALID_POLAR_ENV,
       identifySummary: PASSING_IDENTIFY_SUMMARY,
       options: { target: "live" },
@@ -79,8 +89,22 @@ describe("classifyPaidLaunchReadiness", () => {
     expect(result.blockers.join("\n")).toContain("Billing webhook replay summary is missing");
   });
 
+  it("blocks live launch when the checkout summary is missing", () => {
+    const result = classifyPaidLaunchReadiness({
+      env: VALID_POLAR_ENV,
+      identifySummary: PASSING_IDENTIFY_SUMMARY,
+      options: { target: "live" },
+      websiteQaReportText: PASSING_QA_REPORT,
+      webhookReplaySummary: PASSING_REPLAY_SUMMARY,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.blockers.join("\n")).toContain("Billing checkout summary is missing");
+  });
+
   it("blocks sandbox readiness when the live flag is enabled", () => {
     const result = classifyPaidLaunchReadiness({
+      checkoutSummary: PASSING_CHECKOUT_SUMMARY,
       env: {
         ...VALID_POLAR_ENV,
         POLAR_ENVIRONMENT: "sandbox",
@@ -95,8 +119,9 @@ describe("classifyPaidLaunchReadiness", () => {
     expect(result.blockers.join("\n")).toContain("DEEPSPEC_ENABLE_LIVE_BILLING=true");
   });
 
-  it("allows live launch only when billing, identify, replay, and QA evidence all pass", () => {
+  it("allows live launch only when billing, identify, checkout, replay, and QA evidence all pass", () => {
     const result = classifyPaidLaunchReadiness({
+      checkoutSummary: PASSING_CHECKOUT_SUMMARY,
       env: VALID_POLAR_ENV,
       identifySummary: PASSING_IDENTIFY_SUMMARY,
       options: { target: "live" },

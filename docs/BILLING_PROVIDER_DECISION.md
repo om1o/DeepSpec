@@ -115,7 +115,15 @@ npm run verify:billing-provider -- --provider polar --network
 
 This verifier does not make a real payment. It checks server-only key placement, required product IDs, webhook-secret format, sandbox-vs-production safety, and optional read-only provider product lookup. Live production checks require an explicit `--allow-production` flag.
 
-After the app server is running with `BILLING_PROVIDER=polar`, replay one signed synthetic sandbox webhook through the real API route:
+After the app server is running with `BILLING_PROVIDER=polar`, verify checkout URL creation:
+
+```bash
+npm run verify:billing-checkout -- --url http://127.0.0.1:5175 --plan scan_pack
+```
+
+This creates a fresh anonymous Supabase session, calls `/api/billing-checkout`, verifies the provider returned an HTTPS Polar checkout URL, and writes `artifacts/release-gates/billing-checkout-summary.json`. It does not make a payment.
+
+Then replay one signed synthetic sandbox webhook through the real API route:
 
 ```bash
 npm run verify:billing-webhook-replay -- --url http://127.0.0.1:5175 --plan scan_pack
@@ -129,7 +137,7 @@ Final go/no-go command:
 npm run verify:paid-launch-readiness -- --target live
 ```
 
-This command combines billing provider config, identify release summary, billing webhook replay summary, and the latest website QA report. If it fails, the answer is still sandbox only. If it passes, live charging is allowed from a technical gate perspective, subject to Dad owning the legal/business account and production keys.
+This command combines billing provider config, identify release summary, billing checkout summary, billing webhook replay summary, and the latest website QA report. If it fails, the answer is still sandbox only. If it passes, live charging is allowed from a technical gate perspective, subject to Dad owning the legal/business account and production keys.
 
 ## Implementation Order After Dad Picks
 

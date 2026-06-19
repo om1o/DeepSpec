@@ -5,6 +5,7 @@ import { verifyBillingProviderConfig } from "./verify-billing-provider.mjs";
 import { classifyIdentifyEvalSummary } from "./verify-identify-eval-summary.mjs";
 
 const DEFAULT_IDENTIFY_SUMMARY = ".deepspec-eval/identify-summary.json";
+const DEFAULT_CHECKOUT_SUMMARY = "artifacts/release-gates/billing-checkout-summary.json";
 const DEFAULT_WEBHOOK_REPLAY_SUMMARY = "artifacts/release-gates/billing-webhook-replay-summary.json";
 const DEFAULT_QA_ROOT = "artifacts/qa";
 
@@ -12,6 +13,7 @@ loadLocalEnv(".env.local");
 loadLocalEnv(".env");
 
 export function classifyPaidLaunchReadiness({
+  checkoutSummary = null,
   env = {},
   identifySummary = null,
   options = {},
@@ -50,6 +52,15 @@ export function classifyPaidLaunchReadiness({
     blockers.push(`Identify release gate: ${identify.message}`);
   }
 
+  const checkout = classifyCheckoutSummary(checkoutSummary, provider);
+  if (checkout.ok) {
+    checks.push(checkout.message);
+  } else if (target === "live") {
+    blockers.push(checkout.message);
+  } else {
+    warnings.push(checkout.message);
+  }
+
   const replay = classifyWebhookReplaySummary(webhookReplaySummary, provider);
   if (replay.ok) {
     checks.push(replay.message);
@@ -75,6 +86,41 @@ export function classifyPaidLaunchReadiness({
     recommendation: blockers.length === 0 && target === "live" ? "live_allowed" : "sandbox_only",
     target,
     warnings,
+  };
+}
+
+function classifyCheckoutSummary(summary, provider) {
+  if (!summary || typeof summary !== "object") {
+    return {
+      ok: false,
+      message: "Billing checkout summary is missing. Run `npm run verify:billing-checkout` after sandbox env is configured.",
+    };
+  }
+
+  if (summary.ok !== true) {
+    return {
+      ok: false,
+      message: "Billing checkout summary did not pass.",
+    };
+  }
+
+  if (provider && summary.provider !== provider) {
+    return {
+      ok: false,
+      message: `Billing checkout provider mismatch: expected ${provider}, got ${summary.provider ?? "unknown"}.`,
+    };
+  }
+
+  if (typeof summary.verifiedAt !== "string" || Number.isNaN(Date.parse(summary.verifiedAt))) {
+    return {
+      ok: false,
+      message: "Billing checkout summary is missing a valid verifiedAt timestamp.",
+    };
+  }
+
+  return {
+    ok: true,
+    message: `Billing checkout passed for ${summary.provider} ${summary.planId ?? "unknown plan"}.`,
   };
 }
 
@@ -157,11 +203,13 @@ function classifyWebsiteQaReport(reportText) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  const checkoutSummary = readJson(options.checkoutSummaryPath);
   const identifySummary = readJson(options.identifySummaryPath);
   const webhookReplaySummary = readJson(options.webhookReplaySummaryPath);
   const websiteQaPath = options.websiteQaReportPath || findLatestWebsiteQaReport(DEFAULT_QA_ROOT);
   const websiteQaReportText = websiteQaPath ? readText(websiteQaPath) : "";
   const result = classifyPaidLaunchReadiness({
+    checkoutSummary,
     env: process.env,
     identifySummary,
     options,
@@ -196,6 +244,7 @@ async function main() {
 function parseArgs(args) {
   const options = {
     identifySummaryPath: DEFAULT_IDENTIFY_SUMMARY,
+    checkoutSummaryPath: DEFAULT_CHECKOUT_SUMMARY,
     minIdentifySampleSize: 50,
     provider: "",
     target: "live",
@@ -219,6 +268,9 @@ function parseArgs(args) {
       if (!inlineValue) index += 1;
     } else if (name === "--identify-summary") {
       options.identifySummaryPath = value;
+      if (!inlineValue) index += 1;
+    } else if (name === "--checkout-summary") {
+      options.checkoutSummaryPath = value;
       if (!inlineValue) index += 1;
     } else if (name === "--webhook-replay-summary") {
       options.webhookReplaySummaryPath = value;
@@ -315,6 +367,7 @@ Options:
   --target <live|sandbox>           Launch target. Default: live.
   --provider <polar|stripe>         Override BILLING_PROVIDER.
   --identify-summary <path>         Identify eval summary. Default: ${DEFAULT_IDENTIFY_SUMMARY}.
+  --checkout-summary <path>         Billing checkout summary. Default: ${DEFAULT_CHECKOUT_SUMMARY}.
   --webhook-replay-summary <path>   Billing replay summary. Default: ${DEFAULT_WEBHOOK_REPLAY_SUMMARY}.
   --website-qa-report <path>        Website QA report. Default: latest artifacts/qa report.
   --min-identify-sample-size <n>    Minimum identify samples. Default: 50.
