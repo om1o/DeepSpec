@@ -6,6 +6,7 @@ const baseUrl = process.env.QA_BASE_URL?.trim() || DEFAULT_BASE_URL;
 const qaRoot = path.resolve("artifacts", "qa");
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 const outputDir = path.join(qaRoot, `phone-test-card-${stamp}`);
+const phoneUrl = classifyPhoneUrl(baseUrl);
 
 await mkdir(outputDir, { recursive: true });
 
@@ -17,9 +18,12 @@ const payload = {
   generatedAt: new Date().toISOString(),
   qrCodeUrl: `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(baseUrl)}`,
   outputDir,
-  phoneStatus: "pending_physical_device",
+  phoneStatus: phoneUrl.ok ? "pending_physical_device" : "blocked_public_https_url",
   grade: 0,
-  gradeReason: "Actual phone scan has not been performed from this machine.",
+  gradeReason: phoneUrl.ok
+    ? "Actual phone scan has not been performed from this machine."
+    : phoneUrl.reason,
+  phoneUrl,
   latestWebsiteReport,
   latestWebArReport,
   latestExternalArReport,
@@ -68,6 +72,7 @@ function renderMarkdown(data) {
     `- Phone status: ${data.phoneStatus}`,
     `- Grade: ${data.grade}/10`,
     `- Reason: ${data.gradeReason}`,
+    `- Phone URL check: ${data.phoneUrl.ok ? "pass" : "blocked"} - ${data.phoneUrl.reason}`,
     `- QR code: ${data.qrCodeUrl}`,
     data.latestWebsiteReport ? `- Latest website QA: ${data.latestWebsiteReport}` : "- Latest website QA: not found",
     data.latestWebArReport ? `- Latest strict web AR QA: ${data.latestWebArReport}` : "- Latest strict web AR QA: not found",
@@ -124,6 +129,7 @@ function renderHtml(data) {
   <p><strong>Status:</strong> <span class="status">${escapeHtml(data.phoneStatus)}</span></p>
   <p><strong>Current grade:</strong> ${data.grade}/10</p>
   <p>${escapeHtml(data.gradeReason)}</p>
+  <p><strong>Phone URL check:</strong> ${data.phoneUrl.ok ? "pass" : "blocked"} - ${escapeHtml(data.phoneUrl.reason)}</p>
   <h2>Required Real Phone Checks</h2>
   <ol>${checks}</ol>
   <h2>10 Point Phone Grade</h2>
@@ -158,6 +164,41 @@ function escapeHtml(value) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll("\"", "&quot;");
+}
+
+function classifyPhoneUrl(value) {
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return {
+      ok: false,
+      reason: "QA_BASE_URL is not a valid URL. Use the Vercel Preview HTTPS URL for Dad's phone.",
+      type: "invalid",
+    };
+  }
+
+  if (parsed.protocol !== "https:") {
+    return {
+      ok: false,
+      reason: "Real phone camera testing needs an HTTPS preview URL. Local HTTP URLs are desktop-only checks.",
+      type: "not_https",
+    };
+  }
+
+  if (/^(localhost|127\.0\.0\.1|\[::1\])$/i.test(parsed.hostname)) {
+    return {
+      ok: false,
+      reason: "Localhost and 127.0.0.1 point at the phone itself, not this computer. Use a public Vercel Preview URL.",
+      type: "loopback",
+    };
+  }
+
+  return {
+    ok: true,
+    reason: "Public HTTPS URL is suitable for a real phone camera QA attempt.",
+    type: "public_https",
+  };
 }
 
 async function findLatestExternalArReport() {

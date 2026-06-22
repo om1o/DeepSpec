@@ -38,6 +38,7 @@ const PRODUCT_NAMES = [
 export function buildBillingProviderRunbook(env = {}, options = {}) {
   const provider = resolveProvider(env, options.provider);
   const verification = verifyBillingProviderConfig(env, { provider });
+  const publicUrl = resolvePublicUrl(env);
   const envKeys = provider === "stripe" ? STRIPE_ENV_KEYS : POLAR_ENV_KEYS;
   const providerName = provider === "stripe" ? "Stripe" : "Polar";
   const providerCommand = provider === "stripe" ? "stripe" : "polar";
@@ -75,14 +76,14 @@ export function buildBillingProviderRunbook(env = {}, options = {}) {
     `   npm run verify:billing-provider -- --provider ${providerCommand}`,
     "2. After Dad creates sandbox products, run the read-only provider lookup:",
     `   npm run verify:billing-provider -- --provider ${providerCommand} --network`,
-    "3. After the app server is running, create a sandbox checkout URL:",
-    "   npm run verify:billing-checkout -- --url http://127.0.0.1:5175 --plan scan_pack",
+    "3. After the app server or preview deployment is running, create a sandbox checkout URL:",
+    `   npm run verify:billing-checkout -- --provider ${providerCommand} --url ${publicUrl} --plan scan_pack`,
     provider === "polar"
       ? "4. Replay a signed synthetic sandbox webhook and portal handoff:"
       : "4. Replay a signed synthetic Stripe sandbox webhook and portal handoff:",
     provider === "polar"
-      ? "   npm run verify:billing-webhook-replay -- --url http://127.0.0.1:5175 --plan scan_pack"
-      : "   npm run verify:billing-webhook-replay -- --provider stripe --url http://127.0.0.1:5175 --plan scan_pack",
+      ? `   npm run verify:billing-webhook-replay -- --provider polar --url ${publicUrl} --plan scan_pack`
+      : `   npm run verify:billing-webhook-replay -- --provider stripe --url ${publicUrl} --plan scan_pack`,
     "5. Verify billing sandbox readiness without judging model quality:",
     `   npm run verify:billing-sandbox-readiness -- --provider ${providerCommand}`,
     "6. Print the no-secret evidence bundle Dad can share back:",
@@ -106,6 +107,11 @@ export function buildBillingProviderRunbook(env = {}, options = {}) {
 function resolveProvider(env, providerInput) {
   const provider = String(providerInput ?? env.BILLING_PROVIDER ?? "polar").trim().toLowerCase();
   return provider === "stripe" ? "stripe" : "polar";
+}
+
+function resolvePublicUrl(env) {
+  const publicUrl = String(env.DEEPSPEC_PUBLIC_URL ?? "").trim();
+  return publicUrl || "<preview-url>";
 }
 
 function formatList(label, values) {

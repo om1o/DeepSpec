@@ -22,6 +22,7 @@ describe("buildBillingProviderRunbook", () => {
     expect(runbook).toContain("Dad Owns");
     expect(runbook).toContain("Kid Can Do");
     expect(runbook).toContain("npm run verify:billing-provider -- --provider polar");
+    expect(runbook).toContain("npm run verify:billing-checkout -- --provider polar --url <preview-url> --plan scan_pack");
     expect(runbook).toContain("npm run verify:billing-sandbox-readiness -- --provider polar");
     expect(runbook).toContain("npm run billing:evidence -- --provider polar");
     expect(runbook).toContain("Live payments now: no.");
@@ -58,6 +59,7 @@ describe("buildBillingProviderRunbook", () => {
     }, { provider: "stripe" });
 
     expect(runbook).toContain("npm run verify:billing-webhook-replay -- --provider stripe");
+    expect(runbook).toContain("--url <preview-url>");
     expect(runbook).not.toContain("sk_test_secret");
   });
 });
