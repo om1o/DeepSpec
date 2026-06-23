@@ -481,7 +481,7 @@ function SavedScanControls({
       <CloudHealthCard className="mt-4" />
 
       <div className="mt-4 rounded-[20px] border border-neutral-200 bg-neutral-50 p-4">
-        <p className="text-sm font-extrabold text-neutral-900">Cloud dataset sync</p>
+        <p className="text-sm font-extrabold text-neutral-900">Cloud backup</p>
         <p className="mt-2 text-sm leading-6 text-neutral-500">{cloudSync.message}</p>
         <Button
           className="mt-3 w-full !bg-neutral-100 !text-neutral-900 shadow-none"
@@ -527,7 +527,7 @@ function TrainingReadinessCard({ readiness }: { readiness: TrainingReadiness }) 
     <section className={`mt-4 rounded-[20px] border p-4 ${styles[readiness.level]}`}>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-extrabold uppercase tracking-[0.16em] opacity-80">Data use</p>
+          <p className="text-xs font-extrabold uppercase tracking-[0.16em] opacity-80">Photo use</p>
           <h3 className="mt-1 text-lg font-extrabold tracking-tight">{readiness.label}</h3>
         </div>
         <span className="rounded-full bg-white/70 px-3 py-1 text-xs font-black text-slate-800">
@@ -680,7 +680,7 @@ function CompleteBrief({ result }: { result: IdentificationResult }) {
           <h2 id="complete-brief-heading" className="mt-1 text-xl font-extrabold tracking-tight text-neutral-950">Complete brief</h2>
         </div>
         <div className="shrink-0 rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-right">
-          <p className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-neutral-400">Data coverage</p>
+          <p className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-neutral-400">Scan coverage</p>
           <p className="mt-1 text-lg font-extrabold text-neutral-950">{coverage.score}/{coverage.total}</p>
         </div>
       </div>

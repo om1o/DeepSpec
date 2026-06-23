@@ -8,6 +8,7 @@ import { useCamera, type CameraDevice } from "../hooks/useCamera";
 import type { CameraObjectTarget } from "../hooks/useObjectTarget";
 import { assessImageQuality, type ImageQualityIssue, type ImageQualityResult } from "../lib/imageQuality";
 import { createFocusedScanCrop } from "../lib/focusCrop";
+import { createSegmentedProductIsolationFrame } from "../lib/productSegmentation";
 import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
 import { getScanCardPreferences, type ScanCardPreferences } from "../lib/scanResultCardSettings";
 import { detectObjectTargetFromImageData, type ObjectTargetBox } from "../lib/objectTargeting";
@@ -261,10 +262,10 @@ export default function Scanner() {
       return;
     }
 
-    setScanCardStatusMessage("Saving to cloud dataset.");
+    setScanCardStatusMessage("Saving scan.");
     void syncLookupToCloud(lookup)
       .then((result) => {
-        setScanCardStatusMessage(result.ok ? "Saved to cloud dataset." : result.message);
+        setScanCardStatusMessage(result.ok ? "Scan saved to cloud." : result.message);
       });
   }, []);
 
@@ -297,7 +298,7 @@ export default function Scanner() {
         attachScanToJob(activeShopJob.id, saved.value.id);
       }
       saveLatestScanState(scanState);
-      setIsCardExpanded(true);
+      setIsCardExpanded(Boolean(scanState.result && isFastenerResult(scanState.result, scanState.result.partName)));
       setScanReview({
         correction: options.correction ?? saved.value.correction,
         isolatedFrame: options.isolatedFrame,
@@ -316,7 +317,7 @@ export default function Scanner() {
       storageWarning: saved.message,
     };
     saveLatestScanState(fallbackState);
-    setIsCardExpanded(true);
+    setIsCardExpanded(Boolean(scanState.result && isFastenerResult(scanState.result, scanState.result.partName)));
     setScanReview({
       correction: options.correction ?? null,
       isolatedFrame: options.isolatedFrame,
@@ -368,6 +369,7 @@ export default function Scanner() {
     saveLatestScanState({ frame, scanQuality });
 
     let focusedFrame: CapturedFrame | undefined;
+    let isolatedFrame: CapturedFrame | undefined;
     let secondFrame: CapturedFrame | undefined;
     const focusedCropTarget = reviewTarget?.normalized ?? null;
     const focusedCrop = focusedCropTarget
@@ -379,6 +381,9 @@ export default function Scanner() {
       if (!isScanRequestActive(requestId)) return;
       if (cropQuality.ok) {
         focusedFrame = { imageBase64: focusedCrop, capturedAt: new Date().toISOString() };
+        setAnalysisStep("Preparing scan view");
+        isolatedFrame = await createSegmentedProductIsolationFrame(focusedFrame) ?? focusedFrame;
+        if (!isScanRequestActive(requestId)) return;
       }
     }
 
@@ -407,7 +412,7 @@ export default function Scanner() {
           },
           {
             captureMode,
-            isolatedFrame: focusedFrame,
+            isolatedFrame,
             requestId,
             reviewTarget,
             analysisSource: "cached_match",
@@ -467,7 +472,7 @@ export default function Scanner() {
         },
         {
           captureMode,
-          isolatedFrame: focusedFrame,
+          isolatedFrame,
           requestId,
           reviewTarget,
           analysisSource: "ai_detection",
@@ -493,7 +498,7 @@ export default function Scanner() {
         },
         {
           captureMode,
-          isolatedFrame: focusedFrame,
+          isolatedFrame,
           requestId,
           reviewTarget,
           analysisSource: "ai_detection",
@@ -710,8 +715,8 @@ export default function Scanner() {
       ? getFastenerSizeHint(Math.max(widthMm, heightMm))
       : null;
     const summary = fastenerHint
-      ? `${label}: ${widthMm.toFixed(1)} x ${heightMm.toFixed(1)} mm (same-plane estimate). Longest edge ${longestEdgeMm.toFixed(1)} mm. ${fastenerHint} ${sizeCalibration.guidance} Uncertainty: ${measurementGate.uncertainty}.`
-      : `${label}: ${widthMm.toFixed(1)} x ${heightMm.toFixed(1)} mm (same-plane estimate). Longest edge ${longestEdgeMm.toFixed(1)} mm. ${sizeCalibration.guidance} Uncertainty: ${measurementGate.uncertainty}.`;
+      ? `${label}: ${widthMm.toFixed(1)} x ${heightMm.toFixed(1)} mm (same-plane estimate). Longest edge ${longestEdgeMm.toFixed(1)} mm. ${fastenerHint} ${sizeCalibration.guidance} Size note: ${measurementGate.uncertainty}.`
+      : `${label}: ${widthMm.toFixed(1)} x ${heightMm.toFixed(1)} mm (same-plane estimate). Longest edge ${longestEdgeMm.toFixed(1)} mm. ${sizeCalibration.guidance} Size note: ${measurementGate.uncertainty}.`;
 
     const copied = await copyText(summary);
     setScanCardStatusMessage(
@@ -726,7 +731,7 @@ export default function Scanner() {
     scanRequestIdRef.current += 1;
     setIsAnalyzing(false);
     setAnalysisStep(null);
-    pauseAutoScan("Scan canceled. Hold the right item steady to try again.");
+    pauseAutoScan("Scan canceled. Ready when you are.");
   }
 
   function closeScanReview() {
@@ -759,7 +764,7 @@ export default function Scanner() {
         <img
           alt="Reviewed scan photo"
           className="pointer-events-none absolute inset-0 z-[1] h-full w-full object-cover"
-          src={scanReview.scanState.frame.imageBase64}
+          src={(scanReview.isolatedFrame ?? scanReview.scanState.frame).imageBase64}
         />
       ) : null}
 
@@ -1085,7 +1090,7 @@ export function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; ste
     downloadPercent !== null
       ? `Downloading offline model... ${downloadPercent}% - one-time, keep this screen open.`
       : stillWorking
-        ? "Still working - larger photos take a few more seconds."
+        ? "Finishing scan - larger photos take a few more seconds."
         : step ?? "Matching the scan against vehicle data.";
 
   return (
@@ -1255,7 +1260,7 @@ function ScanResultCard({
   const targetOverlayStyle = getReviewTargetOverlayStyle(target);
   const referenceSummary = sizeCalibration
     ? `${getSizeReferenceLabel(sizeCalibration.preset)} (${sizeCalibration.referenceMm.toFixed(2)} mm). ${sizeCalibration.guidance}`
-    : "Exact size needs a reference object.";
+    : "Size estimate needs a reference object.";
   const showPrecisionTools = isFastener && isExpanded;
   const matchPct = result?.confidenceScore
     ?? (confidence === "high" ? 84 : confidence === "medium" ? 72 : 48);
@@ -1309,8 +1314,6 @@ function ScanResultCard({
             style={{ fontFamily: "var(--font-data)", fontSize: 11, color: "var(--slate-400)", letterSpacing: "0.05em" }}
           >
             <span>{result?.scanCategory ?? "unknown"}</span>
-            <span aria-hidden="true"> / </span>
-            <span>{review.source}</span>
           </p>
           {confidence ? (
             <span className={`mt-1.5 inline-block rounded-full border px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-[0.08em] ${statusStyle.chip}`}>
@@ -1334,15 +1337,15 @@ function ScanResultCard({
       {/* Key stat tiles */}
       {result && !review.scanState.errorMessage ? (
         <div className="mt-3 grid grid-cols-3 gap-1.5">
-          <StatTile label="CATEGORY" value={result.scanCategory} />
+          <StatTile label="PART TYPE" value={result.scanCategory} />
           <StatTile
-            label="SCORE"
+            label="MATCH"
             value={`${confidenceRange ? confidenceRange.low : matchPct}%`}
             accent
           />
           <StatTile
-            label="CONCERNS"
-            value={result.concerns.length ? String(result.concerns.length) : "None"}
+            label="EVIDENCE"
+            value={String(Math.max(1, result.evidence.length + result.visibleObservations.length))}
             warn={result.concerns.length > 0}
           />
         </div>
@@ -1392,71 +1395,54 @@ function ScanResultCard({
             ) : null}
             {isExpanded ? (
               <>
-                <BubbleSection title="What I can see">
+                <BubbleSection title="Evidence">
                   <FactList facts={visibleFacts} />
                 </BubbleSection>
-                <BubbleSection title="Why Deep Spec matched it">
+                <BubbleSection title="Match clues">
                   <FactList facts={evidenceFacts} />
                 </BubbleSection>
-                <BubbleSection title="Cautions">
-                  <FactList facts={concernFacts} emptyText="No visible damage or safety concern was called out in this photo." />
-                </BubbleSection>
+                {concernFacts.length ? (
+                  <BubbleSection title="Flags">
+                    <FactList facts={concernFacts} />
+                  </BubbleSection>
+                ) : null}
               </>
             ) : null}
           </>
         )}
       </div>
 
-      {isExpanded && result?.candidateMatches.length ? (
-        <BubbleSection title="Related parts to compare">
-          <div className="space-y-1.5">
-            {result.candidateMatches.slice(0, 4).map((candidate) => (
-              <div
-                key={candidate.partName}
-                className="rounded-xl px-3 py-2"
-                style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
-              >
-                <p className="text-xs font-black text-white">{candidate.partName}</p>
-                <p className="mt-0.5 text-[11px]" style={{ color: "var(--slate-400)" }}>{summarize(candidate.reason, isCompact ? 90 : 140)}</p>
-              </div>
-            ))}
-          </div>
-        </BubbleSection>
-      ) : null}
-
-      {isExpanded ? (
-        <BubbleSection title="Image area">
-          <div
-            className="relative mt-1.5 overflow-hidden rounded-xl"
-            style={{ border: "1px solid rgba(255,255,255,0.10)" }}
-          >
-            <img
-              alt={`Scan photo for ${label}`}
-              className="h-40 w-full bg-black object-contain"
-              src={(review.isolatedFrame ?? review.scanState.frame).imageBase64}
+      <BubbleSection title="Scan photo">
+        <div
+          className="relative mt-1.5 overflow-hidden rounded-xl"
+          style={{ border: "1px solid rgba(255,255,255,0.10)" }}
+        >
+          <img
+            alt={`Scan photo for ${label}`}
+            className="h-40 w-full bg-black object-contain"
+            src={(review.isolatedFrame ?? review.scanState.frame).imageBase64}
+          />
+          {targetOverlayStyle ? (
+            <span
+              aria-hidden
+              className="absolute rounded-sm"
+              style={{
+                border: "2px solid rgba(0,194,255,0.80)",
+                background: "rgba(0,194,255,0.15)",
+                height: `${targetOverlayStyle.height}%`,
+                left: `${targetOverlayStyle.left}%`,
+                top: `${targetOverlayStyle.top}%`,
+                width: `${targetOverlayStyle.width}%`,
+              }}
             />
-            {targetOverlayStyle ? (
-              <span
-                aria-hidden
-                className="absolute rounded-sm"
-                style={{
-                  border: "2px solid rgba(0,194,255,0.80)",
-                  background: "rgba(0,194,255,0.15)",
-                  height: `${targetOverlayStyle.height}%`,
-                  left: `${targetOverlayStyle.left}%`,
-                  top: `${targetOverlayStyle.top}%`,
-                  width: `${targetOverlayStyle.width}%`,
-                }}
-              />
-            ) : null}
-          </div>
-        </BubbleSection>
-      ) : null}
+          ) : null}
+        </div>
+      </BubbleSection>
 
       {isFastener && isExpanded ? (
         <BubbleSection title="Fastener mode">
           <p>Put a card or coin on the same flat plane as the fastener, then estimate size.</p>
-          <p className="mt-2 text-white/60">Output stays an estimate until depth and angle are verified.</p>
+          <p className="mt-2 text-white/60">Use the reference to size the visible edge.</p>
         </BubbleSection>
       ) : null}
 
@@ -1671,10 +1657,10 @@ function getScanQualityCoach(issue: ScanQualityCoachIssue): ScanQualityCoachStat
       };
     case "too_blurry":
       return {
-        action: "Hold still 2s",
+        action: "Steady photo",
         issue,
         progress: "You're close",
-        title: "Too blurry",
+        title: "Soft photo",
       };
     case "object_too_small":
       return {
@@ -1932,14 +1918,14 @@ function getMeasurementGate(target: ScanReviewTarget, calibration: SizeCalibrati
   if (target.confidence < 0.72) {
     return {
       ok: false,
-      message: "Target lock is not confident enough for AR sizing. Center the part and hold still again.",
+      message: "Target edge needs to be clearer before sizing.",
     };
   }
 
   if (targetPx < 96) {
     return {
       ok: false,
-      message: "Target is too small for a useful AR size estimate. Move closer and lock it again.",
+      message: "Target edge is too small for sizing. Move closer and rescan.",
     };
   }
 
@@ -1959,7 +1945,7 @@ function getMeasurementGate(target: ScanReviewTarget, calibration: SizeCalibrati
 
   return {
     ok: true,
-    uncertainty: "same-plane depth, camera angle, and target edge still need physical verification",
+    uncertainty: "same-plane depth, camera angle, and target edge affect the estimate",
   };
 }
 
@@ -2014,7 +2000,7 @@ function getVisibleFacts(result: IdentificationResult | undefined, compact: bool
     .map((item) => summarize(item, compact ? 85 : 130))
     .filter(Boolean);
 
-  return facts.length ? facts.slice(0, compact ? 3 : 5) : ["No visual observations were returned. Treat this as uncertain."];
+  return facts.length ? facts.slice(0, compact ? 3 : 5) : ["No visual observations were returned."];
 }
 
 function getConcernFacts(result: IdentificationResult | undefined, compact: boolean) {

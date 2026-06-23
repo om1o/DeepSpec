@@ -124,8 +124,8 @@ function getQualityBlocker(quality: ScanQualitySnapshot) {
 
   if (quality.sharpnessScore !== null && quality.sharpnessScore < 65) {
     return {
-      action: "Hold still and retake.",
-      label: "Too blurry",
+      action: "Retake a steady photo.",
+      label: "Soft photo",
       reason: "Sharpness is below the usable range.",
       score: quality.sharpnessScore,
     };

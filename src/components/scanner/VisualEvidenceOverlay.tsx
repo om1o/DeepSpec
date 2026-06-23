@@ -14,11 +14,11 @@ type LensBox = {
 };
 
 const MODE_LABELS: Record<VisualEvidenceMode, string> = {
-  blocked: "Needs target",
+  blocked: "Target",
   grounded: "Grounded",
-  locking: "Stabilizing",
-  measure: "Needs reference",
-  needs_evidence: "Needs evidence",
+  locking: "Targeting",
+  measure: "Reference",
+  needs_evidence: "Verify",
 };
 
 export function VisualEvidenceOverlay({ result, target }: VisualEvidenceOverlayProps) {
@@ -86,7 +86,7 @@ export function VisualEvidenceOverlay({ result, target }: VisualEvidenceOverlayP
             className="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.04em]"
             style={{ background: modeTone.softFill, color: modeTone.ink }}
           >
-            {result.confidence}
+            {getConfidenceLabel(result.confidence)}
           </span>
         </div>
 
@@ -151,7 +151,7 @@ export function VisualEvidenceOverlay({ result, target }: VisualEvidenceOverlayP
             data-testid="visual-evidence-estimate"
             style={{ background: "rgba(120, 53, 15, 0.82)", border: "1px solid rgba(251, 191, 36, 0.42)" }}
           >
-            estimate
+            offline
           </span>
         ) : null}
       </div>
@@ -210,11 +210,15 @@ function getPartFocusBox(partName: string) {
     return { height: 0.44, width: 0.34, x: 0.50, y: 0.32 };
   }
 
+  if (/\b(front and rear|rear and front|passenger side|driver side).*\bdoors?\b/.test(partName)) {
+    return { height: 0.50, width: 0.58, x: 0.30, y: 0.30 };
+  }
+
   if (/\b(rear|back) door\b/.test(partName)) {
     return { height: 0.44, width: 0.34, x: 0.36, y: 0.34 };
   }
 
-  if (/\b(car )?door\b/.test(partName)) {
+  if (/\b(car )?doors?\b/.test(partName)) {
     return { height: 0.42, width: 0.46, x: 0.26, y: 0.34 };
   }
 
@@ -342,6 +346,12 @@ function getConfidenceWidth(confidence: Confidence, range: VisualEvidenceLayer["
   if (confidence === "high") return 84;
   if (confidence === "medium") return 68;
   return 44;
+}
+
+function getConfidenceLabel(confidence: Confidence) {
+  if (confidence === "high") return "locked";
+  if (confidence === "medium") return "solid";
+  return "review";
 }
 
 function getModeTone(mode: VisualEvidenceMode, confidence: Confidence) {

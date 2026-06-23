@@ -64,7 +64,7 @@ export function analyzeQuality(
       metrics,
       ok: false,
       issue: "too_blurry",
-      message: "Move closer and hold steady. Not enough detail to identify.",
+      message: "Move closer for more detail.",
     };
   }
 

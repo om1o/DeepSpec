@@ -86,7 +86,7 @@ describe("Result", () => {
     expect(screen.getByText("Useful match")).toBeInTheDocument();
     expect(screen.getByText("Owner decision pack")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Complete brief" })).toBeInTheDocument();
-    expect(screen.getByText("Data coverage")).toBeInTheDocument();
+    expect(screen.getByText("Scan coverage")).toBeInTheDocument();
     expect(screen.getByText("6/6")).toBeInTheDocument();
     expect(screen.getByText("What could be wrong")).toBeInTheDocument();
     expect(screen.getByText("Starter motor is close enough that it should be ruled out before repair.")).toBeInTheDocument();
@@ -381,11 +381,11 @@ describe("Result", () => {
 
     renderResult(null, `/result/${lookup.id}`);
 
-    expect(screen.getByText("Data use")).toBeInTheDocument();
+    expect(screen.getByText("Photo use")).toBeInTheDocument();
     expect(screen.getByText("Needs review")).toBeInTheDocument();
     expect(screen.getByText("Private by default. This photo is not used for model training unless sharing is allowed.")).toBeInTheDocument();
     expect(screen.getByText("Scan report")).toBeInTheDocument();
-    expect(screen.getByText("Cloud dataset sync")).toBeInTheDocument();
+    expect(screen.getByText("Cloud backup")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sync this scan" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Share" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Export" })).toBeInTheDocument();

@@ -24,6 +24,7 @@ const passingQuality = {
   ok: true,
 };
 const createFocusedScanCrop = vi.fn(async () => "data:image/jpeg;base64,target-crop");
+const createSegmentedProductIsolationFrame = vi.fn(async () => null);
 const detectObjectTargetFromImageData = vi.fn(() => null);
 const getCloudSyncStatus = vi.fn(() => ({ configured: false, message: "Cloud sync is off." }));
 const syncLookupToCloud = vi.fn(async () => ({ ok: true, message: "Scan synced." }));
@@ -153,6 +154,10 @@ vi.mock("../lib/focusCrop", () => ({
   createFocusedScanCrop: (...args: unknown[]) => createFocusedScanCrop(...args),
 }));
 
+vi.mock("../lib/productSegmentation", () => ({
+  createSegmentedProductIsolationFrame: (...args: unknown[]) => createSegmentedProductIsolationFrame(...args),
+}));
+
 vi.mock("../lib/objectTargeting", () => ({
   detectObjectTargetFromImageData: (...args: unknown[]) => detectObjectTargetFromImageData(...args),
 }));
@@ -181,6 +186,8 @@ describe("Scanner", () => {
     assessImageQuality.mockResolvedValue(passingQuality);
     createFocusedScanCrop.mockReset();
     createFocusedScanCrop.mockResolvedValue("data:image/jpeg;base64,target-crop");
+    createSegmentedProductIsolationFrame.mockReset();
+    createSegmentedProductIsolationFrame.mockResolvedValue(null);
     detectObjectTargetFromImageData.mockReset();
     detectObjectTargetFromImageData.mockReturnValue(null);
     getCloudSyncStatus.mockReset();
@@ -219,7 +226,7 @@ describe("Scanner", () => {
     expect(reviewCard).toBeTruthy();
     expect(screen.queryByTestId("lens-primary-label")).not.toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
-    expect(within(reviewCard as HTMLElement).getByText("AI detection")).toBeInTheDocument();
+    expect(within(reviewCard as HTMLElement).queryByText("AI detection")).not.toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).queryByRole("button", { name: "Open details" })).not.toBeInTheDocument();
     const savedLookups = JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]");
     expect(savedLookups).toHaveLength(1);
@@ -276,6 +283,39 @@ describe("Scanner", () => {
       top: 160,
       width: 240,
     });
+  }, 10000);
+
+  it("uses the segmentation model output for the scan-card visual without changing the AI crop", async () => {
+    mockStillImageTarget({
+      confidence: 0.82,
+      height: 0.3,
+      width: 0.24,
+      x: 0.08,
+      y: 0.2666666667,
+    });
+    createSegmentedProductIsolationFrame.mockResolvedValueOnce({
+      capturedAt: "2026-06-23T00:00:00.000Z",
+      imageBase64: "data:image/png;base64,segmented-product",
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    expect(createSegmentedProductIsolationFrame).toHaveBeenCalledWith(expect.objectContaining({
+      imageBase64: "data:image/jpeg;base64,target-crop",
+    }));
+    expect(identifyCapturedFrame.mock.calls[0][1]).toMatchObject({
+      imageBase64: "data:image/jpeg;base64,target-crop",
+    });
+    expect(screen.getByAltText("Scan photo for Alternator")).toHaveAttribute("src", "data:image/png;base64,segmented-product");
   }, 10000);
 
   it("shows a context AR outline when a body part uses a tighter focus overlay", async () => {
@@ -580,7 +620,7 @@ describe("Scanner", () => {
         trainingLabel: "Alternator",
       }));
     });
-    expect(await screen.findByText("Saved to cloud dataset.")).toBeInTheDocument();
+    expect(await screen.findByText("Scan saved to cloud.")).toBeInTheDocument();
   }, 10000);
 
   it("captures a second camera frame as a confidence boost when no crop target is present", async () => {
@@ -923,7 +963,7 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     await userEvent.click(await screen.findByRole("button", { name: "Cancel scan" }));
 
-    expect(await screen.findByText("Scan canceled. Hold the right item steady to try again.")).toBeInTheDocument();
+    expect(await screen.findByText("Scan canceled. Ready when you are.")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 1, name: "Alternator" })).not.toBeInTheDocument();
   }, 10000);
 
@@ -943,7 +983,7 @@ describe("Scanner", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     await userEvent.click(await screen.findByRole("button", { name: "Cancel scan" }));
-    await waitFor(() => expect(screen.getByText("Scan canceled. Hold the right item steady to try again.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Scan canceled. Ready when you are.")).toBeInTheDocument());
 
     await act(async () => {
       resolveScan(makeScanResult("Stale pump"));
@@ -958,7 +998,7 @@ describe("Scanner", () => {
     assessImageQuality.mockResolvedValueOnce({
       ok: false,
       issue: "too_blurry",
-      message: "Move closer and hold steady. Not enough detail to identify.",
+      message: "Move closer for more detail.",
     });
 
     render(
@@ -971,8 +1011,8 @@ describe("Scanner", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
 
-    expect(await screen.findByRole("heading", { level: 2, name: "Too blurry" })).toBeInTheDocument();
-    expect(screen.getAllByText("Hold still 2s").length).toBeGreaterThan(0);
+    expect(await screen.findByRole("heading", { level: 2, name: "Soft photo" })).toBeInTheDocument();
+    expect(screen.getAllByText("Steady photo").length).toBeGreaterThan(0);
     expect(screen.queryByText("Try this exact fix, then scan again.")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Scan again" })).toBeInTheDocument();
     expect(identifyCapturedFrame).not.toHaveBeenCalled();

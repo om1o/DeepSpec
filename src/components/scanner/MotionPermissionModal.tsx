@@ -14,7 +14,7 @@ export default function MotionPermissionModal({ error, onAllow }: MotionPermissi
         </div>
         <h1 className="text-2xl font-extrabold tracking-tight text-white">Allow motion sensing</h1>
         <p className="mt-3 text-sm leading-6 text-[#A1A1AA]">
-          Deep Spec uses motion sensing to detect when you are holding the phone steady.
+          Deep Spec can use phone motion to improve scan timing.
         </p>
         {error ? <p className="mt-3 text-xs font-semibold text-[var(--ds-warn-ink)]">{error}</p> : null}
         <Button className="mt-6 w-full" onClick={onAllow}>

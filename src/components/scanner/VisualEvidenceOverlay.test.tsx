@@ -19,6 +19,7 @@ describe("VisualEvidenceOverlay", () => {
 
     expect(screen.getByTestId("visual-evidence-layer")).toHaveAttribute("data-visual-mode", "grounded");
     expect(screen.getByTestId("visual-evidence-mode")).toHaveTextContent("Grounded");
+    expect(screen.getByText("locked")).toBeInTheDocument();
     expect(screen.getByTestId("lens-primary-label")).toHaveTextContent("Alternator");
     expect(screen.getByTestId("lens-context-overlay")).toBeInTheDocument();
     expect(screen.getAllByTestId(/lens-part-overlay-/)).toHaveLength(1);
@@ -38,17 +39,18 @@ describe("VisualEvidenceOverlay", () => {
     );
 
     expect(screen.getByTestId("visual-evidence-layer")).toHaveAttribute("data-visual-mode", "needs_evidence");
+    expect(screen.getByTestId("visual-evidence-mode")).toHaveTextContent("Verify");
     expect(screen.getByTestId("visual-evidence-required")).toHaveTextContent("Second angle / VIN");
   });
 
   it("uses measure mode when a same-plane reference is required", () => {
     const layer = buildVisualEvidenceLayer(makeResult({
       confirmationNeed: "reference_needed",
-      requiredNextEvidence: ["Add same-plane reference"],
+      requiredNextEvidence: ["Add reference"],
     }), TARGET);
 
     expect(layer.mode).toBe("measure");
-    expect(layer.requiredEvidence).toEqual(["Add same-plane reference"]);
+    expect(layer.requiredEvidence).toEqual(["Add reference"]);
   });
 
   it("marks on-device or backup provider results as estimates", () => {
@@ -67,7 +69,7 @@ describe("VisualEvidenceOverlay", () => {
       />,
     );
 
-    expect(screen.getByTestId("visual-evidence-estimate")).toHaveTextContent("estimate");
+    expect(screen.getByTestId("visual-evidence-estimate")).toHaveTextContent("offline");
   });
 
   it("keeps text evidence as chips instead of fake spatial boxes", () => {
@@ -93,6 +95,26 @@ describe("VisualEvidenceOverlay", () => {
 
     expect(screen.getAllByTestId(/lens-part-overlay-/)).toHaveLength(1);
     expect(screen.getAllByTestId("lens-evidence-chip")).toHaveLength(2);
+  });
+
+  it("keeps plural side-door labels focused instead of covering the full car", () => {
+    render(
+      <VisualEvidenceOverlay
+        result={makeResult({ partName: "Front and Rear Passenger Side Doors", scanCategory: "body" })}
+        target={{
+          confidence: 0.82,
+          height: 610,
+          id: "target-doors",
+          width: 412,
+          x: 0,
+          y: 102,
+        }}
+      />,
+    );
+
+    const partOverlay = screen.getByTestId("lens-part-overlay-0");
+    expect(Number.parseFloat(partOverlay.style.width)).toBeLessThan(300);
+    expect(Number.parseFloat(partOverlay.style.height)).toBeLessThan(360);
   });
 
   it("classifies missing target as blocked without rendering a floating box", () => {

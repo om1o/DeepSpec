@@ -11,7 +11,7 @@ describe("AnalyzingOverlay", () => {
     vi.useRealTimers();
   });
 
-  it("shows the step first, then swaps to reassurance with a live elapsed counter at 8s", () => {
+  it("shows the step first, then swaps to progress copy with a live elapsed counter at 8s", () => {
     render(<AnalyzingOverlay onCancel={() => {}} step="Matching vehicle data" />);
 
     expect(screen.getByText("0s elapsed")).toBeInTheDocument();
@@ -23,13 +23,13 @@ describe("AnalyzingOverlay", () => {
 
     expect(screen.getByText("7s elapsed")).toBeInTheDocument();
     expect(screen.getByText("Matching vehicle data")).toBeInTheDocument();
-    expect(screen.queryByText("Still working — larger photos take a few more seconds.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Finishing scan - larger photos take a few more seconds.")).not.toBeInTheDocument();
 
     act(() => {
       vi.advanceTimersByTime(1000);
     });
 
     expect(screen.getByText("8s elapsed")).toBeInTheDocument();
-    expect(screen.getByText("Still working — larger photos take a few more seconds.")).toBeInTheDocument();
+    expect(screen.getByText("Finishing scan - larger photos take a few more seconds.")).toBeInTheDocument();
   });
 });

@@ -102,8 +102,8 @@ describe("getTrainingReadiness", () => {
         sharpnessScore: 32,
       },
     })).toMatchObject({
-      action: "Hold still and retake.",
-      label: "Too blurry",
+      action: "Retake a steady photo.",
+      label: "Soft photo",
       level: "not_ready",
       reasons: ["Sharpness is below the usable range."],
     });

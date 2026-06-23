@@ -102,11 +102,11 @@ function getRequiredEvidence(result: IdentificationResult) {
   }
 
   if (result.confirmationNeed === "reference_needed") {
-    return ["Add same-plane reference"];
+    return ["Add reference"];
   }
 
   if (result.confirmationNeed === "one_more_angle" || result.confidence === "low" || result.needsBetterPhoto) {
-    return ["Second angle needed"];
+    return ["Add angle"];
   }
 
   return [];

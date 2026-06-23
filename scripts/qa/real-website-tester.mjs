@@ -1072,7 +1072,7 @@ async function waitForScannerAiOutcome() {
       return { text: compactText(text), type: "result" };
     }
 
-    if (/Retake guide|Add light|Hold steady|Fill the frame|too dark|too bright|too blurry|too small/i.test(text)) {
+    if (/Retake guide|Add light|Steady photo|Soft photo|Fill the frame|too dark|too bright|too blurry|too small/i.test(text)) {
       return { text: compactText(text), type: "quality" };
     }
 
