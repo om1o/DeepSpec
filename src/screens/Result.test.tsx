@@ -218,8 +218,8 @@ describe("Result", () => {
     expect(screen.getByText("Still missing")).toBeInTheDocument();
     expect(screen.getByText("Likely Alternator")).toBeInTheDocument();
     expect(screen.getAllByText("Need one more angle to confirm.").length).toBeGreaterThan(0);
-    expect(screen.getByText("Retake guide")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Retake with guide" })).toBeInTheDocument();
+    expect(screen.getByText("More evidence")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Capture another angle" })).toBeInTheDocument();
     expect(screen.getByText("Sharper, brighter photo from another angle.")).toBeInTheDocument();
     expect(screen.getByText("Image callouts that tie the answer to exact visible areas.")).toBeInTheDocument();
     expect(screen.getByText("Related comparison parts to rule out close matches.")).toBeInTheDocument();

@@ -510,14 +510,15 @@ async function runEarlyAccess() {
 async function runPricing() {
   await requireAuthForProtectedRoute("pricing");
   await gotoPath("/pricing");
-  await expectText(/DeepSpec paid beta/i, "pricing heading", "frontend", ["src/screens/Pricing.tsx"]);
+  await expectText(/DeepSpec Auto paid beta/i, "pricing heading", "frontend", ["src/screens/Pricing.tsx"]);
   await expectText(/DeepSpec Plus/i, "plus plan", "frontend", ["src/screens/Pricing.tsx", "src/services/revenue.ts"]);
   await expectText(/\$9\.99/i, "monthly price", "frontend", ["src/screens/Pricing.tsx", "src/services/revenue.ts"]);
   await expectText(/Scan Pack/i, "scan pack", "frontend", ["src/screens/Pricing.tsx", "src/services/revenue.ts"]);
   await expectText(/fake certainty/i, "uncertainty copy", "frontend", ["src/screens/Pricing.tsx"]);
+  await expectText(/Polar sandbox/i, "polar sandbox path", "frontend", ["src/screens/Pricing.tsx"]);
 
   return {
-    details: "Pricing rendered Plus, yearly, scan-pack, and Pro paid-beta offers with uncertainty-safe copy.",
+    details: "Pricing rendered Plus, yearly, scan-pack, and Pro paid-beta offers with uncertainty-safe copy and Polar sandbox positioning.",
     likelyFiles: ["src/screens/Pricing.tsx", "src/services/revenue.ts"],
     status: "pass",
   };
@@ -1067,7 +1068,7 @@ async function waitForScannerAiOutcome() {
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     const text = await getBodyText();
-    if (/Lens result|Best match|Complete brief|Tell me more|What this is|Next step|Open details/i.test(text)) {
+    if (/Lens result|Best match|Complete brief|Tell me more|What this is|Next step/i.test(text)) {
       return { text: compactText(text), type: "result" };
     }
 

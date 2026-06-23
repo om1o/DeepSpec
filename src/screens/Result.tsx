@@ -816,7 +816,7 @@ function GuidedRetakeSection({
 }) {
   return (
     <section className="rounded-[24px] border border-[var(--ds-accent-line)] bg-white p-4 shadow-sm">
-      <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Retake guide</p>
+      <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">More evidence</p>
       <h2 className="mt-1 text-xl font-extrabold tracking-tight">One more angle can confirm it</h2>
       <div className="mt-4 grid grid-cols-2 gap-3">
         <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50">
@@ -841,7 +841,7 @@ function GuidedRetakeSection({
         Center the {result.partName}, keep labels or bolt heads visible, and avoid glare.
       </p>
       <Button className="mt-4 w-full" onClick={onRetakeWithGuide}>
-        Retake with guide
+        Capture another angle
       </Button>
     </section>
   );

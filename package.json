@@ -31,6 +31,7 @@
     "verify:identify-eval": "node scripts/verify-identify-eval-summary.mjs",
     "verify:auth": "node scripts/verify-auth-flows.mjs",
     "verify:billing-provider": "node scripts/verify-billing-provider.mjs",
+    "verify:polar-testing-only": "node scripts/verify-polar-testing-only.mjs",
     "billing:setup-runbook": "node scripts/print-billing-provider-runbook.mjs",
     "billing:evidence": "node scripts/print-billing-provider-evidence.mjs",
     "verify:billing-sandbox-readiness": "node scripts/verify-billing-sandbox-readiness.mjs",

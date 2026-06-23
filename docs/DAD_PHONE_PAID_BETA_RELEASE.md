@@ -20,7 +20,7 @@ $env:QA_BASE_URL="<preview-url>"; npm run qa:phone-card
 npm run verify:dad-phone-paid-beta -- --target dad-test --url <preview-url>
 ```
 
-Dad should use the generated phone card on iPhone Safari. He should open the preview URL, tap Share, choose Add to Home Screen, launch Deep Spec from the new app icon, then test camera permission, live preview, real part scan, Visual Evidence target placement, result detail, history, chat, and upload from the iPhone photo library.
+Dad should use the generated phone card on iPhone Safari. He should open the preview URL, tap Share, choose Add to Home Screen, launch Deep Spec from the new app icon, then test camera permission, live preview, real part scan, Visual Evidence target placement on the scan screen, history, chat, and upload from the iPhone photo library.
 
 ## Provider Sandbox Gate
 
@@ -42,6 +42,7 @@ Run after Dad creates test products and webhook config:
 
 ```bash
 npm run billing:setup-runbook -- --provider polar
+npm run verify:polar-testing-only -- --strict-public-url
 npm run verify:billing-provider -- --provider polar
 npm run verify:billing-provider -- --provider polar --network
 npm run verify:billing-checkout -- --provider polar --url <preview-url> --plan scan_pack
@@ -61,6 +62,7 @@ Paid beta needs all of these:
 - `npm run eval:identify:release` passes the fixed 50-case release gate.
 - `npm run identify:evidence` reports live identify ready.
 - `npm run billing:evidence -- --provider polar` reports sandbox evidence ready.
+- `npm run verify:polar-testing-only -- --strict-public-url` passes with no Stripe env values and live billing off.
 - `npm run verify:dad-phone-paid-beta -- --target paid-beta --url <preview-url> --phone-grade <grade>` passes.
 - `npm run verify:paid-launch-readiness -- --target live` passes before any live charging.
 

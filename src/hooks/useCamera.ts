@@ -3,6 +3,7 @@ import Webcam from "react-webcam";
 import { compressImageDataUrl } from "../lib/utils";
 
 type CameraState = "loading" | "ready" | "blocked";
+type CameraFacingMode = "environment" | "user";
 export type CameraDevice = {
   deviceId: string;
   label: string;
@@ -20,6 +21,7 @@ export function useCamera() {
   const [cameraRequestId, setCameraRequestId] = useState(0);
   const [cameraState, setCameraState] = useState<CameraState>(() => (cameraCaptureSupported ? "loading" : "blocked"));
   const [cameraDevices, setCameraDevices] = useState<CameraDevice[]>([]);
+  const [cameraFacingMode, setCameraFacingMode] = useState<CameraFacingMode>("environment");
   const [selectedCameraId, setSelectedCameraId] = useState("");
   const [cameraError, setCameraError] = useState<string | null>(() =>
     cameraCaptureSupported ? null : "This browser does not support camera capture. Use Safari or Chrome over HTTPS.",
@@ -64,13 +66,13 @@ export function useCamera() {
     }
 
     setCameraError(null);
-    void requestCameraAccess(selectedCameraId)
+    void requestCameraAccess(selectedCameraId, cameraFacingMode)
       .then(() => {
         setCameraState("loading");
         setCameraRequestId((current) => current + 1);
       })
       .catch(markError);
-  }, [cameraCaptureSupported, markError, selectedCameraId]);
+  }, [cameraCaptureSupported, cameraFacingMode, markError, selectedCameraId]);
 
   const selectCamera = useCallback((deviceId: string) => {
     setSelectedCameraId(deviceId);
@@ -78,6 +80,24 @@ export function useCamera() {
     setCameraError(null);
     setCameraRequestId((current) => current + 1);
   }, []);
+
+  const switchCamera = useCallback(() => {
+    if (cameraDevices.length > 1) {
+      const currentIndex = cameraDevices.findIndex((device) => device.deviceId === selectedCameraId);
+      const rearCameraIndex = cameraDevices.findIndex((device) => /back|rear|environment/i.test(device.label));
+      const nextIndex = currentIndex === -1 && rearCameraIndex !== -1
+        ? rearCameraIndex
+        : (Math.max(0, currentIndex) + 1) % cameraDevices.length;
+      selectCamera(cameraDevices[nextIndex].deviceId);
+      return;
+    }
+
+    setSelectedCameraId("");
+    setCameraFacingMode((mode) => (mode === "environment" ? "user" : "environment"));
+    setCameraState("loading");
+    setCameraError(null);
+    setCameraRequestId((current) => current + 1);
+  }, [cameraDevices, selectCamera, selectedCameraId]);
 
   useEffect(() => {
     if (cameraState !== "loading") {
@@ -107,11 +127,13 @@ export function useCamera() {
     webcamRef,
     cameraState,
     cameraError,
+    cameraFacingMode,
     selectedCameraId,
     markReady,
     markError,
     retryCamera,
     selectCamera,
+    switchCamera,
     captureFrame,
   };
 }
@@ -128,10 +150,10 @@ function getCameraErrorMessage(message: string) {
   return message || "Camera access was blocked.";
 }
 
-async function requestCameraAccess(deviceId: string) {
+async function requestCameraAccess(deviceId: string, facingMode: CameraFacingMode) {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: false,
-    video: deviceId ? { deviceId: { exact: deviceId } } : true,
+    video: deviceId ? { deviceId: { exact: deviceId } } : { facingMode: { ideal: facingMode } },
   });
   stream.getTracks().forEach((track) => track.stop());
 }

@@ -5,7 +5,7 @@ type NormalizedTarget = {
   height: number;
 };
 
-const CROP_PADDING = 0.18;
+const CROP_PADDING = 0.06;
 const MIN_CROP_SIZE = 48;
 
 export function createFocusedScanCrop(imageBase64: string, target: NormalizedTarget) {

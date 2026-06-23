@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import Webcam from "react-webcam";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { VisualEvidenceOverlay } from "../components/scanner/VisualEvidenceOverlay";
 import Button from "../components/ui/Button";
 import { useCamera, type CameraDevice } from "../hooks/useCamera";
-import { useObjectTarget, type CameraObjectTarget } from "../hooks/useObjectTarget";
-import { useStillness } from "../hooks/useStillness";
+import type { CameraObjectTarget } from "../hooks/useObjectTarget";
 import { assessImageQuality, type ImageQualityIssue, type ImageQualityResult } from "../lib/imageQuality";
 import { createFocusedScanCrop } from "../lib/focusCrop";
 import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
-import { getScanCardPreferences, type ScanCardPreferences, updateScanCardPreferences } from "../lib/scanResultCardSettings";
+import { getScanCardPreferences, type ScanCardPreferences } from "../lib/scanResultCardSettings";
 import { detectObjectTargetFromImageData, type ObjectTargetBox } from "../lib/objectTargeting";
 import { compressImageDataUrl, saveLatestScanState } from "../lib/utils";
 import { AIServiceError, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
@@ -29,7 +28,6 @@ import {
 import { createLookup, updateLookup } from "../services/storage";
 import type { Confidence, IdentificationResult, CapturedFrame, Lookup, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanQualitySnapshot, ShopJob, ShopVehicleContext } from "../types";
 
-const AUTO_SCAN_HOLD_MS = 5000;
 const SECOND_FRAME_DELAY_MS = 120;
 const IDENTIFY_BUDGET_WARN_MS = 15000;
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
@@ -39,10 +37,6 @@ const SCAN_CARD_SAFE_HEIGHT_PX = 560;
 const MIN_TARGET_WIDTH_PX = 96;
 const MIN_TARGET_HEIGHT_PX = 72;
 const MIN_TARGET_AREA_RATIO = 0.018;
-const MIN_AUTOSCAN_OBJECT_AREA_RATIO = 0.045;
-const MIN_AUTOSCAN_CENTERED_SCORE = 68;
-const MIN_AUTOSCAN_CONFIDENCE = 0.55;
-const MATCH_THRESHOLD = 140;
 const METRIC_FASTENER_WIDTHS_MM = [6, 7, 8, 10, 12, 13, 14, 16, 17, 18, 19, 21, 22, 24];
 const SAE_FASTENER_WIDTHS = [
   { label: "1/4 in", mm: 6.35 },
@@ -75,6 +69,7 @@ type ScanReviewTarget = {
 };
 
 type ScanReviewState = {
+  isolatedFrame?: CapturedFrame;
   lookup: Lookup | null;
   scanState: ScanAnalysisState;
   correction: string | null;
@@ -99,8 +94,6 @@ type ScanQualityCoachState = {
 };
 
 type SizeReferencePreset = "card_short_edge" | "card_long_edge" | "us_quarter" | "us_nickel";
-
-type AutoScanGuide = "move_closer" | "center_part" | "hold_still" | null;
 
 type SizeCalibration = {
   capturedAt: string;
@@ -154,7 +147,6 @@ function applyShopFitmentContext(result: IdentificationResult, vehicleContext: S
 
 export default function Scanner() {
   const location = useLocation();
-  const navigate = useNavigate();
   const activeShopJob = useMemo(() => {
     const jobId = new URLSearchParams(location.search).get("jobId");
     return jobId ? getShopJob(jobId) : null;
@@ -165,10 +157,9 @@ export default function Scanner() {
   );
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisStep, setAnalysisStep] = useState<string | null>(null);
-  const [autoScanPaused, setAutoScanPaused] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [scanReview, setScanReview] = useState<ScanReviewState | null>(null);
-  const [scanCardPrefs, setScanCardPrefs] = useState<ScanCardPreferences>(() => getScanCardPreferences(location.pathname));
+  const [scanCardPrefs] = useState<ScanCardPreferences>(() => getScanCardPreferences(location.pathname));
   const [scanCardStatusMessage, setScanCardStatusMessage] = useState<string | null>(null);
   const [isCardExpanded, setIsCardExpanded] = useState(false);
   const [isReplacingLabel, setIsReplacingLabel] = useState(false);
@@ -179,8 +170,6 @@ export default function Scanner() {
   const cancelScanRef = useRef(false);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const activeIdentifyRef = useRef(false);
-  const autoScanStartedRef = useRef(false);
-  const lastAutoScanTargetIdRef = useRef<string | null>(null);
   const qualityFailureInAttemptRef = useRef(false);
   const lastQualityFailureRef = useRef<ScanQualityCoachIssue | null>(null);
   const activeScanStartedAtRef = useRef(0);
@@ -201,6 +190,7 @@ export default function Scanner() {
   const {
     cameraDevices,
     cameraError,
+    cameraFacingMode,
     cameraRequestId,
     cameraState,
     captureFrame,
@@ -209,65 +199,23 @@ export default function Scanner() {
     retryCamera,
     selectCamera,
     selectedCameraId,
+    switchCamera,
     webcamRef,
   } = useCamera();
   const activeVideoConstraints = useMemo(
-    () => getVideoConstraints(selectedCameraId),
-    [selectedCameraId],
+    () => getVideoConstraints(selectedCameraId, cameraFacingMode),
+    [cameraFacingMode, selectedCameraId],
   );
-  const isRetakeGuide = useMemo(() => new URLSearchParams(location.search).get("guide") === "retake", [location.search]);
-  const { isStable, usesFallback } = useStillness();
-  const objectTarget = useObjectTarget(webcamRef, {
-    enabled: cameraState === "ready" && !isAnalyzing && !scanReview,
-    holdDurationMs: cameraState === "ready" && isStable && !isAnalyzing && !autoScanPaused && !scanReview
-      ? AUTO_SCAN_HOLD_MS
-      : undefined,
-    holdEnabled: cameraState === "ready" && isStable && !isAnalyzing && !autoScanPaused && !scanReview,
-  });
-  const targetProgress = objectTarget?.holdProgress ?? 0;
-  const hasTargetLock = Boolean(objectTarget?.isLocked);
-  const isTargetTooSmallNow = objectTarget ? isObjectTargetTooSmall(objectTarget) : false;
-  const autoScanReadiness = getAutoScanReadiness(objectTarget, {
-    isStable,
-    isTargetTooSmall: isTargetTooSmallNow,
-    usesFallback,
-  });
-  const isAutoScanReady = autoScanReadiness.isReady;
-  const autoScanGuide = autoScanReadiness.guide;
-  const autoScanSeconds = Math.max(1, Math.ceil((1 - targetProgress) * (AUTO_SCAN_HOLD_MS / 1000)));
-  const scannerStatus = getScannerStatus({
-    autoScanGuide,
-    autoScanPaused,
-    autoScanSeconds,
-    cameraState,
-    hasTarget: Boolean(objectTarget),
-    hasTargetLock,
-    isStable,
-    isTargetTooSmall: isTargetTooSmallNow,
-    qualityCoach,
-    scanReview,
-    usesFallback,
-  });
 
   const anchoredReviewTarget = useMemo(
-    () => getAnchoredReviewTarget(scanReview?.reviewTarget ?? null, objectTarget),
-    [objectTarget, scanReview?.reviewTarget],
+    () => (scanReview?.reviewTarget ? clampReviewTarget(scanReview.reviewTarget) : null),
+    [scanReview],
   );
-
-  const isMismatch = scanReview?.reviewTarget && objectTarget
-    ? isTargetMismatch(scanReview.reviewTarget, objectTarget)
-    : false;
 
   const reviewCardPlacement = getReviewCardPlacement(anchoredReviewTarget);
 
   const pauseAutoScan = useCallback((message?: string) => {
-    const shouldPause = Boolean(message);
-    setAutoScanPaused(shouldPause);
     setCaptureError(message ?? null);
-    autoScanStartedRef.current = false;
-    if (shouldPause) {
-      window.setTimeout(() => setAutoScanPaused(false), 1800);
-    }
   }, []);
 
   const stopForQualityCoach = useCallback((issue: ScanQualityCoachIssue) => {
@@ -276,14 +224,10 @@ export default function Scanner() {
     recordScanQualityFailure(issue);
     setQualityCoach(getScanQualityCoach(issue));
     setCaptureError(null);
-    setAutoScanPaused(true);
-    autoScanStartedRef.current = false;
-    window.setTimeout(() => setAutoScanPaused(false), 1800);
   }, []);
 
   const beginScanRequest = useCallback(() => {
     cancelScanRef.current = false;
-    setAutoScanPaused(false);
     setCaptureError(null);
     const previousQualityIssue = qualityCoach?.issue ?? null;
     if (qualityCoach) {
@@ -334,6 +278,7 @@ export default function Scanner() {
       captureMode: ScanCaptureMode;
       requestId: number;
       reviewTarget: ScanReviewTarget | null;
+      isolatedFrame?: CapturedFrame;
       source: ScanReviewResultSource;
       analysisSource: ScanAnalysisSource;
       sourceUpdatedAt: string;
@@ -352,9 +297,10 @@ export default function Scanner() {
         attachScanToJob(activeShopJob.id, saved.value.id);
       }
       saveLatestScanState(scanState);
-      setIsCardExpanded(!scanCardPrefs.compactCardsByDefault);
+      setIsCardExpanded(true);
       setScanReview({
         correction: options.correction ?? saved.value.correction,
+        isolatedFrame: options.isolatedFrame,
         lookup: saved.value,
         reviewTarget: options.reviewTarget,
         scanState,
@@ -370,16 +316,17 @@ export default function Scanner() {
       storageWarning: saved.message,
     };
     saveLatestScanState(fallbackState);
-    setIsCardExpanded(!scanCardPrefs.compactCardsByDefault);
+    setIsCardExpanded(true);
     setScanReview({
       correction: options.correction ?? null,
+      isolatedFrame: options.isolatedFrame,
       lookup: null,
       reviewTarget: options.reviewTarget,
       scanState: fallbackState,
       source,
       sourceUpdatedAt,
     });
-  }, [activeShopJob, isScanRequestActive, scanCardPrefs.compactCardsByDefault, syncSavedLookup]);
+  }, [activeShopJob, isScanRequestActive, syncSavedLookup]);
 
   const analyzeImageBase64 = useCallback(async (
     imageBase64: string,
@@ -389,16 +336,13 @@ export default function Scanner() {
     reviewTargetOverride?: CameraObjectTarget,
   ) => {
     const sourceUpdatedAt = new Date().toISOString();
-    const uploadReviewTarget = !reviewTargetOverride && captureMode === "upload"
-      ? await getReviewTargetFromUploadedImage(imageBase64)
+    const detectedReviewTarget = !reviewTargetOverride && shouldDetectStillTarget(imageBase64, captureMode)
+      ? await getReviewTargetFromCapturedImage(imageBase64)
       : null;
     if (!isScanRequestActive(requestId)) return;
-    const reviewTarget = reviewTargetOverride ? getReviewTargetFromObject(reviewTargetOverride) : uploadReviewTarget;
-
-    if (reviewTarget && isReviewTargetTooSmall(reviewTarget)) {
-      stopForQualityCoach("object_too_small");
-      return;
-    }
+    const reviewTarget = reviewTargetOverride
+      ? getReviewTargetFromObject(reviewTargetOverride)
+      : getUsableReviewTarget(detectedReviewTarget);
 
     setAnalysisStep("Checking photo quality");
     const quality = await assessImageQuality(imageBase64);
@@ -414,7 +358,7 @@ export default function Scanner() {
       motionStable: true,
       previousFailureReason: lastQualityFailureRef.current,
       quality,
-      target: reviewTargetOverride ?? null,
+      target: reviewTarget ? getObjectTargetFromReviewTarget(reviewTarget) : null,
     });
 
     const frame: CapturedFrame = {
@@ -422,6 +366,21 @@ export default function Scanner() {
       capturedAt: new Date().toISOString(),
     };
     saveLatestScanState({ frame, scanQuality });
+
+    let focusedFrame: CapturedFrame | undefined;
+    let secondFrame: CapturedFrame | undefined;
+    const focusedCropTarget = reviewTarget?.normalized ?? null;
+    const focusedCrop = focusedCropTarget
+      ? await createFocusedScanCrop(imageBase64, focusedCropTarget)
+      : null;
+    if (!isScanRequestActive(requestId)) return;
+    if (focusedCrop) {
+      const cropQuality = await assessImageQuality(focusedCrop);
+      if (!isScanRequestActive(requestId)) return;
+      if (cropQuality.ok) {
+        focusedFrame = { imageBase64: focusedCrop, capturedAt: new Date().toISOString() };
+      }
+    }
 
     setAnalysisStep("Checking saved matches");
     const imageHash = await hashImageDataUrl(imageBase64);
@@ -448,6 +407,7 @@ export default function Scanner() {
           },
           {
             captureMode,
+            isolatedFrame: focusedFrame,
             requestId,
             reviewTarget,
             analysisSource: "cached_match",
@@ -455,24 +415,6 @@ export default function Scanner() {
             sourceUpdatedAt,
           },
         );
-        return;
-      }
-    }
-
-    let focusedFrame: CapturedFrame | undefined;
-    let secondFrame: CapturedFrame | undefined;
-    const focusedCropTarget = reviewTargetOverride?.normalized ?? uploadReviewTarget?.normalized ?? null;
-    const focusedCrop = focusedCropTarget
-      ? await createFocusedScanCrop(imageBase64, focusedCropTarget)
-      : null;
-    if (!isScanRequestActive(requestId)) return;
-    if (focusedCrop) {
-      const cropQuality = await assessImageQuality(focusedCrop);
-      if (!isScanRequestActive(requestId)) return;
-      if (cropQuality.ok) {
-        focusedFrame = { imageBase64: focusedCrop, capturedAt: new Date().toISOString() };
-      } else {
-        stopForQualityCoach(cropQuality.issue);
         return;
       }
     }
@@ -525,6 +467,7 @@ export default function Scanner() {
         },
         {
           captureMode,
+          isolatedFrame: focusedFrame,
           requestId,
           reviewTarget,
           analysisSource: "ai_detection",
@@ -550,6 +493,7 @@ export default function Scanner() {
         },
         {
           captureMode,
+          isolatedFrame: focusedFrame,
           requestId,
           reviewTarget,
           analysisSource: "ai_detection",
@@ -566,7 +510,7 @@ export default function Scanner() {
     }
 
     activeIdentifyRef.current = true;
-    const reviewTarget = reviewTargetOverride ?? objectTarget ?? undefined;
+    const reviewTarget = reviewTargetOverride;
     const requestId = beginScanRequest();
     try {
       setIsAnalyzing(true);
@@ -587,7 +531,7 @@ export default function Scanner() {
       }
       activeIdentifyRef.current = false;
     }
-  }, [analyzeImageBase64, beginScanRequest, captureFrame, isAnalyzing, isScanRequestActive, objectTarget, pauseAutoScan]);
+  }, [analyzeImageBase64, beginScanRequest, captureFrame, isAnalyzing, isScanRequestActive, pauseAutoScan]);
 
   const handleGalleryFile = useCallback(async (file: File) => {
     if (isAnalyzing) {
@@ -629,11 +573,8 @@ export default function Scanner() {
   }, [handleIdentify, scanReview]);
 
   const handleFlipCamera = useCallback(() => {
-    if (cameraDevices.length < 2) return;
-    const currentIndex = cameraDevices.findIndex((d) => d.deviceId === selectedCameraId);
-    const nextIndex = (currentIndex + 1) % cameraDevices.length;
-    selectCamera(cameraDevices[nextIndex].deviceId);
-  }, [cameraDevices, selectedCameraId, selectCamera]);
+    switchCamera();
+  }, [switchCamera]);
 
   const applyLabelCorrection = useCallback((correction: string) => {
     if (!scanReview) return;
@@ -721,19 +662,6 @@ export default function Scanner() {
     syncSavedLookup(result.value);
   }, [scanReview, syncSavedLookup]);
 
-  const handleCopyLabel = useCallback(async () => {
-    if (!scanReview) {
-      return;
-    }
-
-    const label = getReviewDisplayLabel(scanReview);
-    const confidence = scanReview.scanState.result?.confidence;
-    const copied = await copyText(
-      confidence ? `${label} | ${scanReview.scanState.result?.scanCategory ?? "unknown"} | ${confidence}` : label,
-    );
-    setScanCardStatusMessage(copied ? "Label copied." : "Copy blocked. Try again.");
-  }, [scanReview]);
-
   const handleSetSizeReference = useCallback(() => {
     if (!scanReview?.reviewTarget) {
       setScanCardStatusMessage("No target lock yet. Center a reference object first.");
@@ -792,60 +720,6 @@ export default function Scanner() {
         : summary,
     );
   }, [scanReview, sizeCalibration]);
-
-  const handleOpenDetails = useCallback(() => {
-    if (!scanReview) {
-      return;
-    }
-
-    saveLatestScanState(scanReview.scanState);
-    if (scanReview.lookup) {
-      navigate(`/result/${scanReview.lookup.id}`);
-      return;
-    }
-
-    navigate("/result", { state: scanReview.scanState });
-  }, [navigate, scanReview]);
-
-  useEffect(() => {
-    if (!isAutoScanReady || cameraState !== "ready" || isAnalyzing || autoScanPaused || scanReview) {
-      return;
-    }
-
-    const autoTargetId = objectTarget?.id ?? null;
-    if (!autoTargetId || autoScanStartedRef.current || lastAutoScanTargetIdRef.current === autoTargetId) {
-      return;
-    }
-
-    autoScanStartedRef.current = true;
-    lastAutoScanTargetIdRef.current = autoTargetId;
-    pulseTargetLock();
-    void handleIdentify();
-  }, [autoScanPaused, cameraState, handleIdentify, isAnalyzing, isAutoScanReady, objectTarget?.id, scanReview]);
-
-  useEffect(() => {
-    if (!hasTargetLock && !isAnalyzing) {
-      autoScanStartedRef.current = false;
-      lastAutoScanTargetIdRef.current = null;
-    }
-  }, [hasTargetLock, isAnalyzing]);
-
-  const toggleCompactCardMode = useCallback(() => {
-    const updated = updateScanCardPreferences(location.pathname, {
-      compactCardsByDefault: !scanCardPrefs.compactCardsByDefault,
-    });
-    setScanCardPrefs(updated);
-    if (scanReview) {
-      setIsCardExpanded(!updated.compactCardsByDefault);
-    }
-  }, [location.pathname, scanCardPrefs.compactCardsByDefault, scanReview]);
-
-  const toggleHideConfidence = useCallback(() => {
-    const updated = updateScanCardPreferences(location.pathname, {
-      hideConfidence: !scanCardPrefs.hideConfidence,
-    });
-    setScanCardPrefs(updated);
-  }, [location.pathname, scanCardPrefs.hideConfidence]);
 
   function cancelCurrentScan() {
     cancelScanRef.current = true;
@@ -918,22 +792,7 @@ export default function Scanner() {
             Deep Spec
           </span>
         </div>
-        <button
-          type="button"
-          aria-label="Switch camera"
-          onClick={handleFlipCamera}
-          className="grid size-10 place-items-center rounded-full text-white"
-          style={{
-            background: "rgba(7,16,30,0.58)",
-            border: "1px solid rgba(255,255,255,0.14)",
-            backdropFilter: "blur(16px)",
-          }}
-        >
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden>
-            <path d="M6 4H14M14 4L11 1M14 4L11 7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-            <path d="M14 16H6M6 16L9 19M6 16L9 13" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
+        <div className="size-10" aria-hidden="true" />
       </header>
 
       {activeShopJob ? (
@@ -953,7 +812,6 @@ export default function Scanner() {
       {cameraState === "blocked" && !scanReview ? (
         <CameraBlocked
           devices={cameraDevices}
-          isRetakeGuide={isRetakeGuide}
           onGallery={() => galleryInputRef.current?.click()}
           message={cameraError}
           onRetry={retryCamera}
@@ -965,27 +823,6 @@ export default function Scanner() {
       {cameraState !== "blocked" ? (
         <>
           {cameraState === "ready" && !scanReview ? <ScannerHUD isAnalyzing={isAnalyzing} /> : null}
-          {cameraState === "ready" && !scanReview ? (
-            <>
-              <LensViewfinderBrackets isAnalyzing={isAnalyzing} label={getReticleLabel({
-                autoScanGuide,
-                autoScanSeconds,
-                hasTarget: Boolean(objectTarget),
-                hasTargetLock,
-                isTargetTooSmall: isTargetTooSmallNow,
-                qualityCoach,
-              })} progress={targetProgress} />
-              <ScannerTargetStatus status={scannerStatus} />
-            </>
-          ) : null}
-          {cameraState === "ready" && objectTarget && !scanReview && !isAnalyzing ? (
-            <TapTargetButton
-              isLocked={isAutoScanReady}
-              isTooSmall={isTargetTooSmallNow}
-              onSelect={() => void handleIdentify(objectTarget)}
-              target={objectTarget}
-            />
-          ) : null}
           {qualityCoach ? (
             <ScanQualityCoachNotice
               coach={qualityCoach}
@@ -993,31 +830,28 @@ export default function Scanner() {
             />
           ) : null}
           {captureError ? <CaptureErrorNotice message={captureError} onTryAgain={() => setCaptureError(null)} /> : null}
-          {isRetakeGuide && !qualityCoach && !isAnalyzing && !scanReview ? <RetakeGuideNotice /> : null}
         </>
       ) : null}
 
       {scanReview?.scanState.result ? (
-        <VisualEvidenceOverlay result={scanReview.scanState.result} target={anchoredReviewTarget} />
+        <>
+          <ProductIsolationMask result={scanReview.scanState.result} target={anchoredReviewTarget} />
+          <VisualEvidenceOverlay result={scanReview.scanState.result} target={anchoredReviewTarget} />
+        </>
       ) : null}
       {isAnalyzing ? <AnalyzingOverlay onCancel={cancelCurrentScan} step={analysisStep} /> : null}
       {scanReview ? (
         <ScanResultCard
           isExpanded={isCardExpanded}
-          isMismatch={Boolean(isMismatch)}
+          isMismatch={false}
           isReplacing={isReplacingLabel}
           target={anchoredReviewTarget}
           onCancelReplace={() => setIsReplacingLabel(false)}
           onClose={closeScanReview}
-          onCopyValue={handleCopyLabel}
           onMeasure={handleReviewMeasure}
-          onOpenDetails={handleOpenDetails}
           onRetryMismatch={retryReviewScan}
           onReportReplace={handleReportReplace}
           onUndoCorrection={handleUndoCorrection}
-          onToggleExpand={() => setIsCardExpanded((value) => !value)}
-          onToggleCompactMode={toggleCompactCardMode}
-          onToggleHideConfidence={toggleHideConfidence}
           onSetSizeReference={handleSetSizeReference}
           onSizeReferencePresetChange={(preset) => setSizeReferencePreset(preset)}
           placement={reviewCardPlacement}
@@ -1052,7 +886,7 @@ export default function Scanner() {
       {!scanReview ? (
         <LensBottomBar
           isAnalyzing={isAnalyzing}
-          isShutterDisabled={cameraState !== "ready" || isAnalyzing || isTargetTooSmallNow}
+          isShutterDisabled={cameraState !== "ready" || isAnalyzing}
           onShutter={() => void handleIdentify()}
           onGallery={() => galleryInputRef.current?.click()}
           onFlip={handleFlipCamera}
@@ -1062,9 +896,12 @@ export default function Scanner() {
   );
 }
 
-function getVideoConstraints(deviceId: string): MediaTrackConstraints {
+function getVideoConstraints(deviceId: string, facingMode: "environment" | "user"): MediaTrackConstraints {
   if (!deviceId) {
-    return DEFAULT_VIDEO_CONSTRAINTS;
+    return {
+      ...DEFAULT_VIDEO_CONSTRAINTS,
+      facingMode: { ideal: facingMode },
+    };
   }
 
   return {
@@ -1072,165 +909,6 @@ function getVideoConstraints(deviceId: string): MediaTrackConstraints {
     width: DEFAULT_VIDEO_CONSTRAINTS.width,
     height: DEFAULT_VIDEO_CONSTRAINTS.height,
   };
-}
-
-function getScannerStatus({
-  autoScanGuide,
-  autoScanPaused,
-  autoScanSeconds,
-  cameraState,
-  hasTarget,
-  hasTargetLock,
-  isStable,
-  isTargetTooSmall,
-  qualityCoach,
-  scanReview,
-  usesFallback,
-}: {
-  autoScanGuide: AutoScanGuide;
-  autoScanPaused: boolean;
-  autoScanSeconds: number;
-  cameraState: string;
-  hasTarget: boolean;
-  hasTargetLock: boolean;
-  isStable: boolean;
-  isTargetTooSmall: boolean;
-  qualityCoach: ScanQualityCoachState | null;
-  scanReview: ScanReviewState | null;
-  usesFallback: boolean;
-}) {
-  if (scanReview) {
-    return "Review scan";
-  }
-
-  if (cameraState === "loading") {
-    return "Opening camera";
-  }
-
-  if (autoScanPaused) {
-    return "Scan paused";
-  }
-
-  if (qualityCoach) {
-    return qualityCoach.action;
-  }
-
-  if (isTargetTooSmall || autoScanGuide === "move_closer") {
-    return "Move closer";
-  }
-
-  if (autoScanGuide === "center_part") {
-    return "Center part";
-  }
-
-  if (autoScanGuide === "hold_still") {
-    return "Hold still";
-  }
-
-  if (hasTargetLock) {
-    return "Locked";
-  }
-
-  if (hasTarget) {
-    return getHoldStillCommand(autoScanSeconds);
-  }
-
-  if (!usesFallback && !isStable) {
-    return "Hold still";
-  }
-
-  return "Center part";
-}
-
-function getAutoScanReadiness(
-  target: CameraObjectTarget | null,
-  {
-    isStable,
-    isTargetTooSmall,
-    usesFallback,
-  }: {
-    isStable: boolean;
-    isTargetTooSmall: boolean;
-    usesFallback: boolean;
-  },
-): { guide: AutoScanGuide; isReady: boolean } {
-  if (!target) {
-    return { guide: null, isReady: false };
-  }
-
-  if (isTargetTooSmall) {
-    return { guide: "move_closer", isReady: false };
-  }
-
-  const objectSizeRatio = getObjectSizeRatio(target);
-  if (objectSizeRatio !== null && objectSizeRatio < MIN_AUTOSCAN_OBJECT_AREA_RATIO) {
-    return { guide: "move_closer", isReady: false };
-  }
-
-  const centeredScore = getTargetCenteredScore(target);
-  if (centeredScore !== null && centeredScore < MIN_AUTOSCAN_CENTERED_SCORE) {
-    return { guide: "center_part", isReady: false };
-  }
-
-  if (target.confidence < MIN_AUTOSCAN_CONFIDENCE) {
-    return { guide: "center_part", isReady: false };
-  }
-
-  if (!target.isLocked || target.holdProgress < 1) {
-    return { guide: !usesFallback && !isStable ? "hold_still" : null, isReady: false };
-  }
-
-  if (!usesFallback && !isStable) {
-    return { guide: "hold_still", isReady: false };
-  }
-
-  return { guide: null, isReady: true };
-}
-
-function getReticleLabel({
-  autoScanGuide,
-  autoScanSeconds,
-  hasTarget,
-  hasTargetLock,
-  isTargetTooSmall,
-  qualityCoach,
-}: {
-  autoScanGuide: AutoScanGuide;
-  autoScanSeconds: number;
-  hasTarget: boolean;
-  hasTargetLock: boolean;
-  isTargetTooSmall: boolean;
-  qualityCoach: ScanQualityCoachState | null;
-}) {
-  if (qualityCoach) {
-    return qualityCoach.action;
-  }
-
-  if (isTargetTooSmall || autoScanGuide === "move_closer") {
-    return "Move closer";
-  }
-
-  if (autoScanGuide === "center_part") {
-    return "Center part";
-  }
-
-  if (autoScanGuide === "hold_still") {
-    return "Hold still";
-  }
-
-  if (hasTargetLock) {
-    return "Locked";
-  }
-
-  if (hasTarget) {
-    return getHoldStillCommand(autoScanSeconds);
-  }
-
-  return "Center part";
-}
-
-function getHoldStillCommand(autoScanSeconds: number) {
-  return `Hold still ${Math.max(1, autoScanSeconds)}s`;
 }
 
 function buildScanQualitySnapshot({
@@ -1310,16 +988,6 @@ function getTargetCenteredScore(target: CameraObjectTarget | null) {
   return Math.round(clampNumber((1 - distance / Math.SQRT1_2) * 100, 0, 100));
 }
 
-function pulseTargetLock() {
-  if (typeof navigator !== "undefined" && "vibrate" in navigator) {
-    try {
-      navigator.vibrate([18, 36, 24]);
-    } catch {
-      // Haptics are optional scanner feedback.
-    }
-  }
-}
-
 function roundRatio(value: number) {
   return Math.round(value * 1000) / 1000;
 }
@@ -1340,7 +1008,6 @@ function CameraLoading() {
 
 function CameraBlocked({
   devices,
-  isRetakeGuide,
   message,
   onGallery,
   onRetry,
@@ -1348,7 +1015,6 @@ function CameraBlocked({
   selectedCameraId,
 }: {
   devices: CameraDevice[];
-  isRetakeGuide: boolean;
   message: string | null;
   onGallery: () => void;
   onRetry: () => void;
@@ -1369,13 +1035,6 @@ function CameraBlocked({
         <p className="mt-3 text-sm leading-6 text-[#A1A1AA]">
           Deep Spec needs your camera to scan parts. {denied || waiting ? "Allow camera access for this site, then try again." : "Check camera access, then try again."}
         </p>
-        {isRetakeGuide ? (
-          <div className="mt-5 rounded-[18px] border border-white/12 bg-white/[0.06] px-4 py-3">
-            <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Retake guide</p>
-            <p className="mt-1 text-sm font-black text-white">Fill the frame from a slight angle.</p>
-            <p className="mt-1 text-xs font-semibold leading-5 text-white/64">Use upload if camera access is blocked.</p>
-          </div>
-        ) : null}
         {message ? <p className="mt-3 text-xs text-white/48">{message}</p> : null}
         {hasCameraChoices ? (
           <label className="mx-auto mt-5 block max-w-xs text-left">
@@ -1402,9 +1061,6 @@ function CameraBlocked({
             Try camera again
           </Button>
         </div>
-        <button className="mx-auto mt-4 block text-xs font-bold text-white/48 underline underline-offset-4" onClick={() => window.location.reload()}>
-          Reload app
-        </button>
       </div>
     </div>
   );
@@ -1427,9 +1083,9 @@ export function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; ste
   const stillWorking = elapsedSeconds >= 8;
   const message =
     downloadPercent !== null
-      ? `Downloading offline model… ${downloadPercent}% — one-time, keep this screen open.`
+      ? `Downloading offline model... ${downloadPercent}% - one-time, keep this screen open.`
       : stillWorking
-        ? "Still working — larger photos take a few more seconds."
+        ? "Still working - larger photos take a few more seconds."
         : step ?? "Matching the scan against vehicle data.";
 
   return (
@@ -1482,9 +1138,6 @@ function ScanQualityCoachNotice({
       </div>
       <div className="px-5 py-4">
         <p className="text-base font-black leading-6 text-white">{coach.action}</p>
-        <p className="mt-1 text-sm font-medium leading-6" style={{ color: "var(--slate-300)" }}>
-          Try this exact fix, then scan again.
-        </p>
         <button
           className="mt-4 w-full rounded-[12px] py-3 text-[13px] font-bold text-white"
           style={{ background: "var(--blue-500)", boxShadow: "0 4px 18px rgba(20,105,236,0.30)" }}
@@ -1494,28 +1147,6 @@ function ScanQualityCoachNotice({
           Scan again
         </button>
       </div>
-    </div>
-  );
-}
-
-function RetakeGuideNotice() {
-  return (
-    <div
-      className="fixed bottom-[198px] left-1/2 z-20 w-[calc(100%-28px)] max-w-sm -translate-x-1/2 rounded-[18px] px-4 py-3 text-center text-white"
-      style={{
-        background: "rgba(7,16,30,0.90)",
-        border: "1px solid rgba(0,194,255,0.16)",
-        backdropFilter: "blur(20px) saturate(1.3)",
-        boxShadow: "0 16px 44px rgba(0,0,0,0.45)",
-      }}
-    >
-      <p style={{ fontFamily: "var(--font-data)", fontSize: 10, fontWeight: 600, letterSpacing: "0.14em", color: "#55C8FF", textTransform: "uppercase" }}>
-        Retake guide
-      </p>
-      <p className="mt-1 text-sm font-black">Fill the frame from a slight angle.</p>
-      <p className="mt-1 text-xs font-medium leading-5" style={{ color: "var(--slate-400)" }}>
-        Keep labels, bolt heads, or connectors visible.
-      </p>
     </div>
   );
 }
@@ -1572,17 +1203,12 @@ function ScanResultCard({
   isReplacing,
   onCancelReplace,
   onClose,
-  onCopyValue,
   onMeasure,
-  onOpenDetails,
   onRetryMismatch,
   onReportReplace,
   onSetSizeReference,
   onSizeReferencePresetChange,
   onUndoCorrection,
-  onToggleExpand,
-  onToggleCompactMode,
-  onToggleHideConfidence,
   onReplacementLabelChange,
   onWrongLabel,
   target,
@@ -1599,17 +1225,12 @@ function ScanResultCard({
   isReplacing: boolean;
   onCancelReplace: () => void;
   onClose: () => void;
-  onCopyValue: () => void;
   onMeasure: () => void;
-  onOpenDetails: () => void;
   onRetryMismatch: () => void;
   onReportReplace: () => void;
   onSetSizeReference: () => void;
   onSizeReferencePresetChange: (preset: SizeReferencePreset) => void;
   onUndoCorrection: () => void;
-  onToggleExpand: () => void;
-  onToggleCompactMode: () => void;
-  onToggleHideConfidence: () => void;
   onReplacementLabelChange: (value: string) => void;
   onWrongLabel: () => void;
   target: ScanReviewTarget | null;
@@ -1632,11 +1253,10 @@ function ScanResultCard({
   const concernFacts = getConcernFacts(result, isCompact);
   const evidenceFacts = getEvidenceFacts(result, isCompact);
   const targetOverlayStyle = getReviewTargetOverlayStyle(target);
-  const threeDSearchUrl = get3DSearchUrl(label);
   const referenceSummary = sizeCalibration
     ? `${getSizeReferenceLabel(sizeCalibration.preset)} (${sizeCalibration.referenceMm.toFixed(2)} mm). ${sizeCalibration.guidance}`
     : "Exact size needs a reference object.";
-  const showPrecisionTools = isFastener || isExpanded;
+  const showPrecisionTools = isFastener && isExpanded;
   const matchPct = result?.confidenceScore
     ?? (confidence === "high" ? 84 : confidence === "medium" ? 72 : 48);
   const dotColor = confidence === "high" ? "var(--green-400)" : confidence === "medium" ? "var(--amber-400)" : "var(--red-400)";
@@ -1678,7 +1298,7 @@ function ScanResultCard({
                 }}
               >
                 {confidenceRange
-                  ? `${confidenceRange.low}–${confidenceRange.high}% match`
+                  ? `${confidenceRange.low}-${confidenceRange.high}% match`
                   : `${confidence} confidence`}
               </span>
             </div>
@@ -1689,12 +1309,12 @@ function ScanResultCard({
             style={{ fontFamily: "var(--font-data)", fontSize: 11, color: "var(--slate-400)", letterSpacing: "0.05em" }}
           >
             <span>{result?.scanCategory ?? "unknown"}</span>
-            <span aria-hidden="true"> · </span>
+            <span aria-hidden="true"> / </span>
             <span>{review.source}</span>
           </p>
-          {!prefs.hideConfidence && confidence ? (
+          {confidence ? (
             <span className={`mt-1.5 inline-block rounded-full border px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-[0.08em] ${statusStyle.chip}`}>
-              {confidenceRange ? `${confidenceRange.low}–${confidenceRange.high}% likely` : `${confidence}`}
+              {confidenceRange ? `${confidenceRange.low}-${confidenceRange.high}% likely` : `${confidence}`}
             </span>
           ) : null}
         </div>
@@ -1812,8 +1432,8 @@ function ScanResultCard({
           >
             <img
               alt={`Scan photo for ${label}`}
-              className="h-32 w-full object-cover"
-              src={review.scanState.frame.imageBase64}
+              className="h-40 w-full bg-black object-contain"
+              src={(review.isolatedFrame ?? review.scanState.frame).imageBase64}
             />
             {targetOverlayStyle ? (
               <span
@@ -1842,15 +1462,6 @@ function ScanResultCard({
 
       {/* Actions */}
       <div className="mt-3 space-y-2">
-        <button
-          className="w-full rounded-[12px] py-3 text-[13px] font-bold text-white"
-          style={{ background: "var(--blue-500)", boxShadow: "0 4px 20px rgba(20,105,236,0.32)" }}
-          onClick={onOpenDetails}
-          type="button"
-        >
-          Open details
-        </button>
-
         {showPrecisionTools ? (
           <>
             <label className="block">
@@ -1893,29 +1504,6 @@ function ScanResultCard({
             </div>
             <p className="text-[10px] leading-5" style={{ color: "var(--slate-500)" }}>{referenceSummary}</p>
           </>
-        ) : null}
-
-        {isExpanded ? (
-          <button
-            className="h-10 w-full rounded-[10px] text-xs font-bold text-white/90"
-            style={{ border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.05)" }}
-            onClick={onCopyValue}
-            type="button"
-          >
-            Copy match
-          </button>
-        ) : null}
-
-        {isExpanded && review.scanState.result ? (
-          <a
-            className="flex h-10 items-center justify-center rounded-[10px] text-xs font-bold text-white/78"
-            style={{ border: "1px solid rgba(20,105,236,0.26)", background: "rgba(20,105,236,0.08)" }}
-            href={threeDSearchUrl}
-            rel="noreferrer"
-            target="_blank"
-          >
-            Search 3D models for this part
-          </a>
         ) : null}
 
         {isReplacing ? (
@@ -1970,24 +1558,6 @@ function ScanResultCard({
             </button>
           </div>
         ) : null}
-      </div>
-
-      {/* Footer controls */}
-      <div
-        className="mt-3 flex items-center justify-between gap-3 pt-3 text-[11px]"
-        style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}
-      >
-        <button className="text-white/40 underline underline-offset-2 hover:text-white/70" onClick={onToggleExpand} type="button">
-          {isExpanded ? "Show less" : "Show more"}
-        </button>
-        <div className="flex flex-wrap items-center justify-end gap-3">
-          <button className="text-white/40 underline underline-offset-2 hover:text-white/70" onClick={onToggleCompactMode} type="button">
-            {prefs.compactCardsByDefault ? "Compact cards on" : "Compact cards off"}
-          </button>
-          <button className="text-white/40 underline underline-offset-2 hover:text-white/70" onClick={onToggleHideConfidence} type="button">
-            {prefs.hideConfidence ? "Show confidence" : "Hide confidence"}
-          </button>
-        </div>
       </div>
 
       {scanCardStatusMessage ? (
@@ -2116,10 +1686,6 @@ function getScanQualityCoach(issue: ScanQualityCoachIssue): ScanQualityCoachStat
   }
 }
 
-function isObjectTargetTooSmall(target: CameraObjectTarget) {
-  return isTargetBoxTooSmall(target.width, target.height);
-}
-
 function isReviewTargetTooSmall(target: ScanReviewTarget) {
   return isTargetBoxTooSmall(target.width, target.height);
 }
@@ -2149,37 +1715,6 @@ function clampReviewTarget(target: ScanReviewTarget): ScanReviewTarget {
   };
 }
 
-function isTargetMismatch(storedTarget: ScanReviewTarget, objectTarget: CameraObjectTarget) {
-  const current = getReviewTargetFromObject(objectTarget);
-  const distance = getTargetDistance(storedTarget, current);
-  const sameId = storedTarget.id === current.id;
-  return distance > MATCH_THRESHOLD || !sameId || storedTarget.confidence - objectTarget.confidence > 0.34;
-}
-
-function shouldTrackTarget(storedTarget: ScanReviewTarget, objectTarget: CameraObjectTarget | null) {
-  if (!objectTarget) {
-    return false;
-  }
-  if (storedTarget.id !== objectTarget.id) {
-    return false;
-  }
-  return !isTargetMismatch(storedTarget, objectTarget);
-}
-
-function getAnchoredReviewTarget(
-  storedTarget: ScanReviewTarget | null,
-  objectTarget: CameraObjectTarget | null,
-) {
-  if (!storedTarget) {
-    return null;
-  }
-
-  const nextTarget = shouldTrackTarget(storedTarget, objectTarget) && objectTarget
-    ? getReviewTargetFromObject(objectTarget)
-    : storedTarget;
-  return clampReviewTarget(nextTarget);
-}
-
 function getReviewTargetFromObject(target: CameraObjectTarget): ScanReviewTarget {
   return {
     confidence: target.confidence,
@@ -2191,7 +1726,43 @@ function getReviewTargetFromObject(target: CameraObjectTarget): ScanReviewTarget
   };
 }
 
-async function getReviewTargetFromUploadedImage(imageBase64: string): Promise<ScanReviewTarget | null> {
+function getProductIsolationTarget(target: ScanReviewTarget, result: IdentificationResult) {
+  const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
+  const targetAreaRatio = (target.width * target.height) / viewportArea;
+  const label = `${result.partName} ${result.scanCategory}`.toLowerCase();
+  const broadAssembly = /bumper|door|hood|fender|quarter|panel|engine|radiator|wheel|tire|assembly/.test(label);
+  if (targetAreaRatio < 0.3 || broadAssembly) {
+    return clampReviewTarget(target);
+  }
+
+  const width = target.width * 0.72;
+  const height = target.height * 0.72;
+  return clampReviewTarget({
+    ...target,
+    height,
+    width,
+    x: target.x + (target.width - width) / 2,
+    y: target.y + (target.height - height) / 2,
+  });
+}
+
+function getUsableReviewTarget(target: ScanReviewTarget | null) {
+  if (!target || isReviewTargetTooSmall(target)) {
+    return null;
+  }
+
+  return target;
+}
+
+function shouldDetectStillTarget(imageBase64: string, captureMode: ScanCaptureMode) {
+  if (captureMode === "upload") {
+    return true;
+  }
+
+  return imageBase64.length > 200;
+}
+
+async function getReviewTargetFromCapturedImage(imageBase64: string): Promise<ScanReviewTarget | null> {
   if (typeof Image === "undefined" || typeof document === "undefined") {
     return null;
   }
@@ -2219,14 +1790,14 @@ async function getReviewTargetFromUploadedImage(imageBase64: string): Promise<Sc
 function loadImageElement(src: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
-    const timeoutId = window.setTimeout(() => reject(new Error("Timed out decoding uploaded scan image.")), 250);
+    const timeoutId = window.setTimeout(() => reject(new Error("Timed out decoding scan image.")), 900);
     image.onload = () => {
       window.clearTimeout(timeoutId);
       resolve(image);
     };
     image.onerror = () => {
       window.clearTimeout(timeoutId);
-      reject(new Error("Could not decode uploaded scan image."));
+      reject(new Error("Could not decode scan image."));
     };
     image.src = src;
   });
@@ -2250,16 +1821,6 @@ function mapImageTargetToViewport(target: ObjectTargetBox, imageWidth: number, i
     x: offsetX + target.x * renderedWidth,
     y: offsetY + target.y * renderedHeight,
   });
-}
-
-function getTargetDistance(a: ScanReviewTarget, b: ScanReviewTarget) {
-  const centerXA = a.x + a.width / 2;
-  const centerXB = b.x + b.width / 2;
-  const centerYA = a.y + a.height / 2;
-  const centerYB = b.y + b.height / 2;
-  const centerDistance = Math.hypot(centerXA - centerXB, centerYA - centerYB);
-  const sizeDistance = Math.abs(a.width - b.width) * 0.35 + Math.abs(a.height - b.height) * 0.35;
-  return centerDistance + sizeDistance;
 }
 
 function getObjectTargetFromReviewTarget(reviewTarget: ScanReviewTarget): CameraObjectTarget {
@@ -2296,11 +1857,6 @@ function getReviewTargetOverlayStyle(target: ScanReviewTarget | null) {
     top: clampNumber((target.y / Math.max(1, window.innerHeight)) * 100, 0, 100),
     width: clampNumber((target.width / Math.max(1, window.innerWidth)) * 100, 1, 100),
   };
-}
-
-function get3DSearchUrl(label: string) {
-  const encoded = encodeURIComponent(`${label} 3D model`);
-  return `https://www.sketchfab.com/search?type=models&sort_by=-relevance&q=${encoded}`;
 }
 
 function getSizeReferenceMm(preset: SizeReferencePreset) {
@@ -2577,10 +2133,10 @@ function ScannerHUD({ isAnalyzing }: { isAnalyzing: boolean }) {
     <>
       <div className="scanner-hud" style={{ top: "max(52px, calc(env(safe-area-inset-top) + 52px))", left: 16 }}>
         <span className="scanner-hud-dot" />
-        DEEPSPEC·LIVE
+        DEEPSPEC LIVE
       </div>
       <div className="scanner-hud" style={{ top: "max(52px, calc(env(safe-area-inset-top) + 52px))", right: 16, textAlign: "right" }}>
-        f/1.8·AUTO ISO
+        f/1.8 AUTO ISO
       </div>
       <div className="scanner-hud" style={{ bottom: "calc(env(safe-area-inset-bottom) + 130px)", left: 16 }}>
         SCAN MODE<br />IDENTIFY
@@ -2592,79 +2148,33 @@ function ScannerHUD({ isAnalyzing }: { isAnalyzing: boolean }) {
   );
 }
 
-function ScannerTargetStatus({ status }: { status: string }) {
-  return (
-    <div className="pointer-events-none fixed left-1/2 top-[max(112px,calc(env(safe-area-inset-top)+88px))] z-20 -translate-x-1/2">
-      <p className="scanner-status-pill">{status}</p>
-    </div>
-  );
-}
-
-function LensViewfinderBrackets({
-  isAnalyzing,
-  label,
-  progress,
-}: {
-  isAnalyzing?: boolean;
-  label: string;
-  progress: number;
-}) {
-  const progressPercent = `${Math.round(clampNumber(progress, 0, 1) * 100)}%`;
-  return (
-    <div className="pointer-events-none fixed inset-0 z-10 flex items-center justify-center" data-testid="object-reticle">
-      <div
-        style={{ width: "min(72vw, 320px)", height: "min(52vw, 240px)" }}
-        className={`relative${isAnalyzing ? " scanner-bracket-pulse" : ""}`}
-      >
-        <span className="scanner-corner scanner-corner-tl" />
-        <span className="scanner-corner scanner-corner-tr" />
-        <span className="scanner-corner scanner-corner-bl" />
-        <span className="scanner-corner scanner-corner-br" />
-        {isAnalyzing ? <div className="scanner-sweep-line" /> : null}
-        <div className="absolute -bottom-9 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full bg-black/35 px-3 py-1.5 text-[11px] font-bold text-white backdrop-blur-md">
-          <span>{label}</span>
-          <span className="scanner-progress-track" aria-hidden>
-            <span className="scanner-progress-fill block" style={{ width: progressPercent }} />
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function TapTargetButton({
-  isLocked,
-  isTooSmall,
-  onSelect,
+function ProductIsolationMask({
+  result,
   target,
 }: {
-  isLocked: boolean;
-  isTooSmall: boolean;
-  onSelect: () => void;
-  target: CameraObjectTarget;
+  result: IdentificationResult;
+  target: ScanReviewTarget | null;
 }) {
-  const label = isTooSmall ? "Move closer" : isLocked ? "Scan this part" : "Tap part";
+  if (!target) {
+    return null;
+  }
 
+  const focusTarget = getProductIsolationTarget(target, result);
   return (
-    <button
-      aria-label={isTooSmall ? "Selected part is too small" : "Scan selected part"}
-      className="fixed z-20 rounded-[18px] border-2 bg-black/10 transition-[border-color,box-shadow,background-color]"
-      disabled={isTooSmall}
-      onClick={onSelect}
-      style={{
-        borderColor: isLocked ? "rgba(16,185,129,0.78)" : "rgba(0,194,255,0.58)",
-        boxShadow: isLocked ? "0 0 38px rgba(16,185,129,0.34)" : "0 0 26px rgba(0,170,255,0.24)",
-        height: target.height,
-        left: target.left,
-        top: target.top,
-        width: target.width,
-      }}
-      type="button"
-    >
-      <span className="absolute left-1/2 top-full mt-2 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/72 px-3 py-1.5 text-xs font-black text-white shadow-lg">
-        {label}
-      </span>
-    </button>
+    <div className="pointer-events-none fixed inset-0 z-30" aria-hidden="true">
+      <div
+        className="absolute rounded-[18px]"
+        data-testid="product-isolation-mask"
+        style={{
+          boxShadow: "0 0 0 9999px rgba(2, 6, 23, 0.76)",
+          height: focusTarget.height,
+          left: focusTarget.x,
+          outline: "1px solid rgba(255,255,255,0.12)",
+          top: focusTarget.y,
+          width: focusTarget.width,
+        }}
+      />
+    </div>
   );
 }
 
