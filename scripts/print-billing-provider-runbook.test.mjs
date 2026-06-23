@@ -47,7 +47,7 @@ describe("buildBillingProviderRunbook", () => {
     expect(runbook).not.toContain("prod_fake_secret");
   });
 
-  it("prints the Stripe webhook replay command for the Stripe fallback path", () => {
+  it("prints the Stripe webhook replay command for the legacy Stripe path", () => {
     const runbook = buildBillingProviderRunbook({
       BILLING_PROVIDER: "stripe",
       STRIPE_PRICE_DEEPSPEC_PLUS_MONTHLY: "price_plus_monthly",

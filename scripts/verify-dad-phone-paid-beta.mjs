@@ -51,7 +51,7 @@ export function classifyDadPhonePaidBetaReadiness({
     }
 
     if (billingSandbox?.ok) {
-      checks.push("Stripe billing sandbox passed provider config, checkout, webhook replay, and portal handoff.");
+      checks.push(`${billingSandbox.provider || "Provider"} billing sandbox passed provider config, checkout, webhook replay, and portal handoff.`);
     } else {
       blockers.push(...(billingSandbox?.blockers || ["Billing sandbox readiness is missing or blocked."]));
       warnings.push(...(billingSandbox?.warnings || []));
@@ -255,7 +255,7 @@ function parseArgs(args) {
     markdownPath: DEFAULT_MARKDOWN_PATH,
     phoneEvidencePath: "",
     phoneGrade: 0,
-    provider: "stripe",
+    provider: "polar",
     summaryPath: DEFAULT_SUMMARY_PATH,
     target: "dad-test",
     url: process.env.QA_BASE_URL || "",
@@ -319,7 +319,7 @@ function printHelp() {
 Options:
   --target <dad-test|paid-beta>          Default: dad-test.
   --url <https-url>                      Public preview URL. Default: QA_BASE_URL.
-  --provider <stripe|polar>              Default: stripe.
+  --provider <polar|stripe>              Default: polar.
   --website-qa-json <path>               Website QA report JSON. Default: latest artifacts/qa report.json.
   --phone-evidence <path>                Manual phone QA JSON with grade.
   --phone-grade <n>                      Manual phone grade override for paid-beta target.

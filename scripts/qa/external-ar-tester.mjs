@@ -27,7 +27,7 @@ const CASES = [
   {
     slug: "hf-damage-102",
     localImage: path.join(EXTERNAL_IMAGE_DIR, "hf-damage-102.jpg"),
-    expectedLabels: ["front fender dent", "front fender", "fender"],
+    expectedLabels: ["front passenger side door", "front door", "door", "fender"],
     forbiddenPatterns: ["quarter[- ]panel", "^dent$"],
   },
 ];

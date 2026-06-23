@@ -1,23 +1,21 @@
 # DeepSpec Billing Provider Decision
 
-Date: 2026-06-19
+Date: 2026-06-22
 
 ## Executive Summary
 
 Do not turn on live paid checkout yet.
 
-DeepSpec should let Dad set up a provider account and sandbox now, but production charges must stay disabled until the identify release gate and provider webhook-to-entitlement flow pass. The product is not ready for live shop billing while `npm run eval:identify:release` is blocked by AI provider availability.
+Dad said Stripe is not usable for this release path. DeepSpec should move the Dad paid-beta setup to a provider-neutral billing path with **Polar sandbox as the first provider to verify**. Production charges must stay disabled until the identify release gate and provider webhook-to-entitlement flow pass.
 
 Recommended provider path:
 
 1. **First production Merchant of Record choice: Polar Starter.**
-   Use this if Dad wants a developer-first setup, clear public pricing, subscriptions, checkout, webhooks, and less tax/compliance admin than Stripe-only.
+   Use this because Dad cannot use Stripe, Polar is Merchant-of-Record oriented, and this repo already has a Polar adapter path for checkout, webhooks, and customer portal handoff.
 2. **Fallback Merchant of Record: Lemon Squeezy.**
-   Use this if Dad wants the simplest seller dashboard and checkout setup, and accepts higher/add-on fees for subscriptions, PayPal, and international transactions.
+   Use this only if Dad cannot get through Polar setup and accepts that DeepSpec will need a new Lemon Squeezy adapter before checkout can be verified.
 3. **Later enterprise option: Paddle.**
    Use this when DeepSpec has real B2B traction and needs stronger global SaaS billing, invoicing, buyer support, and larger-company motions.
-4. **Fastest current code path: Stripe sandbox only.**
-   Stripe has the current adapter in this repo, so it is fastest for sandbox checkout testing, but Stripe is not the low-admin Merchant of Record path and should not be the default answer if Dad wants tax/compliance handled for a small team.
 
 ## Current Repo State
 
@@ -26,8 +24,8 @@ The repo now has provider-neutral billing fields and fail-closed behavior:
 - `BILLING_PROVIDER=` defaults to unconfigured.
 - `/api/billing-checkout` and related endpoints fail closed unless a provider adapter is configured.
 - Implemented adapters in this branch:
-  - `stripe`
-  - `polar`
+  - `polar` for the Dad paid-beta path
+  - `stripe` as legacy compatibility only
 - Supabase entitlement rows now include generic provider IDs:
   - `billing_provider`
   - `provider_customer_id`
@@ -35,22 +33,23 @@ The repo now has provider-neutral billing fields and fail-closed behavior:
   - `provider_checkout_id`
 - Scan credits reserve before identify and only consume after provider success when `DEEPSPEC_ENFORCE_SCAN_CREDITS=true`.
 
-This means the architecture is ready for Lemon Squeezy, Polar, Paddle, or Stripe, and Polar is now the first Merchant of Record adapter path to test in sandbox.
+This means the architecture is provider-neutral, Polar is the first adapter to test in sandbox, and Lemon Squeezy or Paddle can be added later without reshaping entitlement storage.
 
 ## Comparison
 
 | Provider | Current Fit | Pricing / Fees | Strengths | Weaknesses | DeepSpec Recommendation |
 | --- | --- | --- | --- | --- | --- |
-| Polar | Best first MoR fit for developer-led beta | Starter is publicly listed at 5% + 50c; paid plans lower variable fees at higher monthly revenue | Developer-first API, checkout, subscription/customer state, MoR model, transparent pricing | Newer than Paddle/Stripe; still needs a new adapter in this repo | Pick first if Dad is okay with a developer-oriented dashboard |
-| Lemon Squeezy | Best simple-dashboard fallback | Public pricing says 5% + 50c, with add-ons such as subscription, PayPal, and international fees | Simple MoR positioning, subscriptions, software/digital product focus, easy seller flow | Fees can stack; less ideal for larger B2B/enterprise workflows | Pick if Dad wants the easiest operational dashboard |
+| Polar | Best first MoR fit for developer-led beta | Starter is publicly listed at 5% + 50c; paid plans lower variable fees at higher monthly revenue | Developer-first API, checkout, subscription/customer state, customer portal, MoR model, transparent pricing, current repo adapter path | Dad still must pass provider account review and payout setup | Pick first now |
+| Lemon Squeezy | Best simple-dashboard fallback | Public pricing says 5% + 50c, with digital product and subscription features | Simple MoR positioning, subscriptions, software/digital product focus, easy seller flow | Needs a new DeepSpec adapter; fees and terms must be reviewed before implementation | Keep as fallback if Polar is blocked |
 | Paddle | Best later B2B/global scale option | Public pay-as-you-go pricing is 5% + 50c, with custom pricing for scale | MoR, SaaS subscriptions, tax/compliance, fraud, buyer support, invoicing, enterprise credibility | More heavyweight; may require more verification/review; overkill for first small-shop beta | Revisit after paid beta traction |
-| Stripe | Best current-code sandbox path | US card pricing is commonly 2.9% + 30c; Billing adds 0.7% pay-as-you-go for subscription billing volume | Mature engineering docs, current adapter exists, strong Checkout/Portal/Webhooks | Not Merchant of Record; tax/compliance/admin burden stays with the business unless extra products/processes are added | Use sandbox now only if speed matters more than MoR simplicity |
+
+Implementation note: legacy Stripe fields and adapter tests still exist for backward-compatible entitlement data and old branches, but Stripe is removed from the Dad setup checklist and `.env.example`.
 
 ## Why Merchant Of Record First
 
 DeepSpec is trying to sell a software workflow to small repair shops. A Merchant of Record provider is attractive because it handles more of the global tax/compliance/payment administration. That matters because the team is small, Dad is helping set up business/payment operations, and the product needs to focus on mechanic value instead of tax operations.
 
-Stripe is still excellent engineering infrastructure, but it is not the easiest "kid can help operate it without knowing every compliance detail" option. It requires more business, tax, disputes, and payment operations work from the DeepSpec side.
+The old direct payment-provider path is not the release path because Dad cannot use it and it leaves more business, tax, disputes, and payment operations work on the DeepSpec side.
 
 ## Kid-Safe Operating Rule
 
@@ -80,10 +79,10 @@ Start provider setup now:
 Do not start live charging now:
 
 - `npm run eval:identify:release` is blocked by provider availability.
-- Provider-specific adapter work is still needed if Dad picks Lemon Squeezy or Paddle.
 - Polar still needs Dad's sandbox account, product IDs, webhook secret, and end-to-end sandbox verification.
+- Provider-specific adapter work is still needed if Dad later picks Lemon Squeezy or Paddle.
 - Live payments should remain fail-closed until scan credits, refunds, webhook replay, account portal, and provider outage behavior are verified.
-- The server refuses live Polar/Stripe traffic unless `DEEPSPEC_ENABLE_LIVE_BILLING=true` is intentionally set.
+- The server refuses live provider traffic unless `DEEPSPEC_ENABLE_LIVE_BILLING=true` is intentionally set.
 
 ## Polar Sandbox Environment
 
@@ -138,14 +137,6 @@ npm run verify:billing-webhook-replay -- --url http://127.0.0.1:5175 --plan scan
 ```
 
 This replay creates a fresh anonymous Supabase user, posts a signed synthetic Polar `order.paid` event to `/api/billing-webhook`, verifies `/api/account-entitlement` returns an active Polar-backed entitlement, verifies `/api/billing-portal` returns an HTTPS Polar customer portal URL from the server-owned entitlement record, and then deletes only that synthetic billing entitlement row. It still does not make a payment.
-
-If Dad chooses the Stripe fallback instead, use:
-
-```bash
-npm run verify:billing-webhook-replay -- --provider stripe --url http://127.0.0.1:5175 --plan scan_pack
-```
-
-Stripe replay requires a test-mode `STRIPE_SECRET_KEY`, creates and deletes one Stripe test customer, posts a signed synthetic `checkout.session.completed` webhook, verifies entitlement activation, and verifies Stripe customer-portal handoff. It still does not make a payment.
 
 Then verify provider-only sandbox readiness:
 
@@ -204,4 +195,3 @@ This command combines billing provider config, identify release summary, billing
 - Polar fee docs describe added international card fees, chargeback fees, and MoR chargeback monitoring: https://polar.sh/docs/merchant-of-record/fees
 - Paddle pricing lists pay-as-you-go at 5% + 50c and includes tax/compliance, fraud, and billing support: https://www.paddle.com/pricing
 - Paddle describes itself as Merchant of Record for digital product businesses across 300+ markets: https://www.paddle.com/
-- Stripe pricing and Billing pricing document card fees, Checkout/Portal/Billing capabilities, and Billing's 0.7% pay-as-you-go fee: https://stripe.com/pricing and https://stripe.com/billing/pricing

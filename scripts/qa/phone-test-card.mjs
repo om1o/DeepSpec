@@ -28,27 +28,28 @@ const payload = {
   latestWebArReport,
   latestExternalArReport,
   checks: [
-    "Open the URL on the real phone over cellular or Wi-Fi.",
+    "Open the URL on the real iPhone in Safari over cellular or Wi-Fi.",
+    "Tap Share, tap Add to Home Screen, keep the Deep Spec name, then open the new app icon.",
     "Choose Account > No email > Continue without email.",
     "Allow camera permission when prompted.",
-    "Scan a real car part in the camera view and wait for the AR label and review card.",
-    "Confirm the AR box is on the actual part, not the whole car or the wrong nearby panel.",
-    "Confirm the label is specific, not generic.",
+    "Scan a real car part in the camera view and wait for the Visual Evidence overlay and review card.",
+    "Confirm the primary target outline is on the actual part, not the whole car or the wrong nearby panel.",
+    "Confirm the visual layer shows target, label, confidence, evidence, uncertainty, and next action.",
     "Open details, history, and chat for the saved result.",
-    "Try uploading one known external QA image from the phone photo library.",
+    "Try uploading one known external QA image from the iPhone photo library.",
     "Record pass/fail, phone model, browser, network, and screenshots.",
   ],
   grading: [
-    "URL opens on the phone over Wi-Fi or cellular",
+    "HTTPS URL opens in Safari and the Add to Home Screen icon launches Deep Spec",
     "No-email login reaches the scanner",
     "Camera permission prompt works",
     "Live camera preview renders",
     "A real car part scans successfully",
-    "AR box lands on the actual part area",
-    "AR label is specific, not generic",
+    "Visual target outline lands on the actual part area",
+    "Visual Evidence layer shows a specific label, confidence, evidence, and uncertainty",
     "Details page opens for the result",
     "History shows the saved scan",
-    "Phone photo-library upload also scans with correct AR placement",
+    "iPhone photo-library upload also scans with correct visual target placement",
   ],
 };
 
@@ -91,10 +92,12 @@ function renderMarkdown(data) {
     "- Phone model:",
     "- Browser:",
     "- Network:",
+    "- Home-screen icon launched:",
     "- Camera scan label:",
-    "- Camera AR placement:",
+    "- Camera visual target placement:",
+    "- Confidence/evidence/uncertainty shown:",
     "- Upload scan label:",
-    "- Upload AR placement:",
+    "- Upload visual target placement:",
     "- Final phone grade:",
     "- Blocking issues:",
     "",
@@ -136,11 +139,11 @@ function renderHtml(data) {
   <p class="score">Score: <span id="score">0</span>/10</p>
   <ol>${grading}</ol>
   <h2>Result Notes</h2>
-  <p>Phone model / browser / network:</p>
+  <p>Phone model / Safari version / network / home-screen icon launched:</p>
   <textarea></textarea>
-  <p>Camera scan label and AR placement:</p>
+  <p>Camera scan label, visual target placement, confidence, evidence, and uncertainty:</p>
   <textarea></textarea>
-  <p>Upload scan label and AR placement:</p>
+  <p>Upload scan label and visual target placement:</p>
   <textarea></textarea>
   <p>Final phone grade and blockers:</p>
   <textarea></textarea>

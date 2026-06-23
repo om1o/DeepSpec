@@ -31,7 +31,7 @@ describe("billing shared", () => {
     });
   });
 
-  it("rejects unknown plans before contacting Stripe", async () => {
+  it("rejects unknown plans before contacting the billing provider", async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
 

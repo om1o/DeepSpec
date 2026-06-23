@@ -80,7 +80,7 @@ export function buildBillingProviderRunbook(env = {}, options = {}) {
     `   npm run verify:billing-checkout -- --provider ${providerCommand} --url ${publicUrl} --plan scan_pack`,
     provider === "polar"
       ? "4. Replay a signed synthetic sandbox webhook and portal handoff:"
-      : "4. Replay a signed synthetic Stripe sandbox webhook and portal handoff:",
+      : "4. Replay a signed synthetic legacy Stripe sandbox webhook and portal handoff:",
     provider === "polar"
       ? `   npm run verify:billing-webhook-replay -- --provider polar --url ${publicUrl} --plan scan_pack`
       : `   npm run verify:billing-webhook-replay -- --provider stripe --url ${publicUrl} --plan scan_pack`,

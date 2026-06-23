@@ -545,14 +545,14 @@ async function runCheckout() {
       `Checkout did not fail closed for an invalid plan. HTTP ${status.status}.`,
       {
         likelyFiles: ["api/billing.shared.ts", "src/services/revenue.ts"],
-        suggestedFix: "Reject invalid checkout plan ids before contacting Stripe or redirecting a user.",
+        suggestedFix: "Reject invalid checkout plan ids before contacting the billing provider or redirecting a user.",
       },
     );
   }
 
   return {
     category: "backend",
-    details: "Checkout endpoint rejected an invalid plan without creating a Stripe session or redirect.",
+    details: "Checkout endpoint rejected an invalid plan without creating a provider session or redirect.",
     likelyFiles: ["api/billing.shared.ts", "src/screens/Pricing.tsx"],
     status: "pass",
   };

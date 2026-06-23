@@ -24,6 +24,7 @@ const PASSING_BILLING = {
   blockers: [],
   checks: ["Billing sandbox passed."],
   ok: true,
+  provider: "polar",
   warnings: [],
 };
 
@@ -98,5 +99,6 @@ describe("classifyDadPhonePaidBetaReadiness", () => {
 
     expect(result.ok).toBe(true);
     expect(result.recommendation).toBe("paid_beta_may_continue");
+    expect(result.checks.join("\n")).toContain("polar billing sandbox passed");
   });
 });
