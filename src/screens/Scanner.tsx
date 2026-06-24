@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import Webcam from "react-webcam";
 import { Link, useLocation } from "react-router-dom";
-import { VisualEvidenceOverlay } from "../components/scanner/VisualEvidenceOverlay";
+import { FocusedPartOverlay } from "../components/scanner/FocusedPartOverlay";
 import Button from "../components/ui/Button";
 import { useCamera, type CameraDevice } from "../hooks/useCamera";
 import type { CameraObjectTarget } from "../hooks/useObjectTarget";
 import { assessImageQuality, type ImageQualityIssue, type ImageQualityResult } from "../lib/imageQuality";
 import { createFocusedScanCrop } from "../lib/focusCrop";
-import { createSegmentedProductIsolationFrame } from "../lib/productSegmentation";
+import { createSegmentedProductIsolation } from "../lib/productSegmentation";
+import { getSimpleResultSummary } from "../lib/simpleResultSummary";
 import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
 import { getScanCardPreferences, type ScanCardPreferences } from "../lib/scanResultCardSettings";
 import { detectObjectTargetFromImageData, type ObjectTargetBox } from "../lib/objectTargeting";
@@ -20,14 +21,13 @@ import { attachScanToJob, buildCustomerVisibleReport, getShopJob, getVehicleCont
 import {
   recordAcceptableScan,
   recordIdentifyLatency,
-  recordManualCorrection,
   recordNeedsBetterPhoto,
   recordScanAttempt,
   recordScanQualityFailure,
   recordScanQualityRetake,
 } from "../services/scanQualityMetrics";
 import { createLookup, updateLookup } from "../services/storage";
-import type { Confidence, IdentificationResult, CapturedFrame, Lookup, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanQualitySnapshot, ShopJob, ShopVehicleContext } from "../types";
+import type { Confidence, IdentificationResult, CapturedFrame, Lookup, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanQualitySnapshot, ShopJob, ShopVehicleContext, VisualFocusBox, VisualFocusMode } from "../types";
 
 const SECOND_FRAME_DELAY_MS = 120;
 const IDENTIFY_BUDGET_WARN_MS = 15000;
@@ -38,18 +38,7 @@ const SCAN_CARD_SAFE_HEIGHT_PX = 560;
 const MIN_TARGET_WIDTH_PX = 96;
 const MIN_TARGET_HEIGHT_PX = 72;
 const MIN_TARGET_AREA_RATIO = 0.018;
-const METRIC_FASTENER_WIDTHS_MM = [6, 7, 8, 10, 12, 13, 14, 16, 17, 18, 19, 21, 22, 24];
-const SAE_FASTENER_WIDTHS = [
-  { label: "1/4 in", mm: 6.35 },
-  { label: "5/16 in", mm: 7.94 },
-  { label: "3/8 in", mm: 9.53 },
-  { label: "7/16 in", mm: 11.11 },
-  { label: "1/2 in", mm: 12.7 },
-  { label: "9/16 in", mm: 14.29 },
-  { label: "5/8 in", mm: 15.88 },
-  { label: "11/16 in", mm: 17.46 },
-  { label: "3/4 in", mm: 19.05 },
-];
+const FOCUS_CROP_PADDING = 0.06;
 
 const DEFAULT_VIDEO_CONSTRAINTS: MediaTrackConstraints = {
   facingMode: { ideal: "environment" },
@@ -58,8 +47,6 @@ const DEFAULT_VIDEO_CONSTRAINTS: MediaTrackConstraints = {
 };
 
 type ScanReviewResultSource = "AI detection" | "metadata" | "user correction";
-type ScanItemViewSource = "segmented" | "focused_crop" | "full_frame";
-
 type ScanReviewTarget = {
   id: string;
   x: number;
@@ -71,8 +58,8 @@ type ScanReviewTarget = {
 };
 
 type ScanReviewState = {
+  focusTarget: ScanReviewTarget | null;
   isolatedFrame?: CapturedFrame;
-  itemViewSource: ScanItemViewSource;
   lookup: Lookup | null;
   scanState: ScanAnalysisState;
   correction: string | null;
@@ -95,26 +82,6 @@ type ScanQualityCoachState = {
   progress: string;
   title: string;
 };
-
-type SizeReferencePreset = "card_short_edge" | "card_long_edge" | "us_quarter" | "us_nickel";
-
-type SizeCalibration = {
-  capturedAt: string;
-  guidance: string;
-  preset: SizeReferencePreset;
-  referenceMm: number;
-  referencePx: number;
-};
-
-type MeasurementGateResult =
-  | {
-      ok: true;
-      uncertainty: string;
-    }
-  | {
-      ok: false;
-      message: string;
-    };
 
 function buildShopScanContext(job: ShopJob | null, vehicleContext: ShopVehicleContext | undefined): Partial<ScanAnalysisState> {
   if (!job) {
@@ -164,12 +131,7 @@ export default function Scanner() {
   const [scanReview, setScanReview] = useState<ScanReviewState | null>(null);
   const [scanCardPrefs] = useState<ScanCardPreferences>(() => getScanCardPreferences(location.pathname));
   const [scanCardStatusMessage, setScanCardStatusMessage] = useState<string | null>(null);
-  const [isCardExpanded, setIsCardExpanded] = useState(false);
-  const [isReplacingLabel, setIsReplacingLabel] = useState(false);
-  const [replacementLabel, setReplacementLabel] = useState("");
   const [qualityCoach, setQualityCoach] = useState<ScanQualityCoachState | null>(null);
-  const [sizeReferencePreset, setSizeReferencePreset] = useState<SizeReferencePreset>("card_short_edge");
-  const [sizeCalibration, setSizeCalibration] = useState<SizeCalibration | null>(null);
   const cancelScanRef = useRef(false);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const activeIdentifyRef = useRef(false);
@@ -213,6 +175,10 @@ export default function Scanner() {
   const anchoredReviewTarget = useMemo(
     () => (scanReview?.reviewTarget ? clampReviewTarget(scanReview.reviewTarget) : null),
     [scanReview],
+  );
+  const focusedReviewTarget = useMemo(
+    () => (scanReview?.focusTarget ? clampReviewTarget(scanReview.focusTarget) : anchoredReviewTarget),
+    [anchoredReviewTarget, scanReview],
   );
 
   const reviewCardPlacement = getReviewCardPlacement(anchoredReviewTarget);
@@ -279,10 +245,10 @@ export default function Scanner() {
     scanState: ScanAnalysisState,
     options: {
       captureMode: ScanCaptureMode;
+      focusTarget?: ScanReviewTarget | null;
       requestId: number;
       reviewTarget: ScanReviewTarget | null;
       isolatedFrame?: CapturedFrame;
-      itemViewSource?: ScanItemViewSource;
       source: ScanReviewResultSource;
       analysisSource: ScanAnalysisSource;
       sourceUpdatedAt: string;
@@ -301,11 +267,10 @@ export default function Scanner() {
         attachScanToJob(activeShopJob.id, saved.value.id);
       }
       saveLatestScanState(scanState);
-      setIsCardExpanded(Boolean(scanState.result && isFastenerResult(scanState.result, scanState.result.partName)));
       setScanReview({
         correction: options.correction ?? saved.value.correction,
+        focusTarget: options.focusTarget ?? options.reviewTarget,
         isolatedFrame: options.isolatedFrame,
-        itemViewSource: options.itemViewSource ?? (options.isolatedFrame ? "focused_crop" : "full_frame"),
         lookup: saved.value,
         reviewTarget: options.reviewTarget,
         scanState,
@@ -321,11 +286,10 @@ export default function Scanner() {
       storageWarning: saved.message,
     };
     saveLatestScanState(fallbackState);
-    setIsCardExpanded(Boolean(scanState.result && isFastenerResult(scanState.result, scanState.result.partName)));
     setScanReview({
       correction: options.correction ?? null,
+      focusTarget: options.focusTarget ?? options.reviewTarget,
       isolatedFrame: options.isolatedFrame,
-      itemViewSource: options.itemViewSource ?? (options.isolatedFrame ? "focused_crop" : "full_frame"),
       lookup: null,
       reviewTarget: options.reviewTarget,
       scanState: fallbackState,
@@ -374,8 +338,11 @@ export default function Scanner() {
     saveLatestScanState({ frame, scanQuality });
 
     let focusedFrame: CapturedFrame | undefined;
+    let focusBox: VisualFocusBox | undefined = reviewTarget?.normalized ? objectTargetBoxToVisualFocusBox(reviewTarget.normalized) : undefined;
+    let focusMode: VisualFocusMode = reviewTarget ? "crop" : "full_frame";
+    let focusTarget: ScanReviewTarget | null = reviewTarget;
+    let isolatedImageBase64: string | undefined;
     let isolatedFrame: CapturedFrame | undefined;
-    let itemViewSource: ScanItemViewSource = "full_frame";
     let secondFrame: CapturedFrame | undefined;
     const focusedCropTarget = reviewTarget?.normalized ?? null;
     const focusedCrop = focusedCropTarget
@@ -388,9 +355,18 @@ export default function Scanner() {
       if (cropQuality.ok) {
         focusedFrame = { imageBase64: focusedCrop, capturedAt: new Date().toISOString() };
         setAnalysisStep("Preparing scan view");
-        const segmentedFrame = await createSegmentedProductIsolationFrame(focusedFrame);
-        isolatedFrame = segmentedFrame ?? focusedFrame;
-        itemViewSource = segmentedFrame ? "segmented" : "focused_crop";
+        const segmented = await createSegmentedProductIsolation(focusedFrame);
+        isolatedFrame = segmented?.frame ?? focusedFrame;
+        isolatedImageBase64 = segmented?.isolatedImageBase64;
+        if (segmented && focusedCropTarget) {
+          focusMode = "mask";
+          focusBox = mapCropFocusBoxToScanBox(focusedCropTarget, segmented.focusBox);
+          focusTarget = getReviewTargetFromNormalizedFocusBox(focusBox);
+        } else {
+          focusMode = "crop";
+          focusBox = focusedCropTarget ? objectTargetBoxToVisualFocusBox(focusedCropTarget) : focusBox;
+          focusTarget = reviewTarget;
+        }
         if (!isScanRequestActive(requestId)) return;
       }
     }
@@ -410,6 +386,9 @@ export default function Scanner() {
             frame,
             result: contextualResult,
             analyzedAt: new Date().toISOString(),
+            focusBox,
+            focusMode,
+            isolatedImageBase64,
             scanQuality,
             ...shopScanContext,
             provenance: {
@@ -420,8 +399,8 @@ export default function Scanner() {
           },
           {
             captureMode,
+            focusTarget,
             isolatedFrame,
-            itemViewSource,
             requestId,
             reviewTarget,
             analysisSource: "cached_match",
@@ -471,6 +450,9 @@ export default function Scanner() {
           frame,
           result,
           analyzedAt: new Date().toISOString(),
+          focusBox,
+          focusMode,
+          isolatedImageBase64,
           scanQuality,
           ...shopScanContext,
           provenance: {
@@ -481,8 +463,8 @@ export default function Scanner() {
         },
         {
           captureMode,
+          focusTarget,
           isolatedFrame,
-          itemViewSource,
           requestId,
           reviewTarget,
           analysisSource: "ai_detection",
@@ -498,6 +480,9 @@ export default function Scanner() {
           errorMessage: getAIErrorMessage(analysisError),
           errorCode: analysisError instanceof AIServiceError ? analysisError.code : "analysis_failed",
           analyzedAt: new Date().toISOString(),
+          focusBox,
+          focusMode,
+          isolatedImageBase64,
           scanQuality,
           ...buildShopScanContext(activeShopJob, activeShopVehicleContext),
           provenance: {
@@ -508,8 +493,8 @@ export default function Scanner() {
         },
         {
           captureMode,
+          focusTarget,
           isolatedFrame,
-          itemViewSource,
           requestId,
           reviewTarget,
           analysisSource: "ai_detection",
@@ -592,55 +577,6 @@ export default function Scanner() {
     switchCamera();
   }, [switchCamera]);
 
-  const applyLabelCorrection = useCallback((correction: string) => {
-    if (!scanReview) return;
-
-    if (!scanReview.lookup) {
-      recordManualCorrection();
-      setScanReview({
-        ...scanReview,
-        correction,
-        source: "user correction",
-        sourceUpdatedAt: new Date().toISOString(),
-      });
-      setScanCardStatusMessage("Label replacement saved locally.");
-      return;
-    }
-
-    const lookupUpdate = updateLookup(scanReview.lookup.id, { correction });
-    if (!lookupUpdate.ok) {
-      setScanCardStatusMessage(lookupUpdate.message);
-      return;
-    }
-    if (!lookupUpdate.value) {
-      setScanCardStatusMessage("This saved scan was not found.");
-      return;
-    }
-
-    setScanReview({
-      ...scanReview,
-      correction,
-      lookup: lookupUpdate.value,
-      source: "user correction",
-      sourceUpdatedAt: new Date().toISOString(),
-    });
-    recordManualCorrection();
-    setScanCardStatusMessage("Label replacement applied.");
-    syncSavedLookup(lookupUpdate.value);
-  }, [scanReview, syncSavedLookup]);
-
-  const handleReportReplace = useCallback(() => {
-    const trimmed = replacementLabel.trim();
-    if (!trimmed) {
-      setScanCardStatusMessage("Enter the replacement label.");
-      return;
-    }
-
-    applyLabelCorrection(trimmed);
-    setIsReplacingLabel(false);
-    setReplacementLabel("");
-  }, [applyLabelCorrection, replacementLabel]);
-
   const handleUndoCorrection = useCallback(() => {
     if (!scanReview) {
       return;
@@ -678,65 +614,6 @@ export default function Scanner() {
     syncSavedLookup(result.value);
   }, [scanReview, syncSavedLookup]);
 
-  const handleSetSizeReference = useCallback(() => {
-    if (!scanReview?.reviewTarget) {
-      setScanCardStatusMessage("No target lock yet. Center a reference object first.");
-      return;
-    }
-
-    const referenceMm = getSizeReferenceMm(sizeReferencePreset);
-    const referencePx = getReferencePixels(scanReview.reviewTarget, sizeReferencePreset);
-    if (referencePx < 36) {
-      setScanCardStatusMessage("Reference target is too small. Move closer and lock the object.");
-      return;
-    }
-
-    setSizeCalibration({
-      capturedAt: new Date().toISOString(),
-      guidance: getSizeReferenceGuidance(sizeReferencePreset),
-      preset: sizeReferencePreset,
-      referenceMm,
-      referencePx,
-    });
-    setScanCardStatusMessage(`${getSizeReferenceLabel(sizeReferencePreset)} saved. ${getSizeReferenceGuidance(sizeReferencePreset)}`);
-  }, [scanReview, sizeReferencePreset]);
-
-  const handleReviewMeasure = useCallback(async () => {
-    if (!scanReview?.reviewTarget) {
-      setScanCardStatusMessage("No point to measure yet.");
-      return;
-    }
-
-    if (!sizeCalibration) {
-      setScanCardStatusMessage("Set a reference first (card or coin) to estimate mm size.");
-      return;
-    }
-
-    const measurementGate = getMeasurementGate(scanReview.reviewTarget, sizeCalibration);
-    if (!measurementGate.ok) {
-      setScanCardStatusMessage(measurementGate.message);
-      return;
-    }
-
-    const widthMm = estimateMm(scanReview.reviewTarget.width, sizeCalibration);
-    const heightMm = estimateMm(scanReview.reviewTarget.height, sizeCalibration);
-    const longestEdgeMm = Math.max(widthMm, heightMm);
-    const label = getReviewDisplayLabel(scanReview);
-    const fastenerHint = /nut|bolt|screw|stud|thread|fastener/i.test(label)
-      ? getFastenerSizeHint(Math.max(widthMm, heightMm))
-      : null;
-    const summary = fastenerHint
-      ? `${label}: ${widthMm.toFixed(1)} x ${heightMm.toFixed(1)} mm (same-plane estimate). Longest edge ${longestEdgeMm.toFixed(1)} mm. ${fastenerHint} ${sizeCalibration.guidance} Size note: ${measurementGate.uncertainty}.`
-      : `${label}: ${widthMm.toFixed(1)} x ${heightMm.toFixed(1)} mm (same-plane estimate). Longest edge ${longestEdgeMm.toFixed(1)} mm. ${sizeCalibration.guidance} Size note: ${measurementGate.uncertainty}.`;
-
-    const copied = await copyText(summary);
-    setScanCardStatusMessage(
-      copied
-        ? "Same-plane size estimate copied. Verify with a caliper before ordering parts."
-        : summary,
-    );
-  }, [scanReview, sizeCalibration]);
-
   function cancelCurrentScan() {
     cancelScanRef.current = true;
     scanRequestIdRef.current += 1;
@@ -748,11 +625,8 @@ export default function Scanner() {
   function closeScanReview() {
     setScanReview(null);
     setCaptureError(null);
-    setIsReplacingLabel(false);
-    setReplacementLabel("");
     setScanCardStatusMessage(null);
     pauseAutoScan();
-    setIsCardExpanded(false);
   }
 
   return (
@@ -775,7 +649,7 @@ export default function Scanner() {
         <img
           alt="Reviewed scan photo"
           className="pointer-events-none absolute inset-0 z-[1] h-full w-full object-cover"
-          src={(scanReview.isolatedFrame ?? scanReview.scanState.frame).imageBase64}
+          src={scanReview.scanState.frame.imageBase64}
         />
       ) : null}
 
@@ -850,39 +724,25 @@ export default function Scanner() {
       ) : null}
 
       {scanReview?.scanState.result ? (
-        <>
-          <ProductIsolationMask result={scanReview.scanState.result} target={anchoredReviewTarget} />
-          <VisualEvidenceOverlay result={scanReview.scanState.result} target={anchoredReviewTarget} />
-        </>
+        <FocusedPartOverlay
+          label={getSimpleResultSummary(scanReview.scanState.result).title}
+          mode={scanReview.scanState.focusMode ?? (scanReview.isolatedFrame ? "crop" : "full_frame")}
+          target={focusedReviewTarget}
+        />
       ) : null}
       {isAnalyzing ? <AnalyzingOverlay onCancel={cancelCurrentScan} step={analysisStep} /> : null}
       {scanReview ? (
         <ScanResultCard
-          isExpanded={isCardExpanded}
+          isExpanded={false}
           isMismatch={false}
-          isReplacing={isReplacingLabel}
           target={anchoredReviewTarget}
-          onCancelReplace={() => setIsReplacingLabel(false)}
           onClose={closeScanReview}
-          onMeasure={handleReviewMeasure}
           onRetryMismatch={retryReviewScan}
-          onReportReplace={handleReportReplace}
           onUndoCorrection={handleUndoCorrection}
-          onSetSizeReference={handleSetSizeReference}
-          onSizeReferencePresetChange={(preset) => setSizeReferencePreset(preset)}
           placement={reviewCardPlacement}
           prefs={scanCardPrefs}
-          replacementLabel={replacementLabel}
           review={scanReview}
           scanCardStatusMessage={scanCardStatusMessage}
-          sizeCalibration={sizeCalibration}
-          sizeReferencePreset={sizeReferencePreset}
-          onWrongLabel={() => {
-            setReplacementLabel(scanReview?.scanState.result?.partName ?? "");
-            setIsReplacingLabel(true);
-            setScanCardStatusMessage(null);
-          }}
-          onReplacementLabelChange={setReplacementLabel}
         />
       ) : null}
 
@@ -1167,115 +1027,40 @@ function ScanQualityCoachNotice({
   );
 }
 
-function StatTile({
-  accent,
-  label,
-  value,
-  warn,
-}: {
-  accent?: boolean;
-  label: string;
-  value: string;
-  warn?: boolean;
-}) {
-  return (
-    <div
-      className="flex flex-col gap-1 rounded-xl px-3 py-2.5"
-      style={{
-        background: accent ? "rgba(0,194,255,0.07)" : warn ? "rgba(239,68,68,0.07)" : "rgba(255,255,255,0.04)",
-        border: `1px solid ${accent ? "rgba(0,194,255,0.22)" : warn ? "rgba(239,68,68,0.20)" : "rgba(255,255,255,0.08)"}`,
-      }}
-    >
-      <span
-        style={{
-          fontFamily: "var(--font-data)",
-          fontSize: 9,
-          fontWeight: 600,
-          letterSpacing: "0.14em",
-          color: accent ? "rgba(85,200,255,0.70)" : warn ? "rgba(239,68,68,0.65)" : "var(--slate-500)",
-          textTransform: "uppercase",
-        }}
-      >
-        {label}
-      </span>
-      <span
-        style={{
-          fontFamily: "var(--font-data)",
-          fontSize: 12,
-          fontWeight: 600,
-          color: accent ? "#55C8FF" : warn ? "var(--red-400)" : "var(--slate-100)",
-          lineHeight: 1.2,
-        }}
-      >
-        {value}
-      </span>
-    </div>
-  );
-}
-
 function ScanResultCard({
   isExpanded,
   isMismatch,
-  isReplacing,
-  onCancelReplace,
   onClose,
-  onMeasure,
   onRetryMismatch,
-  onReportReplace,
-  onSetSizeReference,
-  onSizeReferencePresetChange,
   onUndoCorrection,
-  onReplacementLabelChange,
-  onWrongLabel,
   target,
   placement,
   prefs,
-  replacementLabel,
   review,
   scanCardStatusMessage,
-  sizeCalibration,
-  sizeReferencePreset,
 }: {
   isExpanded: boolean;
   isMismatch: boolean;
-  isReplacing: boolean;
-  onCancelReplace: () => void;
   onClose: () => void;
-  onMeasure: () => void;
   onRetryMismatch: () => void;
-  onReportReplace: () => void;
-  onSetSizeReference: () => void;
-  onSizeReferencePresetChange: (preset: SizeReferencePreset) => void;
   onUndoCorrection: () => void;
-  onReplacementLabelChange: (value: string) => void;
-  onWrongLabel: () => void;
   target: ScanReviewTarget | null;
   placement: ReviewCardPlacement;
   prefs: ScanCardPreferences;
-  replacementLabel: string;
   review: ScanReviewState;
   scanCardStatusMessage: string | null;
-  sizeCalibration: SizeCalibration | null;
-  sizeReferencePreset: SizeReferencePreset;
 }) {
   const result = review.scanState.result;
-  const label = getReviewDisplayLabel(review);
+  const summary = result ? getSimpleResultSummary(result) : null;
+  const label = summary?.title ?? getReviewDisplayLabel(review);
   const confidence = result?.confidence;
-  const confidenceRange = result ? getConfidenceRange(result) : null;
-  const isFastener = result ? isFastenerResult(result, label) : false;
   const isCompact = prefs.compactCardsByDefault && !isExpanded;
   const statusStyle = getConfidenceStyle(confidence);
   const visibleFacts = getVisibleFacts(result, isCompact);
   const concernFacts = getConcernFacts(result, isCompact);
   const evidenceFacts = getEvidenceFacts(result, isCompact);
   const itemViewFrame = review.isolatedFrame ?? review.scanState.frame;
-  const itemViewBadge = getItemViewBadge(review.itemViewSource, Boolean(review.isolatedFrame));
-  const referenceSummary = sizeCalibration
-    ? `${getSizeReferenceLabel(sizeCalibration.preset)} (${sizeCalibration.referenceMm.toFixed(2)} mm). ${sizeCalibration.guidance}`
-    : "Size estimate needs a reference object.";
-  const showPrecisionTools = isFastener && isExpanded;
-  const matchPct = result?.confidenceScore
-    ?? (confidence === "high" ? 84 : confidence === "medium" ? 72 : 48);
+  const itemViewBadge = getItemViewBadge(review.scanState.focusMode ?? (review.isolatedFrame ? "crop" : "full_frame"), Boolean(review.scanState.isolatedImageBase64));
   const dotColor = confidence === "high" ? "var(--green-400)" : confidence === "medium" ? "var(--amber-400)" : "var(--red-400)";
 
   return (
@@ -1314,24 +1099,12 @@ function ScanResultCard({
                   textTransform: "uppercase",
                 }}
               >
-                {confidenceRange
-                  ? `${confidenceRange.low}-${confidenceRange.high}% match`
-                  : `${confidence} confidence`}
+                {summary?.eyebrow ?? "Detected"}
               </span>
             </div>
           ) : null}
           <h3 className="text-[18px] font-black leading-tight tracking-[-0.02em]">{label}</h3>
-          <p
-            className="mt-0.5"
-            style={{ fontFamily: "var(--font-data)", fontSize: 11, color: "var(--slate-400)", letterSpacing: "0.05em" }}
-          >
-            <span>{result?.scanCategory ?? "unknown"}</span>
-          </p>
-          {confidence ? (
-            <span className={`mt-1.5 inline-block rounded-full border px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-[0.08em] ${statusStyle.chip}`}>
-              {confidenceRange ? `${confidenceRange.low}-${confidenceRange.high}% likely` : `${confidence}`}
-            </span>
-          ) : null}
+          {summary ? <p className="mt-1 text-sm font-semibold leading-5 text-white/76">{summary.body}</p> : null}
         </div>
         <button
           className="grid size-8 shrink-0 place-items-center rounded-full text-white/50 transition-colors hover:text-white/80"
@@ -1345,23 +1118,6 @@ function ScanResultCard({
           </svg>
         </button>
       </div>
-
-      {/* Key stat tiles */}
-      {result && !review.scanState.errorMessage ? (
-        <div className="mt-3 grid grid-cols-3 gap-1.5">
-          <StatTile label="PART TYPE" value={result.scanCategory} />
-          <StatTile
-            label="MATCH"
-            value={`${confidenceRange ? confidenceRange.low : matchPct}%`}
-            accent
-          />
-          <StatTile
-            label="EVIDENCE"
-            value={String(Math.max(1, result.evidence.length + result.visibleObservations.length))}
-            warn={result.concerns.length > 0}
-          />
-        </div>
-      ) : null}
 
       {result && !review.scanState.errorMessage ? (
         <ItemViewPanel
@@ -1403,14 +1159,9 @@ function ScanResultCard({
           </div>
         ) : (
           <>
-            {result?.whatItDoes ? (
-              <BubbleSection title="What this is">
-                <p>{summarize(result.whatItDoes, isCompact ? 150 : 220)}</p>
-              </BubbleSection>
-            ) : null}
-            {result?.nextAction ? (
+            {summary?.nextAction ? (
               <BubbleSection title="Next step">
-                <p>{summarize(result.nextAction, 170)}</p>
+                <p>{summary.nextAction}</p>
               </BubbleSection>
             ) : null}
             {isExpanded ? (
@@ -1432,100 +1183,8 @@ function ScanResultCard({
         )}
       </div>
 
-      {isFastener && isExpanded ? (
-        <BubbleSection title="Fastener mode">
-          <p>Put a card or coin on the same flat plane as the fastener, then estimate size.</p>
-          <p className="mt-2 text-white/60">Use the reference to size the visible edge.</p>
-        </BubbleSection>
-      ) : null}
-
       {/* Actions */}
       <div className="mt-3 space-y-2">
-        {showPrecisionTools ? (
-          <>
-            <label className="block">
-              <span
-                className="mb-1 block text-[10px] font-bold uppercase tracking-[0.12em]"
-                style={{ color: "var(--slate-500)" }}
-              >
-                Size reference
-              </span>
-              <select
-                aria-label="Size reference preset"
-                className="h-10 w-full rounded-[10px] px-3 text-[11px] font-bold text-white outline-none"
-                style={{ border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.05)" }}
-                onChange={(event) => onSizeReferencePresetChange(event.target.value as SizeReferencePreset)}
-                value={sizeReferencePreset}
-              >
-                <option value="card_short_edge">Card short edge (53.98 mm)</option>
-                <option value="card_long_edge">Card long edge (85.60 mm)</option>
-                <option value="us_quarter">US quarter (24.26 mm)</option>
-                <option value="us_nickel">US nickel (21.21 mm)</option>
-              </select>
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                className="h-10 rounded-[10px] text-xs font-bold text-white/90"
-                style={{ border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.05)" }}
-                onClick={onSetSizeReference}
-                type="button"
-              >
-                Set reference
-              </button>
-              <button
-                className="h-10 rounded-[10px] text-xs font-bold text-white/90"
-                style={{ border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.05)" }}
-                onClick={onMeasure}
-                type="button"
-              >
-                Estimate size
-              </button>
-            </div>
-            <p className="text-[10px] leading-5" style={{ color: "var(--slate-500)" }}>{referenceSummary}</p>
-          </>
-        ) : null}
-
-        {isReplacing ? (
-          <div className="space-y-2">
-            <input
-              aria-label="replacement label"
-              className="w-full rounded-[10px] px-3 py-2.5 text-sm text-white outline-none placeholder:text-white/38"
-              style={{ border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.05)" }}
-              maxLength={80}
-              onChange={(event) => onReplacementLabelChange(event.target.value)}
-              placeholder="Example: coolant reservoir cap"
-              value={replacementLabel}
-            />
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                className="h-10 rounded-[10px] text-xs font-bold text-slate-900"
-                style={{ background: "rgba(255,255,255,0.90)" }}
-                onClick={onReportReplace}
-                type="button"
-              >
-                Save correction
-              </button>
-              <button
-                className="h-10 rounded-[10px] text-xs font-bold text-white/80"
-                style={{ border: "1px solid rgba(255,255,255,0.14)" }}
-                onClick={onCancelReplace}
-                type="button"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        ) : (
-          <button
-            className="h-10 w-full rounded-[10px] text-xs font-bold text-white/90"
-            style={{ border: "1px solid rgba(0,194,255,0.22)", background: "rgba(0,194,255,0.06)" }}
-            onClick={onWrongLabel}
-            type="button"
-          >
-            Correct label
-          </button>
-        )}
-
         {review.correction ? (
           <div
             className="flex items-center justify-between gap-2 rounded-[10px] px-3 py-2 text-xs"
@@ -1739,30 +1398,16 @@ function getReviewTargetFromObject(target: CameraObjectTarget): ScanReviewTarget
     confidence: target.confidence,
     height: target.height,
     id: target.id,
+    normalized: target.normalized
+      ? {
+          ...target.normalized,
+          confidence: target.confidence,
+        }
+      : undefined,
     width: target.width,
     x: target.left,
     y: target.top,
   };
-}
-
-function getProductIsolationTarget(target: ScanReviewTarget, result: IdentificationResult) {
-  const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
-  const targetAreaRatio = (target.width * target.height) / viewportArea;
-  const label = `${result.partName} ${result.scanCategory}`.toLowerCase();
-  const broadAssembly = /bumper|door|hood|fender|quarter|panel|engine|radiator|wheel|tire|assembly/.test(label);
-  if (targetAreaRatio < 0.3 || broadAssembly) {
-    return clampReviewTarget(target);
-  }
-
-  const width = target.width * 0.72;
-  const height = target.height * 0.72;
-  return clampReviewTarget({
-    ...target,
-    height,
-    width,
-    x: target.x + (target.width - width) / 2,
-    y: target.y + (target.height - height) / 2,
-  });
 }
 
 function getUsableReviewTarget(target: ScanReviewTarget | null) {
@@ -1856,6 +1501,74 @@ function getObjectTargetFromReviewTarget(reviewTarget: ScanReviewTarget): Camera
   };
 }
 
+function objectTargetBoxToVisualFocusBox(target: ObjectTargetBox): VisualFocusBox {
+  return clampVisualFocusBox({
+    confidence: target.confidence,
+    height: target.height,
+    width: target.width,
+    x: target.x,
+    y: target.y,
+  });
+}
+
+function mapCropFocusBoxToScanBox(cropTarget: ObjectTargetBox, focusBox: VisualFocusBox): VisualFocusBox {
+  const crop = getPaddedNormalizedCrop(cropTarget);
+  return clampVisualFocusBox({
+    confidence: focusBox.confidence,
+    height: focusBox.height * crop.height,
+    width: focusBox.width * crop.width,
+    x: crop.x + focusBox.x * crop.width,
+    y: crop.y + focusBox.y * crop.height,
+  });
+}
+
+function getPaddedNormalizedCrop(target: ObjectTargetBox): VisualFocusBox {
+  const paddedWidth = target.width * (1 + FOCUS_CROP_PADDING * 2);
+  const paddedHeight = target.height * (1 + FOCUS_CROP_PADDING * 2);
+  const x = clampNumber(target.x - target.width * FOCUS_CROP_PADDING, 0, 1);
+  const y = clampNumber(target.y - target.height * FOCUS_CROP_PADDING, 0, 1);
+  const right = clampNumber(x + paddedWidth, 0, 1);
+  const bottom = clampNumber(y + paddedHeight, 0, 1);
+
+  return clampVisualFocusBox({
+    confidence: target.confidence,
+    height: bottom - y,
+    width: right - x,
+    x,
+    y,
+  });
+}
+
+function getReviewTargetFromNormalizedFocusBox(focusBox: VisualFocusBox): ScanReviewTarget {
+  const viewportWidth = Math.max(1, window.innerWidth);
+  const viewportHeight = Math.max(1, window.innerHeight);
+  const normalized = clampVisualFocusBox(focusBox);
+
+  return clampReviewTarget({
+    confidence: normalized.confidence,
+    height: normalized.height * viewportHeight,
+    id: "focused-item",
+    normalized,
+    width: normalized.width * viewportWidth,
+    x: normalized.x * viewportWidth,
+    y: normalized.y * viewportHeight,
+  });
+}
+
+function clampVisualFocusBox(box: VisualFocusBox): VisualFocusBox {
+  const x = clampNumber(box.x, 0, 1);
+  const y = clampNumber(box.y, 0, 1);
+  const width = clampNumber(box.width, 0.01, 1 - x);
+  const height = clampNumber(box.height, 0.01, 1 - y);
+  return {
+    confidence: clampNumber(box.confidence, 0, 1),
+    height,
+    width,
+    x,
+    y,
+  };
+}
+
 function getReviewDisplayLabel(review: ScanReviewState) {
   return (
     review.correction?.trim()
@@ -1865,163 +1578,16 @@ function getReviewDisplayLabel(review: ScanReviewState) {
   );
 }
 
-function getItemViewBadge(source: ScanItemViewSource, hasItemFrame: boolean) {
-  if (source === "segmented" && hasItemFrame) {
+function getItemViewBadge(source: VisualFocusMode, hasIsolatedOutput: boolean) {
+  if (source === "mask" && hasIsolatedOutput) {
     return "Isolated";
   }
 
-  if (source === "focused_crop" && hasItemFrame) {
+  if (source === "crop") {
     return "Focused";
   }
 
   return "Full scan";
-}
-
-function getSizeReferenceMm(preset: SizeReferencePreset) {
-  switch (preset) {
-    case "card_long_edge":
-      return 85.6;
-    case "us_quarter":
-      return 24.26;
-    case "us_nickel":
-      return 21.21;
-    case "card_short_edge":
-    default:
-      return 53.98;
-  }
-}
-
-function getSizeReferenceLabel(preset: SizeReferencePreset) {
-  switch (preset) {
-    case "card_long_edge":
-      return "Card long edge";
-    case "us_quarter":
-      return "US quarter";
-    case "us_nickel":
-      return "US nickel";
-    case "card_short_edge":
-    default:
-      return "Card short edge";
-  }
-}
-
-function getReferencePixels(target: ScanReviewTarget, preset: SizeReferencePreset) {
-  switch (preset) {
-    case "card_short_edge":
-      return Math.min(target.width, target.height);
-    case "card_long_edge":
-      return Math.max(target.width, target.height);
-    case "us_quarter":
-    case "us_nickel":
-    default:
-      return Math.max(target.width, target.height);
-  }
-}
-
-function getSizeReferenceGuidance(preset: SizeReferencePreset) {
-  switch (preset) {
-    case "card_short_edge":
-      return "Best for height when the short card edge matches the vertical edge in frame.";
-    case "card_long_edge":
-      return "Best for width when the long card edge matches the horizontal edge in frame.";
-    case "us_quarter":
-    case "us_nickel":
-      return "Best when the coin is flat to the camera and on the same depth plane.";
-    default:
-      return "Keep the reference and target on the same depth plane.";
-  }
-}
-
-function estimateMm(targetPixels: number, calibration: SizeCalibration) {
-  const mmPerPixel = calibration.referenceMm / Math.max(1, calibration.referencePx);
-  return targetPixels * mmPerPixel;
-}
-
-function getFastenerSizeHint(acrossMm: number) {
-  const metric = findNearestMetricFastener(acrossMm);
-  const sae = findNearestSaeFastener(acrossMm);
-  return `Fastener guess: ${metric} wrench / ${sae} (approx).`;
-}
-
-function getMeasurementGate(target: ScanReviewTarget, calibration: SizeCalibration): MeasurementGateResult {
-  const targetPx = Math.max(target.width, target.height);
-  const ratio = targetPx / Math.max(1, calibration.referencePx);
-
-  if (target.confidence < 0.72) {
-    return {
-      ok: false,
-      message: "Target edge needs to be clearer before sizing.",
-    };
-  }
-
-  if (targetPx < 96) {
-    return {
-      ok: false,
-      message: "Target edge is too small for sizing. Move closer and rescan.",
-    };
-  }
-
-  if (calibration.referencePx < 64) {
-    return {
-      ok: false,
-      message: "Reference is too small. Fill more of the frame with the card or coin.",
-    };
-  }
-
-  if (ratio < 0.6 || ratio > 1.7) {
-    return {
-      ok: false,
-      message: "Reference scale is too different from the target. Use a same-plane card or coin closer to the part.",
-    };
-  }
-
-  return {
-    ok: true,
-    uncertainty: "same-plane depth, camera angle, and target edge affect the estimate",
-  };
-}
-
-function isFastenerResult(result: IdentificationResult, label: string) {
-  return /\b(nut|bolt|screw|stud|thread|washer|fastener)\b/i.test(
-    [
-      label,
-      result.partName,
-      result.whatItDoes,
-      result.nextAction,
-      ...result.visibleObservations,
-      ...result.evidence,
-    ].join(" "),
-  );
-}
-
-function getConfidenceRange(result: IdentificationResult) {
-  if (result.confidenceRange) {
-    return {
-      high: clampNumber(result.confidenceRange.high, 0, 100),
-      low: clampNumber(result.confidenceRange.low, 0, 100),
-    };
-  }
-
-  const score = result.confidenceScore ?? (result.confidence === "high" ? 84 : result.confidence === "medium" ? 72 : 48);
-  const spread = score >= 80 ? 6 : score >= 65 ? 8 : 12;
-  return {
-    high: clampNumber(Math.round(score + spread), 0, 100),
-    low: clampNumber(Math.round(score - spread), 0, 100),
-  };
-}
-
-function findNearestMetricFastener(widthMm: number) {
-  const nearest = METRIC_FASTENER_WIDTHS_MM.reduce((best, current) => (
-    Math.abs(current - widthMm) < Math.abs(best - widthMm) ? current : best
-  ), METRIC_FASTENER_WIDTHS_MM[0]);
-  return `${nearest} mm`;
-}
-
-function findNearestSaeFastener(widthMm: number) {
-  const nearest = SAE_FASTENER_WIDTHS.reduce((best, current) => (
-    Math.abs(current.mm - widthMm) < Math.abs(best.mm - widthMm) ? current : best
-  ), SAE_FASTENER_WIDTHS[0]);
-  return nearest.label;
 }
 
 function getVisibleFacts(result: IdentificationResult | undefined, compact: boolean) {
@@ -2112,27 +1678,6 @@ function getReviewCardPlacement(target: ScanReviewTarget | null): ReviewCardPlac
   return { anchorSide, left, top };
 }
 
-async function copyText(value: string) {
-  try {
-    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(value);
-      return true;
-    }
-
-    const textarea = document.createElement("textarea");
-    textarea.value = value;
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    textarea.select();
-    const success = document.execCommand("copy");
-    textarea.remove();
-    return success;
-  } catch {
-    return false;
-  }
-}
-
 function summarize(value: string, limit: number) {
   const trimmed = value.trim();
   if (trimmed.length <= limit) {
@@ -2163,36 +1708,6 @@ function ScannerHUD({ isAnalyzing }: { isAnalyzing: boolean }) {
         {statusLabel}
       </div>
     </>
-  );
-}
-
-function ProductIsolationMask({
-  result,
-  target,
-}: {
-  result: IdentificationResult;
-  target: ScanReviewTarget | null;
-}) {
-  if (!target) {
-    return null;
-  }
-
-  const focusTarget = getProductIsolationTarget(target, result);
-  return (
-    <div className="pointer-events-none fixed inset-0 z-30" aria-hidden="true">
-      <div
-        className="absolute rounded-[18px]"
-        data-testid="product-isolation-mask"
-        style={{
-          boxShadow: "0 0 0 9999px rgba(2, 6, 23, 0.76)",
-          height: focusTarget.height,
-          left: focusTarget.x,
-          outline: "1px solid rgba(255,255,255,0.12)",
-          top: focusTarget.y,
-          width: focusTarget.width,
-        }}
-      />
-    </div>
   );
 }
 

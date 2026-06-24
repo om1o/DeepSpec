@@ -1,4 +1,4 @@
-import type { CandidateMatch, CandidatePart, ChatMessage, Confidence, CustomerVisibleReport, EvidenceRegion, FitmentConfidence, IdentificationResult, IdentifyModelRun, IdentifyProvider, Lookup, PartMeasurement, PossibleVehicleContext, Rating, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanCategory, ScanProvenance, ScanQualityFailureReason, ScanQualitySnapshot, ShopReviewStatus, ShopVehicleContext, SourceLink, TrainingStatus } from "../types";
+import type { CandidateMatch, CandidatePart, ChatMessage, Confidence, CustomerVisibleReport, EvidenceRegion, FitmentConfidence, IdentificationResult, IdentifyModelRun, IdentifyProvider, Lookup, PartMeasurement, PossibleVehicleContext, Rating, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanCategory, ScanProvenance, ScanQualityFailureReason, ScanQualitySnapshot, ShopReviewStatus, ShopVehicleContext, SourceLink, TrainingStatus, VisualFocusBox, VisualFocusMode } from "../types";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
 export const MAX_SAVED_LOOKUPS = 50;
@@ -22,6 +22,9 @@ export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup
     id: createId(),
     createdAt,
     frame: scanState.frame,
+    ...(normalizeVisualFocusBox(scanState.focusBox) ? { focusBox: normalizeVisualFocusBox(scanState.focusBox) } : {}),
+    ...(isVisualFocusMode(scanState.focusMode) ? { focusMode: scanState.focusMode } : {}),
+    ...(cleanImageDataUrl(scanState.isolatedImageBase64) ? { isolatedImageBase64: cleanImageDataUrl(scanState.isolatedImageBase64) } : {}),
     result: scanState.result,
     errorMessage: scanState.errorMessage,
     errorCode: scanState.errorCode,
@@ -220,6 +223,9 @@ export function deleteLookup(id: string): StorageResult<boolean> {
 export function scanStateFromLookup(lookup: Lookup): ScanAnalysisState {
   return {
     frame: lookup.frame,
+    focusBox: lookup.focusBox,
+    focusMode: lookup.focusMode,
+    isolatedImageBase64: lookup.isolatedImageBase64,
     result: lookup.result,
     errorMessage: lookup.errorMessage,
     errorCode: lookup.errorCode,
@@ -350,6 +356,9 @@ function normalizeLookup(value: unknown): Lookup | null {
     id: lookup.id,
     createdAt: lookup.createdAt,
     frame: lookup.frame,
+    ...(normalizeVisualFocusBox(lookup.focusBox) ? { focusBox: normalizeVisualFocusBox(lookup.focusBox) } : {}),
+    ...(isVisualFocusMode(lookup.focusMode) ? { focusMode: lookup.focusMode } : {}),
+    ...(cleanImageDataUrl(lookup.isolatedImageBase64) ? { isolatedImageBase64: cleanImageDataUrl(lookup.isolatedImageBase64) } : {}),
     result,
     errorMessage: lookup.errorMessage,
     errorCode: lookup.errorCode,
@@ -404,6 +413,39 @@ function isConfidence(value: unknown): value is Confidence {
   return value === "high" || value === "medium" || value === "low";
 }
 
+function isVisualFocusMode(value: unknown): value is VisualFocusMode {
+  return value === "mask" || value === "crop" || value === "full_frame";
+}
+
+function normalizeVisualFocusBox(value: unknown): VisualFocusBox | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const x = getFiniteNumber(value.x);
+  const y = getFiniteNumber(value.y);
+  const width = getFiniteNumber(value.width);
+  const height = getFiniteNumber(value.height);
+  const confidence = getFiniteNumber(value.confidence);
+  if (x === null || y === null || width === null || height === null || confidence === null || width <= 0 || height <= 0) {
+    return undefined;
+  }
+
+  return {
+    confidence: clampNumber(confidence, 0, 1),
+    height: clampNumber(height, 0.001, 1),
+    width: clampNumber(width, 0.001, 1),
+    x: clampNumber(x, 0, 1),
+    y: clampNumber(y, 0, 1),
+  };
+}
+
+function cleanImageDataUrl(value: unknown) {
+  return typeof value === "string" && /^data:image\/(jpeg|png|webp);base64,/i.test(value)
+    ? value
+    : undefined;
+}
+
 function isScanQualityFailureReason(value: unknown): value is ScanQualityFailureReason {
   return (
     value === "too_dark" ||
@@ -449,6 +491,14 @@ function normalizeScanQualitySnapshot(value: unknown): ScanQualitySnapshot | und
 
 function getNullableNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function getFiniteNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function normalizeConfidenceScore(value: unknown, confidence: Confidence) {

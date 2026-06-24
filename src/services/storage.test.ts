@@ -7,6 +7,7 @@ import {
   getLookups,
   LOOKUPS_STORAGE_KEY,
   MAX_SAVED_LOOKUPS,
+  scanStateFromLookup,
   updateLookup,
   updateLookupResult,
 } from "./storage";
@@ -122,6 +123,39 @@ describe("storage", () => {
       },
       trainingLabel: "Alternator",
       trainingStatus: "raw_unreviewed",
+    });
+  });
+
+  it("preserves focused item metadata and isolated output", () => {
+    const result = createLookup({
+      ...scanState,
+      focusBox: {
+        confidence: 0.92,
+        height: 0.42,
+        width: 0.38,
+        x: 0.22,
+        y: 0.18,
+      },
+      focusMode: "mask",
+      isolatedImageBase64: "data:image/png;base64,isolated-output",
+    });
+
+    expect(result.ok).toBe(true);
+    const lookup = getLookup(result.value.id);
+    expect(lookup).toMatchObject({
+      focusBox: {
+        confidence: 0.92,
+        height: 0.42,
+        width: 0.38,
+        x: 0.22,
+        y: 0.18,
+      },
+      focusMode: "mask",
+      isolatedImageBase64: "data:image/png;base64,isolated-output",
+    });
+    expect(scanStateFromLookup(lookup!)).toMatchObject({
+      focusMode: "mask",
+      isolatedImageBase64: "data:image/png;base64,isolated-output",
     });
   });
 

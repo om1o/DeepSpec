@@ -24,7 +24,7 @@ const passingQuality = {
   ok: true,
 };
 const createFocusedScanCrop = vi.fn(async () => "data:image/jpeg;base64,target-crop");
-const createSegmentedProductIsolationFrame = vi.fn(async () => null);
+const createSegmentedProductIsolation = vi.fn(async () => null);
 const detectObjectTargetFromImageData = vi.fn(() => null);
 const getCloudSyncStatus = vi.fn(() => ({ configured: false, message: "Cloud sync is off." }));
 const syncLookupToCloud = vi.fn(async () => ({ ok: true, message: "Scan synced." }));
@@ -155,7 +155,7 @@ vi.mock("../lib/focusCrop", () => ({
 }));
 
 vi.mock("../lib/productSegmentation", () => ({
-  createSegmentedProductIsolationFrame: (...args: unknown[]) => createSegmentedProductIsolationFrame(...args),
+  createSegmentedProductIsolation: (...args: unknown[]) => createSegmentedProductIsolation(...args),
 }));
 
 vi.mock("../lib/objectTargeting", () => ({
@@ -186,8 +186,8 @@ describe("Scanner", () => {
     assessImageQuality.mockResolvedValue(passingQuality);
     createFocusedScanCrop.mockReset();
     createFocusedScanCrop.mockResolvedValue("data:image/jpeg;base64,target-crop");
-    createSegmentedProductIsolationFrame.mockReset();
-    createSegmentedProductIsolationFrame.mockResolvedValue(null);
+    createSegmentedProductIsolation.mockReset();
+    createSegmentedProductIsolation.mockResolvedValue(null);
     detectObjectTargetFromImageData.mockReset();
     detectObjectTargetFromImageData.mockReturnValue(null);
     getCloudSyncStatus.mockReset();
@@ -225,6 +225,11 @@ describe("Scanner", () => {
     const reviewCard = reviewHeading.closest("section");
     expect(reviewCard).toBeTruthy();
     expect(screen.queryByTestId("lens-primary-label")).not.toBeInTheDocument();
+    expect(screen.getByTestId("focused-part-overlay")).toHaveAttribute("data-focus-mode", "full_frame");
+    expect(screen.queryByText("More evidence")).not.toBeInTheDocument();
+    expect(screen.queryByText("Capture another angle")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Likely/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Verify")).not.toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).queryByText("AI detection")).not.toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).queryByRole("button", { name: "Open details" })).not.toBeInTheDocument();
@@ -274,15 +279,16 @@ describe("Scanner", () => {
 
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
     expect(detectObjectTargetFromImageData).toHaveBeenCalled();
-    expect(screen.getByTestId("product-isolation-mask")).toBeInTheDocument();
-    expect(screen.getByTestId("lens-primary-label")).toHaveTextContent("Alternator");
+    expect(screen.queryByTestId("product-isolation-mask")).not.toBeInTheDocument();
+    expect(screen.getByTestId("focused-part-overlay")).toHaveAttribute("data-focus-mode", "crop");
+    expect(screen.getByTestId("focused-part-label")).toHaveTextContent("Alternator");
     expect(screen.getByTestId("scan-item-view")).toHaveTextContent("Focused");
     expect(screen.getByAltText("Item view for Alternator")).toHaveAttribute("src", "data:image/jpeg;base64,target-crop");
-    expectOverlayBox(screen.getByTestId("lens-part-overlay-0"), {
-      height: 180,
-      left: 80,
-      top: 160,
-      width: 240,
+    expectOverlayBox(screen.getByTestId("focused-part-window"), {
+      height: 208.8,
+      left: 60.8,
+      top: 145.6,
+      width: 278.4,
     });
   }, 10000);
 
@@ -294,9 +300,13 @@ describe("Scanner", () => {
       x: 0.08,
       y: 0.2666666667,
     });
-    createSegmentedProductIsolationFrame.mockResolvedValueOnce({
-      capturedAt: "2026-06-23T00:00:00.000Z",
-      imageBase64: "data:image/png;base64,segmented-product",
+    createSegmentedProductIsolation.mockResolvedValueOnce({
+      focusBox: { confidence: 0.9, height: 0.7, width: 0.62, x: 0.18, y: 0.14 },
+      frame: {
+        capturedAt: "2026-06-23T00:00:00.000Z",
+        imageBase64: "data:image/png;base64,segmented-product",
+      },
+      isolatedImageBase64: "data:image/png;base64,segmented-product",
     });
 
     render(
@@ -310,17 +320,23 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
 
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
-    expect(createSegmentedProductIsolationFrame).toHaveBeenCalledWith(expect.objectContaining({
+    expect(createSegmentedProductIsolation).toHaveBeenCalledWith(expect.objectContaining({
       imageBase64: "data:image/jpeg;base64,target-crop",
     }));
     expect(identifyCapturedFrame.mock.calls[0][1]).toMatchObject({
       imageBase64: "data:image/jpeg;base64,target-crop",
     });
+    expect(screen.getByTestId("focused-part-overlay")).toHaveAttribute("data-focus-mode", "mask");
     expect(screen.getByTestId("scan-item-view")).toHaveTextContent("Isolated");
     expect(screen.getByAltText("Item view for Alternator")).toHaveAttribute("src", "data:image/png;base64,segmented-product");
+    const savedLookups = JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]");
+    expect(savedLookups[0]).toMatchObject({
+      focusMode: "mask",
+      isolatedImageBase64: "data:image/png;base64,segmented-product",
+    });
   }, 10000);
 
-  it("shows a context AR outline when a body part uses a tighter focus overlay", async () => {
+  it("shows the default focused overlay for body-part results", async () => {
     mockStillImageTarget({
       confidence: 0.82,
       height: 0.5666666667,
@@ -345,17 +361,12 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     await waitFor(() => expect(captureFrame).toHaveBeenCalled());
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
-    expect(screen.getByTestId("lens-context-overlay")).toBeInTheDocument();
-    expect(screen.getByTestId("lens-primary-label")).toHaveTextContent("front bumper");
-    expectOverlayBox(screen.getByTestId("lens-part-overlay-0"), {
-      height: 95.2,
-      left: 71.6,
-      top: 337.6,
-      width: 244.8,
-    });
+    expect(screen.queryByTestId("lens-context-overlay")).not.toBeInTheDocument();
+    expect(screen.getByTestId("focused-part-label")).toHaveTextContent("front bumper");
+    expect(screen.getByTestId("focused-part-window")).toBeInTheDocument();
   }, 10000);
 
-  it("uses a focused AR overlay for brake assemblies instead of the whole scan area", async () => {
+  it("uses the same focused overlay for brake assemblies", async () => {
     mockStillImageTarget({
       confidence: 0.84,
       height: 0.5083333333,
@@ -380,17 +391,12 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     await waitFor(() => expect(captureFrame).toHaveBeenCalled());
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
-    expect(screen.getByTestId("lens-context-overlay")).toBeInTheDocument();
-    expect(screen.getByTestId("lens-primary-label")).toHaveTextContent("Brake Disc and Caliper Assembly");
-    expectOverlayBox(screen.getByTestId("lens-part-overlay-0"), {
-      height: 189.1,
-      left: 19.36,
-      top: 257.9,
-      width: 286.3,
-    });
+    expect(screen.queryByTestId("lens-context-overlay")).not.toBeInTheDocument();
+    expect(screen.getByTestId("focused-part-label")).toHaveTextContent("Brake Disc and Caliper Assembly");
+    expect(screen.getByTestId("focused-part-window")).toBeInTheDocument();
   }, 10000);
 
-  it("uses focused AR overlays for engine assembly and radiator results", async () => {
+  it("uses focused overlays for engine assembly and radiator results", async () => {
     mockStillImageTarget({
       confidence: 0.86,
       height: 0.6,
@@ -414,13 +420,9 @@ describe("Scanner", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
-    expect(screen.getByTestId("lens-context-overlay")).toBeInTheDocument();
-    expectOverlayBox(screen.getByTestId("lens-part-overlay-0"), {
-      height: 194.4,
-      left: 74,
-      top: 233.6,
-      width: 252,
-    });
+    expect(screen.queryByTestId("lens-context-overlay")).not.toBeInTheDocument();
+    expect(screen.getByTestId("focused-part-label")).toHaveTextContent("Engine");
+    expect(screen.getByTestId("focused-part-window")).toBeInTheDocument();
 
     unmount();
     identifyCapturedFrame.mockClear();
@@ -447,13 +449,9 @@ describe("Scanner", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
-    expect(screen.getByTestId("lens-context-overlay")).toBeInTheDocument();
-    expectOverlayBox(screen.getByTestId("lens-part-overlay-0"), {
-      height: 126,
-      left: 114.8,
-      top: 282,
-      width: 190.4,
-    });
+    expect(screen.queryByTestId("lens-context-overlay")).not.toBeInTheDocument();
+    expect(screen.getByTestId("focused-part-label")).toHaveTextContent("Radiator");
+    expect(screen.getByTestId("focused-part-window")).toBeInTheDocument();
   }, 10000);
 
   it("does not turn text-only evidence regions into fake AR boxes", async () => {
@@ -486,8 +484,9 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
 
-    expect(screen.getAllByTestId(/lens-part-overlay-/)).toHaveLength(1);
-    expect(screen.getByTestId("lens-evidence-chip")).toHaveTextContent(/Pulley: Belt pulley visible/);
+    expect(screen.getByTestId("focused-part-window")).toBeInTheDocument();
+    expect(screen.queryByTestId("lens-evidence-chip")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Pulley: Belt pulley visible/)).not.toBeInTheDocument();
   }, 10000);
 
   it("sends a focused target crop as the AI image when the captured still isolates a product", async () => {
@@ -567,7 +566,8 @@ describe("Scanner", () => {
 
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole("heading", { level: 3, name: "Alternator" })).toBeInTheDocument();
-    expect(screen.queryByTestId("lens-part-overlay-0")).not.toBeInTheDocument();
+    expect(screen.getByTestId("focused-part-overlay")).toHaveAttribute("data-focus-mode", "full_frame");
+    expect(screen.getByTestId("focused-part-window")).toBeInTheDocument();
   }, 10000);
 
   it("does not wait for a prominent live target before a manual scan", async () => {
@@ -668,12 +668,12 @@ describe("Scanner", () => {
     expect(reviewCard?.className).toContain("scanner-result-panel");
     expect(reviewCard?.className).toContain("max-h-[min(62dvh,560px)]");
     expect(within(reviewCard as HTMLElement).queryByRole("button", { name: "Open details" })).not.toBeInTheDocument();
-    expect(within(reviewCard as HTMLElement).getByRole("button", { name: "Correct label" })).toBeInTheDocument();
+    expect(within(reviewCard as HTMLElement).queryByRole("button", { name: "Correct label" })).not.toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).queryByRole("button", { name: "Set reference" })).not.toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).queryByRole("button", { name: "Estimate size" })).not.toBeInTheDocument();
   }, 10000);
 
-  it("requires a size reference before estimating AR size for fastener replacement", async () => {
+  it("keeps measurement controls out of the default fastener scan card", async () => {
     identifyCapturedFrame.mockResolvedValueOnce(makeScanResult("Hex nut"));
 
     render(
@@ -689,27 +689,9 @@ describe("Scanner", () => {
     const reviewCard = reviewHeading.closest("section") as HTMLElement | null;
     expect(reviewCard).toBeTruthy();
 
-    await userEvent.click(within(reviewCard as HTMLElement).getByRole("button", { name: "Estimate size" }));
-    expect(await screen.findByText("No point to measure yet.")).toBeInTheDocument();
-  }, 10000);
-
-  it("shows the size reference dropdown options for fastener scans", async () => {
-    identifyCapturedFrame.mockResolvedValueOnce(makeScanResult("Hex nut"));
-
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <Routes>
-          <Route path="/" element={<Scanner />} />
-        </Routes>
-      </MemoryRouter>,
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
-    await screen.findByRole("heading", { level: 3, name: "Hex nut" });
-
-    expect(screen.getByRole("combobox", { name: "Size reference preset" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Set reference" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Estimate size" })).toBeInTheDocument();
+    expect(within(reviewCard as HTMLElement).queryByRole("combobox", { name: "Size reference preset" })).not.toBeInTheDocument();
+    expect(within(reviewCard as HTMLElement).queryByRole("button", { name: "Set reference" })).not.toBeInTheDocument();
+    expect(within(reviewCard as HTMLElement).queryByRole("button", { name: "Estimate size" })).not.toBeInTheDocument();
   }, 10000);
 
   it("lets the user scan with the shutter button", async () => {

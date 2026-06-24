@@ -502,10 +502,10 @@ async function runResultDetail() {
   await seedSavedScans();
   await gotoPath("/result/qa-alternator-1");
   await expectText(/QA Alternator/i, "result part label", "frontend", ["src/screens/Result.tsx", "src/services/storage.ts"]);
-  await expectText(/Tell me more/i, "chat entry link", "frontend", ["src/screens/Result.tsx"]);
+  await expectText(/\bAsk\b/i, "chat entry action", "frontend", ["src/screens/Result.tsx"]);
 
   return {
-    details: "Saved result detail rendered the seeded part and chat entry.",
+    details: "Saved result detail rendered the simple answer and Ask action.",
     likelyFiles: ["src/screens/Result.tsx", "src/services/storage.ts"],
     status: "pass",
   };
@@ -661,12 +661,11 @@ async function runJobResultCorrection() {
   await requireAuthForProtectedRoute("job-result-correction");
   await seedShopData();
   await gotoPath("/result/qa-alternator-1");
-  await expectText(/Mechanic verification/i, "mechanic verification panel", "frontend", ["src/screens/Result.tsx"]);
-  await expectText(/Required next evidence/i, "next evidence section", "frontend", ["src/screens/Result.tsx"]);
-  await expectText(/Correct/i, "correction action", "frontend", ["src/screens/Result.tsx"]);
+  await expectText(/Best match/i, "simple result heading", "frontend", ["src/screens/Result.tsx"]);
+  await expectText(/Saved scan tools/i, "collapsed saved scan tools", "frontend", ["src/screens/Result.tsx"]);
 
   return {
-    details: "Job result rendered mechanic verification, next evidence, and correction controls.",
+    details: "Job result rendered the simple answer first and kept saved scan tools collapsed.",
     likelyFiles: ["src/screens/Result.tsx", "src/services/storage.ts"],
     status: "pass",
   };
@@ -691,10 +690,14 @@ async function runSecondAngleRefinement() {
   await requireAuthForProtectedRoute("second-angle-refinement");
   await seedShopData();
   await gotoPath("/result/qa-alternator-1");
-  await expectText(/Add second angle/i, "second angle action", "frontend", ["src/screens/Result.tsx", "src/screens/Scanner.tsx"]);
+  await expectText(/Best match/i, "simple result answer", "frontend", ["src/screens/Result.tsx"]);
+  const text = await getBodyText();
+  if (/Add second angle|Capture another angle|More evidence/i.test(text)) {
+    throw new Error("Default result still exposes second-angle guidance.");
+  }
 
   return {
-    details: "Result exposed a second-angle refinement path for shop jobs.",
+    details: "Result kept second-angle guidance out of the default simple answer.",
     likelyFiles: ["src/screens/Result.tsx", "src/screens/Scanner.tsx"],
     status: "pass",
   };
@@ -1102,7 +1105,7 @@ async function waitForScannerAiOutcome() {
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     const text = await getBodyText();
-    if (/Lens result|Best match|Complete brief|Tell me more|What this is|Next step/i.test(text)) {
+    if (/Best match|Detected|Visible issue|Item view|Tell me more|What this is|Next step/i.test(text)) {
       return { text: compactText(text), type: "result" };
     }
 

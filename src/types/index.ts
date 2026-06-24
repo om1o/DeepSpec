@@ -5,6 +5,16 @@ export type CapturedFrame = {
   capturedAt: string;
 };
 
+export type VisualFocusMode = "mask" | "crop" | "full_frame";
+
+export type VisualFocusBox = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  confidence: number;
+};
+
 export type SafetyTriage = "can_help" | "needs_better_photo" | "needs_professional";
 
 export type Confidence = "high" | "medium" | "low";
@@ -239,6 +249,9 @@ export type IdentificationResult = {
 
 export type ScanAnalysisState = {
   frame: CapturedFrame;
+  focusBox?: VisualFocusBox;
+  focusMode?: VisualFocusMode;
+  isolatedImageBase64?: string;
   result?: IdentificationResult;
   errorMessage?: string;
   errorCode?: string;
@@ -291,6 +304,9 @@ export type Lookup = {
   id: string;
   createdAt: string;
   frame: CapturedFrame;
+  focusBox?: VisualFocusBox;
+  focusMode?: VisualFocusMode;
+  isolatedImageBase64?: string;
   result?: IdentificationResult;
   errorMessage?: string;
   errorCode?: string;

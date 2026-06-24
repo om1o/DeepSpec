@@ -32,9 +32,9 @@ const payload = {
     "Tap Share, tap Add to Home Screen, keep the Deep Spec name, then open the new app icon.",
     "Choose Account > No email > Continue without email.",
     "Allow camera permission when prompted.",
-    "Scan a real car part in the camera view and wait for the Visual Evidence overlay and review card.",
-    "Confirm the primary target outline is on the actual part, not the whole car or the wrong nearby panel.",
-    "Confirm the scan screen itself shows target, label, confidence, evidence, uncertainty, and next action.",
+    "Scan a real car part in the camera view and wait for the focused item view and simple answer.",
+    "Confirm the focused window lands on the actual part, not the whole car or the wrong nearby panel.",
+    "Confirm the scan screen itself shows one clear label, one useful sentence, and the item view without opening details.",
     "Confirm history and chat still open from the saved result after the scan is saved.",
     "Try uploading one known external QA image from the iPhone photo library.",
     "Record pass/fail, phone model, browser, network, and screenshots.",
@@ -45,8 +45,8 @@ const payload = {
     "Camera permission prompt works",
     "Live camera preview renders",
     "A real car part scans successfully",
-    "Visual target outline lands on the actual part area",
-    "Scan screen shows a specific label, confidence, evidence, and uncertainty without opening details",
+    "Focused item window lands on the actual part area",
+    "Scan screen shows a specific label, simple answer, and item view without opening details",
     "History and chat open for the saved result",
     "History shows the saved scan",
     "iPhone photo-library upload also scans with correct visual target placement",
@@ -94,8 +94,8 @@ function renderMarkdown(data) {
     "- Network:",
     "- Home-screen icon launched:",
     "- Camera scan label:",
-    "- Camera visual target placement:",
-    "- Confidence/evidence/uncertainty shown:",
+    "- Camera focused item placement:",
+    "- Simple answer shown:",
     "- Upload scan label:",
     "- Upload visual target placement:",
     "- Final phone grade:",
@@ -141,7 +141,7 @@ function renderHtml(data) {
   <h2>Result Notes</h2>
   <p>Phone model / Safari version / network / home-screen icon launched:</p>
   <textarea></textarea>
-  <p>Camera scan label, visual target placement, confidence, evidence, and uncertainty:</p>
+  <p>Camera scan label, focused item placement, and simple answer:</p>
   <textarea></textarea>
   <p>Upload scan label and visual target placement:</p>
   <textarea></textarea>

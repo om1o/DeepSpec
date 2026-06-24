@@ -1,4 +1,4 @@
-import type { CapturedFrame } from "../types";
+import type { CapturedFrame, VisualFocusBox } from "../types";
 
 type BackgroundRemovalPipeline = ((image: string) => Promise<RawImageLike | RawImageLike[]>) & {
   dispose?: () => Promise<void> | void;
@@ -21,11 +21,17 @@ type TransformersModule = {
 
 type ProductSegmentationEnv = Partial<Record<"VITE_DEEPSPEC_SEGMENTATION" | "VITE_DEEPSPEC_SEGMENTATION_MODEL", string>>;
 
+export type ProductIsolationResult = {
+  focusBox: VisualFocusBox;
+  frame: CapturedFrame;
+  isolatedImageBase64: string;
+};
+
 const DEFAULT_PRODUCT_SEGMENTATION_MODEL = "onnx-community/MVANet-ONNX";
 const DEFAULT_SEGMENTATION_TIMEOUT_MS = 6500;
 const pipelinesByModel = new Map<string, Promise<BackgroundRemovalPipeline>>();
 
-export async function createSegmentedProductIsolationFrame(frame: CapturedFrame): Promise<CapturedFrame | null> {
+export async function createSegmentedProductIsolation(frame: CapturedFrame): Promise<ProductIsolationResult | null> {
   if (!isProductSegmentationEnabled() || !canUseBrowserSegmentation()) {
     return null;
   }
@@ -47,12 +53,23 @@ export async function createSegmentedProductIsolationFrame(frame: CapturedFrame)
   }
 
   const imageBase64 = await rawImageToDataUrl(primaryImage);
-  return imageBase64
-    ? {
-        capturedAt: new Date().toISOString(),
-        imageBase64,
-      }
-    : null;
+  if (!imageBase64) {
+    return null;
+  }
+
+  const focusBox = await getAlphaFocusBox(imageBase64);
+  if (!focusBox) {
+    return null;
+  }
+
+  return {
+    focusBox,
+    frame: {
+      capturedAt: new Date().toISOString(),
+      imageBase64,
+    },
+    isolatedImageBase64: imageBase64,
+  };
 }
 
 export function isProductSegmentationEnabled(env: ProductSegmentationEnv = import.meta.env as ProductSegmentationEnv) {
@@ -70,7 +87,9 @@ export function resetProductSegmentationForTests() {
 
 function canUseBrowserSegmentation() {
   return typeof window !== "undefined"
+    && typeof document !== "undefined"
     && typeof FileReader !== "undefined"
+    && typeof Image !== "undefined"
     && typeof Blob !== "undefined";
 }
 
@@ -94,6 +113,71 @@ function getBackgroundRemovalPipeline(model: string) {
 
 function rawImageToDataUrl(image: RawImageLike) {
   return image.toBlob("image/png", 1).then(blobToDataUrl).catch(() => null);
+}
+
+function getAlphaFocusBox(imageBase64: string): Promise<VisualFocusBox | null> {
+  return new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => {
+      const width = image.naturalWidth || image.width;
+      const height = image.naturalHeight || image.height;
+      if (width <= 0 || height <= 0) {
+        resolve(null);
+        return;
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        resolve(null);
+        return;
+      }
+
+      context.drawImage(image, 0, 0, width, height);
+      const data = context.getImageData(0, 0, width, height).data;
+      const bounds = getAlphaBounds(data, width, height);
+      resolve(bounds);
+    };
+    image.onerror = () => resolve(null);
+    image.src = imageBase64;
+  });
+}
+
+function getAlphaBounds(data: Uint8ClampedArray, width: number, height: number): VisualFocusBox | null {
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+  let count = 0;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const alpha = data[(y * width + x) * 4 + 3] ?? 0;
+      if (alpha < 24) {
+        continue;
+      }
+
+      count += 1;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+
+  if (count < Math.max(24, width * height * 0.01) || maxX <= minX || maxY <= minY) {
+    return null;
+  }
+
+  return {
+    confidence: Math.min(1, Math.max(0.45, count / Math.max(1, width * height) * 2.2)),
+    height: clamp01((maxY - minY + 1) / height),
+    width: clamp01((maxX - minX + 1) / width),
+    x: clamp01(minX / width),
+    y: clamp01(minY / height),
+  };
 }
 
 function getPrimaryRawImage(image: RawImageLike | RawImageLike[]) {
@@ -133,4 +217,8 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
         }
       });
   });
+}
+
+function clamp01(value: number) {
+  return Math.max(0, Math.min(1, value));
 }

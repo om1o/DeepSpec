@@ -5,6 +5,7 @@ import CloudHealthCard from "../components/CloudHealthCard";
 import Button from "../components/ui/Button";
 import HistoryDockButton from "../components/ui/HistoryDockButton";
 import ScanThumb from "../components/ui/ScanThumb";
+import { getSimpleResultSummary } from "../lib/simpleResultSummary";
 import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } from "../lib/utils";
 import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
 import { buildScanReport, downloadTextFile, getMechanicSearchUrl, getScanReportFilename } from "../services/report";
@@ -12,14 +13,7 @@ import { recordManualCorrection, recordUserTrustScore } from "../services/scanQu
 import { getShopJob } from "../services/shop";
 import { createLookup, deleteLookup, getLookup, scanStateFromLookup, updateLookup, updateLookupResult } from "../services/storage";
 import { getTrainingReadiness, type TrainingReadiness } from "../services/trainingReadiness";
-import type { CandidateMatch, CapturedFrame, Confidence, EvidenceRegion, IdentificationResult, Lookup, Rating, ScanAnalysisState, ShopJob as ShopJobRecord, SourceLink } from "../types";
-
-type DetectedTextFinding = {
-  codes: string[];
-  exactSearchUrl: string;
-  partSearchUrl: string;
-  text: string;
-};
+import type { CapturedFrame, IdentificationResult, Lookup, Rating, ScanAnalysisState, ShopJob as ShopJobRecord } from "../types";
 
 export default function Result() {
   const location = useLocation();
@@ -35,6 +29,7 @@ export default function Result() {
   const shopJob = scanState?.jobId ? getShopJob(scanState.jobId) : null;
   const canSaveForChat = Boolean(scanState?.frame && scanState.result);
   const datasetSourceUrls = scanState?.result ? getDatasetSourceUrls(scanState.result.evidence) : [];
+  const simpleSummary = scanState?.result ? getSimpleResultSummary(scanState.result) : null;
   const manualCorrectionTrackedRef = useRef(false);
 
   function trackManualCorrectionOnce() {
@@ -96,13 +91,16 @@ export default function Result() {
     setSaveError(result.message);
   }
 
-  function handleSaveAndAsk(question?: string) {
+  function saveCurrentScan() {
     if (!scanState?.frame || !scanState.result) {
-      return;
+      return null;
     }
 
     const saved = createLookup({
       frame: scanState.frame,
+      focusBox: scanState.focusBox,
+      focusMode: scanState.focusMode,
+      isolatedImageBase64: scanState.isolatedImageBase64,
       result: scanState.result,
       analyzedAt: scanState.analyzedAt ?? new Date().toISOString(),
       scanQuality: scanState.scanQuality,
@@ -117,18 +115,26 @@ export default function Result() {
 
     if (!saved.ok) {
       setSaveError(saved.message);
-      return;
+      return null;
     }
 
     setLookup(saved.value);
     setSaveError(null);
-    const query = question ? `?q=${encodeURIComponent(question)}` : "";
-    navigate(`/result/${saved.value.id}/chat${query}`);
+    return saved.value;
   }
 
-  function handleRetakeWithGuide() {
-    const jobQuery = scanState?.jobId ? `jobId=${encodeURIComponent(scanState.jobId)}&` : "";
-    navigate(`/scan?${jobQuery}guide=retake`);
+  function handleSaveOnly() {
+    saveCurrentScan();
+  }
+
+  function handleSaveAndAsk(question?: string) {
+    const saved = lookup ?? saveCurrentScan();
+    if (!saved) {
+      return;
+    }
+
+    const query = question ? `?q=${encodeURIComponent(question)}` : "";
+    navigate(`/result/${saved.id}/chat${query}`);
   }
 
   function handleLookupUpdate(result: ReturnType<typeof updateLookup>) {
@@ -151,7 +157,7 @@ export default function Result() {
           {frame?.imageBase64 ? (
             <ScanThumb
               alt="Captured car part"
-              className="absolute inset-0 h-full w-full object-contain"
+              className="absolute inset-0 h-full w-full object-cover"
               src={frame.imageBase64}
             />
           ) : (
@@ -159,9 +165,13 @@ export default function Result() {
               No captured frame yet.
             </div>
           )}
-          <FocusFrame isVisible={Boolean(frame?.imageBase64)} />
-          <ImageEvidenceCallouts regions={scanState?.result?.evidenceRegions} />
-          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(2,6,23,0.68),rgba(2,6,23,0.04)_38%,rgba(2,6,23,0.82))]" />
+          <ResultFocusFrame
+            focusBox={scanState?.focusBox}
+            isVisible={Boolean(frame?.imageBase64)}
+            label={simpleSummary?.title ?? "Captured frame"}
+            mode={scanState?.focusMode ?? "full_frame"}
+          />
+          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(2,6,23,0.58),rgba(2,6,23,0.02)_38%,rgba(2,6,23,0.76))]" />
           <header className="absolute left-0 right-0 top-0 z-10 flex items-center justify-between px-4 pt-[max(18px,env(safe-area-inset-top))]">
             <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-11 w-32 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-white/30" />
             <Link to="/scan" className="rounded-full bg-white/90 px-4 py-2 text-sm font-bold text-slate-800 shadow-sm ring-1 ring-white/40 backdrop-blur-md">
@@ -171,11 +181,11 @@ export default function Result() {
           <div className="absolute bottom-8 left-0 right-0 z-10 px-4">
             <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Scanned photo</p>
             <h1 className="mt-2 truncate text-3xl font-extrabold tracking-tight text-white">
-              {scanState?.result ? scanState.result.partName : "Captured frame"}
+              {simpleSummary?.title ?? "Captured frame"}
             </h1>
-            {scanState?.result ? (
-              <p className="mt-2 text-sm font-semibold text-white/72">
-                {scanState.result.confidence} confidence / {scanState.result.scanCategory}
+            {simpleSummary ? (
+              <p className="mt-2 max-w-xl text-sm font-semibold leading-6 text-white/76">
+                {simpleSummary.body}
               </p>
             ) : null}
           </div>
@@ -192,11 +202,9 @@ export default function Result() {
               result={scanState.result}
               capturedAt={capturedAt}
               canSaveForChat={canSaveForChat}
-              frame={frame}
-              jobId={scanState.jobId ?? null}
               lookupId={lookup?.id ?? null}
-              onRetakeWithGuide={handleRetakeWithGuide}
               onSaveAndAsk={handleSaveAndAsk}
+              onSaveOnly={handleSaveOnly}
             />
           ) : null}
           {scanState?.errorMessage ? (
@@ -257,56 +265,77 @@ function ShopJobBanner({ job }: { job: ShopJobRecord }) {
   );
 }
 
-function FocusFrame({ isVisible }: { isVisible: boolean }) {
+function ResultFocusFrame({
+  focusBox,
+  isVisible,
+  label,
+  mode,
+}: {
+  focusBox: ScanAnalysisState["focusBox"];
+  isVisible: boolean;
+  label: string;
+  mode: NonNullable<ScanAnalysisState["focusMode"]>;
+}) {
   if (!isVisible) {
     return null;
   }
 
+  const box = getResultFocusBox(focusBox);
+  const labelPlacement = box.top > 24
+    ? { bottom: "calc(100% + 10px)", left: 10 }
+    : { left: 10, top: "calc(100% + 10px)" };
+
   return (
-    <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 aspect-[4/3] w-[min(74vw,420px)] -translate-x-1/2 -translate-y-1/2 rounded-[24px] border border-white/32 shadow-[0_0_0_999px_rgba(2,6,23,0.08),0_0_34px_rgba(11,116,255,0.24)]">
-      <div className="absolute -left-1 -top-1 size-8 rounded-tl-[24px] border-l-4 border-t-4 border-[var(--ds-accent)]" />
-      <div className="absolute -right-1 -top-1 size-8 rounded-tr-[24px] border-r-4 border-t-4 border-[var(--ds-accent)]" />
-      <div className="absolute -bottom-1 -left-1 size-8 rounded-bl-[24px] border-b-4 border-l-4 border-[var(--ds-accent)]" />
-      <div className="absolute -bottom-1 -right-1 size-8 rounded-br-[24px] border-b-4 border-r-4 border-[var(--ds-accent)]" />
-      <span className="absolute left-1/2 top-[calc(100%+12px)] -translate-x-1/2 rounded-full bg-black/56 px-3 py-1 text-[11px] font-extrabold uppercase tracking-[0.16em] text-white/88 ring-1 ring-white/12 backdrop-blur-md">
-        Scanned area
-      </span>
+    <div className="pointer-events-none absolute inset-0 z-10" data-focus-mode={mode} data-testid="result-focus-frame">
+      <div className="absolute left-0 top-0 w-full bg-slate-950/62 backdrop-blur-md" style={{ height: `${box.top}%` }} />
+      <div className="absolute left-0 bg-slate-950/62 backdrop-blur-md" style={{ height: `${box.height}%`, top: `${box.top}%`, width: `${box.left}%` }} />
+      <div className="absolute right-0 bg-slate-950/62 backdrop-blur-md" style={{ height: `${box.height}%`, top: `${box.top}%`, width: `${Math.max(0, 100 - box.left - box.width)}%` }} />
+      <div className="absolute bottom-0 left-0 w-full bg-slate-950/62 backdrop-blur-md" style={{ top: `${box.top + box.height}%` }} />
+      <div
+        className="absolute rounded-[18px] outline outline-2 outline-white/90"
+        style={{
+          height: `${box.height}%`,
+          left: `${box.left}%`,
+          top: `${box.top}%`,
+          width: `${box.width}%`,
+        }}
+      >
+        <div className="absolute -left-1 -top-1 size-7 rounded-tl-[18px] border-l-4 border-t-4 border-white" />
+        <div className="absolute -right-1 -top-1 size-7 rounded-tr-[18px] border-r-4 border-t-4 border-white" />
+        <div className="absolute -bottom-1 -left-1 size-7 rounded-bl-[18px] border-b-4 border-l-4 border-white" />
+        <div className="absolute -bottom-1 -right-1 size-7 rounded-br-[18px] border-b-4 border-r-4 border-white" />
+        <div
+          className="absolute max-w-[min(300px,82vw)] rounded-[14px] bg-white px-3 py-2 text-slate-950 shadow-[0_16px_40px_rgba(2,6,23,0.34)]"
+          style={labelPlacement}
+        >
+          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-[var(--ds-accent)]">
+            {mode === "mask" ? "Focused item" : "Detected item"}
+          </p>
+          <p className="mt-0.5 truncate text-sm font-black">{label}</p>
+        </div>
+      </div>
     </div>
   );
 }
 
-function ImageEvidenceCallouts({ regions }: { regions: EvidenceRegion[] | undefined }) {
-  const callouts = regions?.slice(0, 3) ?? [];
-  if (!callouts.length) {
-    return null;
+function getResultFocusBox(focusBox: ScanAnalysisState["focusBox"]) {
+  if (!focusBox) {
+    return { height: 38, left: 16, top: 28, width: 68 };
   }
 
-  return (
-    <div className="pointer-events-none absolute inset-0 z-10">
-      {callouts.map((region) => (
-        <div
-          key={`${region.regionLabel}-${region.label}`}
-          className={`absolute max-w-[190px] rounded-2xl border border-white/30 bg-slate-950/72 px-3 py-2 text-white shadow-[0_14px_34px_rgba(0,0,0,0.28)] backdrop-blur-md ${getEvidenceCalloutPosition(region.regionLabel)}`}
-        >
-          <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-white/62">{region.regionLabel}</p>
-          <p className="mt-1 truncate text-xs font-extrabold">{region.label}</p>
-        </div>
-      ))}
-    </div>
-  );
-}
+  const paddingX = Math.max(2.5, focusBox.width * 8);
+  const paddingY = Math.max(2.5, focusBox.height * 8);
+  const left = clampPercent((focusBox.x * 100) - paddingX);
+  const top = clampPercent((focusBox.y * 100) - paddingY);
+  const right = clampPercent(((focusBox.x + focusBox.width) * 100) + paddingX);
+  const bottom = clampPercent(((focusBox.y + focusBox.height) * 100) + paddingY);
 
-function getEvidenceCalloutPosition(regionLabel: string) {
-  const label = regionLabel.toLowerCase();
-  if (/upper|top/.test(label) && /left/.test(label)) return "left-[8%] top-[22%]";
-  if (/upper|top/.test(label) && /right/.test(label)) return "right-[8%] top-[22%]";
-  if (/lower|bottom/.test(label) && /left/.test(label)) return "bottom-[24%] left-[8%]";
-  if (/lower|bottom/.test(label) && /right/.test(label)) return "bottom-[24%] right-[8%]";
-  if (/left/.test(label)) return "left-[8%] top-1/2 -translate-y-1/2";
-  if (/right/.test(label)) return "right-[8%] top-1/2 -translate-y-1/2";
-  if (/lower|bottom/.test(label)) return "bottom-[24%] left-1/2 -translate-x-1/2";
-  if (/upper|top/.test(label)) return "left-1/2 top-[22%] -translate-x-1/2";
-  return "left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2";
+  return {
+    height: clampRange(bottom - top, 14, 82),
+    left,
+    top,
+    width: clampRange(right - left, 18, 88),
+  };
 }
 
 function StorageWarning({ message }: { message: string }) {
@@ -384,7 +413,11 @@ function SavedScanControls({
   }
 
   return (
-    <section id="shop-feedback" className="rounded-[22px] border border-neutral-200 bg-white p-4">
+    <details className="rounded-[22px] border border-neutral-200 bg-white p-4">
+      <summary className="cursor-pointer text-sm font-extrabold text-neutral-900">
+        Saved scan tools
+      </summary>
+      <section id="shop-feedback" className="mt-4">
       <p className="text-sm font-extrabold text-neutral-900">Saved scan</p>
       <p className="mt-2 text-sm leading-6 text-neutral-500">
         {lookup.jobId
@@ -512,7 +545,8 @@ function SavedScanControls({
       <Button className="mt-4 w-full border border-[var(--ds-danger-line)] !bg-[var(--ds-danger-soft)] !text-[var(--ds-danger)] shadow-none" onClick={onDelete}>
         Delete saved scan
       </Button>
-    </section>
+      </section>
+    </details>
   );
 }
 
@@ -551,45 +585,35 @@ function TrainingReadinessCard({ readiness }: { readiness: TrainingReadiness }) 
 function AnalysisResult({
   canSaveForChat,
   capturedAt,
-  frame,
-  jobId,
   lookupId,
-  onRetakeWithGuide,
   onSaveAndAsk,
+  onSaveOnly,
   result,
 }: {
   canSaveForChat: boolean;
   capturedAt: string | null;
-  frame: CapturedFrame | null | undefined;
-  jobId: string | null;
   lookupId: string | null;
-  onRetakeWithGuide: () => void;
   onSaveAndAsk: (question?: string) => void;
+  onSaveOnly: () => void;
   result: IdentificationResult;
 }) {
-  const [activePanel, setActivePanel] = useState<ResultPanelId>("match");
+  const summary = getSimpleResultSummary(result);
   const showSafetyWarning = result.isSafetyCritical || result.safetyTriage === "needs_professional";
-  const trustReview = getTrustReview(result);
-  const needsBetterPhoto = result.needsBetterPhoto || result.safetyTriage === "needs_better_photo";
-  const confidenceRange = getConfidenceRange(result);
-  const confirmationMessage = getConfirmationMessage(result);
-  const shouldShowRetakeGuide = needsBetterPhoto || result.confidence !== "high" || result.confirmationNeed === "one_more_angle";
 
   return (
     <>
       <section className="sticky top-2 z-10 rounded-[24px] border border-neutral-200 bg-white p-4 shadow-[0_12px_34px_rgba(15,23,42,0.08)]">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Best match</p>
+            <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">{summary.eyebrow}</p>
             <h2 className="mt-1 text-2xl font-extrabold tracking-tight">
-              Likely {result.partName}
+              {summary.title}
             </h2>
           </div>
-          <ConfidenceBadge confidence={result.confidence} range={confidenceRange} />
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           <MiniPill label={result.scanCategory} />
-          <MiniPill label={trustReview.status} />
+          {isOnDeviceResult(result) || shouldShowBackupModelNotice(result) ? <MiniPill label="Estimate" /> : null}
         </div>
         {isOnDeviceResult(result) ? (
           <p className="mt-3 rounded-2xl border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-3 py-2 text-xs font-semibold leading-5 text-neutral-700">
@@ -600,10 +624,10 @@ function AnalysisResult({
             Identified with a backup AI model because the main model was busy. Double-check this result before relying on it.
           </p>
         ) : null}
-        <p className="mt-3 text-sm leading-6 text-neutral-600">{trustReview.description}</p>
-        <p className="mt-2 text-sm font-bold leading-6 text-neutral-700">{confirmationMessage}</p>
+        <p className="mt-3 text-sm leading-6 text-neutral-600">{summary.body}</p>
+        {summary.nextAction ? <p className="mt-2 text-sm font-bold leading-6 text-neutral-700">{summary.nextAction}</p> : null}
         {capturedAt ? <p className="mt-3 text-xs font-semibold text-neutral-400">Captured {capturedAt}</p> : null}
-        <QuickActions canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
+        <QuickActions canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} onSaveOnly={onSaveOnly} />
       </section>
 
       {showSafetyWarning ? (
@@ -614,186 +638,8 @@ function AnalysisResult({
           </p>
         </section>
       ) : null}
-
-      {needsBetterPhoto ? (
-        <section className="rounded-[22px] border border-neutral-200 bg-neutral-50 p-4">
-          <p className="text-sm font-extrabold text-neutral-900">Better photo needed</p>
-          <p className="mt-2 text-sm leading-6 text-neutral-500">
-            Move closer, add light, and center any label, connector, hose, or damaged area in the lens frame.
-          </p>
-        </section>
-      ) : null}
-
-      {shouldShowRetakeGuide ? (
-        <GuidedRetakeSection frame={frame} onRetakeWithGuide={onRetakeWithGuide} result={result} />
-      ) : null}
-
-      <CompleteBrief result={result} />
-
-      <MechanicResultPanel jobId={jobId} lookupId={lookupId} result={result} />
-
-      <section className="rounded-[22px] border border-neutral-200 bg-white p-2 shadow-sm">
-        <div className="grid grid-cols-4 gap-1" role="tablist" aria-label="Result sections">
-          {RESULT_PANELS.map((panel) => (
-            <ResultPanelButton key={panel.id} active={activePanel === panel.id} label={panel.label} onClick={() => setActivePanel(panel.id)} />
-          ))}
-        </div>
-      </section>
-
-      {activePanel === "match" ? (
-        <>
-          <CandidateMatchesSection candidates={result.candidateMatches ?? []} />
-          <DetectedTextSection findings={getDetectedTextFindings(result)} />
-          <ResultSection title="Match" items={[result.whatItDoes]} />
-          <ResultSection title="Next action" items={[result.nextAction]} />
-        </>
-      ) : null}
-
-      {activePanel === "evidence" ? (
-        <>
-          <EvidenceRegionsSection regions={result.evidenceRegions ?? []} />
-          <EvidenceSection items={result.evidence} />
-          <ResultSection title="Concerns" items={result.concerns} emptyText="Nothing concerning visible." />
-        </>
-      ) : null}
-
-      {activePanel === "sources" ? <ReferenceLinksSection links={getReferenceLinks(result)} /> : null}
-
-      {activePanel === "review" ? (
-        <FollowUpSuggestions canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} result={result} />
-      ) : null}
     </>
   );
-}
-
-function CompleteBrief({ result }: { result: IdentificationResult }) {
-  const coverage = getDataCoverage(result);
-  const missingData = getMissingData(result);
-  const questions = getMechanicQuestions(result);
-  const uncertaintyReasons = getUncertaintyReasons(result);
-
-  return (
-    <section aria-labelledby="complete-brief-heading" className="rounded-[24px] border border-[var(--ds-accent-line)] bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Owner decision pack</p>
-          <h2 id="complete-brief-heading" className="mt-1 text-xl font-extrabold tracking-tight text-neutral-950">Complete brief</h2>
-        </div>
-        <div className="shrink-0 rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-right">
-          <p className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-neutral-400">Scan coverage</p>
-          <p className="mt-1 text-lg font-extrabold text-neutral-950">{coverage.score}/{coverage.total}</p>
-        </div>
-      </div>
-
-      <div className="mt-4 grid grid-cols-1 gap-2">
-        <BriefRow label="What it is" value={`${result.partName} / ${result.scanCategory} / ${result.confidence} confidence`} />
-        <BriefRow label="Why it matters" value={result.whatItDoes} />
-        <BriefRow label="Do next" value={result.nextAction} />
-      </div>
-
-      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <BriefList title="What could be wrong" items={uncertaintyReasons} emptyText="No major uncertainty flagged, but confirm fit and symptoms before repair." />
-        <BriefList title="Still missing" items={missingData} emptyText="Enough data for a useful first pass. A second angle can still improve certainty." />
-        <BriefList title="Ask before repair" items={questions} />
-      </div>
-    </section>
-  );
-}
-
-function MechanicResultPanel({
-  jobId,
-  lookupId,
-  result,
-}: {
-  jobId: string | null;
-  lookupId: string | null;
-  result: IdentificationResult;
-}) {
-  const candidates = getMechanicCandidates(result);
-  const nextEvidence = result.requiredNextEvidence?.length
-    ? result.requiredNextEvidence
-    : ["VIN", "label photo", "second angle", "measurement reference"];
-
-  return (
-    <section className="rounded-[24px] border border-[var(--ds-accent-line)] bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Mechanic verification</p>
-          <h2 className="mt-1 text-xl font-extrabold tracking-tight">Ranked answer</h2>
-        </div>
-        <span className="rounded-full bg-[var(--ds-accent-soft)] px-3 py-1 text-xs font-black capitalize text-[var(--ds-accent)]">
-          {(result.fitmentConfidence ?? "needs_vehicle_context").replaceAll("_", " ")}
-        </span>
-      </div>
-
-      <div className="mt-4 rounded-[8px] border border-slate-200 bg-slate-50 px-3 py-3">
-        <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-400">Top answer</p>
-        <p className="mt-1 text-lg font-black tracking-tight">{result.primaryPart?.partName ?? result.partName}</p>
-        <p className="mt-2 text-sm leading-6 text-slate-600">
-          {(result.visibleObservations[0] || result.whatItDoes)}
-        </p>
-      </div>
-
-      {candidates.length ? (
-        <div className="mt-3 grid gap-2">
-          {candidates.map((candidate, index) => (
-            <div key={`${candidate.partName}-${index}`} className="rounded-[8px] border border-slate-200 bg-white px-3 py-3">
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-sm font-black text-slate-950">{index + 1}. {candidate.partName}</p>
-                <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[11px] font-black capitalize text-slate-500">{candidate.confidence}</span>
-              </div>
-              <p className="mt-2 text-sm leading-5 text-slate-600">Why this: {candidate.whyThis}</p>
-              <p className="mt-1 text-sm leading-5 text-slate-500">Why not: {candidate.whyNot}</p>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      <div className="mt-4 rounded-[8px] bg-[var(--ds-warn-soft)] px-3 py-3">
-        <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--ds-warn-ink)]">Required next evidence</p>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {nextEvidence.slice(0, 5).map((item) => (
-            <span key={item} className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-700 ring-1 ring-[var(--ds-warn-line)]">
-              {item}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-2">
-        <a className="rounded-full bg-[var(--ds-ok)] px-3 py-2 text-center text-xs font-extrabold text-white" href={lookupId ? "#shop-feedback" : "#"}>
-          Confirm
-        </a>
-        <a className="rounded-full bg-neutral-100 px-3 py-2 text-center text-xs font-extrabold text-neutral-900" href={lookupId ? "#shop-feedback" : "#"}>
-          Correct
-        </a>
-        <Link className="rounded-full bg-neutral-100 px-3 py-2 text-center text-xs font-extrabold text-neutral-900" to={jobId ? `/scan?jobId=${encodeURIComponent(jobId)}&guide=retake` : "/scan?guide=retake"}>
-          Add second angle
-        </Link>
-        <Link className="rounded-full bg-neutral-100 px-3 py-2 text-center text-xs font-extrabold text-neutral-900" to={jobId ? `/shop/jobs/${encodeURIComponent(jobId)}` : "/history"}>
-          Add VIN
-        </Link>
-      </div>
-    </section>
-  );
-}
-
-function getMechanicCandidates(result: IdentificationResult) {
-  if (result.candidateParts?.length) {
-    return result.candidateParts.slice(0, 3).map((candidate) => ({
-      confidence: candidate.confidence,
-      partName: candidate.partName,
-      whyNot: candidate.whyNotPrimary || "Needs VIN, label, second angle, or measurement reference before exact fitment.",
-      whyThis: candidate.evidence[0] || "Visible shape and location match this candidate.",
-    }));
-  }
-
-  return result.candidateMatches.slice(0, 3).map((candidate) => ({
-    confidence: candidate.confidence,
-    partName: candidate.partName,
-    whyNot: "Candidate is ranked below the top answer until more evidence is added.",
-    whyThis: candidate.reason,
-  }));
 }
 
 function shouldShowBackupModelNotice(result: IdentificationResult) {
@@ -804,150 +650,6 @@ function shouldShowBackupModelNotice(result: IdentificationResult) {
 function isOnDeviceResult(result: IdentificationResult) {
   return result.modelRun?.provider === "on-device";
 }
-
-function GuidedRetakeSection({
-  frame,
-  onRetakeWithGuide,
-  result,
-}: {
-  frame: CapturedFrame | null | undefined;
-  onRetakeWithGuide: () => void;
-  result: IdentificationResult;
-}) {
-  return (
-    <section className="rounded-[24px] border border-[var(--ds-accent-line)] bg-white p-4 shadow-sm">
-      <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">More evidence</p>
-      <h2 className="mt-1 text-xl font-extrabold tracking-tight">One more angle can confirm it</h2>
-      <div className="mt-4 grid grid-cols-2 gap-3">
-        <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50">
-          <div className="aspect-[4/3] bg-slate-950">
-            {frame?.imageBase64 ? (
-              <ScanThumb alt="Current scan" className="h-full w-full object-cover" src={frame.imageBase64} />
-            ) : null}
-          </div>
-          <p className="px-3 py-2 text-xs font-black text-neutral-500">Current</p>
-        </div>
-        <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50">
-          <div className="grid aspect-[4/3] place-items-center bg-[linear-gradient(135deg,#07111f,#0d3b66)] px-3 text-center text-white">
-            <div>
-              <div className="mx-auto mb-2 aspect-[4/3] w-24 rounded-[14px] border-2 border-[var(--ds-accent)] shadow-[0_0_28px_rgba(11,116,255,0.42)]" />
-              <p className="text-[11px] font-black uppercase tracking-[0.14em]">Closer + slight angle</p>
-            </div>
-          </div>
-          <p className="px-3 py-2 text-xs font-black text-neutral-500">Better angle</p>
-        </div>
-      </div>
-      <p className="mt-3 text-sm leading-6 text-neutral-600">
-        Center the {result.partName}, keep labels or bolt heads visible, and avoid glare.
-      </p>
-      <Button className="mt-4 w-full" onClick={onRetakeWithGuide}>
-        Capture another angle
-      </Button>
-    </section>
-  );
-}
-
-function BriefRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3">
-      <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-neutral-400">{label}</p>
-      <p className="mt-1 text-sm leading-6 text-neutral-800">{value}</p>
-    </div>
-  );
-}
-
-function BriefList({
-  emptyText,
-  items,
-  title,
-}: {
-  emptyText?: string;
-  items: string[];
-  title: string;
-}) {
-  const visibleItems = items.filter(Boolean).slice(0, 4);
-
-  return (
-    <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3">
-      <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-neutral-400">{title}</p>
-      {visibleItems.length > 0 ? (
-        <ul className="mt-2 space-y-2 text-sm leading-5 text-neutral-800">
-          {visibleItems.map((item) => (
-            <li key={item}>{item}</li>
-          ))}
-        </ul>
-      ) : (
-        <p className="mt-2 text-sm leading-5 text-neutral-600">{emptyText}</p>
-      )}
-    </div>
-  );
-}
-
-type ResultPanelId = "match" | "evidence" | "sources" | "review";
-
-const RESULT_PANELS: { id: ResultPanelId; label: string }[] = [
-  { id: "match", label: "Match" },
-  { id: "evidence", label: "Evidence" },
-  { id: "sources", label: "Sources" },
-  { id: "review", label: "Review" },
-];
-
-function ResultPanelButton({
-  active,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      aria-selected={active}
-      className={
-        active
-          ? "min-h-10 rounded-[16px] bg-[var(--ds-accent)] px-2 text-xs font-extrabold text-white"
-          : "min-h-10 rounded-[16px] px-2 text-xs font-extrabold text-neutral-500"
-      }
-      onClick={onClick}
-      role="tab"
-      type="button"
-    >
-      {label}
-    </button>
-  );
-}
-
-function CandidateMatchesSection({ candidates }: { candidates: CandidateMatch[] }) {
-  if (!candidates.length) {
-    return null;
-  }
-
-  return (
-    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
-      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Other possible matches</h2>
-      <div className="mt-3 grid grid-cols-1 gap-2">
-        {candidates.map((candidate) => (
-          <div key={`${candidate.partName}-${candidate.reason}`} className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-extrabold text-neutral-900">{candidate.partName}</p>
-              <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[11px] font-extrabold capitalize text-neutral-500 ring-1 ring-neutral-200">
-                {candidate.confidence}
-              </span>
-            </div>
-            <p className="mt-1 text-xs font-semibold capitalize text-neutral-400">{candidate.scanCategory}</p>
-            <p className="mt-2 text-sm leading-5 text-neutral-600">{candidate.reason}</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-type TrustReview = {
-  description: string;
-  status: string;
-};
 
 function MiniPill({ label }: { label: string }) {
   return (
@@ -961,174 +663,40 @@ function QuickActions({
   canSaveForChat,
   lookupId,
   onSaveAndAsk,
-  result,
+  onSaveOnly,
 }: {
   canSaveForChat: boolean;
   lookupId: string | null;
   onSaveAndAsk: () => void;
-  result: IdentificationResult;
+  onSaveOnly: () => void;
 }) {
-  const nearbyUrl = getMapsSearchUrl(result);
   let askAction = null;
   if (lookupId) {
     askAction = (
-      <Link className="rounded-full bg-[var(--ds-accent)] px-3 py-2 text-center text-xs font-extrabold text-white" to={`/result/${lookupId}/chat`}>
+      <Link className="rounded-full bg-[var(--ds-accent)] px-4 py-3 text-center text-sm font-extrabold text-white" to={`/result/${lookupId}/chat`}>
         Ask
       </Link>
     );
   } else if (canSaveForChat) {
     askAction = (
-      <button className="rounded-full bg-[var(--ds-accent)] px-3 py-2 text-center text-xs font-extrabold text-white" type="button" onClick={onSaveAndAsk}>
+      <button className="rounded-full bg-[var(--ds-accent)] px-4 py-3 text-center text-sm font-extrabold text-white" type="button" onClick={onSaveAndAsk}>
         Ask
       </button>
     );
   }
-  const canAsk = Boolean(askAction);
 
   return (
-    <div className={`mt-4 grid ${canAsk ? "grid-cols-3" : "grid-cols-2"} gap-2`}>
-      <Link className="rounded-full bg-neutral-100 px-3 py-2 text-center text-xs font-extrabold text-neutral-900" to="/scan">
-        Refine
-      </Link>
-      {askAction}
-      <a
-        className="rounded-full bg-neutral-100 px-3 py-2 text-center text-xs font-extrabold text-neutral-900"
-        href={nearbyUrl}
-        rel="noreferrer"
-        target="_blank"
+    <div className="mt-4 grid grid-cols-2 gap-2">
+      {askAction ?? <span aria-hidden className="rounded-full bg-neutral-100 px-4 py-3" />}
+      <button
+        className="rounded-full bg-neutral-100 px-4 py-3 text-center text-sm font-extrabold text-neutral-900 disabled:text-neutral-400"
+        disabled={Boolean(lookupId) || !canSaveForChat}
+        onClick={onSaveOnly}
+        type="button"
       >
-        Nearby
-      </a>
+        {lookupId ? "Saved" : "Save"}
+      </button>
     </div>
-  );
-}
-
-function DetectedTextSection({ findings }: { findings: DetectedTextFinding[] }) {
-  const [copyStatus, setCopyStatus] = useState<string | null>(null);
-  if (!findings.length) {
-    return null;
-  }
-
-  const codeCount = findings.reduce((sum, finding) => sum + finding.codes.length, 0);
-
-  async function copyText(text: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopyStatus("Copied");
-    } catch {
-      setCopyStatus("Copy failed");
-    }
-  }
-
-  return (
-    <section aria-labelledby="detected-text-heading" className="overflow-hidden rounded-[28px] border border-neutral-200 bg-white shadow-[0_18px_48px_rgba(15,23,42,0.14)]">
-      <div className="grid place-items-center bg-neutral-50 pt-3">
-        <div className="h-1.5 w-12 rounded-full bg-neutral-300" />
-      </div>
-      <header className="border-b border-neutral-200 bg-neutral-50 px-4 pb-4 pt-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--ds-evidence-ink)]">Image text</p>
-            <h2 id="detected-text-heading" className="mt-1 text-xl font-extrabold tracking-tight text-neutral-950">Text output</h2>
-          </div>
-          <span className="shrink-0 rounded-full border border-neutral-200 bg-white px-3 py-1 text-[11px] font-extrabold text-neutral-500">
-            {codeCount ? `${codeCount} code${codeCount === 1 ? "" : "s"}` : "label"}
-          </span>
-        </div>
-        {copyStatus ? <p className="mt-3 text-xs font-extrabold text-[var(--ds-evidence-ink)]">{copyStatus}</p> : null}
-      </header>
-      <div className="divide-y divide-neutral-200">
-        {findings.map((finding) => (
-          <article key={finding.text} className="p-4">
-            <div className="rounded-[18px] bg-slate-950 px-4 py-4 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.10)]">
-              <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-white/54">Detected label</p>
-              <p className="mt-2 break-words font-mono text-lg font-extrabold leading-7 text-white">{finding.text}</p>
-            </div>
-            {finding.codes.length ? (
-              <div className="mt-3 overflow-hidden rounded-[16px] border border-neutral-200 bg-neutral-50">
-                <p className="border-b border-neutral-200 px-3 py-2 text-[11px] font-extrabold uppercase tracking-[0.14em] text-neutral-400">Likely part number</p>
-                {finding.codes.map((code) => (
-                  <div key={code} className="flex items-center justify-between gap-3 px-3 py-3">
-                    <span className="text-sm font-semibold text-neutral-500">Candidate code</span>
-                    <span className="break-all text-right font-mono text-sm font-extrabold text-neutral-950">{code}</span>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <button
-                className="min-h-11 rounded-[14px] border border-neutral-200 bg-neutral-50 px-3 text-sm font-extrabold text-neutral-900"
-                onClick={() => void copyText(finding.text)}
-                type="button"
-              >
-                Copy text
-              </button>
-              <a
-                className="grid min-h-11 place-items-center rounded-[14px] bg-[var(--ds-accent)] px-3 text-center text-sm font-extrabold text-white"
-                href={finding.exactSearchUrl}
-                rel="noreferrer"
-                target="_blank"
-              >
-                Search exact
-              </a>
-              <a
-                className="col-span-2 grid min-h-11 place-items-center rounded-[14px] border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 text-center text-sm font-extrabold text-[var(--ds-evidence-ink)]"
-                href={finding.partSearchUrl}
-                rel="noreferrer"
-                target="_blank"
-              >
-                Search with part
-              </a>
-            </div>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function FollowUpSuggestions({
-  canSaveForChat,
-  lookupId,
-  onSaveAndAsk,
-  result,
-}: {
-  canSaveForChat: boolean;
-  lookupId: string | null;
-  onSaveAndAsk: (question: string) => void;
-  result: IdentificationResult;
-}) {
-  const prompts = getFollowUpPrompts(result);
-  if (!lookupId && !canSaveForChat) {
-    return null;
-  }
-
-  return (
-    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
-      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Ask next</h2>
-      <div className="mt-3 grid grid-cols-1 gap-2">
-        {prompts.map((prompt) => (
-          lookupId ? (
-            <Link
-              key={prompt.question}
-              className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3 text-sm font-bold leading-5 text-[var(--ds-evidence-ink)]"
-              to={`/result/${lookupId}/chat?q=${encodeURIComponent(prompt.question)}`}
-            >
-              {prompt.label}
-            </Link>
-          ) : (
-            <button
-              key={prompt.question}
-              className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3 text-left text-sm font-bold leading-5 text-[var(--ds-evidence-ink)]"
-              type="button"
-              onClick={() => onSaveAndAsk(prompt.question)}
-            >
-              {prompt.label}
-            </button>
-          )
-        ))}
-      </div>
-    </section>
   );
 }
 
@@ -1138,84 +706,6 @@ function TrustRow({ label, value }: { label: string; value: string }) {
       <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-neutral-400">{label}</p>
       <p className="mt-1 text-sm leading-6 text-neutral-700">{value}</p>
     </div>
-  );
-}
-
-function EvidenceSection({ items }: { items: string[] }) {
-  const visibleItems = items.map(formatEvidenceItem).filter(Boolean);
-
-  return (
-    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
-      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Visual clues</h2>
-      {visibleItems.length > 0 ? (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {visibleItems.map((item) => (
-            <span key={item} className="rounded-full border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 py-2 text-xs font-semibold leading-5 text-[var(--ds-evidence-ink)]">
-              {item}
-            </span>
-          ))}
-        </div>
-      ) : (
-        <p className="mt-3 text-sm leading-6 text-neutral-500">No visual evidence returned. Treat this result as uncertain.</p>
-      )}
-    </section>
-  );
-}
-
-function EvidenceRegionsSection({ regions }: { regions: EvidenceRegion[] }) {
-  if (!regions.length) {
-    return null;
-  }
-
-  return (
-    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
-      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Image evidence</h2>
-      <div className="mt-3 grid grid-cols-1 gap-2">
-        {regions.map((region) => (
-          <div key={`${region.label}-${region.observation}`} className="rounded-2xl border border-[var(--ds-evidence-line)] bg-[var(--ds-evidence-soft)] px-3 py-3">
-            <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--ds-evidence-ink)]">{region.regionLabel}</p>
-            <p className="mt-1 text-sm font-extrabold text-neutral-900">{region.label}</p>
-            <p className="mt-1 text-sm leading-5 text-neutral-700">{region.observation}</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function formatEvidenceItem(item: string) {
-  const cleaned = item.trim();
-  if (!cleaned || /^Dataset source:|^OCR label text:/i.test(cleaned)) {
-    return "";
-  }
-
-  return cleaned
-    .replace(/^Local dataset match:\s*/i, "Similar dataset sample: ");
-}
-
-type ReferenceLink = Pick<SourceLink, "label" | "sourceType" | "url">;
-
-function ReferenceLinksSection({ links }: { links: ReferenceLink[] }) {
-  return (
-    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
-      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">Ranked sources</h2>
-      <div className="mt-3 grid grid-cols-2 gap-2">
-        {links.map((link) => (
-          <a
-            key={link.url}
-            className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3 text-sm font-bold leading-5 text-[var(--ds-evidence-ink)]"
-            href={link.url}
-            rel="noreferrer"
-            target="_blank"
-          >
-            {link.label}
-            <span aria-hidden="true" className="mt-1 block text-[11px] font-extrabold uppercase tracking-[0.12em] text-neutral-400">
-              {link.sourceType}
-            </span>
-          </a>
-        ))}
-      </div>
-    </section>
   );
 }
 
@@ -1363,258 +853,12 @@ function NotAnalyzed({ capturedAt }: { capturedAt: string | null }) {
   );
 }
 
-function ResultSection({
-  emptyText,
-  items,
-  title,
-}: {
-  emptyText?: string;
-  items: string[];
-  title: string;
-}) {
-  const visibleItems = items.filter(Boolean);
-
-  return (
-    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
-      <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-neutral-500">{title}</h2>
-      {visibleItems.length > 0 ? (
-        <ul className="mt-3 space-y-2 text-sm leading-6 text-neutral-800">
-          {visibleItems.map((item) => (
-            <li key={item}>{item}</li>
-          ))}
-        </ul>
-      ) : (
-        <p className="mt-3 text-sm leading-6 text-neutral-500">{emptyText}</p>
-      )}
-    </section>
-  );
-}
-
-function getConfidenceRange(result: IdentificationResult) {
-  if (result.confidenceRange) {
-    const low = clampPercent(result.confidenceRange.low);
-    const high = clampPercent(result.confidenceRange.high);
-    return low <= high ? { low, high } : { low: high, high: low };
-  }
-
-  const score = result.confidenceScore ?? (result.confidence === "high" ? 84 : result.confidence === "medium" ? 72 : 48);
-  const spread = score >= 80 ? 6 : score >= 65 ? 8 : 12;
-  return {
-    high: clampPercent(score + spread),
-    low: clampPercent(score - spread),
-  };
-}
-
-function getConfirmationMessage(result: IdentificationResult) {
-  if (result.confirmationNeed === "reference_needed" || isFastenerResult(result)) {
-    return "Exact size needs a reference object on the same plane.";
-  }
-
-  if (result.confirmationNeed === "one_more_angle" || result.confidence !== "high" || result.needsBetterPhoto || result.safetyTriage === "needs_better_photo") {
-    return "Need one more angle to confirm.";
-  }
-
-  return "Enough evidence for a useful first pass.";
-}
-
-function isFastenerResult(result: IdentificationResult) {
-  return /\b(nut|bolt|screw|stud|thread|washer|fastener)\b/i.test(
-    [
-      result.partName,
-      result.whatItDoes,
-      result.nextAction,
-      ...result.visibleObservations,
-      ...result.evidence,
-    ].join(" "),
-  );
-}
-
 function clampPercent(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
-function ConfidenceBadge({
-  confidence,
-  range,
-}: {
-  confidence: Confidence;
-  range: { high: number; low: number };
-}) {
-  const styles = {
-    high: "bg-[var(--ds-ok-soft)] text-[var(--ds-ok-ink)] border-[var(--ds-ok-line)]",
-    medium: "bg-[var(--ds-warn-soft)] text-[var(--ds-warn-ink)] border-[var(--ds-warn-line)]",
-    low: "bg-[var(--ds-danger-soft)] text-[var(--ds-danger-ink)] border-[var(--ds-danger-line)]",
-  };
-
-  return (
-    <span className={`shrink-0 rounded-full border px-3 py-1 text-xs font-extrabold capitalize ${styles[confidence]}`}>
-      {range.low}-{range.high}%
-    </span>
-  );
-}
-
-function getReferenceLinks(result: IdentificationResult): ReferenceLink[] {
-  const sourceLinks = (result.sourceLinks ?? []).filter((link) => /^https:\/\//.test(link.url));
-  const defaults: ReferenceLink[] = [
-    {
-      label: "Nearby help",
-      sourceType: "search",
-      url: getMapsSearchUrl(result),
-    },
-    {
-      label: "Report safety issue",
-      sourceType: "safety",
-      url: "https://www.nhtsa.gov/report-a-safety-problem",
-    },
-  ];
-
-  return uniqueReferenceLinks([...sourceLinks, ...defaults]).slice(0, 6);
-}
-
-function uniqueReferenceLinks(links: ReferenceLink[]) {
-  const seen = new Set<string>();
-  const unique: ReferenceLink[] = [];
-
-  for (const link of links) {
-    const key = link.url.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    unique.push(link);
-  }
-
-  return unique;
-}
-
-function getFollowUpPrompts(result: IdentificationResult) {
-  const partName = result.partName;
-  const prompts = [
-    {
-      label: "What should I check next?",
-      question: `What should I check next for this ${partName}?`,
-    },
-    {
-      label: "How serious is this?",
-      question: `How serious is this ${partName} result based only on the photo?`,
-    },
-  ];
-
-  prompts.push(
-    result.needsBetterPhoto || result.safetyTriage === "needs_better_photo"
-      ? {
-          label: "What photo angle would help?",
-          question: `What photo angle would help identify this ${partName} better?`,
-        }
-      : {
-          label: "What symptoms match this part?",
-          question: `What common symptoms connect to this ${partName}?`,
-        },
-  );
-
-  return prompts;
-}
-
-function getDataCoverage(result: IdentificationResult) {
-  const checks = [
-    result.confidence !== "low",
-    result.visibleObservations.length > 0 || result.evidence.length > 0,
-    result.evidenceRegions.length > 0,
-    result.candidateMatches.length > 0,
-    result.sourceLinks.length > 0 || getDatasetSourceUrls(result.evidence).length > 0,
-    !result.needsBetterPhoto && result.safetyTriage !== "needs_better_photo",
-  ];
-
-  return {
-    score: checks.filter(Boolean).length,
-    total: checks.length,
-  };
-}
-
-function getMissingData(result: IdentificationResult) {
-  const missing = [];
-
-  if (result.confidence === "low" || result.needsBetterPhoto || result.safetyTriage === "needs_better_photo") {
-    missing.push("Sharper, brighter photo from another angle.");
-  }
-
-  if (!result.evidenceRegions.length) {
-    missing.push("Image callouts that tie the answer to exact visible areas.");
-  }
-
-  if (!result.candidateMatches.length) {
-    missing.push("Related comparison parts to rule out close matches.");
-  }
-
-  if (!result.sourceLinks.length && !getDatasetSourceUrls(result.evidence).length) {
-    missing.push("Reference links or dataset examples for outside checking.");
-  }
-
-  if (!getDetectedTextFindings(result).length) {
-    missing.push("Visible label, casting mark, or part number.");
-  }
-
-  if (result.isSafetyCritical || result.safetyTriage === "needs_professional") {
-    missing.push("Mechanic confirmation before driving or repair.");
-  }
-
-  return missing;
-}
-
-function getUncertaintyReasons(result: IdentificationResult) {
-  const reasons = [];
-
-  if (result.confidence === "low") {
-    reasons.push("Deep Spec found weak visual clues, so the label may be a nearby or similar-looking part.");
-  } else if (result.confidence === "medium") {
-    reasons.push("One more angle could separate this from a similar part.");
-  }
-
-  if (result.needsBetterPhoto || result.safetyTriage === "needs_better_photo") {
-    reasons.push("The photo may hide the label, connector, mounting point, or damaged area needed to confirm it.");
-  }
-
-  if (result.candidateMatches.length > 0) {
-    reasons.push(`${result.candidateMatches[0].partName} is close enough that it should be ruled out before repair.`);
-  }
-
-  if (!result.evidenceRegions.length) {
-    reasons.push("The answer is not tied to a specific image region yet.");
-  }
-
-  if (!getDetectedTextFindings(result).length) {
-    reasons.push("No visible part number or label was detected.");
-  }
-
-  if (result.isSafetyCritical || result.safetyTriage === "needs_professional") {
-    reasons.push("A photo cannot prove this safety-related system is safe to drive.");
-  }
-
-  return [...new Set(reasons)].slice(0, 4);
-}
-
-function getMechanicQuestions(result: IdentificationResult) {
-  const questions = [
-    `Can you confirm this is the ${result.partName} from the photo?`,
-    `What symptoms would prove this ${result.partName} is actually the problem?`,
-  ];
-
-  if (result.candidateMatches.length > 0) {
-    questions.push(`How do I rule out ${result.candidateMatches[0].partName}?`);
-  }
-
-  if (getDetectedTextFindings(result).length > 0) {
-    questions.push("Does the visible label or part number match the exact replacement?");
-  }
-
-  if (result.isSafetyCritical || result.safetyTriage === "needs_professional") {
-    questions.unshift("Is this safe to drive before repair?");
-  }
-
-  return questions;
-}
-
-function getMapsSearchUrl(result: IdentificationResult) {
-  const query = encodeURIComponent(`${result.scanCategory} ${result.partName} auto repair near me`);
-  return `https://www.google.com/maps/search/?api=1&query=${query}`;
+function clampRange(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function getDatasetSourceUrls(evidence: string[]) {
@@ -1630,96 +874,6 @@ function getDatasetSourceUrls(evidence: string[]) {
   }
 
   return [...urls].slice(0, 3);
-}
-
-function getDetectedTextFindings(result: IdentificationResult): DetectedTextFinding[] {
-  const seen = new Set<string>();
-  const findings: DetectedTextFinding[] = [];
-
-  for (const item of result.evidence) {
-    const text = getOcrEvidenceText(item);
-    if (!text) continue;
-
-    const key = text.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-
-    findings.push({
-      codes: getLikelyCodeTokens(text),
-      exactSearchUrl: getExactTextSearchUrl(text),
-      partSearchUrl: getPartTextSearchUrl(text, result.partName),
-      text,
-    });
-  }
-
-  return findings.slice(0, 3);
-}
-
-function getOcrEvidenceText(item: string) {
-  const match = item.match(/^OCR label text:\s*(.+)$/i);
-  const text = match?.[1]?.replace(/\s+/g, " ").trim();
-  return text || null;
-}
-
-function getLikelyCodeTokens(text: string) {
-  const tokens = text.match(/\b[A-Z0-9][A-Z0-9./#:-]{3,}[A-Z0-9]\b/gi) ?? [];
-  const seen = new Set<string>();
-  const codes: string[] = [];
-
-  for (const token of tokens) {
-    const normalized = token.toUpperCase();
-    if (seen.has(normalized)) continue;
-    if (!/\d/.test(normalized) || !/[A-Z./#:-]/.test(normalized)) continue;
-    seen.add(normalized);
-    codes.push(normalized);
-  }
-
-  return codes.slice(0, 4);
-}
-
-function getExactTextSearchUrl(text: string) {
-  return `https://www.google.com/search?q=${encodeURIComponent(text)}`;
-}
-
-function getPartTextSearchUrl(text: string, partName: string) {
-  const query = encodeURIComponent(`${text} ${partName} car part`);
-  return `https://www.google.com/search?q=${query}`;
-}
-
-function getTrustReview(result: IdentificationResult): TrustReview {
-  if (result.safetyTriage === "needs_professional" || result.isSafetyCritical) {
-    return {
-      description:
-        "Deep Spec can explain the visible clues, but this category can affect driving safety. Do not treat this as repair approval.",
-      status: "Professional verification needed",
-    };
-  }
-
-  if (result.safetyTriage === "needs_better_photo" || result.needsBetterPhoto) {
-    return {
-      description: "The image does not give Deep Spec enough reliable detail. A better photo matters more than another guess.",
-      status: "Incomplete data",
-    };
-  }
-
-  if (result.confidence === "low") {
-    return {
-      description: "The app found some clues, but not enough to make a strong identification.",
-      status: "Low-confidence result",
-    };
-  }
-
-  if (result.confidence === "medium") {
-    return {
-      description: "This is useful for understanding the part, but one more angle would make the result stronger.",
-      status: "Check another angle",
-    };
-  }
-
-  return {
-    description: "The image has enough visual evidence for a useful consumer-level explanation.",
-    status: "Useful match",
-  };
 }
 
 function getScanState(state: unknown): ScanAnalysisState | null {

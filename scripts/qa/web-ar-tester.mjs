@@ -292,20 +292,20 @@ async function runCase(browserInstance, testCase) {
     if (await hasScanIssue(page)) {
       throw new Error("Scan completed with a visible AI service issue.");
     }
-    await page.waitForSelector("[data-testid=\"lens-part-overlay-0\"]", { timeout: 10_000 });
-    await page.waitForSelector("[data-testid=\"lens-context-overlay\"]", { timeout: 10_000 });
+    await page.waitForSelector("[data-testid=\"focused-part-window\"]", { timeout: 10_000 });
+    await page.waitForSelector("[data-testid=\"focused-part-overlay\"]", { timeout: 10_000 });
 
     const screenshot = path.join(screenshotDir, `${testCase.slug}.png`);
     await page.screenshot({ fullPage: true, path: screenshot });
 
-    const firstLabel = (await page.locator("[data-testid=\"lens-primary-label\"]").first().innerText()).trim();
+    const firstLabel = getFocusedLabelText(await page.locator("[data-testid=\"focused-part-label\"]").first().innerText());
     const text = await page.locator("body").innerText();
     const textLower = text.toLowerCase();
     const forbiddenPatterns = testCase.forbiddenPatterns.map((pattern) => new RegExp(pattern, "i"));
     const matchedLabels = testCase.expectedLabels.filter((label) => textLower.includes(label.toLowerCase()));
     const forbidden = forbiddenPatterns.some((pattern) => pattern.test(firstLabel) || pattern.test(text));
-    const partBox = await page.locator("[data-testid=\"lens-part-overlay-0\"]").boundingBox();
-    const contextBox = await page.locator("[data-testid=\"lens-context-overlay\"]").boundingBox();
+    const partBox = await page.locator("[data-testid=\"focused-part-window\"]").boundingBox();
+    const contextBox = await page.locator("[data-testid=\"focused-part-overlay\"]").boundingBox();
     const hasGenericBad = /^(unidentified|unknown component|vehicle component|car part|body panel)|^deep spec\s+/i.test(firstLabel);
     const overlayIsSpecific = isSpecificOverlay(partBox, contextBox);
     const hasRenderedResult = Boolean(firstLabel);
@@ -350,12 +350,12 @@ async function runCase(browserInstance, testCase) {
 }
 
 async function getPartialState(page) {
-  const firstLabel = await page.locator("[data-testid=\"lens-primary-label\"]").first().innerText({ timeout: 500 }).catch(() => undefined);
+  const firstLabel = await page.locator("[data-testid=\"focused-part-label\"]").first().innerText({ timeout: 500 }).catch(() => undefined);
   const text = await page.locator("body").innerText({ timeout: 500 }).catch(() => undefined);
-  const partBox = await page.locator("[data-testid=\"lens-part-overlay-0\"]").boundingBox({ timeout: 500 }).catch(() => null);
-  const contextBox = await page.locator("[data-testid=\"lens-context-overlay\"]").boundingBox({ timeout: 500 }).catch(() => null);
+  const partBox = await page.locator("[data-testid=\"focused-part-window\"]").boundingBox({ timeout: 500 }).catch(() => null);
+  const contextBox = await page.locator("[data-testid=\"focused-part-overlay\"]").boundingBox({ timeout: 500 }).catch(() => null);
   return {
-    ...(firstLabel ? { firstLabel: firstLabel.trim() } : {}),
+    ...(firstLabel ? { firstLabel: getFocusedLabelText(firstLabel) } : {}),
     ...(text ? { text } : {}),
     partBox,
     contextBox,
@@ -365,7 +365,7 @@ async function getPartialState(page) {
 
 async function waitForScanResultOrIssue(page) {
   await page.waitForFunction(() => {
-    const hasLabel = Boolean(globalThis.document.querySelector("[data-testid=\"lens-primary-label\"]"));
+    const hasLabel = Boolean(globalThis.document.querySelector("[data-testid=\"focused-part-label\"]"));
     const text = globalThis.document.body?.innerText ?? "";
     return hasLabel || /SCAN ISSUE|Too many AI lookups|Could not reach the Deep Spec AI service/i.test(text);
   }, undefined, { timeout: SCAN_TIMEOUT_MS });
@@ -390,7 +390,11 @@ function isSpecificOverlay(partBox, contextBox) {
 
   const partArea = partBox.width * partBox.height;
   const contextArea = contextBox.width * contextBox.height;
-  return partBox.width > 24 && partBox.height > 24 && contextArea > partArea * 1.4;
+  return partBox.width > 24 && partBox.height > 24 && contextArea > partArea * 1.25;
+}
+
+function getFocusedLabelText(value) {
+  return String(value).split("\n").map((line) => line.trim()).filter(Boolean).at(-1) ?? "";
 }
 
 function isRetryableProviderResult(result) {
