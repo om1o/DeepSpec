@@ -529,7 +529,7 @@ function SavedScanControls({
       <div className="mt-4 rounded-[20px] border border-neutral-200 bg-neutral-50 p-4">
         <p className="text-sm font-extrabold text-neutral-900">Scan report</p>
         <p className="mt-2 text-sm leading-6 text-neutral-500">
-          Export a plain-text summary for a mechanic, buyer, or your own records. This does not create a public link.
+          Export a plain-text summary for a technician, buyer, or your own records. This does not create a public link.
         </p>
         <div className="mt-3 grid grid-cols-2 gap-3">
           <Button className="!bg-neutral-100 !text-neutral-900 shadow-none" onClick={handleShareReport}>

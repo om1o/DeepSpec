@@ -1308,7 +1308,7 @@ describe("createIdentifyResponse", () => {
         result: {
           safetyTriage: "needs_professional",
           isSafetyCritical: true,
-          nextAction: expect.stringContaining("mechanic"),
+          nextAction: expect.stringContaining("Check this safety item"),
         },
       },
     });
@@ -1323,7 +1323,7 @@ describe("createIdentifyResponse", () => {
       isSafetyCritical: true,
       concerns: ["The bumper cover and hood are visibly dented, with possible structural damage."],
       evidence: ["Front bumper and hood collision deformation are visible."],
-      nextAction: "Have a mechanic inspect this before driving.",
+      nextAction: "Check this before driving.",
     };
 
     vi.spyOn(globalThis, "fetch").mockResolvedValue(

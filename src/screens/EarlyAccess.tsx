@@ -106,7 +106,7 @@ export default function EarlyAccess() {
           <p className="text-sm font-bold text-[var(--ds-accent)]">Business experiment</p>
           <h2 className="mt-2 text-2xl font-extrabold tracking-tight">Prove people want this before charging.</h2>
           <p className="mt-3 text-sm leading-6 text-neutral-500">
-            Deep Spec is testing demand with waitlist signups, feedback, instant AI answers, and mechanic escalation CTAs.
+            Deep Spec is testing demand with waitlist signups, feedback, instant AI answers, and shop workflow CTAs.
             Payments, accounts, domains, and legal docs need parent review later.
           </p>
           <p className="mt-3 rounded-2xl border border-neutral-100 bg-neutral-50 p-3 text-sm leading-6 text-neutral-500">

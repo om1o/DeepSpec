@@ -171,6 +171,26 @@ describe("aiService", () => {
     );
   });
 
+  it("times out a hung identify request instead of leaving the scan loading", async () => {
+    const realSetTimeout = globalThis.setTimeout;
+    vi.spyOn(globalThis, "setTimeout").mockImplementation(((handler: TimerHandler, _timeout?: number, ...args: unknown[]) =>
+      realSetTimeout(handler, 0, ...args)) as typeof setTimeout);
+    vi.spyOn(globalThis, "fetch").mockImplementation((_path, options) => new Promise((_resolve, reject) => {
+      const signal = (options as RequestInit | undefined)?.signal;
+      signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+    }) as never);
+
+    await expect(
+      identifyCapturedFrame({
+        imageBase64: "data:image/jpeg;base64,test",
+        capturedAt: "2026-05-16T00:00:00.000Z",
+      }),
+    ).rejects.toMatchObject({
+      code: "network",
+      message: "Scan took too long. Try again.",
+    });
+  });
+
   it("preserves identify provider metadata from the API response", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(

@@ -75,4 +75,4 @@ Paid beta needs all of these:
 
 ## Creative Assets
 
-Use verified screenshots and QA reports only. Marketing and demo copy must say "AI-assisted scan and mechanic verification workflow." Do not claim guaranteed diagnosis, perfect AI, mechanic certification, fake shop endorsements, or unsupported accuracy numbers.
+Use verified screenshots and QA reports only. Marketing and demo copy must say "AI-assisted scan and verified dataset workflow." Do not claim guaranteed diagnosis, perfect AI, mechanic certification, fake shop endorsements, or unsupported accuracy numbers.

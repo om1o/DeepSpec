@@ -22,7 +22,7 @@ Deep Spec should not certify repairs, guarantee fitment, name exact OEM part num
 
 ## Damage that should escalate
 
-Brakes, steering, suspension, fuel, airbags, electrical burning, severe leaks, and unclear high-risk damage should be treated as professional verification cases. Deep Spec can explain the visible clue, but it should not walk a user through risky repairs.
+Brakes, steering, suspension, fuel, airbags, electrical burning, severe leaks, and unclear high-risk damage should be checked before driving or repairing. Deep Spec can explain the visible clue, but it should not walk a user through risky repairs.
 
 ## Why saved feedback matters
 

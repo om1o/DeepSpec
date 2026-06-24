@@ -153,8 +153,8 @@ export default function Chat() {
 
         {showSafetyWarning ? (
           <section className="mt-4 rounded-[24px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-4">
-            <p className="text-sm font-extrabold text-[var(--ds-warn-ink)]">Professional verification needed</p>
-            <p className="mt-2 text-sm leading-6 text-neutral-700">I can explain the scan, but risky repairs need a mechanic.</p>
+            <p className="text-sm font-extrabold text-[var(--ds-warn-ink)]">Safety check needed</p>
+            <p className="mt-2 text-sm leading-6 text-neutral-700">I can explain the scan, but check this before driving or repairing.</p>
           </section>
         ) : null}
 

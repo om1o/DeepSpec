@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build --configLoader native",
     "check": "npm run lint && npm test && npm run build",
     "dataset:sort": "node scripts/sort-drbimmer-dataset.mjs",
+    "dataset:hf-auto-sources": "node scripts/build-hf-automotive-sources.mjs",
     "dataset:source-manifest": "node scripts/build-source-manifest.mjs",
     "dataset:verified-sources": "node scripts/build-verified-vehicle-reference.mjs",
     "eval:identify": "node scripts/eval-identify.mjs",

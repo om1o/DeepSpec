@@ -34,7 +34,7 @@ That keeps the workflow simple: point at the part, hold steady, tap Identify, ge
 
 ## Safety note
 
-Deep Spec should not be used as a repair certification tool. For brakes, steering, suspension, fuel, airbags, electrical burning, or severe leaks, users should verify with a mechanic before driving.
+Deep Spec should not be used as a repair certification tool. For brakes, steering, suspension, fuel, airbags, electrical burning, or severe leaks, users should check the issue before driving.
 
 ## Next step
 
@@ -52,4 +52,4 @@ Yes, when they reduce repetitive lookup work, organize visual evidence, and prep
 
 ### Is Deep Spec a repair certification tool?
 
-No. Deep Spec is not a repair certification tool. Safety-critical parts should be verified with a mechanic.
+No. Deep Spec is not a repair certification tool. Safety-critical parts should be checked before driving or repairing.

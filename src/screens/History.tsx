@@ -362,7 +362,7 @@ function getStatusLabel(lookup: Lookup) {
   }
 
   if (lookup.result.safetyTriage === "needs_professional" || lookup.result.isSafetyCritical) {
-    return "Professional verification needed";
+    return "Safety check needed";
   }
 
   if (lookup.result.needsBetterPhoto || lookup.result.safetyTriage === "needs_better_photo") {

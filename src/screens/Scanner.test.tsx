@@ -254,6 +254,27 @@ describe("Scanner", () => {
     });
   }, 20000);
 
+  it("opens a simple captured-item review when AI analysis fails", async () => {
+    identifyCapturedFrame.mockRejectedValueOnce(new Error("Provider jammed"));
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+
+    expect(await screen.findByRole("heading", { level: 3, name: "Item captured" })).toBeInTheDocument();
+    expect(screen.getByTestId("scan-item-view")).toBeInTheDocument();
+    expect(screen.getByText("Saved photo")).toBeInTheDocument();
+    expect(screen.getByText("The photo is saved. Try again.")).toBeInTheDocument();
+    expect(screen.queryByText("Reading photo")).not.toBeInTheDocument();
+    expect(screen.queryByText("Provider jammed")).not.toBeInTheDocument();
+  }, 10000);
+
   it("isolates the identified product from the captured still after manual scan", async () => {
     mockStillImageTarget({
       confidence: 0.82,

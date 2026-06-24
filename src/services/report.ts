@@ -9,10 +9,10 @@ export function buildScanReport(lookup: Lookup) {
     `Created: ${formatDate(lookup.createdAt)}`,
     `Captured: ${formatDate(lookup.frame.capturedAt)}`,
     "",
-    "Mechanic summary:",
+    "Scan summary:",
     `${result?.partName ?? "Unidentified part"} - ${result?.confidence ?? "unknown"} confidence - ${lookup.scanCategory}`,
     result?.safetyTriage === "needs_professional" || result?.isSafetyCritical
-      ? "Safety: verify with a qualified mechanic before driving or repairing."
+      ? "Safety: check this before driving or repairing."
       : "Safety: no immediate safety-critical flag from the scan.",
     "",
     `Part: ${result?.partName ?? "Not identified"}`,
@@ -47,7 +47,7 @@ export function buildScanReport(lookup: Lookup) {
     formatSourceLinks(result?.sourceLinks),
     "",
     "Next action:",
-    result?.nextAction ?? "Scan again or ask a professional if this looks unsafe.",
+    result?.nextAction ?? "Scan again or inspect this before driving if it looks unsafe.",
     "",
     "User correction:",
     lookup.correction?.trim() || "None",
@@ -56,7 +56,7 @@ export function buildScanReport(lookup: Lookup) {
     lookup.notes.trim() || "None",
     "",
     "Safety note:",
-    "Deep Spec is not a repair certification tool. Safety-critical parts should be verified with a mechanic.",
+    "Deep Spec is not a repair certification tool. Safety-critical items should be checked before driving or repairing.",
   ];
 
   return lines.join("\n");

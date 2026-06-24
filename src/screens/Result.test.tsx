@@ -372,7 +372,7 @@ describe("Result", () => {
     expect(screen.getByRole("button", { name: "Sync this scan" })).not.toBeDisabled();
   });
 
-  it("shows nearby options for professional verification cases", async () => {
+  it("keeps advanced safety options out of the simple result by default", async () => {
     const lookup = makeLookup({
       result: {
         ...successfulScan.result!,

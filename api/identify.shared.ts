@@ -70,6 +70,7 @@ const DEFAULT_GROQ_IDENTIFY_TIMEOUT_MS = 45_000;
 const DEFAULT_OLLAMA_IDENTIFY_TIMEOUT_MS = 180_000;
 const DEFAULT_DATASET_ROOT = "datasets/raw/drbimmer-car-parts-and-damage-dataset";
 const DEFAULT_DATASET_INDEX_PATH = "datasets/derived/drbimmer-car-parts-and-damage-dataset/records.jsonl";
+const DEFAULT_HF_AUTOMOTIVE_SOURCE_INDEX_PATH = "datasets/verified/hf-automotive-sources-v1/records.jsonl";
 const RETRYABLE_PROVIDER_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 const DEFAULT_BACKUP_RATE_LIMIT_RETRIES = 1;
 const DEFAULT_BACKUP_RETRY_BACKOFF_MS = 800;
@@ -2597,8 +2598,7 @@ function buildDatasetSourceContext(env: Record<string, string | undefined>) {
     return null;
   }
 
-  const datasetIndexPath = resolve(process.cwd(), env.DEEPSPEC_DATASET_INDEX_PATH || DEFAULT_DATASET_INDEX_PATH);
-  const datasetRecords = readDatasetRecords(datasetIndexPath);
+  const datasetRecords = readDatasetRecordIndexes(env);
   const sourceSummaries = datasetRecords.length
     ? summarizeDatasetRecords(datasetRecords)
     : summarizeRawDatasetLabels(resolve(process.cwd(), env.DEEPSPEC_DATASET_ROOT || DEFAULT_DATASET_ROOT));
@@ -2634,7 +2634,7 @@ function summarizeDatasetRecords(records: DatasetRecord[]): DatasetMatch[] {
         kind,
         label,
         score: 0,
-        sampleCount: (existing?.sampleCount ?? 0) + 1,
+        sampleCount: (existing?.sampleCount ?? 0) + getRecordSampleCount(record),
         sourceUrl: existing?.sourceUrl ?? getRecordSourceUrl(record),
       });
     }
@@ -2667,8 +2667,7 @@ type DatasetMatch = {
 };
 
 function findDatasetMatches(result: IdentificationResult, env: Record<string, string | undefined>): DatasetMatch[] {
-  const datasetIndexPath = resolve(process.cwd(), env.DEEPSPEC_DATASET_INDEX_PATH || DEFAULT_DATASET_INDEX_PATH);
-  const datasetRecords = readDatasetRecords(datasetIndexPath);
+  const datasetRecords = readDatasetRecordIndexes(env);
   const datasetRoot = resolve(process.cwd(), env.DEEPSPEC_DATASET_ROOT || DEFAULT_DATASET_ROOT);
   const text = normalizeMatchText(
     [
@@ -2710,7 +2709,32 @@ type DatasetRecord = {
   labels?: unknown;
   links?: unknown;
   primaryLabel?: unknown;
+  sampleCount?: unknown;
 };
+
+function readDatasetRecordIndexes(env: Record<string, string | undefined>): DatasetRecord[] {
+  return getDatasetIndexPaths(env).flatMap((indexPath) => readDatasetRecords(indexPath));
+}
+
+function getDatasetIndexPaths(env: Record<string, string | undefined>) {
+  const explicitPaths = splitDatasetIndexPaths(env.DEEPSPEC_DATASET_INDEX_PATHS);
+  if (explicitPaths.length) {
+    return explicitPaths.map((indexPath) => resolve(process.cwd(), indexPath));
+  }
+
+  if (env.DEEPSPEC_DATASET_INDEX_PATH) {
+    return [resolve(process.cwd(), env.DEEPSPEC_DATASET_INDEX_PATH)];
+  }
+
+  return uniqueStrings([
+    DEFAULT_DATASET_INDEX_PATH,
+    DEFAULT_HF_AUTOMOTIVE_SOURCE_INDEX_PATH,
+  ]).map((indexPath) => resolve(process.cwd(), indexPath));
+}
+
+function splitDatasetIndexPaths(value: string | undefined) {
+  return value ? value.split(/[;,]/).map((item) => item.trim()).filter(Boolean) : [];
+}
 
 function readDatasetRecords(indexPath: string): DatasetRecord[] {
   if (!existsSync(indexPath)) {
@@ -2747,7 +2771,7 @@ function findDatasetRecordMatches(records: DatasetRecord[], text: string): Datas
       labelGroups.set(key, {
         kind,
         label,
-        sampleCount: (existing?.sampleCount ?? 0) + 1,
+        sampleCount: (existing?.sampleCount ?? 0) + getRecordSampleCount(record),
         score: existing?.score ?? 0,
         sourceUrl,
       });
@@ -2783,6 +2807,12 @@ function getRecordSourceUrl(record: DatasetRecord) {
   }
 
   return typeof record.links.image === "string" ? record.links.image : typeof record.links.dataset === "string" ? record.links.dataset : null;
+}
+
+function getRecordSampleCount(record: DatasetRecord) {
+  return typeof record.sampleCount === "number" && Number.isFinite(record.sampleCount) && record.sampleCount > 0
+    ? Math.round(record.sampleCount)
+    : 1;
 }
 
 function formatDatasetEvidence(match: DatasetMatch) {
@@ -2977,10 +3007,14 @@ function buildOcrContext(text: string) {
 }
 
 function ensureProfessionalNextAction(nextAction: string) {
-  const cleaned = cleanText(nextAction, "Verify this part with a mechanic before driving or attempting repair.");
-  return /mechanic|professional|shop/i.test(cleaned)
+  const cleaned = cleanText(nextAction, "Check this safety item before driving or repairing.");
+  if (/mechanic|professional|shop/i.test(cleaned)) {
+    return "Check this safety item before driving or repairing.";
+  }
+
+  return /before driving|before repairing|do not drive|check this safety item/i.test(cleaned)
     ? cleaned
-    : `${cleaned} Verify this with a mechanic before driving or attempting repair.`;
+    : `${cleaned} Check this safety item before driving or repairing.`;
 }
 
 function cleanText(value: string, fallback: string) {

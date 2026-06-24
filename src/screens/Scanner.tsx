@@ -14,7 +14,7 @@ import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../l
 import { getScanCardPreferences, type ScanCardPreferences } from "../lib/scanResultCardSettings";
 import { detectObjectTargetFromImageData, type ObjectTargetBox } from "../lib/objectTargeting";
 import { compressImageDataUrl, saveLatestScanState } from "../lib/utils";
-import { AIServiceError, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
+import { AIServiceError, identifyCapturedFrame } from "../services/aiService";
 import { onOnDeviceModelProgress } from "../services/onDeviceIdentify";
 import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
 import { attachScanToJob, buildCustomerVisibleReport, getShopJob, getVehicleContextForJob } from "../services/shop";
@@ -379,7 +379,7 @@ export default function Scanner() {
       if (cached) {
         const shopScanContext = buildShopScanContext(activeShopJob, activeShopVehicleContext);
         const contextualResult = applyShopFitmentContext(cached, activeShopVehicleContext);
-        setAnalysisStep("Opening review");
+        setAnalysisStep("Opening result");
         recordScanOutcome(contextualResult);
         await persistAndShowReview(
           {
@@ -427,7 +427,7 @@ export default function Scanner() {
     }
 
     try {
-      setAnalysisStep("Matching vehicle data");
+      setAnalysisStep("Reading photo");
       const identifyStartedAt = performance.now();
       const result = applyShopFitmentContext(
         await identifyCapturedFrame(frame, focusedFrame ?? secondFrame, undefined, {
@@ -443,7 +443,7 @@ export default function Scanner() {
       if (!isScanRequestActive(requestId)) return;
       if (imageHash && !activeShopJob) setCachedScanResult(imageHash, result);
       recordScanOutcome(result);
-      setAnalysisStep("Saving result");
+      setAnalysisStep("Saving");
       const shopScanContext = buildShopScanContext(activeShopJob, activeShopVehicleContext);
       await persistAndShowReview(
         {
@@ -477,7 +477,7 @@ export default function Scanner() {
       await persistAndShowReview(
         {
           frame,
-          errorMessage: getAIErrorMessage(analysisError),
+          errorMessage: getSimpleScanErrorMessage(analysisError),
           errorCode: analysisError instanceof AIServiceError ? analysisError.code : "analysis_failed",
           analyzedAt: new Date().toISOString(),
           focusBox,
@@ -959,10 +959,10 @@ export function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; ste
   const stillWorking = elapsedSeconds >= 8;
   const message =
     downloadPercent !== null
-      ? `Downloading offline model... ${downloadPercent}% - one-time, keep this screen open.`
+      ? `Downloading offline model... ${downloadPercent}%`
       : stillWorking
-        ? "Finishing scan - larger photos take a few more seconds."
-        : step ?? "Matching the scan against vehicle data.";
+        ? "Almost done."
+        : step ?? "Reading photo";
 
   return (
     <div className="fixed inset-0 z-40 grid place-items-center px-6 text-center" style={{ background: "rgba(4,7,14,0.82)", backdropFilter: "blur(16px)" }}>
@@ -976,7 +976,7 @@ export function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; ste
           <div className="absolute inset-7 rounded-full" style={{ background: "rgba(0,194,255,0.12)", boxShadow: "0 0 28px rgba(0,170,255,0.40)" }} />
           <div className="scanner-analysis-sweep absolute inset-x-3 top-1/2 h-0.5 rounded-full" style={{ background: "var(--electric-500)" }} />
         </div>
-        <p className="mt-5 text-lg font-extrabold tracking-tight text-white">Analyzing photo</p>
+        <p className="mt-5 text-lg font-extrabold tracking-tight text-white">Reading photo</p>
         <p className="mt-2 text-sm leading-6" style={{ color: "var(--slate-300)" }}>
           {message}
         </p>
@@ -1052,7 +1052,8 @@ function ScanResultCard({
 }) {
   const result = review.scanState.result;
   const summary = result ? getSimpleResultSummary(result) : null;
-  const label = summary?.title ?? getReviewDisplayLabel(review);
+  const isError = Boolean(review.scanState.errorMessage);
+  const label = isError ? "Item captured" : summary?.title ?? getReviewDisplayLabel(review);
   const confidence = result?.confidence;
   const isCompact = prefs.compactCardsByDefault && !isExpanded;
   const statusStyle = getConfidenceStyle(confidence);
@@ -1083,7 +1084,7 @@ function ScanResultCard({
       {/* Header */}
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
-          {result && !review.scanState.errorMessage ? (
+          {result && !isError ? (
             <div
               className="mb-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1"
               style={{ background: "rgba(0,194,255,0.08)", border: "1px solid rgba(0,194,255,0.24)" }}
@@ -1119,7 +1120,7 @@ function ScanResultCard({
         </button>
       </div>
 
-      {result && !review.scanState.errorMessage ? (
+      {itemViewFrame.imageBase64 ? (
         <ItemViewPanel
           badge={itemViewBadge}
           imageBase64={itemViewFrame.imageBase64}
@@ -1149,13 +1150,13 @@ function ScanResultCard({
           </div>
         ) : null}
 
-        {review.scanState.errorMessage ? (
+        {isError ? (
           <div
             className="rounded-xl px-3 py-2.5"
-            style={{ background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.18)" }}
+            style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)" }}
           >
-            <p className="mb-1 text-[10px] font-extrabold uppercase tracking-[0.14em]" style={{ color: "var(--red-400)" }}>Scan issue</p>
-            <p className="text-xs leading-5" style={{ color: "var(--red-400)", opacity: 0.9 }}>{review.scanState.errorMessage}</p>
+            <p className="mb-1 text-[10px] font-extrabold uppercase tracking-[0.14em] text-white/48">Saved photo</p>
+            <p className="text-xs font-semibold leading-5 text-white/78">{review.scanState.errorMessage}</p>
           </div>
         ) : (
           <>
@@ -1576,6 +1577,27 @@ function getReviewDisplayLabel(review: ScanReviewState) {
     || review.lookup?.trainingLabel
     || "Captured part"
   );
+}
+
+function getSimpleScanErrorMessage(error: unknown) {
+  if (error instanceof AIServiceError) {
+    switch (error.code) {
+      case "rate_limited":
+        return "The photo is saved. Try again in a few minutes.";
+      case "network":
+      case "provider_error":
+        return "The photo is saved. Try again.";
+      case "not_configured":
+        return "The photo is saved. AI setup needs attention.";
+      case "image_too_large":
+      case "invalid_input":
+        return error.message || "Use a smaller photo and try again.";
+      default:
+        return "The photo is saved. Try again.";
+    }
+  }
+
+  return "The photo is saved. Try again.";
 }
 
 function getItemViewBadge(source: VisualFocusMode, hasIsolatedOutput: boolean) {
