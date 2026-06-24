@@ -25,6 +25,7 @@ const SCAN_BUCKET = "scan-images";
 const SIGNED_URL_TTL_SECONDS = 60 * 60;
 const DEFAULT_HISTORY_LIMIT = 200;
 const FALLBACK_IMAGE = "/brand/deepspec-logo.webp";
+const CLOUD_HISTORY_CORE_SELECT = "local_id,created_at,captured_at,analyzed_at,error_code,error_message,rating,correction,notes,scan_category,training_label,training_status,chat_history,result_json,image_path";
 
 type CloudHistoryRow = {
   local_id: unknown;
@@ -57,6 +58,11 @@ type SignedImageRow = {
   error?: unknown;
 };
 
+type CloudHistoryQueryResult = {
+  data: unknown;
+  error: { message?: string } | null;
+};
+
 type ReadCloudHistoryResult =
   | { ok: true; value: Lookup[] }
   | { ok: false; message: string };
@@ -76,14 +82,14 @@ export async function readCloudLookups(limit = DEFAULT_HISTORY_LIMIT): Promise<R
     return { ok: false, message: "No verified Supabase session was found." };
   }
 
-  const rowsResult = await supabase
+  const rowsResult: CloudHistoryQueryResult = await supabase
     .from("scan_lookups")
-    .select("local_id,created_at,captured_at,analyzed_at,error_code,error_message,rating,correction,notes,scan_category,training_label,training_status,chat_history,customer_visible_report_json,job_id,org_id,result_json,review_status,technician_user_id,vehicle_context,image_path")
+    .select(CLOUD_HISTORY_CORE_SELECT)
     .order("created_at", { ascending: false })
     .limit(limit);
 
   if (rowsResult.error) {
-    return { ok: false, message: rowsResult.error.message };
+    return { ok: false, message: rowsResult.error.message ?? "Could not load cloud scan history." };
   }
 
   const rows = Array.isArray(rowsResult.data) ? (rowsResult.data as CloudHistoryRow[]) : [];

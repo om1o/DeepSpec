@@ -399,6 +399,7 @@ async function runScannerAiEngine() {
   }
 
   if (outcome.type === "result") {
+    const cloudSync = await waitForScannerCloudSyncOutcome();
     if (analysisMs > 90_000) {
       throw new QaIssue(
         "backend",
@@ -406,6 +407,39 @@ async function runScannerAiEngine() {
         {
           likelyFiles: ["src/screens/Scanner.tsx", "src/services/aiService.ts", "api/identify.shared.ts"],
           suggestedFix: "Profile /api/identify provider latency, image payload size, fallback model order, and scanner save/render work.",
+        },
+      );
+    }
+
+    if (cloudSync.status === "failed") {
+      throw new QaIssue(
+        "backend",
+        `Engine scan produced a result but scan data did not sync. Fixture=${fixture.source}. ${timingSummary}. Visible result: ${cloudSync.text}`,
+        {
+          likelyFiles: ["src/screens/Scanner.tsx", "src/services/cloudSync.ts", "supabase/migrations"],
+          suggestedFix: "Fix Supabase scan lookup/detail writes, schema cache, or cloud sync error handling before treating scanner data persistence as production-ready.",
+        },
+      );
+    }
+
+    if (cloudSync.status === "pending") {
+      throw new QaIssue(
+        "backend",
+        `Engine scan produced a result but cloud sync did not finish within the QA window. Fixture=${fixture.source}. ${timingSummary}. Visible result: ${cloudSync.text}`,
+        {
+          likelyFiles: ["src/screens/Scanner.tsx", "src/services/cloudSync.ts"],
+          suggestedFix: "Wait for and surface a final scan-save state, or fix slow Supabase sync before treating scanner data persistence as production-ready.",
+        },
+      );
+    }
+
+    if (cloudSync.status === "unknown") {
+      throw new QaIssue(
+        "backend",
+        `Engine scan produced a result but did not expose a final scan data state. Fixture=${fixture.source}. ${timingSummary}. Visible result: ${cloudSync.text}`,
+        {
+          likelyFiles: ["src/screens/Scanner.tsx", "src/services/cloudSync.ts"],
+          suggestedFix: "Expose a final saved, disabled, or failed scan-data state before treating scanner persistence as production-ready.",
         },
       );
     }
@@ -422,8 +456,8 @@ async function runScannerAiEngine() {
     }
 
     return {
-      details: `Engine fixture uploaded through scanner and produced a usable AI result. Fixture=${fixture.source}. ${timingSummary}. Visible result: ${outcome.text}`,
-      likelyFiles: ["src/screens/Scanner.tsx", "src/services/aiService.ts", "api/identify.shared.ts"],
+      details: `Engine fixture uploaded through scanner, produced a usable AI result, and completed scan data sync. Fixture=${fixture.source}. ${timingSummary}. Visible result: ${cloudSync.text}`,
+      likelyFiles: ["src/screens/Scanner.tsx", "src/services/aiService.ts", "api/identify.shared.ts", "src/services/cloudSync.ts"],
       status: "pass",
     };
   }
@@ -1084,6 +1118,34 @@ async function waitForScannerAiOutcome() {
   }
 
   return { text: compactText(await getBodyText()), type: "timeout" };
+}
+
+async function waitForScannerCloudSyncOutcome() {
+  const deadline = Date.now() + 20_000;
+  let latestText = compactText(await getBodyText());
+
+  while (Date.now() < deadline) {
+    const text = compactText(await getBodyText());
+    latestText = text;
+
+    if (/Cloud sync failed/i.test(text)) {
+      return { status: "failed", text };
+    }
+
+    if (/Scan saved to cloud/i.test(text)) {
+      return { status: "saved", text };
+    }
+
+    if (/Cloud sync is off|Cloud sync is not configured/i.test(text)) {
+      return { status: "disabled", text };
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  return /Saving scan/i.test(latestText)
+    ? { status: "pending", text: latestText }
+    : { status: "unknown", text: latestText };
 }
 
 async function seedSavedScans() {

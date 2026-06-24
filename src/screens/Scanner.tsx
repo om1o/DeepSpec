@@ -58,6 +58,7 @@ const DEFAULT_VIDEO_CONSTRAINTS: MediaTrackConstraints = {
 };
 
 type ScanReviewResultSource = "AI detection" | "metadata" | "user correction";
+type ScanItemViewSource = "segmented" | "focused_crop" | "full_frame";
 
 type ScanReviewTarget = {
   id: string;
@@ -71,6 +72,7 @@ type ScanReviewTarget = {
 
 type ScanReviewState = {
   isolatedFrame?: CapturedFrame;
+  itemViewSource: ScanItemViewSource;
   lookup: Lookup | null;
   scanState: ScanAnalysisState;
   correction: string | null;
@@ -280,6 +282,7 @@ export default function Scanner() {
       requestId: number;
       reviewTarget: ScanReviewTarget | null;
       isolatedFrame?: CapturedFrame;
+      itemViewSource?: ScanItemViewSource;
       source: ScanReviewResultSource;
       analysisSource: ScanAnalysisSource;
       sourceUpdatedAt: string;
@@ -302,6 +305,7 @@ export default function Scanner() {
       setScanReview({
         correction: options.correction ?? saved.value.correction,
         isolatedFrame: options.isolatedFrame,
+        itemViewSource: options.itemViewSource ?? (options.isolatedFrame ? "focused_crop" : "full_frame"),
         lookup: saved.value,
         reviewTarget: options.reviewTarget,
         scanState,
@@ -321,6 +325,7 @@ export default function Scanner() {
     setScanReview({
       correction: options.correction ?? null,
       isolatedFrame: options.isolatedFrame,
+      itemViewSource: options.itemViewSource ?? (options.isolatedFrame ? "focused_crop" : "full_frame"),
       lookup: null,
       reviewTarget: options.reviewTarget,
       scanState: fallbackState,
@@ -370,6 +375,7 @@ export default function Scanner() {
 
     let focusedFrame: CapturedFrame | undefined;
     let isolatedFrame: CapturedFrame | undefined;
+    let itemViewSource: ScanItemViewSource = "full_frame";
     let secondFrame: CapturedFrame | undefined;
     const focusedCropTarget = reviewTarget?.normalized ?? null;
     const focusedCrop = focusedCropTarget
@@ -382,7 +388,9 @@ export default function Scanner() {
       if (cropQuality.ok) {
         focusedFrame = { imageBase64: focusedCrop, capturedAt: new Date().toISOString() };
         setAnalysisStep("Preparing scan view");
-        isolatedFrame = await createSegmentedProductIsolationFrame(focusedFrame) ?? focusedFrame;
+        const segmentedFrame = await createSegmentedProductIsolationFrame(focusedFrame);
+        isolatedFrame = segmentedFrame ?? focusedFrame;
+        itemViewSource = segmentedFrame ? "segmented" : "focused_crop";
         if (!isScanRequestActive(requestId)) return;
       }
     }
@@ -413,6 +421,7 @@ export default function Scanner() {
           {
             captureMode,
             isolatedFrame,
+            itemViewSource,
             requestId,
             reviewTarget,
             analysisSource: "cached_match",
@@ -473,6 +482,7 @@ export default function Scanner() {
         {
           captureMode,
           isolatedFrame,
+          itemViewSource,
           requestId,
           reviewTarget,
           analysisSource: "ai_detection",
@@ -499,6 +509,7 @@ export default function Scanner() {
         {
           captureMode,
           isolatedFrame,
+          itemViewSource,
           requestId,
           reviewTarget,
           analysisSource: "ai_detection",
@@ -1257,7 +1268,8 @@ function ScanResultCard({
   const visibleFacts = getVisibleFacts(result, isCompact);
   const concernFacts = getConcernFacts(result, isCompact);
   const evidenceFacts = getEvidenceFacts(result, isCompact);
-  const targetOverlayStyle = getReviewTargetOverlayStyle(target);
+  const itemViewFrame = review.isolatedFrame ?? review.scanState.frame;
+  const itemViewBadge = getItemViewBadge(review.itemViewSource, Boolean(review.isolatedFrame));
   const referenceSummary = sizeCalibration
     ? `${getSizeReferenceLabel(sizeCalibration.preset)} (${sizeCalibration.referenceMm.toFixed(2)} mm). ${sizeCalibration.guidance}`
     : "Size estimate needs a reference object.";
@@ -1351,6 +1363,14 @@ function ScanResultCard({
         </div>
       ) : null}
 
+      {result && !review.scanState.errorMessage ? (
+        <ItemViewPanel
+          badge={itemViewBadge}
+          imageBase64={itemViewFrame.imageBase64}
+          label={label}
+        />
+      ) : null}
+
       {/* Content body */}
       <div className={`mt-3 ${statusStyle.accent}`}>
         {isMismatch ? (
@@ -1411,33 +1431,6 @@ function ScanResultCard({
           </>
         )}
       </div>
-
-      <BubbleSection title="Scan photo">
-        <div
-          className="relative mt-1.5 overflow-hidden rounded-xl"
-          style={{ border: "1px solid rgba(255,255,255,0.10)" }}
-        >
-          <img
-            alt={`Scan photo for ${label}`}
-            className="h-40 w-full bg-black object-contain"
-            src={(review.isolatedFrame ?? review.scanState.frame).imageBase64}
-          />
-          {targetOverlayStyle ? (
-            <span
-              aria-hidden
-              className="absolute rounded-sm"
-              style={{
-                border: "2px solid rgba(0,194,255,0.80)",
-                background: "rgba(0,194,255,0.15)",
-                height: `${targetOverlayStyle.height}%`,
-                left: `${targetOverlayStyle.left}%`,
-                top: `${targetOverlayStyle.top}%`,
-                width: `${targetOverlayStyle.width}%`,
-              }}
-            />
-          ) : null}
-        </div>
-      </BubbleSection>
 
       {isFastener && isExpanded ? (
         <BubbleSection title="Fastener mode">
@@ -1560,6 +1553,46 @@ function BubbleSection({ children, title }: { children: ReactNode; title: string
     <div className="border-t border-white/10 py-3 first:border-t-0 first:pt-0">
       <SectionTitle>{title}</SectionTitle>
       <div className="mt-1 text-xs leading-6 text-white/82">{children}</div>
+    </div>
+  );
+}
+
+function ItemViewPanel({
+  badge,
+  imageBase64,
+  label,
+}: {
+  badge: string;
+  imageBase64: string;
+  label: string;
+}) {
+  return (
+    <div
+      className="mt-3 overflow-hidden rounded-[12px] p-2"
+      data-testid="scan-item-view"
+      style={{
+        background: "rgba(2,6,23,0.64)",
+        border: "1px solid rgba(255,255,255,0.12)",
+        boxShadow: "0 14px 34px rgba(0,0,0,0.28)",
+      }}
+    >
+      <div className="flex items-center justify-between gap-3 px-1 pb-2">
+        <SectionTitle>Item view</SectionTitle>
+        <span
+          className="shrink-0 rounded-full px-2 py-1 text-[9px] font-black uppercase tracking-[0.10em] text-white/72"
+          style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.10)" }}
+        >
+          {badge}
+        </span>
+      </div>
+      <div className="relative grid h-44 place-items-center overflow-hidden rounded-[10px] bg-black/76">
+        <img
+          alt={`Item view for ${label}`}
+          className="max-h-full w-full object-contain"
+          data-testid="scan-item-view-image"
+          src={imageBase64}
+        />
+      </div>
     </div>
   );
 }
@@ -1832,17 +1865,16 @@ function getReviewDisplayLabel(review: ScanReviewState) {
   );
 }
 
-function getReviewTargetOverlayStyle(target: ScanReviewTarget | null) {
-  if (!target) {
-    return null;
+function getItemViewBadge(source: ScanItemViewSource, hasItemFrame: boolean) {
+  if (source === "segmented" && hasItemFrame) {
+    return "Isolated";
   }
 
-  return {
-    height: clampNumber((target.height / Math.max(1, window.innerHeight)) * 100, 1, 100),
-    left: clampNumber((target.x / Math.max(1, window.innerWidth)) * 100, 0, 100),
-    top: clampNumber((target.y / Math.max(1, window.innerHeight)) * 100, 0, 100),
-    width: clampNumber((target.width / Math.max(1, window.innerWidth)) * 100, 1, 100),
-  };
+  if (source === "focused_crop" && hasItemFrame) {
+    return "Focused";
+  }
+
+  return "Full scan";
 }
 
 function getSizeReferenceMm(preset: SizeReferencePreset) {

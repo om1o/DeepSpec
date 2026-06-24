@@ -154,6 +154,72 @@ describe("cloudSync", () => {
     }));
   });
 
+  it("retries core scan persistence when optional shop columns are missing from Supabase schema cache", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    const scanLookupUpsert = vi.fn()
+      .mockResolvedValueOnce({
+        error: {
+          message: "Could not find the 'customer_visible_report_json' column of 'scan_lookups' in the schema cache",
+        },
+      })
+      .mockResolvedValueOnce({ error: null });
+    const correctionUpsert = vi.fn().mockResolvedValue({ error: null });
+    const candidateInsert = vi.fn().mockResolvedValue({ error: null });
+    const evidenceInsert = vi.fn().mockResolvedValue({ error: null });
+    const modelRunInsert = vi.fn().mockResolvedValue({ error: null });
+    const syncEventInsert = vi.fn().mockResolvedValue({ error: null });
+    const from = vi.fn((table: string) => {
+      if (table === "scan_lookups") return { upsert: scanLookupUpsert };
+      if (table === "scan_candidates") return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert: candidateInsert };
+      if (table === "scan_evidence") return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert: evidenceInsert };
+      if (table === "scan_corrections") return { upsert: correctionUpsert };
+      if (table === "scan_model_runs") return { insert: modelRunInsert };
+      if (table === "sync_events") return { insert: syncEventInsert };
+      throw new Error(`Unexpected table ${table}`);
+    });
+    mocks.createClient.mockReturnValue({
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
+        signInAnonymously: vi.fn(),
+      },
+      from,
+      storage: {
+        from: vi.fn().mockReturnValue({ upload }),
+      },
+    });
+    const { syncLookupToCloud } = await import("./cloudSync");
+
+    await expect(syncLookupToCloud({
+      ...makeLookup(),
+      customerVisibleReport: {
+        generatedAt: "2026-05-18T00:00:04.000Z",
+        summary: "Customer report summary.",
+        title: "Customer report",
+      },
+    })).resolves.toMatchObject({ ok: true });
+
+    expect(scanLookupUpsert).toHaveBeenCalledTimes(2);
+    expect(scanLookupUpsert.mock.calls[0][0]).toEqual(expect.objectContaining({
+      customer_visible_report_json: expect.any(Object),
+    }));
+    expect(scanLookupUpsert.mock.calls[1][0]).toEqual(expect.not.objectContaining({
+      customer_visible_report_json: expect.anything(),
+      job_id: expect.anything(),
+      org_id: expect.anything(),
+      review_status: expect.anything(),
+      technician_user_id: expect.anything(),
+      vehicle_context: expect.anything(),
+    }));
+    expect(scanLookupUpsert.mock.calls[1][0]).toEqual(expect.objectContaining({
+      image_path: "user-1/lookup-1.jpg",
+      local_id: "lookup-1",
+      result_json: expect.any(Object),
+      user_id: "user-1",
+    }));
+  });
+
   it("upserts the shop job bridge row when a synced scan has valid org and job context", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");

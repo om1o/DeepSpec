@@ -4,6 +4,14 @@ import type { FeedbackSubmission, Lookup, WaitlistSignup } from "../types";
 
 const SCAN_BUCKET = "scan-images";
 const CLOUD_HEALTH_STORAGE_KEY = "deep-spec:cloud-health";
+const SCAN_LOOKUP_OPTIONAL_COLUMNS = [
+  "customer_visible_report_json",
+  "job_id",
+  "org_id",
+  "review_status",
+  "technician_user_id",
+  "vehicle_context",
+] as const;
 const HEALTH_TEST_IMAGE_BASE64 =
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/Aaf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/Aaf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAY/Aqf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/IV//2gAMAwEAAgADAAAAEP/EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8QH//Z";
 
@@ -202,36 +210,28 @@ export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult
       throw new Error(uploaded.error.message);
     }
 
-    const saved = await supabase.from("scan_lookups").upsert(
-      {
-        analyzed_at: lookup.analyzedAt ?? null,
-        captured_at: lookup.frame.capturedAt,
-        chat_history: lookup.chatHistory,
-        correction: lookup.correction,
-        created_at: lookup.createdAt,
-        error_code: lookup.errorCode ?? null,
-        error_message: lookup.errorMessage ?? null,
-        image_byte_length: image.byteLength,
-        image_hash: imageHash,
-        image_mime_type: image.contentType,
-        image_path: imagePath,
-        customer_visible_report_json: lookup.customerVisibleReport ?? null,
-        job_id: asUuid(lookup.jobId),
-        local_id: lookup.id,
-        notes: lookup.notes,
-        org_id: asUuid(lookup.orgId),
-        rating: lookup.rating,
-        result_json: lookup.result ?? null,
-        review_status: lookup.reviewStatus ?? null,
-        scan_category: lookup.scanCategory,
-        technician_user_id: asUuid(lookup.technicianUserId),
-        training_label: lookup.trainingLabel,
-        training_status: lookup.trainingStatus,
-        user_id: user.id,
-        vehicle_context: lookup.vehicleContext ?? null,
-      },
-      { onConflict: "user_id,local_id" },
-    );
+    const saved = await upsertScanLookupRow(supabase, {
+      analyzed_at: lookup.analyzedAt ?? null,
+      captured_at: lookup.frame.capturedAt,
+      chat_history: lookup.chatHistory,
+      correction: lookup.correction,
+      created_at: lookup.createdAt,
+      error_code: lookup.errorCode ?? null,
+      error_message: lookup.errorMessage ?? null,
+      image_byte_length: image.byteLength,
+      image_hash: imageHash,
+      image_mime_type: image.contentType,
+      image_path: imagePath,
+      local_id: lookup.id,
+      notes: lookup.notes,
+      rating: lookup.rating,
+      result_json: lookup.result ?? null,
+      scan_category: lookup.scanCategory,
+      training_label: lookup.trainingLabel,
+      training_status: lookup.trainingStatus,
+      user_id: user.id,
+      ...getOptionalScanLookupFields(lookup),
+    });
 
     if (saved.error) {
       throw new Error(saved.error.message);
@@ -299,6 +299,45 @@ export async function syncLookupsToCloud(lookups: Lookup[]): Promise<CloudBatchS
     ok: failures.length === 0,
     synced,
   };
+}
+
+function getOptionalScanLookupFields(lookup: Lookup) {
+  const optional: Record<string, unknown> = {};
+  const jobId = asUuid(lookup.jobId);
+  const orgId = asUuid(lookup.orgId);
+  const technicianUserId = asUuid(lookup.technicianUserId);
+
+  if (lookup.customerVisibleReport) optional.customer_visible_report_json = lookup.customerVisibleReport;
+  if (jobId) optional.job_id = jobId;
+  if (orgId) optional.org_id = orgId;
+  if (lookup.reviewStatus) optional.review_status = lookup.reviewStatus;
+  if (technicianUserId) optional.technician_user_id = technicianUserId;
+  if (lookup.vehicleContext) optional.vehicle_context = lookup.vehicleContext;
+
+  return optional;
+}
+
+async function upsertScanLookupRow(supabase: SupabaseClient, row: Record<string, unknown>) {
+  const result = await supabase.from("scan_lookups").upsert(row, { onConflict: "user_id,local_id" });
+  if (!isMissingOptionalScanLookupColumn(result.error)) {
+    return result;
+  }
+
+  return supabase.from("scan_lookups").upsert(omitOptionalScanLookupColumns(row), { onConflict: "user_id,local_id" });
+}
+
+function omitOptionalScanLookupColumns(row: Record<string, unknown>) {
+  const fallback = { ...row };
+  for (const column of SCAN_LOOKUP_OPTIONAL_COLUMNS) {
+    delete fallback[column];
+  }
+  return fallback;
+}
+
+function isMissingOptionalScanLookupColumn(error: { message?: string } | null | undefined) {
+  const message = error?.message ?? "";
+  return /schema cache|could not find .* column/i.test(message)
+    && SCAN_LOOKUP_OPTIONAL_COLUMNS.some((column) => message.includes(column));
 }
 
 async function syncDatasetDetailTables(supabase: SupabaseClient, userId: string, lookup: Lookup) {

@@ -276,7 +276,8 @@ describe("Scanner", () => {
     expect(detectObjectTargetFromImageData).toHaveBeenCalled();
     expect(screen.getByTestId("product-isolation-mask")).toBeInTheDocument();
     expect(screen.getByTestId("lens-primary-label")).toHaveTextContent("Alternator");
-    expect(screen.getByAltText("Scan photo for Alternator")).toHaveAttribute("src", "data:image/jpeg;base64,target-crop");
+    expect(screen.getByTestId("scan-item-view")).toHaveTextContent("Focused");
+    expect(screen.getByAltText("Item view for Alternator")).toHaveAttribute("src", "data:image/jpeg;base64,target-crop");
     expectOverlayBox(screen.getByTestId("lens-part-overlay-0"), {
       height: 180,
       left: 80,
@@ -315,7 +316,8 @@ describe("Scanner", () => {
     expect(identifyCapturedFrame.mock.calls[0][1]).toMatchObject({
       imageBase64: "data:image/jpeg;base64,target-crop",
     });
-    expect(screen.getByAltText("Scan photo for Alternator")).toHaveAttribute("src", "data:image/png;base64,segmented-product");
+    expect(screen.getByTestId("scan-item-view")).toHaveTextContent("Isolated");
+    expect(screen.getByAltText("Item view for Alternator")).toHaveAttribute("src", "data:image/png;base64,segmented-product");
   }, 10000);
 
   it("shows a context AR outline when a body part uses a tighter focus overlay", async () => {
