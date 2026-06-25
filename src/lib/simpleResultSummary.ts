@@ -28,7 +28,7 @@ export function getSimpleResultSummary(result: IdentificationResult): SimpleResu
 function getSimpleTitle(result: IdentificationResult) {
   const clean = result.partName.replace(/\s+/g, " ").trim();
   if (!clean || GENERIC_NON_PART.test(clean)) {
-    return "Object detected";
+    return "Item identified";
   }
 
   return clean.replace(/^likely\s+/i, "");

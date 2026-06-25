@@ -49,7 +49,7 @@ export function FocusedPartOverlay({ label, mode, target }: FocusedPartOverlayPr
           style={labelStyle}
         >
           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-[var(--ds-accent)]">
-            {mode === "mask" ? "Focused item" : "Detected item"}
+            Item view
           </p>
           <p className="mt-0.5 truncate text-sm font-black">{label}</p>
         </div>
