@@ -2,7 +2,7 @@ import type { IdentificationResult } from "../types";
 
 export type SimpleResultSummary = {
   body: string;
-  eyebrow: "Best match" | "Detected" | "Visible issue";
+  eyebrow: "Best match" | "Identified" | "Visible issue";
   nextAction: string | null;
   title: string;
 };
@@ -19,7 +19,7 @@ export function getSimpleResultSummary(result: IdentificationResult): SimpleResu
 
   return {
     body,
-    eyebrow: visibleIssue ? "Visible issue" : GENERIC_NON_PART.test(result.partName) ? "Detected" : "Best match",
+    eyebrow: visibleIssue ? "Visible issue" : GENERIC_NON_PART.test(result.partName) ? "Identified" : "Best match",
     nextAction: needsPhoto ? summarizeSentence(result.nextAction || "Use a closer photo of the part.") : null,
     title,
   };

@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import Webcam from "react-webcam";
 import { Link, useLocation } from "react-router-dom";
-import { FocusedPartOverlay } from "../components/scanner/FocusedPartOverlay";
+import { IsolatedPartView } from "../components/result/IsolatedPartView";
+import { IssueLine, ResultDetailSections } from "../components/result/PositiveAnswerCard";
 import Button from "../components/ui/Button";
 import { useCamera, type CameraDevice } from "../hooks/useCamera";
 import type { CameraObjectTarget } from "../hooks/useObjectTarget";
@@ -10,6 +11,7 @@ import { assessImageQuality, type ImageQualityIssue, type ImageQualityResult } f
 import { createFocusedScanCrop } from "../lib/focusCrop";
 import { createSegmentedProductIsolation } from "../lib/productSegmentation";
 import { getSimpleResultSummary } from "../lib/simpleResultSummary";
+import { deriveIssue, getAnswerBody } from "../lib/resultFacts";
 import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
 import { getScanCardPreferences, type ScanCardPreferences } from "../lib/scanResultCardSettings";
 import { detectObjectTargetFromImageData, type ObjectTargetBox } from "../lib/objectTargeting";
@@ -27,7 +29,7 @@ import {
   recordScanQualityRetake,
 } from "../services/scanQualityMetrics";
 import { createLookup, updateLookup } from "../services/storage";
-import type { Confidence, IdentificationResult, CapturedFrame, Lookup, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanQualitySnapshot, ShopJob, ShopVehicleContext, VisualFocusBox, VisualFocusMode } from "../types";
+import type { IdentificationResult, CapturedFrame, Lookup, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanQualitySnapshot, ShopJob, ShopVehicleContext, VisualFocusBox, VisualFocusMode } from "../types";
 
 const SECOND_FRAME_DELAY_MS = 120;
 const IDENTIFY_BUDGET_WARN_MS = 15000;
@@ -175,10 +177,6 @@ export default function Scanner() {
   const anchoredReviewTarget = useMemo(
     () => (scanReview?.reviewTarget ? clampReviewTarget(scanReview.reviewTarget) : null),
     [scanReview],
-  );
-  const focusedReviewTarget = useMemo(
-    () => (scanReview?.focusTarget ? clampReviewTarget(scanReview.focusTarget) : anchoredReviewTarget),
-    [anchoredReviewTarget, scanReview],
   );
 
   const reviewCardPlacement = getReviewCardPlacement(anchoredReviewTarget);
@@ -645,16 +643,8 @@ export default function Scanner() {
           onUserMediaError={markError}
         />
       ) : null}
-      {scanReview?.scanState.frame.imageBase64 ? (
-        <img
-          alt="Reviewed scan photo"
-          className="pointer-events-none absolute inset-0 z-[1] h-full w-full object-cover"
-          src={scanReview.scanState.frame.imageBase64}
-        />
-      ) : null}
-
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(4,7,14,0.72),rgba(4,7,14,0)_28%,rgba(4,7,14,0)_55%,rgba(4,7,14,0.78))]" />
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[46dvh] bg-[radial-gradient(ellipse_at_50%_80%,rgba(0,170,255,0.12),rgba(4,7,14,0)_42%),linear-gradient(to_top,rgba(4,7,14,0.90),rgba(4,7,14,0))]" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[46dvh] bg-[radial-gradient(ellipse_at_50%_80%,rgba(94,147,166,0.12),rgba(4,7,14,0)_42%),linear-gradient(to_top,rgba(4,7,14,0.90),rgba(4,7,14,0))]" />
 
       <header className="fixed left-0 right-0 top-0 z-20 flex items-center justify-between px-4 pb-3 pt-[max(16px,env(safe-area-inset-top))]">
         <Link
@@ -723,11 +713,15 @@ export default function Scanner() {
         </>
       ) : null}
 
-      {scanReview?.scanState.result ? (
-        <FocusedPartOverlay
-          label={getSimpleResultSummary(scanReview.scanState.result).title}
-          mode={scanReview.scanState.focusMode ?? (scanReview.isolatedFrame ? "crop" : "full_frame")}
-          target={focusedReviewTarget}
+      {scanReview ? (
+        <IsolatedPartView
+          frameBase64={scanReview.scanState.frame.imageBase64}
+          isolatedImageBase64={scanReview.scanState.isolatedImageBase64}
+          focusBox={scanReview.scanState.focusBox}
+          focusMode={scanReview.scanState.focusMode ?? (scanReview.isolatedFrame ? "crop" : "full_frame")}
+          label={scanReview.scanState.result ? getSimpleResultSummary(scanReview.scanState.result).title : "Item captured"}
+          issue={scanReview.scanState.result ? deriveIssue(scanReview.scanState.result) : null}
+          variant="scanner"
         />
       ) : null}
       {isAnalyzing ? <AnalyzingOverlay onCancel={cancelCurrentScan} step={analysisStep} /> : null}
@@ -871,10 +865,10 @@ function roundRatio(value: number) {
 function CameraLoading() {
   return (
     <div className="fixed inset-0 z-10 grid place-items-center bg-[var(--ds-bg)] px-6 text-center">
-      <div className="rounded-[24px] border border-white/10 bg-white/8 p-5 shadow-2xl backdrop-blur-md" style={{ borderColor: "rgba(0,194,255,0.18)" }}>
+      <div className="rounded-[24px] border border-white/10 bg-white/8 p-5 shadow-2xl backdrop-blur-md" style={{ borderColor: "rgba(94,147,166,0.18)" }}>
         <div
           className="mx-auto size-12 animate-spin rounded-full border-2"
-          style={{ borderColor: "rgba(0,194,255,0.14)", borderTopColor: "rgba(0,194,255,0.85)" }}
+          style={{ borderColor: "rgba(94,147,166,0.14)", borderTopColor: "rgba(94,147,166,0.85)" }}
         />
         <p className="mt-4 text-sm font-extrabold text-white">Opening camera</p>
       </div>
@@ -966,14 +960,14 @@ export function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; ste
 
   return (
     <div className="fixed inset-0 z-40 grid place-items-center px-6 text-center" style={{ background: "rgba(4,7,14,0.82)", backdropFilter: "blur(16px)" }}>
-      <div className="w-full max-w-xs overflow-hidden rounded-[24px] p-6 shadow-2xl" style={{ background: "rgba(7,16,30,0.96)", border: "1px solid rgba(0,194,255,0.18)" }}>
+      <div className="w-full max-w-xs overflow-hidden rounded-[24px] p-6 shadow-2xl" style={{ background: "rgba(7,16,30,0.96)", border: "1px solid rgba(94,147,166,0.18)" }}>
         <div className="relative mx-auto grid size-24 place-items-center">
-          <div className="absolute inset-0 rounded-full" style={{ border: "1px solid rgba(0,194,255,0.12)" }} />
+          <div className="absolute inset-0 rounded-full" style={{ border: "1px solid rgba(94,147,166,0.12)" }} />
           <div
             className="absolute inset-2 animate-spin rounded-full border-2"
-            style={{ borderColor: "rgba(0,194,255,0.10)", borderTopColor: "rgba(0,194,255,0.82)" }}
+            style={{ borderColor: "rgba(94,147,166,0.10)", borderTopColor: "rgba(94,147,166,0.82)" }}
           />
-          <div className="absolute inset-7 rounded-full" style={{ background: "rgba(0,194,255,0.12)", boxShadow: "0 0 28px rgba(0,170,255,0.40)" }} />
+          <div className="absolute inset-7 rounded-full" style={{ background: "rgba(94,147,166,0.12)", boxShadow: "0 0 28px rgba(94,147,166,0.40)" }} />
           <div className="scanner-analysis-sweep absolute inset-x-3 top-1/2 h-0.5 rounded-full" style={{ background: "var(--electric-500)" }} />
         </div>
         <p className="mt-5 text-lg font-extrabold tracking-tight text-white">Reading photo</p>
@@ -1001,13 +995,13 @@ function ScanQualityCoachNotice({
       className="fixed bottom-[210px] left-1/2 z-30 w-[calc(100%-28px)] max-w-sm -translate-x-1/2 overflow-hidden rounded-[22px] text-center text-white"
       style={{
         background: "rgba(7,16,30,0.96)",
-        border: "1px solid rgba(0,194,255,0.18)",
+        border: "1px solid rgba(94,147,166,0.18)",
         backdropFilter: "blur(28px) saturate(1.4)",
         boxShadow: "0 24px 60px rgba(0,0,0,0.55)",
       }}
     >
-      <div className="px-5 py-4" style={{ background: "rgba(0,194,255,0.07)", borderBottom: "1px solid rgba(0,194,255,0.12)" }}>
-        <p style={{ fontFamily: "var(--font-data)", fontSize: 10, fontWeight: 600, letterSpacing: "0.14em", color: "#55C8FF", textTransform: "uppercase" }}>
+      <div className="px-5 py-4" style={{ background: "rgba(94,147,166,0.07)", borderBottom: "1px solid rgba(94,147,166,0.12)" }}>
+        <p style={{ fontFamily: "var(--font-data)", fontSize: 10, fontWeight: 600, letterSpacing: "0.14em", color: "#86B2C0", textTransform: "uppercase" }}>
           {coach.progress}
         </p>
         <h2 className="mt-1 text-[22px] font-black tracking-tight">{coach.title}</h2>
@@ -1016,7 +1010,7 @@ function ScanQualityCoachNotice({
         <p className="text-base font-black leading-6 text-white">{coach.action}</p>
         <button
           className="mt-4 w-full rounded-[12px] py-3 text-[13px] font-bold text-white"
-          style={{ background: "var(--blue-500)", boxShadow: "0 4px 18px rgba(20,105,236,0.30)" }}
+          style={{ background: "var(--blue-500)", boxShadow: "0 4px 18px rgba(78,110,146,0.30)" }}
           onClick={onTryAgain}
           type="button"
         >
@@ -1054,15 +1048,9 @@ function ScanResultCard({
   const summary = result ? getSimpleResultSummary(result) : null;
   const isError = Boolean(review.scanState.errorMessage);
   const label = isError ? "Item captured" : summary?.title ?? getReviewDisplayLabel(review);
-  const confidence = result?.confidence;
   const isCompact = prefs.compactCardsByDefault && !isExpanded;
-  const statusStyle = getConfidenceStyle(confidence);
-  const visibleFacts = getVisibleFacts(result, isCompact);
-  const concernFacts = getConcernFacts(result, isCompact);
-  const evidenceFacts = getEvidenceFacts(result, isCompact);
   const itemViewFrame = review.isolatedFrame ?? review.scanState.frame;
   const itemViewBadge = getItemViewBadge(review.scanState.focusMode ?? (review.isolatedFrame ? "crop" : "full_frame"), Boolean(review.scanState.isolatedImageBase64));
-  const dotColor = confidence === "high" ? "var(--green-400)" : confidence === "medium" ? "var(--amber-400)" : "var(--red-400)";
 
   return (
     <section
@@ -1087,25 +1075,26 @@ function ScanResultCard({
           {result && !isError ? (
             <div
               className="mb-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1"
-              style={{ background: "rgba(0,194,255,0.08)", border: "1px solid rgba(0,194,255,0.24)" }}
+              style={{ background: "rgba(94,147,166,0.08)", border: "1px solid rgba(94,147,166,0.24)" }}
             >
-              <span className="block rounded-full" style={{ width: 5, height: 5, background: dotColor, flexShrink: 0 }} />
+              <span className="block rounded-full" style={{ width: 5, height: 5, background: "var(--electric-300)", flexShrink: 0 }} />
               <span
                 style={{
                   fontFamily: "var(--font-data)",
                   fontSize: 10,
                   fontWeight: 600,
                   letterSpacing: "0.10em",
-                  color: "#55C8FF",
+                  color: "#86B2C0",
                   textTransform: "uppercase",
                 }}
               >
-                {summary?.eyebrow ?? "Detected"}
+                {summary?.eyebrow ?? "Identified"}
               </span>
             </div>
           ) : null}
           <h3 className="text-[18px] font-black leading-tight tracking-[-0.02em]">{label}</h3>
-          {summary ? <p className="mt-1 text-sm font-semibold leading-5 text-white/76">{summary.body}</p> : null}
+          {result ? <IssueLine result={result} variant="scanner" /> : null}
+          {result && summary ? <p className="mt-1 text-sm font-semibold leading-5 text-white/76">{getAnswerBody(result, summary)}</p> : null}
         </div>
         <button
           className="grid size-8 shrink-0 place-items-center rounded-full text-white/50 transition-colors hover:text-white/80"
@@ -1129,7 +1118,7 @@ function ScanResultCard({
       ) : null}
 
       {/* Content body */}
-      <div className={`mt-3 ${statusStyle.accent}`}>
+      <div className="mt-3">
         {isMismatch ? (
           <div
             className="mb-3 rounded-xl px-3 py-2.5"
@@ -1158,30 +1147,9 @@ function ScanResultCard({
             <p className="mb-1 text-[10px] font-extrabold uppercase tracking-[0.14em] text-white/48">Saved photo</p>
             <p className="text-xs font-semibold leading-5 text-white/78">{review.scanState.errorMessage}</p>
           </div>
-        ) : (
-          <>
-            {summary?.nextAction ? (
-              <BubbleSection title="Next step">
-                <p>{summary.nextAction}</p>
-              </BubbleSection>
-            ) : null}
-            {isExpanded ? (
-              <>
-                <BubbleSection title="Evidence">
-                  <FactList facts={visibleFacts} />
-                </BubbleSection>
-                <BubbleSection title="Match clues">
-                  <FactList facts={evidenceFacts} />
-                </BubbleSection>
-                {concernFacts.length ? (
-                  <BubbleSection title="Flags">
-                    <FactList facts={concernFacts} />
-                  </BubbleSection>
-                ) : null}
-              </>
-            ) : null}
-          </>
-        )}
+        ) : result ? (
+          <ResultDetailSections result={result} variant="scanner" compact={isCompact} />
+        ) : null}
       </div>
 
       {/* Actions */}
@@ -1205,15 +1173,6 @@ function ScanResultCard({
         </p>
       ) : null}
     </section>
-  );
-}
-
-function BubbleSection({ children, title }: { children: ReactNode; title: string }) {
-  return (
-    <div className="border-t border-white/10 py-3 first:border-t-0 first:pt-0">
-      <SectionTitle>{title}</SectionTitle>
-      <div className="mt-1 text-xs leading-6 text-white/82">{children}</div>
-    </div>
   );
 }
 
@@ -1260,19 +1219,6 @@ function ItemViewPanel({
 function SectionTitle({ children }: { children: ReactNode }) {
   return (
     <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-white/48">{children}</p>
-  );
-}
-
-function FactList({ emptyText, facts }: { emptyText?: string; facts: string[] }) {
-  const items = facts.length ? facts : emptyText ? [emptyText] : [];
-  return (
-    <ul className="space-y-1.5">
-      {items.map((fact) => (
-        <li key={fact} className="pl-3 before:-ml-3 before:mr-2 before:text-[var(--ds-accent)] before:content-['-']">
-          {fact}
-        </li>
-      ))}
-    </ul>
   );
 }
 
@@ -1612,64 +1558,6 @@ function getItemViewBadge(source: VisualFocusMode, hasIsolatedOutput: boolean) {
   return "Full scan";
 }
 
-function getVisibleFacts(result: IdentificationResult | undefined, compact: boolean) {
-  if (!result) {
-    return ["No AI result yet. Open the scan details to retry."];
-  }
-  const facts = result.visibleObservations
-    .map((item) => summarize(item, compact ? 85 : 130))
-    .filter(Boolean);
-
-  return facts.length ? facts.slice(0, compact ? 3 : 5) : ["No visual observations were returned."];
-}
-
-function getConcernFacts(result: IdentificationResult | undefined, compact: boolean) {
-  if (!result) {
-    return [];
-  }
-
-  return result.concerns
-    .map((item) => summarize(item, compact ? 85 : 130))
-    .filter(Boolean)
-    .slice(0, compact ? 3 : 5);
-}
-
-function getEvidenceFacts(result: IdentificationResult | undefined, compact: boolean) {
-  if (!result) {
-    return ["Deep Spec needs a completed AI result before it can explain the match."];
-  }
-
-  const facts = [
-    ...result.evidence,
-    ...result.evidenceRegions.map((item) => `${item.regionLabel}: ${item.observation}`),
-  ]
-    .filter(Boolean)
-    .map((item) => summarize(item, compact ? 90 : 145));
-
-  return facts.length ? facts.slice(0, compact ? 3 : 6) : ["No diagnostic evidence was returned by the model."];
-}
-
-function getConfidenceStyle(confidence: Confidence | undefined) {
-  if (confidence === "high") {
-    return {
-      accent: "shadow-[0_0_0_1px_rgba(16,185,129,0.25)]",
-      chip: "border-[var(--ds-ok-line)] bg-[var(--ds-ok-soft)] text-[var(--ds-ok-ink)]",
-    };
-  }
-
-  if (confidence === "medium") {
-    return {
-      accent: "shadow-[0_0_0_1px_rgba(245,158,11,0.22)]",
-      chip: "border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] text-[var(--ds-warn-ink)]",
-    };
-  }
-
-  return {
-    accent: "shadow-[0_0_0_1px_rgba(248,113,113,0.22)]",
-    chip: "border-[var(--ds-danger-line)] bg-[var(--ds-danger-soft)] text-[var(--ds-danger-ink)]",
-  };
-}
-
 function getReviewCardPlacement(target: ScanReviewTarget | null): ReviewCardPlacement {
   if (window.innerWidth < 520 && target) {
     return {
@@ -1698,14 +1586,6 @@ function getReviewCardPlacement(target: ScanReviewTarget | null): ReviewCardPlac
   const top = clampNumber(rawTop - margin, 72, Math.max(72, window.innerHeight - SCAN_CARD_SAFE_HEIGHT_PX));
 
   return { anchorSide, left, top };
-}
-
-function summarize(value: string, limit: number) {
-  const trimmed = value.trim();
-  if (trimmed.length <= limit) {
-    return trimmed;
-  }
-  return `${trimmed.slice(0, Math.max(12, limit - 1)).trimEnd()}...`;
 }
 
 function clampNumber(value: number, min: number, max: number) {
@@ -1770,7 +1650,7 @@ function LensBottomBar({
       </button>
 
       <div className="flex items-center justify-center" style={{ width: 86, height: 86 }}>
-        <div className="flex items-center justify-center rounded-full" style={{ width: 86, height: 86, background: "rgba(0,194,255,0.06)", border: "1px solid rgba(0,194,255,0.22)" }}>
+        <div className="flex items-center justify-center rounded-full" style={{ width: 86, height: 86, background: "rgba(94,147,166,0.06)", border: "1px solid rgba(94,147,166,0.22)" }}>
           <button
             type="button"
             aria-label="Scan now"
@@ -1780,10 +1660,10 @@ function LensBottomBar({
             style={{
               width: 68,
               height: 68,
-              border: "1px solid rgba(0, 194, 255, 0.60)",
-              background: "rgba(0, 194, 255, 0.08)",
-              color: "#39D0FF",
-              boxShadow: "0 0 18px rgba(0,170,255,0.30)",
+              border: "1px solid rgba(94, 147, 166, 0.60)",
+              background: "rgba(94, 147, 166, 0.08)",
+              color: "#86B2C0",
+              boxShadow: "0 0 18px rgba(94,147,166,0.30)",
               animation: "ds-btn-pulse 2.4s ease-in-out infinite",
             }}
           >

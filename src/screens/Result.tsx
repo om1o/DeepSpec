@@ -4,8 +4,10 @@ import { getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../
 import CloudHealthCard from "../components/CloudHealthCard";
 import Button from "../components/ui/Button";
 import HistoryDockButton from "../components/ui/HistoryDockButton";
-import ScanThumb from "../components/ui/ScanThumb";
+import { IsolatedPartView } from "../components/result/IsolatedPartView";
+import { IssueLine, ResultDetailSections } from "../components/result/PositiveAnswerCard";
 import { getSimpleResultSummary } from "../lib/simpleResultSummary";
+import { deriveIssue, getAnswerBody } from "../lib/resultFacts";
 import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } from "../lib/utils";
 import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
 import { buildScanReport, downloadTextFile, getMechanicSearchUrl, getScanReportFilename } from "../services/report";
@@ -155,22 +157,20 @@ export default function Result() {
       <div className="mx-auto grid min-h-dvh w-full max-w-6xl lg:grid-cols-[minmax(0,1fr)_430px] lg:p-4">
         <section className="relative min-h-[48dvh] overflow-hidden bg-[#020617] text-white lg:sticky lg:top-4 lg:min-h-[calc(100dvh-32px)] lg:rounded-[30px]">
           {frame?.imageBase64 ? (
-            <ScanThumb
-              alt="Captured car part"
-              className="absolute inset-0 h-full w-full object-cover"
-              src={frame.imageBase64}
+            <IsolatedPartView
+              frameBase64={frame.imageBase64}
+              isolatedImageBase64={scanState?.isolatedImageBase64}
+              focusBox={scanState?.focusBox}
+              focusMode={scanState?.focusMode ?? "full_frame"}
+              label={simpleSummary?.title ?? "Captured frame"}
+              issue={scanState?.result ? deriveIssue(scanState.result) : null}
+              variant="result"
             />
           ) : (
             <div className="absolute inset-0 grid place-items-center bg-[#061522] px-8 text-center text-sm text-white/62">
               No captured frame yet.
             </div>
           )}
-          <ResultFocusFrame
-            focusBox={scanState?.focusBox}
-            isVisible={Boolean(frame?.imageBase64)}
-            label={simpleSummary?.title ?? "Captured frame"}
-            mode={scanState?.focusMode ?? "full_frame"}
-          />
           <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(2,6,23,0.58),rgba(2,6,23,0.02)_38%,rgba(2,6,23,0.76))]" />
           <header className="absolute left-0 right-0 top-0 z-10 flex items-center justify-between px-4 pt-[max(18px,env(safe-area-inset-top))]">
             <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-11 w-32 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-white/30" />
@@ -263,79 +263,6 @@ function ShopJobBanner({ job }: { job: ShopJobRecord }) {
       </div>
     </section>
   );
-}
-
-function ResultFocusFrame({
-  focusBox,
-  isVisible,
-  label,
-  mode,
-}: {
-  focusBox: ScanAnalysisState["focusBox"];
-  isVisible: boolean;
-  label: string;
-  mode: NonNullable<ScanAnalysisState["focusMode"]>;
-}) {
-  if (!isVisible) {
-    return null;
-  }
-
-  const box = getResultFocusBox(focusBox);
-  const labelPlacement = box.top > 24
-    ? { bottom: "calc(100% + 10px)", left: 10 }
-    : { left: 10, top: "calc(100% + 10px)" };
-
-  return (
-    <div className="pointer-events-none absolute inset-0 z-10" data-focus-mode={mode} data-testid="result-focus-frame">
-      <div className="absolute left-0 top-0 w-full bg-slate-950/62 backdrop-blur-md" style={{ height: `${box.top}%` }} />
-      <div className="absolute left-0 bg-slate-950/62 backdrop-blur-md" style={{ height: `${box.height}%`, top: `${box.top}%`, width: `${box.left}%` }} />
-      <div className="absolute right-0 bg-slate-950/62 backdrop-blur-md" style={{ height: `${box.height}%`, top: `${box.top}%`, width: `${Math.max(0, 100 - box.left - box.width)}%` }} />
-      <div className="absolute bottom-0 left-0 w-full bg-slate-950/62 backdrop-blur-md" style={{ top: `${box.top + box.height}%` }} />
-      <div
-        className="absolute rounded-[18px] outline outline-2 outline-white/90"
-        style={{
-          height: `${box.height}%`,
-          left: `${box.left}%`,
-          top: `${box.top}%`,
-          width: `${box.width}%`,
-        }}
-      >
-        <div className="absolute -left-1 -top-1 size-7 rounded-tl-[18px] border-l-4 border-t-4 border-white" />
-        <div className="absolute -right-1 -top-1 size-7 rounded-tr-[18px] border-r-4 border-t-4 border-white" />
-        <div className="absolute -bottom-1 -left-1 size-7 rounded-bl-[18px] border-b-4 border-l-4 border-white" />
-        <div className="absolute -bottom-1 -right-1 size-7 rounded-br-[18px] border-b-4 border-r-4 border-white" />
-        <div
-          className="absolute max-w-[min(300px,82vw)] rounded-[14px] bg-white px-3 py-2 text-slate-950 shadow-[0_16px_40px_rgba(2,6,23,0.34)]"
-          style={labelPlacement}
-        >
-          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-[var(--ds-accent)]">
-            Item view
-          </p>
-          <p className="mt-0.5 truncate text-sm font-black">{label}</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function getResultFocusBox(focusBox: ScanAnalysisState["focusBox"]) {
-  if (!focusBox) {
-    return { height: 38, left: 16, top: 28, width: 68 };
-  }
-
-  const paddingX = Math.max(2.5, focusBox.width * 8);
-  const paddingY = Math.max(2.5, focusBox.height * 8);
-  const left = clampPercent((focusBox.x * 100) - paddingX);
-  const top = clampPercent((focusBox.y * 100) - paddingY);
-  const right = clampPercent(((focusBox.x + focusBox.width) * 100) + paddingX);
-  const bottom = clampPercent(((focusBox.y + focusBox.height) * 100) + paddingY);
-
-  return {
-    height: clampRange(bottom - top, 14, 82),
-    left,
-    top,
-    width: clampRange(right - left, 18, 88),
-  };
 }
 
 function StorageWarning({ message }: { message: string }) {
@@ -624,10 +551,11 @@ function AnalysisResult({
             Identified with a backup AI model because the main model was busy. Double-check this result before relying on it.
           </p>
         ) : null}
-        <p className="mt-3 text-sm leading-6 text-neutral-600">{summary.body}</p>
-        {summary.nextAction ? <p className="mt-2 text-sm font-bold leading-6 text-neutral-700">{summary.nextAction}</p> : null}
+        <IssueLine result={result} variant="result" />
+        <p className="mt-3 text-sm leading-6 text-neutral-600">{getAnswerBody(result, summary)}</p>
         {capturedAt ? <p className="mt-3 text-xs font-semibold text-neutral-400">Captured {capturedAt}</p> : null}
         <QuickActions canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} onSaveOnly={onSaveOnly} />
+        <ResultDetailSections result={result} variant="result" />
       </section>
 
       {showSafetyWarning ? (
@@ -851,14 +779,6 @@ function NotAnalyzed({ capturedAt }: { capturedAt: string | null }) {
       {capturedAt ? <p className="mt-3 text-xs font-semibold text-neutral-400">Captured {capturedAt}</p> : null}
     </section>
   );
-}
-
-function clampPercent(value: number) {
-  return Math.max(0, Math.min(100, Math.round(value)));
-}
-
-function clampRange(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value));
 }
 
 function getDatasetSourceUrls(evidence: string[]) {

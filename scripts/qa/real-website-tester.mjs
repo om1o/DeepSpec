@@ -1105,7 +1105,7 @@ async function waitForScannerAiOutcome() {
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     const text = await getBodyText();
-    if (/Best match|Detected|Visible issue|Item view|Tell me more|What this is|Next step/i.test(text)) {
+    if (/Best match|Identified|Visible issue|Item view|Tell me more|What this is|Next step/i.test(text)) {
       return { text: compactText(text), type: "result" };
     }
 

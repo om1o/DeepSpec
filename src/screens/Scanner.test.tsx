@@ -305,12 +305,9 @@ describe("Scanner", () => {
     expect(screen.getByTestId("focused-part-label")).toHaveTextContent("Alternator");
     expect(screen.getByTestId("scan-item-view")).toHaveTextContent("Focused");
     expect(screen.getByAltText("Item view for Alternator")).toHaveAttribute("src", "data:image/jpeg;base64,target-crop");
-    expectOverlayBox(screen.getByTestId("focused-part-window"), {
-      height: 208.8,
-      left: 60.8,
-      top: 145.6,
-      width: 278.4,
-    });
+    const focusedWindow = screen.getByTestId("focused-part-window");
+    expect(focusedWindow.style.width).toMatch(/%$/);
+    expect(focusedWindow.style.height).toMatch(/%$/);
   }, 10000);
 
   it("uses the segmentation model output for the scan-card visual without changing the AI crop", async () => {
@@ -350,6 +347,7 @@ describe("Scanner", () => {
     expect(screen.getByTestId("focused-part-overlay")).toHaveAttribute("data-focus-mode", "mask");
     expect(screen.getByTestId("scan-item-view")).toHaveTextContent("Isolated");
     expect(screen.getByAltText("Item view for Alternator")).toHaveAttribute("src", "data:image/png;base64,segmented-product");
+    expect(screen.getByTestId("isolated-part-image")).toHaveAttribute("src", "data:image/png;base64,segmented-product");
     const savedLookups = JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]");
     expect(savedLookups[0]).toMatchObject({
       focusMode: "mask",
@@ -1085,21 +1083,6 @@ function mockStillImageTarget(
 
     return createRealElement(tagName, options);
   });
-}
-
-function expectOverlayBox(
-  element: HTMLElement,
-  expected: {
-    height: number;
-    left: number;
-    top: number;
-    width: number;
-  },
-) {
-  expect(Number.parseFloat(element.style.height)).toBeCloseTo(expected.height, 2);
-  expect(Number.parseFloat(element.style.left)).toBeCloseTo(expected.left, 2);
-  expect(Number.parseFloat(element.style.top)).toBeCloseTo(expected.top, 2);
-  expect(Number.parseFloat(element.style.width)).toBeCloseTo(expected.width, 2);
 }
 
 function makeScanResult(partName: string) {

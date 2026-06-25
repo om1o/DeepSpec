@@ -26,6 +26,7 @@ describe("getSimpleResultSummary", () => {
   it("keeps generic scan results identified without saying object detected", () => {
     const summary = getSimpleResultSummary(makeResult("Unknown object"));
 
+    expect(summary.eyebrow).toBe("Identified");
     expect(summary.title).toBe("Item identified");
     expect(summary.title).not.toMatch(/object detected/i);
   });
