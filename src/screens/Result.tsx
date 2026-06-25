@@ -168,7 +168,7 @@ export default function Result() {
             />
           ) : (
             <div className="absolute inset-0 grid place-items-center bg-[#061522] px-8 text-center text-sm text-white/62">
-              No captured frame yet.
+              No frame captured.
             </div>
           )}
           <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(2,6,23,0.58),rgba(2,6,23,0.02)_38%,rgba(2,6,23,0.76))]" />
@@ -312,7 +312,7 @@ function SavedScanControls({
       await navigator.clipboard.writeText(report);
       setReportStatus("Report copied to clipboard.");
     } catch {
-      setReportStatus("Could not share this report from this browser.");
+      setReportStatus("This browser won't share. Export instead.");
     }
   }
 
@@ -328,7 +328,7 @@ function SavedScanControls({
       const result = await syncLookupToCloud(lookup);
       setCloudStatusMessage(result.message);
     } catch (error) {
-      setCloudStatusMessage(error instanceof Error ? `Cloud sync failed. ${error.message}` : "Cloud sync failed. Please try again.");
+      setCloudStatusMessage(error instanceof Error ? `Sync didn't go through. ${error.message}` : "Sync didn't go through. Retry.");
     } finally {
       setIsSyncingCloud(false);
     }
@@ -548,7 +548,7 @@ function AnalysisResult({
           </p>
         ) : shouldShowBackupModelNotice(result) ? (
           <p className="mt-3 rounded-2xl border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-3 py-2 text-xs font-semibold leading-5 text-neutral-700">
-            Identified with a backup AI model because the main model was busy. Double-check this result before relying on it.
+            Ran on the backup model while the main one was busy. Double-check before relying on it.
           </p>
         ) : null}
         <IssueLine result={result} variant="result" />
@@ -562,7 +562,7 @@ function AnalysisResult({
         <section className="rounded-[22px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-4">
           <p className="text-sm font-extrabold text-[var(--ds-warn-ink)]">Professional check needed</p>
           <p className="mt-2 text-sm leading-6 text-neutral-700">
-            Verify this before driving or attempting repair. The scan can explain visible clues, but this category can affect safety.
+            Verify before driving or repairing. The scan reads visible clues; this category affects safety.
           </p>
         </section>
       ) : null}
@@ -740,7 +740,7 @@ function AnalysisError({
   return (
     <section className="scanner-error-flash rounded-[24px] border border-[var(--ds-danger-line)] bg-[var(--ds-danger-soft)] p-5">
       <p className="text-sm font-bold text-[var(--ds-danger-ink)]">
-        {errorDetails.category === "provider_unavailable" ? "Provider unavailable" : "AI identification failed"}
+        {errorDetails.category === "provider_unavailable" ? "Provider unavailable" : "Identification needs another pass"}
       </p>
       <h2 className="mt-2 text-xl font-extrabold tracking-tight">{errorDetails.title}</h2>
       <p className="mt-3 text-sm leading-6 text-neutral-700">{message}</p>
@@ -750,7 +750,7 @@ function AnalysisError({
       {frame ? (
         <div className="mt-4 border-t border-neutral-200 pt-4">
           <p className="text-xs font-semibold text-neutral-500">
-            {isOnline ? "Internet connection is active." : "Offline. Find an internet connection to retry identification."}
+            {isOnline ? "Connection is active." : "Offline. Reconnect to retry."}
           </p>
           <Button
             className="mt-3 w-full"
@@ -774,7 +774,7 @@ function NotAnalyzed({ capturedAt }: { capturedAt: string | null }) {
       <p className="text-sm font-bold text-[var(--ds-accent)]">Not analyzed yet</p>
       <h2 className="mt-2 text-xl font-extrabold tracking-tight">Scan again to identify this</h2>
       <p className="mt-3 text-sm leading-6 text-neutral-500">
-        Deep Spec has the captured frame, but no AI result is attached to this screen.
+        The frame is here, but no result is attached yet.
       </p>
       {capturedAt ? <p className="mt-3 text-xs font-semibold text-neutral-400">Captured {capturedAt}</p> : null}
     </section>

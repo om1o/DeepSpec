@@ -108,7 +108,7 @@ describe("Result", () => {
 
     expect(
       screen.getByText(
-        "Identified with a backup AI model because the main model was busy. Double-check this result before relying on it.",
+        "Ran on the backup model while the main one was busy. Double-check before relying on it.",
       ),
     ).toBeInTheDocument();
   });
@@ -222,7 +222,7 @@ describe("Result", () => {
     });
 
     expect(screen.getByText("Professional check needed")).toBeInTheDocument();
-    expect(screen.getByText(/Verify this before driving/)).toBeInTheDocument();
+    expect(screen.getByText(/Verify before driving/)).toBeInTheDocument();
   });
 
   it("shows incomplete data guidance when the scan needs a better photo", () => {
@@ -315,7 +315,7 @@ describe("Result", () => {
   it("handles a direct result route without captured state", () => {
     renderResult(null);
 
-    expect(screen.getByText("No captured frame yet.")).toBeInTheDocument();
+    expect(screen.getByText("No frame captured.")).toBeInTheDocument();
   });
 
   it("updates rating, correction, and notes for a saved scan", async () => {
@@ -368,7 +368,7 @@ describe("Result", () => {
     const syncButton = screen.getByRole("button", { name: "Sync this scan" });
     await userEvent.click(syncButton);
 
-    expect(await screen.findByText("Cloud sync failed. Network unavailable")).toBeInTheDocument();
+    expect(await screen.findByText("Sync didn't go through. Network unavailable")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sync this scan" })).not.toBeDisabled();
   });
 
@@ -429,7 +429,7 @@ describe("Result", () => {
     expect(screen.getByText("Provider unavailable")).toBeInTheDocument();
     expect(screen.getByText("AI provider could not be reached")).toBeInTheDocument();
     expect(screen.getByText("Network error")).toBeInTheDocument();
-    expect(screen.getByText(/Internet connection is active/)).toBeInTheDocument();
+    expect(screen.getByText(/Connection is active/)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
 
@@ -458,7 +458,7 @@ describe("Result", () => {
     expect(screen.getByText("Provider unavailable")).toBeInTheDocument();
     expect(screen.getByText("AI provider could not be reached")).toBeInTheDocument();
     expect(screen.getByText("Network error")).toBeInTheDocument();
-    expect(screen.getByText(/Internet connection is active/)).toBeInTheDocument();
+    expect(screen.getByText(/Connection is active/)).toBeInTheDocument();
 
     const retryButton = screen.getByRole("button", { name: "Try again" });
     await userEvent.click(retryButton);
@@ -490,7 +490,7 @@ describe("Result", () => {
 
     renderResult(null, `/result/${failedLookup.id}`);
 
-    expect(screen.getByText(/Offline. Find an internet connection/)).toBeInTheDocument();
+    expect(screen.getByText(/Offline\. Reconnect to retry/)).toBeInTheDocument();
     const retryButton = screen.getByRole("button", { name: "Try again" });
     expect(retryButton).toBeDisabled();
 

@@ -137,7 +137,7 @@ export default function History() {
             </div>
             {lookups.length >= MAX_SAVED_LOOKUPS ? (
               <p className="mt-2 text-xs font-semibold leading-5 text-[var(--ds-warn-ink)]">
-                Local storage is at the {MAX_SAVED_LOOKUPS}-scan cap. Export before replacing older scans.
+                {MAX_SAVED_LOOKUPS}-scan cap reached. Export to keep older scans.
               </p>
             ) : null}
           </section>
@@ -152,14 +152,14 @@ export default function History() {
         ) : lookups.length > 0 ? (
           <section className="mt-6 rounded-[24px] border border-dashed border-slate-200 bg-white p-6 text-center shadow-sm">
             <p className="text-sm font-bold text-[var(--ds-accent)]">No scans match</p>
-            <p className="mt-2 text-sm leading-6 text-neutral-500">Clear the filters to see the full saved scan list.</p>
+            <p className="mt-2 text-sm leading-6 text-neutral-500">Clear the filters to see every saved scan.</p>
           </section>
         ) : (
           <section className="mt-8 rounded-[24px] border border-dashed border-slate-200 bg-white p-6 text-center shadow-sm">
             <p className="text-sm font-bold text-[var(--ds-accent)]">No saved scans yet</p>
             <h2 className="mt-2 text-xl font-extrabold tracking-tight">Scan your first part</h2>
             <p className="mt-3 text-sm leading-6 text-neutral-500">
-              Deep Spec will save the photo, AI result, rating, correction, and notes on this device.
+              Photo, result, rating, correction, and notes stay on this device.
             </p>
             <Button className="mt-5 w-full" onClick={() => window.location.assign("/scan")}>
               Open scanner
@@ -212,7 +212,7 @@ function ScanQualityMetricsPanel({ metrics }: { metrics: ScanQualityMetrics }) {
         </p>
       ) : (
         <p className="mt-3 text-sm font-semibold text-neutral-500">
-          No scan-quality failures recorded yet.
+          No quality issues logged yet.
         </p>
       )}
       {retakeRates.length ? (
@@ -300,7 +300,7 @@ function formatReason(reason: ScanQualityFailureReason) {
 }
 
 function LookupCard({ lookup }: { lookup: Lookup }) {
-  const title = lookup.result?.partName ?? (lookup.errorMessage ? "AI lookup failed" : "Captured frame");
+  const title = lookup.result?.partName ?? (lookup.errorMessage ? "Lookup didn't land" : "Captured frame");
   const createdAt = new Date(lookup.createdAt).toLocaleString();
   const status = getStatusLabel(lookup);
   const readiness = getTrainingReadiness(lookup);
@@ -354,7 +354,7 @@ function getReadinessChipClass(level: ReturnType<typeof getTrainingReadiness>["l
 
 function getStatusLabel(lookup: Lookup) {
   if (lookup.errorMessage) {
-    return "AI error saved";
+    return "Lookup didn't land";
   }
 
   if (!lookup.result) {
@@ -366,7 +366,7 @@ function getStatusLabel(lookup: Lookup) {
   }
 
   if (lookup.result.needsBetterPhoto || lookup.result.safetyTriage === "needs_better_photo") {
-    return "Better photo needed";
+    return "Reshoot for a cleaner read";
   }
 
   return `${lookup.result.confidence} confidence`;

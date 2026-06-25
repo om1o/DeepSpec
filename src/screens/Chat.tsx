@@ -146,7 +146,7 @@ export default function Chat() {
             <h2 className="truncate text-base font-extrabold tracking-tight">{partName}</h2>
             <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-neutral-400">{lookup.scanCategory}</p>
             <p className="mt-2 text-sm leading-6 text-neutral-500">
-              {canChat ? "Short follow-ups. Safety rules still apply." : "This scan needs an AI result before chat can help."}
+              {canChat ? "Short follow-ups. Safety rules still apply." : "Get an AI result first, then chat."}
             </p>
           </div>
         </section>
@@ -154,7 +154,7 @@ export default function Chat() {
         {showSafetyWarning ? (
           <section className="mt-4 rounded-[24px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-4">
             <p className="text-sm font-extrabold text-[var(--ds-warn-ink)]">Safety check needed</p>
-            <p className="mt-2 text-sm leading-6 text-neutral-700">I can explain the scan, but check this before driving or repairing.</p>
+            <p className="mt-2 text-sm leading-6 text-neutral-700">Confirm this before driving or repairing.</p>
           </section>
         ) : null}
 
@@ -177,7 +177,7 @@ export default function Chat() {
               <div className="grid min-h-48 place-items-center text-center">
                 <div>
                   <p className="text-sm font-bold text-[var(--ds-accent)]">No questions yet</p>
-                  <p className="mt-2 text-sm leading-6 text-neutral-500">Ask one clear question about this saved scan.</p>
+                  <p className="mt-2 text-sm leading-6 text-neutral-500">Ask one clear question about this scan.</p>
                 </div>
               </div>
             )}

@@ -123,7 +123,7 @@ function IssuePointer({ anchor, text }: { anchor: VisualFocusBox; text: string }
     <>
       <span
         aria-hidden
-        className="absolute block size-3.5 rounded-full bg-white shadow-[0_0_0_4px_rgba(20,105,236,0.45)]"
+        className="absolute block size-3.5 rounded-full bg-white shadow-[0_0_0_4px_rgba(78,110,146,0.45)]"
         style={{ ...position, transform: "translate(-50%,-50%)" }}
       />
       <div className="absolute" style={{ ...position, transform: "translate(-50%,calc(-50% - 30px))" }}>

@@ -41,7 +41,7 @@ export default function EarlyAccess() {
     setStats(getEngagementData());
 
     if (!result.value) {
-      setWaitlistStatus("Saved on this device, but the waitlist entry could not be prepared for cloud sync.");
+      setWaitlistStatus("Saved on this device. Cloud sync skipped this entry.");
       return;
     }
 
@@ -50,9 +50,9 @@ export default function EarlyAccess() {
       return;
     }
 
-    setWaitlistStatus("Saved on this device. Syncing waitlist entry...");
+    setWaitlistStatus("Saved on this device. Syncing.");
     const syncResult = await syncWaitlistSignupToCloud(result.value);
-    setWaitlistStatus(syncResult.ok ? "Saved locally and synced to cloud." : `Saved locally. ${syncResult.message}`);
+    setWaitlistStatus(syncResult.ok ? "Saved on this device and synced to cloud." : `Saved on this device. ${syncResult.message}`);
   }
 
   async function handleFeedbackSubmit(event: FormEvent<HTMLFormElement>) {
@@ -72,18 +72,18 @@ export default function EarlyAccess() {
     setStats(getEngagementData());
 
     if (!result.value) {
-      setFeedbackStatus("Feedback saved locally, but it could not be prepared for cloud sync.");
+      setFeedbackStatus("Feedback saved on this device. Cloud sync skipped it.");
       return;
     }
 
     if (!cloudSync.configured) {
-      setFeedbackStatus("Feedback saved locally. Cloud sync is off for this build.");
+      setFeedbackStatus("Feedback saved on this device. Cloud sync is off for this build.");
       return;
     }
 
-    setFeedbackStatus("Feedback saved locally. Syncing...");
+    setFeedbackStatus("Feedback saved on this device. Syncing.");
     const syncResult = await syncFeedbackToCloud(result.value);
-    setFeedbackStatus(syncResult.ok ? "Feedback saved locally and synced to cloud." : `Feedback saved locally. ${syncResult.message}`);
+    setFeedbackStatus(syncResult.ok ? "Feedback saved on this device and synced to cloud." : `Feedback saved on this device. ${syncResult.message}`);
   }
 
   return (
@@ -103,11 +103,11 @@ export default function EarlyAccess() {
         </header>
 
         <section className="mt-6 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-sm font-bold text-[var(--ds-accent)]">Business experiment</p>
-          <h2 className="mt-2 text-2xl font-extrabold tracking-tight">Prove people want this before charging.</h2>
+          <p className="text-sm font-bold text-[var(--ds-accent)]">The visual layer for parts</p>
+          <h2 className="mt-2 text-2xl font-extrabold tracking-tight">Point, isolate, identify.</h2>
           <p className="mt-3 text-sm leading-6 text-neutral-500">
-            Deep Spec is testing demand with waitlist signups, feedback, instant AI answers, and shop workflow CTAs.
-            Payments, accounts, domains, and legal docs need parent review later.
+            Deep Spec reads the part through your camera and returns the answer. Join the waitlist and shape
+            what ships first.
           </p>
           <p className="mt-3 rounded-2xl border border-neutral-100 bg-neutral-50 p-3 text-sm leading-6 text-neutral-500">
             {cloudStatusMessage}
@@ -126,7 +126,7 @@ export default function EarlyAccess() {
         <form className="mt-4 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm" onSubmit={handleWaitlistSubmit}>
           <h2 className="text-lg font-extrabold tracking-tight">Join the waitlist</h2>
           <p className="mt-2 text-sm leading-6 text-neutral-500">
-            This saves locally first. When cloud sync is configured, Deep Spec also sends the entry to the private waitlist table.
+            Saved on this device first. With cloud sync on, the entry goes to the private waitlist too.
           </p>
           <label className="mt-4 block">
             <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Email</span>
@@ -154,12 +154,12 @@ export default function EarlyAccess() {
             </select>
           </label>
           <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">What problem should Deep Spec solve?</span>
+            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">What should Deep Spec solve?</span>
             <textarea
               className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
               maxLength={240}
               onChange={(event) => setMainProblem(event.target.value)}
-              placeholder="Example: I want to know if a used car leak is serious before buying."
+              placeholder="ID an unmarked part fast, before I order the wrong one."
               value={mainProblem}
             />
           </label>
@@ -172,7 +172,7 @@ export default function EarlyAccess() {
         <form className="mt-4 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm" onSubmit={handleFeedbackSubmit}>
           <h2 className="text-lg font-extrabold tracking-tight">Send product feedback</h2>
           <p className="mt-2 text-sm leading-6 text-neutral-500">
-            Tell us what would make Deep Spec worth coming back to. This saves locally first and syncs when cloud config is available.
+            Tell us what would make Deep Spec worth keeping in the bay. Saved on this device first, synced when cloud is on.
           </p>
           <label className="mt-4 block">
             <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Topic</span>
@@ -194,7 +194,7 @@ export default function EarlyAccess() {
               className="mt-2 min-h-28 w-full resize-none rounded-2xl border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
               maxLength={800}
               onChange={(event) => setFeedbackMessage(event.target.value)}
-              placeholder="What felt useful, confusing, unsafe, or worth paying for?"
+              placeholder="What worked, what got in the way, what's worth paying for."
               value={feedbackMessage}
             />
           </label>

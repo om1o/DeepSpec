@@ -27,7 +27,7 @@ export default function Account() {
       const token = session?.data.session?.access_token;
       if (!token) {
         if (isMounted) {
-          setVerification({ status: "locked", message: "Server entitlement verification needs a valid Supabase session." });
+          setVerification({ status: "locked", message: "Sign in to verify entitlement." });
         }
         return;
       }
@@ -42,7 +42,7 @@ export default function Account() {
         if (isMounted) {
           setVerification({
             status: "locked",
-            message: body?.error?.message ?? "Server entitlement verification is unavailable. Paid access remains fail-closed.",
+            message: body?.error?.message ?? "Entitlement check unavailable. Paid access stays locked until verified.",
           });
         }
         return;
@@ -61,13 +61,13 @@ export default function Account() {
   }, []);
 
   async function openBillingPortal() {
-    setPortalStatus("Opening secure billing portal...");
+    setPortalStatus("Opening billing portal...");
 
     const client = await getAuthClient();
     const session = client ? await client.auth.getSession().catch(() => null) : null;
     const token = session?.data.session?.access_token;
     if (!token) {
-      setPortalStatus("Sign in again before opening billing. Paid access stays locked without a verified session.");
+      setPortalStatus("Sign in to open billing.");
       return;
     }
 
@@ -83,7 +83,7 @@ export default function Account() {
     }).catch(() => null);
     const body = await response?.json().catch(() => null);
     if (!response?.ok || !body?.url) {
-      setPortalStatus(body?.error?.message ?? "Billing portal is not configured yet. Paid access remains fail-closed.");
+      setPortalStatus(body?.error?.message ?? "Billing portal not configured yet.");
       return;
     }
 
@@ -107,7 +107,7 @@ export default function Account() {
           <h1 className="mt-3 text-3xl font-black tracking-tight">Your DeepSpec access</h1>
           {checkoutState === "success" ? (
             <p className="mt-3 rounded-[8px] bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-900">
-              Checkout returned successfully. Paid scans unlock only after server entitlement verification returns an active provider-backed plan.
+              Checkout complete. Paid scans unlock once entitlement verification confirms an active plan.
             </p>
           ) : null}
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
@@ -118,7 +118,7 @@ export default function Account() {
           <p className="mt-5 text-sm leading-6 text-slate-600">
             Status: {hasScanEntitlement(entitlement) ? "Scanning allowed" : "Scan limit reached"}.
             {" "}
-            {verification.status === "checking" ? "Checking server entitlement..." : getVerificationMessage(verification, entitlement.status)}
+            {verification.status === "checking" ? "Checking entitlement..." : getVerificationMessage(verification, entitlement.status)}
           </p>
           <button
             className="mt-5 h-11 rounded-full bg-slate-950 px-4 text-sm font-bold text-white disabled:opacity-50"
@@ -134,9 +134,9 @@ export default function Account() {
         </section>
 
         <section className="mt-4 rounded-[8px] border border-slate-200 bg-white p-6 text-sm leading-6 text-slate-600 shadow-sm">
-          <h2 className="text-lg font-black tracking-tight text-slate-950">What unlocks next</h2>
+          <h2 className="text-lg font-black tracking-tight text-slate-950">How access works</h2>
           <p className="mt-2">
-            Paid access remains fail-closed. It is read from server entitlement storage tied to the verified Supabase session. Local browser data can show free-preview usage, but it cannot unlock paid plans.
+            Paid access reads from server entitlement storage tied to your verified session. Local browser data tracks free-preview usage only; it cannot unlock paid plans.
           </p>
         </section>
       </div>
@@ -146,16 +146,16 @@ export default function Account() {
 
 function getVerificationMessage(verification: EntitlementVerification, entitlementStatus: string) {
   if (verification.status === "locked") {
-    return /fail-closed/i.test(verification.message)
+    return /fail-closed|until verified/i.test(verification.message)
       ? verification.message
-      : `${verification.message} Paid access remains fail-closed.`;
+      : `${verification.message} Paid access stays locked until verified.`;
   }
 
   if (verification.status === "verified" && entitlementStatus === "active") {
-    return "Server entitlement verified.";
+    return "Entitlement verified.";
   }
 
-  return "No active paid entitlement was found; paid scans remain fail-closed.";
+  return "No active paid plan. Paid scans stay locked until verified.";
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
