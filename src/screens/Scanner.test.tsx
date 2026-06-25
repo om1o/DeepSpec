@@ -728,7 +728,7 @@ describe("Scanner", () => {
     const reviewHeading = await screen.findByRole("heading", { level: 3, name: "Alternator" });
     const reviewCard = reviewHeading.closest("section");
     expect(reviewCard).toBeTruthy();
-    expect(screen.queryByRole("heading", { level: 1, name: "Camera access needed" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 1, name: "Turn on the camera" })).not.toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).queryByRole("button", { name: "Open details" })).not.toBeInTheDocument();
   }, 10000);
 
@@ -852,7 +852,7 @@ describe("Scanner", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole("heading", { level: 1, name: "Camera access needed" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Turn on the camera" })).toBeInTheDocument();
     expect(screen.getByText(/Allow camera access for this site/)).toBeInTheDocument();
     expect(screen.queryByTestId("webcam-preview")).not.toBeInTheDocument();
 
@@ -930,7 +930,7 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
 
     expect(await screen.findByText("No camera frame was available.")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { level: 1, name: "Camera access needed" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 1, name: "Turn on the camera" })).not.toBeInTheDocument();
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
   }, 10000);
 
@@ -1014,8 +1014,8 @@ describe("Scanner", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
 
-    expect(await screen.findByRole("heading", { level: 2, name: "Soft photo" })).toBeInTheDocument();
-    expect(screen.getAllByText("Steady photo").length).toBeGreaterThan(0);
+    expect(await screen.findByRole("heading", { level: 2, name: "Hold steady" })).toBeInTheDocument();
+    expect(screen.getAllByText("A still frame reads sharper.").length).toBeGreaterThan(0);
     expect(screen.queryByText("Try this exact fix, then scan again.")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Scan again" })).toBeInTheDocument();
     expect(identifyCapturedFrame).not.toHaveBeenCalled();

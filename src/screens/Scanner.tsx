@@ -898,12 +898,16 @@ function CameraBlocked({
   return (
     <div className="fixed inset-0 z-30 grid place-items-center bg-[var(--ds-bg)] px-6 text-center">
       <div className="max-w-sm">
-        <div className="mx-auto mb-5 grid size-14 place-items-center rounded-2xl border border-[var(--ds-danger-line)] bg-[var(--ds-danger-soft)] text-[var(--ds-danger)]">
-          !
+        <div className="mx-auto mb-5 grid size-14 place-items-center rounded-2xl border border-[var(--ds-border)] bg-white/5 text-white/70">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <rect x="3" y="6.5" width="18" height="12.5" rx="2.5" stroke="currentColor" strokeWidth="1.6" />
+            <circle cx="12" cy="12.75" r="3.5" stroke="currentColor" strokeWidth="1.6" />
+            <path d="M8 6.5l1.3-2.2h5.4L16 6.5" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+          </svg>
         </div>
-        <h1 className="text-2xl font-extrabold tracking-tight">Camera access needed</h1>
+        <h1 className="text-2xl font-extrabold tracking-tight">Turn on the camera</h1>
         <p className="mt-3 text-sm leading-6 text-[#A1A1AA]">
-          Deep Spec needs your camera to scan parts. {denied || waiting ? "Allow camera access for this site, then try again." : "Check camera access, then try again."}
+          Deep Spec scans parts through your camera. {denied || waiting ? "Allow camera access for this site, then try again." : "Enable camera access, then try again."}
         </p>
         {message ? <p className="mt-3 text-xs text-white/48">{message}</p> : null}
         {hasCameraChoices ? (
@@ -1122,15 +1126,15 @@ function ScanResultCard({
         {isMismatch ? (
           <div
             className="mb-3 rounded-xl px-3 py-2.5"
-            style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.22)" }}
+            style={{ background: "rgba(139,169,196,0.08)", border: "1px solid rgba(139,169,196,0.22)" }}
           >
-            <p className="text-[10px] font-extrabold uppercase tracking-[0.14em]" style={{ color: "var(--red-400)" }}>Target changed</p>
-            <p className="mt-1 text-xs leading-5" style={{ color: "var(--red-400)", opacity: 0.85 }}>
+            <p className="text-[10px] font-extrabold uppercase tracking-[0.14em]" style={{ color: "var(--ds-fg-3)" }}>Target changed</p>
+            <p className="mt-1 text-xs leading-5" style={{ color: "var(--ds-fg-4)", opacity: 0.85 }}>
               The current object moved away from the saved scan point.
             </p>
             <button
               className="mt-2 rounded-full px-3 py-1.5 text-[11px] font-extrabold text-white"
-              style={{ background: "var(--red-500)" }}
+              style={{ background: "var(--ds-accent)" }}
               onClick={onRetryMismatch}
               type="button"
             >
@@ -1227,16 +1231,16 @@ function CaptureErrorNotice({ message, onTryAgain }: { message: string; onTryAga
     <div
       className="fixed bottom-[220px] left-1/2 z-20 w-[calc(100%-28px)] max-w-sm -translate-x-1/2 rounded-[18px] p-4 text-center"
       style={{
-        background: "rgba(30,8,10,0.94)",
-        border: "1px solid rgba(239,68,68,0.28)",
+        background: "rgba(7,16,30,0.94)",
+        border: "1px solid rgba(139,169,196,0.20)",
         backdropFilter: "blur(20px)",
         boxShadow: "0 16px 44px rgba(0,0,0,0.50)",
       }}
     >
-      <p className="text-sm font-bold" style={{ color: "var(--red-400)" }}>{message}</p>
+      <p className="text-sm font-bold" style={{ color: "rgba(255,255,255,0.92)" }}>{message}</p>
       <button
         className="mt-3 w-full rounded-[10px] py-2.5 text-[13px] font-bold text-white"
-        style={{ background: "rgba(239,68,68,0.18)", border: "1px solid rgba(239,68,68,0.30)" }}
+        style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.16)" }}
         onClick={onTryAgain}
         type="button"
       >
@@ -1275,38 +1279,38 @@ function getScanQualityCoach(issue: ScanQualityCoachIssue): ScanQualityCoachStat
   switch (issue) {
     case "too_dark":
       return {
-        action: "Add light",
+        action: "A little more light sharpens the read.",
         issue,
         progress: "You're close",
-        title: "Too dark",
+        title: "Add light",
       };
     case "lens_covered":
       return {
-        action: "Uncover lens",
+        action: "Wipe the lens, then frame the part.",
         issue,
         progress: "You're close",
-        title: "Lens covered",
+        title: "Clear the lens",
       };
     case "too_bright":
       return {
-        action: "Reduce glare",
+        action: "Tilt away from the bright source.",
         issue,
         progress: "You're close",
-        title: "Too much glare",
+        title: "Ease the glare",
       };
     case "too_blurry":
       return {
-        action: "Steady photo",
+        action: "A still frame reads sharper.",
         issue,
         progress: "You're close",
-        title: "Soft photo",
+        title: "Hold steady",
       };
     case "object_too_small":
       return {
-        action: "Move closer",
+        action: "Fill the frame with the part.",
         issue,
         progress: "You're 80% there",
-        title: "Object too small",
+        title: "Move in closer",
       };
   }
 }
@@ -1593,23 +1597,11 @@ function clampNumber(value: number, min: number, max: number) {
 }
 
 function ScannerHUD({ isAnalyzing }: { isAnalyzing: boolean }) {
-  const statusLabel = isAnalyzing ? "CAPTURING" : "READY";
   return (
-    <>
-      <div className="scanner-hud" style={{ top: "max(52px, calc(env(safe-area-inset-top) + 52px))", left: 16 }}>
-        <span className="scanner-hud-dot" />
-        DEEPSPEC LIVE
-      </div>
-      <div className="scanner-hud" style={{ top: "max(52px, calc(env(safe-area-inset-top) + 52px))", right: 16, textAlign: "right" }}>
-        f/1.8 AUTO ISO
-      </div>
-      <div className="scanner-hud" style={{ bottom: "calc(env(safe-area-inset-bottom) + 130px)", left: 16 }}>
-        SCAN MODE<br />IDENTIFY
-      </div>
-      <div className="scanner-hud" style={{ bottom: "calc(env(safe-area-inset-bottom) + 130px)", right: 16, textAlign: "right" }}>
-        {statusLabel}
-      </div>
-    </>
+    <div className="scanner-hud" style={{ top: "max(52px, calc(env(safe-area-inset-top) + 52px))", left: 16 }}>
+      <span className="scanner-hud-dot" />
+      {isAnalyzing ? "READING" : "READY"}
+    </div>
   );
 }
 
