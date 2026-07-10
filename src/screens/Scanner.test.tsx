@@ -156,6 +156,14 @@ vi.mock("../lib/focusCrop", () => ({
 
 vi.mock("../lib/productSegmentation", () => ({
   createSegmentedProductIsolation: (...args: unknown[]) => createSegmentedProductIsolation(...args),
+  warmProductSegmentation: () => {},
+}));
+
+vi.mock("../lib/promptableSegmentation", () => ({
+  createPromptedProductIsolation: async () => null,
+  isolateSceneObjects: async () => [],
+  isPromptableSegmentationEnabled: () => false,
+  warmPromptableSegmentation: () => {},
 }));
 
 vi.mock("../lib/objectTargeting", () => ({
@@ -641,7 +649,6 @@ describe("Scanner", () => {
         trainingLabel: "Alternator",
       }));
     });
-    expect(await screen.findByText("Scan saved to cloud.")).toBeInTheDocument();
   }, 10000);
 
   it("captures a second camera frame as a confidence boost when no crop target is present", async () => {

@@ -1,5 +1,7 @@
 import { createIdentifyResponse } from "./identify.shared";
 import { consumeReservedScanCredit, reserveScanCredit } from "./billing.shared";
+import { enforceRateLimit } from "./rateLimit.shared";
+import { requireSession } from "./requireSession.shared";
 
 type VercelRequest = {
   headers?: Record<string, string | string[] | undefined>;
@@ -26,7 +28,22 @@ export default async function handler(request: VercelRequest, response: VercelRe
     return;
   }
 
-  const reservation = await reserveScanCredit(request.headers ?? {}, process.env);
+  const headers = request.headers ?? {};
+
+  const rateLimit = await enforceRateLimit("identify", headers, process.env);
+  if (!rateLimit.ok) {
+    response.setHeader("Retry-After", String(rateLimit.retryAfterSeconds));
+    response.status(rateLimit.status).json(rateLimit.body);
+    return;
+  }
+
+  const session = await requireSession(headers, process.env);
+  if (!session.ok) {
+    response.status(session.status).json(session.body);
+    return;
+  }
+
+  const reservation = await reserveScanCredit(headers, process.env);
   if (!reservation.ok) {
     response.status(reservation.error.status).json(reservation.error.body);
     return;

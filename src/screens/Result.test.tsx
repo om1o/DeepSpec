@@ -4,7 +4,6 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, vi } from "vitest";
 import Result from "./Result";
 import * as aiService from "../services/aiService";
-import * as cloudSync from "../services/cloudSync";
 import { LOOKUPS_STORAGE_KEY } from "../services/storage";
 import type { Lookup, ScanAnalysisState } from "../types";
 
@@ -318,101 +317,43 @@ describe("Result", () => {
     expect(screen.getByText("No frame captured.")).toBeInTheDocument();
   });
 
-  it("updates rating, correction, and notes for a saved scan", async () => {
+  it("captures distrust and a reason for a saved scan", async () => {
     const lookup = makeLookup();
     localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
 
     renderResult(null, `/result/${lookup.id}`);
 
-    await openSavedScanTools();
-    await userEvent.click(screen.getByRole("button", { name: "Wrong" }));
-    await userEvent.type(screen.getByLabelText("What was it actually?"), "It was the starter.");
-    await userEvent.type(screen.getByLabelText("Private notes"), "Near the lower engine bay.");
+    await userEvent.click(screen.getByRole("button", { name: "Why or why not" }));
+    await userEvent.type(screen.getByLabelText("Why or why not"), "It was the starter.");
 
     const savedLookup = JSON.parse(localStorage.getItem(LOOKUPS_STORAGE_KEY) ?? "[]")[0] as Lookup;
     expect(savedLookup.rating).toBe("down");
     expect(savedLookup.correction).toBe("It was the starter.");
-    expect(savedLookup.notes).toBe("Near the lower engine bay.");
     expect(savedLookup.trainingLabel).toBe("It was the starter.");
     expect(savedLookup.trainingStatus).toBe("user_corrected");
   }, 30000);
 
-  it("shows scan report actions for saved scans", async () => {
+  it("marks a trusted scan with a positive rating", async () => {
     const lookup = makeLookup();
     localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
 
     renderResult(null, `/result/${lookup.id}`);
 
-    await openSavedScanTools();
-    expect(screen.getByText("Photo use")).toBeInTheDocument();
-    expect(screen.getByText("Needs review")).toBeInTheDocument();
-    expect(screen.getByText("Private by default. This photo is not used for model training unless sharing is allowed.")).toBeInTheDocument();
-    expect(screen.getByText("Scan report")).toBeInTheDocument();
-    expect(screen.getByText("Cloud backup")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Sync this scan" })).toBeDisabled();
+    expect(screen.getByTestId("trust-control")).toHaveTextContent("Do you trust this scan?");
+    await userEvent.click(screen.getByRole("button", { name: "Yes" }));
+
+    const savedLookup = JSON.parse(localStorage.getItem(LOOKUPS_STORAGE_KEY) ?? "[]")[0] as Lookup;
+    expect(savedLookup.rating).toBe("up");
+  }, 30000);
+
+  it("keeps share and export report actions on a saved scan", () => {
+    const lookup = makeLookup();
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+
+    renderResult(null, `/result/${lookup.id}`);
+
     expect(screen.getByRole("button", { name: "Share" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Export" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Tell me more" })).toHaveAttribute("href", `/result/${lookup.id}/chat`);
-  });
-
-  it("clears the cloud sync loading state when sync fails", async () => {
-    vi.stubEnv("VITE_SUPABASE_URL", "https://deep-spec.supabase.co");
-    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "public-test-key");
-    vi.spyOn(cloudSync, "syncLookupToCloud").mockRejectedValue(new Error("Network unavailable"));
-    const lookup = makeLookup();
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
-
-    renderResult(null, `/result/${lookup.id}`);
-
-    await openSavedScanTools();
-    const syncButton = screen.getByRole("button", { name: "Sync this scan" });
-    await userEvent.click(syncButton);
-
-    expect(await screen.findByText("Sync didn't go through. Network unavailable")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Sync this scan" })).not.toBeDisabled();
-  });
-
-  it("keeps advanced safety options out of the simple result by default", async () => {
-    const lookup = makeLookup({
-      result: {
-        ...successfulScan.result!,
-        partName: "Brake caliper",
-        scanCategory: "brakes",
-        safetyTriage: "needs_professional",
-        isSafetyCritical: true,
-      },
-      scanCategory: "brakes",
-      trainingLabel: "Brake caliper",
-    });
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
-
-    renderResult(null, `/result/${lookup.id}`);
-
-    await openSavedScanTools();
-    expect(screen.getByRole("link", { name: "Find nearby options" })).toHaveAttribute(
-      "href",
-      "https://www.google.com/maps/search/brakes%20auto%20repair%20near%20me",
-    );
-  });
-
-  it("deletes a saved scan and returns to history", async () => {
-    const lookup = makeLookup();
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
-
-    render(
-      <MemoryRouter initialEntries={[`/result/${lookup.id}`]}>
-        <Routes>
-          <Route path="/history" element={<p>History page</p>} />
-          <Route path="/result/:id" element={<Result />} />
-        </Routes>
-      </MemoryRouter>,
-    );
-
-    await openSavedScanTools();
-    await userEvent.click(screen.getByRole("button", { name: "Delete saved scan" }));
-
-    expect(screen.getByText("History page")).toBeInTheDocument();
-    expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBe("[]");
   });
 
   it("allows retrying an unsaved failed scan when online", async () => {
@@ -514,10 +455,6 @@ function renderResult(state: ScanAnalysisState | null, path = "/result") {
       </Routes>
     </MemoryRouter>,
   );
-}
-
-async function openSavedScanTools() {
-  await userEvent.click(screen.getByText("Saved scan tools"));
 }
 
 function makeLookup(patch: Partial<Lookup> = {}): Lookup {

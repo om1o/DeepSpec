@@ -41,6 +41,24 @@ export default defineConfig(async ({ mode }) => {
               return;
             }
 
+            const { enforceRateLimit } = (await server.ssrLoadModule("/api/rateLimit.shared.ts")) as typeof import("./api/rateLimit.shared");
+            const { requireSession } = (await server.ssrLoadModule("/api/requireSession.shared.ts")) as typeof import("./api/requireSession.shared");
+            const identifyRateLimit = await enforceRateLimit("identify", request.headers, serverEnv);
+            if (!identifyRateLimit.ok) {
+              response.statusCode = identifyRateLimit.status;
+              response.setHeader("Retry-After", String(identifyRateLimit.retryAfterSeconds));
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify(identifyRateLimit.body));
+              return;
+            }
+            const identifySession = await requireSession(request.headers, serverEnv);
+            if (!identifySession.ok) {
+              response.statusCode = identifySession.status;
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify(identifySession.body));
+              return;
+            }
+
             const body = await readJsonBody(request).catch(() => null);
             const { createIdentifyResponse } = (await server.ssrLoadModule("/api/identify.shared.ts")) as typeof import("./api/identify.shared");
             const { consumeReservedScanCredit, reserveScanCredit } = (await server.ssrLoadModule("/api/billing.shared.ts")) as typeof import("./api/billing.shared");
@@ -67,6 +85,24 @@ export default defineConfig(async ({ mode }) => {
               response.statusCode = 405;
               response.setHeader("Content-Type", "application/json");
               response.end(JSON.stringify({ error: { code: "method_not_allowed", message: "Use POST for AI follow-up chat." } }));
+              return;
+            }
+
+            const { enforceRateLimit } = (await server.ssrLoadModule("/api/rateLimit.shared.ts")) as typeof import("./api/rateLimit.shared");
+            const { requireSession } = (await server.ssrLoadModule("/api/requireSession.shared.ts")) as typeof import("./api/requireSession.shared");
+            const chatRateLimit = await enforceRateLimit("chat", request.headers, serverEnv);
+            if (!chatRateLimit.ok) {
+              response.statusCode = chatRateLimit.status;
+              response.setHeader("Retry-After", String(chatRateLimit.retryAfterSeconds));
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify(chatRateLimit.body));
+              return;
+            }
+            const chatSession = await requireSession(request.headers, serverEnv);
+            if (!chatSession.ok) {
+              response.statusCode = chatSession.status;
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify(chatSession.body));
               return;
             }
 
@@ -152,6 +188,11 @@ export default defineConfig(async ({ mode }) => {
       },
       VitePWA({
         registerType: "autoUpdate",
+        // Safety net after the 2-week "ghost service worker" incident: ship a self-destroying
+        // worker that unregisters itself and wipes its caches on load, so a leftover SW can never
+        // silently shadow the app again. Trade-off: this disables PWA offline precaching in
+        // production. Flip back to false (and bump the SW) once you actually want offline support.
+        selfDestroying: true,
         includeAssets: ["icon-192.png", "icon-512.png", "brand/deepspec-logo.webp"],
         manifest: {
           name: "Deep Spec",
@@ -197,6 +238,20 @@ export default defineConfig(async ({ mode }) => {
       globals: true,
       setupFiles: "./src/test/setup.ts",
       testTimeout: 15_000,
+      exclude: [
+        "**/.codex-gitdir-*/**",
+        "**/.ditto-site/**",
+        "**/artifacts/**",
+        "**/datasets/**",
+        "**/dev-dist/**",
+        "**/dist/**",
+        "**/node_modules/**",
+      ],
+      // Feature flags default OFF in tests so the suite exercises baseline behavior,
+      // independent of whatever a developer has enabled in .env.local (e.g. the crop box).
+      env: {
+        VITE_DEEPSPEC_CROP_BOX: "off",
+      },
     },
     server: {
       allowedHosts: [".trycloudflare.com"],

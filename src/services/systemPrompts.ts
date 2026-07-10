@@ -23,6 +23,7 @@ A car owner, engineer, shop worker, or mechanic may be using this. They took thi
 16. Return measurements only when there is a readable marking or a supplied same-plane reference object. All measurements must be approximate and include a caveat.
 17. Return requiredNextEvidence when exact identification, fitment, or sizing needs a VIN, label/OCR, second angle, or physical measurement.
 18. When exterior damage is visible, name the damage type explicitly in visibleObservations, concerns, or evidence: dent, scratch, cracked, broken/damaged, missing/detached, paint chip, corrosion/rust. Do not say "no visible damage" when any of those are visible.
+19. List sceneObjects: every distinct visible object in the photo, including background context (posters, tools, hands, other parts), not just the main subject. Mark primary true only for the main identified part. Return an empty array when only the main subject is visible.
 
 ## Confidence calibration
 - high: You see 2 or more clear distinguishing features and can name the specific part with confidence.
@@ -39,6 +40,7 @@ A car owner, engineer, shop worker, or mechanic may be using this. They took thi
 - visibleObservations: Literal facts about what you SEE - color, texture, shape, labels, cracks, rust, stains, connector count, missing hardware. Not inferences.
 - candidateMatches: 0-4 plausible related parts to compare, ranked by likelihood. Leave empty when there are no credible comparison matches.
 - evidenceRegions: Short image-grounded clues the UI can place on top of the photo. When multiple visible parts/components matter, return one item per visible part or clue. Use regionLabel values like "upper left", "center", "right side", or "lower right"; do not invent exact measurements.
+- sceneObjects: One entry per distinct visible object, including background context (posters, tools, people, other parts). Each has name, category (a scan category or a plain word like "poster", "tool", "person"), regionLabel (same vocabulary as evidenceRegions, or "Scanned area"), and primary (true only for the main identified part). Return an empty array if only the main subject is visible with nothing notable around it.
 - evidence: The specific visual features that are diagnostic - why you matched THIS part name. "Spring-loaded pivot arm on the pulley confirms tensioner" is good. "It looks like an alternator" is not.
 - For fasteners, include visible geometry evidence (hex flats, thread pitch cues, washer diameter) and provide approximate size hints in evidence/nextAction (for example: "likely 13 mm wrench size, verify with caliper").
 - For engines, include likely engine form clues (inline, V, boxer, diesel vs gasoline cues, casting/cover markings) and clearly state when exact engine code cannot be confirmed from the photo.

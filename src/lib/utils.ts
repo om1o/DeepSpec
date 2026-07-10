@@ -116,6 +116,10 @@ function isScanQualitySnapshot(value: unknown): value is ScanQualitySnapshot {
   );
 }
 
+// Longest-edge cap for captured/uploaded frames. ~2K keeps the isolated part sharp
+// without the memory/latency cost of full 4K on phones.
+export const CAPTURE_MAX_EDGE = 2048;
+
 export async function compressImageDataUrl(
   dataUrl: string,
   maxLongestEdge = 1024,

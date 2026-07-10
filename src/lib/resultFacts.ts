@@ -1,4 +1,5 @@
-import type { IdentificationResult, VisualFocusBox } from "../types";
+import { SCAN_CATEGORIES } from "../types";
+import type { IdentificationResult, SceneObject, VisualFocusBox } from "../types";
 import type { SimpleResultSummary } from "./simpleResultSummary";
 
 // Kept identical to the regex inside simpleResultSummary.ts so the issue pointer
@@ -64,6 +65,79 @@ export function getAnswerBody(result: IdentificationResult, summary: SimpleResul
     return what ? summarize(what, 150) : summary.body;
   }
   return summary.body;
+}
+
+// Only tools, car parts, and tech/electronics are treated as real, focusable detected objects.
+// People, furniture, and room/environment are dropped so they never get a label, cutout, or card —
+// they simply remain part of the dimmed background photo. The AI's `category` is a free-ish string,
+// so we key off name + category keywords (whole-word matched, so "hand" never matches "handle").
+// Order matters: a real car-part category wins first; then a hard block; then the allow list.
+const RELEVANCE_BLOCK = [
+  // people
+  "person", "people", "boy", "girl", "man", "woman", "men", "women", "child", "children", "kid", "kids",
+  "baby", "toddler", "human", "adult", "face", "guy", "lady",
+  // furniture
+  "couch", "sofa", "chair", "table", "desk", "bed", "shelf", "cabinet", "drawer", "stool", "bench",
+  "furniture", "dresser", "wardrobe", "nightstand", "ottoman",
+  // room / environment / decor
+  "wall", "floor", "ceiling", "carpet", "rug", "plant", "tree", "grass", "sky", "cloud", "room",
+  "background", "poster", "painting", "picture", "mirror", "vase", "clock", "curtain", "blanket",
+  "pillow", "towel", "book", "food", "plate", "cup", "bottle", "clothing", "shirt", "hat", "shoe", "jacket",
+  // animals
+  "dog", "cat", "pet", "bird", "animal",
+];
+const RELEVANCE_ALLOW = [
+  // tools
+  "tool", "wrench", "spanner", "screwdriver", "plier", "pliers", "hammer", "drill", "socket", "ratchet",
+  "clamp", "jack", "gauge", "meter", "multimeter", "torque", "saw", "blade", "cutter", "knife", "file",
+  "punch", "chisel", "level", "caliper",
+  // tech / electronics
+  "remote", "phone", "smartphone", "tablet", "laptop", "computer", "camera", "battery", "charger", "cable",
+  "wire", "wiring", "connector", "plug", "sensor", "module", "ecu", "controller", "circuit", "board", "pcb",
+  "chip", "device", "electronic", "electronics", "gadget", "speaker", "monitor", "screen", "display",
+  "headphone", "earbud", "drone", "router", "adapter", "fuse", "relay", "switch", "motor", "actuator",
+  "harness", "alternator", "starter", "coil", "solenoid",
+  // generic part / component words (for parts the AI tags with a free-string category)
+  "part", "component", "assembly", "bracket", "mount", "housing", "panel", "hose", "belt", "pipe", "valve",
+  "filter", "pump", "cap", "bolt", "nut", "clip", "seal", "gasket", "bearing", "pulley", "gear", "fitting",
+  "rotor", "caliper", "manifold", "radiator", "compressor", "injector", "spark", "spring", "shock", "strut",
+];
+const RELEVANCE_BLOCK_RE = new RegExp(`\\b(${RELEVANCE_BLOCK.join("|")})\\b`, "i");
+const RELEVANCE_ALLOW_RE = new RegExp(`\\b(${RELEVANCE_ALLOW.join("|")})\\b`, "i");
+
+/** True only for tools, car parts, and tech/electronics — the objects we treat as real, focusable. */
+export function isRelevantSceneObject(object: SceneObject): boolean {
+  if ((SCAN_CATEGORIES as readonly string[]).includes(object.category) && object.category !== "unknown") {
+    return true; // AI classified it as a real car-part category
+  }
+  const text = `${object.name} ${object.category}`.toLowerCase();
+  if (RELEVANCE_BLOCK_RE.test(text)) {
+    return false;
+  }
+  return RELEVANCE_ALLOW_RE.test(text);
+}
+
+/** Distinct visible objects besides the main part — filtered to relevant (tool/part/electronics) only. */
+export function getSecondarySceneObjects(result: IdentificationResult): SceneObject[] {
+  return (result.sceneObjects ?? []).filter(
+    (object) => object.name && !object.primary && isRelevantSceneObject(object),
+  );
+}
+
+export type SceneChip = {
+  object: SceneObject;
+  box: VisualFocusBox;
+};
+
+/** Secondary objects that have a placeable region, for labelling on the image (capped). */
+export function getSceneChips(result: IdentificationResult): SceneChip[] {
+  return getSecondarySceneObjects(result)
+    .map((object) => {
+      const box = regionLabelToBox(object.regionLabel);
+      return box ? { object, box } : null;
+    })
+    .filter((chip): chip is SceneChip => Boolean(chip))
+    .slice(0, 4);
 }
 
 export type DerivedIssue = {

@@ -15,6 +15,7 @@ import type {
   PossibleVehicleContext,
   Rating,
   ScanCategory,
+  SceneObject,
   ShopReviewStatus,
   ShopVehicleContext,
   SourceLink,
@@ -207,6 +208,7 @@ function parseIdentificationResult(value: unknown, fallbackCategory: ScanCategor
     whatItDoes: isString(value.whatItDoes) ? value.whatItDoes : "",
     visibleObservations: parseStringList(value.visibleObservations, 8, 220),
     evidenceRegions: parseEvidenceRegions(value.evidenceRegions),
+    sceneObjects: parseSceneObjects(value.sceneObjects),
     concerns: parseStringList(value.concerns, 8, 220),
     safetyTriage: parseSafetyTriage(value.safetyTriage),
     isSafetyCritical: value.isSafetyCritical === true,
@@ -355,6 +357,23 @@ function parseEvidenceRegions(value: unknown): EvidenceRegion[] {
       regionLabel: isString(item.regionLabel) ? item.regionLabel : "",
     }))
     .filter((item) => Boolean(item.label || item.observation));
+}
+
+function parseSceneObjects(value: unknown): SceneObject[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isObject)
+    .map((item) => ({
+      name: isString(item.name) ? item.name.trim().slice(0, 80) : "",
+      category: isString(item.category) && item.category.trim() ? item.category.trim().slice(0, 40) : "unknown",
+      regionLabel: isString(item.regionLabel) ? item.regionLabel.trim().slice(0, 40) : "Scanned area",
+      primary: item.primary === true,
+    }))
+    .filter((item) => Boolean(item.name))
+    .slice(0, 8);
 }
 
 function parseCustomerVisibleReport(value: unknown): CustomerVisibleReport | undefined {

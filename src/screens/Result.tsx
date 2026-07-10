@@ -1,20 +1,18 @@
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import { getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
-import CloudHealthCard from "../components/CloudHealthCard";
 import Button from "../components/ui/Button";
 import HistoryDockButton from "../components/ui/HistoryDockButton";
 import { IsolatedPartView } from "../components/result/IsolatedPartView";
-import { IssueLine, ResultDetailSections } from "../components/result/PositiveAnswerCard";
+import { ScanDebugOverlay } from "../components/result/ScanDebugOverlay";
+import { IssueLine, ResultDetailSections, SceneCategoryList } from "../components/result/PositiveAnswerCard";
 import { getSimpleResultSummary } from "../lib/simpleResultSummary";
-import { deriveIssue, getAnswerBody } from "../lib/resultFacts";
+import { deriveIssue, getAnswerBody, getSceneChips } from "../lib/resultFacts";
 import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } from "../lib/utils";
-import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
-import { buildScanReport, downloadTextFile, getMechanicSearchUrl, getScanReportFilename } from "../services/report";
-import { recordManualCorrection, recordUserTrustScore } from "../services/scanQualityMetrics";
+import { buildScanReport, downloadTextFile, getScanReportFilename } from "../services/report";
+import { recordManualCorrection } from "../services/scanQualityMetrics";
 import { getShopJob } from "../services/shop";
-import { createLookup, deleteLookup, getLookup, scanStateFromLookup, updateLookup, updateLookupResult } from "../services/storage";
-import { getTrainingReadiness, type TrainingReadiness } from "../services/trainingReadiness";
+import { createLookup, getLookup, scanStateFromLookup, updateLookup, updateLookupResult } from "../services/storage";
 import type { CapturedFrame, IdentificationResult, Lookup, Rating, ScanAnalysisState, ShopJob as ShopJobRecord } from "../types";
 
 export default function Result() {
@@ -71,27 +69,6 @@ export default function Result() {
     handleLookupUpdate(updateLookup(lookup.id, { correction }));
   }
 
-  function handleNotes(notes: string) {
-    if (!lookup) {
-      return;
-    }
-
-    handleLookupUpdate(updateLookup(lookup.id, { notes }));
-  }
-
-  function handleDelete() {
-    if (!lookup) {
-      return;
-    }
-
-    const result = deleteLookup(lookup.id);
-    if (result.ok) {
-      navigate("/history", { replace: true });
-      return;
-    }
-
-    setSaveError(result.message);
-  }
 
   function saveCurrentScan() {
     if (!scanState?.frame || !scanState.result) {
@@ -164,6 +141,8 @@ export default function Result() {
               focusMode={scanState?.focusMode ?? "full_frame"}
               label={simpleSummary?.title ?? "Captured frame"}
               issue={scanState?.result ? deriveIssue(scanState.result) : null}
+              sceneChips={scanState?.result ? getSceneChips(scanState.result) : undefined}
+              objects={scanState?.isolatedObjects}
               variant="result"
             />
           ) : (
@@ -224,15 +203,13 @@ export default function Result() {
           ) : null}
           {!scanState?.result && !scanState?.errorMessage ? <NotAnalyzed capturedAt={capturedAt} /> : null}
           {lookup ? (
-            <SavedScanControls
+            <TrustControl
               lookup={lookup}
-              saveError={saveError}
               onCorrectionChange={handleCorrection}
-              onDelete={handleDelete}
-              onNotesChange={handleNotes}
               onRating={handleRating}
             />
           ) : null}
+          {lookup ? <ReportActions lookup={lookup} /> : null}
           {datasetSourceUrls.length > 0 ? <SourceFinePrint urls={datasetSourceUrls} /> : null}
         </div>
 
@@ -241,6 +218,7 @@ export default function Result() {
         </Button>
         </div>
       </div>
+      <ScanDebugOverlay info={scanState?.debug} />
       <HistoryDockButton />
     </main>
   );
@@ -274,237 +252,92 @@ function StorageWarning({ message }: { message: string }) {
   );
 }
 
-function SavedScanControls({
+function TrustControl({
   lookup,
   onCorrectionChange,
-  onDelete,
-  onNotesChange,
   onRating,
-  saveError,
 }: {
   lookup: Lookup;
   onCorrectionChange: (correction: string) => void;
-  onDelete: () => void;
-  onNotesChange: (notes: string) => void;
   onRating: (rating: Rating) => void;
-  saveError: string | null;
 }) {
-  const [reportStatus, setReportStatus] = useState<string | null>(null);
-  const [cloudStatusMessage, setCloudStatusMessage] = useState<string | null>(null);
-  const [isSyncingCloud, setIsSyncingCloud] = useState(false);
-  const [trustScore, setTrustScore] = useState<number | null>(null);
-  const cloudSync = getCloudSyncStatus();
-  const needsProfessional = lookup.result?.isSafetyCritical || lookup.result?.safetyTriage === "needs_professional";
-  const readiness = getTrainingReadiness(lookup);
-
-  async function handleShareReport() {
-    const report = buildScanReport(lookup);
-    try {
-      if (navigator.share) {
-        await navigator.share({
-          title: `Deep Spec: ${lookup.trainingLabel}`,
-          text: report,
-        });
-        setReportStatus("Report shared.");
-        return;
-      }
-
-      await navigator.clipboard.writeText(report);
-      setReportStatus("Report copied to clipboard.");
-    } catch {
-      setReportStatus("This browser won't share. Export instead.");
-    }
-  }
-
-  function handleDownloadReport() {
-    downloadTextFile(getScanReportFilename(lookup), buildScanReport(lookup));
-    setReportStatus("Report downloaded.");
-  }
-
-  async function handleCloudSync() {
-    setIsSyncingCloud(true);
-    setCloudStatusMessage("Syncing scan...");
-    try {
-      const result = await syncLookupToCloud(lookup);
-      setCloudStatusMessage(result.message);
-    } catch (error) {
-      setCloudStatusMessage(error instanceof Error ? `Sync didn't go through. ${error.message}` : "Sync didn't go through. Retry.");
-    } finally {
-      setIsSyncingCloud(false);
-    }
-  }
-
-  function handleTrustScore(score: number) {
-    setTrustScore(score);
-    recordUserTrustScore(score);
-  }
+  const [showWhy, setShowWhy] = useState(false);
+  const trusted = lookup.rating === "up";
+  const flagged = lookup.rating === "down";
 
   return (
-    <details className="rounded-[22px] border border-neutral-200 bg-white p-4">
-      <summary className="cursor-pointer text-sm font-extrabold text-neutral-900">
-        Saved scan tools
-      </summary>
-      <section id="shop-feedback" className="mt-4">
-      <p className="text-sm font-extrabold text-neutral-900">Saved scan</p>
-      <p className="mt-2 text-sm leading-6 text-neutral-500">
-        {lookup.jobId
-          ? "Your rating, correction, and notes stay private to this shop unless shop learning is enabled."
-          : "Your rating, correction, and notes stay on this device and help improve future results."}
-      </p>
-      <div className="mt-4 grid grid-cols-1 gap-3">
-        <TrustRow label="Dataset category" value={lookup.scanCategory} />
-        <TrustRow label="Training label" value={lookup.trainingLabel} />
-        <TrustRow label="Review status" value={lookup.trainingStatus.replaceAll("_", " ")} />
+    <section className="rounded-[22px] border border-neutral-200 bg-white p-4 shadow-sm" data-testid="trust-control">
+      <p className="text-sm font-extrabold text-neutral-900">Do you trust this scan?</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          className={`rounded-full px-4 py-2 text-sm font-extrabold ${trusted ? "bg-[var(--ds-ok)] text-white" : "bg-neutral-100 text-neutral-900"}`}
+          onClick={() => { onRating("up"); setShowWhy(false); }}
+        >
+          Yes
+        </button>
+        <button
+          type="button"
+          className={`rounded-full px-4 py-2 text-sm font-extrabold ${flagged || showWhy ? "bg-[var(--ds-danger)] text-white" : "bg-neutral-100 text-neutral-900"}`}
+          onClick={() => { onRating("down"); setShowWhy(true); }}
+        >
+          Why or why not
+        </button>
       </div>
-      <TrainingReadinessCard readiness={readiness} />
-
-      {lookup.result ? (
-        <div className="mt-4 grid grid-cols-1 gap-3">
-          <Link
-            className="block rounded-full bg-[var(--ds-accent)] px-5 py-3 text-center text-sm font-bold text-white shadow-sm"
-            to={`/result/${lookup.id}/chat`}
-          >
-            Tell me more
-          </Link>
-          {needsProfessional ? (
-            <a
-              className="block rounded-full border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-5 py-3 text-center text-sm font-bold text-[var(--ds-warn-ink)]"
-              href={getMechanicSearchUrl(lookup)}
-              rel="noreferrer"
-              target="_blank"
-            >
-              Find nearby options
-            </a>
-          ) : null}
-        </div>
+      {showWhy || flagged ? (
+        <label className="mt-3 block">
+          <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Tell us what&apos;s off (or right)</span>
+          <textarea
+            aria-label="Why or why not"
+            className="mt-2 min-h-20 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[var(--ds-accent)]"
+            maxLength={240}
+            onChange={(event) => onCorrectionChange(event.target.value)}
+            placeholder="Example: it's actually a coolant cap, not a brake fluid cap"
+            value={lookup.correction ?? ""}
+          />
+        </label>
       ) : null}
-
-      <div className="mt-4 grid grid-cols-2 gap-3">
-        <Button
-          className={lookup.rating === "up" ? "!bg-[var(--ds-ok)] !text-white shadow-none" : "!bg-neutral-100 !text-neutral-900 shadow-none"}
-          onClick={() => onRating("up")}
-        >
-          Helpful
-        </Button>
-        <Button
-          className={lookup.rating === "down" ? "!bg-[var(--ds-danger)] !text-white shadow-none" : "!bg-neutral-100 !text-neutral-900 shadow-none"}
-          onClick={() => onRating("down")}
-        >
-          Wrong
-        </Button>
-      </div>
-
-      <div className="mt-4 rounded-[20px] border border-neutral-200 bg-neutral-50 p-4">
-        <p className="text-sm font-extrabold text-neutral-900">Trust this result?</p>
-        <p className="mt-2 text-sm leading-6 text-neutral-500">
-          Exact size requires a reference object beside the part.
-        </p>
-        <input
-          aria-label="User trust score"
-          className="mt-3 h-2 w-full accent-[var(--ds-accent)]"
-          max={5}
-          min={1}
-          onChange={(event) => handleTrustScore(Number(event.target.value))}
-          type="range"
-          value={trustScore ?? 3}
-        />
-        <p className="mt-2 text-xs font-bold text-neutral-400">
-          {trustScore ? `${trustScore}/5 recorded` : "Slide after checking the result."}
-        </p>
-      </div>
-
-      <label className="mt-4 block">
-        <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Correct label</span>
-        <textarea
-          aria-label="What was it actually?"
-          className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[var(--ds-accent)]"
-          maxLength={240}
-          onChange={(event) => onCorrectionChange(event.target.value)}
-          placeholder="Example: coolant reservoir cap, not brake fluid cap"
-          value={lookup.correction ?? ""}
-        />
-      </label>
-
-      <label className="mt-4 block">
-        <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Private notes</span>
-        <textarea
-          className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[var(--ds-accent)]"
-          maxLength={500}
-          onChange={(event) => onNotesChange(event.target.value)}
-          placeholder="Optional: where the part was, symptoms, what you checked next"
-          value={lookup.notes}
-        />
-      </label>
-
-      {saveError ? <p className="mt-3 text-sm font-semibold text-[var(--ds-danger-ink)]">{saveError}</p> : null}
-
-      <CloudHealthCard className="mt-4" />
-
-      <div className="mt-4 rounded-[20px] border border-neutral-200 bg-neutral-50 p-4">
-        <p className="text-sm font-extrabold text-neutral-900">Cloud backup</p>
-        <p className="mt-2 text-sm leading-6 text-neutral-500">{cloudSync.message}</p>
-        <Button
-          className="mt-3 w-full !bg-neutral-100 !text-neutral-900 shadow-none"
-          disabled={!cloudSync.configured || isSyncingCloud}
-          onClick={handleCloudSync}
-        >
-          {isSyncingCloud ? "Syncing..." : "Sync this scan"}
-        </Button>
-        {cloudStatusMessage ? <p className="mt-3 text-sm font-semibold text-[var(--ds-accent)]">{cloudStatusMessage}</p> : null}
-      </div>
-
-      <div className="mt-4 rounded-[20px] border border-neutral-200 bg-neutral-50 p-4">
-        <p className="text-sm font-extrabold text-neutral-900">Scan report</p>
-        <p className="mt-2 text-sm leading-6 text-neutral-500">
-          Export a plain-text summary for a technician, buyer, or your own records. This does not create a public link.
-        </p>
-        <div className="mt-3 grid grid-cols-2 gap-3">
-          <Button className="!bg-neutral-100 !text-neutral-900 shadow-none" onClick={handleShareReport}>
-            Share
-          </Button>
-          <Button className="!bg-neutral-100 !text-neutral-900 shadow-none" onClick={handleDownloadReport}>
-            Export
-          </Button>
-        </div>
-        {reportStatus ? <p className="mt-3 text-sm font-semibold text-[var(--ds-accent)]">{reportStatus}</p> : null}
-      </div>
-
-      <Button className="mt-4 w-full border border-[var(--ds-danger-line)] !bg-[var(--ds-danger-soft)] !text-[var(--ds-danger)] shadow-none" onClick={onDelete}>
-        Delete saved scan
-      </Button>
-      </section>
-    </details>
+      <p className="mt-3 text-xs font-semibold leading-5 text-neutral-400">
+        Stays private on this device. Good scans help train Deep Spec once we go live.
+      </p>
+    </section>
   );
 }
 
-function TrainingReadinessCard({ readiness }: { readiness: TrainingReadiness }) {
-  const styles = {
-    not_ready: "border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] text-[var(--ds-warn-ink)]",
-    ready: "border-[var(--ds-ok-line)] bg-[var(--ds-ok-soft)] text-[var(--ds-ok-ink)]",
-    review: "border-[var(--ds-accent-line)] bg-[var(--ds-accent-soft)] text-[var(--ds-accent)]",
-  };
+function ReportActions({ lookup }: { lookup: Lookup }) {
+  const [status, setStatus] = useState<string | null>(null);
+
+  async function handleShare() {
+    const report = buildScanReport(lookup);
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: `Deep Spec: ${lookup.trainingLabel}`, text: report });
+        setStatus("Report shared.");
+        return;
+      }
+      await navigator.clipboard.writeText(report);
+      setStatus("Report copied to clipboard.");
+    } catch {
+      setStatus("This browser won't share. Export instead.");
+    }
+  }
+
+  function handleDownload() {
+    downloadTextFile(getScanReportFilename(lookup), buildScanReport(lookup));
+    setStatus("Report downloaded.");
+  }
 
   return (
-    <section className={`mt-4 rounded-[20px] border p-4 ${styles[readiness.level]}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-extrabold uppercase tracking-[0.16em] opacity-80">Photo use</p>
-          <h3 className="mt-1 text-lg font-extrabold tracking-tight">{readiness.label}</h3>
-        </div>
-        <span className="rounded-full bg-white/70 px-3 py-1 text-xs font-black text-slate-800">
-          {readiness.score}/100
-        </span>
+    <section data-testid="report-actions">
+      <div className="grid grid-cols-2 gap-2">
+        <Button className="!bg-neutral-100 !text-neutral-900 shadow-none" onClick={handleShare}>
+          Share
+        </Button>
+        <Button className="!bg-neutral-100 !text-neutral-900 shadow-none" onClick={handleDownload}>
+          Export
+        </Button>
       </div>
-      <p className="mt-2 text-sm font-semibold leading-6 text-slate-700">{readiness.summary}</p>
-      <p className="mt-2 text-sm font-black leading-6 text-slate-900">{readiness.action}</p>
-      <p className="mt-2 text-xs font-semibold leading-5 text-slate-600">{readiness.privacy}</p>
-      {readiness.reasons.length ? (
-        <ul className="mt-3 space-y-1 text-xs font-semibold leading-5 text-slate-600">
-          {readiness.reasons.slice(0, 3).map((reason) => (
-            <li key={reason}>{reason}</li>
-          ))}
-        </ul>
-      ) : null}
+      {status ? <p className="mt-2 text-xs font-semibold text-[var(--ds-accent)]">{status}</p> : null}
     </section>
   );
 }
@@ -555,6 +388,7 @@ function AnalysisResult({
         <p className="mt-3 text-sm leading-6 text-neutral-600">{getAnswerBody(result, summary)}</p>
         {capturedAt ? <p className="mt-3 text-xs font-semibold text-neutral-400">Captured {capturedAt}</p> : null}
         <QuickActions canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} onSaveOnly={onSaveOnly} />
+        <SceneCategoryList result={result} variant="result" />
         <ResultDetailSections result={result} variant="result" />
       </section>
 
@@ -624,15 +458,6 @@ function QuickActions({
       >
         {lookupId ? "Saved" : "Save"}
       </button>
-    </div>
-  );
-}
-
-function TrustRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
-      <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-neutral-400">{label}</p>
-      <p className="mt-1 text-sm leading-6 text-neutral-700">{value}</p>
     </div>
   );
 }

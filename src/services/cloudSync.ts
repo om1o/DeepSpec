@@ -186,9 +186,20 @@ export async function verifyCloudHealth(): Promise<CloudHealthReport> {
   }
 }
 
+const CLOUD_SYNC_TIMEOUT_MS = 20_000;
+
+function withCloudTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Cloud sync timed out")), timeoutMs);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
+
 export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult> {
-  const config = getCloudSyncConfig();
-  if (!config) {
+  if (!getCloudSyncConfig()) {
     return {
       ok: false,
       message: "Cloud sync is not configured yet.",
@@ -196,61 +207,65 @@ export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult
   }
 
   try {
-    const supabase = await getClient();
-    const user = await ensureCloudUser(supabase);
-    const image = dataUrlToBlob(lookup.frame.imageBase64);
-    const imageHash = await hashBytes(image.bytes);
-    const imagePath = `${user.id}/${lookup.id}.${image.extension}`;
-    const uploaded = await supabase.storage.from(SCAN_BUCKET).upload(imagePath, image.blob, {
-      contentType: image.contentType,
-      upsert: true,
-    });
-
-    if (uploaded.error) {
-      throw new Error(uploaded.error.message);
-    }
-
-    const saved = await upsertScanLookupRow(supabase, {
-      analyzed_at: lookup.analyzedAt ?? null,
-      captured_at: lookup.frame.capturedAt,
-      chat_history: lookup.chatHistory,
-      correction: lookup.correction,
-      created_at: lookup.createdAt,
-      error_code: lookup.errorCode ?? null,
-      error_message: lookup.errorMessage ?? null,
-      image_byte_length: image.byteLength,
-      image_hash: imageHash,
-      image_mime_type: image.contentType,
-      image_path: imagePath,
-      local_id: lookup.id,
-      notes: lookup.notes,
-      rating: lookup.rating,
-      result_json: lookup.result ?? null,
-      scan_category: lookup.scanCategory,
-      training_label: lookup.trainingLabel,
-      training_status: lookup.trainingStatus,
-      user_id: user.id,
-      ...getOptionalScanLookupFields(lookup),
-    });
-
-    if (saved.error) {
-      throw new Error(saved.error.message);
-    }
-
-    await upsertShopJobScan(supabase, user.id, lookup);
-    await syncDatasetDetailTables(supabase, user.id, lookup);
-
-    return {
-      ok: true,
-      imagePath,
-      message: "Scan synced to the private Deep Spec dataset.",
-    };
+    return await withCloudTimeout(performLookupSync(lookup), CLOUD_SYNC_TIMEOUT_MS);
   } catch (error) {
     return {
       ok: false,
       message: getFriendlySyncError(error),
     };
   }
+}
+
+async function performLookupSync(lookup: Lookup): Promise<CloudSyncResult> {
+  const supabase = await getClient();
+  const user = await ensureCloudUser(supabase);
+  const image = dataUrlToBlob(lookup.frame.imageBase64);
+  const imageHash = await hashBytes(image.bytes);
+  const imagePath = `${user.id}/${lookup.id}.${image.extension}`;
+  const uploaded = await supabase.storage.from(SCAN_BUCKET).upload(imagePath, image.blob, {
+    contentType: image.contentType,
+    upsert: true,
+  });
+
+  if (uploaded.error) {
+    throw new Error(uploaded.error.message);
+  }
+
+  const saved = await upsertScanLookupRow(supabase, {
+    analyzed_at: lookup.analyzedAt ?? null,
+    captured_at: lookup.frame.capturedAt,
+    chat_history: lookup.chatHistory,
+    correction: lookup.correction,
+    created_at: lookup.createdAt,
+    error_code: lookup.errorCode ?? null,
+    error_message: lookup.errorMessage ?? null,
+    image_byte_length: image.byteLength,
+    image_hash: imageHash,
+    image_mime_type: image.contentType,
+    image_path: imagePath,
+    local_id: lookup.id,
+    notes: lookup.notes,
+    rating: lookup.rating,
+    result_json: lookup.result ?? null,
+    scan_category: lookup.scanCategory,
+    training_label: lookup.trainingLabel,
+    training_status: lookup.trainingStatus,
+    user_id: user.id,
+    ...getOptionalScanLookupFields(lookup),
+  });
+
+  if (saved.error) {
+    throw new Error(saved.error.message);
+  }
+
+  await upsertShopJobScan(supabase, user.id, lookup);
+  await syncDatasetDetailTables(supabase, user.id, lookup);
+
+  return {
+    ok: true,
+    imagePath,
+    message: "Scan synced to the private Deep Spec dataset.",
+  };
 }
 
 export async function syncLookupsToCloud(lookups: Lookup[]): Promise<CloudBatchSyncResult> {
@@ -814,6 +829,10 @@ function getFriendlySyncError(error: unknown) {
 
   if (/anonymous|signup|sign-in|sign in/i.test(message)) {
     return "Cloud sync needs Supabase anonymous sign-ins enabled before scans can upload.";
+  }
+
+  if (/failed to fetch|networkerror|network error|fetch failed|load failed|timed out|timeout|aborted/i.test(message)) {
+    return "Saved on this device. Cloud sync will retry when you are back online.";
   }
 
   if (/row-level security|policy|permission|not authorized|unauthorized/i.test(message)) {

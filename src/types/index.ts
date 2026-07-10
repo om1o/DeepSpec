@@ -201,6 +201,37 @@ export type EvidenceRegion = {
   regionLabel: string;
 };
 
+export type SceneObject = {
+  name: string;
+  category: ScanCategory | string;
+  regionLabel: string;
+  primary: boolean;
+};
+
+// A scene object that has been cut out (SlimSAM) for the multi-object AR view. In-memory
+// only (the cutout PNGs are too large to persist); a reopened scan shows the primary alone.
+export type IsolatedObject = {
+  name: string;
+  category: ScanCategory | string;
+  focusBox: VisualFocusBox;
+  isolatedImageBase64: string;
+  primary: boolean;
+};
+
+// Dev-only isolation diagnostics for the on-screen debug overlay (gated by VITE_DEEPSPEC_DEBUG).
+export type ScanDebugInfo = {
+  webgpu?: boolean;
+  segmenter?: "SAM" | "MVANet" | "crop" | "full frame" | "none";
+  focusMode?: VisualFocusMode;
+  samLoadMs?: number;
+  samInferenceMs?: number;
+  samModelMs?: number;
+  samPostMs?: number;
+  samMaskDims?: string;
+  samOk?: boolean;
+  samError?: string;
+};
+
 export type SourceLink = {
   label: string;
   url: string;
@@ -237,6 +268,7 @@ export type IdentificationResult = {
   whatItDoes: string;
   visibleObservations: string[];
   evidenceRegions: EvidenceRegion[];
+  sceneObjects?: SceneObject[];
   concerns: string[];
   safetyTriage: SafetyTriage;
   isSafetyCritical: boolean;
@@ -252,6 +284,8 @@ export type ScanAnalysisState = {
   focusBox?: VisualFocusBox;
   focusMode?: VisualFocusMode;
   isolatedImageBase64?: string;
+  isolatedObjects?: IsolatedObject[];
+  debug?: ScanDebugInfo;
   result?: IdentificationResult;
   errorMessage?: string;
   errorCode?: string;

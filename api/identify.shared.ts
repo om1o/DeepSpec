@@ -6,6 +6,7 @@ import {
   type ConfirmationNeed,
   type Confidence,
   type EvidenceRegion,
+  type SceneObject,
   type IdentificationResult,
   type IdentifyModelRun,
   type IdentifyProvider,
@@ -77,7 +78,8 @@ const DEFAULT_BACKUP_RETRY_BACKOFF_MS = 800;
 
 const GEMINI_IDENTIFY_PROMPT = [
   "Identify the main visible vehicle part or damage from the photo.",
-  `Return only JSON with: partName, confidence, confidenceScore, confidenceRange, confirmationNeed, scanCategory, whatItDoes, visibleObservations, evidence, evidenceRegions, concerns, candidateMatches, primaryPart, candidateParts, possibleVehicleContexts, measurements, requiredNextEvidence, fitmentConfidence, safetyTriage, isSafetyCritical, nextAction, needsBetterPhoto, sourceLinks.`,
+  `Return only JSON with: partName, confidence, confidenceScore, confidenceRange, confirmationNeed, scanCategory, whatItDoes, visibleObservations, evidence, evidenceRegions, sceneObjects, concerns, candidateMatches, primaryPart, candidateParts, possibleVehicleContexts, measurements, requiredNextEvidence, fitmentConfidence, safetyTriage, isSafetyCritical, nextAction, needsBetterPhoto, sourceLinks.`,
+  "sceneObjects: list every distinct visible object including background items (posters, tools, hands, other parts); set primary true only for the main part; return [] when only the main subject is visible.",
   `scanCategory must be one of: ${SCAN_CATEGORIES.join(", ")}.`,
   "When visible exterior damage exists, name the damage type explicitly in visibleObservations, concerns, or evidence: dent, scratch, cracked, broken/damaged, missing/detached, paint chip, corrosion/rust. Do not say no visible damage when any of those are visible.",
   "Use only visible evidence. Do not invent OEM fitment, part numbers, prices, or exact engine codes.",
@@ -1455,6 +1457,7 @@ function toIdentificationResult(value: unknown): IdentificationResult | null {
       : "This is a visible vehicle component that should be verified with vehicle-specific context before ordering or repair.",
     visibleObservations,
     evidenceRegions: coerceEvidenceRegions(base.evidenceRegions ?? value.evidenceRegions, partName, visibleObservations),
+    sceneObjects: coerceSceneObjects(value.sceneObjects),
     concerns,
     safetyTriage,
     isSafetyCritical,
@@ -1712,6 +1715,34 @@ function coerceEvidenceRegions(value: unknown, partName: string, observations: s
     observation: observations[0] ?? `The photo shows ${partName}.`,
     regionLabel: "Scanned area",
   }];
+}
+
+function coerceSceneObjects(value: unknown): SceneObject[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => {
+      if (!isRecord(entry) || typeof entry.name !== "string") {
+        return null;
+      }
+
+      const name = cleanText(entry.name, "");
+      if (!name) {
+        return null;
+      }
+
+      const normalizedCategory = resolveScanCategory(entry.category);
+      const category = normalizedCategory === "unknown" && typeof entry.category === "string" && entry.category.trim()
+        ? cleanText(entry.category, "unknown")
+        : normalizedCategory;
+      const regionLabel = typeof entry.regionLabel === "string" ? cleanText(entry.regionLabel, "Scanned area") : "Scanned area";
+
+      return { name, category, regionLabel, primary: entry.primary === true };
+    })
+    .filter((entry): entry is SceneObject => Boolean(entry))
+    .slice(0, 8);
 }
 
 function coerceSourceLinks(value: unknown, partName: string): SourceLink[] {
@@ -3052,6 +3083,7 @@ function isIdentificationResult(value: unknown): value is IdentificationResult {
     typeof value.whatItDoes === "string" &&
     isStringArray(value.visibleObservations) &&
     isEvidenceRegionArray(value.evidenceRegions) &&
+    isSceneObjectArray(value.sceneObjects ?? []) &&
     isStringArray(value.concerns) &&
     isSafetyTriage(value.safetyTriage) &&
     typeof value.isSafetyCritical === "boolean" &&
@@ -3111,6 +3143,16 @@ function isEvidenceRegionArray(value: unknown): value is EvidenceRegion[] {
     typeof item.label === "string" &&
     typeof item.observation === "string" &&
     typeof item.regionLabel === "string"
+  ));
+}
+
+function isSceneObjectArray(value: unknown): value is SceneObject[] {
+  return Array.isArray(value) && value.every((item) => (
+    isRecord(item) &&
+    typeof item.name === "string" &&
+    typeof item.category === "string" &&
+    typeof item.regionLabel === "string" &&
+    typeof item.primary === "boolean"
   ));
 }
 

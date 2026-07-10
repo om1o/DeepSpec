@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { IssueLine, ResultDetailSections } from "./PositiveAnswerCard";
+import { IssueLine, ResultDetailSections, SceneCategoryList } from "./PositiveAnswerCard";
 import { getAnswerBody } from "../../lib/resultFacts";
 import { getSimpleResultSummary } from "../../lib/simpleResultSummary";
 import type { IdentificationResult } from "../../types";
@@ -64,6 +64,28 @@ describe("PositiveAnswerCard pieces", () => {
         variant="result"
       />,
     );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("SceneCategoryList lists relevant other objects with their categories", () => {
+    render(
+      <SceneCategoryList
+        result={makeResult({
+          sceneObjects: [
+            { name: "Engine", category: "engine", regionLabel: "center", primary: true },
+            { name: "Socket wrench", category: "tool", regionLabel: "left side", primary: false },
+          ],
+        })}
+        variant="result"
+      />,
+    );
+    const view = screen.getByTestId("also-in-view");
+    expect(view).toHaveTextContent("Socket wrench");
+    expect(view).toHaveTextContent("tool");
+  });
+
+  it("SceneCategoryList renders nothing when there are no other objects", () => {
+    const { container } = render(<SceneCategoryList result={makeResult()} variant="result" />);
     expect(container).toBeEmptyDOMElement();
   });
 });

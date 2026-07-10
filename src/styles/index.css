@@ -408,6 +408,17 @@ button, a {
   to   { transform: translateY(0);   opacity: 1; }
 }
 
+/* Subtle glow pulse on the primary object in the multi-object Lens overview */
+@keyframes ds-lens-pulse {
+  0%, 100% { filter: drop-shadow(0 0 4px rgba(0, 170, 255, 0.75)); }
+  50%       { filter: drop-shadow(0 0 9px rgba(0, 170, 255, 1)); }
+}
+.lens-pulse-primary { animation: ds-lens-pulse 2.2s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lens-pulse-primary { animation: none; }
+}
+
 @keyframes ds-analysis-sweep {
   0%, 100% { transform: translateY(-18px) scaleX(0.72); opacity: 0.32; }
   50%       { transform: translateY(18px)  scaleX(1);    opacity: 1; }

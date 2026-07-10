@@ -1,4 +1,4 @@
-import type { CandidateMatch, CandidatePart, ChatMessage, Confidence, CustomerVisibleReport, EvidenceRegion, FitmentConfidence, IdentificationResult, IdentifyModelRun, IdentifyProvider, Lookup, PartMeasurement, PossibleVehicleContext, Rating, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanCategory, ScanProvenance, ScanQualityFailureReason, ScanQualitySnapshot, ShopReviewStatus, ShopVehicleContext, SourceLink, TrainingStatus, VisualFocusBox, VisualFocusMode } from "../types";
+import type { CandidateMatch, CandidatePart, ChatMessage, Confidence, CustomerVisibleReport, EvidenceRegion, FitmentConfidence, IdentificationResult, IdentifyModelRun, IdentifyProvider, Lookup, PartMeasurement, PossibleVehicleContext, Rating, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanCategory, SceneObject, ScanProvenance, ScanQualityFailureReason, ScanQualitySnapshot, ShopReviewStatus, ShopVehicleContext, SourceLink, TrainingStatus, VisualFocusBox, VisualFocusMode } from "../types";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
 export const MAX_SAVED_LOOKUPS = 50;
@@ -647,6 +647,7 @@ function normalizeStoredIdentificationResult(value: unknown, correction?: string
     whatItDoes: cleanText(result.whatItDoes, 500),
     visibleObservations: cleanStringArray(result.visibleObservations, 6, 180),
     evidenceRegions: normalizeEvidenceRegions(result.evidenceRegions, result.visibleObservations, result.evidence),
+    sceneObjects: normalizeSceneObjects(result.sceneObjects),
     concerns: cleanStringArray(result.concerns, 6, 180),
     safetyTriage: result.safetyTriage,
     isSafetyCritical: result.isSafetyCritical,
@@ -807,6 +808,25 @@ function normalizeEvidenceRegions(regions: unknown, observations: unknown[], evi
     observation,
     regionLabel: "Scanned area",
   }));
+}
+
+function normalizeSceneObjects(value: unknown): SceneObject[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is Partial<SceneObject> => typeof item === "object" && item !== null)
+    .map((entry) => ({
+      name: typeof entry.name === "string" ? cleanText(entry.name, 80) : "",
+      category: typeof entry.category === "string" && entry.category.trim()
+        ? (isScanCategory(entry.category) ? entry.category : cleanText(entry.category, 40))
+        : "unknown",
+      regionLabel: typeof entry.regionLabel === "string" ? cleanText(entry.regionLabel, 40) : "Scanned area",
+      primary: entry.primary === true,
+    }))
+    .filter((entry) => entry.name)
+    .slice(0, 8);
 }
 
 function normalizeSourceLinks(value: unknown): SourceLink[] {

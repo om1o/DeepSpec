@@ -1,6 +1,9 @@
 import { createChatResponse } from "./chat.shared";
+import { enforceRateLimit } from "./rateLimit.shared";
+import { requireSession } from "./requireSession.shared";
 
 type VercelRequest = {
+  headers?: Record<string, string | string[] | undefined>;
   method?: string;
   body?: unknown;
 };
@@ -21,6 +24,21 @@ export default async function handler(request: VercelRequest, response: VercelRe
         message: "Use POST for AI follow-up chat.",
       },
     });
+    return;
+  }
+
+  const headers = request.headers ?? {};
+
+  const rateLimit = await enforceRateLimit("chat", headers, process.env);
+  if (!rateLimit.ok) {
+    response.setHeader("Retry-After", String(rateLimit.retryAfterSeconds));
+    response.status(rateLimit.status).json(rateLimit.body);
+    return;
+  }
+
+  const session = await requireSession(headers, process.env);
+  if (!session.ok) {
+    response.status(session.status).json(session.body);
     return;
   }
 

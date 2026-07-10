@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Webcam from "react-webcam";
-import { compressImageDataUrl } from "../lib/utils";
+import { CAPTURE_MAX_EDGE, compressImageDataUrl } from "../lib/utils";
 
 type CameraState = "loading" | "ready" | "blocked";
 type CameraFacingMode = "environment" | "user";
@@ -118,7 +118,7 @@ export function useCamera() {
       throw new Error("No camera frame was available.");
     }
 
-    return compressImageDataUrl(screenshot, 1024, 0.8);
+    return compressImageDataUrl(screenshot, CAPTURE_MAX_EDGE, 0.85);
   }, []);
 
   return {
