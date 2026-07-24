@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ScanDebugInfo } from "../../types";
 import { getScanDebug, isScanDebugEnabled } from "../../lib/scanDebug";
+import { getSamGeometryVerdict } from "../../lib/scanDebugGeometry";
 import { supportsWebGpu } from "../../lib/webgpu";
 
 /**
@@ -56,6 +57,28 @@ export function ScanDebugOverlay({ info }: { info?: ScanDebugInfo }) {
       ["SAM model", ms(data.samModelMs)],
       ["SAM post", ms(data.samPostMs)],
       ["SAM masks", data.samMaskDims ?? "—"],
+    );
+  }
+  // Geometry diagnostics: where we told SAM to look vs. what it actually saw and found — lets a
+  // wrong/tiny cutout be traced to "SAM found the wrong area" vs. a decode/scaling mismatch.
+  if (data.samFrameDims !== undefined || data.samModelDims !== undefined) {
+    const geometryVerdict = getSamGeometryVerdict({
+      frameDims: data.samFrameDims,
+      modelDims: data.samModelDims,
+      targetBoxNorm: data.samTargetBoxNorm,
+      maskBoxNorm: data.samMaskBoxNorm,
+    });
+    rows.push(
+      ["SAM frame dims", data.samFrameDims ?? "—"],
+      ["SAM model dims", data.samModelDims ?? "—"],
+      ["SAM verdict", geometryVerdict],
+    );
+  }
+  if (data.samTargetBoxNorm !== undefined || data.samMaskBoxNorm !== undefined) {
+    rows.push(
+      ["SAM target box", data.samTargetBoxNorm ?? "—"],
+      ["SAM mask box", data.samMaskBoxNorm ?? "—"],
+      ["SAM mask coverage", data.samMaskCoverage !== undefined ? `${(data.samMaskCoverage * 100).toFixed(1)}%` : "—"],
     );
   }
   const text = `DeepSpec isolation diagnostics\n${rows.map(([key, value]) => `${key}: ${value}`).join("\n")}`;

@@ -230,6 +230,13 @@ export type ScanDebugInfo = {
   samMaskDims?: string;
   samOk?: boolean;
   samError?: string;
+  // Geometry diagnostics for the "mask succeeded but the cutout is a wrong/tiny blob" failure
+  // mode: where we told SAM to look (frame dims + target box) vs. what it actually saw and found.
+  samFrameDims?: string;
+  samModelDims?: string;
+  samMaskBoxNorm?: string;
+  samMaskCoverage?: number;
+  samTargetBoxNorm?: string;
 };
 
 export type SourceLink = {

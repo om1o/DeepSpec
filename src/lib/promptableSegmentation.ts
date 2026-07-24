@@ -207,6 +207,18 @@ async function isolateBoxes(
     ]]);
     const inputs = await pipeline.processor(rawImage, { input_points: pointPrompts });
 
+    // Point prompts above are computed in frameImage's pixel space (frameWidth/frameHeight), but
+    // the processor reshapes them against ITS OWN decode of the same source (original_sizes). If
+    // the two decodes disagree (e.g. a rotated/EXIF-oriented source), the point lands on the wrong
+    // spot in what the model actually sees, and SAM segments an unrelated region.
+    const modelSize = inputs.original_sizes?.[0];
+    samLog({
+      stage: "prompt-geometry",
+      frameDims: `${frameWidth}x${frameHeight}`,
+      modelDims: modelSize ? `${modelSize[1]}x${modelSize[0]}` : "unknown",
+      pointsPx: pointPrompts.map((p) => p[0].map((v) => Math.round(v))),
+    });
+
     const modelStart = clock();
     const outputs = await pipeline.model(inputs);
     const modelMs = Math.round(clock() - modelStart);
@@ -238,7 +250,10 @@ async function isolateBoxes(
         results.push(null);
         continue;
       }
-      const cutout = await withTimeout(compositeMaskedCutout(frameImage, selected), PROMPTABLE_COMPOSITE_TIMEOUT_MS);
+      const cutout = await withTimeout(
+        compositeMaskedCutout(frameImage, selected, boxes[boxIndex]),
+        PROMPTABLE_COMPOSITE_TIMEOUT_MS,
+      );
       if (!cutout) {
         samLog({ stage: "inference-empty", reason: "mask too small / composite failed" });
       }
@@ -289,7 +304,11 @@ function selectMask(
   return { data: maskTensor.data, width, height, offset };
 }
 
-function compositeMaskedCutout(frameImage: HTMLImageElement, mask: SelectedMask): Promise<CutoutResult | null> {
+function compositeMaskedCutout(
+  frameImage: HTMLImageElement,
+  mask: SelectedMask,
+  targetBox?: VisualFocusBox,
+): Promise<CutoutResult | null> {
   return new Promise((resolve) => {
     try {
       const { width, height } = mask;
@@ -325,6 +344,24 @@ function compositeMaskedCutout(frameImage: HTMLImageElement, mask: SelectedMask)
           }
         }
       }
+
+      // Raw mask bbox, in mask-pixel dims and frame-normalized coords, logged BEFORE the
+      // accept/reject check below so a rejected (too-small/too-large) mask is visible too.
+      // Compared against targetBoxNorm (where we told SAM to look), this tells us whether SAM
+      // found the right region (bbox overlaps the target) or a wrong one (bbox is elsewhere).
+      samLog({
+        stage: "mask-bbox",
+        maskDims: `${width}x${height}`,
+        maskBoxNorm: count > 0
+          ? [minX / width, minY / height, (maxX - minX + 1) / width, (maxY - minY + 1) / height]
+              .map((v) => v.toFixed(3))
+              .join(",")
+          : "empty",
+        coverage: Number((count / (width * height)).toFixed(4)),
+        targetBoxNorm: targetBox
+          ? [targetBox.x, targetBox.y, targetBox.width, targetBox.height].map((v) => v.toFixed(3)).join(",")
+          : undefined,
+      });
 
       // Reject too-small AND ~whole-frame masks. A mask covering nearly everything isn't an
       // isolation (background kept) and would mislabel the result as "Isolated"; fall back instead.
@@ -505,6 +542,19 @@ function samLog(detail: Record<string, unknown>) {
       break;
     case "skip":
       recordScanDebug({ samError: typeof detail.reason === "string" ? `skipped: ${detail.reason}` : "skipped" });
+      break;
+    case "prompt-geometry":
+      recordScanDebug({
+        samFrameDims: typeof detail.frameDims === "string" ? detail.frameDims : undefined,
+        samModelDims: typeof detail.modelDims === "string" ? detail.modelDims : undefined,
+      });
+      break;
+    case "mask-bbox":
+      recordScanDebug({
+        samMaskBoxNorm: typeof detail.maskBoxNorm === "string" ? detail.maskBoxNorm : undefined,
+        samMaskCoverage: typeof detail.coverage === "number" ? detail.coverage : undefined,
+        samTargetBoxNorm: typeof detail.targetBoxNorm === "string" ? detail.targetBoxNorm : undefined,
+      });
       break;
     default:
       break;

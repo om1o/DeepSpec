@@ -36,4 +36,40 @@ describe("ScanDebugOverlay", () => {
     expect(overlay).toHaveTextContent("scan to see");
     expect(screen.getByRole("button", { name: /Copy diagnostics/ })).toBeInTheDocument();
   });
+
+  it("shows an explicit SAM geometry verdict when target and mask boxes are present", () => {
+    vi.stubEnv("VITE_DEEPSPEC_DEBUG", "on");
+    render(
+      <ScanDebugOverlay
+        info={{
+          webgpu: true,
+          segmenter: "SAM",
+          samFrameDims: "1280x720",
+          samModelDims: "1280x720",
+          samTargetBoxNorm: "0.400,0.400,0.300,0.300",
+          samMaskBoxNorm: "0.445,0.454,0.121,0.213",
+          samMaskCoverage: 0.008,
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("scan-debug-overlay")).toHaveTextContent("SAM verdict");
+    expect(screen.getByTestId("scan-debug-overlay")).toHaveTextContent("mask overlaps target");
+  });
+
+  it("shows a dimension mismatch verdict before mask boxes are available", () => {
+    vi.stubEnv("VITE_DEEPSPEC_DEBUG", "on");
+    render(
+      <ScanDebugOverlay
+        info={{
+          webgpu: true,
+          segmenter: "SAM",
+          samFrameDims: "1280x720",
+          samModelDims: "720x1280",
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("scan-debug-overlay")).toHaveTextContent("frame/model dims mismatch");
+  });
 });
