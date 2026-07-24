@@ -1,15 +1,23 @@
 import { getAuthClient, isSupabaseAuthConfigured } from "./auth";
 import type {
   CandidateMatch,
+  CandidatePart,
   ChatMessage,
   Confidence,
+  CustomerVisibleReport,
   EvidenceRegion,
+  FitmentConfidence,
   IdentificationResult,
   IdentifyModelRun,
   IdentifyProvider,
   Lookup,
+  PartMeasurement,
+  PossibleVehicleContext,
   Rating,
   ScanCategory,
+  SceneObject,
+  ShopReviewStatus,
+  ShopVehicleContext,
   SourceLink,
   TrainingStatus,
 } from "../types";
@@ -18,6 +26,7 @@ const SCAN_BUCKET = "scan-images";
 const SIGNED_URL_TTL_SECONDS = 60 * 60;
 const DEFAULT_HISTORY_LIMIT = 200;
 const FALLBACK_IMAGE = "/brand/deepspec-logo.webp";
+const CLOUD_HISTORY_CORE_SELECT = "local_id,created_at,captured_at,analyzed_at,error_code,error_message,rating,correction,notes,scan_category,training_label,training_status,chat_history,result_json,image_path";
 
 type CloudHistoryRow = {
   local_id: unknown;
@@ -33,7 +42,13 @@ type CloudHistoryRow = {
   training_label: unknown;
   training_status: unknown;
   chat_history: unknown;
+  customer_visible_report_json: unknown;
+  job_id: unknown;
+  org_id: unknown;
   result_json: unknown;
+  review_status: unknown;
+  technician_user_id: unknown;
+  vehicle_context: unknown;
   image_path: unknown;
 };
 
@@ -42,6 +57,11 @@ type SignedImageRow = {
   signedUrl?: unknown;
   signedURL?: unknown;
   error?: unknown;
+};
+
+type CloudHistoryQueryResult = {
+  data: unknown;
+  error: { message?: string } | null;
 };
 
 type ReadCloudHistoryResult =
@@ -63,14 +83,14 @@ export async function readCloudLookups(limit = DEFAULT_HISTORY_LIMIT): Promise<R
     return { ok: false, message: "No verified Supabase session was found." };
   }
 
-  const rowsResult = await supabase
+  const rowsResult: CloudHistoryQueryResult = await supabase
     .from("scan_lookups")
-    .select("local_id,created_at,captured_at,analyzed_at,error_code,error_message,rating,correction,notes,scan_category,training_label,training_status,chat_history,result_json,image_path")
+    .select(CLOUD_HISTORY_CORE_SELECT)
     .order("created_at", { ascending: false })
     .limit(limit);
 
   if (rowsResult.error) {
-    return { ok: false, message: rowsResult.error.message };
+    return { ok: false, message: rowsResult.error.message ?? "Could not load cloud scan history." };
   }
 
   const rows = Array.isArray(rowsResult.data) ? (rowsResult.data as CloudHistoryRow[]) : [];
@@ -146,7 +166,13 @@ function mapCloudRowToLookup(
       : correction?.trim() || result?.partName || "unlabeled",
     trainingStatus: parseTrainingStatus(row.training_status),
     chatHistory: parseChatHistory(row.chat_history),
+    customerVisibleReport: parseCustomerVisibleReport(row.customer_visible_report_json),
+    jobId: isString(row.job_id) ? row.job_id : undefined,
+    orgId: isString(row.org_id) ? row.org_id : undefined,
     result,
+    reviewStatus: parseShopReviewStatus(row.review_status),
+    technicianUserId: isString(row.technician_user_id) ? row.technician_user_id : undefined,
+    vehicleContext: parseShopVehicleContext(row.vehicle_context),
     provenance: {
       analysisSource: "ai_detection",
       captureMode: "camera",
@@ -173,9 +199,16 @@ function parseIdentificationResult(value: unknown, fallbackCategory: ScanCategor
     confirmationNeed: parseConfirmationNeed(value.confirmationNeed),
     scanCategory: parseScanCategory(value.scanCategory, fallbackCategory),
     candidateMatches: parseCandidateMatches(value.candidateMatches),
+    primaryPart: parseCandidatePart(value.primaryPart, partName, parseConfidence(value.confidence), parseScanCategory(value.scanCategory, fallbackCategory)),
+    candidateParts: parseCandidateParts(value.candidateParts),
+    possibleVehicleContexts: parsePossibleVehicleContexts(value.possibleVehicleContexts),
+    measurements: parsePartMeasurements(value.measurements),
+    requiredNextEvidence: parseStringList(value.requiredNextEvidence, 8, 220),
+    ...(parseFitmentConfidence(value.fitmentConfidence) ? { fitmentConfidence: parseFitmentConfidence(value.fitmentConfidence) } : {}),
     whatItDoes: isString(value.whatItDoes) ? value.whatItDoes : "",
     visibleObservations: parseStringList(value.visibleObservations, 8, 220),
     evidenceRegions: parseEvidenceRegions(value.evidenceRegions),
+    sceneObjects: parseSceneObjects(value.sceneObjects),
     concerns: parseStringList(value.concerns, 8, 220),
     safetyTriage: parseSafetyTriage(value.safetyTriage),
     isSafetyCritical: value.isSafetyCritical === true,
@@ -230,6 +263,87 @@ function parseCandidateMatches(value: unknown): CandidateMatch[] {
     .filter((item) => Boolean(item.partName));
 }
 
+function parseCandidatePart(
+  value: unknown,
+  fallbackPartName?: string,
+  fallbackConfidence?: Confidence,
+  fallbackCategory?: ScanCategory,
+): CandidatePart | undefined {
+  if (!isObject(value)) {
+    return fallbackPartName && fallbackConfidence && fallbackCategory
+      ? {
+          confidence: fallbackConfidence,
+          evidence: [],
+          partName: fallbackPartName,
+          scanCategory: fallbackCategory,
+        }
+      : undefined;
+  }
+
+  const partName = isString(value.partName) ? value.partName.trim().slice(0, 120) : "";
+  if (!partName) {
+    return undefined;
+  }
+
+  return {
+    confidence: parseConfidence(value.confidence),
+    evidence: parseStringList(value.evidence, 6, 220),
+    partName,
+    scanCategory: parseScanCategory(value.scanCategory),
+    ...(isString(value.whyNotPrimary) ? { whyNotPrimary: value.whyNotPrimary.trim().slice(0, 220) } : {}),
+  };
+}
+
+function parseCandidateParts(value: unknown): CandidatePart[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => parseCandidatePart(item))
+    .filter((item): item is CandidatePart => Boolean(item))
+    .slice(0, 4);
+}
+
+function parsePossibleVehicleContexts(value: unknown): PossibleVehicleContext[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isObject)
+    .map((item) => ({
+      confidence: parseConfidence(item.confidence),
+      evidence: parseStringList(item.evidence, 4, 220),
+      label: isString(item.label) ? item.label.trim().slice(0, 120) : "",
+    }))
+    .filter((item) => item.label)
+    .slice(0, 3);
+}
+
+function parsePartMeasurements(value: unknown): PartMeasurement[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isObject)
+    .map((item): PartMeasurement => {
+      const method = item.method === "reference_object" || item.method === "visible_marking" || item.method === "estimated"
+        ? item.method
+        : "estimated";
+      return {
+        caveat: isString(item.caveat) ? item.caveat.trim().slice(0, 220) : "Estimated; verify before ordering parts.",
+        confidence: parseConfidence(item.confidence),
+        label: isString(item.label) ? item.label.trim().slice(0, 120) : "",
+        method,
+        valueMm: typeof item.valueMm === "number" && Number.isFinite(item.valueMm) ? item.valueMm : 0,
+      };
+    })
+    .filter((item) => item.label && item.valueMm > 0)
+    .slice(0, 4);
+}
+
 function parseEvidenceRegions(value: unknown): EvidenceRegion[] {
   if (!Array.isArray(value)) {
     return [];
@@ -243,6 +357,51 @@ function parseEvidenceRegions(value: unknown): EvidenceRegion[] {
       regionLabel: isString(item.regionLabel) ? item.regionLabel : "",
     }))
     .filter((item) => Boolean(item.label || item.observation));
+}
+
+function parseSceneObjects(value: unknown): SceneObject[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isObject)
+    .map((item) => ({
+      name: isString(item.name) ? item.name.trim().slice(0, 80) : "",
+      category: isString(item.category) && item.category.trim() ? item.category.trim().slice(0, 40) : "unknown",
+      regionLabel: isString(item.regionLabel) ? item.regionLabel.trim().slice(0, 40) : "Scanned area",
+      primary: item.primary === true,
+    }))
+    .filter((item) => Boolean(item.name))
+    .slice(0, 8);
+}
+
+function parseCustomerVisibleReport(value: unknown): CustomerVisibleReport | undefined {
+  if (!isObject(value) || !isString(value.generatedAt) || !isString(value.summary) || !isString(value.title)) {
+    return undefined;
+  }
+
+  return {
+    generatedAt: value.generatedAt,
+    summary: value.summary.slice(0, 600),
+    title: value.title.slice(0, 140),
+  };
+}
+
+function parseShopVehicleContext(value: unknown): ShopVehicleContext | undefined {
+  if (!isObject(value)) {
+    return undefined;
+  }
+
+  const context: ShopVehicleContext = {};
+  const fields: Array<keyof ShopVehicleContext> = ["bayOrRo", "customerName", "engine", "jobTitle", "make", "mileage", "model", "notes", "plate", "symptom", "technicianName", "vin", "year"];
+  for (const field of fields) {
+    if (isString(value[field])) {
+      (context as Record<string, string>)[field] = value[field].trim().slice(0, field === "notes" || field === "symptom" ? 300 : 120);
+    }
+  }
+
+  return Object.keys(context).length ? context : undefined;
 }
 
 function parseSourceLinks(value: unknown): SourceLink[] {
@@ -354,6 +513,16 @@ function parseTrainingStatus(value: unknown): TrainingStatus {
   return value === "user_confirmed" || value === "user_corrected" || value === "raw_unreviewed"
     ? value
     : "raw_unreviewed";
+}
+
+function parseShopReviewStatus(value: unknown): ShopReviewStatus | undefined {
+  return value === "needs_review" || value === "confirmed" || value === "corrected" ? value : undefined;
+}
+
+function parseFitmentConfidence(value: unknown): FitmentConfidence | undefined {
+  return value === "not_applicable" || value === "needs_vehicle_context" || value === "possible" || value === "supported"
+    ? value
+    : undefined;
 }
 
 function parseSourceType(value: unknown): SourceLink["sourceType"] {

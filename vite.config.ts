@@ -25,6 +25,10 @@ export default defineConfig(async ({ mode }) => {
         configurePreviewServer(server: PreviewServer) {
           registerPreviewMethodGuard(server, "/api/identify", "Use POST for AI identification.");
           registerPreviewMethodGuard(server, "/api/chat", "Use POST for AI follow-up chat.");
+          registerPreviewMethodGuard(server, "/api/billing-checkout", "Use POST to start DeepSpec checkout.");
+          registerPreviewMethodGuard(server, "/api/billing-portal", "Use POST to open DeepSpec billing.");
+          registerPreviewMethodGuard(server, "/api/billing-webhook", "Use POST for billing provider webhooks.");
+          registerPreviewMethodGuard(server, "/api/account-entitlement", "Use GET to verify DeepSpec account access.", "GET");
         },
         configureServer(server: ViteDevServer) {
           server.middlewares.use("/api/identify", async (request: IncomingMessage, response: ServerResponse) => {
@@ -37,9 +41,38 @@ export default defineConfig(async ({ mode }) => {
               return;
             }
 
+            const { enforceRateLimit } = (await server.ssrLoadModule("/api/rateLimit.shared.ts")) as typeof import("./api/rateLimit.shared");
+            const { requireSession } = (await server.ssrLoadModule("/api/requireSession.shared.ts")) as typeof import("./api/requireSession.shared");
+            const identifyRateLimit = await enforceRateLimit("identify", request.headers, serverEnv);
+            if (!identifyRateLimit.ok) {
+              response.statusCode = identifyRateLimit.status;
+              response.setHeader("Retry-After", String(identifyRateLimit.retryAfterSeconds));
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify(identifyRateLimit.body));
+              return;
+            }
+            const identifySession = await requireSession(request.headers, serverEnv);
+            if (!identifySession.ok) {
+              response.statusCode = identifySession.status;
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify(identifySession.body));
+              return;
+            }
+
             const body = await readJsonBody(request).catch(() => null);
             const { createIdentifyResponse } = (await server.ssrLoadModule("/api/identify.shared.ts")) as typeof import("./api/identify.shared");
+            const { consumeReservedScanCredit, reserveScanCredit } = (await server.ssrLoadModule("/api/billing.shared.ts")) as typeof import("./api/billing.shared");
+            const reservation = await reserveScanCredit(request.headers, serverEnv);
+            if (!reservation.ok) {
+              response.statusCode = reservation.error.status;
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify(reservation.error.body));
+              return;
+            }
             const result = await createIdentifyResponse(body, serverEnv);
+            if (result.status === 200) {
+              await consumeReservedScanCredit(reservation, serverEnv);
+            }
             response.statusCode = result.status;
             response.setHeader("Content-Type", "application/json");
             response.end(JSON.stringify(result.body));
@@ -55,9 +88,98 @@ export default defineConfig(async ({ mode }) => {
               return;
             }
 
+            const { enforceRateLimit } = (await server.ssrLoadModule("/api/rateLimit.shared.ts")) as typeof import("./api/rateLimit.shared");
+            const { requireSession } = (await server.ssrLoadModule("/api/requireSession.shared.ts")) as typeof import("./api/requireSession.shared");
+            const chatRateLimit = await enforceRateLimit("chat", request.headers, serverEnv);
+            if (!chatRateLimit.ok) {
+              response.statusCode = chatRateLimit.status;
+              response.setHeader("Retry-After", String(chatRateLimit.retryAfterSeconds));
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify(chatRateLimit.body));
+              return;
+            }
+            const chatSession = await requireSession(request.headers, serverEnv);
+            if (!chatSession.ok) {
+              response.statusCode = chatSession.status;
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify(chatSession.body));
+              return;
+            }
+
             const body = await readJsonBody(request).catch(() => null);
             const { createChatResponse } = (await server.ssrLoadModule("/api/chat.shared.ts")) as typeof import("./api/chat.shared");
             const result = await createChatResponse(body, serverEnv);
+            response.statusCode = result.status;
+            response.setHeader("Content-Type", "application/json");
+            response.end(JSON.stringify(result.body));
+          });
+
+          server.middlewares.use("/api/billing-checkout", async (request: IncomingMessage, response: ServerResponse) => {
+            response.setHeader("Cache-Control", "no-store");
+
+            if (request.method !== "POST") {
+              response.statusCode = 405;
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify({ error: { code: "method_not_allowed", message: "Use POST to start DeepSpec checkout." } }));
+              return;
+            }
+
+            const body = await readJsonBody(request).catch(() => null);
+            const { createCheckoutResponse } = (await server.ssrLoadModule("/api/billing.shared.ts")) as typeof import("./api/billing.shared");
+            const result = await createCheckoutResponse(body, serverEnv, request.headers);
+            response.statusCode = result.status;
+            response.setHeader("Content-Type", "application/json");
+            response.end(JSON.stringify(result.body));
+          });
+
+          server.middlewares.use("/api/billing-portal", async (request: IncomingMessage, response: ServerResponse) => {
+            response.setHeader("Cache-Control", "no-store");
+
+            if (request.method !== "POST") {
+              response.statusCode = 405;
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify({ error: { code: "method_not_allowed", message: "Use POST to open DeepSpec billing." } }));
+              return;
+            }
+
+            const body = await readJsonBody(request).catch(() => null);
+            const { createPortalResponse } = (await server.ssrLoadModule("/api/billing.shared.ts")) as typeof import("./api/billing.shared");
+            const result = await createPortalResponse(body, serverEnv);
+            response.statusCode = result.status;
+            response.setHeader("Content-Type", "application/json");
+            response.end(JSON.stringify(result.body));
+          });
+
+          server.middlewares.use("/api/billing-webhook", async (request: IncomingMessage, response: ServerResponse) => {
+            response.setHeader("Cache-Control", "no-store");
+
+            if (request.method !== "POST") {
+              response.statusCode = 405;
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify({ error: { code: "method_not_allowed", message: "Use POST for billing provider webhooks." } }));
+              return;
+            }
+
+            const rawBody = await readRawBody(request).catch(() => "");
+            const { createWebhookResponse } = (await server.ssrLoadModule("/api/billing.shared.ts")) as typeof import("./api/billing.shared");
+            const result = await createWebhookResponse(rawBody, request.headers, serverEnv);
+            response.statusCode = result.status;
+            response.setHeader("Content-Type", "application/json");
+            response.end(JSON.stringify(result.body));
+          });
+
+          server.middlewares.use("/api/account-entitlement", async (request: IncomingMessage, response: ServerResponse) => {
+            response.setHeader("Cache-Control", "no-store");
+
+            if (request.method !== "GET") {
+              response.statusCode = 405;
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify({ error: { code: "method_not_allowed", message: "Use GET to verify DeepSpec account access." } }));
+              return;
+            }
+
+            const { createAccountEntitlementResponse } = (await server.ssrLoadModule("/api/billing.shared.ts")) as typeof import("./api/billing.shared");
+            const result = await createAccountEntitlementResponse(request.headers, serverEnv);
             response.statusCode = result.status;
             response.setHeader("Content-Type", "application/json");
             response.end(JSON.stringify(result.body));
@@ -66,6 +188,11 @@ export default defineConfig(async ({ mode }) => {
       },
       VitePWA({
         registerType: "autoUpdate",
+        // Safety net after the 2-week "ghost service worker" incident: ship a self-destroying
+        // worker that unregisters itself and wipes its caches on load, so a leftover SW can never
+        // silently shadow the app again. Trade-off: this disables PWA offline precaching in
+        // production. Flip back to false (and bump the SW) once you actually want offline support.
+        selfDestroying: true,
         includeAssets: ["icon-192.png", "icon-512.png", "brand/deepspec-logo.webp"],
         manifest: {
           name: "Deep Spec",
@@ -111,12 +238,29 @@ export default defineConfig(async ({ mode }) => {
       globals: true,
       setupFiles: "./src/test/setup.ts",
       testTimeout: 15_000,
+      exclude: [
+        "**/.codex-gitdir-*/**",
+        "**/.ditto-site/**",
+        "**/artifacts/**",
+        "**/datasets/**",
+        "**/dev-dist/**",
+        "**/dist/**",
+        "**/node_modules/**",
+      ],
+      // Feature flags default OFF in tests so the suite exercises baseline behavior,
+      // independent of whatever a developer has enabled in .env.local (e.g. the crop box).
+      env: {
+        VITE_DEEPSPEC_CROP_BOX: "off",
+      },
     },
     server: {
       allowedHosts: [".trycloudflare.com"],
       host: "0.0.0.0",
       port: 5174,
       strictPort: false,
+      watch: {
+        ignored: ["**/artifacts/**"],
+      },
     },
     preview: {
       allowedHosts: [".trycloudflare.com"],
@@ -128,21 +272,26 @@ export default defineConfig(async ({ mode }) => {
 });
 
 async function readJsonBody(request: IncomingMessage) {
+  const rawBody = await readRawBody(request);
+  return rawBody ? JSON.parse(rawBody) : null;
+}
+
+async function readRawBody(request: IncomingMessage) {
   let rawBody = "";
 
   for await (const chunk of request) {
     rawBody += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
   }
 
-  return rawBody ? JSON.parse(rawBody) : null;
+  return rawBody;
 }
 
-function registerPreviewMethodGuard(server: PreviewServer, path: string, message: string) {
+function registerPreviewMethodGuard(server: PreviewServer, path: string, message: string, allowedMethod = "POST") {
   server.middlewares.use(path, (request: IncomingMessage, response: ServerResponse) => {
     response.setHeader("Cache-Control", "no-store");
     response.setHeader("Content-Type", "application/json");
 
-    if (request.method !== "POST") {
+    if (request.method !== allowedMethod) {
       response.statusCode = 405;
       response.end(JSON.stringify({ error: { code: "method_not_allowed", message } }));
       return;

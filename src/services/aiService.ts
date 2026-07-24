@@ -1,5 +1,6 @@
 import { FOLLOWUP_PROMPT, IDENTIFY_PROMPT } from "./systemPrompts";
 import { identifyOnDevice, isOnDeviceFallbackEnabled } from "./onDeviceIdentify";
+import { getAuthClient } from "./auth";
 import {
   SCAN_CATEGORIES,
   type AIInput,
@@ -53,6 +54,10 @@ type AIApiFailure = {
   };
 };
 
+const ON_DEVICE_PROVIDER_FALLBACK_TIMEOUT_MS = 90_000;
+const DEFAULT_IDENTIFY_CLIENT_TIMEOUT_MS = 45_000;
+const DEFAULT_CHAT_CLIENT_TIMEOUT_MS = 30_000;
+
 export class AIServiceError extends Error {
   code: AIErrorCode | string;
 
@@ -69,11 +74,15 @@ export async function runAI(input: AIInput): Promise<string | object> {
       throw new AIServiceError("invalid_input", "Ask a question first.");
     }
 
-    const body = await postAI<ChatApiSuccess>("/api/chat", {
-      userMessage: input.userMessage,
-      systemPrompt: input.systemPrompt,
-      responseAsJson: input.responseAsJson ?? false,
-    });
+    const body = await postAI<ChatApiSuccess>(
+      "/api/chat",
+      {
+        userMessage: input.userMessage,
+        systemPrompt: input.systemPrompt,
+        responseAsJson: input.responseAsJson ?? false,
+      },
+      { timeoutMs: DEFAULT_CHAT_CLIENT_TIMEOUT_MS },
+    );
 
     return body.message;
   }
@@ -83,15 +92,19 @@ export async function runAI(input: AIInput): Promise<string | object> {
       throw new AIServiceError("invalid_input", "No captured image was provided.");
     }
 
-    const body = await postAI<IdentifyApiSuccess>("/api/identify", {
-      imageBase64: input.imageBase64,
-      ...(input.imageBase64_2 ? { imageBase64_2: input.imageBase64_2 } : {}),
-      ...(input.labelRescueTrigger ? { labelRescueTrigger: input.labelRescueTrigger } : {}),
-      ...(input.vehicleContext ? { vehicleContext: input.vehicleContext } : {}),
-      ...(input.measurementContext ? { measurementContext: input.measurementContext } : {}),
-      userMessage: input.userMessage,
-      responseAsJson: input.responseAsJson ?? true,
-    });
+    const body = await postAI<IdentifyApiSuccess>(
+      "/api/identify",
+      {
+        imageBase64: input.imageBase64,
+        ...(input.imageBase64_2 ? { imageBase64_2: input.imageBase64_2 } : {}),
+        ...(input.labelRescueTrigger ? { labelRescueTrigger: input.labelRescueTrigger } : {}),
+        ...(input.vehicleContext ? { vehicleContext: input.vehicleContext } : {}),
+        ...(input.measurementContext ? { measurementContext: input.measurementContext } : {}),
+        userMessage: input.userMessage,
+        responseAsJson: input.responseAsJson ?? true,
+      },
+      { timeoutMs: getIdentifyClientTimeoutMs() },
+    );
 
     return {
       ...body.result,
@@ -102,15 +115,30 @@ export async function runAI(input: AIInput): Promise<string | object> {
   throw new AIServiceError("unsupported", "Deep Spec does not support that AI request yet.");
 }
 
-async function postAI<TSuccess extends object>(path: string, payload: object): Promise<TSuccess> {
+async function postAI<TSuccess extends object>(
+  path: string,
+  payload: object,
+  options: { timeoutMs: number },
+): Promise<TSuccess> {
+  const authHeader = await getAuthHeader();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs);
   const response = await fetch(path, {
     method: "POST",
+    signal: controller.signal,
     headers: {
+      ...(authHeader ? { Authorization: authHeader } : {}),
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
-  }).catch(() => {
+  }).catch((error: unknown) => {
+    if (isAbortError(error)) {
+      throw new AIServiceError("network", "Scan took too long. Try again.");
+    }
+
     throw new AIServiceError("network", "Could not reach the Deep Spec AI service.");
+  }).finally(() => {
+    clearTimeout(timeoutId);
   });
 
   const body = (await response.json().catch(() => null)) as TSuccess | AIApiFailure | null;
@@ -136,26 +164,84 @@ export async function identifyCapturedFrame(
     return identifyOnDevice(frame);
   }
 
-  try {
-    const result = await runAI({
-      type: "vision",
-      imageBase64: frame.imageBase64,
-      imageBase64_2: secondFrame?.imageBase64,
-      labelRescueTrigger,
-      measurementContext: options.measurementContext,
-      userMessage: "Identify this car part from the captured photo.",
-      vehicleContext: options.vehicleContext,
-      systemPrompt: IDENTIFY_PROMPT,
-      responseAsJson: true,
-    });
-
-    return assertIdentificationResult(result);
-  } catch (error) {
-    if (isOnDeviceFallbackEnabled() && error instanceof AIServiceError && error.code === "network") {
-      return identifyOnDevice(frame);
+  const result = await runCloudIdentify(frame, secondFrame, labelRescueTrigger, options).catch((error: unknown) => {
+    if (shouldUseOnDeviceAfterCloudError(error)) {
+      return identifyOnDeviceWithTimeout(frame, error);
     }
 
     throw error;
+  });
+
+  return assertIdentificationResult(result);
+}
+
+function getIdentifyClientTimeoutMs() {
+  const raw = import.meta.env.VITE_DEEPSPEC_IDENTIFY_CLIENT_TIMEOUT_MS
+    || (typeof process !== "undefined" ? process.env.VITE_DEEPSPEC_IDENTIFY_CLIENT_TIMEOUT_MS : undefined);
+  const timeoutMs = Number(raw);
+  return Number.isInteger(timeoutMs) && timeoutMs >= 1_000 && timeoutMs <= 120_000
+    ? timeoutMs
+    : DEFAULT_IDENTIFY_CLIENT_TIMEOUT_MS;
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === "AbortError"
+    || (typeof error === "object" && error !== null && "name" in error && error.name === "AbortError");
+}
+
+async function getAuthHeader() {
+  const client = await getAuthClient().catch(() => null);
+  if (!client) {
+    return "";
+  }
+
+  const session = await client.auth.getSession().catch(() => null);
+  const token = session?.data.session?.access_token;
+  return token ? `Bearer ${token}` : "";
+}
+
+function runCloudIdentify(
+  frame: CapturedFrame,
+  secondFrame: CapturedFrame | undefined,
+  labelRescueTrigger: LabelRescueTrigger | undefined,
+  options: {
+    measurementContext?: MeasurementContext;
+    vehicleContext?: VehicleContext;
+  },
+) {
+  return runAI({
+    type: "vision",
+    imageBase64: frame.imageBase64,
+    imageBase64_2: secondFrame?.imageBase64,
+    labelRescueTrigger,
+    measurementContext: options.measurementContext,
+    userMessage: "Identify this car part from the captured photo.",
+    vehicleContext: options.vehicleContext,
+    systemPrompt: IDENTIFY_PROMPT,
+    responseAsJson: true,
+  });
+}
+
+function shouldUseOnDeviceAfterCloudError(error: unknown) {
+  if (!isOnDeviceFallbackEnabled() || !(error instanceof AIServiceError)) {
+    return false;
+  }
+
+  return getAIErrorDetails(error.code).category === "provider_unavailable";
+}
+
+async function identifyOnDeviceWithTimeout(frame: CapturedFrame, cloudError: unknown) {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = setTimeout(() => reject(cloudError), ON_DEVICE_PROVIDER_FALLBACK_TIMEOUT_MS);
+  });
+
+  try {
+    return await Promise.race([identifyOnDevice(frame), timeout]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
   }
 }
 

@@ -32,7 +32,7 @@ const lookup: Lookup = {
     concerns: ["Brake parts are safety-critical."],
     safetyTriage: "needs_professional",
     isSafetyCritical: true,
-    nextAction: "Verify this with a mechanic before driving.",
+    nextAction: "Check this before driving.",
     needsBetterPhoto: false,
     evidence: [
       "Caliper shape near wheel area.",
@@ -63,7 +63,7 @@ describe("report", () => {
     const report = buildScanReport(lookup);
 
     expect(report).toContain("Deep Spec Scan Report");
-    expect(report).toContain("Mechanic summary:");
+    expect(report).toContain("Scan summary:");
     expect(report).toContain("Part: Brake caliper");
     expect(report).toContain("Safety triage: needs_professional");
     expect(report).toContain("Other possible matches:");

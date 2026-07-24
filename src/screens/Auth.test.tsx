@@ -75,7 +75,7 @@ describe("Auth", () => {
     expect(screen.getAllByAltText("Deep Spec")).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "Continue with Google" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Continue with GitHub" })).not.toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Enter your email address")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("you@shop.com")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Account" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("button", { name: "Sign in to scanner" })).toBeInTheDocument();
     expect(screen.getByText("Cloud ready")).toBeInTheDocument();
@@ -103,7 +103,7 @@ describe("Auth", () => {
     await renderAuth();
 
     await user.click(await screen.findByRole("tab", { name: "Email link" }));
-    await user.type(await screen.findByPlaceholderText("Enter your email address"), "Tester@Example.com");
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "Tester@Example.com");
     await user.click(screen.getByRole("button", { name: "Send sign-in link" }));
 
     await waitFor(() => {
@@ -116,10 +116,51 @@ describe("Auth", () => {
       });
     });
 
-    expect(await screen.findByText("Sign-in link sent to tester@example.com. Open it from your email to finish login.")).toBeInTheDocument();
+    expect(await screen.findByText("Sign-in link sent to tester@example.com. Open it to finish.")).toBeInTheDocument();
     expect(screen.queryByLabelText("Verification code")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "I have a code" }));
     await user.type(await screen.findByLabelText("Verification code"), "123456");
+
+    await waitFor(() => {
+      expect(supabaseMock.auth.verifyOtp).toHaveBeenCalledWith({
+        email: "tester@example.com",
+        token: "123456",
+        type: "email",
+      });
+    });
+    expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
+  });
+
+  it("uses code entry immediately when the public email redirect is rejected", async () => {
+    const user = userEvent.setup();
+    supabaseMock.auth.signInWithOtp
+      .mockResolvedValueOnce({
+        data: {},
+        error: {
+          message: "Redirect URL is not allowed",
+        },
+      })
+      .mockResolvedValueOnce({ data: {}, error: null });
+    supabaseMock.auth.getUser
+      .mockResolvedValueOnce({ data: { user: null }, error: null })
+      .mockResolvedValueOnce({ data: { user: makeUser("code-user") }, error: null });
+
+    await renderAuth();
+
+    await user.click(await screen.findByRole("tab", { name: "Email link" }));
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "Tester@Example.com");
+    await user.click(screen.getByRole("button", { name: "Send sign-in link" }));
+
+    expect(await screen.findByText("Code sent to tester@example.com. Enter the 6 digits below.")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Verification code")).toBeInTheDocument();
+    expect(supabaseMock.auth.signInWithOtp).toHaveBeenNthCalledWith(2, {
+      email: "tester@example.com",
+      options: {
+        shouldCreateUser: true,
+      },
+    });
+
+    await user.type(screen.getByLabelText("Verification code"), "123456");
 
     await waitFor(() => {
       expect(supabaseMock.auth.verifyOtp).toHaveBeenCalledWith({
@@ -138,7 +179,7 @@ describe("Auth", () => {
     await renderAuth();
 
     await user.click(await screen.findByRole("tab", { name: "Email link" }));
-    await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "tester@example.com");
     await user.click(screen.getByRole("button", { name: "Send sign-in link" }));
     await user.click(await screen.findByRole("button", { name: "I have a code" }));
     await user.type(await screen.findByLabelText("Verification code"), "123456");
@@ -173,8 +214,8 @@ describe("Auth", () => {
 
     await renderAuth();
 
-    await user.type(await screen.findByPlaceholderText("Enter your email address"), "Tester@Example.com");
-    await user.type(screen.getByPlaceholderText("Enter your password"), "correct-password");
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "Tester@Example.com");
+    await user.type(screen.getByPlaceholderText("Your password"), "correct-password");
     await user.click(screen.getByRole("button", { name: "Sign in to scanner" }));
 
     await waitFor(() => {
@@ -206,8 +247,8 @@ describe("Auth", () => {
 
     await renderAuth();
 
-    await user.type(await screen.findByPlaceholderText("Enter your email address"), "Tester@Example.com");
-    await user.type(screen.getByPlaceholderText("Enter your password"), "correct-password");
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "Tester@Example.com");
+    await user.type(screen.getByPlaceholderText("Your password"), "correct-password");
     await user.click(screen.getByRole("button", { name: "Sign in to scanner" }));
 
     await waitFor(() => {
@@ -225,8 +266,8 @@ describe("Auth", () => {
 
     await renderAuth();
 
-    await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
-    await user.type(screen.getByPlaceholderText("Enter your password"), "wrong-password");
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "tester@example.com");
+    await user.type(screen.getByPlaceholderText("Your password"), "wrong-password");
     await user.click(screen.getByRole("button", { name: "Sign in to scanner" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Invalid login credentials");
@@ -242,8 +283,8 @@ describe("Auth", () => {
     await renderAuth();
 
     await user.click(await screen.findByRole("button", { name: "No email" }));
-    expect(screen.queryByPlaceholderText("Enter your email address")).not.toBeInTheDocument();
-    expect(screen.queryByPlaceholderText("Enter your password")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("you@shop.com")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Your password")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Continue without email" }));
 
     await waitFor(() => {
@@ -262,8 +303,8 @@ describe("Auth", () => {
     await renderAuth();
 
     await user.click(await screen.findByRole("button", { name: "Create" }));
-    await user.type(await screen.findByPlaceholderText("Enter your email address"), "New@Example.com");
-    await user.type(screen.getByPlaceholderText("Enter your password"), "correct-password");
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "New@Example.com");
+    await user.type(screen.getByPlaceholderText("Your password"), "correct-password");
     await user.click(screen.getByRole("button", { name: "Create account" }));
 
     await waitFor(() => {
@@ -285,8 +326,8 @@ describe("Auth", () => {
     await renderAuth();
 
     await user.click(await screen.findByRole("button", { name: "Create" }));
-    await user.type(await screen.findByPlaceholderText("Enter your email address"), "new@example.com");
-    await user.type(screen.getByPlaceholderText("Enter your password"), "correct-password");
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "new@example.com");
+    await user.type(screen.getByPlaceholderText("Your password"), "correct-password");
     await user.click(screen.getByRole("button", { name: "Create account" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Supabase still requires email confirmation for new password accounts.");
@@ -351,7 +392,7 @@ describe("Auth", () => {
     await renderAuth();
 
     await user.click(await screen.findByRole("tab", { name: "Email link" }));
-    await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "tester@example.com");
     await user.click(screen.getByRole("button", { name: "Send sign-in link" }));
     await user.click(await screen.findByRole("button", { name: "I have a code" }));
 
@@ -373,7 +414,7 @@ describe("Auth", () => {
     await renderAuth();
 
     await user.click(await screen.findByRole("tab", { name: "Email link" }));
-    await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "tester@example.com");
     await user.click(screen.getByRole("button", { name: "Send sign-in link" }));
 
     const resendButton = await screen.findByRole("button", { name: /Send in \d+s/ });
@@ -391,8 +432,8 @@ describe("Auth", () => {
       authState: { from: "/history?filter=recent#scan-1" },
     });
 
-    await user.type(await screen.findByPlaceholderText("Enter your email address"), "Tester@Example.com");
-    await user.type(screen.getByPlaceholderText("Enter your password"), "correct-password");
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "Tester@Example.com");
+    await user.type(screen.getByPlaceholderText("Your password"), "correct-password");
     await user.click(screen.getByRole("button", { name: "Sign in to scanner" }));
 
     expect(await screen.findByText("History opened")).toBeInTheDocument();

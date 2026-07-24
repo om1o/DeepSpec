@@ -35,12 +35,15 @@ const htmlDir = join(artifactDir, "html");
 const videoDir = join(artifactDir, "videos");
 const tracePath = join(artifactDir, "trace.zip");
 const scenarioOrder = getScenarioOrder(parsedArgs.scenarios);
+const viewportProfile = resolveViewportProfile(parsedArgs);
 const startedAt = new Date().toISOString();
 const results = [];
 const consoleLogs = [];
 const networkLogs = [];
 const pageErrors = [];
 const hasSupabaseConfig = Boolean(process.env.VITE_SUPABASE_URL?.trim() && process.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim());
+const QA_SHOP_ORG_ID = "00000000-0000-4000-8000-000000000001";
+const QA_SHOP_JOB_ID = "11111111-1111-4111-8111-111111111111";
 
 let browser;
 let context;
@@ -54,9 +57,22 @@ const scenarioHandlers = {
   "early-access": runEarlyAccess,
   "result-chat": runResultChat,
   "result-detail": runResultDetail,
+  "account-entitlements": runAccountEntitlements,
+  "add-vin-after-result": runAddVinAfterResult,
+  "billing-provider-fail-closed": runBillingProviderFailClosed,
+  checkout: runCheckout,
+  "create-job": runCreateJob,
+  "customer-report-export": runCustomerReportExport,
+  "job-result-correction": runJobResultCorrection,
+  "job-scan": runJobScan,
+  "org-member-permissions": runOrgMemberPermissions,
+  pricing: runPricing,
+  "second-angle-refinement": runSecondAngleRefinement,
   "scanner-ai-engine": runScannerAiEngine,
   "saved-history": runSavedHistory,
   scanner: runScanner,
+  "shop-history-search": runShopHistorySearch,
+  "shop-onboarding": runShopOnboarding,
 };
 
 ensureDir(screenshotDir);
@@ -71,9 +87,11 @@ try {
   context = await browser.newContext({
     recordVideo: {
       dir: videoDir,
-      size: { height: 900, width: 1440 },
+      size: viewportProfile.viewport,
     },
-    viewport: { height: 900, width: 1440 },
+    isMobile: viewportProfile.isMobile,
+    hasTouch: viewportProfile.hasTouch,
+    viewport: viewportProfile.viewport,
   });
   await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
   page = await context.newPage();
@@ -369,7 +387,7 @@ async function runScannerAiEngine() {
     );
   }
 
-  if (identifyApiIssue?.category === "environment") {
+  if (identifyApiIssue?.category === "environment" && outcome.type !== "result") {
     throw new QaIssue(
       "environment",
       `Engine scan was blocked by provider availability. ${identifyApiIssue.reason} Fixture=${fixture.source}. ${timingSummary}. Visible state: ${outcome.text}`,
@@ -381,6 +399,7 @@ async function runScannerAiEngine() {
   }
 
   if (outcome.type === "result") {
+    const cloudSync = await waitForScannerCloudSyncOutcome();
     if (analysisMs > 90_000) {
       throw new QaIssue(
         "backend",
@@ -388,6 +407,39 @@ async function runScannerAiEngine() {
         {
           likelyFiles: ["src/screens/Scanner.tsx", "src/services/aiService.ts", "api/identify.shared.ts"],
           suggestedFix: "Profile /api/identify provider latency, image payload size, fallback model order, and scanner save/render work.",
+        },
+      );
+    }
+
+    if (cloudSync.status === "failed") {
+      throw new QaIssue(
+        "backend",
+        `Engine scan produced a result but scan data did not sync. Fixture=${fixture.source}. ${timingSummary}. Visible result: ${cloudSync.text}`,
+        {
+          likelyFiles: ["src/screens/Scanner.tsx", "src/services/cloudSync.ts", "supabase/migrations"],
+          suggestedFix: "Fix Supabase scan lookup/detail writes, schema cache, or cloud sync error handling before treating scanner data persistence as production-ready.",
+        },
+      );
+    }
+
+    if (cloudSync.status === "pending") {
+      throw new QaIssue(
+        "backend",
+        `Engine scan produced a result but cloud sync did not finish within the QA window. Fixture=${fixture.source}. ${timingSummary}. Visible result: ${cloudSync.text}`,
+        {
+          likelyFiles: ["src/screens/Scanner.tsx", "src/services/cloudSync.ts"],
+          suggestedFix: "Wait for and surface a final scan-save state, or fix slow Supabase sync before treating scanner data persistence as production-ready.",
+        },
+      );
+    }
+
+    if (cloudSync.status === "unknown") {
+      throw new QaIssue(
+        "backend",
+        `Engine scan produced a result but did not expose a final scan data state. Fixture=${fixture.source}. ${timingSummary}. Visible result: ${cloudSync.text}`,
+        {
+          likelyFiles: ["src/screens/Scanner.tsx", "src/services/cloudSync.ts"],
+          suggestedFix: "Expose a final saved, disabled, or failed scan-data state before treating scanner persistence as production-ready.",
         },
       );
     }
@@ -404,8 +456,8 @@ async function runScannerAiEngine() {
     }
 
     return {
-      details: `Engine fixture uploaded through scanner and produced a usable AI result. Fixture=${fixture.source}. ${timingSummary}. Visible result: ${outcome.text}`,
-      likelyFiles: ["src/screens/Scanner.tsx", "src/services/aiService.ts", "api/identify.shared.ts"],
+      details: `Engine fixture uploaded through scanner, produced a usable AI result, and completed scan data sync. Fixture=${fixture.source}. ${timingSummary}. Visible result: ${cloudSync.text}`,
+      likelyFiles: ["src/screens/Scanner.tsx", "src/services/aiService.ts", "api/identify.shared.ts", "src/services/cloudSync.ts"],
       status: "pass",
     };
   }
@@ -450,10 +502,10 @@ async function runResultDetail() {
   await seedSavedScans();
   await gotoPath("/result/qa-alternator-1");
   await expectText(/QA Alternator/i, "result part label", "frontend", ["src/screens/Result.tsx", "src/services/storage.ts"]);
-  await expectText(/Tell me more/i, "chat entry link", "frontend", ["src/screens/Result.tsx"]);
+  await expectText(/\bAsk\b/i, "chat entry action", "frontend", ["src/screens/Result.tsx"]);
 
   return {
-    details: "Saved result detail rendered the seeded part and chat entry.",
+    details: "Saved result detail rendered the simple answer and Ask action.",
     likelyFiles: ["src/screens/Result.tsx", "src/services/storage.ts"],
     status: "pass",
   };
@@ -489,10 +541,245 @@ async function runEarlyAccess() {
   };
 }
 
+async function runPricing() {
+  await requireAuthForProtectedRoute("pricing");
+  await gotoPath("/pricing");
+  await expectText(/DeepSpec Auto paid beta/i, "pricing heading", "frontend", ["src/screens/Pricing.tsx"]);
+  await expectText(/DeepSpec Plus/i, "plus plan", "frontend", ["src/screens/Pricing.tsx", "src/services/revenue.ts"]);
+  await expectText(/\$9\.99/i, "monthly price", "frontend", ["src/screens/Pricing.tsx", "src/services/revenue.ts"]);
+  await expectText(/Scan Pack/i, "scan pack", "frontend", ["src/screens/Pricing.tsx", "src/services/revenue.ts"]);
+  await expectText(/fake certainty/i, "uncertainty copy", "frontend", ["src/screens/Pricing.tsx"]);
+  await expectText(/Polar sandbox/i, "polar sandbox path", "frontend", ["src/screens/Pricing.tsx"]);
+
+  return {
+    details: "Pricing rendered Plus, yearly, scan-pack, and Pro paid-beta offers with uncertainty-safe copy and Polar sandbox positioning.",
+    likelyFiles: ["src/screens/Pricing.tsx", "src/services/revenue.ts"],
+    status: "pass",
+  };
+}
+
+async function runCheckout() {
+  await requireAuthForProtectedRoute("checkout");
+  await gotoPath("/pricing");
+  const status = await page.evaluate(async () => {
+    const response = await fetch("/api/billing-checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ planId: "fake-plan", origin: globalThis.location.origin }),
+    });
+    const body = await response.json().catch(() => null);
+    return {
+      body,
+      status: response.status,
+    };
+  });
+
+  if (status.status !== 400 || status.body?.error?.code !== "invalid_plan") {
+    throw new QaIssue(
+      "backend",
+      `Checkout did not fail closed for an invalid plan. HTTP ${status.status}.`,
+      {
+        likelyFiles: ["api/billing.shared.ts", "src/services/revenue.ts"],
+        suggestedFix: "Reject invalid checkout plan ids before contacting the billing provider or redirecting a user.",
+      },
+    );
+  }
+
+  return {
+    category: "backend",
+    details: "Checkout endpoint rejected an invalid plan without creating a provider session or redirect.",
+    likelyFiles: ["api/billing.shared.ts", "src/screens/Pricing.tsx"],
+    status: "pass",
+  };
+}
+
+async function runAccountEntitlements() {
+  await requireAuthForProtectedRoute("account-entitlements");
+  await seedSavedScans();
+  await gotoPath("/account");
+  await expectText(/Your DeepSpec access/i, "account heading", "frontend", ["src/screens/Account.tsx"]);
+  await expectText(/Free preview/i, "default entitlement", "frontend", ["src/screens/Account.tsx", "src/services/revenue.ts"]);
+  await expectText(/Paid access remains fail-closed/i, "fail-closed paid copy", "frontend", ["src/screens/Account.tsx"]);
+
+  return {
+    details: "Account entitlements rendered the free preview state and fail-closed paid-access copy.",
+    likelyFiles: ["src/screens/Account.tsx", "src/services/revenue.ts"],
+    status: "pass",
+  };
+}
+
+async function runShopOnboarding() {
+  await requireAuthForProtectedRoute("shop-onboarding");
+  await seedShopData();
+  await gotoPath("/shop");
+  await expectText(/Work queue/i, "shop queue heading", "frontend", ["src/screens/Shop.tsx"]);
+  await expectText(/QA alternator RO/i, "seeded shop job", "frontend", ["src/screens/Shop.tsx", "src/services/shop.ts"]);
+  await expectText(/Accuracy feedback/i, "shop accuracy dashboard", "frontend", ["src/screens/Shop.tsx"]);
+
+  return {
+    details: "Shop mode rendered the work queue, seeded job, and accuracy dashboard.",
+    likelyFiles: ["src/screens/Shop.tsx", "src/services/shop.ts"],
+    status: "pass",
+  };
+}
+
+async function runCreateJob() {
+  await requireAuthForProtectedRoute("create-job");
+  await gotoPath("/shop/new");
+  await page.getByLabel(/Job title/i).fill("QA starter complaint");
+  await page.getByLabel(/Technician/i).fill("QA Tech");
+  await page.getByLabel(/^Year/i).fill("2016");
+  await page.getByLabel(/Make/i).fill("Honda");
+  await page.getByLabel(/Model/i).fill("Civic");
+  await page.getByLabel(/Symptom/i).fill("No crank after sitting overnight.");
+  await clickByRole("button", /Start scan/i, "start shop scan");
+  await page.waitForURL((url) => url.pathname === "/scan" && url.searchParams.has("jobId"), { timeout: 10_000 });
+  await expectText(/Shop job/i, "shop scan banner", "frontend", ["src/screens/Scanner.tsx", "src/services/shop.ts"]);
+
+  return {
+    details: "Technician intake created a job and routed directly into job-scoped scanning.",
+    likelyFiles: ["src/screens/ShopNewJob.tsx", "src/screens/Scanner.tsx", "src/services/shop.ts"],
+    status: "pass",
+  };
+}
+
+async function runJobScan() {
+  await requireAuthForProtectedRoute("job-scan");
+  await seedShopData();
+  await gotoPath(`/scan?jobId=${QA_SHOP_JOB_ID}`);
+  await expectText(/Shop job/i, "shop scan banner", "frontend", ["src/screens/Scanner.tsx"]);
+  await expectText(/QA alternator RO/i, "active job title", "frontend", ["src/screens/Scanner.tsx", "src/services/shop.ts"]);
+
+  return {
+    details: "Scanner rendered an active shop job context before scan.",
+    likelyFiles: ["src/screens/Scanner.tsx", "src/services/shop.ts"],
+    status: "pass",
+  };
+}
+
+async function runJobResultCorrection() {
+  await requireAuthForProtectedRoute("job-result-correction");
+  await seedShopData();
+  await gotoPath("/result/qa-alternator-1");
+  await expectText(/Best match/i, "simple result heading", "frontend", ["src/screens/Result.tsx"]);
+  await expectText(/Saved scan tools/i, "collapsed saved scan tools", "frontend", ["src/screens/Result.tsx"]);
+
+  return {
+    details: "Job result rendered the simple answer first and kept saved scan tools collapsed.",
+    likelyFiles: ["src/screens/Result.tsx", "src/services/storage.ts"],
+    status: "pass",
+  };
+}
+
+async function runAddVinAfterResult() {
+  await requireAuthForProtectedRoute("add-vin-after-result");
+  await seedShopData();
+  await gotoPath(`/shop/jobs/${QA_SHOP_JOB_ID}`);
+  await page.getByLabel(/^VIN$/i).fill("1HGCM82633A004352");
+  await clickByRole("button", /Save job/i, "save job vin");
+  await expectText(/Job updated/i, "vin update confirmation", "frontend", ["src/screens/ShopJob.tsx", "src/services/shop.ts"]);
+
+  return {
+    details: "Shop job allowed VIN to be added after result creation.",
+    likelyFiles: ["src/screens/ShopJob.tsx", "src/services/shop.ts"],
+    status: "pass",
+  };
+}
+
+async function runSecondAngleRefinement() {
+  await requireAuthForProtectedRoute("second-angle-refinement");
+  await seedShopData();
+  await gotoPath("/result/qa-alternator-1");
+  await expectText(/Best match/i, "simple result answer", "frontend", ["src/screens/Result.tsx"]);
+  const text = await getBodyText();
+  if (/Add second angle|Capture another angle|More evidence/i.test(text)) {
+    throw new Error("Default result still exposes second-angle guidance.");
+  }
+
+  return {
+    details: "Result kept second-angle guidance out of the default simple answer.",
+    likelyFiles: ["src/screens/Result.tsx", "src/screens/Scanner.tsx"],
+    status: "pass",
+  };
+}
+
+async function runShopHistorySearch() {
+  await requireAuthForProtectedRoute("shop-history-search");
+  await seedShopData();
+  await gotoPath("/history");
+  await page.getByPlaceholder(/Search saved scans/i).fill("QA RO-77");
+  await expectText(/QA Alternator/i, "shop-context history result", "frontend", ["src/screens/History.tsx", "src/services/storage.ts"]);
+
+  return {
+    details: "Saved history found a scan by shop RO context.",
+    likelyFiles: ["src/screens/History.tsx", "src/services/storage.ts"],
+    status: "pass",
+  };
+}
+
+async function runCustomerReportExport() {
+  await requireAuthForProtectedRoute("customer-report-export");
+  await seedShopData();
+  await gotoPath(`/shop/jobs/${QA_SHOP_JOB_ID}`);
+  await expectText(/Export report/i, "customer report export control", "frontend", ["src/screens/ShopJob.tsx", "src/services/shop.ts"]);
+
+  return {
+    details: "Shop job exposed customer report export without creating a public link.",
+    likelyFiles: ["src/screens/ShopJob.tsx", "src/services/shop.ts"],
+    status: "pass",
+  };
+}
+
+async function runOrgMemberPermissions() {
+  await requireAuthForProtectedRoute("org-member-permissions");
+  await seedShopData();
+  await gotoPath("/shop");
+  await expectText(/Shop corrections stay private/i, "shop privacy copy", "frontend", ["src/screens/Shop.tsx", "src/services/shop.ts"]);
+
+  return {
+    details: "Shop dashboard defaulted correction learning to private until explicit opt-in.",
+    likelyFiles: ["src/screens/Shop.tsx", "src/services/shop.ts", "supabase/migrations"],
+    status: "pass",
+  };
+}
+
+async function runBillingProviderFailClosed() {
+  await requireAuthForProtectedRoute("billing-provider-fail-closed");
+  const status = await page.evaluate(async () => {
+    const response = await fetch("/api/billing-checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ planId: "pro_beta", origin: globalThis.location.origin }),
+    });
+    const body = await response.json().catch(() => null);
+    return { body, status: response.status };
+  });
+
+  if (status.status === 200 || !status.body?.error) {
+    throw new QaIssue(
+      "backend",
+      `Billing provider checkout did not fail closed. HTTP ${status.status}.`,
+      {
+        likelyFiles: ["api/billing.shared.ts", "src/screens/Pricing.tsx"],
+        suggestedFix: "Require a configured provider adapter and verified session before returning any checkout URL.",
+      },
+    );
+  }
+
+  return {
+    category: "backend",
+    details: `Billing provider checkout failed closed with ${status.body.error.code}.`,
+    likelyFiles: ["api/billing.shared.ts", "src/screens/Pricing.tsx"],
+    status: "pass",
+  };
+}
+
 async function runApiCloudHealth() {
   const failures = [];
   const identifyStatus = await getStatus(`${baseUrl}/api/identify`);
   const chatStatus = await getStatus(`${baseUrl}/api/chat`);
+  const checkoutStatus = await getStatus(`${baseUrl}/api/billing-checkout`);
+  const portalStatus = await getStatus(`${baseUrl}/api/billing-portal`);
 
   if (identifyStatus !== 405) {
     failures.push(`/api/identify returned HTTP ${identifyStatus}; expected 405 for safe GET.`);
@@ -500,6 +787,14 @@ async function runApiCloudHealth() {
 
   if (chatStatus !== 405) {
     failures.push(`/api/chat returned HTTP ${chatStatus}; expected 405 for safe GET.`);
+  }
+
+  if (checkoutStatus !== 405) {
+    failures.push(`/api/billing-checkout returned HTTP ${checkoutStatus}; expected 405 for safe GET.`);
+  }
+
+  if (portalStatus !== 405) {
+    failures.push(`/api/billing-portal returned HTTP ${portalStatus}; expected 405 for safe GET.`);
   }
 
   const supabaseUrl = process.env.VITE_SUPABASE_URL?.trim();
@@ -654,9 +949,9 @@ async function selectTabIfNeeded(name, label) {
 
 async function waitForAny(locators, label) {
   const attempts = locators.map((locator) => locator.waitFor({ state: "visible", timeout: 7_000 }));
-  const settled = await Promise.allSettled(attempts);
-
-  if (settled.every((result) => result.status === "rejected")) {
+  try {
+    await Promise.any(attempts);
+  } catch {
     throw new QaIssue(
       "frontend",
       `Expected one of the ${label}, but none were visible.`,
@@ -810,11 +1105,11 @@ async function waitForScannerAiOutcome() {
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     const text = await getBodyText();
-    if (/Lens result|Best match|Complete brief|Tell me more/i.test(text)) {
+    if (/Best match|Identified|Visible issue|Item view|Tell me more|What this is|Next step/i.test(text)) {
       return { text: compactText(text), type: "result" };
     }
 
-    if (/Retake guide|Add light|Hold steady|Fill the frame|too dark|too bright|too blurry|too small/i.test(text)) {
+    if (/Retake guide|Add light|Steady photo|Soft photo|Fill the frame|too dark|too bright|too blurry|too small/i.test(text)) {
       return { text: compactText(text), type: "quality" };
     }
 
@@ -828,11 +1123,133 @@ async function waitForScannerAiOutcome() {
   return { text: compactText(await getBodyText()), type: "timeout" };
 }
 
+async function waitForScannerCloudSyncOutcome() {
+  const deadline = Date.now() + 20_000;
+  let latestText = compactText(await getBodyText());
+
+  while (Date.now() < deadline) {
+    const text = compactText(await getBodyText());
+    latestText = text;
+
+    if (/Cloud sync failed/i.test(text)) {
+      return { status: "failed", text };
+    }
+
+    if (/Scan saved to cloud/i.test(text)) {
+      return { status: "saved", text };
+    }
+
+    if (/Cloud sync is off|Cloud sync is not configured/i.test(text)) {
+      return { status: "disabled", text };
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  return /Saving scan/i.test(latestText)
+    ? { status: "pending", text: latestText }
+    : { status: "unknown", text: latestText };
+}
+
 async function seedSavedScans() {
   await page.evaluate((lookups) => {
     localStorage.setItem("deep-spec:lookups", JSON.stringify(lookups));
     localStorage.setItem(`deep-spec:chat:${lookups[0].id}`, JSON.stringify(lookups[0].chatHistory));
   }, createSeedLookups());
+}
+
+async function seedShopData() {
+  await page.evaluate(({ jobId, orgId, lookups }) => {
+    const capturedAt = new Date().toISOString();
+    const shopLookups = lookups.map((lookup, index) => index === 0
+      ? {
+          ...lookup,
+          customerVisibleReport: {
+            generatedAt: capturedAt,
+            summary: "2014 Toyota Camry: battery light and belt noise. Latest DeepSpec result: QA Alternator.",
+            title: "QA alternator RO customer report",
+          },
+          jobId,
+          orgId,
+          reviewStatus: "needs_review",
+          result: {
+            ...lookup.result,
+            candidateParts: [
+              {
+                confidence: "high",
+                evidence: ["Vented housing", "Pulley face"],
+                partName: "QA Alternator",
+                scanCategory: "electrical",
+              },
+              {
+                confidence: "medium",
+                evidence: ["Nearby cylindrical housing"],
+                partName: "Starter motor",
+                scanCategory: "electrical",
+                whyNotPrimary: "Starter mounting and pulley clues do not match.",
+              },
+            ],
+            fitmentConfidence: "needs_vehicle_context",
+            primaryPart: {
+              confidence: "high",
+              evidence: ["Vented housing and pulley face are visible."],
+              partName: "QA Alternator",
+              scanCategory: "electrical",
+            },
+            requiredNextEvidence: ["VIN", "label photo", "second angle"],
+          },
+          vehicleContext: {
+            bayOrRo: "QA RO-77",
+            customerName: "QA Customer",
+            jobTitle: "QA alternator RO",
+            make: "Toyota",
+            model: "Camry",
+            symptom: "Battery light and belt noise.",
+            technicianName: "QA Tech",
+            year: "2014",
+          },
+        }
+      : lookup);
+    localStorage.setItem("deep-spec:lookups", JSON.stringify(shopLookups));
+    localStorage.setItem(`deep-spec:chat:${shopLookups[0].id}`, JSON.stringify(shopLookups[0].chatHistory));
+    localStorage.setItem("deep-spec:shop:organization", JSON.stringify({
+      createdAt: capturedAt,
+      id: orgId,
+      name: "QA Repair Shop",
+      ownerUserId: "qa-owner",
+      slug: "qa-repair-shop",
+    }));
+    localStorage.setItem("deep-spec:shop:feedback-permission", JSON.stringify({
+      learningOptIn: false,
+      orgId,
+      updatedAt: capturedAt,
+    }));
+    localStorage.setItem("deep-spec:shop:jobs", JSON.stringify([
+      {
+        bayOrRo: "QA RO-77",
+        createdAt: capturedAt,
+        createdByUserId: "qa-owner",
+        customerName: "QA Customer",
+        engine: "2.5L",
+        id: jobId,
+        make: "Toyota",
+        mileage: "142000",
+        model: "Camry",
+        notes: "QA seeded shop job.",
+        orgId,
+        plate: "QA123",
+        reviewStatus: "needs_review",
+        scanIds: ["qa-alternator-1"],
+        status: "in_progress",
+        symptom: "Battery light and belt noise.",
+        technicianName: "QA Tech",
+        title: "QA alternator RO",
+        updatedAt: capturedAt,
+        vin: "",
+        year: "2014",
+      },
+    ]));
+  }, { jobId: QA_SHOP_JOB_ID, orgId: QA_SHOP_ORG_ID, lookups: createSeedLookups() });
 }
 
 function createSeedLookups() {
@@ -1085,6 +1502,7 @@ function buildReport(finishedAt) {
     suggestedFixes,
     tracePath,
     videoPath: videoDir,
+    viewport: viewportProfile,
     failed: results.filter((result) => result.status !== "pass").map((result) => ({
       category: result.category,
       details: result.details,
@@ -1100,6 +1518,7 @@ function renderMarkdownReport(report) {
     "",
     `- Report path: ${join(artifactDir, "report.md")}`,
     `- Base URL: ${report.baseUrl}`,
+    `- Viewport: ${report.viewport.name} (${report.viewport.viewport.width} x ${report.viewport.viewport.height})`,
     `- Started: ${report.startedAt}`,
     `- Finished: ${report.finishedAt}`,
     `- Screenshots/evidence path: ${report.evidencePath}`,
@@ -1152,6 +1571,25 @@ function collectProblems(category) {
     }));
 }
 
+function resolveViewportProfile(args) {
+  const requested = (args.viewport || process.env.QA_VIEWPORT || "desktop").trim().toLowerCase();
+  if (requested === "mobile" || requested === "phone") {
+    return {
+      hasTouch: true,
+      isMobile: true,
+      name: "mobile-emulated",
+      viewport: { height: 844, width: 390 },
+    };
+  }
+
+  return {
+    hasTouch: false,
+    isMobile: false,
+    name: "desktop",
+    viewport: { height: 900, width: 1440 },
+  };
+}
+
 function getScenarioOrder(requestedScenarios) {
   return requestedScenarios.length > 0 ? requestedScenarios : DEEPSPEC_QA_SCENARIOS;
 }
@@ -1164,6 +1602,16 @@ function likelyFilesForScenario(scenario) {
     "result-chat": ["src/screens/Chat.tsx", "api/chat.shared.ts"],
     "result-detail": ["src/screens/Result.tsx", "src/services/storage.ts"],
     "saved-history": ["src/screens/History.tsx", "src/services/storage.ts"],
+    "shop-onboarding": ["src/screens/Shop.tsx", "src/services/shop.ts"],
+    "create-job": ["src/screens/ShopNewJob.tsx", "src/screens/Scanner.tsx", "src/services/shop.ts"],
+    "job-scan": ["src/screens/Scanner.tsx", "src/services/shop.ts"],
+    "job-result-correction": ["src/screens/Result.tsx", "src/services/storage.ts"],
+    "add-vin-after-result": ["src/screens/ShopJob.tsx", "src/services/shop.ts"],
+    "second-angle-refinement": ["src/screens/Result.tsx", "src/screens/Scanner.tsx"],
+    "shop-history-search": ["src/screens/History.tsx", "src/services/storage.ts"],
+    "customer-report-export": ["src/screens/ShopJob.tsx", "src/services/shop.ts"],
+    "org-member-permissions": ["src/screens/Shop.tsx", "src/services/shop.ts", "supabase/migrations"],
+    "billing-provider-fail-closed": ["api/billing.shared.ts", "src/screens/Pricing.tsx"],
     scanner: ["src/screens/Scanner.tsx"],
     "scanner-ai-engine": ["src/screens/Scanner.tsx", "src/services/aiService.ts", "api/identify.shared.ts"],
   };

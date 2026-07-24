@@ -78,18 +78,7 @@ export function scoreIdentificationResult(result, expectedLabels) {
     };
   }
 
-  const resultText = normalizeText(
-    [
-      result.partName,
-      result.scanCategory,
-      result.whatItDoes,
-      ...(Array.isArray(result.candidateMatches) ? result.candidateMatches.map(formatCandidateForScoring) : []),
-      ...(Array.isArray(result.visibleObservations) ? result.visibleObservations : []),
-      ...(Array.isArray(result.evidenceRegions) ? result.evidenceRegions.map(formatEvidenceRegionForScoring) : []),
-      ...(Array.isArray(result.concerns) ? result.concerns : []),
-      ...(Array.isArray(result.evidence) ? result.evidence : []),
-    ].join(" "),
-  );
+  const resultText = buildResultScoringText(result);
   const matchedLabels = expectedLabels.filter((label) => labelAliases(label).some((alias) => resultText.includes(alias)));
   const failureReasons = [];
 
@@ -187,6 +176,10 @@ export function isSafetyFalsePositive(result, expectedLabels) {
     return false;
   }
 
+  if (hasSevereBodyDamageSignal(result)) {
+    return false;
+  }
+
   return result.isSafetyCritical === true || result.safetyTriage === "needs_professional";
 }
 
@@ -211,11 +204,58 @@ export function summarizeEvalMetrics(results, requestedSampleCount = results.len
     safetyFalsePositiveRate: rate(safetyFalsePositiveCount, attemptedCount),
     wrongResultCount: results.filter((result) => result.failureReasons.includes("wrong_result")).length,
     tooVagueCount: results.filter((result) => result.failureReasons.includes("too_vague")).length,
+    failureModes: summarizeFailureModes(results),
+    labelBuckets: summarizeLabelBuckets(results),
     latencyMs: {
       provider: summarizeLatency(providerLatencies),
       total: summarizeLatency(totalLatencies),
     },
   };
+}
+
+function summarizeFailureModes(results) {
+  const counts = new Map();
+  for (const result of results) {
+    for (const reason of result.failureReasons) {
+      counts.set(reason, (counts.get(reason) ?? 0) + 1);
+    }
+  }
+
+  return Object.fromEntries([...counts.entries()].sort((a, b) => a[0].localeCompare(b[0])));
+}
+
+function summarizeLabelBuckets(results) {
+  const buckets = new Map();
+  for (const result of results) {
+    const labels = Array.isArray(result.expectedLabels) && result.expectedLabels.length ? result.expectedLabels : ["unknown"];
+    const label = String(labels[0]).toLowerCase();
+    const existing = buckets.get(label) ?? {
+      attemptedCount: 0,
+      passCount: 0,
+      failureCount: 0,
+      failureModes: {},
+    };
+    existing.attemptedCount += 1;
+    if (result.status === 200 && result.failureReasons.length === 0) {
+      existing.passCount += 1;
+    } else {
+      existing.failureCount += 1;
+    }
+    for (const reason of result.failureReasons) {
+      existing.failureModes[reason] = (existing.failureModes[reason] ?? 0) + 1;
+    }
+    buckets.set(label, existing);
+  }
+
+  return Object.fromEntries([...buckets.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([label, bucket]) => [
+      label,
+      {
+        ...bucket,
+        passRate: rate(bucket.passCount, bucket.attemptedCount),
+      },
+    ]));
 }
 
 async function main() {
@@ -888,6 +928,36 @@ function labelAliases(label) {
     aliases.add("broken");
     aliases.add("cracked");
     aliases.add("crack");
+    aliases.add("damaged");
+    aliases.add("severely damaged");
+    aliases.add("detached");
+    aliases.add("hanging");
+    aliases.add("has damage");
+    aliases.add("impact damage");
+  }
+
+  if (normalized === "missing part") {
+    aliases.add("missing");
+    aliases.add("absent");
+    aliases.add("detached");
+    aliases.add("hanging");
+  }
+
+  if (normalized === "cracked") {
+    aliases.add("crack");
+    aliases.add("cracks");
+  }
+
+  if (normalized === "paint chip") {
+    aliases.add("paint chipped");
+    aliases.add("chipped");
+    aliases.add("chips");
+  }
+
+  if (normalized === "corrosion") {
+    aliases.add("corroded");
+    aliases.add("rust");
+    aliases.add("rusted");
   }
 
   if (normalized === "scratch") {
@@ -899,6 +969,29 @@ function labelAliases(label) {
   }
 
   return [...aliases].filter((alias) => alias.length >= 4);
+}
+
+function buildResultScoringText(result) {
+  return normalizeText(
+    [
+      result.partName,
+      result.scanCategory,
+      result.whatItDoes,
+      formatPartForScoring(result.primaryPart),
+      ...(Array.isArray(result.candidateMatches) ? result.candidateMatches.map(formatCandidateForScoring) : []),
+      ...(Array.isArray(result.candidateParts) ? result.candidateParts.map(formatPartForScoring) : []),
+      ...(Array.isArray(result.visibleObservations) ? result.visibleObservations : []),
+      ...(Array.isArray(result.evidenceRegions) ? result.evidenceRegions.map(formatEvidenceRegionForScoring) : []),
+      ...(Array.isArray(result.concerns) ? result.concerns : []),
+      ...(Array.isArray(result.evidence) ? result.evidence : []),
+      ...(Array.isArray(result.requiredNextEvidence) ? result.requiredNextEvidence : []),
+    ].join(" "),
+  );
+}
+
+function hasSevereBodyDamageSignal(result) {
+  const text = buildResultScoringText(result);
+  return /\b(detached|hanging|missing|exposed structure|severely damaged|structural damage)\b/.test(text);
 }
 
 function isTooVague(result) {
@@ -916,6 +1009,19 @@ function formatCandidateForScoring(candidate) {
   }
 
   return [candidate.partName, candidate.scanCategory, candidate.reason].filter(Boolean).join(" ");
+}
+
+function formatPartForScoring(part) {
+  if (!part || typeof part !== "object") {
+    return "";
+  }
+
+  return [
+    part.partName,
+    part.scanCategory,
+    part.whyNotPrimary,
+    ...(Array.isArray(part.evidence) ? part.evidence : []),
+  ].filter(Boolean).join(" ");
 }
 
 function formatEvidenceRegionForScoring(region) {

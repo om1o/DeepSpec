@@ -73,21 +73,79 @@ describe("aiService", () => {
     onlineSpy.mockRestore();
   });
 
-  it("falls back to the on-device model when the cloud chain is unreachable", async () => {
+  it("uses the on-device model for online cloud provider availability errors", async () => {
     vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "true");
     vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network down"));
-    const offlineResult = {
+    vi.mocked(identifyOnDevice).mockReset().mockResolvedValue({
       ...result,
+      confidence: "low",
       modelRun: { provider: "on-device", model: "SmolVLM-256M", latencyMs: 12, fallbackReason: "offline", ocrUsed: false },
-    };
-    vi.mocked(identifyOnDevice).mockReset().mockResolvedValue(offlineResult as never);
+    } as never);
 
     await expect(
       identifyCapturedFrame({ imageBase64: "data:image/jpeg;base64,test", capturedAt: "2026-05-16T00:00:00.000Z" }),
     ).resolves.toMatchObject({ modelRun: { provider: "on-device" } });
 
     expect(identifyOnDevice).toHaveBeenCalledOnce();
+  });
+
+  it("does not hide unreadable cloud model responses with the on-device fallback", async () => {
+    vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "true");
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: "invalid_response",
+            message: "Deep Spec received an unreadable AI response.",
+          },
+        }),
+        {
+          status: 502,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    vi.mocked(identifyOnDevice).mockReset();
+
+    await expect(
+      identifyCapturedFrame({ imageBase64: "data:image/jpeg;base64,test", capturedAt: "2026-05-16T00:00:00.000Z" }),
+    ).rejects.toMatchObject({ code: "invalid_response" });
+
+    expect(identifyOnDevice).not.toHaveBeenCalled();
+  });
+
+  it("returns the provider error when the online on-device fallback stalls", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "true");
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: "rate_limited",
+            message: "Too many AI lookups right now. Try again in a few minutes.",
+          },
+        }),
+        {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    vi.mocked(identifyOnDevice).mockReset().mockReturnValue(new Promise(() => undefined) as never);
+
+    const scan = identifyCapturedFrame({
+      imageBase64: "data:image/jpeg;base64,test",
+      capturedAt: "2026-05-16T00:00:00.000Z",
+    });
+    const rejection = expect(scan).rejects.toMatchObject({ code: "rate_limited" });
+    await vi.advanceTimersByTimeAsync(90_000);
+
+    await rejection;
+    expect(identifyOnDevice).toHaveBeenCalledOnce();
+    vi.useRealTimers();
   });
 
   it("routes vision calls through the identify API", async () => {
@@ -111,6 +169,26 @@ describe("aiService", () => {
         method: "POST",
       }),
     );
+  });
+
+  it("times out a hung identify request instead of leaving the scan loading", async () => {
+    const realSetTimeout = globalThis.setTimeout;
+    vi.spyOn(globalThis, "setTimeout").mockImplementation(((handler: TimerHandler, _timeout?: number, ...args: unknown[]) =>
+      realSetTimeout(handler, 0, ...args)) as typeof setTimeout);
+    vi.spyOn(globalThis, "fetch").mockImplementation((_path, options) => new Promise((_resolve, reject) => {
+      const signal = (options as RequestInit | undefined)?.signal;
+      signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+    }) as never);
+
+    await expect(
+      identifyCapturedFrame({
+        imageBase64: "data:image/jpeg;base64,test",
+        capturedAt: "2026-05-16T00:00:00.000Z",
+      }),
+    ).rejects.toMatchObject({
+      code: "network",
+      message: "Scan took too long. Try again.",
+    });
   });
 
   it("preserves identify provider metadata from the API response", async () => {
@@ -171,6 +249,7 @@ describe("aiService", () => {
   });
 
   it("throws a clean service error when the API rejects the request", async () => {
+    vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "false");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({

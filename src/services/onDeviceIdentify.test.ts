@@ -1,5 +1,6 @@
 import {
   extractGeneratedText,
+  extractZeroShotLabelText,
   isOnDeviceFallbackEnabled,
   mapOnDeviceTextToResult,
   onOnDeviceModelProgress,
@@ -45,6 +46,13 @@ describe("onDeviceIdentify", () => {
     expect(extractGeneratedText(null)).toBe("");
   });
 
+  it("extracts the best zero-shot vehicle label into structured fallback text", () => {
+    expect(extractZeroShotLabelText([{ label: "front fender", score: 0.83 }])).toBe(
+      "part: front fender; category: body; note: on-device visual fallback, 83% label score",
+    );
+    expect(extractZeroShotLabelText(null)).toBe("");
+  });
+
   it("registers and unregisters model-download progress listeners", () => {
     const unsubscribe = onOnDeviceModelProgress(() => {});
     expect(typeof unsubscribe).toBe("function");
@@ -65,7 +73,7 @@ describe("onDeviceIdentify", () => {
     const pipeline = vi.fn()
       .mockRejectedValueOnce(new Error("download failed"))
       .mockResolvedValueOnce(async () => [
-        { generated_text: "part: Fuse box; category: electrical; note: label visible" },
+        { label: "battery", score: 0.76 },
       ]);
     vi.doMock("@huggingface/transformers", () => ({ pipeline }));
 
@@ -74,10 +82,11 @@ describe("onDeviceIdentify", () => {
 
     await expect(identifyOnDevice(frame)).rejects.toThrow("download failed");
     await expect(identifyOnDevice(frame)).resolves.toMatchObject({
-      partName: "Fuse box",
+      partName: "battery",
       scanCategory: "electrical",
     });
     expect(pipeline).toHaveBeenCalledTimes(2);
+    expect(pipeline).toHaveBeenCalledWith("zero-shot-image-classification", expect.any(String), expect.any(Object));
 
     vi.doUnmock("@huggingface/transformers");
     vi.resetModules();

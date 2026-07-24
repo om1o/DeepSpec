@@ -7,6 +7,7 @@ import {
   getLookups,
   LOOKUPS_STORAGE_KEY,
   MAX_SAVED_LOOKUPS,
+  scanStateFromLookup,
   updateLookup,
   updateLookupResult,
 } from "./storage";
@@ -125,6 +126,39 @@ describe("storage", () => {
     });
   });
 
+  it("preserves focused item metadata and isolated output", () => {
+    const result = createLookup({
+      ...scanState,
+      focusBox: {
+        confidence: 0.92,
+        height: 0.42,
+        width: 0.38,
+        x: 0.22,
+        y: 0.18,
+      },
+      focusMode: "mask",
+      isolatedImageBase64: "data:image/png;base64,isolated-output",
+    });
+
+    expect(result.ok).toBe(true);
+    const lookup = getLookup(result.value.id);
+    expect(lookup).toMatchObject({
+      focusBox: {
+        confidence: 0.92,
+        height: 0.42,
+        width: 0.38,
+        x: 0.22,
+        y: 0.18,
+      },
+      focusMode: "mask",
+      isolatedImageBase64: "data:image/png;base64,isolated-output",
+    });
+    expect(scanStateFromLookup(lookup!)).toMatchObject({
+      focusMode: "mask",
+      isolatedImageBase64: "data:image/png;base64,isolated-output",
+    });
+  });
+
   it("updates rating, correction, and notes", () => {
     const lookup = createLookup(scanState).value;
 
@@ -142,6 +176,68 @@ describe("storage", () => {
       scanCategory: "steering",
       trainingLabel: "It was the power steering pump.",
       trainingStatus: "user_corrected",
+    });
+  });
+
+  it("preserves shop job context and mechanic-grade result fields", () => {
+    const lookup = createLookup({
+      ...scanState,
+      customerVisibleReport: {
+        generatedAt: "2026-05-16T00:00:06.000Z",
+        summary: "Customer safe summary.",
+        title: "Customer report",
+      },
+      jobId: "11111111-1111-4111-8111-111111111111",
+      orgId: "00000000-0000-4000-8000-000000000001",
+      reviewStatus: "needs_review",
+      vehicleContext: {
+        jobTitle: "Alternator job",
+        make: "Toyota",
+        model: "Camry",
+        symptom: "Battery light.",
+        technicianName: "Sam",
+        year: "2014",
+      },
+      result: {
+        ...scanState.result!,
+        candidateParts: [
+          {
+            confidence: "high",
+            evidence: ["Pulley and vented housing."],
+            partName: "Alternator",
+            scanCategory: "electrical",
+          },
+        ],
+        fitmentConfidence: "needs_vehicle_context",
+        primaryPart: {
+          confidence: "high",
+          evidence: ["Pulley and vented housing."],
+          partName: "Alternator",
+          scanCategory: "electrical",
+        },
+        requiredNextEvidence: ["VIN", "label photo"],
+      },
+    }).value;
+
+    expect(getLookup(lookup.id)).toMatchObject({
+      customerVisibleReport: {
+        title: "Customer report",
+      },
+      jobId: "11111111-1111-4111-8111-111111111111",
+      orgId: "00000000-0000-4000-8000-000000000001",
+      reviewStatus: "needs_review",
+      result: {
+        candidateParts: [
+          {
+            partName: "Alternator",
+          },
+        ],
+        fitmentConfidence: "needs_vehicle_context",
+        requiredNextEvidence: ["VIN", "label photo"],
+      },
+      vehicleContext: {
+        technicianName: "Sam",
+      },
     });
   });
 

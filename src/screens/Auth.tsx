@@ -27,9 +27,9 @@ function formatAuthError(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
   // Supabase returns a verbose policy dump for weak passwords — replace it.
   if (/Password should contain/i.test(message) || /weak password/i.test(message)) {
-    return "Password must be at least 8 characters and include an uppercase letter, a lowercase letter, a number, and a special character.";
+    return "Password needs 8+ characters with an uppercase, a lowercase, a number, and a symbol.";
   }
-  return message || "Authentication failed. Try again.";
+  return message || "Sign-in didn't go through. Try again.";
 }
 
 export default function Auth() {
@@ -180,9 +180,14 @@ export default function Auth() {
 
     try {
       const normalizedEmail = email.trim().toLowerCase();
-      await sendEmailSignInLink(normalizedEmail, postAuthPath);
-      setStep("sent");
-      setNotice(`Sign-in link sent to ${normalizedEmail}. Open it from your email to finish login.`);
+      const delivery = await sendEmailSignInLink(normalizedEmail, postAuthPath);
+      if (delivery.delivery === "code") {
+        setStep("code");
+        setNotice(`Code sent to ${normalizedEmail}. Enter the 6 digits below.`);
+      } else {
+        setStep("sent");
+        setNotice(`Sign-in link sent to ${normalizedEmail}. Open it to finish.`);
+      }
       setResendCooldown(RESEND_COOLDOWN_SECONDS);
     } catch (authError) {
       setError(formatAuthError(authError));
@@ -225,8 +230,14 @@ export default function Auth() {
 
     try {
       const normalizedEmail = email.trim().toLowerCase();
-      await sendEmailSignInLink(normalizedEmail, postAuthPath);
-      setNotice(`New sign-in link sent to ${normalizedEmail}.`);
+      const delivery = await sendEmailSignInLink(normalizedEmail, postAuthPath);
+      if (delivery.delivery === "code") {
+        setStep("code");
+        setNotice(`New code sent to ${normalizedEmail}.`);
+      } else {
+        setStep("sent");
+        setNotice(`New sign-in link sent to ${normalizedEmail}.`);
+      }
       setResendCooldown(RESEND_COOLDOWN_SECONDS);
       autoSubmittedCodeRef.current = null;
     } catch (authError) {
@@ -256,7 +267,7 @@ export default function Auth() {
     setStep("code");
     setCode("");
     setError(null);
-    setNotice("Enter the 6-digit code from your email.");
+    setNotice("Enter the 6 digits from your email.");
     autoSubmittedCodeRef.current = null;
   }
 
@@ -274,7 +285,7 @@ export default function Auth() {
     return (
       <main className="flex min-h-dvh items-center justify-center bg-[var(--ds-bg)] px-4 text-center text-sm font-bold text-[var(--ds-fg-3)]">
         <div className="rounded-[8px] border border-white/10 bg-white/10 px-5 py-3 shadow-sm backdrop-blur-md">
-          Checking your session...
+          Checking session...
         </div>
       </main>
     );
@@ -299,14 +310,14 @@ export default function Auth() {
           <div className="absolute inset-x-10 bottom-10 space-y-5 text-white">
             <div className="max-w-xl">
               <p className="text-sm font-black uppercase tracking-[0.16em] text-[var(--ds-accent)]">Protected scanner access</p>
-              <h1 className="mt-3 text-5xl font-black leading-none">Login that matches the shop floor.</h1>
+              <h1 className="mt-3 text-5xl font-black leading-none">Login built for the shop floor.</h1>
               <p className="mt-4 max-w-lg text-base font-semibold leading-7 text-white/74">
-                Deep Spec opens only after Supabase returns a verified user session.
+                Deep Spec opens once Supabase verifies the session.
               </p>
             </div>
             <div className="grid grid-cols-3 gap-3">
               <StatusCell label="Auth" value="Password first" />
-              <StatusCell label="Email" value="Optional" />
+              <StatusCell label="Email" value="Link/code" />
               <StatusCell label="Session" value="Verified" />
             </div>
           </div>
@@ -324,7 +335,7 @@ export default function Auth() {
             <p className="text-sm font-black uppercase tracking-[0.14em] text-[var(--ds-accent)]">Deep Spec account</p>
             <h1 className="mt-3 text-4xl font-black tracking-normal text-white">Sign in</h1>
             <p className="mt-3 text-base font-semibold leading-7 text-white/68">
-              Use an existing password account or start a private Supabase session without email.
+              Use a password account, an email code, or start a private session without email.
             </p>
           </div>
 
@@ -399,7 +410,7 @@ export default function Auth() {
                     inputMode="email"
                     name="email"
                     onChange={(event) => setEmail(event.target.value)}
-                    placeholder="Enter your email address"
+                    placeholder="you@shop.com"
                     required={(authMode === "link" || passwordMode !== "anonymous") && supabaseConfigured}
                     spellCheck={false}
                     type="email"
@@ -443,7 +454,7 @@ export default function Auth() {
                         minLength={8}
                         name="password"
                         onChange={(event) => setPassword(event.target.value)}
-                        placeholder="Enter your password"
+                        placeholder="Your password"
                         required={supabaseConfigured}
                         type="password"
                         value={password}
@@ -486,7 +497,7 @@ export default function Auth() {
               ) : null}
 
               {error ? (
-                <p className="rounded-[8px] border border-red-300/30 bg-red-500/10 px-4 py-3 text-sm font-bold leading-6 text-red-100" role="alert">
+                <p className="rounded-[8px] border border-white/15 bg-white/8 px-4 py-3 text-sm font-bold leading-6 text-white/85" role="alert">
                   {error}
                 </p>
               ) : null}

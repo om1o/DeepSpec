@@ -4,6 +4,14 @@ import type { FeedbackSubmission, Lookup, WaitlistSignup } from "../types";
 
 const SCAN_BUCKET = "scan-images";
 const CLOUD_HEALTH_STORAGE_KEY = "deep-spec:cloud-health";
+const SCAN_LOOKUP_OPTIONAL_COLUMNS = [
+  "customer_visible_report_json",
+  "job_id",
+  "org_id",
+  "review_status",
+  "technician_user_id",
+  "vehicle_context",
+] as const;
 const HEALTH_TEST_IMAGE_BASE64 =
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/Aaf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/Aaf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAY/Aqf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/IV//2gAMAwEAAgADAAAAEP/EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8QH//Z";
 
@@ -178,9 +186,20 @@ export async function verifyCloudHealth(): Promise<CloudHealthReport> {
   }
 }
 
+const CLOUD_SYNC_TIMEOUT_MS = 20_000;
+
+function withCloudTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Cloud sync timed out")), timeoutMs);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
+
 export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult> {
-  const config = getCloudSyncConfig();
-  if (!config) {
+  if (!getCloudSyncConfig()) {
     return {
       ok: false,
       message: "Cloud sync is not configured yet.",
@@ -188,62 +207,65 @@ export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult
   }
 
   try {
-    const supabase = await getClient();
-    const user = await ensureCloudUser(supabase);
-    const image = dataUrlToBlob(lookup.frame.imageBase64);
-    const imageHash = await hashBytes(image.bytes);
-    const imagePath = `${user.id}/${lookup.id}.${image.extension}`;
-    const uploaded = await supabase.storage.from(SCAN_BUCKET).upload(imagePath, image.blob, {
-      contentType: image.contentType,
-      upsert: true,
-    });
-
-    if (uploaded.error) {
-      throw new Error(uploaded.error.message);
-    }
-
-    const saved = await supabase.from("scan_lookups").upsert(
-      {
-        analyzed_at: lookup.analyzedAt ?? null,
-        captured_at: lookup.frame.capturedAt,
-        chat_history: lookup.chatHistory,
-        correction: lookup.correction,
-        created_at: lookup.createdAt,
-        error_code: lookup.errorCode ?? null,
-        error_message: lookup.errorMessage ?? null,
-        image_byte_length: image.byteLength,
-        image_hash: imageHash,
-        image_mime_type: image.contentType,
-        image_path: imagePath,
-        local_id: lookup.id,
-        notes: lookup.notes,
-        rating: lookup.rating,
-        result_json: lookup.result ?? null,
-        scan_category: lookup.scanCategory,
-        training_label: lookup.trainingLabel,
-        training_status: lookup.trainingStatus,
-        user_id: user.id,
-      },
-      { onConflict: "user_id,local_id" },
-    );
-
-    if (saved.error) {
-      throw new Error(saved.error.message);
-    }
-
-    await syncDatasetDetailTables(supabase, user.id, lookup);
-
-    return {
-      ok: true,
-      imagePath,
-      message: "Scan synced to the private Deep Spec dataset.",
-    };
+    return await withCloudTimeout(performLookupSync(lookup), CLOUD_SYNC_TIMEOUT_MS);
   } catch (error) {
     return {
       ok: false,
       message: getFriendlySyncError(error),
     };
   }
+}
+
+async function performLookupSync(lookup: Lookup): Promise<CloudSyncResult> {
+  const supabase = await getClient();
+  const user = await ensureCloudUser(supabase);
+  const image = dataUrlToBlob(lookup.frame.imageBase64);
+  const imageHash = await hashBytes(image.bytes);
+  const imagePath = `${user.id}/${lookup.id}.${image.extension}`;
+  const uploaded = await supabase.storage.from(SCAN_BUCKET).upload(imagePath, image.blob, {
+    contentType: image.contentType,
+    upsert: true,
+  });
+
+  if (uploaded.error) {
+    throw new Error(uploaded.error.message);
+  }
+
+  const saved = await upsertScanLookupRow(supabase, {
+    analyzed_at: lookup.analyzedAt ?? null,
+    captured_at: lookup.frame.capturedAt,
+    chat_history: lookup.chatHistory,
+    correction: lookup.correction,
+    created_at: lookup.createdAt,
+    error_code: lookup.errorCode ?? null,
+    error_message: lookup.errorMessage ?? null,
+    image_byte_length: image.byteLength,
+    image_hash: imageHash,
+    image_mime_type: image.contentType,
+    image_path: imagePath,
+    local_id: lookup.id,
+    notes: lookup.notes,
+    rating: lookup.rating,
+    result_json: lookup.result ?? null,
+    scan_category: lookup.scanCategory,
+    training_label: lookup.trainingLabel,
+    training_status: lookup.trainingStatus,
+    user_id: user.id,
+    ...getOptionalScanLookupFields(lookup),
+  });
+
+  if (saved.error) {
+    throw new Error(saved.error.message);
+  }
+
+  await upsertShopJobScan(supabase, user.id, lookup);
+  await syncDatasetDetailTables(supabase, user.id, lookup);
+
+  return {
+    ok: true,
+    imagePath,
+    message: "Scan synced to the private Deep Spec dataset.",
+  };
 }
 
 export async function syncLookupsToCloud(lookups: Lookup[]): Promise<CloudBatchSyncResult> {
@@ -294,12 +316,74 @@ export async function syncLookupsToCloud(lookups: Lookup[]): Promise<CloudBatchS
   };
 }
 
+function getOptionalScanLookupFields(lookup: Lookup) {
+  const optional: Record<string, unknown> = {};
+  const jobId = asUuid(lookup.jobId);
+  const orgId = asUuid(lookup.orgId);
+  const technicianUserId = asUuid(lookup.technicianUserId);
+
+  if (lookup.customerVisibleReport) optional.customer_visible_report_json = lookup.customerVisibleReport;
+  if (jobId) optional.job_id = jobId;
+  if (orgId) optional.org_id = orgId;
+  if (lookup.reviewStatus) optional.review_status = lookup.reviewStatus;
+  if (technicianUserId) optional.technician_user_id = technicianUserId;
+  if (lookup.vehicleContext) optional.vehicle_context = lookup.vehicleContext;
+
+  return optional;
+}
+
+async function upsertScanLookupRow(supabase: SupabaseClient, row: Record<string, unknown>) {
+  const result = await supabase.from("scan_lookups").upsert(row, { onConflict: "user_id,local_id" });
+  if (!isMissingOptionalScanLookupColumn(result.error)) {
+    return result;
+  }
+
+  return supabase.from("scan_lookups").upsert(omitOptionalScanLookupColumns(row), { onConflict: "user_id,local_id" });
+}
+
+function omitOptionalScanLookupColumns(row: Record<string, unknown>) {
+  const fallback = { ...row };
+  for (const column of SCAN_LOOKUP_OPTIONAL_COLUMNS) {
+    delete fallback[column];
+  }
+  return fallback;
+}
+
+function isMissingOptionalScanLookupColumn(error: { message?: string } | null | undefined) {
+  const message = error?.message ?? "";
+  return /schema cache|could not find .* column/i.test(message)
+    && SCAN_LOOKUP_OPTIONAL_COLUMNS.some((column) => message.includes(column));
+}
+
 async function syncDatasetDetailTables(supabase: SupabaseClient, userId: string, lookup: Lookup) {
   await replaceScanCandidates(supabase, userId, lookup);
   await replaceScanEvidence(supabase, userId, lookup);
   await upsertScanCorrection(supabase, userId, lookup);
   await insertScanModelRun(supabase, userId, lookup);
   await insertSyncEvent(supabase, userId, lookup, "upsert", "success", "Scan dataset details synced.");
+}
+
+async function upsertShopJobScan(supabase: SupabaseClient, userId: string, lookup: Lookup) {
+  const orgId = asUuid(lookup.orgId);
+  const jobId = asUuid(lookup.jobId);
+  if (!orgId || !jobId) {
+    return;
+  }
+
+  await assertCloudResult(
+    await supabase.from("job_scans").upsert(
+      {
+        customer_visible_report_json: lookup.customerVisibleReport ?? null,
+        job_id: jobId,
+        org_id: orgId,
+        review_status: lookup.reviewStatus ?? "needs_review",
+        scan_local_id: lookup.id,
+        user_id: userId,
+      },
+      { onConflict: "job_id,user_id,scan_local_id" },
+    ),
+    "job_scans upsert failed",
+  );
 }
 
 async function replaceScanCandidates(supabase: SupabaseClient, userId: string, lookup: Lookup) {
@@ -372,6 +456,9 @@ async function insertScanModelRun(supabase: SupabaseClient, userId: string, look
         confirmationNeed: lookup.result?.confirmationNeed ?? null,
         fallbackReason: modelRun?.fallbackReason ?? null,
         hasResult: Boolean(lookup.result),
+        jobId: lookup.jobId ?? null,
+        orgId: lookup.orgId ?? null,
+        reviewStatus: lookup.reviewStatus ?? null,
         savedAt: lookup.provenance.savedAt,
         safetyTriage: lookup.result?.safetyTriage ?? null,
         scanQuality: lookup.scanQuality ?? null,
@@ -744,6 +831,10 @@ function getFriendlySyncError(error: unknown) {
     return "Cloud sync needs Supabase anonymous sign-ins enabled before scans can upload.";
   }
 
+  if (/failed to fetch|networkerror|network error|fetch failed|load failed|timed out|timeout|aborted/i.test(message)) {
+    return "Saved on this device. Cloud sync will retry when you are back online.";
+  }
+
   if (/row-level security|policy|permission|not authorized|unauthorized/i.test(message)) {
     return "Cloud sync was blocked by a security check. Your scan is still saved on this device.";
   }
@@ -753,6 +844,12 @@ function getFriendlySyncError(error: unknown) {
   }
 
   return `Cloud sync failed: ${message}`;
+}
+
+function asUuid(value: string | undefined) {
+  return value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+    ? value
+    : null;
 }
 
 async function cleanupCloudHealthCheck(supabase: SupabaseClient, userId: string, testId: string, imagePath: string) {

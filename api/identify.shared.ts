@@ -6,6 +6,7 @@ import {
   type ConfirmationNeed,
   type Confidence,
   type EvidenceRegion,
+  type SceneObject,
   type IdentificationResult,
   type IdentifyModelRun,
   type IdentifyProvider,
@@ -62,15 +63,30 @@ const DEFAULT_OCR_MODEL = "microsoft/trocr-large-printed";
 const IDENTIFY_MAX_OUTPUT_TOKENS = 2048;
 const HF_IDENTIFY_MAX_OUTPUT_TOKENS = 2048;
 const OLLAMA_IDENTIFY_MAX_OUTPUT_TOKENS = 900;
+const DEFAULT_GEMINI_IDENTIFY_THINKING_BUDGET = 0;
 const DEFAULT_IDENTIFY_PROVIDER_TIMEOUT_MS = 25_000;
+const DEFAULT_GEMINI_IDENTIFY_HEDGE_DELAY_MS = 4_000;
 const DEFAULT_HF_IDENTIFY_TIMEOUT_MS = 45_000;
 const DEFAULT_GROQ_IDENTIFY_TIMEOUT_MS = 45_000;
 const DEFAULT_OLLAMA_IDENTIFY_TIMEOUT_MS = 180_000;
 const DEFAULT_DATASET_ROOT = "datasets/raw/drbimmer-car-parts-and-damage-dataset";
 const DEFAULT_DATASET_INDEX_PATH = "datasets/derived/drbimmer-car-parts-and-damage-dataset/records.jsonl";
+const DEFAULT_HF_AUTOMOTIVE_SOURCE_INDEX_PATH = "datasets/verified/hf-automotive-sources-v1/records.jsonl";
 const RETRYABLE_PROVIDER_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 const DEFAULT_BACKUP_RATE_LIMIT_RETRIES = 1;
 const DEFAULT_BACKUP_RETRY_BACKOFF_MS = 800;
+
+const GEMINI_IDENTIFY_PROMPT = [
+  "Identify the main visible vehicle part or damage from the photo.",
+  `Return only JSON with: partName, confidence, confidenceScore, confidenceRange, confirmationNeed, scanCategory, whatItDoes, visibleObservations, evidence, evidenceRegions, sceneObjects, concerns, candidateMatches, primaryPart, candidateParts, possibleVehicleContexts, measurements, requiredNextEvidence, fitmentConfidence, safetyTriage, isSafetyCritical, nextAction, needsBetterPhoto, sourceLinks.`,
+  "sceneObjects: list every distinct visible object including background items (posters, tools, hands, other parts); set primary true only for the main part; return [] when only the main subject is visible.",
+  `scanCategory must be one of: ${SCAN_CATEGORIES.join(", ")}.`,
+  "When visible exterior damage exists, name the damage type explicitly in visibleObservations, concerns, or evidence: dent, scratch, cracked, broken/damaged, missing/detached, paint chip, corrosion/rust. Do not say no visible damage when any of those are visible.",
+  "Use only visible evidence. Do not invent OEM fitment, part numbers, prices, or exact engine codes.",
+  "For complete engines, prefer category engine unless visible active leaking fuel/fluid or a specific safety system is the main subject.",
+  "Use leak only for visible active fluid, wet staining, dripping, pooling, oil, coolant, fuel, or other fluid evidence.",
+  "Keep text short for a phone UI.",
+].join(" ");
 
 const OLLAMA_IDENTIFY_PROMPT = [
   "Identify the main visible car part or car damage.",
@@ -78,151 +94,6 @@ const OLLAMA_IDENTIFY_PROMPT = [
   "confidence: high, medium, or low.",
   `scanCategory: ${SCAN_CATEGORIES.join(", ")}.`,
 ].join(" ");
-
-const IDENTIFICATION_RESPONSE_SCHEMA = {
-  type: "object",
-  properties: {
-    partName: { type: "string" },
-    confidence: { type: "string", enum: ["high", "medium", "low"] },
-    confidenceScore: { type: "number" },
-    confidenceRange: {
-      type: "object",
-      properties: {
-        low: { type: "number" },
-        high: { type: "number" },
-      },
-      required: ["low", "high"],
-    },
-    confirmationNeed: { type: "string", enum: ["none", "one_more_angle", "reference_needed"] },
-    scanCategory: { type: "string", enum: [...SCAN_CATEGORIES] },
-    candidateMatches: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          partName: { type: "string" },
-          confidence: { type: "string", enum: ["high", "medium", "low"] },
-          scanCategory: { type: "string", enum: [...SCAN_CATEGORIES] },
-          reason: { type: "string" },
-        },
-        required: ["partName", "confidence", "scanCategory", "reason"],
-      },
-    },
-    primaryPart: {
-      type: "object",
-      properties: {
-        partName: { type: "string" },
-        confidence: { type: "string", enum: ["high", "medium", "low"] },
-        scanCategory: { type: "string", enum: [...SCAN_CATEGORIES] },
-        evidence: { type: "array", items: { type: "string" } },
-        whyNotPrimary: { type: "string" },
-      },
-      required: ["partName", "confidence", "scanCategory", "evidence"],
-    },
-    candidateParts: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          partName: { type: "string" },
-          confidence: { type: "string", enum: ["high", "medium", "low"] },
-          scanCategory: { type: "string", enum: [...SCAN_CATEGORIES] },
-          evidence: { type: "array", items: { type: "string" } },
-          whyNotPrimary: { type: "string" },
-        },
-        required: ["partName", "confidence", "scanCategory", "evidence"],
-      },
-    },
-    possibleVehicleContexts: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          label: { type: "string" },
-          confidence: { type: "string", enum: ["high", "medium", "low"] },
-          evidence: { type: "array", items: { type: "string" } },
-        },
-        required: ["label", "confidence", "evidence"],
-      },
-    },
-    measurements: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          label: { type: "string" },
-          valueMm: { type: "number" },
-          confidence: { type: "string", enum: ["high", "medium", "low"] },
-          method: { type: "string", enum: ["reference_object", "visible_marking", "estimated"] },
-          caveat: { type: "string" },
-        },
-        required: ["label", "valueMm", "confidence", "method", "caveat"],
-      },
-    },
-    requiredNextEvidence: {
-      type: "array",
-      items: { type: "string" },
-    },
-    fitmentConfidence: { type: "string", enum: ["not_applicable", "needs_vehicle_context", "possible", "supported"] },
-    whatItDoes: { type: "string" },
-    visibleObservations: {
-      type: "array",
-      items: { type: "string" },
-    },
-    evidenceRegions: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          label: { type: "string" },
-          observation: { type: "string" },
-          regionLabel: { type: "string" },
-        },
-        required: ["label", "observation", "regionLabel"],
-      },
-    },
-    concerns: {
-      type: "array",
-      items: { type: "string" },
-    },
-    safetyTriage: { type: "string", enum: ["can_help", "needs_better_photo", "needs_professional"] },
-    isSafetyCritical: { type: "boolean" },
-    nextAction: { type: "string" },
-    needsBetterPhoto: { type: "boolean" },
-    evidence: {
-      type: "array",
-      items: { type: "string" },
-    },
-    sourceLinks: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          label: { type: "string" },
-          url: { type: "string" },
-          sourceType: { type: "string", enum: ["dataset", "reference", "search", "safety"] },
-        },
-        required: ["label", "url", "sourceType"],
-      },
-    },
-  },
-  required: [
-    "partName",
-    "confidence",
-    "scanCategory",
-    "candidateMatches",
-    "whatItDoes",
-    "visibleObservations",
-    "evidenceRegions",
-    "concerns",
-    "safetyTriage",
-    "isSafetyCritical",
-    "nextAction",
-    "needsBetterPhoto",
-    "evidence",
-    "sourceLinks",
-  ],
-};
 
 export async function createIdentifyResponse(body: unknown, env: Record<string, string | undefined>): Promise<IdentifyResponse> {
   const parsed = parseIdentifyRequest(body);
@@ -241,103 +112,78 @@ export async function createIdentifyResponse(body: unknown, env: Record<string, 
   const hasGroqFallback = isGroqIdentifyFallbackConfigured(env);
   const hasOllamaFallback = isOllamaIdentifyFallbackEnabled(env);
   const apiKey = env.GEMINI_API_KEY;
+
+  let lastRetryableError: IdentifyResponse | null = null;
+  let triedGroq = false;
+  if (hasGroqFallback) {
+    triedGroq = true;
+    const response = await withBackupRateLimitRetry(env, () =>
+      createGroqIdentifyResponse(parsed, ocr, sourceContext, env, "primary"),
+    );
+    if (response.status === 200) {
+      return response;
+    }
+
+    if (isRetryableIdentifyResponse(response)) {
+      lastRetryableError = response;
+    }
+  }
+
   if (!apiKey) {
+    if (hasHfFallback && lastRetryableError) {
+      const reason = getIdentifyErrorCode(lastRetryableError) ?? "provider_unavailable";
+      const response = await withBackupRateLimitRetry(env, () =>
+        createHfIdentifyResponse(parsed, ocr, sourceContext, env, reason),
+      );
+      if (response.status === 200) {
+        return response;
+      }
+
+      if ("error" in response.body && response.body.error.code === "invalid_response") {
+        return response;
+      }
+    }
+
     return hasOllamaFallback
       ? createOllamaIdentifyResponse(parsed, ocr, env)
       : errorResponse(500, "not_configured", "Deep Spec AI is not configured. Add GEMINI_API_KEY on the server.");
   }
 
   const models = getIdentifyModels(env);
-  let rateLimited = false;
-  let lastRetryableError: IdentifyResponse | null = null;
-
-  for (let index = 0; index < models.length; index += 1) {
-    const model = models[index];
-    const hasFallback = index < models.length - 1;
-    const fallbackAvailable = hasFallback || hasHfFallback || hasGroqFallback || hasOllamaFallback;
-    const startedAt = Date.now();
-    const response = await fetchGeminiIdentify(model, parsed, ocr, sourceContext, apiKey, env);
-
-    if (!response) {
-      const networkError = errorResponse(502, "network", "Deep Spec could not reach Gemini.");
-      lastRetryableError = networkError;
-      logIdentifyAttempt("gemini", model, startedAt, networkError, fallbackAvailable);
-      if (hasFallback) continue;
-      if (hasHfFallback || hasGroqFallback || hasOllamaFallback) break;
-      return networkError;
-    }
-
-    if (response.status === 429) {
-      rateLimited = true;
-      const retryError = errorResponse(429, "rate_limited", "Too many AI lookups right now. Try again in a few minutes.");
-      lastRetryableError = retryError;
-      logIdentifyAttempt("gemini", model, startedAt, retryError, fallbackAvailable);
-      if (hasFallback) continue;
-      if (hasHfFallback || hasGroqFallback || hasOllamaFallback) break;
-      return retryError;
-    }
-
-    const isJson = (response.headers.get("content-type") ?? "").includes("application/json");
-    const responseBody = isJson ? ((await response.json().catch(() => null)) as JsonObject | null) : null;
-
-    if (!response.ok) {
-      const providerError = errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
-      if (RETRYABLE_PROVIDER_STATUSES.has(response.status)) {
-        lastRetryableError = providerError;
-        logIdentifyAttempt("gemini", model, startedAt, providerError, fallbackAvailable);
-        if (hasFallback) continue;
-        if (hasHfFallback || hasGroqFallback || hasOllamaFallback) break;
-      }
-
-      return providerError;
-    }
-
-    const text = extractGeminiText(responseBody);
-    if (!text) {
-      const invalidResponse = errorResponse(502, "invalid_response", "Gemini did not return a usable answer.");
-      lastRetryableError = invalidResponse;
-      logIdentifyAttempt("gemini", model, startedAt, invalidResponse, hasFallback);
-      if (hasFallback) continue;
-      return invalidResponse;
-    }
-
-    const result = parseIdentificationResult(text);
-    if (!result) {
-      const invalidResponse = errorResponse(502, "invalid_response", "Gemini returned JSON that Deep Spec could not read.");
-      lastRetryableError = invalidResponse;
-      logIdentifyAttempt("gemini", model, startedAt, invalidResponse, hasFallback);
-      if (hasFallback) continue;
-      return invalidResponse;
-    }
-
-    const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env);
-    const latencyMs = Date.now() - startedAt;
-
-    console.info("[DeepSpec AI]", {
-      provider: "gemini",
-      model,
-      latencyMs,
-      success: true,
-      confidence: normalizedResult.confidence,
-      scanCategory: normalizedResult.scanCategory,
-      safetyTriage: normalizedResult.safetyTriage,
-      ocrUsed: Boolean(ocr?.text),
-    });
-
-    return {
-      status: 200,
-      body: {
-        ...withModelRun(normalizedResult, {
-          provider: "gemini",
-          model,
-          latencyMs,
-          ocrUsed: Boolean(ocr?.text),
-        }),
-      },
-    };
+  const geminiResult = await createGeminiIdentifyResponse({
+    apiKey,
+    env,
+    fallbackAvailable: hasHfFallback || hasGroqFallback || hasOllamaFallback,
+    models,
+    ocr,
+    parsed,
+    sourceContext,
+  });
+  if (geminiResult.response.status === 200) {
+    return geminiResult.response;
   }
 
-  if (hasGroqFallback && lastRetryableError) {
+  const rateLimited = geminiResult.rateLimited;
+  lastRetryableError = geminiResult.lastRetryableError ?? lastRetryableError;
+
+  if (!rateLimited && !hasGroqFallback && !hasHfFallback && !hasOllamaFallback) {
+    const rescueResponse = await createGeminiRescueIdentifyResponse(
+      models[0] ?? DEFAULT_MODEL,
+      parsed,
+      ocr,
+      apiKey,
+      env,
+    );
+    if (rescueResponse.status === 200) {
+      return rescueResponse;
+    }
+
+    if (isRetryableIdentifyResponse(rescueResponse)) {
+      lastRetryableError = rescueResponse;
+    }
+  }
+
+  if (hasGroqFallback && !triedGroq && lastRetryableError) {
     const reason = getIdentifyErrorCode(lastRetryableError) ?? "provider_unavailable";
     const response = await withBackupRateLimitRetry(env, () =>
       createGroqIdentifyResponse(parsed, ocr, sourceContext, env, reason),
@@ -383,12 +229,261 @@ function getIdentifyErrorCode(response: IdentifyResponse) {
   return "error" in response.body ? response.body.error.code : null;
 }
 
+type GeminiIdentifyOptions = {
+  apiKey: string;
+  env: Record<string, string | undefined>;
+  fallbackAvailable: boolean;
+  models: string[];
+  ocr: { text: string; model: string } | null;
+  parsed: ParsedIdentifyRequest;
+  sourceContext: string | null;
+};
+
+type GeminiIdentifyAttempt = {
+  model: string;
+  response: IdentifyResponse;
+  rateLimited: boolean;
+};
+
+async function createGeminiIdentifyResponse({
+  apiKey,
+  env,
+  fallbackAvailable,
+  models,
+  ocr,
+  parsed,
+  sourceContext,
+}: GeminiIdentifyOptions): Promise<{
+  lastRetryableError: IdentifyResponse;
+  rateLimited: boolean;
+  response: IdentifyResponse;
+}> {
+  const controllers = new Map<string, AbortController>();
+  const attempts: GeminiIdentifyAttempt[] = [];
+  const pending = new Set<Promise<GeminiIdentifyAttempt>>();
+  let nextModelIndex = 0;
+  let nextHedgeAt = Date.now();
+
+  const startNextAttempt = () => {
+    const model = models[nextModelIndex];
+    if (!model) {
+      return;
+    }
+
+    nextModelIndex += 1;
+    const controller = new AbortController();
+    controllers.set(model, controller);
+    const attempt = createGeminiIdentifyAttempt(model, parsed, ocr, sourceContext, apiKey, env, fallbackAvailable, controller.signal)
+      .finally(() => controllers.delete(model));
+    pending.add(attempt);
+    attempt.finally(() => pending.delete(attempt));
+    nextHedgeAt = Date.now() + getGeminiIdentifyHedgeDelayMs(env);
+  };
+
+  startNextAttempt();
+
+  while (pending.size > 0 || nextModelIndex < models.length) {
+    if (pending.size === 0) {
+      startNextAttempt();
+      continue;
+    }
+
+    const waitForHedge = nextModelIndex < models.length
+      ? delay(Math.max(0, nextHedgeAt - Date.now())).then(() => null)
+      : null;
+    const attempt = await Promise.race(waitForHedge ? [...pending, waitForHedge] : [...pending]);
+    if (!attempt) {
+      startNextAttempt();
+      continue;
+    }
+
+    attempts.push(attempt);
+    if (attempt.response.status === 200) {
+      for (const controller of controllers.values()) {
+        controller.abort();
+      }
+
+      return {
+        lastRetryableError: attempt.response,
+        rateLimited: false,
+        response: attempt.response,
+      };
+    }
+  }
+
+  const lastRetryableError = [...attempts]
+    .reverse()
+    .find((attempt) => isRetryableIdentifyResponse(attempt.response))?.response
+    ?? attempts.at(-1)?.response
+    ?? errorResponse(502, "provider_error", "The AI provider rejected this request.");
+
+  return {
+    lastRetryableError,
+    rateLimited: attempts.some((attempt) => attempt.rateLimited),
+    response: fallbackAvailable
+      ? lastRetryableError
+      : attempts[0]?.response ?? lastRetryableError,
+  };
+}
+
+async function createGeminiIdentifyAttempt(
+  model: string,
+  parsed: ParsedIdentifyRequest,
+  ocr: { text: string; model: string } | null,
+  sourceContext: string | null,
+  apiKey: string,
+  env: Record<string, string | undefined>,
+  backupFallbackAvailable: boolean,
+  signal?: AbortSignal,
+): Promise<GeminiIdentifyAttempt> {
+  const startedAt = Date.now();
+  const response = await fetchGeminiIdentify(model, parsed, ocr, sourceContext, apiKey, env, signal);
+  const fallbackAvailable = backupFallbackAvailable;
+
+  if (!response) {
+    const networkError = errorResponse(502, "network", "Deep Spec could not reach Gemini.");
+    logIdentifyAttempt("gemini", model, startedAt, networkError, fallbackAvailable);
+    return { model, response: networkError, rateLimited: false };
+  }
+
+  if (response.status === 429) {
+    const retryError = errorResponse(429, "rate_limited", "Too many AI lookups right now. Try again in a few minutes.");
+    logIdentifyAttempt("gemini", model, startedAt, retryError, fallbackAvailable);
+    return { model, response: retryError, rateLimited: true };
+  }
+
+  const isJson = (response.headers.get("content-type") ?? "").includes("application/json");
+  const responseBody = isJson ? ((await response.json().catch(() => null)) as JsonObject | null) : null;
+
+  if (!response.ok) {
+    const providerError = errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
+    logIdentifyAttempt("gemini", model, startedAt, providerError, fallbackAvailable);
+    return { model, response: providerError, rateLimited: false };
+  }
+
+  const text = extractGeminiText(responseBody);
+  if (!text) {
+    const invalidResponse = errorResponse(502, "invalid_response", "Gemini did not return a usable answer.");
+    logIdentifyAttempt("gemini", model, startedAt, invalidResponse, fallbackAvailable);
+    return { model, response: invalidResponse, rateLimited: false };
+  }
+
+  const result = parseIdentificationResult(text);
+  if (!result) {
+    const invalidResponse = errorResponse(502, "invalid_response", "Gemini returned JSON that Deep Spec could not read.");
+    logIdentifyAttempt("gemini", model, startedAt, invalidResponse, fallbackAvailable);
+    return { model, response: invalidResponse, rateLimited: false };
+  }
+
+  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env);
+  const latencyMs = Date.now() - startedAt;
+
+  console.info("[DeepSpec AI]", {
+    provider: "gemini",
+    model,
+    latencyMs,
+    success: true,
+    confidence: normalizedResult.confidence,
+    scanCategory: normalizedResult.scanCategory,
+    safetyTriage: normalizedResult.safetyTriage,
+    ocrUsed: Boolean(ocr?.text),
+  });
+
+  return {
+    model,
+    response: {
+      status: 200,
+      body: {
+        ...withModelRun(normalizedResult, {
+          provider: "gemini",
+          model,
+          latencyMs,
+          ocrUsed: Boolean(ocr?.text),
+        }),
+      },
+    },
+    rateLimited: false,
+  };
+}
+
+function isRetryableIdentifyResponse(response: IdentifyResponse) {
+  return response.status === 429 || RETRYABLE_PROVIDER_STATUSES.has(response.status);
+}
+
+async function createGeminiRescueIdentifyResponse(
+  model: string,
+  parsed: ParsedIdentifyRequest,
+  ocr: { text: string; model: string } | null,
+  apiKey: string,
+  env: Record<string, string | undefined>,
+): Promise<IdentifyResponse> {
+  const startedAt = Date.now();
+  const response = await fetchGeminiRescueIdentify(model, parsed, ocr, apiKey, env);
+
+  if (!response) {
+    const networkError = errorResponse(502, "network", "Deep Spec could not reach Gemini.");
+    logIdentifyAttempt("gemini", model, startedAt, networkError, false);
+    return networkError;
+  }
+
+  const isJson = (response.headers.get("content-type") ?? "").includes("application/json");
+  const responseBody = isJson ? ((await response.json().catch(() => null)) as JsonObject | null) : null;
+  if (!response.ok) {
+    const providerError = response.status === 429
+      ? errorResponse(429, "rate_limited", "Too many AI lookups right now. Try again in a few minutes.")
+      : errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
+    logIdentifyAttempt("gemini", model, startedAt, providerError, false);
+    return providerError;
+  }
+
+  const text = extractGeminiText(responseBody);
+  const result = text ? parseIdentificationResult(text) : null;
+  if (!result) {
+    const invalidResponse = errorResponse(502, "invalid_response", "Gemini returned JSON that Deep Spec could not read.");
+    logIdentifyAttempt("gemini", model, startedAt, invalidResponse, false);
+    return invalidResponse;
+  }
+
+  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env);
+  const latencyMs = Date.now() - startedAt;
+
+  console.info("[DeepSpec AI]", {
+    provider: "gemini",
+    model,
+    latencyMs,
+    success: true,
+    confidence: normalizedResult.confidence,
+    scanCategory: normalizedResult.scanCategory,
+    safetyTriage: normalizedResult.safetyTriage,
+    fallbackReason: "compact_rescue",
+    ocrUsed: Boolean(ocr?.text),
+  });
+
+  return {
+    status: 200,
+    body: {
+      ...withModelRun(normalizedResult, {
+        provider: "gemini",
+        model,
+        latencyMs,
+        fallbackReason: "compact_rescue",
+        ocrUsed: Boolean(ocr?.text),
+      }),
+    },
+  };
+}
+
 function getIdentifyModels(env: Record<string, string | undefined>) {
   return uniqueStrings([
     env.GEMINI_MODEL || DEFAULT_MODEL,
     ...splitModelList(env.GEMINI_FALLBACK_MODELS),
     ...DEFAULT_FALLBACK_MODELS,
   ]);
+}
+
+function getGeminiIdentifyHedgeDelayMs(env: Record<string, string | undefined>) {
+  const value = Number(env.DEEPSPEC_GEMINI_IDENTIFY_HEDGE_DELAY_MS);
+  return Number.isInteger(value) && value >= 0 && value <= 20_000 ? value : DEFAULT_GEMINI_IDENTIFY_HEDGE_DELAY_MS;
 }
 
 function withModelRun(result: IdentificationResult, modelRun: IdentifyModelRun) {
@@ -686,7 +781,7 @@ function getHfIdentifyTimeoutMs(env: Record<string, string | undefined>) {
 }
 
 function isGroqIdentifyFallbackConfigured(env: Record<string, string | undefined>) {
-  return Boolean(getGroqToken(env));
+  return env.DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK === "true" && Boolean(getGroqToken(env));
 }
 
 function getGroqToken(env: Record<string, string | undefined>) {
@@ -923,19 +1018,20 @@ function fetchGeminiIdentify(
   sourceContext: string | null,
   apiKey: string,
   env: Record<string, string | undefined>,
+  signal?: AbortSignal,
 ) {
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
   return fetch(endpoint, {
     method: "POST",
-    signal: AbortSignal.timeout(getIdentifyProviderTimeoutMs(env)),
+    signal: getGeminiFetchSignal(env, signal),
     headers: {
       "Content-Type": "application/json",
       "x-goog-api-key": apiKey,
     },
     body: JSON.stringify({
       system_instruction: {
-        parts: [{ text: IDENTIFY_PROMPT }],
+        parts: [{ text: GEMINI_IDENTIFY_PROMPT }],
       },
       contents: [
         {
@@ -961,10 +1057,84 @@ function fetchGeminiIdentify(
         temperature: 0.1,
         maxOutputTokens: IDENTIFY_MAX_OUTPUT_TOKENS,
         responseMimeType: "application/json",
-        responseJsonSchema: IDENTIFICATION_RESPONSE_SCHEMA,
+        thinkingConfig: {
+          thinkingBudget: getGeminiIdentifyThinkingBudget(env),
+        },
       },
     }),
   }).catch(() => null);
+}
+
+function fetchGeminiRescueIdentify(
+  model: string,
+  parsed: ParsedIdentifyRequest,
+  ocr: { text: string; model: string } | null,
+  apiKey: string,
+  env: Record<string, string | undefined>,
+) {
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+
+  return fetch(endpoint, {
+    method: "POST",
+    signal: AbortSignal.timeout(Math.min(getIdentifyProviderTimeoutMs(env), 15_000)),
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey,
+    },
+    body: JSON.stringify({
+      system_instruction: {
+        parts: [{
+          text: [
+            "Identify the main visible vehicle part from the image.",
+            `Return only compact JSON with partName, confidence, confidenceScore, scanCategory, whatItDoes, visibleObservations, evidence, concerns, isSafetyCritical, safetyTriage, nextAction, needsBetterPhoto.`,
+            `scanCategory must be one of: ${SCAN_CATEGORIES.join(", ")}.`,
+            "Use category engine for a complete engine assembly unless active fluid leakage is visible.",
+          ].join(" "),
+        }],
+      },
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              inline_data: {
+                mime_type: parsed.mimeType,
+                data: parsed.base64,
+              },
+            },
+            ...(ocr?.text ? [{ text: buildOcrContext(ocr.text) }] : []),
+            { text: parsed.userMessage },
+          ],
+        },
+      ],
+      generationConfig: {
+        temperature: 0,
+        maxOutputTokens: 700,
+        thinkingConfig: {
+          thinkingBudget: 0,
+        },
+      },
+    }),
+  }).catch(() => null);
+}
+
+function getGeminiFetchSignal(env: Record<string, string | undefined>, signal?: AbortSignal) {
+  const timeoutSignal = AbortSignal.timeout(getIdentifyProviderTimeoutMs(env));
+  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+}
+
+function getGeminiIdentifyThinkingBudget(env: Record<string, string | undefined>) {
+  const value = env.DEEPSPEC_GEMINI_IDENTIFY_THINKING_BUDGET;
+  if (!value) {
+    return DEFAULT_GEMINI_IDENTIFY_THINKING_BUDGET;
+  }
+
+  const budget = Number(value);
+  if (!Number.isInteger(budget) || budget < -1 || budget > 24_576) {
+    return DEFAULT_GEMINI_IDENTIFY_THINKING_BUDGET;
+  }
+
+  return budget;
 }
 
 function getIdentifyProviderTimeoutMs(env: Record<string, string | undefined>) {
@@ -1183,16 +1353,428 @@ function extractGeminiText(responseBody: JsonObject | null) {
 }
 
 function parseIdentificationResult(text: string): IdentificationResult | null {
+  if (containsProviderDiagnostic(text)) {
+    return null;
+  }
+
   try {
-    const parsed = JSON.parse(text) as unknown;
-    if (!isIdentificationResult(parsed)) {
+    const parsed = JSON.parse(extractJsonObjectText(text)) as unknown;
+    if (containsProviderDiagnostic(parsed)) {
       return null;
     }
-
-    return parsed;
+    return toIdentificationResult(parsed);
   } catch {
     return null;
   }
+}
+
+function containsProviderDiagnostic(value: unknown): boolean {
+  if (typeof value === "string") {
+    return /unsupported pipeline|must be one of|model is currently loading|not supported for task|validation error/i.test(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.some((item) => containsProviderDiagnostic(item));
+  }
+
+  if (isRecord(value)) {
+    return Object.values(value).some((item) => containsProviderDiagnostic(item));
+  }
+
+  return false;
+}
+
+function extractJsonObjectText(text: string) {
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    return trimmed;
+  }
+
+  const fenced = /```(?:json)?\s*([\s\S]*?)\s*```/i.exec(trimmed);
+  if (fenced?.[1]) {
+    return extractJsonObjectText(fenced[1]);
+  }
+
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  return start >= 0 && end > start ? trimmed.slice(start, end + 1) : trimmed;
+}
+
+function toIdentificationResult(value: unknown): IdentificationResult | null {
+  if (isIdentificationResult(value)) {
+    return value;
+  }
+
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const primary = isRecord(value.primaryPart) ? value.primaryPart : null;
+  const base = typeof value.partName === "string" ? value : primary;
+  if (!base || typeof base.partName !== "string") {
+    return null;
+  }
+
+  const partName = cleanText(base.partName, "Unidentified car part");
+  const scanCategory = resolveScanCategory(base.scanCategory ?? value.scanCategory);
+  const confidence = resolveLooseConfidence(base.confidence ?? value.confidence, base.confidenceScore ?? value.confidenceScore);
+  const visibleObservations = coerceStringList(base.visibleObservations ?? value.visibleObservations, [
+    `The model identified ${partName} as the main visible item.`,
+  ]);
+  const evidence = coerceStringList(base.evidence ?? value.evidence, visibleObservations);
+  const concerns = coerceStringList(base.concerns ?? value.concerns, []);
+  const confirmationNeed = normalizeConfirmationNeed(base.confirmationNeed ?? value.confirmationNeed);
+  const safetyTriage = isSafetyTriage(value.safetyTriage) ? value.safetyTriage : "can_help";
+  const isSafetyCritical = typeof value.isSafetyCritical === "boolean" ? value.isSafetyCritical : false;
+  const nextAction = typeof value.nextAction === "string" && value.nextAction.trim()
+    ? value.nextAction
+    : typeof base.nextAction === "string" && base.nextAction.trim()
+      ? base.nextAction
+    : "Use the visible identification as a starting point and verify fitment with vehicle context.";
+
+  return {
+    partName,
+    confidence,
+    ...(normalizeConfidenceScore(base.confidenceScore ?? value.confidenceScore) === undefined
+      ? {}
+      : { confidenceScore: normalizeConfidenceScore(base.confidenceScore ?? value.confidenceScore) }),
+    ...(normalizeConfidenceRange(base.confidenceRange ?? value.confidenceRange) === undefined
+      ? {}
+      : { confidenceRange: normalizeConfidenceRange(base.confidenceRange ?? value.confidenceRange) }),
+    ...(confirmationNeed
+      ? { confirmationNeed }
+      : {}),
+    scanCategory,
+    candidateMatches: coerceCandidateMatches(value.candidateMatches, scanCategory),
+    primaryPart: coercePrimaryPart(base, partName, confidence, scanCategory, evidence),
+    candidateParts: coerceCandidateParts(value.candidateParts, scanCategory),
+    possibleVehicleContexts: coercePossibleVehicleContexts(value.possibleVehicleContexts),
+    measurements: coerceMeasurements(value.measurements),
+    requiredNextEvidence: coerceStringList(value.requiredNextEvidence, []),
+    ...(isOptionalFitmentConfidence(value.fitmentConfidence) ? { fitmentConfidence: value.fitmentConfidence } : {}),
+    whatItDoes: typeof (base.whatItDoes ?? value.whatItDoes) === "string" && String(base.whatItDoes ?? value.whatItDoes).trim()
+      ? String(base.whatItDoes ?? value.whatItDoes)
+      : "This is a visible vehicle component that should be verified with vehicle-specific context before ordering or repair.",
+    visibleObservations,
+    evidenceRegions: coerceEvidenceRegions(base.evidenceRegions ?? value.evidenceRegions, partName, visibleObservations),
+    sceneObjects: coerceSceneObjects(value.sceneObjects),
+    concerns,
+    safetyTriage,
+    isSafetyCritical,
+    nextAction,
+    needsBetterPhoto: typeof value.needsBetterPhoto === "boolean" ? value.needsBetterPhoto : false,
+    evidence,
+    sourceLinks: coerceSourceLinks(value.sourceLinks, partName),
+  };
+}
+
+function resolveLooseConfidence(confidence: unknown, confidenceScore: unknown): Confidence {
+  if (isConfidence(confidence)) {
+    return confidence;
+  }
+
+  if (typeof confidence === "string") {
+    const normalized = confidence.trim().toLowerCase();
+    if (isConfidence(normalized)) {
+      return normalized;
+    }
+  }
+
+  const numericConfidence = typeof confidence === "number" && Number.isFinite(confidence) ? confidence : confidenceScore;
+  if (typeof numericConfidence === "number" && Number.isFinite(numericConfidence)) {
+    const normalizedScore = numericConfidence <= 1 ? numericConfidence * 100 : numericConfidence;
+    if (normalizedScore >= 80) return "high";
+    if (normalizedScore >= 50) return "medium";
+  }
+
+  return "medium";
+}
+
+function coerceStringList(value: unknown, fallback: string[]): string[] {
+  if (isStringArray(value)) {
+    const cleaned = cleanList(value);
+    return cleaned.length ? cleaned : fallback;
+  }
+
+  if (typeof value === "string") {
+    const cleaned = cleanText(value, "");
+    return cleaned ? [cleaned] : fallback;
+  }
+
+  return fallback;
+}
+
+function coerceCandidateMatches(value: unknown, fallbackCategory: ScanCategory): CandidateMatch[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((candidate) => {
+      if (typeof candidate === "string") {
+        const partName = cleanText(candidate, "");
+        return partName
+          ? {
+              partName,
+              confidence: "medium" as const,
+              scanCategory: fallbackCategory,
+              reason: "Returned as an alternate visible candidate.",
+            }
+          : null;
+      }
+
+      if (!isRecord(candidate) || typeof candidate.partName !== "string") {
+        return null;
+      }
+
+      const partName = cleanText(candidate.partName, "");
+      if (!partName) {
+        return null;
+      }
+
+      const evidence = coerceStringList(candidate.evidence, []);
+      const reason = typeof candidate.reason === "string" && candidate.reason.trim()
+        ? candidate.reason
+        : evidence[0] ?? "Returned as an alternate visible candidate.";
+
+      return {
+        partName,
+        confidence: resolveLooseConfidence(candidate.confidence, candidate.confidenceScore),
+        scanCategory: resolveScanCategory(candidate.scanCategory) === "unknown"
+          ? fallbackCategory
+          : resolveScanCategory(candidate.scanCategory),
+        reason,
+      };
+    })
+    .filter((candidate): candidate is CandidateMatch => Boolean(candidate))
+    .slice(0, 5);
+}
+
+function coercePrimaryPart(
+  value: unknown,
+  partName: string,
+  confidence: Confidence,
+  scanCategory: ScanCategory,
+  evidence: string[],
+): CandidatePart {
+  if (isRecord(value) && typeof value.partName === "string") {
+    return {
+      partName: cleanText(value.partName, partName),
+      confidence: resolveLooseConfidence(value.confidence, value.confidenceScore),
+      scanCategory: resolveScanCategory(value.scanCategory) === "unknown" ? scanCategory : resolveScanCategory(value.scanCategory),
+      evidence: coerceStringList(value.evidence, evidence).slice(0, 4),
+      ...(typeof value.whyNotPrimary === "string" ? { whyNotPrimary: cleanText(value.whyNotPrimary, "") } : {}),
+    };
+  }
+
+  return {
+    partName,
+    confidence,
+    scanCategory,
+    evidence: evidence.slice(0, 4),
+  };
+}
+
+function coerceCandidateParts(value: unknown, fallbackCategory: ScanCategory): CandidatePart[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((candidate) => {
+      if (!isRecord(candidate) || typeof candidate.partName !== "string") {
+        return null;
+      }
+
+      const partName = cleanText(candidate.partName, "");
+      if (!partName) {
+        return null;
+      }
+
+      return {
+        partName,
+        confidence: resolveLooseConfidence(candidate.confidence, candidate.confidenceScore),
+        scanCategory: resolveScanCategory(candidate.scanCategory) === "unknown"
+          ? fallbackCategory
+          : resolveScanCategory(candidate.scanCategory),
+        evidence: coerceStringList(candidate.evidence, []).slice(0, 4),
+        ...(typeof candidate.whyNotPrimary === "string" ? { whyNotPrimary: cleanText(candidate.whyNotPrimary, "") } : {}),
+      };
+    })
+    .filter((candidate): candidate is CandidatePart => Boolean(candidate))
+    .slice(0, 5);
+}
+
+function coercePossibleVehicleContexts(value: unknown): PossibleVehicleContext[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((context) => {
+      if (typeof context === "string") {
+        const label = cleanText(context, "");
+        return label
+          ? {
+              label,
+              confidence: "low" as const,
+              evidence: ["Model-provided context; verify with VIN or visible labels."],
+            }
+          : null;
+      }
+
+      if (!isRecord(context) || typeof context.label !== "string") {
+        return null;
+      }
+
+      const label = cleanText(context.label, "");
+      const evidence = coerceStringList(context.evidence, []);
+      return label && evidence.length
+        ? { label, confidence: resolveLooseConfidence(context.confidence, context.confidenceScore), evidence }
+        : null;
+    })
+    .filter((context): context is PossibleVehicleContext => Boolean(context))
+    .slice(0, 3);
+}
+
+function coerceMeasurements(value: unknown): PartMeasurement[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((measurement) => {
+      if (!isRecord(measurement) || typeof measurement.label !== "string") {
+        return null;
+      }
+
+      const valueMm = normalizeMeasurementValue(measurement.valueMm);
+      if (!valueMm) {
+        return null;
+      }
+
+      return {
+        label: cleanText(measurement.label, ""),
+        valueMm,
+        confidence: resolveLooseConfidence(measurement.confidence, measurement.confidenceScore),
+        method: measurement.method === "reference_object" || measurement.method === "visible_marking" || measurement.method === "estimated"
+          ? measurement.method
+          : "estimated",
+        caveat: typeof measurement.caveat === "string" && measurement.caveat.trim()
+          ? measurement.caveat
+          : "Approximate measurement; verify with a physical tool before ordering parts.",
+      };
+    })
+    .filter((measurement): measurement is PartMeasurement => Boolean(measurement))
+    .slice(0, 4);
+}
+
+function coerceEvidenceRegions(value: unknown, partName: string, observations: string[]): EvidenceRegion[] {
+  if (!Array.isArray(value)) {
+    return [{
+      label: partName,
+      observation: observations[0] ?? `The photo shows ${partName}.`,
+      regionLabel: "Scanned area",
+    }];
+  }
+
+  const regions = value
+    .map((region) => {
+      if (typeof region === "string") {
+        const observation = cleanText(region, "");
+        return observation
+          ? {
+              label: partName,
+              observation,
+              regionLabel: "Scanned area",
+            }
+          : null;
+      }
+
+      if (!isRecord(region)) {
+        return null;
+      }
+
+      const label = typeof region.label === "string" ? cleanText(region.label, "") : partName;
+      const observation = typeof region.observation === "string"
+        ? cleanText(region.observation, "")
+        : typeof region.visualEvidence === "string"
+          ? cleanText(region.visualEvidence, "")
+          : typeof region.visualClue === "string"
+            ? cleanText(region.visualClue, "")
+            : observations[0] ?? "";
+      const regionLabel = typeof region.regionLabel === "string" ? cleanText(region.regionLabel, "Scanned area") : "Scanned area";
+
+      return label && observation ? { label, observation, regionLabel } : null;
+    })
+    .filter((region): region is EvidenceRegion => Boolean(region))
+    .slice(0, 4);
+
+  return regions.length ? regions : [{
+    label: partName,
+    observation: observations[0] ?? `The photo shows ${partName}.`,
+    regionLabel: "Scanned area",
+  }];
+}
+
+function coerceSceneObjects(value: unknown): SceneObject[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => {
+      if (!isRecord(entry) || typeof entry.name !== "string") {
+        return null;
+      }
+
+      const name = cleanText(entry.name, "");
+      if (!name) {
+        return null;
+      }
+
+      const normalizedCategory = resolveScanCategory(entry.category);
+      const category = normalizedCategory === "unknown" && typeof entry.category === "string" && entry.category.trim()
+        ? cleanText(entry.category, "unknown")
+        : normalizedCategory;
+      const regionLabel = typeof entry.regionLabel === "string" ? cleanText(entry.regionLabel, "Scanned area") : "Scanned area";
+
+      return { name, category, regionLabel, primary: entry.primary === true };
+    })
+    .filter((entry): entry is SceneObject => Boolean(entry))
+    .slice(0, 8);
+}
+
+function coerceSourceLinks(value: unknown, partName: string): SourceLink[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((link) => {
+      if (typeof link === "string") {
+        return {
+          label: "Model reference",
+          url: link,
+          sourceType: "search" as const,
+        };
+      }
+
+      if (!isRecord(link) || typeof link.url !== "string") {
+        return null;
+      }
+
+      return {
+        label: typeof link.label === "string" && link.label.trim() ? link.label : `Search ${partName}`,
+        url: link.url,
+        sourceType: isSourceType(link.sourceType) ? link.sourceType : "search",
+      };
+    })
+    .filter((link): link is SourceLink => Boolean(link));
+}
+
+function isOptionalFitmentConfidence(value: unknown) {
+  return value === "not_applicable" || value === "needs_vehicle_context" || value === "possible" || value === "supported";
 }
 
 function parseOllamaIdentificationResult(text: string): IdentificationResult | null {
@@ -1254,7 +1836,16 @@ function resolveOllamaConfidence(value: unknown): Confidence {
 }
 
 function resolveScanCategory(value: unknown): ScanCategory {
-  return isScanCategory(value) ? value : "unknown";
+  if (isScanCategory(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return isScanCategory(normalized) ? normalized : "unknown";
+  }
+
+  return "unknown";
 }
 
 function isSafetyCriticalCategory(category: ScanCategory) {
@@ -1300,9 +1891,24 @@ function normalizeNextAction(
   nextAction: string,
   safetyTriage: IdentificationResult["safetyTriage"],
   needsBetterPhoto: boolean,
+  partName: string,
 ) {
   if (safetyTriage === "needs_professional") {
     return ensureProfessionalNextAction(nextAction);
+  }
+
+  if (partName.toLowerCase() === "engine assembly") {
+    const cleaned = cleanText(nextAction, "");
+    if (!cleaned || /owner.?s manual|visible identification|specific engine details|vehicle component|another photo of (?:the )?(?:label|engine)/i.test(cleaned)) {
+      return "Use the vehicle year, make, model, or VIN before ordering engine-bay parts; inspect the exact cover, intake, belt, hose, or wiring area you need.";
+    }
+  }
+
+  if (/\bfender\b/i.test(partName)) {
+    const cleaned = cleanText(nextAction, "");
+    if (/quarter[- ]panel/i.test(cleaned)) {
+      return "Inspect the fender damage from a closer angle and check nearby bumper, hood, wheel-opening, and door gaps.";
+    }
   }
 
   if (needsBetterPhoto) {
@@ -1315,6 +1921,70 @@ function normalizeNextAction(
     : cleaned;
 }
 
+function normalizeWhatItDoes(whatItDoes: string, partName: string, scanCategory: ScanCategory) {
+  const cleaned = cleanText(whatItDoes, "");
+  const normalizedPartName = partName.toLowerCase();
+  const generic = !cleaned
+    || /visible vehicle component|vehicle-specific context|could not verify|damaged body panel|body panel sits/i.test(cleaned)
+    || (/\bfender\b/.test(normalizedPartName) && /quarter[- ]panel|rear-side|tail-?light edge|trunk\/side|\b(dent|scratch|broken part) is the specific exterior body area/i.test(cleaned));
+
+  if (partName.toLowerCase() === "engine assembly") {
+    if (generic) {
+      return "The engine assembly is the main power unit in the engine bay; visible cover, intake, belt, hose, and wiring clues identify the broader assembly area.";
+    }
+  }
+
+  if (generic) {
+    const partDescription = describeRecognizedPart(partName, scanCategory);
+    if (partDescription) {
+      return partDescription;
+    }
+  }
+
+  return cleanText(
+    cleaned,
+    scanCategory === "engine"
+      ? "Deep Spec identified an engine-bay part, but could not verify its exact function from this photo."
+      : "Deep Spec could not verify what this part does from this photo.",
+  );
+}
+
+function describeRecognizedPart(partName: string, scanCategory: ScanCategory) {
+  const normalized = partName.toLowerCase().replace(/[-_]/g, " ");
+  const descriptions: Array<[RegExp, string]> = [
+    [/\b(front |rear |back )?bumper\b/, `${partName} is an exterior impact cover at the end of the vehicle; it protects underlying brackets, lamps, sensors, and body structure from minor contact.`],
+    [/\b(car )?(front |rear |back )?door\b/, `${partName} is a side body closure panel that protects the cabin opening and carries the handle, glass, trim, and lower side-impact structure.`],
+    [/\bquarter panel\b/, `${partName} is a fixed rear-side body panel around the wheel opening, tail-light edge, and trunk/side structure.`],
+    [/\bfender\b/, `${partName} is the outer body panel around the wheel opening; it shields the tire area and aligns with the bumper, hood, and door gaps.`],
+    [/\bhood\b/, `${partName} is the front body panel over the engine bay; it protects engine-bay components and aligns with the fenders, grille, and headlamps.`],
+    [/\bhead\s*light|headlamp\b/, `${partName} is the front lighting assembly used for road illumination and signaling; lens, housing, tabs, and wiring determine replacement fit.`],
+    [/\btail\s*light|taillight\b/, `${partName} is the rear lighting assembly for brake, turn, and running-light visibility; lens, mounting tabs, and wiring should be checked.`],
+    [/\bgrille\b/, `${partName} is the front opening/trim panel that directs airflow and aligns with the bumper, hood, lamps, and radiator-support area.`],
+    [/\bmirror\b/, `${partName} is the side mirror assembly used for rearward visibility; housing, glass, mounting base, and wiring options affect fitment.`],
+    [/\b(front |rear |back )?wheel\b/, `${partName} is the wheel/tire area; visible rim, tire sidewall, and wheel-opening alignment help separate wheel damage from surrounding body-panel damage.`],
+    [/\bwindshield|window\b/, `${partName} is vehicle glass; cracks, seals, trim, and nearby body edges determine whether glass, molding, or surrounding panel work is needed.`],
+    [/\brocker panel\b/, `${partName} is the lower side body panel below the doors; it supports side sealing and is commonly checked for dents, corrosion, and structural damage.`],
+    [/\btrunk\b/, `${partName} is the rear cargo closure panel; alignment with quarter panels, bumper, tail lights, and latch hardware matters for repair.`],
+    [/\broof\b/, `${partName} is the upper body panel; dents, glass edges, rails, and weather sealing determine repair scope.`],
+    [/\bvalve cover\b/, `${partName} seals the top of the cylinder head and keeps engine oil contained around the valvetrain; gasket leaks, fasteners, hoses, and wiring nearby should be inspected.`],
+    [/\bengine cover\b/, `${partName} is the visible cover over the engine assembly; remove or inspect surrounding intake, hose, wiring, and fastener areas before identifying the exact service part.`],
+    [/\bintake (manifold|duct|hose|tube|boot)\b/, `${partName} routes intake air into the engine; cracks, loose clamps, sensor wiring, and adjacent hoses affect diagnosis and fitment.`],
+    [/\bradiator hose\b/, `${partName} carries coolant between the engine and radiator; swelling, cracks, clamp position, and coolant residue should be checked before replacement.`],
+    [/\bserpentine belt|drive belt\b/, `${partName} drives engine accessories; inspect ribs, cracks, routing, tensioner alignment, and nearby pulleys before replacing it.`],
+  ];
+
+  const match = descriptions.find(([pattern]) => pattern.test(normalized));
+  if (match) {
+    return match[1];
+  }
+
+  if (scanCategory === "body" && !isGenericPartName(partName)) {
+    return `${partName} is the specific exterior body area identified in this scan; inspect adjacent panel gaps, mounting points, finish damage, and nearby lamps or trim before repair decisions.`;
+  }
+
+  return null;
+}
+
 function normalizeIdentificationResult(
   result: IdentificationResult,
   ocrText: string | null = null,
@@ -1323,8 +1993,9 @@ function normalizeIdentificationResult(
   const datasetMatches = findDatasetMatches(result, env);
   const cleanEvidence = appendDatasetEvidence(appendOcrEvidence(cleanList(result.evidence), ocrText), datasetMatches);
   const originalPartName = cleanText(result.partName, "Unidentified car part");
-  const partName = resolvePrimaryPartName(originalPartName, datasetMatches);
   const scanCategory = getTrustedCategory(result);
+  const partName = resolvePrimaryPartName(originalPartName, datasetMatches, result);
+  const resolvedScanCategory = resolvePartScanCategory(scanCategory, partName);
   const safety = normalizeSafetyFlags(result, scanCategory);
   const visibleObservations = cleanList(result.visibleObservations);
   const confidence = resolvePrimaryConfidence(result.confidence, originalPartName, partName, datasetMatches);
@@ -1332,45 +2003,79 @@ function normalizeIdentificationResult(
   const confidenceRange = normalizeConfidenceRange(result.confidenceRange);
   const confirmationNeed = normalizeConfirmationNeed(result.confirmationNeed);
   const needsBetterPhoto = normalizeNeedsBetterPhoto(result, safety.safetyTriage, partName, confidence);
-  const candidateMatches = normalizeCandidateMatches(result, datasetMatches, partName, scanCategory);
-  const evidenceRegions = normalizeEvidenceRegions(result.evidenceRegions, visibleObservations, cleanEvidence);
+  const candidateMatches = normalizeCandidateMatches(result, datasetMatches, partName, resolvedScanCategory);
+  const evidenceRegions = normalizeEvidenceRegions(result.evidenceRegions, visibleObservations, cleanEvidence, partName);
   const sourceLinks = normalizeSourceLinks(result.sourceLinks, datasetMatches, partName);
 
   return {
     ...result,
     partName,
-    primaryPart: normalizePrimaryPart(result.primaryPart, partName, confidence, scanCategory, cleanEvidence),
+    primaryPart: normalizePrimaryPart(result.primaryPart, partName, confidence, resolvedScanCategory, cleanEvidence),
     confidence,
     ...(confidenceScore === undefined ? {} : { confidenceScore }),
     ...(confidenceRange === undefined ? {} : { confidenceRange }),
     ...(confirmationNeed === undefined ? {} : { confirmationNeed }),
-    candidateParts: normalizeCandidateParts(result.candidateParts, candidateMatches, partName, confidence, scanCategory),
+    candidateParts: normalizeCandidateParts(result.candidateParts, candidateMatches, partName, confidence, resolvedScanCategory),
     possibleVehicleContexts: normalizePossibleVehicleContexts(result.possibleVehicleContexts),
     measurements: normalizeMeasurements(result.measurements),
     requiredNextEvidence: normalizeRequiredNextEvidence(result.requiredNextEvidence, confirmationNeed, needsBetterPhoto),
     fitmentConfidence: normalizeFitmentConfidence(result.fitmentConfidence, result.possibleVehicleContexts),
-    scanCategory,
+    scanCategory: resolvedScanCategory,
     candidateMatches,
-    whatItDoes: cleanText(result.whatItDoes, "Deep Spec could not verify what this part does from this photo."),
+    whatItDoes: normalizeWhatItDoes(result.whatItDoes, partName, resolvedScanCategory),
     visibleObservations,
     evidenceRegions,
     concerns: cleanList(result.concerns),
     evidence: cleanEvidence,
     sourceLinks,
-    nextAction: normalizeNextAction(result.nextAction, safety.safetyTriage, needsBetterPhoto),
+    nextAction: normalizeNextAction(result.nextAction, safety.safetyTriage, needsBetterPhoto, partName),
     safetyTriage: safety.safetyTriage,
     isSafetyCritical: safety.isSafetyCritical,
     needsBetterPhoto,
   };
 }
 
-function resolvePrimaryPartName(partName: string, datasetMatches: DatasetMatch[]) {
-  if (!isGenericPartName(partName)) {
-    return partName;
+function resolvePrimaryPartName(
+  partName: string,
+  datasetMatches: DatasetMatch[],
+  result?: IdentificationResult,
+) {
+  if (
+    isGenericEnginePartName(partName) &&
+    result &&
+    (hasEngineBayAssemblyEvidence(result) || isBrandedGenericEnginePartName(partName) || isGenericEngineRetryOutput(partName, result))
+  ) {
+    return "Engine assembly";
+  }
+
+  const cleanedPartName = stripDeepSpecPartPrefix(partName);
+
+  if (result && isFrontFenderDamageOnlyLabel(cleanedPartName, result)) {
+    return `Front fender ${cleanedPartName.trim().toLowerCase()}`;
+  }
+
+  if (result && isFrontFenderMisreadAsQuarterPanel(cleanedPartName, result)) {
+    return "Front fender";
+  }
+
+  if (result && isUnsupportedQuarterPanelLabel(cleanedPartName, result)) {
+    return "Fender";
+  }
+
+  if (!isGenericPartName(cleanedPartName)) {
+    return cleanedPartName;
   }
 
   const supportedPartMatch = datasetMatches.find((match) => isDatasetPartMatch(match) && match.score >= 5);
-  return supportedPartMatch?.label ?? partName;
+  return supportedPartMatch?.label ?? cleanedPartName;
+}
+
+function resolvePartScanCategory(scanCategory: ScanCategory, partName: string): ScanCategory {
+  if (partName === "Engine assembly" || isKnownEnginePartName(partName)) {
+    return "engine";
+  }
+
+  return scanCategory;
 }
 
 function resolvePrimaryConfidence(
@@ -1389,7 +2094,7 @@ function resolvePrimaryConfidence(
 
 function normalizeConfidenceScore(value: unknown) {
   if (typeof value === "number" && Number.isFinite(value)) {
-    return clampPercent(value);
+    return clampPercent(value <= 1 ? value * 100 : value);
   }
 
   return undefined;
@@ -1397,9 +2102,22 @@ function normalizeConfidenceScore(value: unknown) {
 
 function normalizeConfidenceRange(value: unknown) {
   if (isRecord(value) && typeof value.low === "number" && typeof value.high === "number") {
-    const low = clampPercent(value.low);
-    const high = clampPercent(value.high);
+    const low = clampPercent(value.low <= 1 ? value.low * 100 : value.low);
+    const high = clampPercent(value.high <= 1 ? value.high * 100 : value.high);
     return low <= high ? { low, high } : { low: high, high: low };
+  }
+
+  if (typeof value === "string") {
+    const match = /^\s*(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)\s*$/.exec(value);
+    if (match) {
+      const rawLow = Number(match[1]);
+      const rawHigh = Number(match[2]);
+      if (Number.isFinite(rawLow) && Number.isFinite(rawHigh)) {
+        const low = clampPercent(rawLow <= 1 ? rawLow * 100 : rawLow);
+        const high = clampPercent(rawHigh <= 1 ? rawHigh * 100 : rawHigh);
+        return low <= high ? { low, high } : { low: high, high: low };
+      }
+    }
   }
 
   return undefined;
@@ -1408,6 +2126,13 @@ function normalizeConfidenceRange(value: unknown) {
 function normalizeConfirmationNeed(value: unknown): ConfirmationNeed | undefined {
   if (value === "none" || value === "one_more_angle" || value === "reference_needed") {
     return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "none" || normalized === "one_more_angle" || normalized === "reference_needed") {
+      return normalized;
+    }
   }
 
   return undefined;
@@ -1421,6 +2146,94 @@ function isGenericPartName(partName: string) {
   return /^(unknown|unknown component|unidentified|unidentified car part|car part|vehicle component|vehicle part|damaged area|car body|vehicle body|body panel)$/i.test(
     partName.trim(),
   );
+}
+
+function isGenericEnginePartName(partName: string) {
+  return /^(engine|deep spec engine|engine bay|engine compartment|powertrain)$/i.test(partName.trim());
+}
+
+function isBrandedGenericEnginePartName(partName: string) {
+  return /^deep spec engine$/i.test(partName.trim());
+}
+
+function isGenericEngineRetryOutput(partName: string, result: IdentificationResult) {
+  if (!/^engine$/i.test(partName.trim())) {
+    return false;
+  }
+
+  return /visible vehicle component|vehicle-specific context|another photo of (?:the )?engine/i.test(
+    [result.whatItDoes, result.nextAction].join(" "),
+  );
+}
+
+function stripDeepSpecPartPrefix(partName: string) {
+  const stripped = partName.trim().replace(/^deep spec\s+/i, "").trim();
+  return stripped || partName;
+}
+
+function isKnownEnginePartName(partName: string) {
+  return /\b(valve cover|engine cover|timing cover|intake manifold|intake duct|radiator hose|serpentine belt|drive belt|oil pan|air filter box|throttle body)\b/i.test(partName);
+}
+
+function isFrontFenderMisreadAsQuarterPanel(partName: string, result: IdentificationResult) {
+  if (!/\bquarter[- ]panel\b/i.test(partName)) {
+    return false;
+  }
+
+  const evidenceText = getVisualBodyEvidenceText(partName, result);
+  return hasFrontFenderEvidence(evidenceText) && !hasRearQuarterEvidence(evidenceText);
+}
+
+function isUnsupportedQuarterPanelLabel(partName: string, result: IdentificationResult) {
+  if (!/\bquarter[- ]panel\b/i.test(partName)) {
+    return false;
+  }
+
+  return !hasRearQuarterEvidence(getVisualBodyEvidenceText(partName, result));
+}
+
+function isFrontFenderDamageOnlyLabel(partName: string, result: IdentificationResult) {
+  if (!/^(dent|scratch|broken part|corrosion)$/i.test(partName.trim())) {
+    return false;
+  }
+
+  const evidenceText = getBodyEvidenceText(partName, result);
+  return hasFrontFenderEvidence(evidenceText) && !hasRearQuarterEvidence(evidenceText);
+}
+
+function getVisualBodyEvidenceText(partName: string, result: IdentificationResult) {
+  return normalizeMatchText(
+    [
+      partName,
+      ...result.visibleObservations,
+      ...result.concerns,
+      ...result.evidence,
+      ...result.evidenceRegions.flatMap((region) => [region.label, region.observation, region.regionLabel]),
+    ].join(" "),
+  );
+}
+
+function getBodyEvidenceText(partName: string, result: IdentificationResult) {
+  return normalizeMatchText(
+    [
+      partName,
+      result.whatItDoes,
+      result.nextAction,
+      ...result.visibleObservations,
+      ...result.concerns,
+      ...result.evidence,
+      ...result.evidenceRegions.flatMap((region) => [region.label, region.observation, region.regionLabel]),
+    ].join(" "),
+  );
+}
+
+function hasFrontFenderEvidence(evidenceText: string) {
+  return /\bfront\b|head\s*light|headlamp|\bhood\b|front bumper|front wheel|front tire|front fender|wheel arch|grille/.test(evidenceText);
+}
+
+function hasRearQuarterEvidence(evidenceText: string) {
+  const rearEvidenceText = evidenceText.replace(/\bnot (?:the )?rear quarter\b/g, "");
+  return /\brear\b|\bback\b|tail\s*light|taillight|\btrunk\b|rear bumper|rear wheel|rear tire/.test(rearEvidenceText);
 }
 
 function isDatasetPartMatch(match: DatasetMatch) {
@@ -1489,10 +2302,22 @@ function normalizePrimaryPart(
   evidence: string[],
 ): CandidatePart {
   if (primaryPart?.partName) {
+    const rawPrimaryPartName = cleanText(primaryPart.partName, partName);
+    const primaryPartName = isGenericEnginePartName(rawPrimaryPartName) && partName === "Engine assembly"
+      ? partName
+      : /^deep spec\s+/i.test(rawPrimaryPartName)
+      ? partName
+      : /\bquarter[- ]panel\b/i.test(rawPrimaryPartName) && /\bfender\b/i.test(partName)
+      ? partName
+      : /^(dent|scratch|broken part|corrosion)$/i.test(rawPrimaryPartName) && /\bfender\b/i.test(partName)
+      ? partName
+      : rawPrimaryPartName;
     return {
-      partName: cleanText(primaryPart.partName, partName),
+      partName: primaryPartName,
       confidence: primaryPart.confidence,
-      scanCategory: getTrustedCandidateCategory(primaryPart.scanCategory, primaryPart.partName),
+      scanCategory: primaryPartName === partName && (partName === "Engine assembly" || /^deep spec\s+/i.test(rawPrimaryPartName))
+        ? scanCategory
+        : getTrustedCandidateCategory(primaryPart.scanCategory, primaryPart.partName),
       evidence: cleanList(primaryPart.evidence).slice(0, 4),
       ...(primaryPart.whyNotPrimary ? { whyNotPrimary: cleanText(primaryPart.whyNotPrimary, "") } : {}),
     };
@@ -1632,7 +2457,12 @@ function normalizeFitmentConfidence(
   return possibleVehicleContexts?.length ? "possible" : "needs_vehicle_context";
 }
 
-function normalizeEvidenceRegions(evidenceRegions: EvidenceRegion[], observations: string[], evidence: string[]) {
+function normalizeEvidenceRegions(
+  evidenceRegions: EvidenceRegion[],
+  observations: string[],
+  evidence: string[],
+  partName: string,
+) {
   const cleanRegions = evidenceRegions
     .map((region) => ({
       label: cleanText(region.label, ""),
@@ -1640,6 +2470,25 @@ function normalizeEvidenceRegions(evidenceRegions: EvidenceRegion[], observation
       regionLabel: cleanText(region.regionLabel, "Scanned area"),
     }))
     .filter((region) => region.label && region.observation);
+
+  if (partName.toLowerCase() === "engine assembly") {
+    return normalizeEngineAssemblyRegions(cleanRegions, observations, evidence);
+  }
+
+  if (/\bfender\b/i.test(partName)) {
+    const normalizedFenderRegions = cleanRegions.map((region) => (
+      /\bquarter[- ]panel\b/i.test(region.label)
+        ? {
+            ...region,
+            label: partName,
+            observation: region.observation.replace(/\bquarter[- ]panel\b/gi, partName),
+          }
+        : region
+    ));
+    if (normalizedFenderRegions.length) {
+      return normalizedFenderRegions.slice(0, 4);
+    }
+  }
 
   if (cleanRegions.length) {
     return cleanRegions.slice(0, 4);
@@ -1652,6 +2501,80 @@ function normalizeEvidenceRegions(evidenceRegions: EvidenceRegion[], observation
       observation,
       regionLabel: "Scanned area",
     }));
+}
+
+function normalizeEngineAssemblyRegions(
+  regions: EvidenceRegion[],
+  observations: string[],
+  evidence: string[],
+) {
+  const weakRegionPattern = /^(engine|primary clue|clue \d+)$/i;
+  const weakObservationPattern = /black and silver color|visible vehicle component|main visible item/i;
+  const strongRegions = regions
+    .filter((region) => !weakRegionPattern.test(region.label) || !weakObservationPattern.test(region.observation))
+    .map((region) => ({
+      ...region,
+      label: weakRegionPattern.test(region.label) ? "Engine assembly" : region.label,
+      regionLabel: region.regionLabel || "Engine bay",
+    }));
+
+  if (regions.length && strongRegions.length === regions.length) {
+    return uniqueEvidenceRegions(strongRegions).slice(0, 4);
+  }
+
+  if (strongRegions.length >= 2) {
+    return uniqueEvidenceRegions(strongRegions).slice(0, 4);
+  }
+
+  const clues = [...observations, ...evidence].join(" ").toLowerCase();
+  const fallbackRegions: EvidenceRegion[] = [
+    {
+      label: "Engine cover",
+      observation: "Large cover area anchors the main engine assembly.",
+      regionLabel: "Center engine bay",
+    },
+    {
+      label: "Intake duct",
+      observation: "Air intake ducting is visible around the engine body.",
+      regionLabel: "Front engine bay",
+    },
+    {
+      label: "Accessory drive",
+      observation: "Belt or alternator-area hardware supports the engine assembly call.",
+      regionLabel: "Side engine bay",
+    },
+    {
+      label: "Hoses and wiring",
+      observation: "Hoses, harnesses, or connectors are visible around the assembly.",
+      regionLabel: "Engine bay perimeter",
+    },
+  ];
+
+  if (/cover|intake|duct|alternator|belt|hose|wiring|connector|harness|engine bay/.test(clues)) {
+    return fallbackRegions;
+  }
+
+  return [
+    {
+      label: "Engine assembly",
+      observation: "The scan shows the broader engine-bay assembly rather than a single isolated small part.",
+      regionLabel: "Engine bay",
+    },
+  ];
+}
+
+function uniqueEvidenceRegions(regions: EvidenceRegion[]) {
+  const seen = new Set<string>();
+  const unique: EvidenceRegion[] = [];
+
+  for (const region of regions) {
+    const key = `${region.label.toLowerCase()}|${region.observation.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(region);
+  }
+
+  return unique;
 }
 
 function normalizeSourceLinks(sourceLinks: SourceLink[], datasetMatches: DatasetMatch[], partName: string) {
@@ -1702,8 +2625,11 @@ function uniqueSourceLinks(links: SourceLink[]) {
 }
 
 function buildDatasetSourceContext(env: Record<string, string | undefined>) {
-  const datasetIndexPath = resolve(process.cwd(), env.DEEPSPEC_DATASET_INDEX_PATH || DEFAULT_DATASET_INDEX_PATH);
-  const datasetRecords = readDatasetRecords(datasetIndexPath);
+  if (env.DEEPSPEC_ENABLE_DATASET_SOURCE_CONTEXT !== "true") {
+    return null;
+  }
+
+  const datasetRecords = readDatasetRecordIndexes(env);
   const sourceSummaries = datasetRecords.length
     ? summarizeDatasetRecords(datasetRecords)
     : summarizeRawDatasetLabels(resolve(process.cwd(), env.DEEPSPEC_DATASET_ROOT || DEFAULT_DATASET_ROOT));
@@ -1739,7 +2665,7 @@ function summarizeDatasetRecords(records: DatasetRecord[]): DatasetMatch[] {
         kind,
         label,
         score: 0,
-        sampleCount: (existing?.sampleCount ?? 0) + 1,
+        sampleCount: (existing?.sampleCount ?? 0) + getRecordSampleCount(record),
         sourceUrl: existing?.sourceUrl ?? getRecordSourceUrl(record),
       });
     }
@@ -1772,8 +2698,7 @@ type DatasetMatch = {
 };
 
 function findDatasetMatches(result: IdentificationResult, env: Record<string, string | undefined>): DatasetMatch[] {
-  const datasetIndexPath = resolve(process.cwd(), env.DEEPSPEC_DATASET_INDEX_PATH || DEFAULT_DATASET_INDEX_PATH);
-  const datasetRecords = readDatasetRecords(datasetIndexPath);
+  const datasetRecords = readDatasetRecordIndexes(env);
   const datasetRoot = resolve(process.cwd(), env.DEEPSPEC_DATASET_ROOT || DEFAULT_DATASET_ROOT);
   const text = normalizeMatchText(
     [
@@ -1815,7 +2740,32 @@ type DatasetRecord = {
   labels?: unknown;
   links?: unknown;
   primaryLabel?: unknown;
+  sampleCount?: unknown;
 };
+
+function readDatasetRecordIndexes(env: Record<string, string | undefined>): DatasetRecord[] {
+  return getDatasetIndexPaths(env).flatMap((indexPath) => readDatasetRecords(indexPath));
+}
+
+function getDatasetIndexPaths(env: Record<string, string | undefined>) {
+  const explicitPaths = splitDatasetIndexPaths(env.DEEPSPEC_DATASET_INDEX_PATHS);
+  if (explicitPaths.length) {
+    return explicitPaths.map((indexPath) => resolve(process.cwd(), indexPath));
+  }
+
+  if (env.DEEPSPEC_DATASET_INDEX_PATH) {
+    return [resolve(process.cwd(), env.DEEPSPEC_DATASET_INDEX_PATH)];
+  }
+
+  return uniqueStrings([
+    DEFAULT_DATASET_INDEX_PATH,
+    DEFAULT_HF_AUTOMOTIVE_SOURCE_INDEX_PATH,
+  ]).map((indexPath) => resolve(process.cwd(), indexPath));
+}
+
+function splitDatasetIndexPaths(value: string | undefined) {
+  return value ? value.split(/[;,]/).map((item) => item.trim()).filter(Boolean) : [];
+}
 
 function readDatasetRecords(indexPath: string): DatasetRecord[] {
   if (!existsSync(indexPath)) {
@@ -1852,7 +2802,7 @@ function findDatasetRecordMatches(records: DatasetRecord[], text: string): Datas
       labelGroups.set(key, {
         kind,
         label,
-        sampleCount: (existing?.sampleCount ?? 0) + 1,
+        sampleCount: (existing?.sampleCount ?? 0) + getRecordSampleCount(record),
         score: existing?.score ?? 0,
         sourceUrl,
       });
@@ -1888,6 +2838,12 @@ function getRecordSourceUrl(record: DatasetRecord) {
   }
 
   return typeof record.links.image === "string" ? record.links.image : typeof record.links.dataset === "string" ? record.links.dataset : null;
+}
+
+function getRecordSampleCount(record: DatasetRecord) {
+  return typeof record.sampleCount === "number" && Number.isFinite(record.sampleCount) && record.sampleCount > 0
+    ? Math.round(record.sampleCount)
+    : 1;
 }
 
 function formatDatasetEvidence(match: DatasetMatch) {
@@ -2082,10 +3038,14 @@ function buildOcrContext(text: string) {
 }
 
 function ensureProfessionalNextAction(nextAction: string) {
-  const cleaned = cleanText(nextAction, "Verify this part with a mechanic before driving or attempting repair.");
-  return /mechanic|professional|shop/i.test(cleaned)
+  const cleaned = cleanText(nextAction, "Check this safety item before driving or repairing.");
+  if (/mechanic|professional|shop/i.test(cleaned)) {
+    return "Check this safety item before driving or repairing.";
+  }
+
+  return /before driving|before repairing|do not drive|check this safety item/i.test(cleaned)
     ? cleaned
-    : `${cleaned} Verify this with a mechanic before driving or attempting repair.`;
+    : `${cleaned} Check this safety item before driving or repairing.`;
 }
 
 function cleanText(value: string, fallback: string) {
@@ -2123,6 +3083,7 @@ function isIdentificationResult(value: unknown): value is IdentificationResult {
     typeof value.whatItDoes === "string" &&
     isStringArray(value.visibleObservations) &&
     isEvidenceRegionArray(value.evidenceRegions) &&
+    isSceneObjectArray(value.sceneObjects ?? []) &&
     isStringArray(value.concerns) &&
     isSafetyTriage(value.safetyTriage) &&
     typeof value.isSafetyCritical === "boolean" &&
@@ -2185,6 +3146,16 @@ function isEvidenceRegionArray(value: unknown): value is EvidenceRegion[] {
   ));
 }
 
+function isSceneObjectArray(value: unknown): value is SceneObject[] {
+  return Array.isArray(value) && value.every((item) => (
+    isRecord(item) &&
+    typeof item.name === "string" &&
+    typeof item.category === "string" &&
+    typeof item.regionLabel === "string" &&
+    typeof item.primary === "boolean"
+  ));
+}
+
 function isSourceLinkArray(value: unknown): value is SourceLink[] {
   return Array.isArray(value) && value.every((item) => (
     isRecord(item) &&
@@ -2194,7 +3165,7 @@ function isSourceLinkArray(value: unknown): value is SourceLink[] {
   ));
 }
 
-function isConfidence(value: unknown) {
+function isConfidence(value: unknown): value is Confidence {
   return value === "high" || value === "medium" || value === "low";
 }
 
@@ -2236,6 +3207,10 @@ function isSourceType(value: unknown): value is SourceLink["sourceType"] {
 }
 
 function getTrustedCategory(result: IdentificationResult): ScanCategory {
+  if (hasCompleteEngineEvidence(result)) {
+    return "engine";
+  }
+
   if (result.scanCategory === "leak" && !hasLeakEvidence(result)) {
     const inferredCategory = categorizeIdentificationText(result);
     return inferredCategory === "unknown" || inferredCategory === "leak" ? "body" : inferredCategory;
@@ -2274,7 +3249,7 @@ function categorizeText(text: string): ScanCategory {
   if (/steering|tie rod|rack and pinion/.test(normalized)) return "steering";
   if (/suspension|control arm|strut|shock|ball joint/.test(normalized)) return "suspension";
   if (/fuel|gas|injector|fuel line|tank/.test(normalized)) return "fuel";
-  if (/leak|oil|coolant|fluid/.test(normalized)) return "leak";
+  if (/\b(active leak|fluid leak|oil leak|coolant leak|fuel leak|gas leak|leaking|wet stain|dripping|pooling|seeping)\b/.test(normalized)) return "leak";
   if (/battery|alternator|starter|wire|wiring|connector|fuse|sensor|electrical/.test(normalized)) return "electrical";
   if (/bumper|fender|door|panel|body|hood|windshield|window|wheel|headlight|tail\s*light|taillight|roof|grille|license|mirror|rocker|quarter|trunk/.test(normalized)) return "body";
   if (/engine|belt|hose|radiator|thermostat|filter|intake|manifold/.test(normalized)) return "engine";
@@ -2297,6 +3272,36 @@ function hasLeakEvidence(result: IdentificationResult) {
   }
 
   return /\b(active leak|fluid leak|oil leak|coolant leak|fuel leak|gas leak|leaking|fluid|oil|coolant|fuel|wet stain|dripping|pooling|seeping)\b/i.test(text);
+}
+
+function hasCompleteEngineEvidence(result: IdentificationResult) {
+  return hasEngineBayAssemblyEvidence(result);
+}
+
+function hasEngineBayAssemblyEvidence(result: IdentificationResult) {
+  const text = normalizeWhitespace([
+    result.partName,
+    result.primaryPart?.partName ?? "",
+    result.whatItDoes,
+    ...result.visibleObservations,
+    ...result.evidence,
+  ].join(" "));
+
+  const namesCompleteEngine = /\b(engine|internal combustion engine|engine assembly|complete engine|engine block|powertrain)\b/i.test(text);
+  const engineBayFeatures = [
+    /\bengine cover\b/i,
+    /\bintake (manifold|duct|hose|tube|boot)\b/i,
+    /\bcylinder head\b/i,
+    /\boil pan\b/i,
+    /\bengine block\b/i,
+    /\balternator\b/i,
+    /\bserpentine belt\b/i,
+    /\bradiator hose\b/i,
+    /\bwire harness\b/i,
+    /\belectrical connectors?\b/i,
+  ].filter((pattern) => pattern.test(text)).length;
+
+  return namesCompleteEngine && engineBayFeatures >= 2;
 }
 
 function hasSafetyCriticalEvidence(result: IdentificationResult) {
