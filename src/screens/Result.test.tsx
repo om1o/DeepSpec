@@ -102,6 +102,18 @@ describe("Result", () => {
     });
   });
 
+  it("automatically prepares an intake draft after saving without requiring inspection", async () => {
+    const user = userEvent.setup();
+    renderResult(successfulScan);
+    expect(screen.queryByRole("region", { name: "Automatic intake draft" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save", exact: true }));
+    expect(screen.getByRole("region", { name: "Automatic intake draft" })).toHaveTextContent("AI suggestion — not verified");
+    expect(screen.getByRole("region", { name: "Automatic intake draft" })).toHaveTextContent("Not tested");
+    expect(getLookups()).toHaveLength(1);
+    expect(getLookups()[0].inspection).toBeUndefined();
+    expect(reportService.buildScanReport(getLookups()[0])).toContain("Automatic intake draft");
+  });
+
   it("shows the AI identification result", async () => {
     renderResult(successfulScan);
 

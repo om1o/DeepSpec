@@ -1,4 +1,5 @@
 import { getLocalDateStamp } from "../lib/utils";
+import { formatIntakeDraft } from "../lib/intakeDraft";
 import type { CandidateMatch, EvidenceRegion, Lookup, SourceLink } from "../types";
 
 export function buildScanReport(lookup: Lookup) {
@@ -10,11 +11,13 @@ export function buildScanReport(lookup: Lookup) {
     `Created: ${formatDate(lookup.createdAt)}`,
     `Captured: ${formatDate(lookup.frame.capturedAt)}`,
     "",
+    formatIntakeDraft(lookup),
+    "",
     "AI scan summary:",
     `${result?.partName ?? "Unidentified part"} - ${result?.confidence ?? "unknown"} confidence - ${lookup.scanCategory}`,
     result?.safetyTriage === "needs_professional" || result?.isSafetyCritical
       ? "Safety: check this before driving or repairing."
-      : "Safety: no immediate safety-critical flag from the scan.",
+      : result ? "Safety: no immediate safety-critical flag from the scan." : "Safety: not assessed; no AI result saved.",
     "",
     `Part: ${result?.partName ?? "Not identified"}`,
     `Confidence: ${result?.confidence ?? "unknown"}`,
@@ -39,7 +42,7 @@ export function buildScanReport(lookup: Lookup) {
     formatList(detectedText, "None detected."),
     "",
     "Concerns:",
-    formatList(result?.concerns, "Nothing concerning visible."),
+    formatList(result?.concerns, "No concerns recorded; this does not establish condition."),
     "",
     "Dataset evidence:",
     formatList(datasetEvidence, "No local labeled dataset evidence matched this result."),

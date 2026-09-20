@@ -5,6 +5,7 @@ import Button from "../components/ui/Button";
 import HistoryDockButton from "../components/ui/HistoryDockButton";
 import { IsolatedPartView } from "../components/result/IsolatedPartView";
 import { PartInspectionForm } from "../components/result/PartInspectionForm";
+import { IntakeDraft } from "../components/result/IntakeDraft";
 import { ScanDebugOverlay } from "../components/result/ScanDebugOverlay";
 import { IssueLine, ResultDetailSections, SceneCategoryList } from "../components/result/PositiveAnswerCard";
 import { getSimpleResultSummary } from "../lib/simpleResultSummary";
@@ -220,6 +221,7 @@ export default function Result() {
             />
           ) : null}
           {!scanState?.result && !scanState?.errorMessage ? <NotAnalyzed capturedAt={capturedAt} /> : null}
+          {inspectionLookup ? <IntakeDraft lookup={inspectionLookup} /> : null}
           {lookup ? (
             <TrustControl
               lookup={lookup}

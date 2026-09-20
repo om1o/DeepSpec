@@ -1,6 +1,44 @@
 import { buildScanReport, getMechanicSearchUrl, getScanReportFilename } from "./report";
 import type { Lookup } from "../types";
 import { emptyPartInspection } from "../lib/partInspection";
+import { buildIntakeDraft } from "../lib/intakeDraft";
+
+it("prepares an intake draft without promoting AI confidence, OCR or ratings to verification", () => {
+  const draft = buildIntakeDraft({ ...lookup, result: { ...lookup.result!, confidence: "high" } });
+  expect(draft.identitySource).toBe("AI suggestion — not verified");
+  expect(draft.partNumber).toBe("Not verified");
+  expect(draft.functionStatus).toBe("Not tested");
+  expect(draft.checks).toContain("Have a qualified professional assess this part before use.");
+  expect(buildScanReport(lookup)).toContain("Automatic intake draft\nRecord: lookup-1");
+});
+
+it("keeps failed identification and missing observations explicit", () => {
+  const failed = { ...lookup, result: undefined };
+  expect(buildIntakeDraft(failed).identitySource).toBe("No identification saved");
+  expect(buildScanReport(failed)).toContain("Safety: not assessed; no AI result saved.");
+  expect(buildScanReport(failed)).not.toContain("Nothing concerning visible");
+});
+
+it("asks for another angle and deduplicates requested evidence", () => {
+  const draft = buildIntakeDraft({ ...lookup, result: { ...lookup.result!, confirmationNeed: "one_more_angle", requiredNextEvidence: ["Read label", "Read label", " "] } });
+  expect(draft.checks).toContain("Take a clearer photo or another angle of the part and its label.");
+  expect(draft.checks.filter((check) => check === "Read label")).toHaveLength(1);
+});
+
+it.each(["passed", "failed", "inconclusive", "not_tested"] as const)("uses human %s evidence while still requiring fitment verification", (functionalStatus) => {
+  const draft = buildIntakeDraft({ ...lookup, inspection: {
+    ...emptyPartInspection, inspectorName: "Pat", inspectedAt: "2026-09-20T12:00:00Z",
+    confirmedPartName: "Starter", partNumber: "ABC123", identityEvidence: "Stamped label",
+    functionalStatus, functionalNotes: "Bench test recorded separately",
+  } });
+  expect(draft.name).toBe("Starter");
+  expect(draft.identitySource).toBe("Human inspection");
+  expect(draft.functionStatus).toBe(`${functionalStatus.replaceAll("_", " ")} (human record)`);
+  expect(draft.checks).toContain("Verify vehicle fitment against a trusted catalog before ordering or listing.");
+  expect(draft.checks).not.toContain("Read and record the part number.");
+  if (functionalStatus === "failed") expect(draft.checks).toContain("Functional test failed; resolve the recorded failure before use.");
+  if (functionalStatus === "inconclusive") expect(draft.checks).toContain("Functional test was inconclusive; further testing is needed.");
+});
 
 it("separates human inspection from AI and never infers function from appearance", () => {
   const report = buildScanReport({ ...lookup, inspection: {

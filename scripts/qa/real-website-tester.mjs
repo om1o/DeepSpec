@@ -510,9 +510,12 @@ async function runResultDetail() {
   await gotoPath("/result/qa-alternator-1");
   await expectText(/QA Alternator/i, "result part label", "frontend", ["src/screens/Result.tsx", "src/services/storage.ts"]);
   await expectText(/\bAsk\b/i, "chat entry action", "frontend", ["src/screens/Result.tsx"]);
+  await expectText(/Automatic intake draft/i, "automatic intake draft", "frontend", ["src/components/result/IntakeDraft.tsx", "src/screens/Result.tsx"]);
+  await expectText(/AI suggestion — not verified/i, "unverified intake identity", "frontend", ["src/lib/intakeDraft.ts"]);
+  await expectText(/Verify vehicle fitment against a trusted catalog/i, "fitment check", "frontend", ["src/lib/intakeDraft.ts"]);
 
   return {
-    details: "Saved result detail rendered the simple answer and Ask action.",
+    details: "Saved result detail rendered the answer, Ask action, automatic intake draft, unverified identity and fitment check.",
     likelyFiles: ["src/screens/Result.tsx", "src/services/storage.ts"],
     status: "pass",
   };
