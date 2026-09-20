@@ -1,4 +1,5 @@
 import { getLookups } from "./storage";
+import { accountStorageKey } from "../lib/accountScope";
 import type {
   CustomerVisibleReport,
   Lookup,
@@ -380,7 +381,7 @@ function writeJobs(jobs: ShopJob[]): StorageResult<ShopJob[]> {
   }
 
   try {
-    localStorage.setItem(SHOP_JOBS_STORAGE_KEY, JSON.stringify(normalized));
+    localStorage.setItem(accountStorageKey(SHOP_JOBS_STORAGE_KEY), JSON.stringify(normalized));
     return { ok: true, value: normalized };
   } catch {
     return { ok: false, message: "DeepSpec could not save this shop job on this device.", value: normalized };
@@ -452,7 +453,7 @@ function readJson<T>(key: string, guard: (value: unknown) => value is T): T | nu
   }
 
   try {
-    const raw = localStorage.getItem(key);
+    const raw = localStorage.getItem(accountStorageKey(key));
     if (!raw) {
       return null;
     }
@@ -470,7 +471,7 @@ function writeJson(key: string, value: unknown) {
   }
 
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    localStorage.setItem(accountStorageKey(key), JSON.stringify(value));
   } catch {
     // The caller still gets the in-memory object; persistence failures surface on job writes.
   }

@@ -10,6 +10,7 @@ import { ScanDebugOverlay } from "../components/result/ScanDebugOverlay";
 import { IssueLine, ResultDetailSections, SceneCategoryList } from "../components/result/PositiveAnswerCard";
 import { getSimpleResultSummary } from "../lib/simpleResultSummary";
 import { withLatestInspection } from "../lib/partInspection";
+import { getAccountScope, isAccountScopeCurrent, isCurrentAccountRouteState } from "../lib/accountScope";
 import { deriveIssue, getAnswerBody, getSceneChips } from "../lib/resultFacts";
 import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } from "../lib/utils";
 import { buildScanReport, downloadTextFile, getScanReportFilename } from "../services/report";
@@ -19,14 +20,16 @@ import { createLookup, getLookup, normalizeLookup, saveExistingLookup, scanState
 import type { CapturedFrame, IdentificationResult, Lookup, Rating, ScanAnalysisState, ShopJob as ShopJobRecord } from "../types";
 
 export default function Result() {
+  const [mountedScope] = useState(getAccountScope);
   const location = useLocation();
+  const routeState = isCurrentAccountRouteState(location.state) ? location.state : null;
   const navigate = useNavigate();
   const { id } = useParams();
-  const historyLookup = normalizeLookup(location.state?.savedLookup);
+  const historyLookup = normalizeLookup(routeState?.savedLookup);
   const [lookup, setLookup] = useState<Lookup | null>(() => {
     if (!id) return null;
     const local = getLookup(id);
-    const fromHistory = normalizeLookup(location.state?.savedLookup);
+    const fromHistory = normalizeLookup(routeState?.savedLookup);
     if (local && fromHistory?.id === id) return withLatestInspection(local, fromHistory);
     return local;
   });
@@ -36,7 +39,7 @@ export default function Result() {
     : lookup;
   const inspectionLookup = inspectionBase ? withRetriedLookupResult(inspectionBase, liveScanState) : null;
   const [saveError, setSaveError] = useState<string | null>(null);
-  const scanState = lookup ? scanStateFromLookup(lookup) : liveScanState ?? getScanState(location.state);
+  const scanState = lookup ? scanStateFromLookup(lookup) : liveScanState ?? getScanState(routeState);
   const frame = scanState?.frame ?? readLatestCapturedFrame();
   const capturedAt = frame?.capturedAt ? new Date(frame.capturedAt).toLocaleString() : null;
   const storageWarning = scanState?.storageWarning;
@@ -56,6 +59,7 @@ export default function Result() {
   }
 
   function handleRating(rating: Rating) {
+    if (!isAccountScopeCurrent(mountedScope)) return;
     if (!lookup) {
       return;
     }
@@ -72,6 +76,7 @@ export default function Result() {
   }
 
   function handleCorrection(correction: string) {
+    if (!isAccountScopeCurrent(mountedScope)) return;
     if (!lookup) {
       return;
     }
@@ -85,6 +90,7 @@ export default function Result() {
 
 
   function saveCurrentScan() {
+    if (!isAccountScopeCurrent(mountedScope)) return null;
     if (!scanState?.frame || !scanState.result) {
       return null;
     }
@@ -121,6 +127,7 @@ export default function Result() {
   }
 
   function handleSaveAndAsk(question?: string) {
+    if (!isAccountScopeCurrent(mountedScope)) return;
     const saved = lookup ?? saveCurrentScan();
     if (!saved) {
       return;
@@ -529,6 +536,7 @@ function AnalysisError({
 }) {
   const [isOnline, setIsOnline] = useState(() => typeof navigator !== "undefined" ? navigator.onLine : true);
   const [isRetrying, setIsRetrying] = useState(false);
+  const [mountedScope] = useState(getAccountScope);
   const [retryError, setRetryError] = useState<string | null>(null);
   const errorDetails = getAIErrorDetails(code);
 
@@ -547,13 +555,15 @@ function AnalysisError({
   }, []);
 
   async function handleRetry() {
+    const scope = mountedScope;
     const retryFrame = lookup?.frame ?? frame;
-    if (!retryFrame || isRetrying) return;
+    if (!retryFrame || isRetrying || !isAccountScopeCurrent(scope)) return;
     setIsRetrying(true);
     setRetryError(null);
 
     try {
       const result = await identifyCapturedFrame(retryFrame);
+      if (!isAccountScopeCurrent(scope)) return;
       if (lookup) {
         const updateResult = updateLookupResult(lookup.id, result, {
           analysisSource: "manual_retry",
@@ -581,7 +591,7 @@ function AnalysisError({
         });
       }
     } catch (err) {
-      setRetryError(getAIErrorMessage(err));
+      if (isAccountScopeCurrent(scope)) setRetryError(getAIErrorMessage(err));
     } finally {
       setIsRetrying(false);
     }

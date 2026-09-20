@@ -1,3 +1,4 @@
+import { accountStorageKey, setActiveAccount } from "../lib/accountScope";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -228,8 +229,9 @@ describe("Auth", () => {
   });
 
   it("syncs all local saved scans to cloud after a verified login", async () => {
+    setActiveAccount("password-user");
     const user = userEvent.setup();
-    localStorage.setItem("deep-spec:lookups", JSON.stringify([
+    localStorage.setItem(accountStorageKey("deep-spec:lookups"), JSON.stringify([
       makeSavedLookup("lookup-1", "Alternator"),
       makeSavedLookup("lookup-2", "Starter"),
     ]));
@@ -261,8 +263,9 @@ describe("Auth", () => {
   });
 
   it("opens the scanner without waiting for a slow cloud sync to finish", async () => {
+    setActiveAccount("password-user");
     const user = userEvent.setup();
-    localStorage.setItem("deep-spec:lookups", JSON.stringify([makeSavedLookup("lookup-1", "Alternator")]));
+    localStorage.setItem(accountStorageKey("deep-spec:lookups"), JSON.stringify([makeSavedLookup("lookup-1", "Alternator")]));
     // A stalled upload (bad signal, slow storage) must not hold a verified user on the login screen.
     cloudSyncMock.syncLookupsToCloud.mockReturnValue(new Promise(() => undefined));
     supabaseMock.auth.getUser

@@ -1,3 +1,4 @@
+import { setActiveAccount } from "../../lib/accountScope";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PartInspectionForm } from "./PartInspectionForm";
@@ -70,4 +71,21 @@ it("does not announce saved or sync when local storage fails", async () => {
   expect(screen.getByRole("status")).toHaveTextContent("storage is full");
   expect(onSaved).not.toHaveBeenCalled();
   expect(sync).not.toHaveBeenCalled();
+});
+
+it.each(["different-account", "round-trip"])("rejects a stale mounted inspection form: %s", async (mode) => {
+  const user = userEvent.setup();
+  const { lookup, onSaved } = setup();
+  const sync = vi.spyOn(cloud, "syncLookupToCloud");
+  await user.click(screen.getByText("Human inspection — optional"));
+  await user.type(screen.getByLabelText("Inspector name (self-reported)"), "Pat");
+  setActiveAccount("other-account");
+  if (mode === "round-trip") setActiveAccount("test-user");
+  await user.click(screen.getByRole("button", { name: "Save inspection" }));
+  expect(screen.getByRole("status")).toHaveTextContent("Account changed");
+  expect(onSaved).not.toHaveBeenCalled();
+  expect(sync).not.toHaveBeenCalled();
+  expect(getLookup(lookup.id)?.inspection).toBeUndefined();
+  setActiveAccount("test-user");
+  expect(getLookup(lookup.id)?.inspection).toBeUndefined();
 });

@@ -1,4 +1,5 @@
 import type { CapturedFrame, ScanAnalysisState, ScanQualitySnapshot } from "../types";
+import { accountStorageKey } from "./accountScope";
 
 const LATEST_CAPTURED_FRAME_KEY = "deep-spec:latest-captured-frame";
 const LATEST_SCAN_STATE_KEY = "deep-spec:latest-scan-state";
@@ -15,7 +16,7 @@ export function saveLatestCapturedFrame(frame: CapturedFrame) {
   }
 
   try {
-    sessionStorage.setItem(LATEST_CAPTURED_FRAME_KEY, JSON.stringify(frame));
+    sessionStorage.setItem(accountStorageKey(LATEST_CAPTURED_FRAME_KEY), JSON.stringify(frame));
   } catch {
     // Phase 1 should still navigate even if browser storage is unavailable.
   }
@@ -31,7 +32,7 @@ export function saveLatestScanState(state: ScanAnalysisState) {
   }
 
   try {
-    sessionStorage.setItem(LATEST_SCAN_STATE_KEY, JSON.stringify(state));
+    sessionStorage.setItem(accountStorageKey(LATEST_SCAN_STATE_KEY), JSON.stringify(state));
   } catch {
     // Phase 2 should still show the current route state if browser storage is unavailable.
   }
@@ -43,7 +44,7 @@ export function readLatestScanState(): ScanAnalysisState | null {
   }
 
   try {
-    const rawState = sessionStorage.getItem(LATEST_SCAN_STATE_KEY);
+    const rawState = sessionStorage.getItem(accountStorageKey(LATEST_SCAN_STATE_KEY));
     if (!rawState) {
       return null;
     }
@@ -73,7 +74,7 @@ function readLegacyCapturedFrame(): CapturedFrame | null {
   }
 
   try {
-    const rawFrame = sessionStorage.getItem(LATEST_CAPTURED_FRAME_KEY);
+    const rawFrame = sessionStorage.getItem(accountStorageKey(LATEST_CAPTURED_FRAME_KEY));
     if (!rawFrame) {
       return null;
     }

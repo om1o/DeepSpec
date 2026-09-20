@@ -1,3 +1,4 @@
+import { accountStorageKey } from "../lib/accountScope";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -80,7 +81,7 @@ describe("History", () => {
   });
 
   it("lists saved scans with dataset category", () => {
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
 
     renderHistory();
 
@@ -95,7 +96,7 @@ describe("History", () => {
   });
 
   it("filters saved scans by search, category, review status, and rating", async () => {
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup, bodyLookup]));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup, bodyLookup]));
 
     renderHistory();
 
@@ -133,7 +134,7 @@ describe("History", () => {
 
   it("filters unresolved identities independently of helpfulness and training labels", async () => {
     const uncertain = { ...lookup, id: "uncertain", result: { ...lookup.result!, partName: "Uncertain alternator", confidence: "low" } };
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup, uncertain, bodyLookup]));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup, uncertain, bodyLookup]));
     renderHistory();
     await userEvent.click(screen.getByRole("checkbox", { name: "Unresolved identities only" }));
     expect(screen.getByText("Uncertain alternator")).toBeInTheDocument();
@@ -154,7 +155,7 @@ describe("History", () => {
       ? { ...emptyPartInspection, inspectorName: "Local reviewer", inspectedAt: localTime } : undefined };
     const remote = { ...lookup, frame: { ...lookup.frame, imageBase64: "https://example.test/signed.jpg" }, inspection: remoteTime
       ? { ...emptyPartInspection, inspectorName: "Remote reviewer", inspectedAt: remoteTime } : undefined };
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([local]));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
     readCloudLookupsMock.mockResolvedValue({ ok: true, value: [remote, bodyLookup] });
     render(
       <MemoryRouter initialEntries={["/history"]}>
@@ -174,7 +175,7 @@ describe("History", () => {
   });
 
   it("does not warn about the on-device cap just because cloud history is long", async () => {
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
     readCloudLookupsMock.mockResolvedValue({
       ok: true,
       value: makeLookups(MAX_SAVED_LOOKUPS + 10, "cloud"),
@@ -188,7 +189,7 @@ describe("History", () => {
   });
 
   it("warns when the on-device store itself is full", () => {
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify(makeLookups(MAX_SAVED_LOOKUPS, "local")));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify(makeLookups(MAX_SAVED_LOOKUPS, "local")));
 
     renderHistory();
 

@@ -1,3 +1,4 @@
+import { getAccountScope, isAccountScopeCurrent } from "../lib/accountScope";
 import { getAuthClient, isSupabaseAuthConfigured } from "./auth";
 import { normalizePartInspection } from "../lib/partInspection";
 import type {
@@ -75,27 +76,34 @@ type ReadCloudHistoryResult =
   | { ok: false; message: string };
 
 export async function readCloudLookups(limit = DEFAULT_HISTORY_LIMIT): Promise<ReadCloudHistoryResult> {
+  const scope = getAccountScope();
+  const changed = () => ({ ok: false as const, message: "Account changed. Reload your saved scans." });
+  if (!isAccountScopeCurrent(scope)) return changed();
   if (!isSupabaseAuthConfigured()) {
     return { ok: false, message: "Supabase auth is not configured for this build." };
   }
 
   const supabase = await getAuthClient();
+  if (!isAccountScopeCurrent(scope)) return changed();
   if (!supabase) {
     return { ok: false, message: "Supabase auth is not configured for this build." };
   }
 
   const userResult = await supabase.auth.getUser();
-  if (userResult.error || !userResult.data.user) {
+  if (!isAccountScopeCurrent(scope)) return changed();
+  if (userResult.error || !userResult.data.user || userResult.data.user.id !== scope.userId) {
     return { ok: false, message: "No verified Supabase session was found." };
   }
 
   const selectRows = (columns: string): PromiseLike<CloudHistoryQueryResult> => supabase
     .from("scan_lookups")
     .select(columns)
+    .eq("user_id", scope.userId)
     .order("created_at", { ascending: false })
     .limit(limit);
   let optionalColumns = [...CLOUD_HISTORY_SHOP_COLUMNS, "inspection_json"];
   let rowsResult = await selectRows(`${CLOUD_HISTORY_CORE_SELECT},${optionalColumns.join(",")}`);
+  if (!isAccountScopeCurrent(scope)) return changed();
   // The shop and inspection migrations may be deployed independently. Drop only the
   // missing group, preserving whichever fields this database supports.
   for (let attempt = 0; attempt < 2 && rowsResult.error; attempt += 1) {
@@ -107,6 +115,7 @@ export async function readCloudLookups(limit = DEFAULT_HISTORY_LIMIT): Promise<R
       break;
     }
     rowsResult = await selectRows([CLOUD_HISTORY_CORE_SELECT, ...optionalColumns].join(","));
+    if (!isAccountScopeCurrent(scope)) return changed();
   }
 
   if (rowsResult.error) {
@@ -115,6 +124,7 @@ export async function readCloudLookups(limit = DEFAULT_HISTORY_LIMIT): Promise<R
 
   const rows = Array.isArray(rowsResult.data) ? (rowsResult.data as CloudHistoryRow[]) : [];
   const signedImageMap = await getSignedImageMap(supabase, rows);
+  if (!isAccountScopeCurrent(scope)) return changed();
   const lookups = rows
     .map((row, index) => mapCloudRowToLookup(row, signedImageMap, index))
     .filter((lookup): lookup is Lookup => Boolean(lookup));

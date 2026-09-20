@@ -74,6 +74,7 @@ const scenarioHandlers = {
   "second-angle-refinement": runSecondAngleRefinement,
   "scanner-ai-engine": runScannerAiEngine,
   "scanner-quality-retake": runScannerQualityRetake,
+  "shared-device-account-switch": runSharedDeviceAccountSwitch,
   "saved-history": runSavedHistory,
   scanner: runScanner,
   "shop-history-search": runShopHistorySearch,
@@ -323,6 +324,39 @@ async function runAuthLogin() {
   };
 }
 
+async function runSharedDeviceAccountSwitch() {
+  await requireAuthForProtectedRoute("shared-device-account-switch");
+  await seedSavedScans();
+  const readUserId = () => page.evaluate(() => {
+    const key = Object.keys(localStorage).find((entry) => /^sb-.+-auth-token$/.test(entry));
+    return key ? JSON.parse(localStorage.getItem(key)).user?.id : null;
+  });
+  const firstUser = await readUserId();
+  const firstPrefix = await qaStoragePrefix();
+  await gotoPath("/history");
+  await page.getByRole("link", { name: /QA Alternator/ }).waitFor({ state: "visible" });
+  await page.reload();
+  await page.getByRole("link", { name: /QA Alternator/ }).waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await page.waitForURL((url) => url.pathname === "/auth");
+  authEstablished = false;
+  await selectTabIfNeeded(/Account/i, "account auth tab");
+  await clickByRole("button", /^No email$/i, "no-email auth mode");
+  await clickByRole("button", /Continue without email/i, "continue without email");
+  await page.waitForURL((url) => ["/scan", "/history"].includes(url.pathname), { timeout: 20_000 });
+  const secondUser = await readUserId();
+  if (!firstUser || !secondUser || firstUser === secondUser) throw new QaIssue("auth/session", "Could not establish distinct QA accounts for shared-device isolation.");
+  authEstablished = true;
+  await gotoPath("/history");
+  await page.getByRole("heading", { name: "Saved scans", exact: true }).waitFor({ state: "visible" });
+  if (await page.getByRole("link", { name: /QA Alternator/ }).count()) {
+    throw new QaIssue("auth/session", "A second QA account can see the first account's device-saved scan after signing out and back in on the same browser profile.", { likelyFiles: ["src/services/auth.ts", "src/services/storage.ts", "src/App.tsx"], suggestedFix: "Scope private device records to the verified account while preserving existing data; verify account switching and in-flight work." });
+  }
+  const firstRecordsRetained = await page.evaluate((prefix) => JSON.parse(localStorage.getItem(prefix + "deep-spec:lookups") ?? "[]").some((lookup) => lookup.id === "qa-alternator-1"), firstPrefix);
+  if (!firstRecordsRetained) throw new QaIssue("frontend", "Account switching removed the first account's saved QA evidence.");
+  return { status: "pass", details: "Two distinct QA accounts used one browser profile; reload retained the first account's history, switching hid it from the second account, and the original stored record remained intact." };
+}
+
 async function runScanner() {
   await requireAuthForProtectedRoute("scanner");
   const startedAtMs = Date.now();
@@ -364,7 +398,8 @@ async function runScannerQualityRetake() {
     return canvas.toDataURL("image/png");
   });
   const fixture = { name: "covered-lens.png", mimeType: "image/png", buffer: Buffer.from(dataUrl.split(",")[1], "base64") };
-  const originalIds = await page.evaluate(() => JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]").map((scan) => scan.id));
+  const prefix = await qaStoragePrefix();
+  const originalIds = await page.evaluate((prefix) => JSON.parse(localStorage.getItem(prefix + "deep-spec:lookups") ?? "[]").map((scan) => scan.id), prefix);
   let identifyRequests = 0;
   const onRequest = (request) => { if (new URL(request.url()).pathname === "/api/identify") identifyRequests += 1; };
   page.on("request", onRequest);
@@ -378,7 +413,7 @@ async function runScannerQualityRetake() {
     await retake.click();
     await (await chooserPromise).setFiles(fixture);
     await page.getByText("Guided retake used. Review the evidence or start a separate scan when ready.", { exact: true }).waitFor({ state: "visible" });
-    const saved = await page.evaluate((ids) => JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]").filter((scan) => !ids.includes(scan.id)), originalIds);
+    const saved = await page.evaluate(({ ids, prefix }) => JSON.parse(localStorage.getItem(prefix + "deep-spec:lookups") ?? "[]").filter((scan) => !ids.includes(scan.id)), { ids: originalIds, prefix });
     if (saved.length !== 2 || saved.some((scan) => scan.errorCode !== "quality_rejected" || scan.scanQuality?.accepted !== false || !scan.frame.imageBase64) || identifyRequests !== 0 || await retake.count()) {
       throw new QaIssue("frontend", "Quality retake did not preserve two rejected captures or exceeded its one-retake/zero-identification limit.", { likelyFiles: ["src/screens/Scanner.tsx", "src/services/storage.ts"] });
     }
@@ -1235,15 +1270,26 @@ async function waitForScannerCloudSyncOutcome() {
     : { status: "unknown", text: latestText };
 }
 
+async function qaStoragePrefix() {
+  return page.evaluate(() => {
+    const key = Object.keys(localStorage).find((key) => key.startsWith("sb-") && key.endsWith("-auth-token"));
+    const userId = key && JSON.parse(localStorage.getItem(key) ?? "null")?.user?.id;
+    if (!userId) throw new Error("QA fixture requires an authenticated account.");
+    return "deep-spec:account:" + encodeURIComponent(userId) + ":";
+  });
+}
+
 async function seedSavedScans() {
-  await page.evaluate((lookups) => {
-    localStorage.setItem("deep-spec:lookups", JSON.stringify(lookups));
-    localStorage.setItem(`deep-spec:chat:${lookups[0].id}`, JSON.stringify(lookups[0].chatHistory));
-  }, createSeedLookups());
+  const prefix = await qaStoragePrefix();
+  await page.evaluate(({ lookups, prefix }) => {
+    localStorage.setItem(prefix + "deep-spec:lookups", JSON.stringify(lookups));
+    localStorage.setItem(prefix + `deep-spec:chat:${lookups[0].id}`, JSON.stringify(lookups[0].chatHistory));
+  }, { lookups: createSeedLookups(), prefix });
 }
 
 async function seedShopData() {
-  await page.evaluate(({ jobId, orgId, lookups }) => {
+  const prefix = await qaStoragePrefix();
+  await page.evaluate(({ jobId, orgId, lookups, prefix }) => {
     const capturedAt = new Date().toISOString();
     const shopLookups = lookups.map((lookup, index) => index === 0
       ? {
@@ -1294,21 +1340,21 @@ async function seedShopData() {
           },
         }
       : lookup);
-    localStorage.setItem("deep-spec:lookups", JSON.stringify(shopLookups));
-    localStorage.setItem(`deep-spec:chat:${shopLookups[0].id}`, JSON.stringify(shopLookups[0].chatHistory));
-    localStorage.setItem("deep-spec:shop:organization", JSON.stringify({
+    localStorage.setItem(prefix + "deep-spec:lookups", JSON.stringify(shopLookups));
+    localStorage.setItem(prefix + `deep-spec:chat:${shopLookups[0].id}`, JSON.stringify(shopLookups[0].chatHistory));
+    localStorage.setItem(prefix + "deep-spec:shop:organization", JSON.stringify({
       createdAt: capturedAt,
       id: orgId,
       name: "QA Repair Shop",
       ownerUserId: "qa-owner",
       slug: "qa-repair-shop",
     }));
-    localStorage.setItem("deep-spec:shop:feedback-permission", JSON.stringify({
+    localStorage.setItem(prefix + "deep-spec:shop:feedback-permission", JSON.stringify({
       learningOptIn: false,
       orgId,
       updatedAt: capturedAt,
     }));
-    localStorage.setItem("deep-spec:shop:jobs", JSON.stringify([
+    localStorage.setItem(prefix + "deep-spec:shop:jobs", JSON.stringify([
       {
         bayOrRo: "QA RO-77",
         createdAt: capturedAt,
@@ -1333,7 +1379,7 @@ async function seedShopData() {
         year: "2014",
       },
     ]));
-  }, { jobId: QA_SHOP_JOB_ID, orgId: QA_SHOP_ORG_ID, lookups: createSeedLookups() });
+  }, { prefix, jobId: QA_SHOP_JOB_ID, orgId: QA_SHOP_ORG_ID, lookups: createSeedLookups() });
 }
 
 function createSeedLookups() {

@@ -1,3 +1,4 @@
+import { getAccountScope, isAccountScopeCurrent, withAccountRouteState } from "../lib/accountScope";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import Webcam from "react-webcam";
@@ -138,6 +139,7 @@ function applyShopFitmentContext(result: IdentificationResult, vehicleContext: S
 }
 
 export default function Scanner() {
+  const accountScopeRef = useRef(getAccountScope());
   const location = useLocation();
   const activeShopJob = useMemo(() => {
     const jobId = new URLSearchParams(location.search).get("jobId");
@@ -276,6 +278,8 @@ export default function Scanner() {
   }, [selectedCameraId]);
 
   const syncSavedLookup = useCallback((lookup: Lookup) => {
+    const scope = accountScopeRef.current;
+    if (!isAccountScopeCurrent(scope)) return;
     if (!getCloudSyncStatus().configured) {
       setScanSave({ lookupId: lookup.id, status: "local" });
       return;
@@ -283,18 +287,18 @@ export default function Scanner() {
 
     setScanSave({ lookupId: lookup.id, status: "pending" });
     const finish = (status: "saved" | "failed") => setScanSave((current) => (
-      current?.lookupId === lookup.id ? { lookupId: lookup.id, status } : current
+      isAccountScopeCurrent(scope) && current?.lookupId === lookup.id ? { lookupId: lookup.id, status } : current
     ));
     void syncLookupToCloud(lookup).then((result) => finish(result.ok ? "saved" : "failed"), () => finish("failed"));
   }, []);
 
   const isScanRequestActive = useCallback((requestId: number) => (
-    scanRequestIdRef.current === requestId && !cancelScanRef.current
+    isAccountScopeCurrent(accountScopeRef.current) && scanRequestIdRef.current === requestId && !cancelScanRef.current
   ), []);
 
   // Safety net: guarantees the loading overlay clears even if a step hangs forever.
   const startScanWatchdog = useCallback((requestId: number) => window.setTimeout(() => {
-    if (scanRequestIdRef.current !== requestId || cancelScanRef.current) {
+    if (!isAccountScopeCurrent(accountScopeRef.current) || scanRequestIdRef.current !== requestId || cancelScanRef.current) {
       return;
     }
     cancelScanRef.current = true;
@@ -526,6 +530,7 @@ export default function Scanner() {
       if (!isScanRequestActive(requestId)) return;
       try {
         const second = await secondFrameProvider();
+        if (!isScanRequestActive(requestId)) return;
         const secondQuality = await assessImageQuality(second);
         if (secondQuality.ok) {
           secondFrame = { imageBase64: second, capturedAt: new Date().toISOString() };
@@ -535,6 +540,7 @@ export default function Scanner() {
       }
     }
 
+    if (!isScanRequestActive(requestId)) return;
     try {
       setAnalysisStep("Reading photo");
       const identifyStartedAt = performance.now();
@@ -544,12 +550,12 @@ export default function Scanner() {
         }),
         activeShopVehicleContext,
       );
+      if (!isScanRequestActive(requestId)) return;
       const identifyMs = Math.round(performance.now() - identifyStartedAt);
       recordIdentifyLatency(identifyMs, identifyMs > IDENTIFY_BUDGET_WARN_MS);
       if (identifyMs > IDENTIFY_BUDGET_WARN_MS) {
         console.warn(`[DeepSpec] Identify took ${identifyMs}ms (over ${IDENTIFY_BUDGET_WARN_MS}ms budget).`);
       }
-      if (!isScanRequestActive(requestId)) return;
       if (imageHash && !activeShopJob) setCachedScanResult(imageHash, result);
       recordScanOutcome(result);
 
@@ -644,7 +650,7 @@ export default function Scanner() {
   }, [activeShopJob, activeShopVehicleContext, isScanRequestActive, persistAndShowReview, recordScanOutcome, selectedCameraId, stopForQualityCoach]);
 
   const handleIdentify = useCallback(async (reviewTargetOverride?: CameraObjectTarget) => {
-    if (isAnalyzing || activeIdentifyRef.current) {
+    if (!isAccountScopeCurrent(accountScopeRef.current) || isAnalyzing || activeIdentifyRef.current) {
       return;
     }
 
@@ -675,7 +681,7 @@ export default function Scanner() {
   }, [analyzeImageBase64, beginScanRequest, captureFrame, isAnalyzing, isScanRequestActive, pauseAutoScan, startScanWatchdog]);
 
   const handleGalleryFile = useCallback(async (file: File) => {
-    if (isAnalyzing) {
+    if (!isAccountScopeCurrent(accountScopeRef.current) || isAnalyzing) {
       return;
     }
 
@@ -802,7 +808,7 @@ export default function Scanner() {
     : "the scan";
 
   const runObjectAnalysis = useCallback((index: number, object: IsolatedObject | undefined) => {
-    if (!object || startedObjectAnalysisRef.current.has(index)) {
+    if (!isAccountScopeCurrent(accountScopeRef.current) || !object || startedObjectAnalysisRef.current.has(index)) {
       return;
     }
     startedObjectAnalysisRef.current.add(index);
@@ -812,11 +818,11 @@ export default function Scanner() {
     setObjectAnalyses((prev) => ({ ...prev, [index]: { status: "loading" } }));
     void identifyCapturedFrame({ imageBase64: object.isolatedImageBase64, capturedAt: new Date().toISOString() })
       .then((result) => {
-        if (startedObjectAnalysisRef.current !== analysisSession) return;
+        if (!isAccountScopeCurrent(accountScopeRef.current) || startedObjectAnalysisRef.current !== analysisSession) return;
         setObjectAnalyses((prev) => ({ ...prev, [index]: { status: "done", result } }));
       })
       .catch((error) => {
-        if (startedObjectAnalysisRef.current !== analysisSession) return;
+        if (!isAccountScopeCurrent(accountScopeRef.current) || startedObjectAnalysisRef.current !== analysisSession) return;
         setObjectAnalyses((prev) => ({ ...prev, [index]: { status: "error", message: getSimpleScanErrorMessage(error) } }));
       });
   }, []);
@@ -1443,7 +1449,7 @@ function ScanResultCard({
         <div className="mb-3 rounded-xl bg-white/10 px-3 py-2.5">
           <p className="text-xs font-bold">{intakeReview.label}</p>
           {intakeReview.reasons.map((reason) => <p key={reason} className="mt-1 text-xs text-white/75">{reason}</p>)}
-          {review.lookup ? <Link className="mt-2 inline-block text-xs font-bold underline" to={`/result/${review.lookup.id}`} state={{ ...review.scanState, savedLookup: review.lookup }}>Open intake draft</Link> : null}
+          {review.lookup ? <Link className="mt-2 inline-block text-xs font-bold underline" to={`/result/${review.lookup.id}`} state={withAccountRouteState({ ...review.scanState, savedLookup: review.lookup })}>Open intake draft</Link> : null}
         </div>
         {isMismatch ? (
           <div

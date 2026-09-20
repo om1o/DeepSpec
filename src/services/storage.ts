@@ -2,6 +2,7 @@ import type { CandidateMatch, CandidatePart, ChatMessage, Confidence, CustomerVi
 
 import type { PartInspectionDraft } from "../types";
 import { normalizePartInspection, withLatestInspection } from "../lib/partInspection";
+import { accountStorageKey } from "../lib/accountScope";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
 export const MAX_SAVED_LOOKUPS = 50;
@@ -102,7 +103,7 @@ export function getLookups(): Lookup[] {
   }
 
   try {
-    const rawLookups = localStorage.getItem(LOOKUPS_STORAGE_KEY);
+    const rawLookups = localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY));
     if (!rawLookups) {
       return [];
     }
@@ -239,7 +240,7 @@ export function appendChatMessages(id: string, messages: ChatMessage[]): Storage
   const chatWriteResult = writeChatHistory(id, updatedHistory);
   if (!chatWriteResult.ok) {
     try {
-      localStorage.removeItem(CHAT_KEY(id));
+      localStorage.removeItem(accountStorageKey(CHAT_KEY(id)));
     } catch {
       // Fall back to the parent lookup record if the per-scan chat key cannot be updated.
     }
@@ -259,7 +260,7 @@ export function deleteLookup(id: string): StorageResult<boolean> {
 
   const writeResult = writeLookups(next);
   if (writeResult.ok && hasLocalStorage()) {
-    try { localStorage.removeItem(CHAT_KEY(id)); } catch { /* ignore */ }
+    try { localStorage.removeItem(accountStorageKey(CHAT_KEY(id))); } catch { /* ignore */ }
   }
   return writeResult.ok ? { ok: true, value: true } : { ok: false, message: writeResult.message, value: false };
 }
@@ -288,7 +289,7 @@ export function scanStateFromLookup(lookup: Lookup): ScanAnalysisState {
 function mergeLookupChatHistory(lookup: Lookup): Lookup {
   if (!hasLocalStorage()) return lookup;
   try {
-    const raw = localStorage.getItem(CHAT_KEY(lookup.id));
+    const raw = localStorage.getItem(accountStorageKey(CHAT_KEY(lookup.id)));
     if (!raw) return lookup;
     const parsed = JSON.parse(raw) as unknown;
     const chatHistory = normalizeChatHistory(parsed);
@@ -304,7 +305,7 @@ function writeChatHistory(id: string, history: ChatMessage[]): StorageResult<Cha
     return { ok: false, message: "Saved scans are not available in this browser.", value: history };
   }
   try {
-    localStorage.setItem(CHAT_KEY(id), JSON.stringify(history));
+    localStorage.setItem(accountStorageKey(CHAT_KEY(id)), JSON.stringify(history));
     return { ok: true, value: history };
   } catch (error) {
     return {
@@ -329,7 +330,7 @@ function writeLookups(lookups: Lookup[]): StorageResult<Lookup[]> {
   }
 
   try {
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify(cappedLookups));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify(cappedLookups));
     pruneChatHistory(lookups.slice(MAX_SAVED_LOOKUPS));
     return { ok: true, value: cappedLookups };
   } catch (error) {
@@ -346,7 +347,7 @@ function writeLookups(lookups: Lookup[]): StorageResult<Lookup[]> {
 function pruneChatHistory(droppedLookups: Lookup[]) {
   for (const lookup of droppedLookups) {
     try {
-      localStorage.removeItem(CHAT_KEY(lookup.id));
+      localStorage.removeItem(accountStorageKey(CHAT_KEY(lookup.id)));
     } catch {
       // Best-effort cleanup after the bounded lookup index is already saved.
     }

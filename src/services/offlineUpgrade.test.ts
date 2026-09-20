@@ -1,3 +1,4 @@
+import { setActiveAccount } from "../lib/accountScope";
 import { identifyCapturedFrame } from "./aiService";
 import { createLookup, getLookup } from "./storage";
 import { getOfflineEstimateLookups, startOfflineUpgradeWatcher, upgradeOfflineEstimates } from "./offlineUpgrade";
@@ -92,6 +93,29 @@ describe("offlineUpgrade", () => {
     await expect(firstUpgrade).resolves.toBe(1);
     await expect(secondUpgrade).resolves.toBe(1);
     expect(getLookup(created.value!.id)?.result?.modelRun?.provider).toBe("gemini");
+  });
+
+  it("starts a separate upgrade for another account and discards old completion after returning", async () => {
+    const original = createLookup({ frame, result: makeResult("on-device") });
+    createLookup({ frame, result: makeResult("on-device") });
+    let resolveOriginal!: (result: IdentificationResult) => void;
+    let resolveOther!: (result: IdentificationResult) => void;
+    vi.mocked(identifyCapturedFrame)
+      .mockReturnValueOnce(new Promise((resolve) => { resolveOriginal = resolve; }))
+      .mockReturnValueOnce(new Promise((resolve) => { resolveOther = resolve; }));
+    const oldUpgrade = upgradeOfflineEstimates();
+    setActiveAccount("other-user");
+    const other = createLookup({ frame, result: makeResult("on-device") });
+    const otherUpgrade = upgradeOfflineEstimates();
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(2);
+    resolveOther(makeResult("gemini"));
+    expect(await otherUpgrade).toBe(1);
+    expect(getLookup(other.value!.id)?.result?.modelRun?.provider).toBe("gemini");
+    setActiveAccount("test-user");
+    resolveOriginal(makeResult("gemini"));
+    expect(await oldUpgrade).toBe(0);
+    expect(getLookup(original.value!.id)?.result?.modelRun?.provider).toBe("on-device");
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(2);
   });
 
   it("only attaches the reconnect watcher when the fallback is enabled", () => {

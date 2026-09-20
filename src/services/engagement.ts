@@ -1,4 +1,5 @@
 import type { FeedbackSubmission, WaitlistSignup } from "../types";
+import { accountStorageKey } from "../lib/accountScope";
 
 export const ENGAGEMENT_STORAGE_KEY = "deep-spec:engagement";
 const MAX_ENTRIES = 100;
@@ -25,7 +26,7 @@ export function getEngagementData(): EngagementData {
   }
 
   try {
-    const rawData = localStorage.getItem(ENGAGEMENT_STORAGE_KEY);
+    const rawData = localStorage.getItem(accountStorageKey(ENGAGEMENT_STORAGE_KEY));
     if (!rawData) {
       return { waitlist: [], feedback: [] };
     }
@@ -116,7 +117,7 @@ function writeEngagementData(data: EngagementData): SaveResult<EngagementData> {
   }
 
   try {
-    localStorage.setItem(ENGAGEMENT_STORAGE_KEY, JSON.stringify(data));
+    localStorage.setItem(accountStorageKey(ENGAGEMENT_STORAGE_KEY), JSON.stringify(data));
     return { ok: true, value: data };
   } catch (error) {
     return {

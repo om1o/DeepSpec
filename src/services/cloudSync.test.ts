@@ -10,8 +10,10 @@ vi.mock("@supabase/supabase-js", () => ({
 }));
 
 describe("cloudSync", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetModules();
+    const { setActiveAccount } = await import("../lib/accountScope");
+    setActiveAccount("user-1");
     vi.stubEnv("VITE_SUPABASE_URL", "");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "");
     mocks.createClient.mockReset();
@@ -19,6 +21,43 @@ describe("cloudSync", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  it("stops a batch after the account changes during its first upload", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const { setActiveAccount } = await import("../lib/accountScope");
+    const upload = vi.fn().mockImplementation(async () => { setActiveAccount("user-2"); return { error: null }; });
+    const from = vi.fn();
+    mocks.createClient.mockReturnValue({
+      auth: { getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }) },
+      storage: { from: vi.fn().mockReturnValue({ upload }) }, from,
+    });
+    const { syncLookupsToCloud } = await import("./cloudSync");
+    const result = await syncLookupsToCloud([makeLookup(), { ...makeLookup(), id: "lookup-2" }]);
+    expect(result.synced).toBe(0);
+    expect(result.failed).toBe(2);
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  it.each(["signed-out", "different-owner", "round-trip"])("blocks account changes before upload: %s", async (mode) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const { setActiveAccount } = await import("../lib/accountScope");
+    const upload = vi.fn();
+    const signInAnonymously = vi.fn();
+    mocks.createClient.mockReturnValue({
+      auth: { getSession: vi.fn().mockImplementation(async () => {
+        if (mode === "round-trip") { setActiveAccount("other"); setActiveAccount("user-1"); }
+        return { data: { session: mode === "signed-out" ? null : { user: { id: mode === "different-owner" ? "other" : "user-1" } } }, error: null };
+      }), signInAnonymously },
+      storage: { from: vi.fn().mockReturnValue({ upload }) }, from: vi.fn(),
+    });
+    const { syncLookupToCloud } = await import("./cloudSync");
+    expect((await syncLookupToCloud(makeLookup())).ok).toBe(false);
+    expect(upload).not.toHaveBeenCalled();
+    expect(signInAnonymously).not.toHaveBeenCalled();
   });
 
   it.each(["updated", "missing", "migration"])("saves a cloud-only inspection without reuploading its image: %s", async (outcome) => {
@@ -67,7 +106,7 @@ describe("cloudSync", () => {
     if (missingShop) upsert.mockResolvedValueOnce({ error: { message: "Could not find the 'job_id' column in the schema cache" } });
     mocks.createClient.mockReturnValue({
       auth: {
-        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
         signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } }, error: null }),
       },
       from: vi.fn().mockReturnValue({ upsert }),
@@ -137,7 +176,7 @@ describe("cloudSync", () => {
     });
     mocks.createClient.mockReturnValue({
       auth: {
-        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
         signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } }, error: null }),
       },
       from,
@@ -461,7 +500,7 @@ describe("cloudSync", () => {
     });
   });
 
-  it("returns a plain-language error when anonymous sign-in is not enabled", async () => {
+  it("refuses signed-out sync without creating an anonymous account", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
     mocks.createClient.mockReturnValue({
@@ -478,8 +517,9 @@ describe("cloudSync", () => {
 
     await expect(syncLookupToCloud(makeLookup())).resolves.toEqual({
       ok: false,
-      message: "Cloud sync needs Supabase anonymous sign-ins enabled before scans can upload.",
+      message: "Sign in to the account that owns this scan before syncing.",
     });
+    expect(mocks.createClient.mock.results.at(-1)?.value.auth.signInAnonymously).not.toHaveBeenCalled();
   });
 
   it("resets clientPromise so the next call can retry after an import failure", async () => {
@@ -498,7 +538,7 @@ describe("cloudSync", () => {
     const insert = vi.fn().mockResolvedValue({ error: null });
     mocks.createClient.mockReturnValue({
       auth: {
-        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
         signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "user-retry" } }, error: null }),
       },
       from: vi.fn((table: string) => {
@@ -731,7 +771,7 @@ describe("cloudSync", () => {
     mocks.createClient.mockReturnValue({
       auth: {
         getUser: vi.fn().mockResolvedValue({ data: { user: { id: "shared-user" } }, error: null }),
-        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
         signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "shared-user" } }, error: null }),
         onAuthStateChange: vi.fn().mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } }),
       },

@@ -1,3 +1,4 @@
+import { accountStorageKey } from "../lib/accountScope";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -45,7 +46,7 @@ describe("EarlyAccess", () => {
 
     expect(await screen.findByText("Feedback saved on this device. Cloud sync is off for this build.")).toBeInTheDocument();
 
-    const savedData = JSON.parse(localStorage.getItem(ENGAGEMENT_STORAGE_KEY) ?? "{}");
+    const savedData = JSON.parse(localStorage.getItem(accountStorageKey(ENGAGEMENT_STORAGE_KEY)) ?? "{}");
     expect(savedData.waitlist).toHaveLength(1);
     expect(savedData.feedback).toHaveLength(1);
   });
@@ -88,7 +89,7 @@ describe("EarlyAccess", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save waitlist entry" }));
 
     expect(await screen.findByText("Saved on this device. Cloud sync failed: network unavailable")).toBeInTheDocument();
-    const savedData = JSON.parse(localStorage.getItem(ENGAGEMENT_STORAGE_KEY) ?? "{}");
+    const savedData = JSON.parse(localStorage.getItem(accountStorageKey(ENGAGEMENT_STORAGE_KEY)) ?? "{}");
     expect(savedData.waitlist).toHaveLength(1);
   });
 });

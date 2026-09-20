@@ -1,3 +1,4 @@
+import { accountStorageKey, getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { getAuthClient } from "./auth";
 import type { FeedbackSubmission, Lookup, WaitlistSignup } from "../types";
@@ -98,13 +99,15 @@ export function getCloudHealthSnapshot(): CloudHealthReport {
 }
 
 export async function verifyCloudHealth(): Promise<CloudHealthReport> {
+  const scope = getAccountScope();
+  const saveReport = (report: CloudHealthReport) => isAccountScopeCurrent(scope) ? saveCloudHealthReport(report) : report;
   const config = getCloudSyncConfig();
   const checkedAt = new Date().toISOString();
   let report = createCloudHealthReport(config, checkedAt);
 
   if (!config) {
     report = updateCloudHealthCheck(report, "configured", "fail", "Cloud sync isn't connected yet.");
-    return saveCloudHealthReport({
+    return saveReport({
       ...report,
       message: "Cloud sync isn't set up yet.",
       overall: "unconfigured",
@@ -171,14 +174,14 @@ export async function verifyCloudHealth(): Promise<CloudHealthReport> {
     await assertCloudHealthRlsIsolation(otherClient, testId);
     report = updateCloudHealthCheck(report, "rlsIsolation", "pass", "Your scans stay private to you.");
 
-    return saveCloudHealthReport({
+    return saveReport({
       ...report,
       lastVerifiedAt: checkedAt,
       message: "Cloud sync is working. Your scans save and stay private to you.",
       overall: "ready",
     });
   } catch (error) {
-    return saveCloudHealthReport(markNextUnknownCloudHealthFailure(report, getFriendlySyncError(error)));
+    return saveReport(markNextUnknownCloudHealthFailure(report, getFriendlySyncError(error)));
   } finally {
     if (ownerClient && userId && imagePath) {
       await cleanupCloudHealthCheck(ownerClient, userId, testId, imagePath);
@@ -199,6 +202,10 @@ function withCloudTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T>
 }
 
 export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult> {
+  return syncLookupForAccount(lookup, getAccountScope());
+}
+
+async function syncLookupForAccount(lookup: Lookup, scope: AccountScope): Promise<CloudSyncResult> {
   if (!getCloudSyncConfig()) {
     return {
       ok: false,
@@ -207,7 +214,8 @@ export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult
   }
 
   try {
-    return await withCloudTimeout(performLookupSync(lookup), CLOUD_SYNC_TIMEOUT_MS);
+    assertAccount(scope);
+    return await withCloudTimeout(performLookupSync(lookup, scope), CLOUD_SYNC_TIMEOUT_MS);
   } catch (error) {
     return {
       ok: false,
@@ -216,9 +224,12 @@ export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult
   }
 }
 
-async function performLookupSync(lookup: Lookup): Promise<CloudSyncResult> {
+async function performLookupSync(lookup: Lookup, scope: AccountScope): Promise<CloudSyncResult> {
   const supabase = await getClient();
-  const user = await ensureCloudUser(supabase);
+  assertAccount(scope);
+  const user = await ensureCloudUser(supabase, scope);
+  const guard = () => assertAccount(scope);
+  guard();
   // Cloud history contains signed image URLs, not the original image bytes. Save
   // the inspection without replacing image metadata or stale AI/feedback fields.
   if (lookup.inspection && !lookup.frame.imageBase64.startsWith("data:")) {
@@ -227,6 +238,7 @@ async function performLookupSync(lookup: Lookup): Promise<CloudSyncResult> {
       .eq("user_id", user.id)
       .eq("local_id", lookup.id)
       .select("local_id");
+    guard();
     if (updated.error) throw new Error(updated.error.message);
     if (!Array.isArray(updated.data) || updated.data.length === 0) {
       return { ok: false, message: "Inspection is saved on this device, but its cloud scan was not found for this account." };
@@ -235,12 +247,14 @@ async function performLookupSync(lookup: Lookup): Promise<CloudSyncResult> {
   }
   const image = dataUrlToBlob(lookup.frame.imageBase64);
   const imageHash = await hashBytes(image.bytes);
+  guard();
   const imagePath = `${user.id}/${lookup.id}.${image.extension}`;
   const uploaded = await supabase.storage.from(SCAN_BUCKET).upload(imagePath, image.blob, {
     contentType: image.contentType,
     upsert: true,
   });
 
+  guard();
   if (uploaded.error) {
     throw new Error(uploaded.error.message);
   }
@@ -267,14 +281,17 @@ async function performLookupSync(lookup: Lookup): Promise<CloudSyncResult> {
     user_id: user.id,
     ...(lookup.inspection ? { inspection_json: lookup.inspection } : {}),
     ...getOptionalScanLookupFields(lookup),
-  });
+  }, guard);
 
+  guard();
   if (saved.error) {
     throw new Error(saved.error.message);
   }
 
   await upsertShopJobScan(supabase, user.id, lookup);
-  await syncDatasetDetailTables(supabase, user.id, lookup);
+  guard();
+  await syncDatasetDetailTables(supabase, user.id, lookup, guard);
+  guard();
 
   return {
     ok: true,
@@ -284,6 +301,7 @@ async function performLookupSync(lookup: Lookup): Promise<CloudSyncResult> {
 }
 
 export async function syncLookupsToCloud(lookups: Lookup[]): Promise<CloudBatchSyncResult> {
+  const scope = getAccountScope();
   const uniqueLookups = [...new Map(lookups.map((lookup) => [lookup.id, lookup])).values()];
   if (!uniqueLookups.length) {
     return {
@@ -311,7 +329,7 @@ export async function syncLookupsToCloud(lookups: Lookup[]): Promise<CloudBatchS
   let synced = 0;
 
   for (const lookup of uniqueLookups) {
-    const result = await syncLookupToCloud(lookup);
+    const result = await syncLookupForAccount(lookup, scope);
     if (result.ok) {
       synced += 1;
     } else {
@@ -347,8 +365,10 @@ function getOptionalScanLookupFields(lookup: Lookup) {
   return optional;
 }
 
-async function upsertScanLookupRow(supabase: SupabaseClient, row: Record<string, unknown>) {
+async function upsertScanLookupRow(supabase: SupabaseClient, row: Record<string, unknown>, guard: () => void) {
+  guard();
   const result = await supabase.from("scan_lookups").upsert(row, { onConflict: "user_id,local_id" });
+  guard();
   if (!isMissingOptionalScanLookupColumn(result.error)) {
     return result;
   }
@@ -370,11 +390,16 @@ function isMissingOptionalScanLookupColumn(error: { message?: string } | null | 
     && SCAN_LOOKUP_OPTIONAL_COLUMNS.some((column) => message.includes(column));
 }
 
-async function syncDatasetDetailTables(supabase: SupabaseClient, userId: string, lookup: Lookup) {
-  await replaceScanCandidates(supabase, userId, lookup);
-  await replaceScanEvidence(supabase, userId, lookup);
+async function syncDatasetDetailTables(supabase: SupabaseClient, userId: string, lookup: Lookup, guard: () => void) {
+  guard();
+  await replaceScanCandidates(supabase, userId, lookup, guard);
+  guard();
+  await replaceScanEvidence(supabase, userId, lookup, guard);
+  guard();
   await upsertScanCorrection(supabase, userId, lookup);
+  guard();
   await insertScanModelRun(supabase, userId, lookup);
+  guard();
   await insertSyncEvent(supabase, userId, lookup, "upsert", "success", "Scan dataset details synced.");
 }
 
@@ -401,8 +426,9 @@ async function upsertShopJobScan(supabase: SupabaseClient, userId: string, looku
   );
 }
 
-async function replaceScanCandidates(supabase: SupabaseClient, userId: string, lookup: Lookup) {
+async function replaceScanCandidates(supabase: SupabaseClient, userId: string, lookup: Lookup, guard: () => void) {
   await deleteScanDetails(supabase, "scan_candidates", userId, lookup.id);
+  guard();
   const candidates = lookup.result?.candidateMatches ?? [];
   if (!candidates.length) {
     return;
@@ -425,8 +451,9 @@ async function replaceScanCandidates(supabase: SupabaseClient, userId: string, l
   );
 }
 
-async function replaceScanEvidence(supabase: SupabaseClient, userId: string, lookup: Lookup) {
+async function replaceScanEvidence(supabase: SupabaseClient, userId: string, lookup: Lookup, guard: () => void) {
   await deleteScanDetails(supabase, "scan_evidence", userId, lookup.id);
+  guard();
   const evidence = buildEvidenceRows(userId, lookup);
   if (!evidence.length) {
     return;
@@ -750,22 +777,17 @@ async function createVerificationClient(config: CloudSyncConfig): Promise<Supaba
   });
 }
 
-async function ensureCloudUser(supabase: SupabaseClient): Promise<User> {
+function assertAccount(scope: AccountScope) {
+  if (!isAccountScopeCurrent(scope)) throw new Error("Account changed. Sign in and retry from your saved scans.");
+}
+
+async function ensureCloudUser(supabase: SupabaseClient, scope: AccountScope): Promise<User> {
   const session = await supabase.auth.getSession();
-  if (session.error) {
-    throw new Error(session.error.message);
-  }
-
-  if (session.data.session?.user) {
-    return session.data.session.user;
-  }
-
-  const anonymousSignIn = await supabase.auth.signInAnonymously();
-  if (anonymousSignIn.error || !anonymousSignIn.data.user) {
-    throw new Error(anonymousSignIn.error?.message ?? "Anonymous sign-in failed.");
-  }
-
-  return anonymousSignIn.data.user;
+  assertAccount(scope);
+  if (session.error) throw new Error(session.error.message);
+  const user = session.data.session?.user;
+  if (!user || user.id !== scope.userId) throw new Error("Sign in to the account that owns this scan before syncing.");
+  return user;
 }
 
 async function signInForHealthCheck(supabase: SupabaseClient): Promise<User> {
@@ -846,6 +868,7 @@ function getImageExtension(contentType: string) {
 
 function getFriendlySyncError(error: unknown) {
   const message = error instanceof Error ? error.message : "Unknown cloud sync error.";
+  if (message === "Sign in to the account that owns this scan before syncing.") return message;
 
   if (/inspection_json/i.test(message) && /does not exist|schema cache|could not find .* column/i.test(message)) {
     return "Inspection is saved on this device. Apply the part inspection database migration before syncing it to the cloud.";
@@ -961,7 +984,7 @@ function readCloudHealthReport(): CloudHealthReport | null {
   }
 
   try {
-    const raw = localStorage.getItem(CLOUD_HEALTH_STORAGE_KEY);
+    const raw = localStorage.getItem(accountStorageKey(CLOUD_HEALTH_STORAGE_KEY));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as CloudHealthReport;
     if (!parsed || typeof parsed !== "object" || !parsed.checks) return null;
@@ -974,7 +997,7 @@ function readCloudHealthReport(): CloudHealthReport | null {
 function saveCloudHealthReport(report: CloudHealthReport): CloudHealthReport {
   if (typeof localStorage !== "undefined") {
     try {
-      localStorage.setItem(CLOUD_HEALTH_STORAGE_KEY, JSON.stringify(report));
+      localStorage.setItem(accountStorageKey(CLOUD_HEALTH_STORAGE_KEY), JSON.stringify(report));
     } catch {
       // The current report is still useful even when this device cannot persist it.
     }

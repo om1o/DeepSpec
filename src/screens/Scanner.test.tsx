@@ -1,3 +1,6 @@
+import { accountStorageKey, setActiveAccount } from "../lib/accountScope";
+import { getLookups } from "../services/storage";
+import { hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -246,7 +249,7 @@ describe("Scanner", () => {
     expect(within(reviewCard as HTMLElement).getByText("It charges the battery while the engine runs.")).toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).queryByText("AI detection")).not.toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).queryByRole("button", { name: "Open details" })).not.toBeInTheDocument();
-    const savedLookups = JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]");
+    const savedLookups = JSON.parse(localStorage.getItem(accountStorageKey("deep-spec:lookups")) ?? "[]");
     expect(savedLookups).toHaveLength(1);
     expect(savedLookups[0]).toMatchObject({
       provenance: {
@@ -409,7 +412,7 @@ describe("Scanner", () => {
     expect(screen.getByTestId("scan-item-view")).toHaveTextContent("Isolated");
     expect(screen.getByAltText("Item view for Alternator")).toHaveAttribute("src", "data:image/png;base64,segmented-product");
     expect(screen.getByTestId("isolated-part-image")).toHaveAttribute("src", "data:image/png;base64,segmented-product");
-    const savedLookups = JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]");
+    const savedLookups = JSON.parse(localStorage.getItem(accountStorageKey("deep-spec:lookups")) ?? "[]");
     expect(savedLookups[0]).toMatchObject({
       focusMode: "mask",
       isolatedImageBase64: "data:image/png;base64,segmented-product",
@@ -882,7 +885,7 @@ describe("Scanner", () => {
     const reviewCard = reviewHeading.closest("section");
     expect(reviewCard).toBeTruthy();
     expect(within(reviewCard as HTMLElement).queryByRole("button", { name: "Open details" })).not.toBeInTheDocument();
-    const savedLookups = JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]");
+    const savedLookups = JSON.parse(localStorage.getItem(accountStorageKey("deep-spec:lookups")) ?? "[]");
     expect(savedLookups[0]).toMatchObject({
       provenance: {
         analysisSource: "ai_detection",
@@ -920,7 +923,7 @@ describe("Scanner", () => {
 
       expect(await screen.findByText("Choose a JPEG, PNG, or WebP photo.")).toBeInTheDocument();
       expect(identifyCapturedFrame).not.toHaveBeenCalled();
-      expect(localStorage.getItem("deep-spec:lookups")).toBeNull();
+      expect(localStorage.getItem(accountStorageKey("deep-spec:lookups"))).toBeNull();
     });
 
     it("tells the user when the photo is over the size limit", async () => {
@@ -948,11 +951,11 @@ describe("Scanner", () => {
       await userEvent.click(screen.getByRole("button", { name: "Upload one retake" }));
       fireEvent.change(screen.getByLabelText("Upload photo"), { target: { files: [] } });
       expect(screen.getByRole("button", { name: "Upload one retake" })).toBeInTheDocument();
-      expect(JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]")).toHaveLength(1);
+      expect(JSON.parse(localStorage.getItem(accountStorageKey("deep-spec:lookups")) ?? "[]")).toHaveLength(1);
       await userEvent.click(screen.getByRole("button", { name: "Upload one retake" }));
       chooseFile(new File(["blurry again"], "retake.jpg", { type: "image/jpeg" }));
       expect(await screen.findByText("Guided retake used. Review the evidence or start a separate scan when ready.")).toBeInTheDocument();
-      expect(JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]")).toHaveLength(2);
+      expect(JSON.parse(localStorage.getItem(accountStorageKey("deep-spec:lookups")) ?? "[]")).toHaveLength(2);
       expect(identifyCapturedFrame).not.toHaveBeenCalled();
     }, 10000);
   });
@@ -1140,7 +1143,7 @@ describe("Scanner", () => {
     expect(screen.getByRole("button", { name: "Scan now" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
-    expect(localStorage.getItem("deep-spec:lookups")).toBeTruthy();
+    expect(localStorage.getItem(accountStorageKey("deep-spec:lookups"))).toBeTruthy();
   }, 10000);
 
   it("lets the user cancel a scan in progress before the result opens", async () => {
@@ -1159,6 +1162,23 @@ describe("Scanner", () => {
 
     expect(await screen.findByText("Scan canceled. Ready when you are.")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 1, name: "Alternator" })).not.toBeInTheDocument();
+  }, 10000);
+
+  it.each(["other-user", "test-user"])("discards a pending scan after account change ending at %s", async (finalAccount) => {
+    vi.mocked(hashImageDataUrl).mockResolvedValueOnce("private-image-hash");
+    let resolveScan!: (value: ReturnType<typeof makeScanResult>) => void;
+    identifyCapturedFrame.mockImplementationOnce(() => new Promise((resolve) => { resolveScan = resolve; }));
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    const cacheWrites = vi.mocked(setCachedScanResult).mock.calls.length;
+    setActiveAccount("other-user");
+    setActiveAccount(finalAccount);
+    await act(async () => { resolveScan(makeScanResult("Stale private scan")); });
+    expect(getLookups()).toEqual([]);
+    expect(vi.mocked(setCachedScanResult).mock.calls).toHaveLength(cacheWrites);
+    expect(syncLookupToCloud).not.toHaveBeenCalled();
+    expect(screen.queryByText("Stale private scan")).not.toBeInTheDocument();
   }, 10000);
 
   it("prevents a canceled provider response from saving after cancel", async () => {
@@ -1185,7 +1205,7 @@ describe("Scanner", () => {
     });
 
     expect(screen.queryByRole("heading", { level: 1, name: "Stale pump" })).not.toBeInTheDocument();
-    expect(localStorage.getItem("deep-spec:lookups")).toBeNull();
+    expect(localStorage.getItem(accountStorageKey("deep-spec:lookups"))).toBeNull();
   }, 10000);
 
   it("blocks blurry captures with a single quality coach fix before identify", async () => {
@@ -1209,7 +1229,7 @@ describe("Scanner", () => {
     expect(screen.getAllByText("A still frame reads sharper.").length).toBeGreaterThan(0);
     expect(screen.queryByText("Try this exact fix, then scan again.")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Prepare one retake" })).toBeInTheDocument();
-    const saved = JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]");
+    const saved = JSON.parse(localStorage.getItem(accountStorageKey("deep-spec:lookups")) ?? "[]");
     expect(saved).toHaveLength(1);
     expect(saved[0]).toMatchObject({ errorCode: "quality_rejected", scanQuality: { accepted: false, failureReason: "too_blurry" } });
     expect(saved[0].frame.imageBase64).toBe("data:image/jpeg;base64,compressed-frame");
@@ -1224,7 +1244,7 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Scan again" }));
     expect(await screen.findByText("Guided retake used. Review the evidence or start a separate scan when ready.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Prepare one retake" })).not.toBeInTheDocument();
-    expect(JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]")).toHaveLength(2);
+    expect(JSON.parse(localStorage.getItem(accountStorageKey("deep-spec:lookups")) ?? "[]")).toHaveLength(2);
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
   });
 
@@ -1235,7 +1255,7 @@ describe("Scanner", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Prepare one retake" }));
     await userEvent.click(screen.getByRole("button", { name: "Scan again" }));
     expect(await screen.findByText("Identity awaiting review")).toBeInTheDocument();
-    const saved = JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]");
+    const saved = JSON.parse(localStorage.getItem(accountStorageKey("deep-spec:lookups")) ?? "[]");
     expect(saved).toHaveLength(2);
     expect(saved.some((item: { errorCode?: string }) => item.errorCode === "quality_rejected")).toBe(true);
     expect(saved.every((item: { inspection?: unknown }) => !item.inspection)).toBe(true);

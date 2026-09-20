@@ -1,3 +1,4 @@
+import { accountStorageKey, setActiveAccount, withAccountRouteState } from "../lib/accountScope";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -70,6 +71,22 @@ describe("Result", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+  });
+
+  it("rejects a previous account's result retained in browser history", () => {
+    const oldState = withAccountRouteState(successfulScan);
+    setActiveAccount("other-user");
+    render(<MemoryRouter initialEntries={[{ pathname: "/result/old", state: oldState }]}><Routes><Route path="/result/:id" element={<Result />} /></Routes></MemoryRouter>);
+    expect(screen.queryByRole("heading", { name: "Alternator" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Automatic intake draft" })).not.toBeInTheDocument();
+  });
+
+  it("does not save a stale mounted result into a new account", async () => {
+    const user = userEvent.setup();
+    renderResult(successfulScan);
+    setActiveAccount("other-user");
+    await user.click(screen.getByRole("button", { name: "Save", exact: true }));
+    expect(getLookups()).toEqual([]);
   });
 
   it("opens a cloud-only inspection and saves edits under the original scan id", async () => {
@@ -326,7 +343,7 @@ describe("Result", () => {
         initialEntries={[
           {
             pathname: "/result",
-            state: successfulScan,
+            state: withAccountRouteState(successfulScan),
           },
         ]}
       >
@@ -340,7 +357,7 @@ describe("Result", () => {
     await userEvent.click(screen.getByRole("button", { name: "Ask" }));
 
     expect(screen.getByText("Chat page")).toBeInTheDocument();
-    const savedLookups = JSON.parse(localStorage.getItem(LOOKUPS_STORAGE_KEY) ?? "[]") as Lookup[];
+    const savedLookups = JSON.parse(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY)) ?? "[]") as Lookup[];
     expect(savedLookups).toHaveLength(1);
     expect(savedLookups[0].result?.partName).toBe("Alternator");
     expect(savedLookups[0].provenance).toMatchObject(successfulScan.provenance!);
@@ -348,7 +365,7 @@ describe("Result", () => {
   });
 
   it("restores the latest successful scan after a refresh", () => {
-    sessionStorage.setItem("deep-spec:latest-scan-state", JSON.stringify(successfulScan));
+    sessionStorage.setItem(accountStorageKey("deep-spec:latest-scan-state"), JSON.stringify(successfulScan));
 
     renderResult(null);
 
@@ -364,14 +381,14 @@ describe("Result", () => {
 
   it("captures distrust and a reason for a saved scan", async () => {
     const lookup = makeLookup();
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
 
     renderResult(null, `/result/${lookup.id}`);
 
     await userEvent.click(screen.getByRole("button", { name: "Why or why not" }));
     await userEvent.type(screen.getByLabelText("Why or why not"), "It was the starter.");
 
-    const savedLookup = JSON.parse(localStorage.getItem(LOOKUPS_STORAGE_KEY) ?? "[]")[0] as Lookup;
+    const savedLookup = JSON.parse(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY)) ?? "[]")[0] as Lookup;
     expect(savedLookup.rating).toBe("down");
     expect(savedLookup.correction).toBe("It was the starter.");
     expect(savedLookup.trainingLabel).toBe("It was the starter.");
@@ -380,20 +397,20 @@ describe("Result", () => {
 
   it("marks a trusted scan with a positive rating", async () => {
     const lookup = makeLookup();
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
 
     renderResult(null, `/result/${lookup.id}`);
 
     expect(screen.getByTestId("trust-control")).toHaveTextContent("Do you trust this scan?");
     await userEvent.click(screen.getByRole("button", { name: "Yes" }));
 
-    const savedLookup = JSON.parse(localStorage.getItem(LOOKUPS_STORAGE_KEY) ?? "[]")[0] as Lookup;
+    const savedLookup = JSON.parse(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY)) ?? "[]")[0] as Lookup;
     expect(savedLookup.rating).toBe("up");
   }, 30000);
 
   it("keeps share and export report actions on a saved scan", () => {
     const lookup = makeLookup();
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
 
     renderResult(null, `/result/${lookup.id}`);
 
@@ -403,7 +420,7 @@ describe("Result", () => {
 
   it("stays quiet when the user dismisses the native share sheet", async () => {
     const lookup = makeLookup();
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
     const share = vi.fn().mockRejectedValue(new DOMException("Share canceled", "AbortError"));
     Object.defineProperty(navigator, "share", { configurable: true, value: share });
 
@@ -420,7 +437,7 @@ describe("Result", () => {
 
   it("still tells the user when sharing genuinely fails", async () => {
     const lookup = makeLookup();
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
     const share = vi.fn().mockRejectedValue(new DOMException("Not allowed", "NotAllowedError"));
     Object.defineProperty(navigator, "share", { configurable: true, value: share });
 
@@ -453,7 +470,7 @@ describe("Result", () => {
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
 
     expect(identifySpy).toHaveBeenCalledWith(frame);
-    expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBeNull();
+    expect(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY))).toBeNull();
     expect(screen.queryByText("Provider unavailable")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
 
@@ -499,7 +516,7 @@ describe("Result", () => {
       errorCode: "network",
       analyzedAt: undefined,
     });
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([failedLookup]));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([failedLookup]));
 
     const onlineSpy = vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
     const identifySpy = vi.spyOn(aiService, "identifyCapturedFrame").mockResolvedValue(successfulScan.result!);
@@ -516,7 +533,7 @@ describe("Result", () => {
 
     expect(identifySpy).toHaveBeenCalledWith(failedLookup.frame);
 
-    const savedLookups = JSON.parse(localStorage.getItem(LOOKUPS_STORAGE_KEY) ?? "[]") as Lookup[];
+    const savedLookups = JSON.parse(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY)) ?? "[]") as Lookup[];
     expect(savedLookups[0].result?.partName).toBe("Alternator");
     expect(savedLookups[0].errorMessage).toBeUndefined();
     expect(savedLookups[0].provenance.analysisSource).toBe("manual_retry");
@@ -535,7 +552,7 @@ describe("Result", () => {
       errorCode: "network",
       analyzedAt: undefined,
     });
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([failedLookup]));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([failedLookup]));
 
     const onlineSpy = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
 
@@ -555,7 +572,7 @@ function renderResult(state: (ScanAnalysisState & { savedLookup?: Lookup }) | nu
       initialEntries={[
         {
           pathname: path,
-          state,
+          state: state ? withAccountRouteState(state) : null,
         },
       ]}
     >

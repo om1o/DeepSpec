@@ -1,5 +1,6 @@
 import type { AuthChangeEvent, Session, SupabaseClient, User } from "@supabase/supabase-js";
 import type { Provider } from "@supabase/supabase-js";
+import { getAccountScope, setActiveAccount } from "../lib/accountScope";
 
 type SupabaseAuthConfig = {
   key: string;
@@ -18,6 +19,9 @@ const DEFAULT_POST_AUTH_PATH = "/scan";
 let clientPromise: Promise<SupabaseClient> | null = null;
 let authRedirectPromise: Promise<boolean> | null = null;
 let verifiedAuthUserCache: { user: User; verifiedAt: number } | null = null;
+let authRevision = 0;
+let signOutRevision = 0;
+let pendingSignOuts = 0;
 
 export function isSupabaseAuthConfigured() {
   return Boolean(getSupabaseAuthConfig());
@@ -32,39 +36,51 @@ export function isGitHubAuthEnabled() {
 }
 
 export async function getVerifiedAuthUser(): Promise<User | null> {
+  const revision = authRevision;
+  if (pendingSignOuts) return null;
   const client = await getAuthClient();
+  if (pendingSignOuts || revision !== authRevision) return null;
   if (!client) {
+    setActiveAccount(null);
     return null;
   }
 
-  return verifyAuthUser(client);
+  return verifyAuthUser(client, revision);
 }
 
-async function verifyAuthUser(client: SupabaseClient): Promise<User | null> {
+async function verifyAuthUser(client: SupabaseClient, revision = authRevision, expectedUserId?: string): Promise<User | null> {
+  if (pendingSignOuts || revision !== authRevision) return null;
   const redirectReady = await completeAuthRedirectIfNeeded(client);
+  if (pendingSignOuts || revision !== authRevision) return null;
   if (!redirectReady) {
     clearVerifiedAuthUserCache();
+    setActiveAccount(null);
     return null;
   }
 
   const cachedUser = getCachedVerifiedAuthUser();
   if (cachedUser) {
+    setActiveAccount(cachedUser.id);
     return cachedUser;
   }
 
   const result = await withTimeout(client.auth.getUser().catch(() => null), AUTH_VERIFY_TIMEOUT_MS);
+  if (pendingSignOuts || revision !== authRevision) return null;
   if (!result) {
     clearVerifiedAuthUserCache();
+    setActiveAccount(null);
     return null;
   }
 
   const { data, error } = result;
-  if (error || !data.user) {
+  if (error || !data.user || (expectedUserId && data.user.id !== expectedUserId)) {
     clearVerifiedAuthUserCache();
+    setActiveAccount(null);
     return null;
   }
 
   verifiedAuthUserCache = { user: data.user, verifiedAt: Date.now() };
+  setActiveAccount(data.user.id);
   return data.user;
 }
 
@@ -109,7 +125,10 @@ export async function sendEmailSignInLink(email: string, redirectPath?: string):
 }
 
 export async function verifyEmailCode(email: string, token: string) {
+  const signOutAtStart = signOutRevision;
+  assertSignInCurrent(signOutAtStart);
   const client = await getRequiredAuthClient();
+  assertSignInCurrent(signOutAtStart);
   const result = await client.auth.verifyOtp({
     email,
     token,
@@ -120,7 +139,9 @@ export async function verifyEmailCode(email: string, token: string) {
     throw new Error(result.error.message);
   }
 
-  const user = await getVerifiedAuthUser();
+  assertSignInCurrent(signOutAtStart);
+  clearVerifiedAuthUserCache();
+  const user = await verifyAuthUser(client, ++authRevision, result.data?.user?.id);
   if (!user) {
     throw new Error("Could not verify this session. Request a new code and try again.");
   }
@@ -129,7 +150,10 @@ export async function verifyEmailCode(email: string, token: string) {
 }
 
 export async function signInWithPassword(email: string, password: string) {
+  const signOutAtStart = signOutRevision;
+  assertSignInCurrent(signOutAtStart);
   const client = await getRequiredAuthClient();
+  assertSignInCurrent(signOutAtStart);
   const result = await client.auth.signInWithPassword({
     email,
     password,
@@ -139,7 +163,9 @@ export async function signInWithPassword(email: string, password: string) {
     throw new Error(result.error.message);
   }
 
-  const user = await getVerifiedAuthUser();
+  assertSignInCurrent(signOutAtStart);
+  clearVerifiedAuthUserCache();
+  const user = await verifyAuthUser(client, ++authRevision, result.data?.user?.id);
   if (!user) {
     throw new Error("Could not verify this session. Check your email and password and try again.");
   }
@@ -148,7 +174,10 @@ export async function signInWithPassword(email: string, password: string) {
 }
 
 export async function signUpWithPassword(email: string, password: string, redirectPath?: string) {
+  const signOutAtStart = signOutRevision;
+  assertSignInCurrent(signOutAtStart);
   const client = await getRequiredAuthClient();
+  assertSignInCurrent(signOutAtStart);
   const result = await client.auth.signUp({
     email,
     password,
@@ -165,7 +194,9 @@ export async function signUpWithPassword(email: string, password: string, redire
     throw new Error("Supabase still requires email confirmation for new password accounts. Disable Confirm Email in the Supabase Email provider, then create the account again.");
   }
 
-  const user = await getVerifiedAuthUser();
+  assertSignInCurrent(signOutAtStart);
+  clearVerifiedAuthUserCache();
+  const user = await verifyAuthUser(client, ++authRevision, result.data?.user?.id);
   if (!user) {
     throw new Error("Could not verify this new account session. Try signing in again.");
   }
@@ -174,14 +205,19 @@ export async function signUpWithPassword(email: string, password: string, redire
 }
 
 export async function signInAnonymously() {
+  const signOutAtStart = signOutRevision;
+  assertSignInCurrent(signOutAtStart);
   const client = await getRequiredAuthClient();
+  assertSignInCurrent(signOutAtStart);
   const result = await client.auth.signInAnonymously();
 
   if (result.error) {
     throw new Error(result.error.message);
   }
 
-  const user = await getVerifiedAuthUser();
+  assertSignInCurrent(signOutAtStart);
+  clearVerifiedAuthUserCache();
+  const user = await verifyAuthUser(client, ++authRevision, result.data?.user?.id);
   if (!user) {
     throw new Error("Could not verify this session. Try again.");
   }
@@ -211,18 +247,27 @@ async function signInWithOAuthProvider(provider: Provider, redirectPath?: string
   }
 }
 
+function assertSignInCurrent(signOutAtStart: number) {
+  if (pendingSignOuts || signOutAtStart !== signOutRevision) throw new Error("Session changed. Try signing in again.");
+}
+
 export async function signOut() {
-  const client = await getAuthClient();
-  if (!client) {
-    return;
-  }
-
-  const result = await client.auth.signOut();
-  if (result.error) {
-    throw new Error(result.error.message);
-  }
-
+  signOutRevision += 1;
+  pendingSignOuts += 1;
+  authRevision += 1;
   clearVerifiedAuthUserCache();
+  setActiveAccount(null);
+  try {
+    const client = await getAuthClient();
+    if (!client) return;
+    const result = await client.auth.signOut();
+    if (result.error) throw new Error(result.error.message);
+  } finally {
+    pendingSignOuts -= 1;
+    authRevision += 1;
+    clearVerifiedAuthUserCache();
+    setActiveAccount(null);
+  }
 }
 
 export async function getAuthClient() {
@@ -250,31 +295,44 @@ export async function getAuthClient() {
   return clientPromise;
 }
 
-export async function subscribeToAuthChanges(onChange: (user: User | null) => void) {
+export async function subscribeToAuthChanges(
+  onChange: (user: User | null) => void,
+  onVerifying?: (userId: string) => void,
+) {
   const client = await getAuthClient();
   if (!client) {
     return () => undefined;
   }
 
+  let active = true;
   const subscription = client.auth.onAuthStateChange((_event: AuthChangeEvent, session: Session | null) => {
+    const revision = ++authRevision;
+    clearVerifiedAuthUserCache();
+    if (pendingSignOuts) { setActiveAccount(null); onChange(null); return; }
+    if (getAccountScope().userId !== (session?.user?.id ?? null)) {
+      setActiveAccount(null);
+    }
     if (!session?.user) {
       clearVerifiedAuthUserCache();
       onChange(null);
       return;
     }
 
+    onVerifying?.(session.user.id);
     setTimeout(() => {
-      clearVerifiedAuthUserCache();
+      if (!active || revision !== authRevision) return;
       void verifyAuthUser(client)
-        .then(onChange)
+        .then((user) => { if (active && revision === authRevision) onChange(user); })
         .catch(() => {
+          if (!active || revision !== authRevision) return;
           clearVerifiedAuthUserCache();
+          setActiveAccount(null);
           onChange(null);
         });
     }, 0);
   });
 
-  return () => subscription.data.subscription.unsubscribe();
+  return () => { active = false; subscription.data.subscription.unsubscribe(); };
 }
 
 function getSupabaseAuthConfig(): SupabaseAuthConfig | null {

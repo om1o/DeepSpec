@@ -1,4 +1,5 @@
 import type { IdentificationResult } from "../types/index";
+import { accountStorageKey } from "./accountScope";
 
 export const SCAN_CACHE_KEY = "deep-spec:scan-cache";
 export const SCAN_CACHE_MAX = 20;
@@ -30,7 +31,7 @@ export async function hashImageDataUrl(dataUrl: string): Promise<string | null> 
 
 function loadCache(): CacheEntry[] {
   try {
-    const raw = localStorage.getItem(SCAN_CACHE_KEY);
+    const raw = localStorage.getItem(accountStorageKey(SCAN_CACHE_KEY));
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -42,7 +43,7 @@ function loadCache(): CacheEntry[] {
 
 function saveCache(entries: CacheEntry[]): void {
   try {
-    localStorage.setItem(SCAN_CACHE_KEY, JSON.stringify(entries));
+    localStorage.setItem(accountStorageKey(SCAN_CACHE_KEY), JSON.stringify(entries));
   } catch {
     // Scan caching is best-effort and must not break identification.
   }
@@ -76,7 +77,7 @@ export function setCachedScanResult(hash: string, result: IdentificationResult):
 
 export function clearScanCache(): void {
   try {
-    localStorage.removeItem(SCAN_CACHE_KEY);
+    localStorage.removeItem(accountStorageKey(SCAN_CACHE_KEY));
   } catch {
     // Ignore cache cleanup failures.
   }

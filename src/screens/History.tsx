@@ -10,6 +10,7 @@ import { getTrainingReadiness } from "../services/trainingReadiness";
 import { getLocalDateStamp } from "../lib/utils";
 import { withLatestInspection } from "../lib/partInspection";
 import { getIntakeReview } from "../lib/intakeReview";
+import { hasUnassignedDeviceRecords, withAccountRouteState } from "../lib/accountScope";
 import { SCAN_CATEGORIES, type Lookup, type Rating, type ScanCategory, type TrainingStatus } from "../types";
 
 export default function History() {
@@ -97,6 +98,7 @@ export default function History() {
         </header>
 
         <ScanQualityMetricsPanel metrics={qualityMetrics} />
+        {hasUnassignedDeviceRecords() ? <p role="status" className="mt-4 rounded-2xl bg-white p-4 text-sm text-slate-700">Older device records are preserved separately. Their account owner is unknown, so they are not shown or uploaded automatically. Owner-confirmed recovery is required.</p> : null}
 
         {lookups.length > 0 ? (
           <section className="mt-5 rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
@@ -319,7 +321,7 @@ function LookupCard({ lookup }: { lookup: Lookup }) {
   return (
     <Link
       to={`/result/${lookup.id}`}
-      state={{ ...scanStateFromLookup(lookup), savedLookup: lookup }}
+      state={withAccountRouteState({ ...scanStateFromLookup(lookup), savedLookup: lookup })}
       className="grid grid-cols-[88px_1fr] gap-3 rounded-[24px] border border-slate-200 bg-white p-3 text-slate-950 shadow-sm transition hover:border-blue-200"
     >
       <ScanThumb

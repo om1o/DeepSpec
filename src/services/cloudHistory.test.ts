@@ -1,3 +1,4 @@
+import { setActiveAccount } from "../lib/accountScope";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 type SelectResult = { data: unknown; error: { message?: string } | null };
@@ -12,7 +13,7 @@ vi.mock("./auth", () => ({
     auth: { getUser: async () => ({ data: { user: { id: "user-1" } }, error: null }) },
     from: () => ({
       select: (columns: string) => ({
-        order: () => ({ limit: async () => mocks.select(columns) }),
+        eq: () => ({ order: () => ({ limit: async () => mocks.select(columns) }) }),
       }),
     }),
     storage: { from: () => ({ createSignedUrls: async () => ({ data: [], error: null }) }) },
@@ -41,7 +42,18 @@ const inspection = {
 
 describe("readCloudLookups", () => {
   beforeEach(() => {
+    setActiveAccount("user-1");
     mocks.select.mockReset();
+  });
+
+  it.each(["other", "round-trip"])("discards a history response after account changes: %s", async (mode) => {
+    mocks.select.mockImplementation(() => {
+      setActiveAccount("other");
+      if (mode === "round-trip") setActiveAccount("user-1");
+      return { data: [shopRow], error: null };
+    });
+    const { readCloudLookups } = await import("./cloudHistory");
+    expect(await readCloudLookups()).toEqual({ ok: false, message: "Account changed. Reload your saved scans." });
   });
 
   it("reads human inspection separately from AI and training fields", async () => {

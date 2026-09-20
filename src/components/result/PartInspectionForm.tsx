@@ -1,3 +1,4 @@
+import { getAccountScope, isAccountScopeCurrent } from "../../lib/accountScope";
 import { useState } from "react";
 import { emptyPartInspection, inspectionValidationError } from "../../lib/partInspection";
 import { getCloudSyncStatus, syncLookupToCloud } from "../../services/cloudSync";
@@ -5,6 +6,7 @@ import { saveLookupInspection } from "../../services/storage";
 import type { Lookup, PartInspectionDraft } from "../../types";
 
 export function PartInspectionForm({ lookup, onSaved }: { lookup: Lookup; onSaved: (lookup: Lookup) => void }) {
+  const [scope] = useState(getAccountScope);
   const [draft, setDraft] = useState<PartInspectionDraft>(lookup.inspection ?? { ...emptyPartInspection });
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
@@ -14,6 +16,7 @@ export function PartInspectionForm({ lookup, onSaved }: { lookup: Lookup; onSave
     setMessage("");
   }
   async function save() {
+    if (!isAccountScopeCurrent(scope)) { setMessage("Account changed. Reopen the scan before saving an inspection."); return; }
     const error = inspectionValidationError(draft);
     if (error) { setMessage(error); return; }
     const result = saveLookupInspection(lookup.id, draft, lookup);
@@ -27,10 +30,12 @@ export function PartInspectionForm({ lookup, onSaved }: { lookup: Lookup; onSave
     setSaving(true);
     try {
       const sync = await syncLookupToCloud(result.value);
+      if (!isAccountScopeCurrent(scope)) return;
       setMessage(sync.ok ? "Inspection saved on this device and synced to the cloud." : `Saved on this device. Cloud sync failed: ${sync.message}`);
     } catch {
+      if (!isAccountScopeCurrent(scope)) return;
       setMessage("Saved on this device. Cloud sync failed; try saving again when connected.");
-    } finally { setSaving(false); }
+    } finally { if (isAccountScopeCurrent(scope)) setSaving(false); }
   }
   return (
     <details className="rounded-[22px] border border-neutral-200 bg-white p-4 shadow-sm">

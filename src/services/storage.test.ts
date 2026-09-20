@@ -1,3 +1,4 @@
+import { accountStorageKey, setActiveAccount } from "../lib/accountScope";
 import {
   appendChatMessages,
   createChatMessage,
@@ -97,6 +98,27 @@ describe("storage", () => {
   beforeEach(() => {
     localStorage.clear();
     vi.restoreAllMocks();
+  });
+
+  it("isolates scans and chat while preserving another account and unassigned records", () => {
+    const legacy = JSON.stringify([{ id: "unassigned-record" }]);
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, legacy);
+    setActiveAccount("owner-a");
+    const saved = createLookup(scanState);
+    expect(saved.ok).toBe(true);
+    appendChatMessages(saved.value.id, [createChatMessage("user", "Private shop question")]);
+    setActiveAccount("owner-b");
+    expect(getLookups()).toEqual([]);
+    expect(getLookup(saved.value.id)).toBeNull();
+    setActiveAccount(null);
+    expect(getLookups()).toEqual([]);
+    expect(createLookup(scanState).ok).toBe(false);
+    setActiveAccount("owner-a");
+    expect(getLookups()).toHaveLength(1);
+    expect(getLookup(saved.value.id)?.chatHistory).toEqual(expect.arrayContaining([
+      expect.objectContaining({ content: "Private shop question" }),
+    ]));
+    expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBe(legacy);
   });
 
   it("creates and reads a saved lookup", () => {
@@ -364,7 +386,7 @@ describe("storage", () => {
     expect(lookups).toHaveLength(MAX_SAVED_LOOKUPS);
     expect(lookups[0].result?.partName).toBe(`Alternator ${MAX_SAVED_LOOKUPS + 4}`);
     expect(lookups.some((lookup) => lookup.id === firstLookup.id)).toBe(false);
-    expect(localStorage.getItem(`deep-spec:chat:${firstLookup.id}`)).toBeNull();
+    expect(localStorage.getItem(accountStorageKey(`deep-spec:chat:${firstLookup.id}`))).toBeNull();
   });
 
   it("persists human inspection without changing AI or training labels", () => {
@@ -432,7 +454,7 @@ describe("storage", () => {
   });
 
   it("ignores corrupt localStorage data", () => {
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, "{bad json");
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), "{bad json");
 
     expect(getLookups()).toEqual([]);
   });

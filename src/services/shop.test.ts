@@ -1,3 +1,4 @@
+import { accountStorageKey } from "../lib/accountScope";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createLookup, LOOKUPS_STORAGE_KEY, updateLookup } from "./storage";
 import {
@@ -79,7 +80,7 @@ describe("shop service", () => {
     attachScanToJob(job.id, scan.id);
     // Scan evicted from local storage (50-scan cap) or saved on another device: nothing to derive
     // from, so the stored status stands instead of resetting to "needs_review".
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, "[]");
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), "[]");
     expect(getShopJob(job.id)?.reviewStatus).toBe("confirmed");
   });
 

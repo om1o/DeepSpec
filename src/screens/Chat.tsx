@@ -1,3 +1,4 @@
+import { getAccountScope, isAccountScopeCurrent } from "../lib/accountScope";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import Button from "../components/ui/Button";
@@ -8,6 +9,7 @@ import { appendChatMessages, createChatMessage, getLookup } from "../services/st
 import type { Lookup } from "../types";
 
 export default function Chat() {
+  const accountScopeRef = useRef(getAccountScope());
   const { id } = useParams();
   const [searchParams] = useSearchParams();
   const [lookup, setLookup] = useState<Lookup | null>(() => (id ? getLookup(id) : null));
@@ -23,7 +25,7 @@ export default function Chat() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!lookup || !lookup.result || isSending) {
+    if (!isAccountScopeCurrent(accountScopeRef.current) || !lookup || !lookup.result || isSending) {
       return;
     }
 
@@ -47,7 +49,7 @@ export default function Chat() {
   }
 
   async function sendQuestion(trimmedQuestion: string, shouldSaveUserMessage: boolean) {
-    if (!lookup || !lookup.result || isSending) {
+    if (!isAccountScopeCurrent(accountScopeRef.current) || !lookup || !lookup.result || isSending) {
       return;
     }
 
@@ -81,6 +83,7 @@ export default function Chat() {
 
     try {
       const answer = await sendFollowUp(activeLookup, trimmedQuestion);
+      if (!isAccountScopeCurrent(accountScopeRef.current)) return;
       const assistantMessage = createChatMessage("assistant", answer);
       const savedAssistantMessage = appendChatMessages(activeLookup.id, [assistantMessage]);
       if (!savedAssistantMessage.ok) {
@@ -97,10 +100,11 @@ export default function Chat() {
 
       setLookup(savedAssistantMessage.value);
     } catch (chatError) {
+      if (!isAccountScopeCurrent(accountScopeRef.current)) return;
       setError(getAIErrorMessage(chatError));
       setErrorCode(chatError instanceof AIServiceError ? chatError.code : null);
     } finally {
-      setIsSending(false);
+      if (isAccountScopeCurrent(accountScopeRef.current)) setIsSending(false);
     }
   }
 
