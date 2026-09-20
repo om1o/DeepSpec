@@ -1,5 +1,11 @@
 import { isDeepStrictEqual } from "node:util";
 
+export function fetchCloudVerification(input, options = {}) {
+  const callerSignal = options.signal ?? (input instanceof Request ? input.signal : undefined);
+  const timeoutSignal = AbortSignal.timeout(20_000);
+  return fetch(input, { ...options, signal: callerSignal ? AbortSignal.any([callerSignal, timeoutSignal]) : timeoutSignal });
+}
+
 export async function assertInspectionSchema(client) {
   const result = await client.from("scan_lookups").select("inspection_json").limit(0);
   if (result.error && (result.error.code === "42703" || result.error.code === "PGRST204")) {

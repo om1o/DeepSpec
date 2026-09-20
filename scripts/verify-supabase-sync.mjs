@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { assertPrivateStorageDenied } from "./qa/storage-access-check.mjs";
-import { assertInspectionSchema, cleanupCloudFixture, verifyInspectionRoundTrip } from "./qa/cloud-fixture-checks.mjs";
+import { assertInspectionSchema, cleanupCloudFixture, fetchCloudVerification, verifyInspectionRoundTrip } from "./qa/cloud-fixture-checks.mjs";
 
 const SCAN_BUCKET = "scan-images";
 const inspectionMode = process.argv.includes("--inspection");
@@ -46,6 +46,7 @@ try {
   console.log("      Anonymous sign-ins are enabled in Supabase Auth settings.");
 
   ownerClient = createClient(config.url, config.key, {
+    global: { fetch: fetchCloudVerification },
     auth: {
       autoRefreshToken: false,
       detectSessionInUrl: false,
@@ -112,6 +113,7 @@ try {
 
   console.log("[6/9] Proving another anonymous user cannot read those scan datasets...");
   const otherClient = createClient(config.url, config.key, {
+    global: { fetch: fetchCloudVerification },
     auth: {
       autoRefreshToken: false,
       detectSessionInUrl: false,
@@ -205,7 +207,7 @@ async function signInAnonymously(supabase, config) {
     throw new Error(
       [
         `Anonymous sign-in failed: ${error?.message ?? "No user returned"}${code}, ${status}.`,
-        "The verifier already confirmed anonymous sign-ins are enabled, so this is a Supabase Auth/database problem instead of a browser app problem.",
+        "Anonymous sign-ins were enabled during preflight, but this request failed. Check network reachability and Auth logs before diagnosing a database problem.",
         dashboardLinks
           ? `Open Auth logs for the failed /signup event: ${dashboardLinks.authLogs}`
           : "Open Supabase Dashboard -> Auth logs for the failed /signup event.",
@@ -257,7 +259,7 @@ async function runPreflight(config) {
 }
 
 async function fetchJson(url, headers) {
-  const response = await fetch(url, { headers });
+  const response = await fetchCloudVerification(url, { headers });
   const bodyText = await response.text();
   let parsedBody;
 

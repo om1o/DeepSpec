@@ -1,5 +1,22 @@
-import { expect, it, vi } from "vitest";
-import { assertInspectionSchema, cleanupCloudFixture, verifyInspectionRoundTrip } from "./cloud-fixture-checks.mjs";
+import { afterEach, expect, it, vi } from "vitest";
+import { assertInspectionSchema, cleanupCloudFixture, fetchCloudVerification, verifyInspectionRoundTrip } from "./cloud-fixture-checks.mjs";
+
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+it.each(["timeout", "caller", "request"])("aborts pending verification requests on %s cancellation", async (source) => {
+  const timeout = new AbortController();
+  const caller = new AbortController();
+  vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeout.signal);
+  vi.stubGlobal("fetch", vi.fn((_input, init) => new Promise((_resolve, reject) => {
+    if (init.signal.aborted) reject(new Error("aborted"));
+    else init.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+  })));
+  const input = source === "request" ? new Request("https://example.test", { signal: caller.signal }) : "https://example.test";
+  const pending = fetchCloudVerification(input, source === "caller" ? { signal: caller.signal } : {});
+  const rejected = expect(pending).rejects.toThrow("aborted");
+  if (source === "timeout") timeout.abort(); else caller.abort();
+  await rejected;
+});
 
 const localId = "phase8-11111111-2222-4333-8444-555555555555";
 const userId = "qa-owner";
