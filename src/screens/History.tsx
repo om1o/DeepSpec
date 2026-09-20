@@ -9,6 +9,7 @@ import { MAX_SAVED_LOOKUPS, getLookups, scanStateFromLookup } from "../services/
 import { getTrainingReadiness } from "../services/trainingReadiness";
 import { getLocalDateStamp } from "../lib/utils";
 import { withLatestInspection } from "../lib/partInspection";
+import { getIntakeReview } from "../lib/intakeReview";
 import { SCAN_CATEGORIES, type Lookup, type Rating, type ScanCategory, type TrainingStatus } from "../types";
 
 export default function History() {
@@ -53,6 +54,7 @@ export default function History() {
   const [categoryFilter, setCategoryFilter] = useState<ScanCategory | "all">("all");
   const [reviewFilter, setReviewFilter] = useState<TrainingStatus | "error" | "all">("all");
   const [ratingFilter, setRatingFilter] = useState<Exclude<Rating, null> | "unrated" | "all">("all");
+  const [unresolvedOnly, setUnresolvedOnly] = useState(false);
   const filteredLookups = useMemo(
     () =>
       lookups.filter(
@@ -61,8 +63,8 @@ export default function History() {
           matchesCategory(lookup, categoryFilter) &&
           matchesReviewStatus(lookup, reviewFilter) &&
           matchesRating(lookup, ratingFilter),
-      ),
-    [categoryFilter, lookups, query, ratingFilter, reviewFilter],
+      ).filter((lookup) => !unresolvedOnly || getIntakeReview(lookup).status === "unresolved"),
+    [categoryFilter, lookups, query, ratingFilter, reviewFilter, unresolvedOnly],
   );
 
   return (
@@ -129,6 +131,12 @@ export default function History() {
                 <option value="down">Wrong</option>
                 <option value="unrated">Unrated</option>
               </FilterSelect>
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <label className="flex items-center gap-2 text-xs font-semibold">
+                <input type="checkbox" checked={unresolvedOnly} onChange={(event) => setUnresolvedOnly(event.target.checked)} />
+                Unresolved identities only
+              </label>
             </div>
             <div className="mt-3 flex items-center justify-between gap-3">
               <p className="text-xs font-bold text-neutral-500">
@@ -326,6 +334,7 @@ function LookupCard({ lookup }: { lookup: Lookup }) {
         </div>
         <p className="mt-1 truncate text-xs font-semibold text-neutral-400">{createdAt}</p>
         <p className="mt-3 text-sm font-semibold text-neutral-500">{status}</p>
+        <p className="mt-2 text-xs font-bold text-[var(--ds-accent)]">{getIntakeReview(lookup).label}</p>
         {lookup.jobId || lookup.vehicleContext?.technicianName ? (
           <p className="mt-2 truncate text-xs font-bold text-[var(--ds-accent)]">
             {lookup.vehicleContext?.jobTitle ?? "Shop job"}

@@ -17,6 +17,8 @@ it("keeps failed identification and missing observations explicit", () => {
   expect(buildIntakeDraft(failed).identitySource).toBe("No identification saved");
   expect(buildScanReport(failed)).toContain("Safety: not assessed; no AI result saved.");
   expect(buildScanReport(failed)).not.toContain("Nothing concerning visible");
+  expect(buildScanReport(failed)).toContain("Identity status: Identity unresolved");
+  expect(buildScanReport(failed)).toContain("Unresolved: AI identification did not complete.");
 });
 
 it("asks for another angle and deduplicates requested evidence", () => {

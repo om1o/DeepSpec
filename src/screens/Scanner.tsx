@@ -20,6 +20,7 @@ import { createPromptedProductIsolation, isolateSceneObjects, isPromptableSegmen
 import { supportsWebGpu } from "../lib/webgpu";
 import { getScanDebug, isScanDebugEnabled, recordScanDebug, resetScanDebug } from "../lib/scanDebug";
 import { getSimpleResultSummary } from "../lib/simpleResultSummary";
+import { getIntakeReview } from "../lib/intakeReview";
 import { deriveIssue, getAnswerBody, getSceneChips } from "../lib/resultFacts";
 import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
 import { getScanCardPreferences, type ScanCardPreferences } from "../lib/scanResultCardSettings";
@@ -1281,6 +1282,7 @@ function ScanResultCard({
   scanCardStatusMessage: string | null;
 }) {
   const result = review.scanState.result;
+  const intakeReview = getIntakeReview(review.lookup ?? review.scanState);
   const summary = result ? getSimpleResultSummary(result) : null;
   const isError = Boolean(review.scanState.errorMessage);
   const label = isError ? "Item captured" : summary?.title ?? getReviewDisplayLabel(review);
@@ -1385,6 +1387,11 @@ function ScanResultCard({
       {/* Content body */}
       {!collapsed ? (
       <div className="mt-3">
+        <div className="mb-3 rounded-xl bg-white/10 px-3 py-2.5">
+          <p className="text-xs font-bold">{intakeReview.label}</p>
+          {intakeReview.reasons.map((reason) => <p key={reason} className="mt-1 text-xs text-white/75">{reason}</p>)}
+          {review.lookup ? <Link className="mt-2 inline-block text-xs font-bold underline" to={`/result/${review.lookup.id}`} state={{ ...review.scanState, savedLookup: review.lookup }}>Open intake draft</Link> : null}
+        </div>
         {isMismatch ? (
           <div
             className="mb-3 rounded-xl px-3 py-2.5"

@@ -1,4 +1,5 @@
 import type { Lookup } from "../types";
+import { getIntakeReview } from "./intakeReview";
 
 // Derived from the saved record so retries and inspection edits cannot leave a stale draft.
 export function buildIntakeDraft(lookup: Lookup) {
@@ -23,6 +24,7 @@ export function buildIntakeDraft(lookup: Lookup) {
   if (inspection?.functionalStatus === "failed") checks.push("Functional test failed; resolve the recorded failure before use.");
   if (inspection?.functionalStatus === "inconclusive") checks.push("Functional test was inconclusive; further testing is needed.");
   return {
+    review: getIntakeReview(lookup),
     name: confirmedName || correction || result?.partName || "Unidentified part",
     identitySource: confirmedName ? "Human inspection" : correction ? "User correction — not independently verified" : result ? "AI suggestion — not verified" : "No identification saved",
     partNumber: inspection?.partNumber.trim() || "Not verified",
@@ -37,6 +39,8 @@ export function formatIntakeDraft(lookup: Lookup) {
   return [
     "Automatic intake draft",
     `Record: ${lookup.id}`,
+    `Identity status: ${draft.review.label}`,
+    ...draft.review.reasons.map((reason) => `Unresolved: ${reason}`),
     `Part: ${draft.name}`,
     `Identity source: ${draft.identitySource}`,
     `Part number: ${draft.partNumber}`,

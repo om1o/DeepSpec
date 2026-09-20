@@ -109,6 +109,7 @@ describe("Result", () => {
     await user.click(screen.getByRole("button", { name: "Save", exact: true }));
     expect(screen.getByRole("region", { name: "Automatic intake draft" })).toHaveTextContent("AI suggestion — not verified");
     expect(screen.getByRole("region", { name: "Automatic intake draft" })).toHaveTextContent("Not tested");
+    expect(screen.getByRole("region", { name: "Automatic intake draft" })).toHaveTextContent("Identity awaiting review");
     expect(getLookups()).toHaveLength(1);
     expect(getLookups()[0].inspection).toBeUndefined();
     expect(reportService.buildScanReport(getLookups()[0])).toContain("Automatic intake draft");

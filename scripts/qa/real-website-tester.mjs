@@ -511,6 +511,7 @@ async function runResultDetail() {
   await expectText(/QA Alternator/i, "result part label", "frontend", ["src/screens/Result.tsx", "src/services/storage.ts"]);
   await expectText(/\bAsk\b/i, "chat entry action", "frontend", ["src/screens/Result.tsx"]);
   await expectText(/Automatic intake draft/i, "automatic intake draft", "frontend", ["src/components/result/IntakeDraft.tsx", "src/screens/Result.tsx"]);
+  await expectText(/Identity awaiting review/i, "identity review status", "frontend", ["src/lib/intakeReview.ts"]);
   await expectText(/AI suggestion — not verified/i, "unverified intake identity", "frontend", ["src/lib/intakeDraft.ts"]);
   await expectText(/Verify vehicle fitment against a trusted catalog/i, "fitment check", "frontend", ["src/lib/intakeDraft.ts"]);
 

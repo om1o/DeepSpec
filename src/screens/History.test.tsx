@@ -131,6 +131,19 @@ describe("History", () => {
     expect(screen.getByText("1/1 saved scans")).toBeInTheDocument();
   });
 
+  it("filters unresolved identities independently of helpfulness and training labels", async () => {
+    const uncertain = { ...lookup, id: "uncertain", result: { ...lookup.result!, partName: "Uncertain alternator", confidence: "low" } };
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup, uncertain, bodyLookup]));
+    renderHistory();
+    await userEvent.click(screen.getByRole("checkbox", { name: "Unresolved identities only" }));
+    expect(screen.getByText("Uncertain alternator")).toBeInTheDocument();
+    expect(screen.getByText("Rear bumper")).toBeInTheDocument();
+    expect(screen.queryByText("Alternator")).not.toBeInTheDocument();
+    expect(screen.getByText("2/3 saved scans")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("checkbox", { name: "Unresolved identities only" }));
+    expect(screen.getByText("Alternator")).toBeInTheDocument();
+  });
+
   it.each([
     [undefined, "2026-09-20T12:00:00.000Z", "Remote reviewer"],
     ["2026-09-19T12:00:00.000Z", "2026-09-20T12:00:00.000Z", "Remote reviewer"],

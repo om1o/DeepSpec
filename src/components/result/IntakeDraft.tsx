@@ -7,6 +7,8 @@ export function IntakeDraft({ lookup }: { lookup: Lookup }) {
     <section aria-label="Automatic intake draft" className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-800">
       <h2 className="font-bold">Automatic intake draft</h2>
       <p className="mt-1 text-xs text-slate-500">Prepared from this saved scan. Included in your report export.</p>
+      <p className="mt-3 font-semibold">{draft.review.label}</p>
+      {draft.review.reasons.length ? <ul className="mt-2 list-disc space-y-1 pl-5">{draft.review.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul> : null}
       <dl className="mt-3 space-y-2">
         <div><dt className="font-semibold">Part</dt><dd>{draft.name}</dd><dd className="text-xs text-slate-500">{draft.identitySource}</dd></div>
         <div><dt className="font-semibold">Part number</dt><dd>{draft.partNumber}</dd></div>
