@@ -1,4 +1,4 @@
-import { FOLLOWUP_PROMPT, IDENTIFY_PROMPT } from "./systemPrompts";
+import { CHAT_USER_MESSAGE_MAX_CHARS, FOLLOWUP_PROMPT, IDENTIFY_PROMPT } from "./systemPrompts";
 import { identifyOnDevice, isOnDeviceFallbackEnabled } from "./onDeviceIdentify";
 import { getAuthClient } from "./auth";
 import {
@@ -495,14 +495,21 @@ function isScanCategory(value: unknown): value is ScanCategory {
   return typeof value === "string" && SCAN_CATEGORIES.includes(value as ScanCategory);
 }
 
+/**
+ * The follow-up message: scan facts, recent chat, then the question — kept within the chat API's
+ * CHAT_USER_MESSAGE_MAX_CHARS cut. The question used to come last with no budget, so a detailed
+ * result plus a couple of long answers pushed it past the cut and the model never saw it. Now the
+ * question's room is reserved first, facts are trimmed to fit, and recent chat fills what's left,
+ * newest first.
+ */
+function collapseWhitespace(value: string) {
+  return value.trim().replace(/\s+/g, " ");
+}
+
 function buildFollowUpContext(lookup: Lookup, question: string) {
   const result = lookup.result;
-  const recentMessages = lookup.chatHistory
-    .slice(-6)
-    .map((message) => `${message.role}: ${message.content}`)
-    .join("\n");
-
-  return [
+  const questionLine = `User question: ${question}`;
+  const facts = [
     `Saved scan category: ${lookup.scanCategory}`,
     `Training label: ${lookup.trainingLabel}`,
     result ? `Part name: ${result.partName}` : "Part name: unknown",
@@ -514,9 +521,33 @@ function buildFollowUpContext(lookup: Lookup, question: string) {
     result ? `Concerns: ${result.concerns.join("; ") || "none"}` : "",
     result ? `Next action: ${result.nextAction}` : "",
     lookup.correction ? `User correction: ${lookup.correction}` : "",
-    recentMessages ? `Recent chat:\n${recentMessages}` : "",
-    `User question: ${question}`,
   ]
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, Math.max(0, CHAT_USER_MESSAGE_MAX_CHARS - questionLine.length - 1));
+
+  // Chat saves the question before sending, so it is usually already the last history message.
+  // The saved copy has its whitespace collapsed (createChatMessage), so compare collapsed forms —
+  // a question typed with a newline would otherwise be sent once as history and again as itself.
+  const history = lookup.chatHistory.slice(-7);
+  const last = history[history.length - 1];
+  if (last?.role === "user" && collapseWhitespace(last.content) === collapseWhitespace(question)) {
+    history.pop();
+  }
+
+  const chatHeader = "Recent chat:";
+  let room = CHAT_USER_MESSAGE_MAX_CHARS - questionLine.length - facts.length - chatHeader.length - 3;
+  const chatLines: string[] = [];
+  for (const message of history.slice(-6).reverse()) {
+    const line = `${message.role}: ${message.content}`;
+    if (line.length + 1 > room) {
+      break;
+    }
+    chatLines.unshift(line);
+    room -= line.length + 1;
+  }
+
+  return [facts, chatLines.length ? `${chatHeader}\n${chatLines.join("\n")}` : "", questionLine]
     .filter(Boolean)
     .join("\n");
 }

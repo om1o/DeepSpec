@@ -797,6 +797,52 @@ describe("billing shared", () => {
     }));
     expect(table.updateEq).toHaveBeenCalledWith("provider_subscription_id", "sub_123");
   });
+
+  describe("Polar webhook secrets created before the Standard Webhooks switch", () => {
+    // Polar HMAC scheme: the raw secret string itself is the signing key (Polar's docs say to
+    // base64-encode it before handing it to a Standard Webhooks library, which decodes it back).
+    const legacySecret = "polar_whs_legacy-secret";
+    const legacyEnv = () => ({ ...polarWebhookEnv(), POLAR_WEBHOOK_SECRET: legacySecret });
+    const body = JSON.stringify({ data: {}, type: "customer.created" });
+
+    it("verifies a webhook signed with the raw legacy secret", async () => {
+      supabaseMock.createClient.mockReturnValue({ from: createBillingTableMock().from });
+
+      await expect(createWebhookResponse(
+        body,
+        signStandardWebhookBody(body, undefined, Buffer.from(legacySecret)),
+        legacyEnv(),
+      )).resolves.toMatchObject({ status: 200, body: { handled: false, received: true } });
+    });
+
+    it("still rejects a webhook signed with some other secret", async () => {
+      supabaseMock.createClient.mockReturnValue({ from: createBillingTableMock().from });
+
+      await expect(createWebhookResponse(
+        body,
+        signStandardWebhookBody(body, undefined, Buffer.from("someone-elses-secret")),
+        legacyEnv(),
+      )).resolves.toMatchObject({ status: 400, body: { error: { code: "invalid_signature" } } });
+    });
+
+    it("keeps verifying whsec_ secrets the Standard Webhooks way", async () => {
+      supabaseMock.createClient.mockReturnValue({ from: createBillingTableMock().from });
+
+      await expect(createWebhookResponse(body, signStandardWebhookBody(body), polarWebhookEnv()))
+        .resolves.toMatchObject({ status: 200, body: { handled: false, received: true } });
+    });
+
+    it("never accepts a signature made with an empty key", async () => {
+      supabaseMock.createClient.mockReturnValue({ from: createBillingTableMock().from });
+
+      // "!!!" is not base64, so it decodes to zero bytes — an HMAC with an empty key anyone can compute.
+      await expect(createWebhookResponse(
+        body,
+        signStandardWebhookBody(body, undefined, Buffer.alloc(0)),
+        { ...polarWebhookEnv(), POLAR_WEBHOOK_SECRET: "!!!" },
+      )).resolves.toMatchObject({ status: 400, body: { error: { code: "invalid_signature" } } });
+    });
+  });
 });
 
 function webhookEnv() {
@@ -825,9 +871,13 @@ function signStripeBody(body: string, timestamp = Math.floor(Date.now() / 1000))
   return `t=${timestamp},v1=${signature}`;
 }
 
-function signStandardWebhookBody(body: string, timestamp = Math.floor(Date.now() / 1000)) {
+function signStandardWebhookBody(
+  body: string,
+  timestamp = Math.floor(Date.now() / 1000),
+  key: Buffer = Buffer.from("polar-webhook-secret"),
+) {
   const webhookId = "msg_test";
-  const signature = createHmac("sha256", Buffer.from("polar-webhook-secret"))
+  const signature = createHmac("sha256", key)
     .update(`${webhookId}.${timestamp}.${body}`, "utf8")
     .digest("base64");
   return {

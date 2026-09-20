@@ -27,6 +27,10 @@ const SIGNED_URL_TTL_SECONDS = 60 * 60;
 const DEFAULT_HISTORY_LIMIT = 200;
 const FALLBACK_IMAGE = "/brand/deepspec-logo.webp";
 const CLOUD_HISTORY_CORE_SELECT = "local_id,created_at,captured_at,analyzed_at,error_code,error_message,rating,correction,notes,scan_category,training_label,training_status,chat_history,result_json,image_path";
+// Shop-mode columns (mechanic_shop_mode migration). Not every deployed database has them, so the
+// read asks for them and falls back to the core columns only when PostgREST reports one missing —
+// reading the core columns alone dropped the job, vehicle, and review status from every cloud scan.
+const CLOUD_HISTORY_SHOP_COLUMNS = ["customer_visible_report_json", "job_id", "org_id", "review_status", "technician_user_id", "vehicle_context"];
 
 type CloudHistoryRow = {
   local_id: unknown;
@@ -83,11 +87,15 @@ export async function readCloudLookups(limit = DEFAULT_HISTORY_LIMIT): Promise<R
     return { ok: false, message: "No verified Supabase session was found." };
   }
 
-  const rowsResult: CloudHistoryQueryResult = await supabase
+  const selectRows = (columns: string): PromiseLike<CloudHistoryQueryResult> => supabase
     .from("scan_lookups")
-    .select(CLOUD_HISTORY_CORE_SELECT)
+    .select(columns)
     .order("created_at", { ascending: false })
     .limit(limit);
+  let rowsResult = await selectRows(`${CLOUD_HISTORY_CORE_SELECT},${CLOUD_HISTORY_SHOP_COLUMNS.join(",")}`);
+  if (isMissingShopColumn(rowsResult.error)) {
+    rowsResult = await selectRows(CLOUD_HISTORY_CORE_SELECT);
+  }
 
   if (rowsResult.error) {
     return { ok: false, message: rowsResult.error.message ?? "Could not load cloud scan history." };
@@ -100,6 +108,13 @@ export async function readCloudLookups(limit = DEFAULT_HISTORY_LIMIT): Promise<R
     .filter((lookup): lookup is Lookup => Boolean(lookup));
 
   return { ok: true, value: lookups };
+}
+
+/** A select naming a shop column the database doesn't have (Postgres 42703 or a stale schema cache). */
+function isMissingShopColumn(error: { message?: string } | null) {
+  const message = error?.message ?? "";
+  return /does not exist|schema cache|could not find .* column/i.test(message)
+    && CLOUD_HISTORY_SHOP_COLUMNS.some((column) => message.includes(column));
 }
 
 async function getSignedImageMap(

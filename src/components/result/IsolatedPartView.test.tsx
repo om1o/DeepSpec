@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { IsolatedPartView } from "./IsolatedPartView";
-import { getContainedStageStyle } from "./isolatedPartViewGeometry";
+import { edgeSafeShift, getContainedStageStyle, getFocusLabelPlacement } from "./isolatedPartViewGeometry";
 import type { IsolatedObject, VisualFocusBox } from "../../types";
 
 const frame = "data:image/jpeg;base64,frame";
@@ -147,5 +147,33 @@ describe("getContainedStageStyle (AR stage letterbox math)", () => {
       width: "600px",
       height: "400px",
     });
+  });
+});
+
+describe("edge-safe label placement (labels stay inside the overflow-hidden stage)", () => {
+  const box = (x: number, y: number, width: number, height: number): VisualFocusBox => ({ x, y, width, height, confidence: 1 });
+
+  it("shifts a label by its anchor fraction: flush-left at the left edge, centred mid-stage, flush-right at the right", () => {
+    expect(edgeSafeShift(0)).toBe("0%");
+    expect(edgeSafeShift(0.5)).toBe("-50%");
+    expect(edgeSafeShift(1)).toBe("-100%");
+    expect(edgeSafeShift(-0.2)).toBe("0%");
+    expect(edgeSafeShift(1.3)).toBe("-100%");
+  });
+
+  it("hangs the focus label from the box edge with more stage beside it", () => {
+    // Box right of centre ending before 82%: the old rule left-anchored it and it ran 62px off-stage.
+    expect(getFocusLabelPlacement(box(0.58, 0.45, 0.22, 0.2))).toMatchObject({ right: 10 });
+    expect(getFocusLabelPlacement(box(0.1, 0.45, 0.22, 0.2))).toMatchObject({ left: 10 });
+  });
+
+  it("caps the focus label to the room on its side, as % of the focus frame's width", () => {
+    // Left-anchored at x=0.45 with width 0.1: 55% of the stage = 550% of the frame.
+    expect(getFocusLabelPlacement(box(0.45, 0.5, 0.1, 0.1)).maxWidth).toBe("min(300px, calc(550.00% - 18px))");
+  });
+
+  it("puts the label above the box, or below when the box hugs the top", () => {
+    expect(getFocusLabelPlacement(box(0.2, 0.4, 0.2, 0.2))).toMatchObject({ bottom: "calc(100% + 10px)" });
+    expect(getFocusLabelPlacement(box(0.2, 0.05, 0.2, 0.2))).toMatchObject({ top: "calc(100% + 10px)" });
   });
 });

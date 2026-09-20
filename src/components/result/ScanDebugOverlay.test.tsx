@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { ScanDebugOverlay } from "./ScanDebugOverlay";
 
 describe("ScanDebugOverlay", () => {
@@ -13,13 +14,24 @@ describe("ScanDebugOverlay", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("shows the diagnostics and a copy button when enabled", () => {
+  it("starts collapsed to a one-line summary with the copy button, so it doesn't cover the scan labels", () => {
+    vi.stubEnv("VITE_DEEPSPEC_DEBUG", "on");
+    render(<ScanDebugOverlay info={{ webgpu: true, segmenter: "SAM", samLoadMs: 1200 }} />);
+    const overlay = screen.getByTestId("scan-debug-overlay");
+    expect(overlay).toHaveAttribute("data-expanded", "false");
+    expect(overlay).toHaveTextContent("SAM");
+    expect(overlay).not.toHaveTextContent("WebGPU");
+    expect(screen.getByRole("button", { name: /Copy diagnostics/ })).toBeInTheDocument();
+  });
+
+  it("shows the diagnostics and a copy button when enabled and expanded", async () => {
     vi.stubEnv("VITE_DEEPSPEC_DEBUG", "on");
     render(
       <ScanDebugOverlay
         info={{ webgpu: true, segmenter: "SAM", focusMode: "mask", samLoadMs: 1200, samInferenceMs: 800, samOk: true }}
       />,
     );
+    await userEvent.click(screen.getByRole("button", { expanded: false }));
     const overlay = screen.getByTestId("scan-debug-overlay");
     expect(overlay).toHaveTextContent("WebGPU");
     expect(overlay).toHaveTextContent("Segmenter");
@@ -28,16 +40,18 @@ describe("ScanDebugOverlay", () => {
     expect(screen.getByRole("button", { name: /Copy diagnostics/ })).toBeInTheDocument();
   });
 
-  it("still renders (with placeholders + WebGPU) when enabled before any scan", () => {
+  it("still renders (with placeholders + WebGPU) when enabled before any scan", async () => {
     vi.stubEnv("VITE_DEEPSPEC_DEBUG", "on");
     render(<ScanDebugOverlay />);
+    expect(screen.getByTestId("scan-debug-overlay")).toHaveTextContent("scan to see");
+    await userEvent.click(screen.getByRole("button", { expanded: false }));
     const overlay = screen.getByTestId("scan-debug-overlay");
     expect(overlay).toHaveTextContent("WebGPU");
     expect(overlay).toHaveTextContent("scan to see");
     expect(screen.getByRole("button", { name: /Copy diagnostics/ })).toBeInTheDocument();
   });
 
-  it("shows an explicit SAM geometry verdict when target and mask boxes are present", () => {
+  it("shows an explicit SAM geometry verdict when target and mask boxes are present", async () => {
     vi.stubEnv("VITE_DEEPSPEC_DEBUG", "on");
     render(
       <ScanDebugOverlay
@@ -53,6 +67,9 @@ describe("ScanDebugOverlay", () => {
       />,
     );
 
+    // The verdict is the collapsed summary; the labelled row appears once expanded.
+    expect(screen.getByTestId("scan-debug-overlay")).toHaveTextContent("mask overlaps target");
+    await userEvent.click(screen.getByRole("button", { expanded: false }));
     expect(screen.getByTestId("scan-debug-overlay")).toHaveTextContent("SAM verdict");
     expect(screen.getByTestId("scan-debug-overlay")).toHaveTextContent("mask overlaps target");
   });

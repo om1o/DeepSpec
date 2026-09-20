@@ -84,6 +84,18 @@ describe("report", () => {
     expect(getScanReportFilename(lookup)).toBe("deep-spec-brake-caliper-2026-05-17.txt");
   });
 
+  it("dates the filename in the user's local timezone, matching the report body", () => {
+    const originalTz = process.env.TZ;
+    process.env.TZ = "America/New_York";
+    try {
+      // 11:30pm on Sep 17 in New York is already Sep 18 in UTC.
+      const evening = { ...lookup, createdAt: "2026-09-18T03:30:00.000Z" };
+      expect(getScanReportFilename(evening)).toBe("deep-spec-brake-caliper-2026-09-17.txt");
+    } finally {
+      process.env.TZ = originalTz;
+    }
+  });
+
   it("creates a nearby options map URL without ranking shops", () => {
     expect(getMechanicSearchUrl(lookup)).toBe("https://www.google.com/maps/search/brakes%20auto%20repair%20near%20me");
   });

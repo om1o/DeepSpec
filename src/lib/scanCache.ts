@@ -48,13 +48,24 @@ function saveCache(entries: CacheEntry[]): void {
   }
 }
 
+// An offline estimate is a stopgap, not an answer: caching it would hand the same photo that
+// estimate again after the connection or provider recovers, instead of a real analysis.
+function isOnDeviceEstimate(result: IdentificationResult | undefined): boolean {
+  return result?.modelRun?.provider === "on-device";
+}
+
 export function getCachedScanResult(hash: string): IdentificationResult | null {
   const entries = loadCache();
   const entry = entries.find((e) => e.hash === hash);
-  return entry?.result ?? null;
+  // Also skips estimates an earlier build already cached.
+  return entry && !isOnDeviceEstimate(entry.result) ? entry.result : null;
 }
 
 export function setCachedScanResult(hash: string, result: IdentificationResult): void {
+  if (isOnDeviceEstimate(result)) {
+    return;
+  }
+
   const entries = loadCache().filter((e) => e.hash !== hash);
   entries.push({ hash, result, cachedAt: new Date().toISOString() });
   if (entries.length > SCAN_CACHE_MAX) {

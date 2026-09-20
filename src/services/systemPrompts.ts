@@ -79,6 +79,10 @@ If two photos are provided, the first is the full scan and the second may be a f
 - Return only valid JSON matching the schema.
 `.trim();
 
+// The chat API keeps only this many characters of the follow-up message (question + scan context);
+// the client budgets its context to fit so the question itself is never cut off.
+export const CHAT_USER_MESSAGE_MAX_CHARS = 3000;
+
 export const FOLLOWUP_PROMPT = `
 You are Deep Spec's follow-up assistant. A user just had a vehicle part identified by the app and wants to ask a follow-up question about it.
 

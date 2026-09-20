@@ -133,31 +133,36 @@ export default function Result() {
     <main className="min-h-dvh bg-[var(--ds-bg)] text-slate-950">
       <div className="mx-auto grid min-h-dvh w-full max-w-6xl lg:grid-cols-[minmax(0,1fr)_430px] lg:p-4">
         <section className="relative min-h-[48dvh] overflow-hidden bg-[#020617] text-white lg:sticky lg:top-4 lg:min-h-[calc(100dvh-32px)] lg:rounded-[30px]">
+          {/* On desktop the answer card is pulled 40px over this panel (lg:-ml-10), so the photo,
+              header and title keep clear of that strip (lg:right-10) — otherwise the card hid the
+              photo's right edge, any label placed there, and part of the Back button. */}
           {frame?.imageBase64 ? (
-            <IsolatedPartView
-              frameBase64={frame.imageBase64}
-              isolatedImageBase64={scanState?.isolatedImageBase64}
-              focusBox={scanState?.focusBox}
-              focusMode={scanState?.focusMode ?? "full_frame"}
-              label={simpleSummary?.title ?? "Captured frame"}
-              issue={scanState?.result ? deriveIssue(scanState.result) : null}
-              sceneChips={scanState?.result ? getSceneChips(scanState.result) : undefined}
-              objects={scanState?.isolatedObjects}
-              variant="result"
-            />
+            <div className="absolute inset-0 lg:right-10">
+              <IsolatedPartView
+                frameBase64={frame.imageBase64}
+                isolatedImageBase64={scanState?.isolatedImageBase64}
+                focusBox={scanState?.focusBox}
+                focusMode={scanState?.focusMode ?? "full_frame"}
+                label={simpleSummary?.title ?? "Captured frame"}
+                issue={scanState?.result ? deriveIssue(scanState.result) : null}
+                sceneChips={scanState?.result ? getSceneChips(scanState.result) : undefined}
+                objects={scanState?.isolatedObjects}
+                variant="result"
+              />
+            </div>
           ) : (
             <div className="absolute inset-0 grid place-items-center bg-[#061522] px-8 text-center text-sm text-white/62">
               No frame captured.
             </div>
           )}
           <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(2,6,23,0.58),rgba(2,6,23,0.02)_38%,rgba(2,6,23,0.76))]" />
-          <header className="absolute left-0 right-0 top-0 z-10 flex items-center justify-between px-4 pt-[max(18px,env(safe-area-inset-top))]">
+          <header className="absolute left-0 right-0 top-0 z-10 lg:right-10 flex items-center justify-between px-4 pt-[max(18px,env(safe-area-inset-top))]">
             <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-11 w-32 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-white/30" />
             <Link to="/scan" className="rounded-full bg-white/90 px-4 py-2 text-sm font-bold text-slate-800 shadow-sm ring-1 ring-white/40 backdrop-blur-md">
               Back
             </Link>
           </header>
-          <div className="absolute bottom-8 left-0 right-0 z-10 px-4">
+          <div className="absolute bottom-8 left-0 right-0 z-10 px-4 lg:right-10">
             <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Scanned photo</p>
             <h1 className="mt-2 truncate text-3xl font-extrabold tracking-tight text-white">
               {simpleSummary?.title ?? "Captured frame"}
@@ -317,7 +322,11 @@ function ReportActions({ lookup }: { lookup: Lookup }) {
       }
       await navigator.clipboard.writeText(report);
       setStatus("Report copied to clipboard.");
-    } catch {
+    } catch (error) {
+      // Dismissing the native share sheet rejects with AbortError; that's a choice, not a failure.
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
       setStatus("This browser won't share. Export instead.");
     }
   }

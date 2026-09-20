@@ -8,8 +8,22 @@ type ParsedBox = {
 export type SamGeometryVerdict =
   | "frame/model dims mismatch"
   | "mask missed target"
+  | "mask much smaller than target"
+  | "mask much larger than target"
   | "mask overlaps target"
   | "need geometry";
+
+// A mask box under this share of the target box's area is treated as SAM grabbing a sub-part (a
+// label, a connector) rather than the object — the "tiny blob" failure. It still overlaps the
+// target, so the overlap check alone reads it as fine.
+const UNDERSIZED_MASK_AREA_RATIO = 0.25;
+
+// A mask box over this multiple of the target box's area is treated as SAM grabbing the object
+// plus its surroundings (the whole engine around an engine cover) — the "spill" failure. It
+// contains the target, so the overlap check alone reads it as fine. Tighter than mirroring the
+// undersized ratio (4x): target boxes are drawn around the object, so a correct mask box should
+// rarely be much bigger than the target at all.
+const OVERSIZED_MASK_AREA_RATIO = 2;
 
 type SamGeometryInput = {
   frameDims?: string;
@@ -40,9 +54,18 @@ export function getSamGeometryVerdict(input: SamGeometryInput): SamGeometryVerdi
   const maskCenterX = maskBox.x + maskBox.width / 2;
   const maskCenterY = maskBox.y + maskBox.height / 2;
 
-  return overlapRatio >= 0.25 || isPointInsideBox(maskCenterX, maskCenterY, targetBox)
-    ? "mask overlaps target"
-    : "mask missed target";
+  if (overlapRatio < 0.25 && !isPointInsideBox(maskCenterX, maskCenterY, targetBox)) {
+    return "mask missed target";
+  }
+  const maskArea = getBoxArea(maskBox);
+  const targetArea = getBoxArea(targetBox);
+  if (maskArea < targetArea * UNDERSIZED_MASK_AREA_RATIO) {
+    return "mask much smaller than target";
+  }
+  if (maskArea > targetArea * OVERSIZED_MASK_AREA_RATIO) {
+    return "mask much larger than target";
+  }
+  return "mask overlaps target";
 }
 
 function parseDims(value?: string): { width: number; height: number } | null {

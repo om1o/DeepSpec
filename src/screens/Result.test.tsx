@@ -356,6 +356,39 @@ describe("Result", () => {
     expect(screen.getByRole("button", { name: "Export" })).toBeInTheDocument();
   });
 
+  it("stays quiet when the user dismisses the native share sheet", async () => {
+    const lookup = makeLookup();
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+    const share = vi.fn().mockRejectedValue(new DOMException("Share canceled", "AbortError"));
+    Object.defineProperty(navigator, "share", { configurable: true, value: share });
+
+    try {
+      renderResult(null, `/result/${lookup.id}`);
+      await userEvent.click(screen.getByRole("button", { name: "Share" }));
+
+      expect(share).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("report-actions")).not.toHaveTextContent(/won't share/i);
+    } finally {
+      Reflect.deleteProperty(navigator, "share");
+    }
+  });
+
+  it("still tells the user when sharing genuinely fails", async () => {
+    const lookup = makeLookup();
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+    const share = vi.fn().mockRejectedValue(new DOMException("Not allowed", "NotAllowedError"));
+    Object.defineProperty(navigator, "share", { configurable: true, value: share });
+
+    try {
+      renderResult(null, `/result/${lookup.id}`);
+      await userEvent.click(screen.getByRole("button", { name: "Share" }));
+
+      expect(screen.getByTestId("report-actions")).toHaveTextContent(/won't share/i);
+    } finally {
+      Reflect.deleteProperty(navigator, "share");
+    }
+  });
+
   it("allows retrying an unsaved failed scan when online", async () => {
     const onlineSpy = vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
     const identifySpy = vi.spyOn(aiService, "identifyCapturedFrame").mockResolvedValue(successfulScan.result!);

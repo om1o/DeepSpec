@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, expect, vi } from "vitest";
@@ -25,6 +25,8 @@ const passingQuality = {
 };
 const createFocusedScanCrop = vi.fn(async () => "data:image/jpeg;base64,target-crop");
 const createSegmentedProductIsolation = vi.fn(async () => null);
+const isPromptableSegmentationEnabled = vi.fn(() => false);
+const isolateSceneObjects = vi.fn(async () => []);
 const detectObjectTargetFromImageData = vi.fn(() => null);
 const getCloudSyncStatus = vi.fn(() => ({ configured: false, message: "Cloud sync is off." }));
 const syncLookupToCloud = vi.fn(async () => ({ ok: true, message: "Scan synced." }));
@@ -161,8 +163,8 @@ vi.mock("../lib/productSegmentation", () => ({
 
 vi.mock("../lib/promptableSegmentation", () => ({
   createPromptedProductIsolation: async () => null,
-  isolateSceneObjects: async () => [],
-  isPromptableSegmentationEnabled: () => false,
+  isolateSceneObjects: (...args: unknown[]) => isolateSceneObjects(...args),
+  isPromptableSegmentationEnabled: () => isPromptableSegmentationEnabled(),
   warmPromptableSegmentation: () => {},
 }));
 
@@ -196,6 +198,9 @@ describe("Scanner", () => {
     createFocusedScanCrop.mockResolvedValue("data:image/jpeg;base64,target-crop");
     createSegmentedProductIsolation.mockReset();
     createSegmentedProductIsolation.mockResolvedValue(null);
+    isPromptableSegmentationEnabled.mockReturnValue(false);
+    isolateSceneObjects.mockReset();
+    isolateSceneObjects.mockResolvedValue([]);
     detectObjectTargetFromImageData.mockReset();
     detectObjectTargetFromImageData.mockReturnValue(null);
     getCloudSyncStatus.mockReset();
@@ -260,6 +265,54 @@ describe("Scanner", () => {
       trainingLabel: "Alternator",
       trainingStatus: "raw_unreviewed",
     });
+  }, 20000);
+
+  it.each(["success", "failure"])("ignores a previous scan's late object-analysis %s", async (outcome) => {
+    mockStillImageTarget({ confidence: 0.9, x: 0.2, y: 0.2, width: 0.3, height: 0.3 });
+    const focusBox = { x: 0.2, y: 0.2, width: 0.3, height: 0.3 };
+    createSegmentedProductIsolation.mockResolvedValue({
+      focusBox,
+      frame: { imageBase64: "data:image/png;base64,isolated", capturedAt: new Date().toISOString() },
+      isolatedImageBase64: "data:image/png;base64,isolated",
+    });
+    isPromptableSegmentationEnabled.mockReturnValue(true);
+    isolateSceneObjects.mockResolvedValue([
+      { name: "Alternator", category: "electrical", focusBox, isolatedImageBase64: "data:image/png;base64,primary", primary: true },
+      { name: "Wrench", category: "tools", focusBox, isolatedImageBase64: "data:image/png;base64,secondary", primary: false },
+    ]);
+    const sceneResult = { ...makeScanResult("Alternator"), sceneObjects: [
+      { name: "Wrench", category: "tools", regionLabel: "right", confidence: "high" },
+    ] };
+    let resolveOld!: (result: ReturnType<typeof makeScanResult>) => void;
+    let rejectOld!: (error: Error) => void;
+    const oldResponse = new Promise<ReturnType<typeof makeScanResult>>((resolve, reject) => {
+      resolveOld = resolve;
+      rejectOld = reject;
+    });
+    identifyCapturedFrame
+      .mockResolvedValueOnce(sceneResult)
+      .mockReturnValueOnce(oldResponse)
+      .mockResolvedValueOnce(sceneResult)
+      .mockResolvedValueOnce(makeScanResult("Socket wrench"));
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Isolated Wrench" }));
+    expect(screen.getByTestId("focused-object-card")).toHaveTextContent("Analyzing");
+    await userEvent.click(screen.getByTestId("focused-object-back"));
+    await userEvent.click(screen.getByRole("button", { name: "Close result card" }));
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Isolated Wrench" }));
+    await waitFor(() => expect(screen.getByTestId("focused-object-card")).toHaveTextContent("Socket wrench"));
+
+    await act(async () => {
+      if (outcome === "success") resolveOld(makeScanResult("Old scan part"));
+      else rejectOld(new Error("Old scan failed"));
+      await oldResponse.catch(() => undefined);
+    });
+    expect(screen.getByTestId("focused-object-card")).toHaveTextContent("Socket wrench");
+    expect(screen.getByTestId("focused-object-card")).not.toHaveTextContent("Old scan");
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(4);
   }, 20000);
 
   it("opens a simple captured-item review when AI analysis fails", async () => {
@@ -699,6 +752,42 @@ describe("Scanner", () => {
     expect(within(reviewCard as HTMLElement).queryByRole("button", { name: "Estimate size" })).not.toBeInTheDocument();
   }, 10000);
 
+  it("re-anchors the result card when the device is rotated or the window is resized", async () => {
+    const originalWidth = window.innerWidth;
+    const originalHeight = window.innerHeight;
+    const setViewport = (width: number, height: number) => {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: height });
+    };
+
+    try {
+      setViewport(375, 667);
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <Routes>
+            <Route path="/" element={<Scanner />} />
+          </Routes>
+        </MemoryRouter>,
+      );
+
+      await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+      const reviewHeading = await screen.findByRole("heading", { level: 3, name: "Alternator" });
+      const reviewCard = reviewHeading.closest("section") as HTMLElement;
+      // Docked low on the portrait phone: viewport height minus the card's reserved room.
+      expect(reviewCard.style.top).toBe("247px");
+
+      act(() => {
+        setViewport(1024, 768);
+        window.dispatchEvent(new Event("resize"));
+      });
+
+      // Same card, re-placed for the landscape viewport instead of keeping its portrait position.
+      expect((screen.getByRole("heading", { level: 3, name: "Alternator" }).closest("section") as HTMLElement).style.top).toBe("348px");
+    } finally {
+      setViewport(originalWidth, originalHeight);
+    }
+  }, 20000);
+
   it("keeps measurement controls out of the default fastener scan card", async () => {
     identifyCapturedFrame.mockResolvedValueOnce(makeScanResult("Hex nut"));
 
@@ -759,7 +848,9 @@ describe("Scanner", () => {
       new File(["test-image"], "alternator.jpg", { type: "image/jpeg" }),
     );
 
-    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    // jsdom never decodes images, so the upload's target detection always runs out its 900ms
+    // decode timeout before identify is called — too close to waitFor's 1000ms default.
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1), { timeout: 3000 });
     const reviewHeading = await screen.findByRole("heading", { level: 3, name: "Alternator" });
     const reviewCard = reviewHeading.closest("section");
     expect(reviewCard).toBeTruthy();
@@ -772,6 +863,64 @@ describe("Scanner", () => {
       },
     });
   }, 10000);
+
+  describe("when the camera is blocked and upload is the only way to scan", () => {
+    function renderBlockedScanner() {
+      cameraHookState.current = {
+        cameraError: "Permission denied",
+        cameraRequestId: 7,
+        cameraState: "blocked",
+      };
+      render(
+        <MemoryRouter initialEntries={["/"]}>
+          <Routes>
+            <Route path="/" element={<Scanner />} />
+          </Routes>
+        </MemoryRouter>,
+      );
+    }
+
+    // fireEvent, not userEvent.upload: user-event filters files by the input's accept list, and
+    // the picker's "All files" option (or a drop) can still hand the handler any type.
+    function chooseFile(file: File) {
+      fireEvent.change(screen.getByLabelText("Upload photo"), { target: { files: [file] } });
+    }
+
+    it("rejects a file type the server would refuse, and says so", async () => {
+      renderBlockedScanner();
+
+      chooseFile(new File(["GIF89a"], "animation.gif", { type: "image/gif" }));
+
+      expect(await screen.findByText("Choose a JPEG, PNG, or WebP photo.")).toBeInTheDocument();
+      expect(identifyCapturedFrame).not.toHaveBeenCalled();
+      expect(localStorage.getItem("deep-spec:lookups")).toBeNull();
+    });
+
+    it("tells the user when the photo is over the size limit", async () => {
+      renderBlockedScanner();
+      const oversized = new File(["x"], "huge.jpg", { type: "image/jpeg" });
+      Object.defineProperty(oversized, "size", { value: 13 * 1024 * 1024 });
+
+      chooseFile(oversized);
+
+      expect(await screen.findByText("Choose a photo under 12 MB.")).toBeInTheDocument();
+      expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    });
+
+    it("shows the quality coach fix for a blurry upload", async () => {
+      assessImageQuality.mockResolvedValueOnce({
+        ok: false,
+        issue: "too_blurry",
+        message: "Move closer for more detail.",
+      });
+      renderBlockedScanner();
+
+      chooseFile(new File(["blurry"], "blurry.jpg", { type: "image/jpeg" }));
+
+      expect(await screen.findByRole("heading", { level: 2, name: "Hold steady" }, { timeout: 3000 })).toBeInTheDocument();
+      expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    }, 10000);
+  });
 
   it("sends a focused detector crop as the AI image for uploaded photos", async () => {
     cameraHookState.current = {

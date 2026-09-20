@@ -3090,8 +3090,45 @@ function isIdentificationResult(value: unknown): value is IdentificationResult {
     typeof value.nextAction === "string" &&
     typeof value.needsBetterPhoto === "boolean" &&
     isStringArray(value.evidence) &&
-    isSourceLinkArray(value.sourceLinks)
+    isSourceLinkArray(value.sourceLinks) &&
+    // Optional in the prompt, so models fill them loosely. They must be checked here: a result that
+    // passes this guard skips the coercion path and the normalizers below assume real arrays.
+    isOptionalCandidatePartArray(value.candidateParts) &&
+    isOptionalPossibleVehicleContextArray(value.possibleVehicleContexts) &&
+    isOptionalPartMeasurementArray(value.measurements) &&
+    (value.requiredNextEvidence === undefined || isStringArray(value.requiredNextEvidence))
   );
+}
+
+function isOptionalCandidatePartArray(value: unknown) {
+  return value === undefined || (Array.isArray(value) && value.every((item) => (
+    isRecord(item) &&
+    typeof item.partName === "string" &&
+    isConfidence(item.confidence) &&
+    isScanCategory(item.scanCategory) &&
+    isStringArray(item.evidence) &&
+    (item.whyNotPrimary === undefined || typeof item.whyNotPrimary === "string")
+  )));
+}
+
+function isOptionalPossibleVehicleContextArray(value: unknown) {
+  return value === undefined || (Array.isArray(value) && value.every((item) => (
+    isRecord(item) &&
+    typeof item.label === "string" &&
+    isConfidence(item.confidence) &&
+    isStringArray(item.evidence)
+  )));
+}
+
+function isOptionalPartMeasurementArray(value: unknown) {
+  return value === undefined || (Array.isArray(value) && value.every((item) => (
+    isRecord(item) &&
+    typeof item.label === "string" &&
+    typeof item.valueMm === "number" &&
+    isConfidence(item.confidence) &&
+    (item.method === "reference_object" || item.method === "visible_marking" || item.method === "estimated") &&
+    typeof item.caveat === "string"
+  )));
 }
 
 function getProviderErrorMessage(responseBody: JsonObject | null) {

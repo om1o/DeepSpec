@@ -120,5 +120,69 @@ describe("resultFacts", () => {
     it("drops an unclassified object that matches neither block nor allow list", () => {
       expect(isRelevantSceneObject(obj("Mystery blob", "unknown"))).toBe(false);
     });
+
+    // [name, category, kept?] — the probe table from the category-filter review.
+    const KEEP = true;
+    const DROP = false;
+    const cases: Record<string, [string, string, boolean][]> = {
+      // Furniture/room/decor words are modifiers in these names, not what the object is.
+      "tools whose names contain a furniture/room word": [
+        ["Floor jack", "tool", KEEP], ["Bottle jack", "tool", KEEP], ["Table saw", "tool", KEEP],
+        ["Bench grinder", "tool", KEEP], ["Bench vise", "tool", KEEP], ["Shop towel", "tool", KEEP],
+        ["Tool cabinet", "tool", KEEP], ["Tool chest drawer", "tool", KEEP], ["Creeper board", "tool", KEEP],
+        ["Wall charger", "electronics", KEEP], ["Desk lamp", "electronics", KEEP], ["Face shield", "tool", KEEP],
+        ["Shop light on stand", "tool", KEEP], ["Magnetic parts tray on floor", "tool", KEEP],
+        ["Phone on table", "electronics", KEEP], ["Laptop on desk", "electronics", KEEP],
+      ],
+      "car parts whose names contain a furniture/room word": [
+        ["Side mirror", "part", KEEP], ["Rearview mirror", "part", KEEP], ["Brake shoe", "part", KEEP],
+        ["Skid plate", "part", KEEP], ["Pressure plate", "part", KEEP], ["License plate", "part", KEEP],
+        ["Clock spring", "part", KEEP], ["Water jacket", "part", KEEP], ["Truck bed", "part", KEEP],
+        ["Floor pan", "part", KEEP], ["Floor mat", "part", KEEP], ["Seat cushion", "part", KEEP],
+        ["Cup holder", "part", KEEP], ["Coolant reservoir bottle", "part", KEEP], ["Overflow bottle", "part", KEEP],
+        ["Glove box", "part", KEEP], ["Cabin air filter", "part", KEEP], ["Door panel", "part", KEEP],
+        ["Hood", "body part", KEEP], ["Wheel", "part", KEEP], ["Tire", "part", KEEP], ["Headlight", "part", KEEP],
+        ["Bumper", "part", KEEP], ["Fender", "part", KEEP], ["Windshield", "part", KEEP],
+        ["Engine cover", "part", KEEP], ["Dipstick", "part", KEEP], ["Exhaust manifold", "part", KEEP],
+      ],
+      "car parts and tools named with a body-part word": [
+        ["Control arm", "part", KEEP], ["Rocker arm", "part", KEEP], ["Wiper arm", "part", KEEP],
+        ["Hand brake lever", "part", KEEP], ["Hand brake", "brakes", KEEP], ["Hand tools", "tools", KEEP],      ],
+      "plural names and categories": [
+        ["Wrenches", "tools", KEEP], ["Screwdrivers", "tools", KEEP], ["Sockets", "tools", KEEP],
+        ["Pliers", "tools", KEEP], ["Hoses", "parts", KEEP], ["Bolts", "parts", KEEP], ["Belts", "parts", KEEP],
+        ["Spark plugs", "parts", KEEP], ["Cables", "electronics", KEEP], ["Wires", "electrical parts", KEEP],
+        ["Fuses", "parts", KEEP], ["Clamps", "tools", KEEP], ["Hammers", "tools", KEEP],
+        ["Knives", "tools", KEEP], ["Batteries", "parts", KEEP],
+      ],
+      "car-part categories in any casing": [
+        ["Hood", "Body", KEEP], ["Hood", "body", KEEP], ["Radiator hose", "Engine", KEEP],
+        ["Thing", "Engine", KEEP], ["Thing", "engine", KEEP], ["Thing", " BRAKES ", KEEP],
+      ],
+      "people, body parts, furniture, room, decor, animals": [
+        ["Man", "person", DROP], ["Person", "person", DROP], ["People", "people", DROP],
+        ["Mechanic", "person", DROP], ["Person holding phone", "person", DROP], ["Kids", "people", DROP],
+        ["Person's hand", "hand", DROP], ["Hand", "hand", DROP], ["Hand holding wrench", "hand", DROP],
+        ["Fingers", "hand", DROP], ["Arm", "unknown", DROP], ["Woman holding wrench", "tool", DROP],
+        // "body part" is the anatomical sense, so it doesn't vouch for a body-part word.
+        ["Hand", "body part", DROP], ["Human hand", "Body Parts", DROP], ["Finger", "body-part", DROP],
+        ["Chairs", "furniture", DROP], ["Couch", "furniture", DROP], ["Desk", "furniture", DROP],
+        ["Workbench", "furniture", DROP], ["Shelving unit", "furniture", DROP], ["Poster", "decor", DROP],
+        ["Posters", "decor", DROP], ["Potted plants", "decor", DROP], ["Coffee mug", "kitchen", DROP],
+        ["Dog", "animal", DROP],
+      ],
+      // These names contain an allow word; the non-target category is what drops them.
+      "household items with a part-like name": [
+        ["Baseball cap", "clothing", DROP], ["Belt", "clothing", DROP], ["Cutting board", "kitchen", DROP],
+        ["Kitchen knife", "kitchen", DROP], ["Light switch", "home", DROP], ["Level", "home", DROP],
+        ["Nail file", "personal", DROP], ["Spring onion", "food", DROP], ["Picture frame on shelf", "decor", DROP],
+        ["TV screen", "electronics", KEEP],
+      ],
+    };
+    for (const [group, rows] of Object.entries(cases)) {
+      it.each(rows)(`${group}: %s / %s → kept=%s`, (name, category, kept) => {
+        expect(isRelevantSceneObject(obj(name, category))).toBe(kept);
+      });
+    }
   });
 });

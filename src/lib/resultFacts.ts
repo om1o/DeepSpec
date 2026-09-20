@@ -1,15 +1,12 @@
 import { SCAN_CATEGORIES } from "../types";
 import type { IdentificationResult, SceneObject, VisualFocusBox } from "../types";
 import type { SimpleResultSummary } from "./simpleResultSummary";
-
-// Kept identical to the regex inside simpleResultSummary.ts so the issue pointer
-// fires exactly when that helper sets the "Visible issue" eyebrow.
-const DAMAGE_WORDS = /\b(dent|scratch|crack|broken|damage|damaged|missing|detached|chip|rust|corrosion|leak|stain)\b/i;
+import { describesVisibleDamage } from "./damageWords";
 
 /** The first sentence describing visible damage, or null when nothing looks wrong. */
 export function findVisibleIssue(result: IdentificationResult): string | null {
-  const concern = result.concerns.find((item) => DAMAGE_WORDS.test(item));
-  return concern ?? result.visibleObservations.find((item) => DAMAGE_WORDS.test(item)) ?? null;
+  const concern = result.concerns.find((item) => describesVisibleDamage(item));
+  return concern ?? result.visibleObservations.find((item) => describesVisibleDamage(item)) ?? null;
 }
 
 export function summarize(value: string, limit: number) {
@@ -68,50 +65,76 @@ export function getAnswerBody(result: IdentificationResult, summary: SimpleResul
 }
 
 // Only tools, car parts, and tech/electronics are treated as real, focusable detected objects.
-// People, furniture, and room/environment are dropped so they never get a label, cutout, or card —
-// they simply remain part of the dimmed background photo. The AI's `category` is a free-ish string,
-// so we key off name + category keywords (whole-word matched, so "hand" never matches "handle").
-// Order matters: a real car-part category wins first; then a hard block; then the allow list.
-const RELEVANCE_BLOCK = [
-  // people
-  "person", "people", "boy", "girl", "man", "woman", "men", "women", "child", "children", "kid", "kids",
-  "baby", "toddler", "human", "adult", "face", "guy", "lady",
-  // furniture
-  "couch", "sofa", "chair", "table", "desk", "bed", "shelf", "cabinet", "drawer", "stool", "bench",
-  "furniture", "dresser", "wardrobe", "nightstand", "ottoman",
-  // room / environment / decor
-  "wall", "floor", "ceiling", "carpet", "rug", "plant", "tree", "grass", "sky", "cloud", "room",
-  "background", "poster", "painting", "picture", "mirror", "vase", "clock", "curtain", "blanket",
-  "pillow", "towel", "book", "food", "plate", "cup", "bottle", "clothing", "shirt", "hat", "shoe", "jacket",
-  // animals
-  "dog", "cat", "pet", "bird", "animal",
+// Everything else is dropped so it never gets a label, cutout, or card — it simply remains part
+// of the dimmed background photo. The AI's `category` is a free-ish string, so we key off name +
+// category keywords, whole-word matched ("hand" never matches "handle") with an optional plural
+// ending ("wrenches", "tools").
+//
+// The default is DROP: an object is kept only when an allow word matches. So a block list is only
+// needed where an allow word would otherwise keep a non-target — and furniture/room/decor words
+// must NOT block by name, because they are common modifiers in tool and part names ("floor jack",
+// "table saw", "side mirror", "brake shoe", "skid plate"). Order:
+//   1. a people word anywhere → drop ("Person holding phone")
+//   2. a car-part scan category (any casing) → keep
+//   3. a non-target category ("clothing", "food", "furniture") → drop; category only, never name
+//   4. a body-part word → drop, unless the category itself vouches for a tool/part/device —
+//      "Hand holding wrench / hand" drops, but "Control arm / part" and "Hand brake / part" stay.
+//      "body part" doesn't vouch — it's the anatomical sense, so "Hand / body part" drops.
+//   5. otherwise keep only on an allow word
+const PEOPLE_WORDS = [
+  "person", "people", "boy", "girl", "man", "woman", "men", "women", "child", "children", "kid",
+  "baby", "toddler", "human", "adult", "guy", "lady", "ladies",
+];
+// Soft-blocked (rule 4): these double as car-part / tool names (control arm, hand brake, face shield).
+const BODY_PART_WORDS = ["hand", "arm", "finger", "face"];
+// Matched against the category only (rule 3).
+const NON_TARGET_CATEGORIES = [
+  "furniture", "decor", "decoration", "room", "environment", "background", "home", "household",
+  "kitchen", "food", "clothing", "apparel", "personal", "plant", "animal", "pet", "poster", "art",
 ];
 const RELEVANCE_ALLOW = [
   // tools
-  "tool", "wrench", "spanner", "screwdriver", "plier", "pliers", "hammer", "drill", "socket", "ratchet",
-  "clamp", "jack", "gauge", "meter", "multimeter", "torque", "saw", "blade", "cutter", "knife", "file",
-  "punch", "chisel", "level", "caliper",
+  "tool", "wrench", "spanner", "screwdriver", "plier", "hammer", "drill", "socket", "ratchet",
+  "clamp", "jack", "gauge", "meter", "multimeter", "torque", "saw", "blade", "cutter", "knife", "knives",
+  "file", "punch", "chisel", "level", "caliper",
   // tech / electronics
-  "remote", "phone", "smartphone", "tablet", "laptop", "computer", "camera", "battery", "charger", "cable",
-  "wire", "wiring", "connector", "plug", "sensor", "module", "ecu", "controller", "circuit", "board", "pcb",
-  "chip", "device", "electronic", "electronics", "gadget", "speaker", "monitor", "screen", "display",
-  "headphone", "earbud", "drone", "router", "adapter", "fuse", "relay", "switch", "motor", "actuator",
-  "harness", "alternator", "starter", "coil", "solenoid",
+  "remote", "phone", "smartphone", "tablet", "laptop", "computer", "camera", "battery", "batteries",
+  "charger", "cable", "wire", "wiring", "connector", "plug", "sensor", "module", "ecu", "controller",
+  "circuit", "board", "pcb", "chip", "device", "electronic", "electronics", "gadget", "speaker", "monitor",
+  "screen", "display", "headphone", "earbud", "drone", "router", "adapter", "fuse", "relay", "switch",
+  "motor", "actuator", "harness", "alternator", "starter", "coil", "solenoid",
   // generic part / component words (for parts the AI tags with a free-string category)
-  "part", "component", "assembly", "bracket", "mount", "housing", "panel", "hose", "belt", "pipe", "valve",
-  "filter", "pump", "cap", "bolt", "nut", "clip", "seal", "gasket", "bearing", "pulley", "gear", "fitting",
-  "rotor", "caliper", "manifold", "radiator", "compressor", "injector", "spark", "spring", "shock", "strut",
+  "part", "component", "assembly", "assemblies", "bracket", "mount", "housing", "panel", "hose", "belt",
+  "pipe", "valve", "filter", "pump", "cap", "bolt", "nut", "clip", "seal", "gasket", "bearing", "pulley",
+  "gear", "fitting", "rotor", "manifold", "radiator", "compressor", "injector", "spark", "spring",
+  "shock", "strut",
 ];
-const RELEVANCE_BLOCK_RE = new RegExp(`\\b(${RELEVANCE_BLOCK.join("|")})\\b`, "i");
-const RELEVANCE_ALLOW_RE = new RegExp(`\\b(${RELEVANCE_ALLOW.join("|")})\\b`, "i");
+
+/** Whole-word match on any of `words`, each optionally followed by a plural "s"/"es". */
+function wordListRegex(words: string[]) {
+  return new RegExp(`\\b(${words.join("|")})(?:s|es)?\\b`, "i");
+}
+
+const PEOPLE_RE = wordListRegex(PEOPLE_WORDS);
+const BODY_PART_RE = wordListRegex(BODY_PART_WORDS);
+const NON_TARGET_CATEGORY_RE = wordListRegex(NON_TARGET_CATEGORIES);
+const RELEVANCE_ALLOW_RE = wordListRegex(RELEVANCE_ALLOW);
+const ANATOMY_CATEGORY_RE = /\bbody[\s-]*parts?\b/g;
 
 /** True only for tools, car parts, and tech/electronics — the objects we treat as real, focusable. */
 export function isRelevantSceneObject(object: SceneObject): boolean {
-  if ((SCAN_CATEGORIES as readonly string[]).includes(object.category) && object.category !== "unknown") {
+  const category = object.category.trim().toLowerCase();
+  const text = `${object.name} ${category}`.toLowerCase();
+  if (PEOPLE_RE.test(text)) {
+    return false;
+  }
+  if ((SCAN_CATEGORIES as readonly string[]).includes(category) && category !== "unknown") {
     return true; // AI classified it as a real car-part category
   }
-  const text = `${object.name} ${object.category}`.toLowerCase();
-  if (RELEVANCE_BLOCK_RE.test(text)) {
+  if (NON_TARGET_CATEGORY_RE.test(category)) {
+    return false;
+  }
+  if (BODY_PART_RE.test(text) && !RELEVANCE_ALLOW_RE.test(category.replace(ANATOMY_CATEGORY_RE, " "))) {
     return false;
   }
   return RELEVANCE_ALLOW_RE.test(text);
@@ -159,7 +182,7 @@ export function deriveIssue(result: IdentificationResult): DerivedIssue | null {
 }
 
 function anchorFromDamageRegion(result: IdentificationResult): VisualFocusBox | null {
-  const region = result.evidenceRegions.find((item) => DAMAGE_WORDS.test(item.observation));
+  const region = result.evidenceRegions.find((item) => describesVisibleDamage(item.observation));
   return region ? regionLabelToBox(region.regionLabel) : null;
 }
 

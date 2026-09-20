@@ -659,6 +659,11 @@ export async function syncWaitlistSignupToCloud(signup: WaitlistSignup): Promise
       user_type: signup.userType,
     });
 
+    // waitlist_signups is unique on lower(email); someone re-joining is already where they want to be.
+    if (inserted.error?.code === "23505") {
+      return { ok: true, message: "Already on the waitlist." };
+    }
+
     if (inserted.error) {
       throw new Error(inserted.error.message);
     }
@@ -827,7 +832,9 @@ function getImageExtension(contentType: string) {
 function getFriendlySyncError(error: unknown) {
   const message = error instanceof Error ? error.message : "Unknown cloud sync error.";
 
-  if (/anonymous|signup|sign-in|sign in/i.test(message)) {
+  // Anchored to Supabase's actual auth wording ("Anonymous sign-ins are disabled", "Signups not
+  // allowed"): a bare "signup" also matched the waitlist_signups table in unrelated errors.
+  if (/anonymous[\s_-]*(?:sign|auth|provider)|signups? (?:is |are )?(?:not allowed|disabled)|sign-in|sign in/i.test(message)) {
     return "Cloud sync needs Supabase anonymous sign-ins enabled before scans can upload.";
   }
 

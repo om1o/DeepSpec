@@ -158,3 +158,17 @@ function loadImage(dataUrl: string): Promise<HTMLImageElement> {
     image.src = dataUrl;
   });
 }
+
+/**
+ * YYYY-MM-DD in the user's local timezone. toISOString().slice(0, 10) gives the UTC date, which
+ * is already tomorrow for an evening scan anywhere west of UTC.
+ */
+export function getLocalDateStamp(value: Date | string = new Date()): string {
+  const date = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(date.getTime())) {
+    return typeof value === "string" ? value.slice(0, 10) : "";
+  }
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}

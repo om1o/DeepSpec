@@ -1,4 +1,4 @@
-import { FOLLOWUP_PROMPT } from "../src/services/systemPrompts";
+import { CHAT_USER_MESSAGE_MAX_CHARS, FOLLOWUP_PROMPT } from "../src/services/systemPrompts";
 
 type JsonObject = Record<string, unknown>;
 
@@ -188,7 +188,7 @@ function parseChatRequest(body: unknown): { userMessage: string } | { error: Cha
   }
 
   return {
-    userMessage: userMessage.slice(0, 3000),
+    userMessage: userMessage.slice(0, CHAT_USER_MESSAGE_MAX_CHARS),
   };
 }
 

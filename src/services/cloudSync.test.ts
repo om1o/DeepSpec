@@ -472,6 +472,52 @@ describe("cloudSync", () => {
     expect(insert).toHaveBeenCalledTimes(2);
   });
 
+  describe("waitlist signup failures", () => {
+    const signup = {
+      createdAt: "2026-05-18T00:00:00.000Z",
+      email: "user@example.com",
+      id: "waitlist-1",
+      mainProblem: "I want help identifying leaks.",
+      userType: "car_owner" as const,
+    };
+
+    async function syncWithInsertError(error: { code?: string; message: string }) {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+      mocks.createClient.mockReturnValue({
+        auth: { getSession: vi.fn(), signInAnonymously: vi.fn() },
+        from: vi.fn().mockReturnValue({ insert: vi.fn().mockResolvedValue({ error }) }),
+        storage: { from: vi.fn() },
+      });
+      const { syncWaitlistSignupToCloud } = await import("./cloudSync");
+      return syncWaitlistSignupToCloud(signup);
+    }
+
+    it("treats an email that is already on the waitlist as joined, not as a failure", async () => {
+      await expect(syncWithInsertError({
+        code: "23505",
+        message: 'duplicate key value violates unique constraint "waitlist_signups_email_lower_idx"',
+      })).resolves.toEqual({ ok: true, message: "Already on the waitlist." });
+    });
+
+    it("does not blame anonymous sign-ins just because the table name contains 'signup'", async () => {
+      const result = await syncWithInsertError({
+        code: "42501",
+        message: 'new row violates row-level security policy for table "waitlist_signups"',
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.message).toMatch(/security check/i);
+      expect(result.message).not.toMatch(/anonymous/i);
+    });
+
+    it("still explains a genuinely disabled anonymous sign-in", async () => {
+      const result = await syncWithInsertError({ message: "Anonymous sign-ins are disabled" });
+
+      expect(result.message).toMatch(/anonymous sign-ins enabled/i);
+    });
+  });
+
   it("checks runtime cloud health across auth, storage, row write, durable details, and RLS isolation", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");

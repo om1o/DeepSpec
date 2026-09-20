@@ -64,15 +64,17 @@ export default function Auth() {
   const finishVerifiedLogin = useCallback(async () => {
     const localLookups = getLookups();
     if (localLookups.length) {
-      setNotice(`Syncing ${localLookups.length} saved scan${localLookups.length === 1 ? "" : "s"} to cloud.`);
-      try {
-        const syncResult = await syncLookupsToCloud(localLookups);
-        if (!syncResult.ok) {
-          console.warn("[DeepSpec] Local scan cloud sync after login was incomplete.", syncResult);
-        }
-      } catch (syncError) {
-        console.warn("[DeepSpec] Local scan cloud sync after login failed.", syncError);
-      }
+      // Upload in the background. Waiting here held a verified user on this screen for up to
+      // 20s per saved scan (50 scans max) on a weak connection, and the scans are safe locally.
+      void syncLookupsToCloud(localLookups)
+        .then((syncResult) => {
+          if (!syncResult.ok) {
+            console.warn("[DeepSpec] Local scan cloud sync after login was incomplete.", syncResult);
+          }
+        })
+        .catch((syncError) => {
+          console.warn("[DeepSpec] Local scan cloud sync after login failed.", syncError);
+        });
     }
 
     navigate(postAuthPath, { replace: true });

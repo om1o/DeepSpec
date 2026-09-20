@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { vi } from "vitest";
 import History from "./History";
 import { readCloudLookups } from "../services/cloudHistory";
-import { LOOKUPS_STORAGE_KEY } from "../services/storage";
+import { LOOKUPS_STORAGE_KEY, MAX_SAVED_LOOKUPS } from "../services/storage";
 import type { Lookup } from "../types";
 
 vi.mock("../services/cloudHistory", () => ({
@@ -129,6 +129,28 @@ describe("History", () => {
     expect(await screen.findByText("Alternator")).toBeInTheDocument();
     expect(screen.getByText("1/1 saved scans")).toBeInTheDocument();
   });
+
+  it("does not warn about the on-device cap just because cloud history is long", async () => {
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+    readCloudLookupsMock.mockResolvedValue({
+      ok: true,
+      value: makeLookups(MAX_SAVED_LOOKUPS + 10, "cloud"),
+    });
+
+    renderHistory();
+
+    const total = MAX_SAVED_LOOKUPS + 11;
+    expect(await screen.findByText(`${total}/${total} saved scans`)).toBeInTheDocument();
+    expect(screen.queryByText(/scan cap reached/i)).not.toBeInTheDocument();
+  });
+
+  it("warns when the on-device store itself is full", () => {
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify(makeLookups(MAX_SAVED_LOOKUPS, "local")));
+
+    renderHistory();
+
+    expect(screen.getByText(`${MAX_SAVED_LOOKUPS}-scan cap reached. Export to keep older scans.`)).toBeInTheDocument();
+  });
 });
 
 function renderHistory() {
@@ -139,4 +161,12 @@ function renderHistory() {
       </Routes>
     </MemoryRouter>,
   );
+}
+
+function makeLookups(count: number, prefix: string): Lookup[] {
+  return Array.from({ length: count }, (_, index) => ({
+    ...lookup,
+    id: `${prefix}-${index}`,
+    createdAt: new Date(Date.UTC(2026, 4, 1, 0, index)).toISOString(),
+  }));
 }

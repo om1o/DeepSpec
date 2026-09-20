@@ -10,6 +10,7 @@ const supabaseMock = vi.hoisted(() => ({
     signInWithPassword: vi.fn(),
     signOut: vi.fn(),
     signUp: vi.fn(),
+    verifyOtp: vi.fn(),
   },
   createClient: vi.fn(),
   unsubscribe: vi.fn(),
@@ -34,6 +35,7 @@ describe("auth service", () => {
     supabaseMock.auth.signInWithPassword.mockReset();
     supabaseMock.auth.signOut.mockReset();
     supabaseMock.auth.signUp.mockReset();
+    supabaseMock.auth.verifyOtp.mockReset();
     supabaseMock.createClient.mockReset();
     supabaseMock.unsubscribe.mockReset();
     supabaseMock.createClient.mockReturnValue({
@@ -51,6 +53,7 @@ describe("auth service", () => {
     supabaseMock.auth.signInWithOtp.mockResolvedValue({ data: {}, error: null });
     supabaseMock.auth.signInWithPassword.mockResolvedValue({ data: {}, error: null });
     supabaseMock.auth.signUp.mockResolvedValue({ data: { session: { access_token: "token" } }, error: null });
+    supabaseMock.auth.verifyOtp.mockResolvedValue({ data: {}, error: null });
   });
 
   afterEach(() => {
@@ -181,6 +184,38 @@ describe("auth service", () => {
     expect(normalizePostAuthRedirectPath("//evil.example.com/steal")).toBe("/scan");
   });
 
+  it("never lets a hostile next value resolve to another origin", async () => {
+    const { normalizePostAuthRedirectPath } = await import("./auth");
+    const backslash = String.fromCharCode(92);
+    const tab = String.fromCharCode(9);
+    const lineFeed = String.fromCharCode(10);
+    const carriageReturn = String.fromCharCode(13);
+    // The URL parser treats a backslash as a slash and drops tabs/newlines, so each of these
+    // resolves to https://evil.example.com even though none starts with a literal "//".
+    const hostile = [
+      `/${backslash}evil.example.com`,
+      `/${backslash}${backslash}evil.example.com`,
+      `/${tab}/evil.example.com`,
+      `/${lineFeed}/evil.example.com`,
+      `/${carriageReturn}/evil.example.com`,
+      `${backslash}/evil.example.com`,
+      `${backslash}${backslash}evil.example.com`,
+    ];
+
+    for (const value of hostile) {
+      const normalized = normalizePostAuthRedirectPath(value);
+      expect(new URL(normalized, window.location.origin).origin, JSON.stringify(value)).toBe(window.location.origin);
+    }
+  });
+
+  it("keeps ordinary same-origin post-auth paths untouched", async () => {
+    const { normalizePostAuthRedirectPath } = await import("./auth");
+
+    expect(normalizePostAuthRedirectPath("/scan?jobId=abc-123")).toBe("/scan?jobId=abc-123");
+    expect(normalizePostAuthRedirectPath("/result/42/chat?q=is%20it%20safe")).toBe("/result/42/chat?q=is%20it%20safe");
+    expect(normalizePostAuthRedirectPath("/%5Cnot-a-host")).toBe("/%5Cnot-a-host");
+  });
+
   it("fails password account creation clearly when email confirmation is still required", async () => {
     const { signUpWithPassword } = await import("./auth");
     supabaseMock.auth.signUp.mockResolvedValueOnce({ data: { session: null }, error: null });
@@ -281,6 +316,37 @@ describe("auth service", () => {
     await expect(getVerifiedAuthUser()).resolves.toBeNull();
 
     expect(supabaseMock.auth.getUser).not.toHaveBeenCalled();
+  });
+
+  it("recovers from a spent callback code so a fresh email code can still sign in", async () => {
+    window.history.pushState({}, "", "/auth?next=%2Fscan&code=already-used");
+    const { getVerifiedAuthUser, verifyEmailCode } = await import("./auth");
+    supabaseMock.auth.exchangeCodeForSession.mockResolvedValue({
+      data: {},
+      error: {
+        message: "invalid request: both auth code and code verifier should be non-empty",
+      },
+    });
+    supabaseMock.auth.getUser.mockResolvedValue({
+      data: {
+        user: {
+          app_metadata: {},
+          aud: "authenticated",
+          created_at: new Date(0).toISOString(),
+          id: "otp-user",
+          user_metadata: {},
+        },
+      },
+      error: null,
+    });
+
+    await expect(getVerifiedAuthUser()).resolves.toBeNull();
+
+    await expect(verifyEmailCode("user@example.com", "123456")).resolves.toEqual(
+      expect.objectContaining({ id: "otp-user" }),
+    );
+
+    expect(window.location.search).toBe("?next=%2Fscan");
   });
 
   it("verifies auth-change sessions with Supabase before reporting a user", async () => {

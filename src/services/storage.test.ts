@@ -179,6 +179,30 @@ describe("storage", () => {
     });
   });
 
+  // A correction's category overrides the model's. Keywords used to match inside other words
+  // ("oil" in "coil", "gas" in "gasket", "body" in "throttle body").
+  it.each([
+    ["Ignition coil", "electrical"], // no category word → keeps the model's category
+    ["Coil spring", "suspension"],
+    ["Clock spring", "airbag"],
+    ["Valve cover gasket", "engine"],
+    ["Head gasket", "engine"],
+    ["Throttle body", "engine"],
+    ["Oil filter", "engine"],
+    ["Oil pan", "engine"],
+    ["Coolant reservoir", "engine"],
+    ["Rear brake pads", "brakes"],
+    ["Gas tank strap", "fuel"],
+    ["Fuel injectors", "fuel"],
+    ["Oil leak at the drain plug", "leak"],
+    ["Front door panel", "body"],
+    ["It was the power steering pump.", "steering"],
+  ])("files the correction %j under %s", (correction, category) => {
+    const lookup = createLookup(scanState).value;
+    updateLookup(lookup.id, { correction });
+    expect(getLookup(lookup.id)?.scanCategory).toBe(category);
+  });
+
   it("preserves shop job context and mechanic-grade result fields", () => {
     const lookup = createLookup({
       ...scanState,

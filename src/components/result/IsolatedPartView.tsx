@@ -3,7 +3,7 @@ import type { CSSProperties, ReactNode } from "react";
 import type { IsolatedObject, VisualFocusBox, VisualFocusMode } from "../../types";
 import type { DerivedIssue, SceneChip } from "../../lib/resultFacts";
 import ScanThumb from "../ui/ScanThumb";
-import { getContainedStageStyle, orderSceneObjects } from "./isolatedPartViewGeometry";
+import { edgeSafeShift, getContainedStageStyle, getFocusLabelPlacement, orderSceneObjects } from "./isolatedPartViewGeometry";
 
 type IsolatedPartViewProps = {
   frameBase64: string;
@@ -159,9 +159,9 @@ export function IsolatedPartView({
       >
         <CornerMarks />
         <div
-          className="absolute max-w-[min(300px,82vw)] rounded-[14px] bg-white px-3 py-2 text-slate-950 shadow-[0_16px_40px_rgba(2,6,23,0.34)]"
+          className="absolute w-max rounded-[14px] bg-white px-3 py-2 text-slate-950 shadow-[0_16px_40px_rgba(2,6,23,0.34)]"
           data-testid="focused-part-label"
-          style={labelPlacement(box)}
+          style={getFocusLabelPlacement(box)}
         >
           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-[var(--ds-accent)]">
             {showCutout ? "Isolated" : showCropWindow ? "Focused" : "In view"}
@@ -375,9 +375,9 @@ function LensOverview({
         >
           <CornerMarks />
           <div
-            className="absolute max-w-[min(300px,82vw)] rounded-[14px] bg-white px-3 py-2 text-slate-950 shadow-[0_16px_40px_rgba(2,6,23,0.34)]"
+            className="absolute w-max rounded-[14px] bg-white px-3 py-2 text-slate-950 shadow-[0_16px_40px_rgba(2,6,23,0.34)]"
             data-testid="lens-focused-label"
-            style={labelPlacement(focusedObject.focusBox)}
+            style={getFocusLabelPlacement(focusedObject.focusBox)}
           >
             <p className="text-[10px] font-black uppercase tracking-[0.14em] text-[var(--ds-accent)]">Isolated</p>
             <p className="mt-0.5 truncate text-sm font-black">{focusedObject.name}</p>
@@ -405,18 +405,19 @@ function LensLabel({ object, index }: { object: IsolatedObject; index: number })
   const anchorTop = above ? box.y : box.y + box.height;
   const label = (
     <span
-      className={`block max-w-[42vw] truncate rounded-full px-2.5 py-1 text-[11px] font-bold shadow-[0_8px_22px_rgba(2,6,23,0.45)] ${object.primary ? "bg-[var(--ds-accent)] text-white" : "border border-white/25 bg-slate-950/75 text-white"}`}
+      className={`block max-w-full truncate rounded-full px-2.5 py-1 text-[11px] font-bold shadow-[0_8px_22px_rgba(2,6,23,0.45)] ${object.primary ? "bg-[var(--ds-accent)] text-white" : "border border-white/25 bg-slate-950/75 text-white"}`}
     >
       {shortName(object.name)}
     </span>
   );
-  const line = <span aria-hidden className="block w-px bg-white/55" style={{ height: leader }} />;
+  // The leader sits at cx of the label's own width, which (with the edge-safe shift) is exactly the anchor.
+  const line = <span aria-hidden className="block w-px bg-white/55" style={{ height: leader, marginLeft: `${cx * 100}%` }} />;
 
   return (
     <div
-      className="pointer-events-none absolute z-40 flex flex-col items-center"
+      className="pointer-events-none absolute z-40 flex w-max max-w-[42%] flex-col items-start"
       data-testid="lens-label"
-      style={{ left: `${cx * 100}%`, top: `${anchorTop * 100}%`, transform: above ? "translate(-50%,-100%)" : "translate(-50%,0)" }}
+      style={{ left: `${cx * 100}%`, top: `${anchorTop * 100}%`, transform: `translate(${edgeSafeShift(cx)},${above ? "-100%" : "0"})` }}
     >
       {above ? <>{label}{line}</> : <>{line}{label}</>}
     </div>
@@ -433,11 +434,11 @@ function SceneChipLabel({ chip }: { chip: SceneChip }) {
   const cy = clamp01(chip.box.y + chip.box.height / 2);
   return (
     <div
-      className="absolute"
+      className="absolute w-max max-w-[44%]"
       data-testid="scene-chip"
-      style={{ left: `${cx * 100}%`, top: `${cy * 100}%`, transform: "translate(-50%,-50%)" }}
+      style={{ left: `${cx * 100}%`, top: `${cy * 100}%`, transform: `translate(${edgeSafeShift(cx)},${edgeSafeShift(cy)})` }}
     >
-      <span className="inline-block max-w-[44vw] truncate rounded-full border border-white/30 bg-slate-950/70 px-2.5 py-1 text-[11px] font-bold text-white shadow-[0_8px_22px_rgba(2,6,23,0.45)] backdrop-blur-sm">
+      <span className="block truncate rounded-full border border-white/30 bg-slate-950/70 px-2.5 py-1 text-[11px] font-bold text-white shadow-[0_8px_22px_rgba(2,6,23,0.45)] backdrop-blur-sm">
         {chip.object.name}
       </span>
     </div>
@@ -456,9 +457,9 @@ function IssuePointer({ anchor, text }: { anchor: VisualFocusBox; text: string }
         className="absolute block size-3.5 rounded-full bg-white shadow-[0_0_0_4px_rgba(78,110,146,0.45)]"
         style={{ ...position, transform: "translate(-50%,-50%)" }}
       />
-      <div className="absolute" style={{ ...position, transform: "translate(-50%,calc(-50% - 30px))" }}>
+      <div className="absolute w-max max-w-[min(260px,68%)]" style={{ ...position, transform: `translate(${edgeSafeShift(cx)},calc(-50% - 30px))` }}>
         <p
-          className="max-w-[min(260px,68vw)] rounded-full bg-[var(--ds-accent)] px-3 py-1.5 text-center text-xs font-bold leading-snug text-white shadow-[0_14px_30px_rgba(2,6,23,0.45)]"
+          className="rounded-full bg-[var(--ds-accent)] px-3 py-1.5 text-center text-xs font-bold leading-snug text-white shadow-[0_14px_30px_rgba(2,6,23,0.45)]"
           data-testid="issue-callout"
         >
           {text}
@@ -495,14 +496,6 @@ function clipFor(box: VisualFocusBox) {
   const right = clamp01(1 - box.x - box.width) * 100;
   const bottom = clamp01(1 - box.y - box.height) * 100;
   return `inset(${top}% ${right}% ${bottom}% ${left}% round 16px)`;
-}
-
-function labelPlacement(box: VisualFocusBox): CSSProperties {
-  const horizontal = box.x + box.width > 0.82 ? { right: 10 } : { left: 10 };
-  if (box.y > 0.16) {
-    return { ...horizontal, bottom: "calc(100% + 10px)" };
-  }
-  return { ...horizontal, top: "calc(100% + 10px)" };
 }
 
 function clamp01(value: number) {

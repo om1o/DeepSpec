@@ -71,6 +71,49 @@ describe("createIdentifyResponse", () => {
     tempDatasetRoots.clear();
   });
 
+  describe("off-schema optional fields in a model response", () => {
+    // These four are optional in the prompt, so models fill them loosely: a string instead of a
+    // list, a null entry inside the list, an item with no evidence. None of that may take the
+    // request down — the rest of the answer is still good.
+    const badShapes: Array<[string, unknown]> = [
+      ["a string", "none"],
+      ["a number", 3],
+      ["true", true],
+      ["an object", { a: 1 }],
+      ["null", null],
+      ["a list with null in it", [null]],
+      ["a list of numbers", [1, 2, 3]],
+      ["a list of empty objects", [{}]],
+      ["items missing their evidence", [{ partName: "Starter motor", label: "Starter", confidence: "low", scanCategory: "electrical" }]],
+    ];
+    const fields = ["candidateParts", "possibleVehicleContexts", "measurements", "requiredNextEvidence"] as const;
+
+    for (const field of fields) {
+      for (const [shape, value] of badShapes) {
+        it(`still answers when ${field} is ${shape}`, async () => {
+          vi.spyOn(console, "info").mockImplementation(() => undefined);
+          vi.spyOn(globalThis, "fetch").mockResolvedValue(
+            new Response(
+              JSON.stringify({
+                candidates: [
+                  { content: { parts: [{ text: JSON.stringify({ ...result, [field]: value }) }] }, finishReason: "STOP" },
+                ],
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          );
+
+          const response = await createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" });
+
+          expect(response.status).toBe(200);
+          const answer = (response.body as { result: Record<string, unknown> }).result;
+          expect(answer.partName).toBe("Alternator");
+          expect(Array.isArray(answer[field])).toBe(true);
+        });
+      }
+    }
+  });
+
   it("requires a server-side Gemini key", async () => {
     await expect(createIdentifyResponse({ imageBase64 }, {})).resolves.toMatchObject({
       status: 500,

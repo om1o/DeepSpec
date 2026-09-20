@@ -593,20 +593,30 @@ function categorizeScan(result?: Partial<IdentificationResult>, correction?: str
   return categorizeText(text);
 }
 
+// Whole words only, with an optional plural: unanchored patterns matched "oil" inside "coil" and
+// "gas" inside "gasket", and a correction's category overrides the model's, so "Ignition coil"
+// was filed under leak. Rules run in order; the first match wins.
+const CATEGORY_RULES: [ScanCategory, string[]][] = [
+  ["airbag", ["airbag", "srs", "clock spring"]],
+  // Named engine parts that contain a later rule's keyword ("body", "oil", "coolant", "tank").
+  ["engine", ["throttle body", "oil filter", "oil pan", "valve cover", "head gasket", "cylinder head", "coolant reservoir", "coolant tank"]],
+  ["brakes", ["brake", "caliper", "rotor", "pad"]],
+  ["steering", ["steering", "tie rod", "rack and pinion"]],
+  ["suspension", ["suspension", "control arm", "strut", "shock", "ball joint", "spring"]],
+  ["fuel", ["fuel", "gas", "injector", "fuel line", "tank"]],
+  // A leak is a condition, not a part: "oil" or "coolant" alone names engine fluids, not a leak.
+  ["leak", ["leak", "leaking", "leakage", "drip", "dripping", "puddle", "seep", "seeping", "seepage"]],
+  ["electrical", ["battery", "batteries", "alternator", "starter", "wire", "wiring", "connector", "fuse", "sensor", "electrical"]],
+  ["body", ["bumper", "fender", "door", "panel", "body"]],
+  ["engine", ["engine", "belt", "hose", "radiator", "thermostat", "filter", "intake", "manifold", "gasket", "oil", "coolant"]],
+];
+const CATEGORY_MATCHERS = CATEGORY_RULES.map(([category, words]) => [
+  category,
+  new RegExp(`\\b(${words.join("|")})(?:s|es)?\\b`, "i"),
+] as const);
+
 function categorizeText(text: string): ScanCategory {
-  const normalized = text.toLowerCase();
-
-  if (/airbag|srs/.test(normalized)) return "airbag";
-  if (/brake|caliper|rotor|pad/.test(normalized)) return "brakes";
-  if (/steering|tie rod|rack and pinion/.test(normalized)) return "steering";
-  if (/suspension|control arm|strut|shock|ball joint/.test(normalized)) return "suspension";
-  if (/fuel|gas|injector|fuel line|tank/.test(normalized)) return "fuel";
-  if (/leak|oil|coolant|fluid/.test(normalized)) return "leak";
-  if (/battery|alternator|starter|wire|wiring|connector|fuse|sensor|electrical/.test(normalized)) return "electrical";
-  if (/bumper|fender|door|panel|body/.test(normalized)) return "body";
-  if (/engine|belt|hose|radiator|thermostat|filter|intake|manifold/.test(normalized)) return "engine";
-
-  return "unknown";
+  return CATEGORY_MATCHERS.find(([, pattern]) => pattern.test(text))?.[0] ?? "unknown";
 }
 
 function normalizeStoredIdentificationResult(value: unknown, correction?: string): IdentificationResult | undefined {

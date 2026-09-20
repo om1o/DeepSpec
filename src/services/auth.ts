@@ -294,7 +294,7 @@ export function normalizePostAuthRedirectPath(path: string | null | undefined) {
   }
 
   const trimmed = path.trim();
-  if (!trimmed) {
+  if (!trimmed || hasUnsafeRedirectCharacters(trimmed)) {
     return DEFAULT_POST_AUTH_PATH;
   }
 
@@ -314,6 +314,20 @@ export function normalizePostAuthRedirectPath(path: string | null | undefined) {
   }
 
   return DEFAULT_POST_AUTH_PATH;
+}
+
+// The URL parser reads a backslash as a slash and silently drops tabs and newlines, so "/\evil.com"
+// and "/<TAB>/evil.com" resolve to another origin although neither starts with "//". When pushState
+// rejects a cross-origin URL, react-router falls back to window.location.assign, so this was a
+// post-login open redirect. No legitimate app path contains a backslash or a control character.
+function hasUnsafeRedirectCharacters(value: string) {
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    if (character === "\\" || code < 0x20 || code === 0x7f) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function isOAuthProviderEnabled(flag: string | undefined) {
@@ -369,7 +383,17 @@ async function completeAuthRedirectIfNeeded(client: SupabaseClient): Promise<boo
   if (!authRedirectPromise) {
     authRedirectPromise = withTimeout(exchangeAuthCodeForSession(client, authCode, url), AUTH_VERIFY_TIMEOUT_MS)
       .then((result) => result === true)
-      .catch(() => false);
+      .catch(() => false)
+      .then((exchanged) => {
+        if (!exchanged) {
+          // A spent or expired code must not keep failing every later verification.
+          // Drop it from the URL and let the next attempt run without it.
+          clearAuthCodeFromUrl(url);
+          authRedirectPromise = null;
+        }
+
+        return exchanged;
+      });
   }
 
   return authRedirectPromise;
@@ -381,9 +405,13 @@ async function exchangeAuthCodeForSession(client: SupabaseClient, authCode: stri
     throw new Error(result.error.message);
   }
 
+  clearAuthCodeFromUrl(url);
+  return true;
+}
+
+function clearAuthCodeFromUrl(url: URL) {
   url.searchParams.delete("code");
   window.history.replaceState(window.history.state, document.title, `${url.pathname}${url.search}${url.hash}`);
-  return true;
 }
 
 function getAuthRedirectUrl(redirectPath?: string) {

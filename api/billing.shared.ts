@@ -79,6 +79,11 @@ type BillingSupabaseOptions = {
     persistSession: boolean;
   };
 };
+// An update can be awaited as-is, or narrowed with more filters and asked for the rows it changed.
+type BillingUpdateQuery = PromiseLike<{ error: unknown }> & {
+  eq: (column: string, value: string | number) => BillingUpdateQuery;
+  select: (columns: string) => PromiseLike<{ data: unknown; error: unknown }>;
+};
 type BillingSupabaseTable = {
   select: (columns: string) => {
     eq: (column: string, value: string) => {
@@ -88,11 +93,7 @@ type BillingSupabaseTable = {
       }>;
     };
   };
-  update: (values: Record<string, unknown>) => {
-    eq: (column: string, value: string) => PromiseLike<{
-      error: unknown;
-    }>;
-  };
+  update: (values: Record<string, unknown>) => BillingUpdateQuery;
   upsert: (values: Record<string, unknown>, options?: { onConflict?: string }) => PromiseLike<{
     error: unknown;
   }>;
@@ -103,6 +104,7 @@ const createBillingClient = createClient as unknown as (
   options: BillingSupabaseOptions,
 ) => BillingSupabaseClient;
 
+const SCAN_CREDIT_WRITE_ATTEMPTS = 4;
 const STRIPE_CHECKOUT_URL = "https://api.stripe.com/v1/checkout/sessions";
 const STRIPE_PORTAL_URL = "https://api.stripe.com/v1/billing_portal/sessions";
 const STRIPE_SIGNATURE_TOLERANCE_SECONDS = 300;
@@ -545,13 +547,39 @@ export async function consumeReservedScanCredit(reservation: ScanCreditReservati
       persistSession: false,
     },
   });
-  await supabase
-    .from("billing_entitlements")
-    .update({
-      scans_used: reservation.scansUsed + 1,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("user_id", reservation.userId);
+  // reservation.scansUsed was read before a 25-45s AI call, so writing it back plus one would erase
+  // every scan that finished in the meantime (two overlapping scans billed as one). Only write when
+  // the stored count still matches what we last saw; otherwise re-read it and try again.
+  let expected = reservation.scansUsed;
+  for (let attempt = 0; attempt < SCAN_CREDIT_WRITE_ATTEMPTS; attempt += 1) {
+    const { data, error } = await supabase
+      .from("billing_entitlements")
+      .update({
+        scans_used: expected + 1,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("user_id", reservation.userId)
+      .eq("scans_used", expected)
+      .select("scans_used");
+    if (error) {
+      console.warn("[DeepSpec] Could not record a consumed scan credit:", error);
+      return;
+    }
+    if (Array.isArray(data) && data.length > 0) {
+      return;
+    }
+
+    const { data: current, error: readError } = await supabase
+      .from("billing_entitlements")
+      .select("scans_used")
+      .eq("user_id", reservation.userId)
+      .maybeSingle();
+    const latest = isRecord(current) ? Number(current.scans_used) : Number.NaN;
+    if (readError || !Number.isFinite(latest)) {
+      return;
+    }
+    expected = latest;
+  }
 }
 
 export function listConfiguredPlans(env: BillingEnv) {
@@ -1033,32 +1061,28 @@ function isValidStandardWebhookSignature(
     return false;
   }
 
-  const secret = decodeStandardWebhookSecret(webhookSecret);
-  if (!secret) {
-    return false;
-  }
-
-  const expected = createHmac("sha256", secret)
-    .update(`${webhookId}.${webhookTimestamp}.${rawBody}`, "utf8")
-    .digest("base64");
-
-  return webhookSignature
+  const signedContent = `${webhookId}.${webhookTimestamp}.${rawBody}`;
+  const candidates = webhookSignature
     .split(" ")
     .map((signature) => signature.trim())
     .filter(Boolean)
-    .some((signature) => {
-      const [version, value] = signature.split(",");
-      return version === "v1" && secureCompareBase64(value, expected);
-    });
+    .map((signature) => signature.split(","))
+    .filter(([version]) => version === "v1")
+    .map(([, value]) => value);
+
+  return getStandardWebhookKeys(webhookSecret).some((key) => {
+    const expected = createHmac("sha256", key).update(signedContent, "utf8").digest("base64");
+    return candidates.some((candidate) => secureCompareBase64(candidate, expected));
+  });
 }
 
-function decodeStandardWebhookSecret(webhookSecret: string) {
-  const secret = webhookSecret.startsWith("whsec_") ? webhookSecret.slice("whsec_".length) : webhookSecret;
-  try {
-    return Buffer.from(secret, "base64");
-  } catch {
-    return null;
-  }
+// Polar signs with one of two keys depending on when the secret was created, and its own SDKs try
+// both: a whsec_ secret is base64 (Standard Webhooks), while an older secret's raw string is the key
+// (Polar's docs: base64-encode it before handing it to a Standard Webhooks library).
+function getStandardWebhookKeys(webhookSecret: string): Buffer[] {
+  const encoded = webhookSecret.startsWith("whsec_") ? webhookSecret.slice("whsec_".length) : webhookSecret;
+  // An empty key (a secret with nothing decodable in it) would let anyone compute a valid HMAC.
+  return [Buffer.from(encoded, "base64"), Buffer.from(webhookSecret, "utf8")].filter((key) => key.length > 0);
 }
 
 function secureCompareBase64(candidate: string | undefined, expected: string) {

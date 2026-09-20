@@ -1,3 +1,4 @@
+import { getLocalDateStamp } from "../lib/utils";
 import type { CandidateMatch, EvidenceRegion, Lookup, SourceLink } from "../types";
 
 export function buildScanReport(lookup: Lookup) {
@@ -68,7 +69,7 @@ export function getScanReportFilename(lookup: Lookup) {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 40);
-  const date = lookup.createdAt.slice(0, 10);
+  const date = getLocalDateStamp(lookup.createdAt);
 
   return `deep-spec-${part || "scan"}-${date}.txt`;
 }

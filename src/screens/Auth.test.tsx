@@ -260,6 +260,25 @@ describe("Auth", () => {
     expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
   });
 
+  it("opens the scanner without waiting for a slow cloud sync to finish", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("deep-spec:lookups", JSON.stringify([makeSavedLookup("lookup-1", "Alternator")]));
+    // A stalled upload (bad signal, slow storage) must not hold a verified user on the login screen.
+    cloudSyncMock.syncLookupsToCloud.mockReturnValue(new Promise(() => undefined));
+    supabaseMock.auth.getUser
+      .mockResolvedValueOnce({ data: { user: null }, error: null })
+      .mockResolvedValueOnce({ data: { user: makeUser("password-user") }, error: null });
+
+    await renderAuth();
+
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "Tester@Example.com");
+    await user.type(screen.getByPlaceholderText("Your password"), "correct-password");
+    await user.click(screen.getByRole("button", { name: "Sign in to scanner" }));
+
+    expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
+    expect(cloudSyncMock.syncLookupsToCloud).toHaveBeenCalledTimes(1);
+  });
+
   it("does not open the scanner when password auth does not verify a user", async () => {
     const user = userEvent.setup();
     supabaseMock.auth.signInWithPassword.mockResolvedValueOnce({ data: {}, error: { message: "Invalid login credentials" } });

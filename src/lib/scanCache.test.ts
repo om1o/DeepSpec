@@ -71,6 +71,43 @@ describe("setCachedScanResult / getCachedScanResult", () => {
   });
 });
 
+describe("on-device estimates", () => {
+  const withProvider = (partName: string, provider: "on-device" | "gemini"): IdentificationResult => ({
+    ...makeResult(partName),
+    modelRun: { provider, model: "test-model", latencyMs: 10, ocrUsed: false },
+  });
+
+  it("does not cache an offline estimate, so a rescan gets a real analysis once back online", () => {
+    setCachedScanResult("hash1", withProvider("Rough guess", "on-device"));
+
+    expect(getCachedScanResult("hash1")).toBeNull();
+    expect(localStorage.getItem(SCAN_CACHE_KEY)).toBeNull();
+  });
+
+  it("ignores an estimate that an older build already cached", () => {
+    localStorage.setItem(
+      SCAN_CACHE_KEY,
+      JSON.stringify([{ hash: "hash1", result: withProvider("Rough guess", "on-device"), cachedAt: "2026-01-01T00:00:00.000Z" }]),
+    );
+
+    expect(getCachedScanResult("hash1")).toBeNull();
+  });
+
+  it("still caches a full cloud result", () => {
+    const result = withProvider("Brake Caliper", "gemini");
+    setCachedScanResult("hash1", result);
+
+    expect(getCachedScanResult("hash1")).toEqual(result);
+  });
+
+  it("keeps an earlier full result when a later offline estimate arrives for the same photo", () => {
+    setCachedScanResult("hash1", withProvider("Brake Caliper", "gemini"));
+    setCachedScanResult("hash1", withProvider("Rough guess", "on-device"));
+
+    expect(getCachedScanResult("hash1")?.partName).toBe("Brake Caliper");
+  });
+});
+
 describe("capacity eviction", () => {
   it("evicts the oldest entry when cap is reached", () => {
     for (let i = 0; i < SCAN_CACHE_MAX; i++) {

@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { createLookup } from "./storage";
+import { createLookup, LOOKUPS_STORAGE_KEY, updateLookup } from "./storage";
 import {
   attachScanToJob,
   buildCustomerJobReport,
+  buildCustomerVisibleReport,
   createShopJob,
   getShopFeedbackPermission,
+  getShopJob,
   getShopJobScans,
   getShopMetrics,
   searchShopJobs,
@@ -54,6 +56,46 @@ describe("shop service", () => {
       status: "open",
       vin: "1HGCM82633A004352",
     });
+  });
+
+  it("keeps the job's review status in step with its scans after they are rated or corrected", () => {
+    const job = createShopJob(baseJob).value!;
+    const scan = createLookup(makeScanState({ jobId: job.id, orgId: job.orgId, reviewStatus: "needs_review" })).value;
+    attachScanToJob(job.id, scan.id);
+    expect(getShopJob(job.id)?.reviewStatus).toBe("needs_review");
+
+    // The status was computed once at attach time and never refreshed afterwards.
+    updateLookup(scan.id, { rating: "up" });
+    expect(getShopJob(job.id)?.reviewStatus).toBe("confirmed");
+
+    updateLookup(scan.id, { correction: "Serpentine belt tensioner" });
+    expect(getShopJob(job.id)?.reviewStatus).toBe("corrected");
+  });
+
+  it("keeps a job's stored review status when none of its scans are on this device", () => {
+    const job = createShopJob(baseJob).value!;
+    // Confirmed at attach time, so "confirmed" is what's stored on the job.
+    const scan = createLookup(makeScanState({ jobId: job.id, orgId: job.orgId, reviewStatus: "confirmed" })).value;
+    attachScanToJob(job.id, scan.id);
+    // Scan evicted from local storage (50-scan cap) or saved on another device: nothing to derive
+    // from, so the stored status stands instead of resetting to "needs_review".
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, "[]");
+    expect(getShopJob(job.id)?.reviewStatus).toBe("confirmed");
+  });
+
+  it("describes the scan being saved, not the job's previous scan, in the customer report", () => {
+    const job = createShopJob(baseJob).value!;
+    const previous = createLookup(makeScanState({ jobId: job.id, orgId: job.orgId })).value; // an Alternator
+    attachScanToJob(job.id, previous.id);
+    const starter = { ...makeScanState({}).result!, partName: "Starter motor", confidence: "medium" as const };
+
+    const report = buildCustomerVisibleReport(getShopJob(job.id)!, undefined, { result: starter, correction: null });
+    expect(report.summary).toContain("Latest DeepSpec result: Starter motor (medium confidence)");
+    expect(report.summary).not.toContain("Alternator");
+
+    // A failed scan (no result) is the latest too — it doesn't fall back to the previous part.
+    const failed = buildCustomerVisibleReport(getShopJob(job.id)!, undefined, { result: undefined, correction: null });
+    expect(failed.summary).toContain("Latest DeepSpec result: part scan (needs review)");
   });
 
   it("attaches scans, calculates review queues, and respects opt-in learning", () => {

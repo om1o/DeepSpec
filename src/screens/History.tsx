@@ -7,18 +7,20 @@ import { readCloudLookups } from "../services/cloudHistory";
 import { getScanQualityMetrics, type ScanQualityFailureReason, type ScanQualityMetrics } from "../services/scanQualityMetrics";
 import { MAX_SAVED_LOOKUPS, getLookups, scanStateFromLookup } from "../services/storage";
 import { getTrainingReadiness } from "../services/trainingReadiness";
+import { getLocalDateStamp } from "../lib/utils";
 import { SCAN_CATEGORIES, type Lookup, type Rating, type ScanCategory, type TrainingStatus } from "../types";
 
 export default function History() {
   const navigate = useNavigate();
-  const [lookups, setLookups] = useState<Lookup[]>(() => getLookups());
+  // The on-device cap counts what this device stores, not the merged list that also holds cloud scans.
+  const [deviceLookups] = useState<Lookup[]>(() => getLookups());
+  const [lookups, setLookups] = useState<Lookup[]>(deviceLookups);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [query, setQuery] = useState("");
   const qualityMetrics = useMemo(() => getScanQualityMetrics(), []);
 
   useEffect(() => {
     let isMounted = true;
-    const localLookups = getLookups();
 
     void readCloudLookups()
       .then((result) => {
@@ -26,7 +28,7 @@ export default function History() {
           return;
         }
 
-        setLookups(mergeLookups(localLookups, result.value));
+        setLookups(mergeLookups(deviceLookups, result.value));
       })
       .catch(() => {
         // Keep local history if cloud history fails to load.
@@ -35,7 +37,7 @@ export default function History() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [deviceLookups]);
 
   async function handleSignOut() {
     setIsSigningOut(true);
@@ -135,7 +137,7 @@ export default function History() {
                 Export JSON
               </Button>
             </div>
-            {lookups.length >= MAX_SAVED_LOOKUPS ? (
+            {deviceLookups.length >= MAX_SAVED_LOOKUPS ? (
               <p className="mt-2 text-xs font-semibold leading-5 text-[var(--ds-warn-ink)]">
                 {MAX_SAVED_LOOKUPS}-scan cap reached. Export to keep older scans.
               </p>
@@ -460,7 +462,7 @@ function exportLookups(lookups: Lookup[]) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `deepspec-saved-scans-${new Date().toISOString().slice(0, 10)}.json`;
+  anchor.download = `deepspec-saved-scans-${getLocalDateStamp()}.json`;
   anchor.click();
   URL.revokeObjectURL(url);
 }

@@ -167,9 +167,14 @@ export function createShopJob(input: ShopJobInput): StorageResult<ShopJob | null
 
 export function getShopJobs(orgId = getCurrentOrganization().id): ShopJob[] {
   const jobs = readJson<ShopJob[]>(SHOP_JOBS_STORAGE_KEY, isShopJobArray) ?? [];
+  const lookups = getLookups();
   return jobs
     .filter((job) => job.orgId === orgId)
     .map(normalizeShopJob)
+    // The job's status is derived from its scans, which are rated/corrected after they're attached;
+    // re-derive on read so it doesn't stay stuck at whatever it was at attach time. Keep the stored
+    // value when none of its scans are on this device (evicted, or saved on another device).
+    .map((job) => ({ ...job, reviewStatus: getReviewStatusForScans(job.scanIds, lookups) ?? job.reviewStatus }))
     .sort((left, right) => getTime(right.updatedAt) - getTime(left.updatedAt));
 }
 
@@ -308,8 +313,16 @@ export function getShopMetrics(
   };
 }
 
-export function buildCustomerVisibleReport(job: ShopJob, scans = getShopJobScans(job)): CustomerVisibleReport {
-  const latestScan = scans[0];
+/**
+ * `latest` is the scan being saved. The report is built before that scan is stored, so without
+ * it the job's newest stored scan — the previous one — was described as the latest result.
+ */
+export function buildCustomerVisibleReport(
+  job: ShopJob,
+  scans = getShopJobScans(job),
+  latest?: Pick<Lookup, "result" | "correction">,
+): CustomerVisibleReport {
+  const latestScan = latest ?? scans[0];
   const topPart = latestScan?.correction?.trim() || latestScan?.result?.partName || "part scan";
   const confidence = latestScan?.result?.confidence ? `${latestScan.result.confidence} confidence` : "needs review";
   return {
@@ -398,9 +411,14 @@ function normalizeShopJob(job: ShopJob): ShopJob {
 }
 
 function getReviewStatusForScanIds(scanIds: string[]): ShopReviewStatus {
-  const scans = getLookups().filter((lookup) => scanIds.includes(lookup.id));
+  return getReviewStatusForScans(scanIds, getLookups()) ?? "needs_review";
+}
+
+/** The job's review status from its scans on this device, or null when none of them are here. */
+function getReviewStatusForScans(scanIds: string[], lookups: Lookup[]): ShopReviewStatus | null {
+  const scans = lookups.filter((lookup) => scanIds.includes(lookup.id));
   if (!scans.length) {
-    return "needs_review";
+    return null;
   }
 
   if (scans.some((scan) => scan.reviewStatus === "corrected" || scan.trainingStatus === "user_corrected" || scan.correction?.trim())) {

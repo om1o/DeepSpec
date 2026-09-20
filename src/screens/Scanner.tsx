@@ -10,9 +10,11 @@ import { isCropBoxEnabled } from "../components/scanner/cropBoxGeometry";
 import { IssueLine, ResultDetailSections, SceneCategoryList } from "../components/result/PositiveAnswerCard";
 import Button from "../components/ui/Button";
 import { useCamera, type CameraDevice } from "../hooks/useCamera";
+import { useViewportSize } from "../hooks/useViewportSize";
 import type { CameraObjectTarget } from "../hooks/useObjectTarget";
 import { assessImageQuality, type ImageQualityIssue, type ImageQualityResult } from "../lib/imageQuality";
 import { createFocusedScanCrop } from "../lib/focusCrop";
+import { getDisplayedFocusRect, getReviewCardPlacement, SCAN_CARD_WIDTH_PX, type ReviewCardPlacement } from "../lib/reviewCardPlacement";
 import { createSegmentedProductIsolation, warmProductSegmentation } from "../lib/productSegmentation";
 import { createPromptedProductIsolation, isolateSceneObjects, isPromptableSegmentationEnabled, warmPromptableSegmentation, type SceneObjectInput } from "../lib/promptableSegmentation";
 import { supportsWebGpu } from "../lib/webgpu";
@@ -52,9 +54,8 @@ const IDENTIFY_BUDGET_WARN_MS = 15000;
 // trips a normal scan (identify caps at ~45s, segmentation at ~13s).
 const SCAN_WATCHDOG_TIMEOUT_MS = 90000;
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
+const UPLOAD_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const COMPRESS_UPLOAD_OVER_BYTES = 1024 * 1024;
-const SCAN_CARD_WIDTH_PX = 340;
-const SCAN_CARD_SAFE_HEIGHT_PX = 560;
 const MIN_TARGET_WIDTH_PX = 96;
 const MIN_TARGET_HEIGHT_PX = 72;
 const MIN_TARGET_AREA_RATIO = 0.018;
@@ -88,12 +89,6 @@ type ScanReviewState = {
   reviewTarget: ScanReviewTarget | null;
 };
 
-type ReviewCardPlacement = {
-  left: number;
-  top: number;
-  anchorSide: "left" | "right";
-};
-
 type ScanQualityCoachIssue = ImageQualityIssue | "object_too_small";
 
 type ScanQualityCoachState = {
@@ -103,13 +98,18 @@ type ScanQualityCoachState = {
   title: string;
 };
 
-function buildShopScanContext(job: ShopJob | null, vehicleContext: ShopVehicleContext | undefined): Partial<ScanAnalysisState> {
+function buildShopScanContext(
+  job: ShopJob | null,
+  vehicleContext: ShopVehicleContext | undefined,
+  result: IdentificationResult | undefined,
+): Partial<ScanAnalysisState> {
   if (!job) {
     return {};
   }
 
   return {
-    customerVisibleReport: buildCustomerVisibleReport(job),
+    // Describe the scan being saved, not the job's previous one (this runs before it's stored).
+    customerVisibleReport: buildCustomerVisibleReport(job, undefined, { result, correction: null }),
     jobId: job.id,
     orgId: job.orgId,
     reviewStatus: "needs_review",
@@ -209,8 +209,14 @@ export default function Scanner() {
     () => (scanReview?.reviewTarget ? clampReviewTarget(scanReview.reviewTarget) : null),
     [scanReview],
   );
-
-  const reviewCardPlacement = getReviewCardPlacement(anchoredReviewTarget);
+  const reviewFrameSize = useFrameSize(scanReview?.scanState.frame.imageBase64);
+  // Anchor the result card to where the part is actually drawn (the letterboxed review stage),
+  // not the live-camera/upload target, which is in cropped object-cover coordinates.
+  const viewport = useViewportSize();
+  const displayedFocusRect = scanReview?.scanState.focusBox && reviewFrameSize
+    ? getDisplayedFocusRect(scanReview.scanState.focusBox, reviewFrameSize, viewport)
+    : null;
+  const reviewCardPlacement = getReviewCardPlacement(displayedFocusRect ?? anchoredReviewTarget, viewport);
 
   const pauseAutoScan = useCallback((message?: string) => {
     setCaptureError(message ?? null);
@@ -456,8 +462,8 @@ export default function Scanner() {
     if (imageHash && !activeShopJob) {
       const cached = getCachedScanResult(imageHash);
       if (cached) {
-        const shopScanContext = buildShopScanContext(activeShopJob, activeShopVehicleContext);
         const contextualResult = applyShopFitmentContext(cached, activeShopVehicleContext);
+        const shopScanContext = buildShopScanContext(activeShopJob, activeShopVehicleContext, contextualResult);
         setAnalysisStep("Opening result");
         recordScanOutcome(contextualResult);
         await persistAndShowReview(
@@ -550,7 +556,7 @@ export default function Scanner() {
       }
 
       setAnalysisStep("Saving");
-      const shopScanContext = buildShopScanContext(activeShopJob, activeShopVehicleContext);
+      const shopScanContext = buildShopScanContext(activeShopJob, activeShopVehicleContext, result);
       await persistAndShowReview(
         {
           frame,
@@ -592,7 +598,7 @@ export default function Scanner() {
           focusMode,
           isolatedImageBase64,
           scanQuality,
-          ...buildShopScanContext(activeShopJob, activeShopVehicleContext),
+          ...buildShopScanContext(activeShopJob, activeShopVehicleContext, undefined),
           provenance: {
             analysisSource: "ai_detection",
             captureMode,
@@ -760,10 +766,19 @@ export default function Scanner() {
       return;
     }
     startedObjectAnalysisRef.current.add(index);
+    // This set is replaced on a new scan or when review closes. A late response must
+    // not overwrite another scan's card just because it uses the same object index.
+    const analysisSession = startedObjectAnalysisRef.current;
     setObjectAnalyses((prev) => ({ ...prev, [index]: { status: "loading" } }));
     void identifyCapturedFrame({ imageBase64: object.isolatedImageBase64, capturedAt: new Date().toISOString() })
-      .then((result) => setObjectAnalyses((prev) => ({ ...prev, [index]: { status: "done", result } })))
-      .catch((error) => setObjectAnalyses((prev) => ({ ...prev, [index]: { status: "error", message: getSimpleScanErrorMessage(error) } })));
+      .then((result) => {
+        if (startedObjectAnalysisRef.current !== analysisSession) return;
+        setObjectAnalyses((prev) => ({ ...prev, [index]: { status: "done", result } }));
+      })
+      .catch((error) => {
+        if (startedObjectAnalysisRef.current !== analysisSession) return;
+        setObjectAnalyses((prev) => ({ ...prev, [index]: { status: "error", message: getSimpleScanErrorMessage(error) } }));
+      });
   }, []);
 
   const handleFocusObject = useCallback((index: number | null) => {
@@ -857,6 +872,7 @@ export default function Scanner() {
       {cameraState === "blocked" && !scanReview ? (
         <CameraBlocked
           devices={cameraDevices}
+          notice={qualityCoach ? { title: qualityCoach.title, text: qualityCoach.action } : captureError ? { text: captureError } : null}
           onGallery={() => galleryInputRef.current?.click()}
           message={cameraError}
           onRetry={retryCamera}
@@ -1062,6 +1078,7 @@ function CameraLoading() {
 function CameraBlocked({
   devices,
   message,
+  notice,
   onGallery,
   onRetry,
   onSelectCamera,
@@ -1069,6 +1086,8 @@ function CameraBlocked({
 }: {
   devices: CameraDevice[];
   message: string | null;
+  /** Feedback on the last upload; the floating scanner notices don't render while the camera is blocked. */
+  notice: { title?: string; text: string } | null;
   onGallery: () => void;
   onRetry: () => void;
   onSelectCamera: (deviceId: string) => void;
@@ -1093,6 +1112,17 @@ function CameraBlocked({
           Deep Spec scans parts through your camera. {denied || waiting ? "Allow camera access for this site, then try again." : "Enable camera access, then try again."}
         </p>
         {message ? <p className="mt-3 text-xs text-white/48">{message}</p> : null}
+        {notice ? (
+          <div
+            className="mt-5 rounded-[14px] px-4 py-3 text-left"
+            data-testid="upload-notice"
+            role="status"
+            style={{ background: "rgba(94,147,166,0.10)", border: "1px solid rgba(94,147,166,0.24)" }}
+          >
+            {notice.title ? <h2 className="text-base font-black tracking-tight text-white">{notice.title}</h2> : null}
+            <p className="text-sm font-semibold leading-6 text-white/86">{notice.text}</p>
+          </div>
+        ) : null}
         {hasCameraChoices ? (
           <label className="mx-auto mt-5 block max-w-xs text-left">
             <span className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-white/54">Camera</span>
@@ -1572,7 +1602,9 @@ function CaptureErrorNotice({ message, onTryAgain }: { message: string; onTryAga
 }
 
 function readImageFileAsDataUrl(file: File) {
-  if (!file.type.startsWith("image/")) {
+  // The same three types the file input's accept list and the identify API allow; anything else
+  // (GIF, HEIC, SVG...) would be read, quality-checked, then refused by the server.
+  if (!UPLOAD_IMAGE_TYPES.includes(file.type)) {
     return Promise.reject(new Error("Choose a JPEG, PNG, or WebP photo."));
   }
 
@@ -1883,38 +1915,29 @@ function getItemViewBadge(source: VisualFocusMode, hasIsolatedOutput: boolean) {
   return "Full scan";
 }
 
-function getReviewCardPlacement(target: ScanReviewTarget | null): ReviewCardPlacement {
-  if (window.innerWidth < 520 && target) {
-    return {
-      anchorSide: "right",
-      left: 14,
-      top: Math.max(72, window.innerHeight - 320),
-    };
-  }
-
-  if (!target) {
-    return {
-      anchorSide: "right",
-      left: 14,
-      top: Math.max(72, window.innerHeight - 420),
-    };
-  }
-
-  const margin = 12;
-  const gap = 10;
-  const canPlaceRight = target.x + target.width + SCAN_CARD_WIDTH_PX + gap < window.innerWidth;
-  const anchorSide = canPlaceRight ? "left" : "right";
-  const left = canPlaceRight
-    ? clampNumber(target.x + target.width + gap, 14, window.innerWidth - SCAN_CARD_WIDTH_PX - 14)
-    : clampNumber(target.x - SCAN_CARD_WIDTH_PX - gap, 14, window.innerWidth - SCAN_CARD_WIDTH_PX - 14);
-  const rawTop = target.y + target.height / 2;
-  const top = clampNumber(rawTop - margin, 72, Math.max(72, window.innerHeight - SCAN_CARD_SAFE_HEIGHT_PX));
-
-  return { anchorSide, left, top };
-}
-
 function clampNumber(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+/** Natural size of a captured frame, once decoded (null until then, or if it fails to decode). */
+function useFrameSize(imageBase64: string | undefined) {
+  const [frameSize, setFrameSize] = useState<{ source: string; width: number; height: number } | null>(null);
+  useEffect(() => {
+    if (!imageBase64 || typeof Image === "undefined") {
+      return;
+    }
+    const image = new Image();
+    image.onload = () => {
+      if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+        setFrameSize({ source: imageBase64, width: image.naturalWidth, height: image.naturalHeight });
+      }
+    };
+    image.src = imageBase64;
+    return () => {
+      image.onload = null;
+    };
+  }, [imageBase64]);
+  return frameSize && frameSize.source === imageBase64 ? frameSize : null;
 }
 
 function ScannerHUD({ isAnalyzing }: { isAnalyzing: boolean }) {
