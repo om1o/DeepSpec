@@ -43,6 +43,9 @@ export function ScanDebugOverlay({ info }: { info?: ScanDebugInfo }) {
   const data = info ?? getScanDebug();
   const webgpuValue = data.webgpu ?? webgpu;
   const scanned = data.segmenter !== undefined || data.samInferenceMs !== undefined || data.focusMode !== undefined;
+  const samSkipReason = data.samError?.startsWith("skipped:")
+    ? data.samError.slice("skipped:".length).trim()
+    : data.samError === "skipped" ? "No reason recorded" : undefined;
 
   const yesNo = (value?: boolean) => (value === undefined ? "checking…" : value ? "yes" : "no");
   const ms = (value?: number) => (typeof value === "number" ? `${value} ms` : "—");
@@ -52,8 +55,8 @@ export function ScanDebugOverlay({ info }: { info?: ScanDebugInfo }) {
     ["focusMode", data.focusMode ?? "—"],
     ["SAM load", ms(data.samLoadMs)],
     ["SAM inference", ms(data.samInferenceMs)],
-    ["SAM ok", yesNo(data.samOk)],
-    ["SAM error", data.samError ?? "—"],
+    ["SAM ok", samSkipReason ? "not run" : yesNo(data.samOk)],
+    samSkipReason ? ["SAM skipped", samSkipReason] : ["SAM error", data.samError ?? "—"],
   ];
   // Cold-time breakdown (model vs post) + output shape, shown only once a SAM inference logged them.
   if (data.samModelMs !== undefined || data.samPostMs !== undefined || data.samMaskDims !== undefined) {
@@ -86,7 +89,7 @@ export function ScanDebugOverlay({ info }: { info?: ScanDebugInfo }) {
       ["SAM mask coverage", data.samMaskCoverage !== undefined ? `${(data.samMaskCoverage * 100).toFixed(1)}%` : "—"],
     );
   }
-  const summary = geometryVerdict ?? (data.samError ? "SAM error" : data.segmenter ?? (scanned ? "—" : "scan to see"));
+  const summary = samSkipReason ? "SAM skipped" : geometryVerdict ?? (data.samError ? "SAM error" : data.segmenter ?? (scanned ? "—" : "scan to see"));
   const text = `DeepSpec isolation diagnostics\n${rows.map(([key, value]) => `${key}: ${value}`).join("\n")}`;
 
   async function copy() {

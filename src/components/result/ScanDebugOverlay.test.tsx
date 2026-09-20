@@ -8,6 +8,26 @@ describe("ScanDebugOverlay", () => {
     vi.unstubAllEnvs();
   });
 
+  it.each(["no_webgpu", "disabled-env"])("describes an intentional %s skip without reporting a SAM error", async (reason) => {
+    const user = userEvent.setup();
+    vi.stubEnv("VITE_DEEPSPEC_DEBUG", "on");
+    render(<ScanDebugOverlay info={{ webgpu: false, segmenter: "crop", samError: `skipped: ${reason}` }} />);
+    expect(screen.getByRole("button", { expanded: false })).toHaveTextContent("SAM skipped");
+    await user.click(screen.getByRole("button", { expanded: false }));
+    expect(screen.getByRole("row", { name: new RegExp(`SAM skipped ${reason}`) })).toBeInTheDocument();
+    expect(screen.queryByText("SAM error")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Copy diagnostics" }));
+    expect(await navigator.clipboard.readText()).toContain(`SAM skipped: ${reason}`);
+  });
+
+  it("keeps an actual inference failure visible as an error", async () => {
+    vi.stubEnv("VITE_DEEPSPEC_DEBUG", "on");
+    render(<ScanDebugOverlay info={{ webgpu: true, segmenter: "crop", samError: "timeout after 25000ms" }} />);
+    expect(screen.getByRole("button", { expanded: false })).toHaveTextContent("SAM error");
+    await userEvent.click(screen.getByRole("button", { expanded: false }));
+    expect(screen.getByRole("row", { name: "SAM error timeout after 25000ms" })).toBeInTheDocument();
+  });
+
   it("renders nothing when VITE_DEEPSPEC_DEBUG is off", () => {
     vi.stubEnv("VITE_DEEPSPEC_DEBUG", "off");
     const { container } = render(<ScanDebugOverlay info={{ webgpu: true, segmenter: "SAM" }} />);
