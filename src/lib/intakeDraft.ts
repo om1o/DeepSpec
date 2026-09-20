@@ -8,11 +8,13 @@ export function buildIntakeDraft(lookup: Lookup) {
   const confirmedName = inspection?.confirmedPartName.trim();
   const correction = lookup.correction?.trim();
   const checks: string[] = [];
-  if (!result) checks.push("Run identification again; no AI result is saved.");
+  if (!result) checks.push(lookup.errorCode === "quality_rejected"
+    ? "Review the rejected photo and quality guidance before deciding whether to take a new scan."
+    : "Run identification again; no AI result is saved.");
   if (result?.needsBetterPhoto || result?.safetyTriage === "needs_better_photo" || result?.confirmationNeed === "one_more_angle") {
     checks.push("Take a clearer photo or another angle of the part and its label.");
   }
-  if (!confirmedName) checks.push("Verify the suggested identity against the part or a trusted reference.");
+  if (!confirmedName) checks.push(result || correction ? "Verify the suggested identity against the part or a trusted reference." : "Identify the part using its markings or a trusted reference.");
   if (!inspection?.partNumber.trim()) checks.push("Read and record the part number.");
   checks.push("Verify vehicle fitment against a trusted catalog before ordering or listing.");
   if (result?.confidence !== "high" || result?.confirmationNeed === "reference_needed") {
@@ -41,6 +43,7 @@ export function formatIntakeDraft(lookup: Lookup) {
     `Record: ${lookup.id}`,
     `Identity status: ${draft.review.label}`,
     ...draft.review.reasons.map((reason) => `Unresolved: ${reason}`),
+    ...(lookup.errorMessage ? [`Scan issue: ${lookup.errorMessage}`] : []),
     `Part: ${draft.name}`,
     `Identity source: ${draft.identitySource}`,
     `Part number: ${draft.partNumber}`,

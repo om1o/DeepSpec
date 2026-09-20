@@ -80,6 +80,7 @@ type ScanReviewTarget = {
 };
 
 type ScanReviewState = {
+  guidedRetakeUsed: boolean;
   focusTarget: ScanReviewTarget | null;
   isolatedFrame?: CapturedFrame;
   lookup: Lookup | null;
@@ -90,7 +91,7 @@ type ScanReviewState = {
   reviewTarget: ScanReviewTarget | null;
 };
 
-type ScanQualityCoachIssue = ImageQualityIssue | "object_too_small";
+type ScanQualityCoachIssue = ImageQualityIssue | "object_too_small" | "needs_better_photo";
 
 type ScanQualityCoachState = {
   action: string;
@@ -157,6 +158,8 @@ export default function Scanner() {
   const [scanCardPrefs] = useState<ScanCardPreferences>(() => getScanCardPreferences(location.pathname));
   const [scanCardStatusMessage, setScanCardStatusMessage] = useState<string | null>(null);
   const [qualityCoach, setQualityCoach] = useState<ScanQualityCoachState | null>(null);
+  const guidedRetakeUsedRef = useRef(false);
+  const pendingGuidedRetakeRef = useRef(false);
   const cancelScanRef = useRef(false);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const activeIdentifyRef = useRef(false);
@@ -233,6 +236,10 @@ export default function Scanner() {
   }, []);
 
   const beginScanRequest = useCallback(() => {
+    if (pendingGuidedRetakeRef.current) {
+      guidedRetakeUsedRef.current = true;
+      pendingGuidedRetakeRef.current = false;
+    }
     setScanSave(null);
     cancelScanRef.current = false;
     setCaptureError(null);
@@ -337,6 +344,7 @@ export default function Scanner() {
       }
       saveLatestScanState(scanState);
       setScanReview({
+        guidedRetakeUsed: guidedRetakeUsedRef.current,
         correction: options.correction ?? saved.value.correction,
         focusTarget: options.focusTarget ?? options.reviewTarget,
         isolatedFrame: options.isolatedFrame,
@@ -356,6 +364,7 @@ export default function Scanner() {
     };
     saveLatestScanState(fallbackState);
     setScanReview({
+      guidedRetakeUsed: guidedRetakeUsedRef.current,
       correction: options.correction ?? null,
       focusTarget: options.focusTarget ?? options.reviewTarget,
       isolatedFrame: options.isolatedFrame,
@@ -386,10 +395,6 @@ export default function Scanner() {
     setAnalysisStep("Checking photo quality");
     const quality = await assessImageQuality(imageBase64);
     if (!isScanRequestActive(requestId)) return;
-    if (!quality.ok) {
-      stopForQualityCoach(quality.issue);
-      return;
-    }
     const scanQuality = buildScanQualitySnapshot({
       cameraId: selectedCameraId,
       firstPass: !qualityFailureInAttemptRef.current,
@@ -404,6 +409,18 @@ export default function Scanner() {
       imageBase64,
       capturedAt: new Date().toISOString(),
     };
+    if (!quality.ok) {
+      stopForQualityCoach(quality.issue);
+      const coach = getScanQualityCoach(quality.issue);
+      persistAndShowReview({
+        frame, scanQuality, errorCode: "quality_rejected",
+        errorMessage: `Photo quality check: ${coach.title}. ${coach.action}${guidedRetakeUsedRef.current ? " Guided retake used; identity remains unresolved. Review the saved evidence before deciding what to do next." : " Identification was not run."}`,
+        analyzedAt: sourceUpdatedAt,
+        provenance: { captureMode, analysisSource: "ai_detection", savedAt: sourceUpdatedAt },
+        ...buildShopScanContext(activeShopJob, activeShopVehicleContext, undefined),
+      }, { captureMode, requestId, reviewTarget, source: "AI detection", analysisSource: "ai_detection", sourceUpdatedAt });
+      return;
+    }
     saveLatestScanState({ frame, scanQuality });
     resetScanDebug();
 
@@ -748,6 +765,9 @@ export default function Scanner() {
   }
 
   function closeScanReview() {
+    guidedRetakeUsedRef.current = false;
+    pendingGuidedRetakeRef.current = false;
+    setQualityCoach(null);
     setScanReview(null);
     setCaptureError(null);
     setScanCardStatusMessage(null);
@@ -755,6 +775,19 @@ export default function Scanner() {
     setObjectAnalyses({});
     startedObjectAnalysisRef.current = new Set();
     pauseAutoScan();
+  }
+
+  function prepareGuidedRetake() {
+    if (!scanReview || guidedRetakeUsedRef.current || isAnalyzing) return;
+    const coach = getReviewRetakeCoach(scanReview.scanState);
+    if (!coach) return;
+    pendingGuidedRetakeRef.current = true;
+    setQualityCoach(coach);
+    if (scanReview.scanState.provenance?.captureMode === "upload" || cameraState !== "ready") {
+      galleryInputRef.current?.click();
+    } else {
+      setScanReview(null);
+    }
   }
 
   // Multi-object Lens: tapping a secondary object promotes it to the isolated treatment and lazily
@@ -894,7 +927,7 @@ export default function Scanner() {
           {cameraState === "ready" && !scanReview && cropBoxEnabled ? (
             <CropBox webcamRef={webcamRef} isAnalyzing={isAnalyzing} onCapture={(target) => void handleIdentify(target)} />
           ) : null}
-          {qualityCoach ? (
+          {qualityCoach && !scanReview ? (
             <ScanQualityCoachNotice
               coach={qualityCoach}
               onTryAgain={() => void handleIdentify()}
@@ -941,6 +974,10 @@ export default function Scanner() {
           placement={reviewCardPlacement}
           prefs={scanCardPrefs}
           review={scanReview}
+          retakeCoach={getReviewRetakeCoach(scanReview.scanState)}
+          retakeUsed={scanReview.guidedRetakeUsed}
+          onPrepareRetake={prepareGuidedRetake}
+          retakeUsesUpload={scanReview.scanState.provenance?.captureMode === "upload" || cameraState !== "ready"}
           scanCardStatusMessage={scanCardStatusMessage}
         />
       ) : null}
@@ -1014,14 +1051,15 @@ function buildScanQualitySnapshot({
   motionFallback: boolean;
   motionStable: boolean;
   previousFailureReason: ScanQualityCoachIssue | null;
-  quality: Extract<ImageQualityResult, { ok: true }>;
+  quality: ImageQualityResult;
   target: CameraObjectTarget | null;
 }): ScanQualitySnapshot {
   const metrics = quality.metrics;
   const targetScore = getTargetCenteredScore(target);
 
   return {
-    accepted: true,
+    accepted: quality.ok,
+    ...(!quality.ok ? { failureReason: quality.issue, fixAction: getScanQualityCoach(quality.issue).action } : {}),
     averageLuminance: metrics?.averageLuminance ?? null,
     brightPixelRatio: metrics?.brightPixelRatio ?? null,
     brightnessScore: metrics?.brightnessScore ?? null,
@@ -1029,7 +1067,7 @@ function buildScanQualitySnapshot({
     checkedAt: new Date().toISOString(),
     darkPixelRatio: metrics?.darkPixelRatio ?? null,
     firstPass,
-    ...(previousFailureReason ? { fixAction: getScanQualityCoach(previousFailureReason).action } : {}),
+    ...(quality.ok && previousFailureReason ? { fixAction: getScanQualityCoach(previousFailureReason).action } : {}),
     glareScore: metrics?.glareScore ?? null,
     gradientVariance: metrics?.gradientVariance ?? null,
     motionFallback,
@@ -1259,6 +1297,10 @@ function ScanQualityCoachNotice({
 }
 
 function ScanResultCard({
+  retakeCoach,
+  retakeUsed,
+  onPrepareRetake,
+  retakeUsesUpload,
   isExpanded,
   isMismatch,
   onClose,
@@ -1270,6 +1312,10 @@ function ScanResultCard({
   review,
   scanCardStatusMessage,
 }: {
+  retakeCoach: ScanQualityCoachState | null;
+  retakeUsed: boolean;
+  onPrepareRetake: () => void;
+  retakeUsesUpload: boolean;
   isExpanded: boolean;
   isMismatch: boolean;
   onClose: () => void;
@@ -1387,6 +1433,13 @@ function ScanResultCard({
       {/* Content body */}
       {!collapsed ? (
       <div className="mt-3">
+        {retakeCoach ? <div className="mb-3 rounded-xl bg-white/10 px-3 py-2.5">
+          <h2 className="text-sm font-bold">{retakeCoach.title}</h2>
+          <p className="mt-1 text-xs text-white/75">{retakeCoach.action}</p>
+          {retakeUsed ? <p className="mt-2 text-xs font-bold">Guided retake used. Review the evidence or start a separate scan when ready.</p> : (
+            <button type="button" onClick={onPrepareRetake} className="mt-2 rounded-full bg-[var(--ds-accent)] px-3 py-2 text-xs font-bold">{retakeUsesUpload ? "Upload one retake" : "Prepare one retake"}</button>
+          )}
+        </div> : null}
         <div className="mb-3 rounded-xl bg-white/10 px-3 py-2.5">
           <p className="text-xs font-bold">{intakeReview.label}</p>
           {intakeReview.reasons.map((reason) => <p key={reason} className="mt-1 text-xs text-white/75">{reason}</p>)}
@@ -1654,8 +1707,17 @@ function readImageFileAsDataUrl(file: File) {
   });
 }
 
+function getReviewRetakeCoach(scan: ScanAnalysisState): ScanQualityCoachState | null {
+  const reason = scan.scanQuality?.failureReason;
+  if (scan.scanQuality?.accepted === false && (reason === "too_blurry" || reason === "too_dark" || reason === "too_bright" || reason === "lens_covered")) return getScanQualityCoach(reason);
+  if (scan.result?.needsBetterPhoto || scan.result?.safetyTriage === "needs_better_photo" || scan.result?.confirmationNeed === "one_more_angle") return getScanQualityCoach("needs_better_photo");
+  return null;
+}
+
 function getScanQualityCoach(issue: ScanQualityCoachIssue): ScanQualityCoachState {
   switch (issue) {
+    case "needs_better_photo":
+      return { action: "Show the part from another angle with its label in focus.", issue, progress: "One guided retake", title: "Another angle needed" };
     case "too_dark":
       return {
         action: "A little more light sharpens the read.",

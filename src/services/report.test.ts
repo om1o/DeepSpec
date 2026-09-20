@@ -21,6 +21,13 @@ it("keeps failed identification and missing observations explicit", () => {
   expect(buildScanReport(failed)).toContain("Unresolved: AI identification did not complete.");
 });
 
+it("exports the rejected photo's quality reason and retake outcome", () => {
+  const report = buildScanReport({ ...lookup, result: undefined, errorCode: "quality_rejected", errorMessage: "Photo quality check: Hold steady. Guided retake used; identity remains unresolved." });
+  expect(report).toContain("Photo quality was insufficient; identification was not run.");
+  expect(report).toContain("Scan issue: Photo quality check: Hold steady. Guided retake used; identity remains unresolved.");
+  expect(report).not.toContain("Run identification again");
+});
+
 it("asks for another angle and deduplicates requested evidence", () => {
   const draft = buildIntakeDraft({ ...lookup, result: { ...lookup.result!, confirmationNeed: "one_more_angle", requiredNextEvidence: ["Read label", "Read label", " "] } });
   expect(draft.checks).toContain("Take a clearer photo or another angle of the part and its label.");

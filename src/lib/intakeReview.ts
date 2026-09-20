@@ -1,12 +1,13 @@
 import type { Lookup } from "../types";
 
-export function getIntakeReview(scan: Partial<Pick<Lookup, "result" | "rating" | "inspection" | "errorMessage">>) {
+export function getIntakeReview(scan: Partial<Pick<Lookup, "result" | "rating" | "inspection" | "errorMessage" | "errorCode">>) {
   const { result, inspection } = scan;
   if (inspection?.confirmedPartName.trim() && inspection.identityEvidence.trim()) {
     return { status: "human_recorded" as const, label: "Identity recorded by inspector", reasons: [] as string[] };
   }
   const reasons: string[] = [];
-  if (!result || scan.errorMessage) reasons.push("AI identification did not complete.");
+  if (scan.errorCode === "quality_rejected") reasons.push("Photo quality was insufficient; identification was not run.");
+  else if (!result || scan.errorMessage) reasons.push("AI identification did not complete.");
   if (result) {
     if (result.needsBetterPhoto || result.safetyTriage === "needs_better_photo" || result.confirmationNeed === "one_more_angle") reasons.push("A clearer photo or another angle is needed.");
     if (result.confidence !== "high") reasons.push("The suggested identity has limited confidence.");

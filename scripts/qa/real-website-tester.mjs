@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   DEEPSPEC_QA_SCENARIOS,
@@ -73,6 +73,7 @@ const scenarioHandlers = {
   pricing: runPricing,
   "second-angle-refinement": runSecondAngleRefinement,
   "scanner-ai-engine": runScannerAiEngine,
+  "scanner-quality-retake": runScannerQualityRetake,
   "saved-history": runSavedHistory,
   scanner: runScanner,
   "shop-history-search": runShopHistorySearch,
@@ -348,6 +349,54 @@ async function runScanner() {
     likelyFiles: ["src/screens/Scanner.tsx", "src/components/scanner/IdentifyButton.tsx"],
     status: "pass",
   };
+}
+
+async function runScannerQualityRetake() {
+  await requireAuthForProtectedRoute("scanner-quality-retake");
+  await gotoPath("/scan");
+  const dataUrl = await page.evaluate(() => {
+    const canvas = globalThis.document.createElement("canvas");
+    canvas.width = 320;
+    canvas.height = 240;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "black";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/png");
+  });
+  const fixture = { name: "covered-lens.png", mimeType: "image/png", buffer: Buffer.from(dataUrl.split(",")[1], "base64") };
+  const originalIds = await page.evaluate(() => JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]").map((scan) => scan.id));
+  let identifyRequests = 0;
+  const onRequest = (request) => { if (new URL(request.url()).pathname === "/api/identify") identifyRequests += 1; };
+  page.on("request", onRequest);
+  try {
+    await page.getByLabel("Upload photo", { exact: true }).setInputFiles(fixture);
+    const retake = page.getByRole("button", { name: "Upload one retake", exact: true });
+    await retake.waitFor({ state: "visible" });
+    await retake.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(screenshotDir, "quality-first-capture.png"), fullPage: true });
+    const chooserPromise = page.waitForEvent("filechooser");
+    await retake.click();
+    await (await chooserPromise).setFiles(fixture);
+    await page.getByText("Guided retake used. Review the evidence or start a separate scan when ready.", { exact: true }).waitFor({ state: "visible" });
+    const saved = await page.evaluate((ids) => JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]").filter((scan) => !ids.includes(scan.id)), originalIds);
+    if (saved.length !== 2 || saved.some((scan) => scan.errorCode !== "quality_rejected" || scan.scanQuality?.accepted !== false || !scan.frame.imageBase64) || identifyRequests !== 0 || await retake.count()) {
+      throw new QaIssue("frontend", "Quality retake did not preserve two rejected captures or exceeded its one-retake/zero-identification limit.", { likelyFiles: ["src/screens/Scanner.tsx", "src/services/storage.ts"] });
+    }
+    await page.screenshot({ path: join(screenshotDir, "quality-retake-exhausted.png"), fullPage: true });
+    await gotoPath(`/result/${saved[0].id}`);
+    await expectText(/Identity unresolved/i, "reloaded unresolved identity", "frontend", ["src/lib/intakeReview.ts"]);
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Export", exact: true }).click();
+    const exportedPath = join(artifactDir, "quality-retake-report.txt");
+    await (await downloadPromise).saveAs(exportedPath);
+    const report = readFileSync(exportedPath, "utf8");
+    if (!report.includes("Guided retake used") || !report.includes("Photo quality was insufficient; identification was not run.") || report.includes("Run identification again")) {
+      throw new QaIssue("frontend", "Downloaded report lost the rejection reason or retake outcome.", { likelyFiles: ["src/lib/intakeDraft.ts", "src/services/report.ts"] });
+    }
+    return { status: "pass", details: "Two generated covered-lens uploads preserved as unresolved records; one guided retake offered; zero identify requests; reload and actual text download retained the reason and retake outcome." };
+  } finally {
+    page.off("request", onRequest);
+  }
 }
 
 async function runScannerAiEngine() {

@@ -51,7 +51,7 @@ export function buildScanReport(lookup: Lookup) {
     formatSourceLinks(result?.sourceLinks),
     "",
     "Next action:",
-    result?.nextAction ?? "Scan again or inspect this before driving if it looks unsafe.",
+    result?.nextAction ?? "Review the saved evidence and unresolved checks before deciding on another scan or inspection.",
     "",
     "Human inspection (self-reported, separate from AI):",
     ...(lookup.inspection ? [

@@ -934,8 +934,8 @@ describe("Scanner", () => {
       expect(identifyCapturedFrame).not.toHaveBeenCalled();
     });
 
-    it("shows the quality coach fix for a blurry upload", async () => {
-      assessImageQuality.mockResolvedValueOnce({
+    it("preserves rejected uploads and does not spend the retake when the file chooser is canceled", async () => {
+      assessImageQuality.mockResolvedValue({
         ok: false,
         issue: "too_blurry",
         message: "Move closer for more detail.",
@@ -945,6 +945,14 @@ describe("Scanner", () => {
       chooseFile(new File(["blurry"], "blurry.jpg", { type: "image/jpeg" }));
 
       expect(await screen.findByRole("heading", { level: 2, name: "Hold steady" }, { timeout: 3000 })).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "Upload one retake" }));
+      fireEvent.change(screen.getByLabelText("Upload photo"), { target: { files: [] } });
+      expect(screen.getByRole("button", { name: "Upload one retake" })).toBeInTheDocument();
+      expect(JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]")).toHaveLength(1);
+      await userEvent.click(screen.getByRole("button", { name: "Upload one retake" }));
+      chooseFile(new File(["blurry again"], "retake.jpg", { type: "image/jpeg" }));
+      expect(await screen.findByText("Guided retake used. Review the evidence or start a separate scan when ready.")).toBeInTheDocument();
+      expect(JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]")).toHaveLength(2);
       expect(identifyCapturedFrame).not.toHaveBeenCalled();
     }, 10000);
   });
@@ -1200,9 +1208,48 @@ describe("Scanner", () => {
     expect(await screen.findByRole("heading", { level: 2, name: "Hold steady" })).toBeInTheDocument();
     expect(screen.getAllByText("A still frame reads sharper.").length).toBeGreaterThan(0);
     expect(screen.queryByText("Try this exact fix, then scan again.")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Scan again" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Prepare one retake" })).toBeInTheDocument();
+    const saved = JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]");
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({ errorCode: "quality_rejected", scanQuality: { accepted: false, failureReason: "too_blurry" } });
+    expect(saved[0].frame.imageBase64).toBe("data:image/jpeg;base64,compressed-frame");
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
   }, 10000);
+
+  it("offers one guided retake then preserves a second bad photo as unresolved", async () => {
+    assessImageQuality.mockResolvedValue({ ok: false, issue: "too_blurry", message: "Hold steady" });
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Prepare one retake" }));
+    await userEvent.click(screen.getByRole("button", { name: "Scan again" }));
+    expect(await screen.findByText("Guided retake used. Review the evidence or start a separate scan when ready.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Prepare one retake" })).not.toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]")).toHaveLength(2);
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+  });
+
+  it("allows a successful guided retake without confirming identity or replacing the rejected photo", async () => {
+    assessImageQuality.mockResolvedValueOnce({ ok: false, issue: "too_dark", message: "Add light" });
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Prepare one retake" }));
+    await userEvent.click(screen.getByRole("button", { name: "Scan again" }));
+    expect(await screen.findByText("Identity awaiting review")).toBeInTheDocument();
+    const saved = JSON.parse(localStorage.getItem("deep-spec:lookups") ?? "[]");
+    expect(saved).toHaveLength(2);
+    expect(saved.some((item: { errorCode?: string }) => item.errorCode === "quality_rejected")).toBe(true);
+    expect(saved.every((item: { inspection?: unknown }) => !item.inspection)).toBe(true);
+  });
+
+  it("offers a guided retake for AI-requested photo evidence", async () => {
+    identifyCapturedFrame.mockResolvedValue({ ...makeScanResult("Alternator"), needsBetterPhoto: true });
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Prepare one retake" }));
+    await userEvent.click(screen.getByRole("button", { name: "Scan again" }));
+    expect(await screen.findByText("Guided retake used. Review the evidence or start a separate scan when ready.")).toBeInTheDocument();
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(2);
+  });
 });
 
 function makeObjectTarget(overrides: Partial<NonNullable<typeof objectTargetState.current>>) {
