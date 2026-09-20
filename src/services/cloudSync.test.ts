@@ -11,6 +11,7 @@ vi.mock("@supabase/supabase-js", () => ({
 
 describe("cloudSync", () => {
   beforeEach(async () => {
+    localStorage.clear();
     vi.resetModules();
     const { setActiveAccount } = await import("../lib/accountScope");
     setActiveAccount("user-1");
@@ -28,10 +29,13 @@ describe("cloudSync", () => {
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
     mocks.createClient.mockReturnValue({ auth: { getSession: vi.fn().mockRejectedValue(new Error(message)) } });
     const { syncLookupToCloud } = await import("./cloudSync");
+    const { saveExistingLookup, getLookup } = await import("./storage");
+    saveExistingLookup(makeLookup());
     await expect(syncLookupToCloud(makeLookup())).resolves.toEqual({
       ok: false,
       message: "Cloud save was not confirmed. Reconnect and retry the save.",
     });
+    expect(getLookup("lookup-1")?.cloudSave).toMatchObject({ status: "failed", scope: "scan" });
   });
 
   it("stops a batch after the account changes during its first upload", async () => {
@@ -98,9 +102,12 @@ describe("cloudSync", () => {
       functionalStatus: "not_tested", functionalNotes: "", inspectorName: "Sam",
       inspectedAt: "2026-09-20T12:00:00.000Z",
     };
+    const { saveExistingLookup, getLookup } = await import("./storage");
+    saveExistingLookup(lookup);
     const { syncLookupToCloud } = await import("./cloudSync");
     const result = await syncLookupToCloud(lookup);
     expect(result.ok).toBe(outcome === "updated");
+    expect(getLookup(lookup.id)?.cloudSave).toMatchObject({ scope: "inspection", status: outcome === "updated" ? "acknowledged" : "failed" });
     if (outcome === "missing") expect(result.message).toContain("not found for this account");
     if (outcome === "migration") expect(result.message).toContain("database migration");
     expect(from).toHaveBeenCalledExactlyOnceWith("scan_lookups");
@@ -108,6 +115,44 @@ describe("cloudSync", () => {
     expect(eq.mock.calls).toEqual([["user_id", "user-1"], ["local_id", "lookup-1"]]);
     expect(select).toHaveBeenCalledWith("local_id");
     expect(storageFrom).not.toHaveBeenCalled();
+  });
+
+  it.each(["unchanged", "edited", "account-changed", "timeout"])("records only an applicable inspection acknowledgement: %s", async (outcome) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const { saveExistingLookup, getLookup, updateLookup } = await import("./storage");
+    const { setActiveAccount } = await import("../lib/accountScope");
+    const lookup = makeLookup();
+    lookup.frame.imageBase64 = "https://example.test/scan.jpg";
+    lookup.inspection = { confirmedPartName: "Alternator", partNumber: "ALT-42", identityEvidence: "Stamped marking", visibleCondition: "not_inspected", visibleNotes: "", functionalStatus: "not_tested", functionalNotes: "", inspectorName: "Sam", inspectedAt: "2026-09-20T12:00:00.000Z" };
+    saveExistingLookup(lookup);
+    let complete!: (value: unknown) => void;
+    const select = vi.fn().mockImplementation(() => new Promise((resolve) => { complete = resolve; }));
+    const eq = vi.fn();
+    eq.mockReturnValue({ eq, select });
+    const update = vi.fn().mockReturnValue({ eq });
+    mocks.createClient.mockReturnValue({ auth: { getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }) }, from: vi.fn().mockReturnValue({ update }) });
+    const { syncLookupToCloud } = await import("./cloudSync");
+    if (outcome === "timeout") vi.useFakeTimers();
+    try {
+      const saving = syncLookupToCloud({ ...lookup, inspection: { ...lookup.inspection, inspectorName: "Stale name" } });
+      await vi.waitFor(() => expect(select).toHaveBeenCalled());
+      expect(update).toHaveBeenCalledWith({ inspection_json: lookup.inspection });
+      expect(getLookup(lookup.id)?.cloudSave).toMatchObject({ status: "unconfirmed", scope: "inspection" });
+      if (outcome === "edited") updateLookup(lookup.id, { notes: "New local work" });
+      if (outcome === "account-changed") setActiveAccount("user-2");
+      if (outcome === "timeout") {
+        await vi.advanceTimersByTimeAsync(20_001);
+        expect((await saving).ok).toBe(false);
+      }
+      complete({ data: [{ local_id: lookup.id }], error: null });
+      await saving;
+      if (outcome === "account-changed") {
+        expect(getLookup(lookup.id)).toBeNull();
+        setActiveAccount("user-1");
+      }
+      expect(getLookup(lookup.id)?.cloudSave?.status).toBe(outcome === "unchanged" ? "acknowledged" : outcome === "edited" ? undefined : outcome === "timeout" ? "failed" : "unconfirmed");
+    } finally { vi.useRealTimers(); }
   });
 
   it.each([false, true])("does not silently drop inspection when its column is missing (shop fallback: %s)", async (missingShop) => {
@@ -204,7 +249,11 @@ describe("cloudSync", () => {
       functionalStatus: "not_tested", functionalNotes: "", inspectorName: "Sam",
       inspectedAt: "2026-09-20T12:00:00.000Z",
     };
+    const { saveExistingLookup, getLookup, updateLookup } = await import("./storage");
+    saveExistingLookup(lookup);
+    updateLookup(lookup.id, { notes: "Current bench notes" });
     const result = await syncLookupToCloud(lookup);
+    expect(getLookup(lookup.id)?.cloudSave).toMatchObject({ status: "acknowledged", scope: "scan" });
 
     expect(result).toEqual({
       ok: true,
@@ -219,6 +268,7 @@ describe("cloudSync", () => {
     expect(scanLookupUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         image_byte_length: 5,
+        notes: "Current bench notes",
         inspection_json: lookup.inspection,
         image_hash: expect.any(String),
         image_mime_type: "image/jpeg",

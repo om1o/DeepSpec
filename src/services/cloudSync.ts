@@ -1,6 +1,7 @@
 import { accountStorageKey, getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { getAuthClient } from "./auth";
+import { getLookup, recordCloudSaveAttempt } from "./storage";
 import type { FeedbackSubmission, Lookup, WaitlistSignup } from "../types";
 
 const SCAN_BUCKET = "scan-images";
@@ -213,10 +214,26 @@ async function syncLookupForAccount(lookup: Lookup, scope: AccountScope): Promis
     };
   }
 
+  let receipt: Lookup["cloudSave"];
+  const finish = (status: "acknowledged" | "failed") => {
+    if (receipt && isAccountScopeCurrent(scope)) {
+      recordCloudSaveAttempt(lookup.id, { ...receipt, status }, receipt.attemptId);
+    }
+  };
   try {
     assertAccount(scope);
-    return await withCloudTimeout(performLookupSync(lookup, scope), CLOUD_SYNC_TIMEOUT_MS);
+    // Screens can hold an older snapshot. Upload current device content when present.
+    lookup = getLookup(lookup.id) ?? lookup;
+    receipt = {
+      attemptId: createRuntimeId(), attemptedAt: new Date().toISOString(), status: "unconfirmed",
+      scope: lookup.inspection && !lookup.frame.imageBase64.startsWith("data:") ? "inspection" : "scan",
+    };
+    recordCloudSaveAttempt(lookup.id, receipt);
+    const result = await withCloudTimeout(performLookupSync(lookup, scope), CLOUD_SYNC_TIMEOUT_MS);
+    finish(result.ok ? "acknowledged" : "failed");
+    return result;
   } catch (error) {
+    finish("failed");
     return {
       ok: false,
       message: getFriendlySyncError(error),

@@ -76,6 +76,7 @@ const scenarioHandlers = {
   "scanner-quality-retake": runScannerQualityRetake,
   "shared-device-account-switch": runSharedDeviceAccountSwitch,
   "device-storage-capacity": runDeviceStorageCapacity,
+  "cloud-save-receipt": runCloudSaveReceipt,
   "saved-history": runSavedHistory,
   scanner: runScanner,
   "shop-history-search": runShopHistorySearch,
@@ -440,6 +441,31 @@ async function runDeviceStorageCapacity() {
     return { status: "pass", details: "50 generated records preserved at capacity; identification blocked; downloaded export retained notes/chat; cancellation retained data; explicit device removal issued no cloud DELETE; a new rejected photo saved after freeing space." };
   } finally {
     page.off("request", onRequest);
+  }
+}
+
+async function runCloudSaveReceipt() {
+  await requireAuthForProtectedRoute("cloud-save-receipt");
+  const prefix = await qaStoragePrefix();
+  const originalIds = await page.evaluate((prefix) => JSON.parse(localStorage.getItem(prefix + "deep-spec:lookups") ?? "[]").map((row) => row.id), prefix);
+  const failUpload = async (route) => route.request().method() === "POST" ? route.abort("failed") : route.continue();
+  await page.route("**/storage/v1/object/scan-images/**", failUpload);
+  try {
+    await gotoPath("/scan");
+    const dataUrl = await page.evaluate(() => {
+      const canvas = globalThis.document.createElement("canvas"); canvas.width = 320; canvas.height = 240;
+      const ctx = canvas.getContext("2d"); ctx.fillStyle = "black"; ctx.fillRect(0, 0, 320, 240);
+      return canvas.toDataURL("image/png");
+    });
+    await page.getByLabel("Upload photo", { exact: true }).setInputFiles({ name: "receipt-test.png", mimeType: "image/png", buffer: Buffer.from(dataUrl.split(",")[1], "base64") });
+    await page.waitForFunction(({ prefix, originalIds }) => JSON.parse(localStorage.getItem(prefix + "deep-spec:lookups") ?? "[]").some((row) => !originalIds.includes(row.id) && row.cloudSave?.status === "failed"), { prefix, originalIds }, { timeout: 30_000 });
+    await gotoPath("/history");
+    await page.getByText("Device copy · Cloud save failed or timed out; retry required", { exact: true }).first().waitFor({ state: "visible" });
+    await page.reload();
+    await page.getByText("Device copy · Cloud save failed or timed out; retry required", { exact: true }).first().waitFor({ state: "visible" });
+    return { status: "pass", details: "Generated covered-lens capture retained locally after deliberately blocked cloud upload; durable failed-save receipt and retry-required History label remained visible after full reload. Controlled network fault, not a live backend outage." };
+  } finally {
+    await page.unroute("**/storage/v1/object/scan-images/**", failUpload);
   }
 }
 

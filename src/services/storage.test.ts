@@ -13,6 +13,7 @@ import {
   scanStateFromLookup,
   updateLookup,
   updateLookupResult,
+  recordCloudSaveAttempt,
 } from "./storage";
 import type { ScanAnalysisState } from "../types";
 import { emptyPartInspection } from "../lib/partInspection";
@@ -119,6 +120,33 @@ describe("storage", () => {
       expect.objectContaining({ content: "Private shop question" }),
     ]));
     expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBe(legacy);
+  });
+
+  it("retains cloud receipts after reading storage and rejects obsolete completions", () => {
+    const saved = createLookup(scanState).value;
+    const receipt = { attemptId: "attempt-1", attemptedAt: new Date().toISOString(), status: "unconfirmed" as const, scope: "scan" as const };
+    expect(recordCloudSaveAttempt(saved.id, receipt)).toBe(true);
+    expect(getLookup(saved.id)?.cloudSave).toEqual(receipt);
+    updateLookup(saved.id, { notes: "New bench observation" });
+    expect(recordCloudSaveAttempt(saved.id, { ...receipt, status: "acknowledged" }, receipt.attemptId)).toBe(false);
+    expect(getLookup(saved.id)?.cloudSave).toBeUndefined();
+    expect(getLookup(saved.id)?.notes).toBe("New bench observation");
+    recordCloudSaveAttempt(saved.id, { ...receipt, attemptId: "attempt-2" });
+    expect(recordCloudSaveAttempt(saved.id, { ...receipt, status: "acknowledged" }, receipt.attemptId)).toBe(false);
+    deleteLookup(saved.id);
+    expect(recordCloudSaveAttempt(saved.id, receipt)).toBe(false);
+    expect(getLookups()).toEqual([]);
+  });
+
+  it.each(["notes", "result", "chat", "copy", "inspection"])("invalidates cloud confirmation after a %s change", (mutation) => {
+    const saved = createLookup(scanState).value;
+    recordCloudSaveAttempt(saved.id, { attemptId: "ack", attemptedAt: new Date().toISOString(), status: "acknowledged", scope: "scan" });
+    if (mutation === "notes") updateLookup(saved.id, { notes: "New note" });
+    if (mutation === "result") updateLookupResult(saved.id, scanState.result!);
+    if (mutation === "chat") appendChatMessages(saved.id, [createChatMessage("user", "New question")]);
+    if (mutation === "copy") saveExistingLookup(getLookup(saved.id)!);
+    if (mutation === "inspection") saveLookupInspection(saved.id, { ...emptyPartInspection, inspectorName: "Sam", confirmedPartName: "Alternator", identityEvidence: "Stamped marking" });
+    expect(getLookup(saved.id)?.cloudSave).toBeUndefined();
   });
 
   it("creates and reads a saved lookup", () => {

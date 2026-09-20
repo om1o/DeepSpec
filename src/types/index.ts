@@ -356,6 +356,12 @@ export type PartInspection = {
 export type PartInspectionDraft = Omit<PartInspection, "inspectedAt">;
 
 export type Lookup = {
+  cloudSave?: {
+    attemptId: string;
+    attemptedAt: string;
+    status: "unconfirmed" | "acknowledged" | "failed";
+    scope: "scan" | "inspection";
+  };
   inspection?: PartInspection;
   id: string;
   createdAt: string;

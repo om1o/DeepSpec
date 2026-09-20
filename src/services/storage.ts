@@ -61,7 +61,7 @@ export function saveExistingLookup(lookup: Lookup, retryState?: ScanAnalysisStat
   const lookups = getLookups();
   const local = lookups.find((entry) => entry.id === lookup.id);
   const existing = local ? withLatestInspection(local, lookup) : lookup;
-  const saved = withRetriedLookupResult(existing, retryState);
+  const saved = { ...withRetriedLookupResult(existing, retryState), cloudSave: undefined };
   const write = writeLookups(local
     ? lookups.map((entry) => entry.id === saved.id ? saved : entry)
     : [saved, ...lookups]);
@@ -91,7 +91,7 @@ export function saveLookupInspection(id: string, draft: PartInspectionDraft, clo
   if (!existing) return { ok: false, value: null, message: "Saved scan not found." };
   const inspection = normalizePartInspection({ ...draft, inspectedAt: new Date().toISOString() });
   if (!inspection) return { ok: false, value: existing, message: "Complete the inspection and supporting evidence before saving." };
-  const updated = { ...existing, inspection };
+  const updated = { ...existing, inspection, cloudSave: undefined };
   const write = writeLookups(lookups.some((lookup) => lookup.id === id)
     ? lookups.map((lookup) => lookup.id === id ? updated : lookup)
     : [updated, ...lookups]);
@@ -126,6 +126,14 @@ export function getLookup(id: string): Lookup | null {
   return mergeLookupChatHistory(lookup);
 }
 
+// Patch the current row, never a stale upload snapshot or a deleted record.
+export function recordCloudSaveAttempt(id: string, receipt: NonNullable<Lookup["cloudSave"]>, expectedAttemptId?: string): boolean {
+  const lookups = getLookups();
+  const current = lookups.find((lookup) => lookup.id === id);
+  if (!current || (expectedAttemptId && current.cloudSave?.attemptId !== expectedAttemptId)) return false;
+  return writeLookups(lookups.map((lookup) => lookup.id === id ? { ...lookup, cloudSave: receipt } : lookup)).ok;
+}
+
 export function updateLookup(
   id: string,
   patch: Partial<Pick<Lookup, "rating" | "correction" | "notes">>,
@@ -141,6 +149,7 @@ export function updateLookup(
   const updatedLookup = {
     ...lookups[index],
     ...patchData,
+    cloudSave: undefined,
   };
   updatedLookup.trainingStatus = getTrainingStatus(updatedLookup.rating, updatedLookup.correction);
   updatedLookup.trainingLabel = getTrainingLabel(updatedLookup.result, updatedLookup.correction);
@@ -171,6 +180,7 @@ export function updateLookupResult(
   const existing = lookups[index];
   const updatedLookup: Lookup = {
     ...existing,
+    cloudSave: undefined,
     result,
     errorMessage: undefined,
     errorCode: undefined,
@@ -222,7 +232,7 @@ export function appendChatMessages(id: string, messages: ChatMessage[]): Storage
   }
 
   const updatedHistory = [...lookup.chatHistory, ...cleanMessages].slice(-MAX_CHAT_MESSAGES);
-  const updatedLookup: Lookup = { ...lookup, chatHistory: updatedHistory };
+  const updatedLookup: Lookup = { ...lookup, chatHistory: updatedHistory, cloudSave: undefined };
   const lookups = getLookups();
   const index = lookups.findIndex((storedLookup) => storedLookup.id === id);
 
@@ -391,6 +401,7 @@ export function normalizeLookup(value: unknown): Lookup | null {
 
   return {
     inspection: normalizePartInspection(lookup.inspection),
+    cloudSave: normalizeCloudSave(lookup.cloudSave),
     id: lookup.id,
     createdAt: lookup.createdAt,
     frame: lookup.frame,
@@ -417,6 +428,14 @@ export function normalizeLookup(value: unknown): Lookup | null {
     ...(cleanTextValue(lookup.technicianUserId, 120) ? { technicianUserId: cleanTextValue(lookup.technicianUserId, 120) } : {}),
     ...(normalizeShopVehicleContext(lookup.vehicleContext) ? { vehicleContext: normalizeShopVehicleContext(lookup.vehicleContext) } : {}),
   };
+}
+
+function normalizeCloudSave(value: unknown): Lookup["cloudSave"] {
+  if (!isRecord(value) || typeof value.attemptId !== "string" || !value.attemptId
+    || typeof value.attemptedAt !== "string" || !Number.isFinite(Date.parse(value.attemptedAt))
+    || !["unconfirmed", "acknowledged", "failed"].includes(value.status as string)
+    || !["scan", "inspection"].includes(value.scope as string)) return undefined;
+  return { attemptId: value.attemptId, attemptedAt: value.attemptedAt, status: value.status, scope: value.scope } as NonNullable<Lookup["cloudSave"]>;
 }
 
 function normalizeScanProvenance(value: unknown, fallbackSavedAt: string): ScanProvenance {

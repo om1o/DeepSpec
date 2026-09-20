@@ -176,6 +176,7 @@ export default function History() {
             {filteredLookups.map((lookup) => (
               <div key={lookup.id}>
                 <LookupCard lookup={lookup} />
+                <p className="mt-2 px-3 text-xs font-semibold text-[var(--ds-fg-3)]">{cloudSaveLabel(deviceLookups.find((local) => local.id === lookup.id))}</p>
                 {deviceLookups.some((local) => local.id === lookup.id) ? (
                   <button type="button" className="mt-2 px-3 py-2 text-xs font-semibold text-[var(--ds-fg-3)] underline" aria-label={`Remove ${lookup.result?.partName ?? "scan"} from this device`} onClick={() => removeDeviceRecord(lookup)}>Remove device record</button>
                 ) : null}
@@ -202,6 +203,19 @@ export default function History() {
       </div>
     </main>
   );
+}
+
+function cloudSaveLabel(local?: Lookup): string {
+  if (!local) return "Loaded from cloud";
+  if (!local.cloudSave) return "Device copy · Cloud save not confirmed for these changes";
+  if (local.cloudSave.status === "acknowledged") {
+    return local.cloudSave.scope === "inspection"
+      ? "Last inspection save acknowledged · Other changes not confirmed"
+      : "Last cloud save acknowledged";
+  }
+  return local.cloudSave.status === "failed"
+    ? "Device copy · Cloud save failed or timed out; retry required"
+    : "Device copy · Cloud confirmation unavailable";
 }
 
 function ScanQualityMetricsPanel({ metrics }: { metrics: ScanQualityMetrics }) {
