@@ -704,6 +704,33 @@ describe("Scanner", () => {
     });
   }, 10000);
 
+  it("shows cloud failure and lets the user retry without analyzing again", async () => {
+    getCloudSyncStatus.mockReturnValue({ configured: true, message: "Configured" });
+    syncLookupToCloud.mockResolvedValueOnce({ ok: false, message: "Network unavailable" });
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    expect(await screen.findByTestId("scan-save-status")).toHaveTextContent("Cloud sync failed");
+    const calls = identifyCapturedFrame.mock.calls.length;
+    await userEvent.click(screen.getByRole("button", { name: "Retry cloud save" }));
+    await waitFor(() => expect(screen.getByTestId("scan-save-status")).toHaveTextContent("Scan saved to cloud"));
+    expect(identifyCapturedFrame.mock.calls).toHaveLength(calls);
+    expect(syncLookupToCloud).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows local-only persistence when cloud sync is off", async () => {
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    expect(await screen.findByTestId("scan-save-status")).toHaveTextContent("Saved on this device. Cloud sync is off.");
+  });
+
+  it("does not hide a failed local save behind a successful AI result", async () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("quota", "QuotaExceededError"); });
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    expect(await screen.findByTestId("scan-save-status")).toHaveTextContent("Not saved on this device");
+    expect(syncLookupToCloud).not.toHaveBeenCalled();
+  });
+
   it("captures a second camera frame as a confidence boost when no crop target is present", async () => {
     captureFrame
       .mockResolvedValueOnce("data:image/jpeg;base64,primary-frame")

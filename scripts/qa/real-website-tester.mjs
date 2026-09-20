@@ -3,6 +3,8 @@ import { join } from "node:path";
 import {
   DEEPSPEC_QA_SCENARIOS,
   classifyIdentifyApiIssue,
+  classifyQaTransportError,
+  getAuthDependencyBlocker,
   ensureDir,
   fetchWithTimeout,
   formatError,
@@ -20,6 +22,7 @@ class QaIssue extends Error {
     super(message);
     this.name = "QaIssue";
     this.category = category;
+    this.status = options.status ?? (["environment", "missing_env"].includes(category) ? "blocked" : "fail");
     this.likelyFiles = options.likelyFiles ?? [];
     this.suggestedFix = options.suggestedFix ?? "";
   }
@@ -50,6 +53,7 @@ let context;
 let page;
 let authAttempted = false;
 let authEstablished = false;
+let authFailure = null;
 
 const scenarioHandlers = {
   "api-cloud-health": runApiCloudHealth,
@@ -242,11 +246,13 @@ async function runScenario(scenario) {
         details: error.message,
         likelyFiles: error.likelyFiles,
         name: scenario,
-        status: "fail",
+        status: error.status,
         suggestedFix: error.suggestedFix,
       };
     } else {
-      result = {
+      result = classifyQaTransportError(error) ? {
+        ...classifyQaTransportError(error), name: scenario,
+      } : {
         category: "frontend",
         details: formatError(error),
         likelyFiles: likelyFilesForScenario(scenario),
@@ -256,6 +262,7 @@ async function runScenario(scenario) {
       };
     }
   } finally {
+    if (scenario === "auth-login" && result?.status !== "pass") authFailure = result;
     const evidence = await captureEvidence(scenario);
     results.push({
       ...result,
@@ -435,7 +442,7 @@ async function runScannerAiEngine() {
 
     if (cloudSync.status === "unknown") {
       throw new QaIssue(
-        "backend",
+        "frontend",
         `Engine scan produced a result but did not expose a final scan data state. Fixture=${fixture.source}. ${timingSummary}. Visible result: ${cloudSync.text}`,
         {
           likelyFiles: ["src/screens/Scanner.tsx", "src/services/cloudSync.ts"],
@@ -821,12 +828,13 @@ async function runApiCloudHealth() {
   }
 
   if (failures.length) {
+    const transportOnly = failures.every((message) => classifyQaTransportError(message));
     throw new QaIssue(
-      "backend",
+      transportOnly ? "environment" : "backend",
       failures.join(" "),
       {
-        likelyFiles: ["api/identify.shared.ts", "api/chat.shared.ts", "src/services/cloudSync.ts", "scripts/verify-supabase-sync.mjs", "supabase/migrations"],
-        suggestedFix: "Fix API method guards or Supabase schema/Auth health, then rerun `npm run qa:doctor` before calling it a product bug.",
+        likelyFiles: transportOnly ? [] : ["api/identify.shared.ts", "api/chat.shared.ts", "src/services/cloudSync.ts", "scripts/verify-supabase-sync.mjs", "supabase/migrations"],
+        suggestedFix: transportOnly ? "Retry Supabase reachability after network and local resource pressure recover." : "Fix API method guards or Supabase schema/Auth health, then rerun `npm run qa:doctor` before calling it a product bug.",
       },
     );
   }
@@ -845,14 +853,8 @@ async function requireAuthForProtectedRoute(scenario) {
   }
 
   if (!authEstablished) {
-    throw new QaIssue(
-      "auth/session",
-      `${scenario} is blocked because auth-login did not establish a verified DeepSpec session.`,
-      {
-        likelyFiles: ["src/services/auth.ts", "src/screens/Auth.tsx", "scripts/verify-auth-flows.mjs"],
-        suggestedFix: "Fix the auth-login failure first; protected DeepSpec routes should not be tested through a bypass.",
-      },
-    );
+    const blocker = getAuthDependencyBlocker(scenario, authFailure);
+    throw new QaIssue(blocker.category, blocker.message, blocker);
   }
 }
 
@@ -1124,12 +1126,22 @@ async function waitForScannerAiOutcome() {
 }
 
 async function waitForScannerCloudSyncOutcome() {
-  const deadline = Date.now() + 20_000;
+  // Allow the service's 20-second timeout to settle and render a final state.
+  const deadline = Date.now() + 25_000;
   let latestText = compactText(await getBodyText());
 
   while (Date.now() < deadline) {
     const text = compactText(await getBodyText());
     latestText = text;
+
+    if (/Cloud sync failed|Scan saved to cloud|Cloud sync is off|Cloud sync is not configured/i.test(text)) {
+      const visible = await page.getByTestId("scan-save-status").evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        const front = element.ownerDocument.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        return rect.width > 0 && rect.height > 0 && front !== null && element.contains(front);
+      }).catch(() => false);
+      if (!visible) return { status: "unknown", text: `Save status is missing, outside the viewport, or covered by another element. ${text}` };
+    }
 
     if (/Cloud sync failed/i.test(text)) {
       return { status: "failed", text };

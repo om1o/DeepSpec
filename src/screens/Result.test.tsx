@@ -4,7 +4,8 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, vi } from "vitest";
 import Result from "./Result";
 import * as aiService from "../services/aiService";
-import { getLookup, LOOKUPS_STORAGE_KEY } from "../services/storage";
+import * as reportService from "../services/report";
+import { getLookup, getLookups, LOOKUPS_STORAGE_KEY } from "../services/storage";
 import { emptyPartInspection } from "../lib/partInspection";
 import type { Lookup, ScanAnalysisState } from "../types";
 
@@ -85,6 +86,20 @@ describe("Result", () => {
     await user.click(screen.getByRole("button", { name: "Save inspection" }));
     expect(getLookup(cloudLookup.id)?.inspection?.inspectorName).toBe("New inspector");
     expect(getLookup(cloudLookup.id)?.frame.imageBase64).toBe("https://example.com/signed-image.jpg");
+  });
+
+  it("saves a cloud scan without duplicating its identity or losing its inspection", async () => {
+    const user = userEvent.setup();
+    const cloudLookup = makeLookup({
+      inspection: { ...emptyPartInspection, inspectorName: "Pat", inspectedAt: "2026-09-19T12:00:00.000Z" },
+      notes: "Keep original notes",
+    });
+    renderResult({ ...successfulScan, savedLookup: cloudLookup }, `/result/${cloudLookup.id}`);
+    await user.click(screen.getByRole("button", { name: "Save", exact: true }));
+    expect(getLookups()).toHaveLength(1);
+    expect(getLookup(cloudLookup.id)).toMatchObject({
+      id: cloudLookup.id, inspection: cloudLookup.inspection, notes: "Keep original notes",
+    });
   });
 
   it("shows the AI identification result", async () => {
@@ -430,6 +445,38 @@ describe("Result", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
 
     onlineSpy.mockRestore();
+  });
+
+  it.each(["Save", "Save inspection"])("preserves a successful cloud retry in report and %s under its original id", async (saveAction) => {
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    vi.spyOn(aiService, "identifyCapturedFrame").mockResolvedValue(successfulScan.result!);
+    const failedLookup = makeLookup({
+      result: undefined, errorCode: "network", errorMessage: "Network error", analyzedAt: undefined,
+      scanCategory: "unknown", trainingLabel: "unlabeled",
+      notes: "Keep this intake note",
+      inspection: { ...emptyPartInspection, inspectorName: "Pat", inspectedAt: "2026-09-19T12:00:00.000Z" },
+      chatHistory: [{ id: "message-1", role: "user", content: "Original question", timestamp: "2026-09-19T12:00:00.000Z" }],
+    });
+    renderResult({ frame, errorCode: "network", errorMessage: "Network error", savedLookup: failedLookup }, `/result/${failedLookup.id}`);
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
+    const report = vi.spyOn(reportService, "buildScanReport");
+    await userEvent.click(screen.getByRole("button", { name: "Share", exact: true }));
+    expect(report).toHaveBeenCalledWith(expect.objectContaining({
+      result: successfulScan.result, errorCode: undefined, errorMessage: undefined,
+    }));
+    if (saveAction === "Save inspection") await userEvent.click(screen.getByText("Human inspection — saved"));
+    await userEvent.click(screen.getByRole("button", { name: saveAction, exact: true }));
+    expect(getLookups()).toHaveLength(1);
+    expect(getLookup(failedLookup.id)).toMatchObject({
+      id: failedLookup.id, result: successfulScan.result, notes: failedLookup.notes,
+      inspection: expect.objectContaining({ inspectorName: "Pat", functionalStatus: "not_tested" }), chatHistory: failedLookup.chatHistory,
+      trainingLabel: "Alternator", scanCategory: "electrical", trainingStatus: "raw_unreviewed",
+      provenance: { analysisSource: "manual_retry" },
+    });
+    expect(getLookup(failedLookup.id)?.errorCode).toBeUndefined();
+    expect(getLookup(failedLookup.id)?.errorMessage).toBeUndefined();
+    expect(screen.queryByText("Network error")).not.toBeInTheDocument();
   });
 
   it("allows retrying a saved failed scan when online", async () => {

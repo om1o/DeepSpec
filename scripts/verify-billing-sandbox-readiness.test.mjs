@@ -33,6 +33,15 @@ const PASSING_REPLAY_SUMMARY = {
 };
 
 describe("classifyBillingSandboxReadiness", () => {
+  it.each(["polar_whs_legacy-secret", "!!!"])("accepts raw Polar signing secrets without claiming base64 validation: %s", (secret) => {
+    const result = classifyBillingSandboxReadiness({
+      checkoutSummary: PASSING_CHECKOUT_SUMMARY,
+      env: { ...VALID_POLAR_SANDBOX_ENV, POLAR_WEBHOOK_SECRET: secret },
+      webhookReplaySummary: PASSING_REPLAY_SUMMARY,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.checks).toContain("Billing: Polar webhook signing secret is present.");
+  });
   it("passes when provider config, checkout, replay, and portal evidence pass", () => {
     const result = classifyBillingSandboxReadiness({
       checkoutSummary: PASSING_CHECKOUT_SUMMARY,

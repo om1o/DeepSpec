@@ -9,6 +9,17 @@ import {
 } from "./verify-billing-webhook-replay.mjs";
 
 describe("billing webhook replay helpers", () => {
+  it.each(["polar_whs_legacy-secret", "!!!"])("signs unprefixed Polar secrets as raw UTF-8 keys: %s", (secret) => {
+    const rawBody = JSON.stringify({ type: "customer.created", data: {} });
+    const headers = signStandardWebhookBody(rawBody, secret, { webhookId: "msg_legacy", timestamp: 1782000000 });
+    const expected = createHmac("sha256", Buffer.from(secret, "utf8"))
+      .update(`msg_legacy.1782000000.${rawBody}`, "utf8").digest("base64");
+    expect(headers["webhook-signature"]).toBe(`v1,${expected}`);
+  });
+
+  it.each(["", "   ", "whsec_", "whsec_!!!"])("rejects an empty Polar signing key", (secret) => {
+    expect(() => signStandardWebhookBody("{}", secret)).toThrow();
+  });
   it("builds a paid Polar order payload with DeepSpec entitlement metadata", () => {
     const payload = buildPolarOrderPaidPayload({
       planId: "scan_pack",

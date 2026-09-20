@@ -182,6 +182,25 @@ export function classifyIdentifyApiIssue({ status, text = "" } = {}) {
   return null;
 }
 
+export function classifyQaTransportError(error) {
+  const details = formatError(error);
+  if (!/net::ERR_(?:ABORTED|CONNECTION_[A-Z_]+|NAME_NOT_RESOLVED|TIMED_OUT)|\bfetch failed\b|\bThis operation was aborted\b|page\.goto: Timeout \d+ms exceeded/i.test(details)) return null;
+  return {
+    category: "environment", status: "blocked", details, likelyFiles: [],
+    suggestedFix: "Check local server and network health, then rerun QA without competing browser or build jobs.",
+  };
+}
+
+export function getAuthDependencyBlocker(scenario, rootFailure) {
+  return {
+    category: rootFailure?.category ?? "auth/session",
+    status: "blocked",
+    message: `${scenario} was not tested because auth-login did not establish a session. ${rootFailure?.details ?? "Resolve auth-login first."}`,
+    likelyFiles: [],
+    suggestedFix: rootFailure?.suggestedFix ?? "Resolve auth-login and rerun dependent flows without bypassing authentication.",
+  };
+}
+
 function loadEnvFile(filename) {
   let contents;
 

@@ -149,6 +149,7 @@ export default function Scanner() {
   const [analysisStep, setAnalysisStep] = useState<string | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [scanReview, setScanReview] = useState<ScanReviewState | null>(null);
+  const [scanSave, setScanSave] = useState<{ lookupId: string; status: "pending" | "saved" | "local" | "failed" } | null>(null);
   const [focusedObjectIndex, setFocusedObjectIndex] = useState<number | null>(null);
   const [objectAnalyses, setObjectAnalyses] = useState<Record<number, ObjectAnalysis>>({});
   const startedObjectAnalysisRef = useRef<Set<number>>(new Set());
@@ -231,6 +232,7 @@ export default function Scanner() {
   }, []);
 
   const beginScanRequest = useCallback(() => {
+    setScanSave(null);
     cancelScanRef.current = false;
     setCaptureError(null);
     const previousQualityIssue = qualityCoach?.issue ?? null;
@@ -267,11 +269,15 @@ export default function Scanner() {
 
   const syncSavedLookup = useCallback((lookup: Lookup) => {
     if (!getCloudSyncStatus().configured) {
+      setScanSave({ lookupId: lookup.id, status: "local" });
       return;
     }
 
-    // Sync quietly in the background — the user never needs to see sync status.
-    void syncLookupToCloud(lookup).catch(() => {});
+    setScanSave({ lookupId: lookup.id, status: "pending" });
+    const finish = (status: "saved" | "failed") => setScanSave((current) => (
+      current?.lookupId === lookup.id ? { lookupId: lookup.id, status } : current
+    ));
+    void syncLookupToCloud(lookup).then((result) => finish(result.ok ? "saved" : "failed"), () => finish("failed"));
   }, []);
 
   const isScanRequestActive = useCallback((requestId: number) => (
@@ -938,6 +944,19 @@ export default function Scanner() {
         />
       ) : null}
       <ScanDebugOverlay info={scanReview?.scanState.debug} />
+      {scanReview && ((scanReview.lookup && scanSave?.lookupId === scanReview.lookup.id) || scanReview.scanState.storageWarning) ? (
+        <aside data-testid="scan-save-status" role="status" className="fixed right-3 top-[calc(max(12px,env(safe-area-inset-top))+56px)] z-[60] max-w-[min(70vw,320px)] rounded-xl border border-white/20 bg-slate-950/90 px-3 py-2 text-xs text-white shadow-lg">
+          {scanReview.scanState.storageWarning
+            ? `Not saved on this device. ${scanReview.scanState.storageWarning}`
+            : scanSave?.status === "saved" ? "Scan saved to cloud"
+              : scanSave?.status === "local" ? "Saved on this device. Cloud sync is off."
+                : scanSave?.status === "failed" ? "Saved on this device. Cloud sync failed."
+                  : "Saved on this device. Saving scan to cloud…"}
+          {scanReview.lookup && scanSave?.status === "failed" ? (
+            <button type="button" className="ml-2 underline" onClick={() => { if (scanReview.lookup) syncSavedLookup(scanReview.lookup); }}>Retry cloud save</button>
+          ) : null}
+        </aside>
+      ) : null}
 
       <input
         ref={galleryInputRef}

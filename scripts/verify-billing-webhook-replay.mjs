@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
+import { getPolarWebhookSigningKey } from "./polar-webhook-signing.mjs";
 
 const PLAN_ALLOWANCE = {
   plus_monthly: 100,
@@ -111,9 +112,9 @@ export function signStripeWebhookBody(rawBody, webhookSecret, options = {}) {
 export function signStandardWebhookBody(rawBody, webhookSecret, options = {}) {
   const webhookId = options.webhookId || `msg_${randomUUID()}`;
   const webhookTimestamp = String(options.timestamp ?? Math.floor(Date.now() / 1000));
-  const secret = decodeStandardWebhookSecret(webhookSecret);
+  const secret = getPolarWebhookSigningKey(webhookSecret);
   if (!secret) {
-    throw new Error("POLAR_WEBHOOK_SECRET is not a valid Standard Webhooks base64 secret.");
+    throw new Error("POLAR_WEBHOOK_SECRET must contain a nonempty raw secret or whsec_ base64 key.");
   }
 
   const signature = createHmac("sha256", secret)
@@ -289,8 +290,8 @@ function readRequiredEnv(options) {
     throw new Error(`Missing required env: ${missing.map(([key]) => key).join(", ")}`);
   }
 
-  if (billingProvider === "polar" && !decodeStandardWebhookSecret(polarWebhookSecret)) {
-    throw new Error("POLAR_WEBHOOK_SECRET is not a valid Standard Webhooks base64 secret.");
+  if (billingProvider === "polar" && !getPolarWebhookSigningKey(polarWebhookSecret)) {
+    throw new Error("POLAR_WEBHOOK_SECRET must contain a nonempty raw secret or whsec_ base64 key.");
   }
 
   if (billingProvider === "stripe" && !stripeSecretKey.startsWith("sk_test_")) {
@@ -447,16 +448,6 @@ export function classifyProviderPortalUrl(rawUrl, provider) {
 
 function isExpectedProviderHost(hostname, expectedHostSuffix) {
   return hostname === expectedHostSuffix || hostname.endsWith(`.${expectedHostSuffix}`);
-}
-
-function decodeStandardWebhookSecret(webhookSecret) {
-  const secret = webhookSecret.startsWith("whsec_") ? webhookSecret.slice("whsec_".length) : webhookSecret;
-  try {
-    const decoded = Buffer.from(secret, "base64");
-    return decoded.length > 0 ? decoded : null;
-  } catch {
-    return null;
-  }
 }
 
 function parseJson(bodyText) {

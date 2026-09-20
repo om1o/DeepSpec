@@ -14,7 +14,7 @@ import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } fro
 import { buildScanReport, downloadTextFile, getScanReportFilename } from "../services/report";
 import { recordManualCorrection } from "../services/scanQualityMetrics";
 import { getShopJob } from "../services/shop";
-import { createLookup, getLookup, normalizeLookup, scanStateFromLookup, updateLookup, updateLookupResult } from "../services/storage";
+import { createLookup, getLookup, normalizeLookup, saveExistingLookup, scanStateFromLookup, updateLookup, updateLookupResult, withRetriedLookupResult } from "../services/storage";
 import type { CapturedFrame, IdentificationResult, Lookup, Rating, ScanAnalysisState, ShopJob as ShopJobRecord } from "../types";
 
 export default function Result() {
@@ -29,10 +29,11 @@ export default function Result() {
     if (local && fromHistory?.id === id) return withLatestInspection(local, fromHistory);
     return local;
   });
-  const inspectionLookup = historyLookup && historyLookup.id === id
+  const [liveScanState, setLiveScanState] = useState<ScanAnalysisState | null>(null);
+  const inspectionBase = historyLookup && historyLookup.id === id
     ? (lookup ? withLatestInspection(lookup, historyLookup) : historyLookup)
     : lookup;
-  const [liveScanState, setLiveScanState] = useState<ScanAnalysisState | null>(null);
+  const inspectionLookup = inspectionBase ? withRetriedLookupResult(inspectionBase, liveScanState) : null;
   const [saveError, setSaveError] = useState<string | null>(null);
   const scanState = lookup ? scanStateFromLookup(lookup) : liveScanState ?? getScanState(location.state);
   const frame = scanState?.frame ?? readLatestCapturedFrame();
@@ -87,7 +88,7 @@ export default function Result() {
       return null;
     }
 
-    const saved = createLookup({
+    const saved = inspectionLookup ? saveExistingLookup(inspectionLookup, liveScanState) : createLookup({
       frame: scanState.frame,
       focusBox: scanState.focusBox,
       focusMode: scanState.focusMode,

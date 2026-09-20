@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getPolarWebhookSigningKey } from "./polar-webhook-signing.mjs";
 
 const POLAR_PRODUCT_ENV_KEYS = [
   "POLAR_PRODUCT_DEEPSPEC_PLUS_MONTHLY",
@@ -121,10 +122,10 @@ function verifyPolar(env, options, checks, issues, warnings) {
   const webhookSecret = String(env.POLAR_WEBHOOK_SECRET ?? "").trim();
   if (!webhookSecret) {
     issues.push("Missing POLAR_WEBHOOK_SECRET.");
-  } else if (!decodeStandardWebhookSecret(webhookSecret)) {
-    issues.push("POLAR_WEBHOOK_SECRET is not a valid Standard Webhooks base64 secret.");
+  } else if (!getPolarWebhookSigningKey(webhookSecret)) {
+    issues.push("POLAR_WEBHOOK_SECRET must contain a nonempty raw secret or whsec_ base64 key.");
   } else {
-    checks.push("Polar webhook secret decodes as a Standard Webhooks secret.");
+    checks.push("Polar webhook signing secret is present.");
   }
 
   for (const key of POLAR_PRODUCT_ENV_KEYS) {
@@ -291,16 +292,6 @@ async function fetchJson(url, headers) {
 function parseJson(bodyText) {
   try {
     return bodyText ? JSON.parse(bodyText) : null;
-  } catch {
-    return null;
-  }
-}
-
-function decodeStandardWebhookSecret(webhookSecret) {
-  const secret = webhookSecret.startsWith("whsec_") ? webhookSecret.slice("whsec_".length) : webhookSecret;
-  try {
-    const decoded = Buffer.from(secret, "base64");
-    return decoded.length > 0 ? decoded : null;
   } catch {
     return null;
   }

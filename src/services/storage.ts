@@ -1,7 +1,7 @@
 import type { CandidateMatch, CandidatePart, ChatMessage, Confidence, CustomerVisibleReport, EvidenceRegion, FitmentConfidence, IdentificationResult, IdentifyModelRun, IdentifyProvider, Lookup, PartMeasurement, PossibleVehicleContext, Rating, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanCategory, SceneObject, ScanProvenance, ScanQualityFailureReason, ScanQualitySnapshot, ShopReviewStatus, ShopVehicleContext, SourceLink, TrainingStatus, VisualFocusBox, VisualFocusMode } from "../types";
 
 import type { PartInspectionDraft } from "../types";
-import { normalizePartInspection } from "../lib/partInspection";
+import { normalizePartInspection, withLatestInspection } from "../lib/partInspection";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
 export const MAX_SAVED_LOOKUPS = 50;
@@ -53,6 +53,33 @@ export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup
   const writeResult = writeLookups(lookups);
 
   return writeResult.ok ? { ok: true, value: lookup } : { ok: false, message: writeResult.message, value: lookup };
+}
+
+export function saveExistingLookup(lookup: Lookup, retryState?: ScanAnalysisState | null): StorageResult<Lookup> {
+  const lookups = getLookups();
+  const local = lookups.find((entry) => entry.id === lookup.id);
+  const existing = local ? withLatestInspection(local, lookup) : lookup;
+  const saved = withRetriedLookupResult(existing, retryState);
+  const write = writeLookups(local
+    ? lookups.map((entry) => entry.id === saved.id ? saved : entry)
+    : [saved, ...lookups]);
+  return write.ok ? { ok: true, value: saved } : { ok: false, value: saved, message: write.message };
+}
+
+export function withRetriedLookupResult(existing: Lookup, retryState?: ScanAnalysisState | null): Lookup {
+  // A cloud-only retry lives in screen state until Save; retain the original
+  // record's identity and human work while replacing the failed AI attempt.
+  return retryState?.result ? {
+    ...existing,
+    result: retryState.result,
+    analyzedAt: retryState.analyzedAt ?? new Date().toISOString(),
+    errorCode: undefined,
+    errorMessage: undefined,
+    scanCategory: categorizeScan(retryState.result, existing.correction ?? undefined),
+    trainingLabel: getTrainingLabel(retryState.result, existing.correction),
+    trainingStatus: getTrainingStatus(existing.rating, existing.correction),
+    provenance: normalizeScanProvenance({ ...existing.provenance, ...retryState.provenance }, existing.createdAt),
+  } : existing;
 }
 
 export function saveLookupInspection(id: string, draft: PartInspectionDraft, cloudLookup?: Lookup): StorageResult<Lookup | null> {

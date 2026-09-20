@@ -3,6 +3,7 @@ import {
   createChatMessage,
   createLookup,
   saveLookupInspection,
+  saveExistingLookup,
   deleteLookup,
   getLookup,
   getLookups,
@@ -392,6 +393,35 @@ describe("storage", () => {
     expect(saved.ok).toBe(false);
     expect(saved.value?.inspection).toBeUndefined();
     expect(getLookup(lookup.id)?.inspection).toBeUndefined();
+  });
+
+  it("saves an existing scan id once without discarding newer local changes", () => {
+    const original = createLookup(scanState).value;
+    updateLookup(original.id, { notes: "Newer local note" });
+    const saved = saveExistingLookup(original);
+    expect(saved.ok).toBe(true);
+    expect(getLookups()).toHaveLength(1);
+    expect(getLookup(original.id)?.notes).toBe("Newer local note");
+  });
+
+  it("keeps existing human feedback when saving a cloud retry result", () => {
+    const original = createLookup(scanState).value;
+    updateLookup(original.id, { correction: "Starter motor", rating: "down", notes: "Keep technician note" });
+    const saved = saveExistingLookup(original, { ...scanState, provenance: { ...original.provenance, analysisSource: "manual_retry" } });
+    expect(saved.ok).toBe(true);
+    expect(saved.value).toMatchObject({
+      correction: "Starter motor", rating: "down", notes: "Keep technician note",
+      trainingLabel: "Starter motor", trainingStatus: "user_corrected",
+      provenance: { analysisSource: "manual_retry" },
+    });
+  });
+
+  it("reports storage failure when saving a cloud copy", () => {
+    const original = createLookup(scanState).value;
+    localStorage.clear();
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("quota", "QuotaExceededError"); });
+    expect(saveExistingLookup(original).ok).toBe(false);
+    expect(getLookup(original.id)).toBeNull();
   });
 
   it("deletes a saved lookup", () => {
