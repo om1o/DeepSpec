@@ -1,11 +1,12 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Button from "../components/ui/Button";
 import ScanThumb from "../components/ui/ScanThumb";
 import { signOut } from "../services/auth";
 import { readCloudLookups } from "../services/cloudHistory";
+import { syncLookupToCloud } from "../services/cloudSync";
 import { getScanQualityMetrics, type ScanQualityFailureReason, type ScanQualityMetrics } from "../services/scanQualityMetrics";
-import { DEVICE_SCAN_LIMIT_MESSAGE, MAX_SAVED_LOOKUPS, deleteLookup, getLookups, scanStateFromLookup } from "../services/storage";
+import { DEVICE_SCAN_LIMIT_MESSAGE, MAX_SAVED_LOOKUPS, deleteLookup, getLookup, getLookups, saveExistingLookup, scanStateFromLookup, subscribeToLookupChanges } from "../services/storage";
 import { getTrainingReadiness } from "../services/trainingReadiness";
 import { getLocalDateStamp } from "../lib/utils";
 import { withLatestInspection } from "../lib/partInspection";
@@ -18,7 +19,10 @@ export default function History() {
   const [mountedScope] = useState(getAccountScope);
   // The on-device cap counts what this device stores, not the merged list that also holds cloud scans.
   const [deviceLookups, setDeviceLookups] = useState<Lookup[]>(() => getLookups());
-  const [lookups, setLookups] = useState<Lookup[]>(deviceLookups);
+  const [cloudLookups, setCloudLookups] = useState<Lookup[]>([]);
+  const lookups = useMemo(() => mergeLookups(deviceLookups, cloudLookups), [deviceLookups, cloudLookups]);
+  const retryPending = useRef(false);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
   const [storageMessage, setStorageMessage] = useState<string | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [query, setQuery] = useState("");
@@ -29,11 +33,11 @@ export default function History() {
 
     void readCloudLookups()
       .then((result) => {
-        if (!isMounted || !result.ok) {
+        if (!isMounted || !isAccountScopeCurrent(mountedScope) || !result.ok) {
           return;
         }
 
-        setLookups(mergeLookups(deviceLookups, result.value));
+        setCloudLookups(result.value);
       })
       .catch(() => {
         // Keep local history if cloud history fails to load.
@@ -42,7 +46,44 @@ export default function History() {
     return () => {
       isMounted = false;
     };
-  }, [deviceLookups]);
+  }, [mountedScope]);
+
+  useEffect(() => {
+    if (!isAccountScopeCurrent(mountedScope)) return;
+    return subscribeToLookupChanges(() => {
+      if (isAccountScopeCurrent(mountedScope)) setDeviceLookups(getLookups());
+    });
+  }, [mountedScope]);
+
+  async function retryCloudSave(id: string) {
+    if (retryPending.current || !isAccountScopeCurrent(mountedScope)) return;
+    let current = getLookup(id);
+    if (!current) return;
+    const remote = cloudLookups.find((lookup) => lookup.id === id);
+    const withKnownInspection = remote ? withLatestInspection(current, remote) : current;
+    if (withKnownInspection !== current) {
+      const preserved = saveExistingLookup(withKnownInspection);
+      if (!preserved.ok) { setStorageMessage(`Cloud save stopped to protect the newer inspection. ${preserved.message}`); return; }
+      current = preserved.value;
+    }
+    retryPending.current = true;
+    setRetryingId(id);
+    setStorageMessage(null);
+    try {
+      const result = await syncLookupToCloud(current);
+      if (!isAccountScopeCurrent(mountedScope)) return;
+      const latest = getLookup(id);
+      setStorageMessage(result.ok && latest?.cloudSave?.status !== "acknowledged"
+        ? "The cloud accepted the request, but these device changes are not confirmed. Check the saved record before retrying."
+        : result.message);
+      setDeviceLookups(getLookups());
+    } catch {
+      if (isAccountScopeCurrent(mountedScope)) setStorageMessage("Cloud save could not be confirmed. Your device record is retained; retry when connected.");
+    } finally {
+      retryPending.current = false;
+      if (isAccountScopeCurrent(mountedScope)) setRetryingId(null);
+    }
+  }
 
   async function handleSignOut() {
     setIsSigningOut(true);
@@ -62,7 +103,6 @@ export default function History() {
     const removed = deleteLookup(lookup.id);
     if (!removed.ok) { setStorageMessage(`Removal failed. ${removed.message}`); return; }
     setDeviceLookups(getLookups());
-    setLookups((current) => current.filter((entry) => entry.id !== lookup.id));
     setStorageMessage("Stored device copy removed. Cloud records are not deleted; cloud history and open views may still show this scan.");
   }
 
@@ -178,7 +218,12 @@ export default function History() {
                 <LookupCard lookup={lookup} />
                 <p className="mt-2 px-3 text-xs font-semibold text-[var(--ds-fg-3)]">{cloudSaveLabel(deviceLookups.find((local) => local.id === lookup.id))}</p>
                 {deviceLookups.some((local) => local.id === lookup.id) ? (
-                  <button type="button" className="mt-2 px-3 py-2 text-xs font-semibold text-[var(--ds-fg-3)] underline" aria-label={`Remove ${lookup.result?.partName ?? "scan"} from this device`} onClick={() => removeDeviceRecord(lookup)}>Remove device record</button>
+                  <div className="flex flex-wrap gap-2">
+                    {lookup.frame.imageBase64.startsWith("data:") || lookup.inspection ? (
+                      <button type="button" disabled={retryingId !== null} className="mt-2 px-3 py-2 text-xs font-semibold text-[var(--ds-fg-3)] underline disabled:opacity-50" aria-label={`Save ${lookup.result?.partName ?? "scan"} to cloud`} onClick={() => void retryCloudSave(lookup.id)}>{retryingId === lookup.id ? "Saving…" : !lookup.frame.imageBase64.startsWith("data:") ? "Save inspection to cloud" : "Save to cloud"}</button>
+                    ) : null}
+                    <button type="button" disabled={retryingId === lookup.id} className="mt-2 px-3 py-2 text-xs font-semibold text-[var(--ds-fg-3)] underline disabled:opacity-50" aria-label={`Remove ${lookup.result?.partName ?? "scan"} from this device`} onClick={() => removeDeviceRecord(lookup)}>Remove device record</button>
+                  </div>
                 ) : null}
               </div>
             ))}

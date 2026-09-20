@@ -1,17 +1,19 @@
 import { accountStorageKey, setActiveAccount } from "../lib/accountScope";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { vi } from "vitest";
 import History from "./History";
 import { readCloudLookups } from "../services/cloudHistory";
-import { getLookups, LOOKUPS_STORAGE_KEY, MAX_SAVED_LOOKUPS } from "../services/storage";
+import { getLookups, LOOKUPS_STORAGE_KEY, MAX_SAVED_LOOKUPS, recordCloudSaveAttempt, updateLookup } from "../services/storage";
+import { syncLookupToCloud } from "../services/cloudSync";
 import type { Lookup } from "../types";
 import { emptyPartInspection } from "../lib/partInspection";
 
 vi.mock("../services/cloudHistory", () => ({
   readCloudLookups: vi.fn(),
 }));
+vi.mock("../services/cloudSync", () => ({ syncLookupToCloud: vi.fn() }));
 
 const readCloudLookupsMock = vi.mocked(readCloudLookups);
 
@@ -67,6 +69,7 @@ describe("History", () => {
   beforeEach(() => {
     localStorage.clear();
     readCloudLookupsMock.mockReset();
+    vi.mocked(syncLookupToCloud).mockReset();
     readCloudLookupsMock.mockResolvedValue({
       ok: false,
       message: "No verified Supabase session was found.",
@@ -74,6 +77,62 @@ describe("History", () => {
   });
 
   afterEach(() => vi.restoreAllMocks());
+
+  it("refreshes a receipt while History stays open without refetching cloud history", async () => {
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    renderHistory();
+    await waitFor(() => expect(readCloudLookupsMock).toHaveBeenCalledTimes(1));
+    act(() => { recordCloudSaveAttempt(lookup.id, { attemptId: "done", attemptedAt: new Date().toISOString(), status: "acknowledged", scope: "scan" }); });
+    expect(await screen.findByText("Last cloud save acknowledged")).toBeInTheDocument();
+    expect(readCloudLookupsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries current device content once and shows a failure without losing it", async () => {
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    let complete!: (value: { ok: false; message: string }) => void;
+    vi.mocked(syncLookupToCloud).mockImplementation(() => new Promise((resolve) => { complete = resolve; }));
+    renderHistory();
+    act(() => { updateLookup(lookup.id, { notes: "Latest receiving note" }); });
+    const retry = screen.getByRole("button", { name: "Save Alternator to cloud" });
+    await userEvent.click(retry);
+    expect(retry).toBeDisabled();
+    expect(syncLookupToCloud).toHaveBeenCalledTimes(1);
+    expect(syncLookupToCloud).toHaveBeenCalledWith(expect.objectContaining({ notes: "Latest receiving note" }));
+    await act(async () => { complete({ ok: false, message: "Cloud unavailable; retry later." }); });
+    expect(screen.getByRole("status")).toHaveTextContent("Cloud unavailable");
+    expect(getLookups()).toHaveLength(1);
+    expect(retry).toBeEnabled();
+  });
+
+  it("discards a retry completion after changing accounts", async () => {
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    let complete!: (value: { ok: true; message: string }) => void;
+    vi.mocked(syncLookupToCloud).mockImplementation(() => new Promise((resolve) => { complete = resolve; }));
+    renderHistory();
+    await userEvent.click(screen.getByRole("button", { name: "Save Alternator to cloud" }));
+    setActiveAccount("other");
+    await act(async () => { complete({ ok: true, message: "Old account upload done" }); });
+    expect(screen.queryByText("Old account upload done")).not.toBeInTheDocument();
+    expect(getLookups()).toEqual([]);
+  });
+
+  it.each([false, true])("protects a newer cloud inspection already shown before retrying (storage failure: %s)", async (storageFailure) => {
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    const inspection = { ...emptyPartInspection, confirmedPartName: "Alternator", identityEvidence: "Stamped marking", inspectorName: "New inspector", inspectedAt: "2026-09-20T12:00:00.000Z" };
+    readCloudLookupsMock.mockResolvedValue({ ok: true, value: [{ ...lookup, inspection }] });
+    vi.mocked(syncLookupToCloud).mockResolvedValue({ ok: false, message: "Cloud unavailable" });
+    renderHistory();
+    await screen.findByText("Identity recorded by inspector");
+    if (storageFailure) vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("storage unavailable"); });
+    await userEvent.click(screen.getByRole("button", { name: "Save Alternator to cloud" }));
+    if (storageFailure) {
+      expect(syncLookupToCloud).not.toHaveBeenCalled();
+      expect(screen.getByRole("status")).toHaveTextContent("stopped to protect the newer inspection");
+      return;
+    }
+    expect(syncLookupToCloud).toHaveBeenCalledWith(expect.objectContaining({ inspection }));
+    expect(getLookups()[0].inspection).toEqual(inspection);
+  });
 
   it.each([
     [undefined, "Cloud save not confirmed for these changes"],

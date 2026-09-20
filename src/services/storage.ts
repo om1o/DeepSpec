@@ -9,6 +9,19 @@ export const MAX_SAVED_LOOKUPS = 50;
 export const DEVICE_SCAN_LIMIT_MESSAGE = `Device limit reached (${MAX_SAVED_LOOKUPS} scans). Export records, then remove a device record in Saved scans before scanning again. Existing records are preserved.`;
 const MAX_CHAT_MESSAGES = 40;
 const CHAT_KEY = (id: string) => `deep-spec:chat:${id}`;
+const LOOKUPS_CHANGED = "deep-spec:lookups-changed";
+
+export function subscribeToLookupChanges(listener: () => void): () => void {
+  const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
+  const onLocalChange = (event: Event) => { if ((event as CustomEvent<string>).detail === key) listener(); };
+  const onStorageChange = (event: StorageEvent) => { if (event.storageArea === localStorage && (event.key === key || event.key === null)) listener(); };
+  window.addEventListener(LOOKUPS_CHANGED, onLocalChange);
+  window.addEventListener("storage", onStorageChange);
+  return () => {
+    window.removeEventListener(LOOKUPS_CHANGED, onLocalChange);
+    window.removeEventListener("storage", onStorageChange);
+  };
+}
 
 type StorageResult<T> =
   | {
@@ -343,7 +356,9 @@ function writeLookups(lookups: Lookup[]): StorageResult<Lookup[]> {
   }
 
   try {
-    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify(lookups));
+    const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    localStorage.setItem(key, JSON.stringify(lookups));
+    window.dispatchEvent(new CustomEvent(LOOKUPS_CHANGED, { detail: key }));
     return { ok: true, value: lookups };
   } catch (error) {
     return {

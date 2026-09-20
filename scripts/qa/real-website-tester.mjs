@@ -463,7 +463,15 @@ async function runCloudSaveReceipt() {
     await page.getByText("Device copy · Cloud save failed or timed out; retry required", { exact: true }).first().waitFor({ state: "visible" });
     await page.reload();
     await page.getByText("Device copy · Cloud save failed or timed out; retry required", { exact: true }).first().waitFor({ state: "visible" });
-    return { status: "pass", details: "Generated covered-lens capture retained locally after deliberately blocked cloud upload; durable failed-save receipt and retry-required History label remained visible after full reload. Controlled network fault, not a live backend outage." };
+    await page.screenshot({ path: join(screenshotDir, "cloud-save-failure-reloaded.png"), fullPage: true });
+    await page.unroute("**/storage/v1/object/scan-images/**", failUpload);
+    const savedId = await page.evaluate(({ prefix, originalIds }) => JSON.parse(localStorage.getItem(prefix + "deep-spec:lookups") ?? "[]").find((row) => !originalIds.includes(row.id) && row.cloudSave?.status === "failed")?.id, { prefix, originalIds });
+    const card = page.locator(`a[href="/result/${savedId}"]`).locator("..");
+    await card.getByRole("button", { name: /^Save .+ to cloud$/ }).click();
+    await card.getByText("Last cloud save acknowledged", { exact: true }).waitFor({ state: "visible", timeout: 30_000 });
+    await page.reload();
+    await page.locator(`a[href="/result/${savedId}"]`).locator("..").getByText("Last cloud save acknowledged", { exact: true }).waitFor({ state: "visible" });
+    return { status: "pass", details: "Generated rejected photo retained after deliberately blocked upload; failed receipt survived reload. Restored network, explicitly retried from Saved scans, observed live acknowledgement without navigating, then reloaded and retained acknowledgement. Controlled initial fault, followed by real cloud save." };
   } finally {
     await page.unroute("**/storage/v1/object/scan-images/**", failUpload);
   }

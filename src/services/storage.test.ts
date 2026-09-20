@@ -14,6 +14,7 @@ import {
   updateLookup,
   updateLookupResult,
   recordCloudSaveAttempt,
+  subscribeToLookupChanges,
 } from "./storage";
 import type { ScanAnalysisState } from "../types";
 import { emptyPartInspection } from "../lib/partInspection";
@@ -120,6 +121,23 @@ describe("storage", () => {
       expect.objectContaining({ content: "Private shop question" }),
     ]));
     expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBe(legacy);
+  });
+
+  it("notifies only the subscribed account and stops notifying after cleanup", () => {
+    const listener = vi.fn();
+    const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    const unsubscribe = subscribeToLookupChanges(listener);
+    createLookup(scanState);
+    expect(listener).toHaveBeenCalledTimes(1);
+    window.dispatchEvent(new StorageEvent("storage", { key, storageArea: localStorage }));
+    expect(listener).toHaveBeenCalledTimes(2);
+    setActiveAccount("different-owner");
+    createLookup(scanState);
+    window.dispatchEvent(new StorageEvent("storage", { key: accountStorageKey(LOOKUPS_STORAGE_KEY), storageArea: localStorage }));
+    expect(listener).toHaveBeenCalledTimes(2);
+    unsubscribe();
+    window.dispatchEvent(new StorageEvent("storage", { key, storageArea: localStorage }));
+    expect(listener).toHaveBeenCalledTimes(2);
   });
 
   it("retains cloud receipts after reading storage and rejects obsolete completions", () => {
