@@ -178,7 +178,7 @@ export default function History() {
               <FilterSelect label="Filter review status" value={reviewFilter} onChange={(value) => setReviewFilter(value as TrainingStatus | "error" | "all")}>
                 <option value="all">All review states</option>
                 <option value="raw_unreviewed">Unreviewed</option>
-                <option value="user_confirmed">Confirmed</option>
+                <option value="user_confirmed">Marked helpful</option>
                 <option value="user_corrected">Corrected</option>
                 <option value="error">AI errors</option>
               </FilterSelect>

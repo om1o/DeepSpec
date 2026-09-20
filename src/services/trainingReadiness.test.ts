@@ -57,7 +57,7 @@ const lookup: Lookup = {
 };
 
 describe("getTrainingReadiness", () => {
-  it("marks confirmed clean scans as review-ready without implying training consent", () => {
+  it("marks clean scans rated helpful as review-ready without implying training consent", () => {
     expect(getTrainingReadiness(lookup)).toMatchObject({
       action: "Keep private unless sharing is allowed.",
       label: "Review-ready",

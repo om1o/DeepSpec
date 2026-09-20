@@ -106,7 +106,7 @@ export function getTrainingReadiness(lookup: Lookup): TrainingReadiness {
     action: "Keep private unless sharing is allowed.",
     label: "Review-ready",
     level: "ready",
-    reasons: ["Sharp photo, confirmed result, and enough quality data are present."],
+    reasons: ["A sharp photo, helpful feedback, and quality measurements are present. Part identity still needs human review."],
     score: 90,
     summary: "This scan is ready for a human review queue.",
   });
