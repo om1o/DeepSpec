@@ -77,6 +77,7 @@ const scenarioHandlers = {
   "shared-device-account-switch": runSharedDeviceAccountSwitch,
   "device-storage-capacity": runDeviceStorageCapacity,
   "cloud-save-receipt": runCloudSaveReceipt,
+  "auth-restore-no-upload": runAuthRestoreNoUpload,
   "saved-history": runSavedHistory,
   scanner: runScanner,
   "shop-history-search": runShopHistorySearch,
@@ -441,6 +442,30 @@ async function runDeviceStorageCapacity() {
     return { status: "pass", details: "50 generated records preserved at capacity; identification blocked; downloaded export retained notes/chat; cancellation retained data; explicit device removal issued no cloud DELETE; a new rejected photo saved after freeing space." };
   } finally {
     page.off("request", onRequest);
+  }
+}
+
+async function runAuthRestoreNoUpload() {
+  await requireAuthForProtectedRoute("auth-restore-no-upload");
+  const prefix = await qaStoragePrefix();
+  const records = createSeedLookups();
+  const stored = JSON.stringify(records);
+  await page.evaluate(({ prefix, stored }) => localStorage.setItem(prefix + "deep-spec:lookups", stored), { prefix, stored });
+  let writes = 0;
+  const cloudPaths = /\/(?:storage\/v1\/object\/scan-images\/|rest\/v1\/(?:scan_lookups|scan_candidates|scan_evidence|scan_corrections|scan_model_runs|sync_events)(?:\?|$))/;
+  const preventReplay = async (route) => {
+    if (["POST", "PATCH", "DELETE", "PUT"].includes(route.request().method())) { writes += 1; await route.abort("failed"); }
+    else await route.continue();
+  };
+  await page.route(cloudPaths, preventReplay);
+  try {
+    await gotoPath("/auth");
+    await page.waitForURL(/\/scan(?:\?|$)/);
+    const retained = await page.evaluate((prefix) => localStorage.getItem(prefix + "deep-spec:lookups"), prefix);
+    if (retained !== stored || writes) throw new QaIssue("frontend", "Restoring a verified session replayed or rewrote older device records.", { likelyFiles: ["src/screens/Auth.tsx"] });
+    return { status: "pass", details: "Restored a verified QA session with generated device records, reached the scanner, retained exact device bytes and observed no automatic cloud record/image writes. Cloud write interception prevented unintended replay during this check." };
+  } finally {
+    await page.unroute(cloudPaths, preventReplay);
   }
 }
 

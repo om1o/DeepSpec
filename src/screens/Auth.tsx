@@ -14,8 +14,6 @@ import {
   signUpWithPassword,
   verifyEmailCode,
 } from "../services/auth";
-import { syncLookupsToCloud } from "../services/cloudSync";
-import { getLookups } from "../services/storage";
 
 type AuthStep = "email" | "sent" | "code";
 type AuthMode = "link" | "password";
@@ -62,21 +60,8 @@ export default function Auth() {
   }, [location.search, location.state]);
 
   const finishVerifiedLogin = useCallback(async () => {
-    const localLookups = getLookups();
-    if (localLookups.length) {
-      // Upload in the background. Waiting here held a verified user on this screen for up to
-      // 20s per saved scan (50 scans max) on a weak connection, and the scans are safe locally.
-      void syncLookupsToCloud(localLookups)
-        .then((syncResult) => {
-          if (!syncResult.ok) {
-            console.warn("[DeepSpec] Local scan cloud sync after login was incomplete.", syncResult);
-          }
-        })
-        .catch((syncError) => {
-          console.warn("[DeepSpec] Local scan cloud sync after login failed.", syncError);
-        });
-    }
-
+    // Older device records can be behind cloud edits. Retry them explicitly from
+    // Saved scans until server revision checks make automatic replay safe.
     navigate(postAuthPath, { replace: true });
   }, [navigate, postAuthPath]);
 
@@ -339,6 +324,7 @@ export default function Auth() {
             <p className="mt-3 text-base font-semibold leading-7 text-white/68">
               Use a password account, an email code, or start a private session without email.
             </p>
+            <p className="mt-2 text-sm leading-6 text-white/68">Retry older device saves from Saved scans after signing in.</p>
           </div>
 
           <div className="mt-8 space-y-3">

@@ -228,21 +228,14 @@ describe("Auth", () => {
     expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
   });
 
-  it("syncs all local saved scans to cloud after a verified login", async () => {
+  it("preserves device records without replaying them over cloud records after login", async () => {
     setActiveAccount("password-user");
     const user = userEvent.setup();
-    localStorage.setItem(accountStorageKey("deep-spec:lookups"), JSON.stringify([
+    const savedRecords = JSON.stringify([
       makeSavedLookup("lookup-1", "Alternator"),
       makeSavedLookup("lookup-2", "Starter"),
-    ]));
-    cloudSyncMock.syncLookupsToCloud.mockResolvedValueOnce({
-      attempted: 2,
-      failed: 0,
-      failures: [],
-      message: "2 saved scans synced to the cloud.",
-      ok: true,
-      synced: 2,
-    });
+    ]);
+    localStorage.setItem(accountStorageKey("deep-spec:lookups"), savedRecords);
     supabaseMock.auth.getUser
       .mockResolvedValueOnce({ data: { user: null }, error: null })
       .mockResolvedValueOnce({ data: { user: makeUser("password-user") }, error: null });
@@ -253,33 +246,22 @@ describe("Auth", () => {
     await user.type(screen.getByPlaceholderText("Your password"), "correct-password");
     await user.click(screen.getByRole("button", { name: "Sign in to scanner" }));
 
-    await waitFor(() => {
-      expect(cloudSyncMock.syncLookupsToCloud).toHaveBeenCalledWith([
-        expect.objectContaining({ id: "lookup-1", trainingLabel: "Alternator" }),
-        expect.objectContaining({ id: "lookup-2", trainingLabel: "Starter" }),
-      ]);
-    });
     expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
+    expect(cloudSyncMock.syncLookupsToCloud).not.toHaveBeenCalled();
+    expect(localStorage.getItem(accountStorageKey("deep-spec:lookups"))).toBe(savedRecords);
   });
 
-  it("opens the scanner without waiting for a slow cloud sync to finish", async () => {
+  it("restores a verified session without uploading or rewriting older device records", async () => {
     setActiveAccount("password-user");
-    const user = userEvent.setup();
-    localStorage.setItem(accountStorageKey("deep-spec:lookups"), JSON.stringify([makeSavedLookup("lookup-1", "Alternator")]));
-    // A stalled upload (bad signal, slow storage) must not hold a verified user on the login screen.
-    cloudSyncMock.syncLookupsToCloud.mockReturnValue(new Promise(() => undefined));
-    supabaseMock.auth.getUser
-      .mockResolvedValueOnce({ data: { user: null }, error: null })
-      .mockResolvedValueOnce({ data: { user: makeUser("password-user") }, error: null });
+    const savedRecords = JSON.stringify([makeSavedLookup("lookup-1", "Alternator")]);
+    localStorage.setItem(accountStorageKey("deep-spec:lookups"), savedRecords);
+    supabaseMock.auth.getUser.mockResolvedValue({ data: { user: makeUser("password-user") }, error: null });
 
     await renderAuth();
 
-    await user.type(await screen.findByPlaceholderText("you@shop.com"), "Tester@Example.com");
-    await user.type(screen.getByPlaceholderText("Your password"), "correct-password");
-    await user.click(screen.getByRole("button", { name: "Sign in to scanner" }));
-
     expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
-    expect(cloudSyncMock.syncLookupsToCloud).toHaveBeenCalledTimes(1);
+    expect(cloudSyncMock.syncLookupsToCloud).not.toHaveBeenCalled();
+    expect(localStorage.getItem(accountStorageKey("deep-spec:lookups"))).toBe(savedRecords);
   });
 
   it("does not open the scanner when password auth does not verify a user", async () => {
