@@ -21,6 +21,77 @@ describe("cloudSync", () => {
     vi.unstubAllEnvs();
   });
 
+  it.each(["updated", "missing", "migration"])("saves a cloud-only inspection without reuploading its image: %s", async (outcome) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const select = vi.fn().mockResolvedValue({
+      data: outcome === "updated" ? [{ local_id: "lookup-1" }] : [],
+      error: outcome === "migration" ? { message: "column inspection_json does not exist" } : null,
+    });
+    const eq = vi.fn();
+    eq.mockReturnValue({ eq, select });
+    const update = vi.fn().mockReturnValue({ eq });
+    const storageFrom = vi.fn();
+    const from = vi.fn().mockReturnValue({ update });
+    mocks.createClient.mockReturnValue({
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
+      },
+      from,
+      storage: { from: storageFrom },
+    });
+    const lookup = makeLookup();
+    lookup.frame.imageBase64 = "https://example.supabase.co/storage/v1/object/sign/scan-images/scan.jpg?token=example";
+    lookup.inspection = {
+      confirmedPartName: "Alternator", partNumber: "ALT-42", identityEvidence: "Read stamped number",
+      visibleCondition: "no_visible_damage", visibleNotes: "Housing intact",
+      functionalStatus: "not_tested", functionalNotes: "", inspectorName: "Sam",
+      inspectedAt: "2026-09-20T12:00:00.000Z",
+    };
+    const { syncLookupToCloud } = await import("./cloudSync");
+    const result = await syncLookupToCloud(lookup);
+    expect(result.ok).toBe(outcome === "updated");
+    if (outcome === "missing") expect(result.message).toContain("not found for this account");
+    if (outcome === "migration") expect(result.message).toContain("database migration");
+    expect(from).toHaveBeenCalledExactlyOnceWith("scan_lookups");
+    expect(update).toHaveBeenCalledExactlyOnceWith({ inspection_json: lookup.inspection });
+    expect(eq.mock.calls).toEqual([["user_id", "user-1"], ["local_id", "lookup-1"]]);
+    expect(select).toHaveBeenCalledWith("local_id");
+    expect(storageFrom).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("does not silently drop inspection when its column is missing (shop fallback: %s)", async (missingShop) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const upsert = vi.fn().mockResolvedValue({ error: { message: "Could not find the 'inspection_json' column in the schema cache" } });
+    if (missingShop) upsert.mockResolvedValueOnce({ error: { message: "Could not find the 'job_id' column in the schema cache" } });
+    mocks.createClient.mockReturnValue({
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } }, error: null }),
+      },
+      from: vi.fn().mockReturnValue({ upsert }),
+      storage: { from: vi.fn().mockReturnValue({ upload: vi.fn().mockResolvedValue({ error: null }) }) },
+    });
+    const lookup = makeLookup();
+    lookup.inspection = {
+      confirmedPartName: "Alternator", partNumber: "ALT-42", identityEvidence: "Read stamped number",
+      visibleCondition: "no_visible_damage", visibleNotes: "Housing intact",
+      functionalStatus: "not_tested", functionalNotes: "", inspectorName: "Sam",
+      inspectedAt: "2026-09-20T12:00:00.000Z",
+    };
+    const { syncLookupToCloud } = await import("./cloudSync");
+    await expect(syncLookupToCloud(lookup)).resolves.toEqual({
+      ok: false,
+      message: "Inspection is saved on this device. Apply the part inspection database migration before syncing it to the cloud.",
+    });
+    expect(upsert).toHaveBeenCalledTimes(missingShop ? 2 : 1);
+    for (const [row] of upsert.mock.calls) {
+      expect(row).toMatchObject({ inspection_json: lookup.inspection, training_status: "raw_unreviewed", training_label: "Alternator" });
+      expect(row.result_json).toEqual(lookup.result);
+    }
+  });
+
   it("stays disabled when Supabase public config is missing", async () => {
     const { getCloudHealthSnapshot, getCloudSyncStatus, syncLookupToCloud } = await import("./cloudSync");
 
@@ -76,7 +147,14 @@ describe("cloudSync", () => {
     });
     const { syncLookupToCloud } = await import("./cloudSync");
 
-    const result = await syncLookupToCloud(makeLookup());
+    const lookup = makeLookup();
+    lookup.inspection = {
+      confirmedPartName: "Alternator", partNumber: "ALT-42", identityEvidence: "Read stamped number",
+      visibleCondition: "no_visible_damage", visibleNotes: "Housing intact",
+      functionalStatus: "not_tested", functionalNotes: "", inspectorName: "Sam",
+      inspectedAt: "2026-09-20T12:00:00.000Z",
+    };
+    const result = await syncLookupToCloud(lookup);
 
     expect(result).toEqual({
       ok: true,
@@ -91,6 +169,7 @@ describe("cloudSync", () => {
     expect(scanLookupUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         image_byte_length: 5,
+        inspection_json: lookup.inspection,
         image_hash: expect.any(String),
         image_mime_type: "image/jpeg",
         image_path: "user-1/lookup-1.jpg",
@@ -201,6 +280,8 @@ describe("cloudSync", () => {
     })).resolves.toMatchObject({ ok: true });
 
     expect(scanLookupUpsert).toHaveBeenCalledTimes(2);
+    // A stale client without an inspection must not explicitly clear the cloud field.
+    for (const [row] of scanLookupUpsert.mock.calls) expect(row).not.toHaveProperty("inspection_json");
     expect(scanLookupUpsert.mock.calls[0][0]).toEqual(expect.objectContaining({
       customer_visible_report_json: expect.any(Object),
     }));

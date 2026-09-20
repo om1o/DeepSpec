@@ -219,6 +219,20 @@ export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult
 async function performLookupSync(lookup: Lookup): Promise<CloudSyncResult> {
   const supabase = await getClient();
   const user = await ensureCloudUser(supabase);
+  // Cloud history contains signed image URLs, not the original image bytes. Save
+  // the inspection without replacing image metadata or stale AI/feedback fields.
+  if (lookup.inspection && !lookup.frame.imageBase64.startsWith("data:")) {
+    const updated = await supabase.from("scan_lookups")
+      .update({ inspection_json: lookup.inspection })
+      .eq("user_id", user.id)
+      .eq("local_id", lookup.id)
+      .select("local_id");
+    if (updated.error) throw new Error(updated.error.message);
+    if (!Array.isArray(updated.data) || updated.data.length === 0) {
+      return { ok: false, message: "Inspection is saved on this device, but its cloud scan was not found for this account." };
+    }
+    return { ok: true, message: "Inspection synced to your saved scan." };
+  }
   const image = dataUrlToBlob(lookup.frame.imageBase64);
   const imageHash = await hashBytes(image.bytes);
   const imagePath = `${user.id}/${lookup.id}.${image.extension}`;
@@ -251,6 +265,7 @@ async function performLookupSync(lookup: Lookup): Promise<CloudSyncResult> {
     training_label: lookup.trainingLabel,
     training_status: lookup.trainingStatus,
     user_id: user.id,
+    ...(lookup.inspection ? { inspection_json: lookup.inspection } : {}),
     ...getOptionalScanLookupFields(lookup),
   });
 
@@ -831,6 +846,10 @@ function getImageExtension(contentType: string) {
 
 function getFriendlySyncError(error: unknown) {
   const message = error instanceof Error ? error.message : "Unknown cloud sync error.";
+
+  if (/inspection_json/i.test(message) && /does not exist|schema cache|could not find .* column/i.test(message)) {
+    return "Inspection is saved on this device. Apply the part inspection database migration before syncing it to the cloud.";
+  }
 
   // Anchored to Supabase's actual auth wording ("Anonymous sign-ins are disabled", "Signups not
   // allowed"): a bare "signup" also matched the waitlist_signups table in unrelated errors.

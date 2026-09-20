@@ -32,9 +32,57 @@ const shopRow = {
   vehicle_context: { make: "Toyota", model: "Camry", vin: "1HGCM82633A004352" },
 };
 
+const inspection = {
+  confirmedPartName: "Alternator", partNumber: "ALT-42", identityEvidence: "Read stamped number",
+  visibleCondition: "no_visible_damage", visibleNotes: "Housing intact",
+  functionalStatus: "not_tested", functionalNotes: "", inspectorName: "Sam",
+  inspectedAt: "2026-09-20T12:00:00.000Z",
+};
+
 describe("readCloudLookups", () => {
   beforeEach(() => {
     mocks.select.mockReset();
+  });
+
+  it("reads human inspection separately from AI and training fields", async () => {
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, inspection_json: inspection }], error: null });
+    const { readCloudLookups } = await import("./cloudHistory");
+    const result = await readCloudLookups();
+    expect(result.ok && result.value[0]).toMatchObject({ inspection, trainingStatus: "raw_unreviewed" });
+    expect(result.ok && result.value[0].result).toBeUndefined();
+  });
+
+  it("retains shop columns when only the inspection migration is missing", async () => {
+    mocks.select.mockImplementation((columns) => columns.includes("inspection_json")
+      ? { data: null, error: { message: "column scan_lookups.inspection_json does not exist" } }
+      : { data: [shopRow], error: null });
+    const { readCloudLookups } = await import("./cloudHistory");
+    const result = await readCloudLookups();
+    expect(mocks.select).toHaveBeenCalledTimes(2);
+    expect(result.ok && result.value[0]).toMatchObject({ jobId: "job-7", inspection: undefined });
+  });
+
+  it("reads core history when both optional migrations are missing", async () => {
+    mocks.select.mockImplementation((columns) => columns.includes("inspection_json")
+      ? { data: null, error: { message: "Could not find the 'inspection_json' column in the schema cache" } }
+      : columns.includes("job_id")
+        ? { data: null, error: { message: "column scan_lookups.job_id does not exist" } }
+        : { data: [{ local_id: "scan-1" }], error: null });
+    const { readCloudLookups } = await import("./cloudHistory");
+    const result = await readCloudLookups();
+    expect(mocks.select).toHaveBeenCalledTimes(3);
+    expect(result.ok && result.value[0].id).toBe("scan-1");
+  });
+
+  it("retains inspection when only the shop migration is missing", async () => {
+    mocks.select.mockImplementation((columns) => columns.includes("job_id")
+      ? { data: null, error: { message: "column scan_lookups.job_id does not exist" } }
+      : { data: [{ local_id: "scan-1", inspection_json: inspection }], error: null });
+    const { readCloudLookups } = await import("./cloudHistory");
+    const result = await readCloudLookups();
+    expect(mocks.select).toHaveBeenCalledTimes(2);
+    expect(mocks.select.mock.calls[1][0]).toContain("inspection_json");
+    expect(result.ok && result.value[0].inspection).toEqual(inspection);
   });
 
   it("reads the shop fields, so a cloud-only shop scan keeps its job and vehicle", async () => {

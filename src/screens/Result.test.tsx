@@ -4,7 +4,8 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, vi } from "vitest";
 import Result from "./Result";
 import * as aiService from "../services/aiService";
-import { LOOKUPS_STORAGE_KEY } from "../services/storage";
+import { getLookup, LOOKUPS_STORAGE_KEY } from "../services/storage";
+import { emptyPartInspection } from "../lib/partInspection";
 import type { Lookup, ScanAnalysisState } from "../types";
 
 const frame = {
@@ -68,6 +69,22 @@ describe("Result", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+  });
+
+  it("opens a cloud-only inspection and saves edits under the original scan id", async () => {
+    const user = userEvent.setup();
+    const cloudLookup = makeLookup({
+      frame: { ...frame, imageBase64: "https://example.com/signed-image.jpg" },
+      inspection: { ...emptyPartInspection, inspectorName: "Original inspector", inspectedAt: "2026-09-19T12:00:00Z" },
+    });
+    renderResult({ ...successfulScan, savedLookup: cloudLookup }, `/result/${cloudLookup.id}`);
+    await user.click(screen.getByText("Human inspection — saved"));
+    expect(screen.getByLabelText("Inspector name (self-reported)")).toHaveValue("Original inspector");
+    await user.clear(screen.getByLabelText("Inspector name (self-reported)"));
+    await user.type(screen.getByLabelText("Inspector name (self-reported)"), "New inspector");
+    await user.click(screen.getByRole("button", { name: "Save inspection" }));
+    expect(getLookup(cloudLookup.id)?.inspection?.inspectorName).toBe("New inspector");
+    expect(getLookup(cloudLookup.id)?.frame.imageBase64).toBe("https://example.com/signed-image.jpg");
   });
 
   it("shows the AI identification result", async () => {
@@ -472,7 +489,7 @@ describe("Result", () => {
   });
 });
 
-function renderResult(state: ScanAnalysisState | null, path = "/result") {
+function renderResult(state: (ScanAnalysisState & { savedLookup?: Lookup }) | null, path = "/result") {
   render(
     <MemoryRouter
       initialEntries={[

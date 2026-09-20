@@ -1,4 +1,5 @@
 import { getAuthClient, isSupabaseAuthConfigured } from "./auth";
+import { normalizePartInspection } from "../lib/partInspection";
 import type {
   CandidateMatch,
   CandidatePart,
@@ -54,6 +55,7 @@ type CloudHistoryRow = {
   technician_user_id: unknown;
   vehicle_context: unknown;
   image_path: unknown;
+  inspection_json?: unknown;
 };
 
 type SignedImageRow = {
@@ -92,9 +94,19 @@ export async function readCloudLookups(limit = DEFAULT_HISTORY_LIMIT): Promise<R
     .select(columns)
     .order("created_at", { ascending: false })
     .limit(limit);
-  let rowsResult = await selectRows(`${CLOUD_HISTORY_CORE_SELECT},${CLOUD_HISTORY_SHOP_COLUMNS.join(",")}`);
-  if (isMissingShopColumn(rowsResult.error)) {
-    rowsResult = await selectRows(CLOUD_HISTORY_CORE_SELECT);
+  let optionalColumns = [...CLOUD_HISTORY_SHOP_COLUMNS, "inspection_json"];
+  let rowsResult = await selectRows(`${CLOUD_HISTORY_CORE_SELECT},${optionalColumns.join(",")}`);
+  // The shop and inspection migrations may be deployed independently. Drop only the
+  // missing group, preserving whichever fields this database supports.
+  for (let attempt = 0; attempt < 2 && rowsResult.error; attempt += 1) {
+    if (isMissingShopColumn(rowsResult.error)) {
+      optionalColumns = optionalColumns.filter((column) => !CLOUD_HISTORY_SHOP_COLUMNS.includes(column));
+    } else if (isMissingInspectionColumn(rowsResult.error)) {
+      optionalColumns = optionalColumns.filter((column) => column !== "inspection_json");
+    } else {
+      break;
+    }
+    rowsResult = await selectRows([CLOUD_HISTORY_CORE_SELECT, ...optionalColumns].join(","));
   }
 
   if (rowsResult.error) {
@@ -115,6 +127,12 @@ function isMissingShopColumn(error: { message?: string } | null) {
   const message = error?.message ?? "";
   return /does not exist|schema cache|could not find .* column/i.test(message)
     && CLOUD_HISTORY_SHOP_COLUMNS.some((column) => message.includes(column));
+}
+
+function isMissingInspectionColumn(error: { message?: string } | null) {
+  const message = error?.message ?? "";
+  return /does not exist|schema cache|could not find .* column/i.test(message)
+    && message.includes("inspection_json");
 }
 
 async function getSignedImageMap(
@@ -175,6 +193,7 @@ function mapCloudRowToLookup(
     rating: parseRating(row.rating),
     correction,
     notes: isString(row.notes) ? row.notes : "",
+    inspection: normalizePartInspection(row.inspection_json),
     scanCategory,
     trainingLabel: isString(row.training_label)
       ? row.training_label

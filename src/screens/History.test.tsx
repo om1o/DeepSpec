@@ -1,11 +1,12 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { vi } from "vitest";
 import History from "./History";
 import { readCloudLookups } from "../services/cloudHistory";
 import { LOOKUPS_STORAGE_KEY, MAX_SAVED_LOOKUPS } from "../services/storage";
 import type { Lookup } from "../types";
+import { emptyPartInspection } from "../lib/partInspection";
 
 vi.mock("../services/cloudHistory", () => ({
   readCloudLookups: vi.fn(),
@@ -130,6 +131,35 @@ describe("History", () => {
     expect(screen.getByText("1/1 saved scans")).toBeInTheDocument();
   });
 
+  it.each([
+    [undefined, "2026-09-20T12:00:00.000Z", "Remote reviewer"],
+    ["2026-09-19T12:00:00.000Z", "2026-09-20T12:00:00.000Z", "Remote reviewer"],
+    ["2026-09-20T12:00:00.000Z", undefined, "Local reviewer"],
+    ["2026-09-20T12:00:00.000Z", "2026-09-19T12:00:00.000Z", "Local reviewer"],
+  ])("navigates with the latest inspection while preserving local image (%s / %s)", async (localTime, remoteTime, reviewer) => {
+    const local = { ...lookup, inspection: localTime
+      ? { ...emptyPartInspection, inspectorName: "Local reviewer", inspectedAt: localTime } : undefined };
+    const remote = { ...lookup, frame: { ...lookup.frame, imageBase64: "https://example.test/signed.jpg" }, inspection: remoteTime
+      ? { ...emptyPartInspection, inspectorName: "Remote reviewer", inspectedAt: remoteTime } : undefined };
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([local]));
+    readCloudLookupsMock.mockResolvedValue({ ok: true, value: [remote, bodyLookup] });
+    render(
+      <MemoryRouter initialEntries={["/history"]}>
+        <Routes>
+          <Route path="/history" element={<History />} />
+          <Route path="/result/:id" element={<NavigationLookup />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    // The second row only arrives with the cloud response, so the merge has completed.
+    await screen.findByText("Rear bumper");
+    await userEvent.click(screen.getByRole("link", { name: /Alternator/ }));
+    const savedLookup = JSON.parse(screen.getByTestId("navigation-lookup").textContent!);
+    expect(savedLookup.inspection.inspectorName).toBe(reviewer);
+    expect(savedLookup.frame.imageBase64).toBe(lookup.frame.imageBase64);
+    expect(savedLookup.id).toBe(lookup.id);
+  });
+
   it("does not warn about the on-device cap just because cloud history is long", async () => {
     localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
     readCloudLookupsMock.mockResolvedValue({
@@ -161,6 +191,11 @@ function renderHistory() {
       </Routes>
     </MemoryRouter>,
   );
+}
+
+function NavigationLookup() {
+  const location = useLocation();
+  return <pre data-testid="navigation-lookup">{JSON.stringify(location.state.savedLookup)}</pre>;
 }
 
 function makeLookups(count: number, prefix: string): Lookup[] {

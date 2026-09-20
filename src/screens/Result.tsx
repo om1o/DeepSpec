@@ -4,22 +4,34 @@ import { getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../
 import Button from "../components/ui/Button";
 import HistoryDockButton from "../components/ui/HistoryDockButton";
 import { IsolatedPartView } from "../components/result/IsolatedPartView";
+import { PartInspectionForm } from "../components/result/PartInspectionForm";
 import { ScanDebugOverlay } from "../components/result/ScanDebugOverlay";
 import { IssueLine, ResultDetailSections, SceneCategoryList } from "../components/result/PositiveAnswerCard";
 import { getSimpleResultSummary } from "../lib/simpleResultSummary";
+import { withLatestInspection } from "../lib/partInspection";
 import { deriveIssue, getAnswerBody, getSceneChips } from "../lib/resultFacts";
 import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } from "../lib/utils";
 import { buildScanReport, downloadTextFile, getScanReportFilename } from "../services/report";
 import { recordManualCorrection } from "../services/scanQualityMetrics";
 import { getShopJob } from "../services/shop";
-import { createLookup, getLookup, scanStateFromLookup, updateLookup, updateLookupResult } from "../services/storage";
+import { createLookup, getLookup, normalizeLookup, scanStateFromLookup, updateLookup, updateLookupResult } from "../services/storage";
 import type { CapturedFrame, IdentificationResult, Lookup, Rating, ScanAnalysisState, ShopJob as ShopJobRecord } from "../types";
 
 export default function Result() {
   const location = useLocation();
   const navigate = useNavigate();
   const { id } = useParams();
-  const [lookup, setLookup] = useState<Lookup | null>(() => (id ? getLookup(id) : null));
+  const historyLookup = normalizeLookup(location.state?.savedLookup);
+  const [lookup, setLookup] = useState<Lookup | null>(() => {
+    if (!id) return null;
+    const local = getLookup(id);
+    const fromHistory = normalizeLookup(location.state?.savedLookup);
+    if (local && fromHistory?.id === id) return withLatestInspection(local, fromHistory);
+    return local;
+  });
+  const inspectionLookup = historyLookup && historyLookup.id === id
+    ? (lookup ? withLatestInspection(lookup, historyLookup) : historyLookup)
+    : lookup;
   const [liveScanState, setLiveScanState] = useState<ScanAnalysisState | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const scanState = lookup ? scanStateFromLookup(lookup) : liveScanState ?? getScanState(location.state);
@@ -214,7 +226,8 @@ export default function Result() {
               onRating={handleRating}
             />
           ) : null}
-          {lookup ? <ReportActions lookup={lookup} /> : null}
+          {inspectionLookup ? <PartInspectionForm key={inspectionLookup.id} lookup={inspectionLookup} onSaved={setLookup} /> : null}
+          {inspectionLookup ? <ReportActions lookup={inspectionLookup} /> : null}
           {datasetSourceUrls.length > 0 ? <SourceFinePrint urls={datasetSourceUrls} /> : null}
         </div>
 

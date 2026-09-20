@@ -8,6 +8,7 @@ import { getScanQualityMetrics, type ScanQualityFailureReason, type ScanQualityM
 import { MAX_SAVED_LOOKUPS, getLookups, scanStateFromLookup } from "../services/storage";
 import { getTrainingReadiness } from "../services/trainingReadiness";
 import { getLocalDateStamp } from "../lib/utils";
+import { withLatestInspection } from "../lib/partInspection";
 import { SCAN_CATEGORIES, type Lookup, type Rating, type ScanCategory, type TrainingStatus } from "../types";
 
 export default function History() {
@@ -310,7 +311,7 @@ function LookupCard({ lookup }: { lookup: Lookup }) {
   return (
     <Link
       to={`/result/${lookup.id}`}
-      state={scanStateFromLookup(lookup)}
+      state={{ ...scanStateFromLookup(lookup), savedLookup: lookup }}
       className="grid grid-cols-[88px_1fr] gap-3 rounded-[24px] border border-slate-200 bg-white p-3 text-slate-950 shadow-sm transition hover:border-blue-200"
     >
       <ScanThumb
@@ -446,7 +447,8 @@ function mergeLookups(localLookups: Lookup[], cloudLookups: Lookup[]) {
   }
 
   for (const lookup of localLookups) {
-    byId.set(lookup.id, lookup);
+    const remote = byId.get(lookup.id);
+    byId.set(lookup.id, remote ? withLatestInspection(lookup, remote) : lookup);
   }
 
   return [...byId.values()].sort((left, right) => getTimestamp(right.createdAt) - getTimestamp(left.createdAt));

@@ -2,6 +2,7 @@ import {
   appendChatMessages,
   createChatMessage,
   createLookup,
+  saveLookupInspection,
   deleteLookup,
   getLookup,
   getLookups,
@@ -12,6 +13,7 @@ import {
   updateLookupResult,
 } from "./storage";
 import type { ScanAnalysisState } from "../types";
+import { emptyPartInspection } from "../lib/partInspection";
 
 const scanState: ScanAnalysisState = {
   frame: {
@@ -362,6 +364,34 @@ describe("storage", () => {
     expect(lookups[0].result?.partName).toBe(`Alternator ${MAX_SAVED_LOOKUPS + 4}`);
     expect(lookups.some((lookup) => lookup.id === firstLookup.id)).toBe(false);
     expect(localStorage.getItem(`deep-spec:chat:${firstLookup.id}`)).toBeNull();
+  });
+
+  it("persists human inspection without changing AI or training labels", () => {
+    const lookup = createLookup(scanState).value;
+    expect(lookup.inspection).toBeUndefined();
+    const saved = saveLookupInspection(lookup.id, {
+      ...emptyPartInspection, inspectorName: "Pat", confirmedPartName: "Starter motor",
+      identityEvidence: "Matched the stamped number to the catalog", visibleCondition: "no_visible_damage",
+    });
+    expect(saved.ok).toBe(true);
+    const reopened = getLookup(lookup.id)!;
+    expect(reopened.inspection?.confirmedPartName).toBe("Starter motor");
+    expect(reopened.inspection?.functionalStatus).toBe("not_tested");
+    expect(reopened.result?.partName).toBe("Alternator");
+    expect(reopened.trainingLabel).toBe(lookup.trainingLabel);
+    expect(reopened.trainingStatus).toBe("raw_unreviewed");
+    updateLookup(lookup.id, { notes: "Keep inspection" });
+    expect(getLookup(lookup.id)?.inspection).toEqual(reopened.inspection);
+  });
+
+  it("rejects unsupported functional claims and preserves the prior record on storage failure", () => {
+    const lookup = createLookup(scanState).value;
+    expect(saveLookupInspection(lookup.id, { ...emptyPartInspection, inspectorName: "Pat", functionalStatus: "passed" }).ok).toBe(false);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("quota", "QuotaExceededError"); });
+    const saved = saveLookupInspection(lookup.id, { ...emptyPartInspection, inspectorName: "Pat" });
+    expect(saved.ok).toBe(false);
+    expect(saved.value?.inspection).toBeUndefined();
+    expect(getLookup(lookup.id)?.inspection).toBeUndefined();
   });
 
   it("deletes a saved lookup", () => {

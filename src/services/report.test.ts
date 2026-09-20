@@ -1,5 +1,18 @@
 import { buildScanReport, getMechanicSearchUrl, getScanReportFilename } from "./report";
 import type { Lookup } from "../types";
+import { emptyPartInspection } from "../lib/partInspection";
+
+it("separates human inspection from AI and never infers function from appearance", () => {
+  const report = buildScanReport({ ...lookup, inspection: {
+    ...emptyPartInspection, inspectorName: "Pat", inspectedAt: "2026-09-20T12:00:00Z",
+    confirmedPartName: "Different part", identityEvidence: "Read stamped number", visibleCondition: "no_visible_damage",
+  } });
+  expect(report).toContain("AI scan summary:");
+  expect(report).toContain("Human inspection (self-reported, separate from AI):");
+  expect(report).toContain("Confirmed part: Different part");
+  expect(report).toContain("Functional test: not tested");
+  expect(buildScanReport(lookup)).toContain("No human inspection recorded. Function not verified.");
+});
 
 const lookup: Lookup = {
   id: "lookup-1",
@@ -63,7 +76,7 @@ describe("report", () => {
     const report = buildScanReport(lookup);
 
     expect(report).toContain("Deep Spec Scan Report");
-    expect(report).toContain("Scan summary:");
+    expect(report).toContain("AI scan summary:");
     expect(report).toContain("Part: Brake caliper");
     expect(report).toContain("Safety triage: needs_professional");
     expect(report).toContain("Other possible matches:");

@@ -1,5 +1,8 @@
 import type { CandidateMatch, CandidatePart, ChatMessage, Confidence, CustomerVisibleReport, EvidenceRegion, FitmentConfidence, IdentificationResult, IdentifyModelRun, IdentifyProvider, Lookup, PartMeasurement, PossibleVehicleContext, Rating, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanCategory, SceneObject, ScanProvenance, ScanQualityFailureReason, ScanQualitySnapshot, ShopReviewStatus, ShopVehicleContext, SourceLink, TrainingStatus, VisualFocusBox, VisualFocusMode } from "../types";
 
+import type { PartInspectionDraft } from "../types";
+import { normalizePartInspection } from "../lib/partInspection";
+
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
 export const MAX_SAVED_LOOKUPS = 50;
 const MAX_CHAT_MESSAGES = 40;
@@ -50,6 +53,20 @@ export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup
   const writeResult = writeLookups(lookups);
 
   return writeResult.ok ? { ok: true, value: lookup } : { ok: false, message: writeResult.message, value: lookup };
+}
+
+export function saveLookupInspection(id: string, draft: PartInspectionDraft, cloudLookup?: Lookup): StorageResult<Lookup | null> {
+  const lookups = getLookups();
+  const existing = lookups.find((lookup) => lookup.id === id)
+    ?? (cloudLookup?.id === id ? normalizeLookup(cloudLookup) : null);
+  if (!existing) return { ok: false, value: null, message: "Saved scan not found." };
+  const inspection = normalizePartInspection({ ...draft, inspectedAt: new Date().toISOString() });
+  if (!inspection) return { ok: false, value: existing, message: "Complete the inspection and supporting evidence before saving." };
+  const updated = { ...existing, inspection };
+  const write = writeLookups(lookups.some((lookup) => lookup.id === id)
+    ? lookups.map((lookup) => lookup.id === id ? updated : lookup)
+    : [updated, ...lookups]);
+  return write.ok ? { ok: true, value: updated } : { ok: false, value: existing, message: write.message };
 }
 
 export function getLookups(): Lookup[] {
@@ -327,7 +344,7 @@ function sanitizePatch(patch: Partial<Pick<Lookup, "rating" | "correction" | "no
   return sanitized;
 }
 
-function normalizeLookup(value: unknown): Lookup | null {
+export function normalizeLookup(value: unknown): Lookup | null {
   if (typeof value !== "object" || value === null) {
     return null;
   }
@@ -353,6 +370,7 @@ function normalizeLookup(value: unknown): Lookup | null {
     : getTrainingStatus(rating, correction);
 
   return {
+    inspection: normalizePartInspection(lookup.inspection),
     id: lookup.id,
     createdAt: lookup.createdAt,
     frame: lookup.frame,

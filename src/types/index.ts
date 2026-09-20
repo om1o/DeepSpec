@@ -341,7 +341,22 @@ export type ScanProvenance = {
   savedAt: string;
 };
 
+export type PartInspection = {
+  confirmedPartName: string;
+  partNumber: string;
+  identityEvidence: string;
+  visibleCondition: "not_inspected" | "no_visible_damage" | "visible_damage" | "uncertain";
+  visibleNotes: string;
+  functionalStatus: "not_tested" | "passed" | "failed" | "inconclusive";
+  functionalNotes: string;
+  inspectorName: string;
+  inspectedAt: string;
+};
+
+export type PartInspectionDraft = Omit<PartInspection, "inspectedAt">;
+
 export type Lookup = {
+  inspection?: PartInspection;
   id: string;
   createdAt: string;
   frame: CapturedFrame;
