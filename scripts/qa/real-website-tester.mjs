@@ -544,10 +544,29 @@ async function runSavedHistory() {
   await seedSavedScans();
   await gotoPath("/history");
   await expectText(/Saved scans/i, "history heading", "frontend", ["src/screens/History.tsx"]);
+  const headingContrast = await page.getByRole("heading", { name: "Saved scans", exact: true }).evaluate((heading) => {
+    const canvas = globalThis.document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const luminance = (color) => {
+      // Canvas converts CSS colors (including Tailwind's OKLCH) to sRGB bytes.
+      ctx.fillStyle = color;
+      ctx.fillRect(0, 0, 1, 1);
+      const channels = Array.from(ctx.getImageData(0, 0, 1, 1).data).slice(0, 3).map((value) => {
+        const channel = value / 255;
+        return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+      });
+      return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+    };
+    const foreground = luminance(globalThis.getComputedStyle(heading).color);
+    const background = luminance(globalThis.getComputedStyle(heading.closest("main")).backgroundColor);
+    return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+  });
+  if (headingContrast < 4.5) throw new QaIssue("frontend", `History heading contrast is only ${headingContrast.toFixed(2)}:1 against the page background.`, { likelyFiles: ["src/screens/History.tsx"], suggestedFix: "Use the page foreground color for the heading while preserving dark text inside white cards." });
   await expectText(/QA Alternator/i, "seeded saved scan", "frontend", ["src/screens/History.tsx", "src/services/storage.ts"]);
 
   return {
-    details: "Saved scan history rendered seeded local QA scans.",
+    details: `Saved scan history rendered seeded local QA scans; heading contrast ${headingContrast.toFixed(2)}:1.`,
     likelyFiles: ["src/screens/History.tsx", "src/services/storage.ts"],
     status: "pass",
   };
