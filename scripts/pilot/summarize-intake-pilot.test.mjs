@@ -1,0 +1,41 @@
+import { describe, expect, it } from "vitest";
+import { summarizeIntakePilot } from "./summarize-intake-pilot.mjs";
+
+const record = (id, workflow = "deepspec", changes = {}) => ({
+  id, physicalPartId: id, batch: "batch-1", workflow, outcome: "completed",
+  identity: "correct", accepted: true, reference: "Reviewer checked stamped label against catalog",
+  activeSeconds: 120, functionalTestSeconds: 30, elapsedSeconds: 150, captureAttempts: 1,
+  ...changes,
+});
+
+describe("intake pilot summary", () => {
+  it("does not invent measurements for an empty template", () => {
+    expect(summarizeIntakePilot({ studyId: "pilot", records: [] })).toMatchObject({ status: "no_observations", observations: 0, batches: [] });
+  });
+  it("includes abandoned and unverified cases in denominators without counting them as correct", () => {
+    const summary = summarizeIntakePilot({ studyId: "pilot", records: [record("a"), record("b", "deepspec", { outcome: "abandoned", identity: "unresolved", accepted: false, activeSeconds: 60, elapsedSeconds: 90, captureAttempts: 2 }), record("c", "deepspec", { identity: "unverified", reference: "", accepted: true })] });
+    expect(summary.batches[0].deepspec).toMatchObject({ attempted: 3, completed: 2, abandoned: 1, correct: 1, unresolved: 1, unverified: 1, acceptedUnverified: 1, retakes: 1, totalActiveSeconds: 300, totalFunctionalTestSeconds: 90 });
+    expect(summary.batches[0].medianActiveReductionPercent).toBeNull();
+  });
+  it("keeps batches separate and includes functional testing in active time", () => {
+    const summary = summarizeIntakePilot({ studyId: "pilot", records: [record("a", "manual", { activeSeconds: 240, elapsedSeconds: 300 }), record("b"), record("c", "manual", { batch: "batch-2" })] });
+    expect(summary.batches).toHaveLength(2);
+    expect(summary.batches[0].medianActiveReductionPercent).toBe(50);
+    expect(summary.batches[0].deepspec.medianActiveSeconds).toBe(120);
+    expect(summary.batches[1].medianActiveReductionPercent).toBeNull();
+  });
+  it("counts wrong accepted identities separately from rejected errors", () => {
+    const summary = summarizeIntakePilot({ studyId: "pilot", records: [record("a", "deepspec", { identity: "wrong" }), record("b", "deepspec", { identity: "wrong", accepted: false })] });
+    expect(summary.batches[0].deepspec).toMatchObject({ wrong: 2, wrongAccepted: 1 });
+  });
+  it.each([
+    { activeSeconds: -1 }, { activeSeconds: null }, { activeSeconds: "120" },
+    { elapsedSeconds: 119 }, { functionalTestSeconds: 121 }, { captureAttempts: 1.5 },
+    { identity: "correct", reference: "" }, { accepted: "yes" }, { workflow: "other" },
+  ])("rejects invalid or unsupported measurements: %j", (changes) => {
+    expect(() => summarizeIntakePilot({ studyId: "pilot", records: [record("a", "deepspec", changes)] })).toThrow();
+  });
+  it("rejects repeated physical parts across arms and batches", () => {
+    expect(() => summarizeIntakePilot({ studyId: "pilot", records: [record("a"), record("b", "manual", { physicalPartId: "a", batch: "batch-2" })] })).toThrow(/physical part/i);
+  });
+});
