@@ -6,6 +6,7 @@ import { accountStorageKey } from "../lib/accountScope";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
 export const MAX_SAVED_LOOKUPS = 50;
+export const DEVICE_SCAN_LIMIT_MESSAGE = `Device limit reached (${MAX_SAVED_LOOKUPS} scans). Export records, then remove a device record in Saved scans before scanning again. Existing records are preserved.`;
 const MAX_CHAT_MESSAGES = 40;
 const CHAT_KEY = (id: string) => `deep-spec:chat:${id}`;
 
@@ -319,38 +320,29 @@ function writeChatHistory(id: string, history: ChatMessage[]): StorageResult<Cha
 }
 
 function writeLookups(lookups: Lookup[]): StorageResult<Lookup[]> {
-  const cappedLookups = lookups.slice(0, MAX_SAVED_LOOKUPS);
+  if (lookups.length > MAX_SAVED_LOOKUPS) {
+    return { ok: false, message: DEVICE_SCAN_LIMIT_MESSAGE, value: lookups };
+  }
 
   if (!hasLocalStorage()) {
     return {
       ok: false,
       message: "Saved scans are not available in this browser.",
-      value: cappedLookups,
+      value: lookups,
     };
   }
 
   try {
-    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify(cappedLookups));
-    pruneChatHistory(lookups.slice(MAX_SAVED_LOOKUPS));
-    return { ok: true, value: cappedLookups };
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify(lookups));
+    return { ok: true, value: lookups };
   } catch (error) {
     return {
       ok: false,
       message: isQuotaError(error)
         ? "Your device storage is full. Delete older saved scans, then try again."
         : "Deep Spec could not save this scan on this device.",
-      value: cappedLookups,
+      value: lookups,
     };
-  }
-}
-
-function pruneChatHistory(droppedLookups: Lookup[]) {
-  for (const lookup of droppedLookups) {
-    try {
-      localStorage.removeItem(accountStorageKey(CHAT_KEY(lookup.id)));
-    } catch {
-      // Best-effort cleanup after the bounded lookup index is already saved.
-    }
   }
 }
 

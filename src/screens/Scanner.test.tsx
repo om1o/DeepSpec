@@ -1,5 +1,5 @@
 import { accountStorageKey, setActiveAccount } from "../lib/accountScope";
-import { getLookups } from "../services/storage";
+import { createLookup, getLookups, MAX_SAVED_LOOKUPS } from "../services/storage";
 import { hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -724,6 +724,20 @@ describe("Scanner", () => {
     render(<MemoryRouter><Scanner /></MemoryRouter>);
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     expect(await screen.findByTestId("scan-save-status")).toHaveTextContent("Saved on this device. Cloud sync is off.");
+  });
+
+  it.each(["camera", "upload"])("stops %s analysis at device capacity without dropping earlier records", async (mode) => {
+    for (let index = 0; index < MAX_SAVED_LOOKUPS; index += 1) {
+      createLookup({ frame: { imageBase64: "data:image/jpeg;base64,test", capturedAt: new Date().toISOString() } });
+    }
+    const ids = getLookups().map((lookup) => lookup.id);
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    if (mode === "camera") await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    else await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["test-image"], "part.jpg", { type: "image/jpeg" }));
+    expect(await screen.findByText(/Device limit reached/)).toBeInTheDocument();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    expect(syncLookupToCloud).not.toHaveBeenCalled();
+    expect(getLookups().map((lookup) => lookup.id)).toEqual(ids);
   });
 
   it("does not hide a failed local save behind a successful AI result", async () => {

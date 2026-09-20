@@ -39,7 +39,7 @@ import {
   recordScanQualityFailure,
   recordScanQualityRetake,
 } from "../services/scanQualityMetrics";
-import { createLookup, updateLookup } from "../services/storage";
+import { createLookup, DEVICE_SCAN_LIMIT_MESSAGE, getLookups, MAX_SAVED_LOOKUPS, updateLookup } from "../services/storage";
 import type { IdentificationResult, CapturedFrame, IsolatedObject, Lookup, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanDebugInfo, ScanQualitySnapshot, ShopJob, ShopVehicleContext, VisualFocusBox, VisualFocusMode } from "../types";
 
 // Build-freshness stamp for the Scanner UI chunk. ScanResultCard, the collapse toggle, and the
@@ -388,6 +388,7 @@ export default function Scanner() {
     reviewTargetOverride?: CameraObjectTarget,
   ) => {
     const sourceUpdatedAt = new Date().toISOString();
+    if (getLookups().length >= MAX_SAVED_LOOKUPS) throw new Error(DEVICE_SCAN_LIMIT_MESSAGE);
     const detectedReviewTarget = !reviewTargetOverride && shouldDetectStillTarget(imageBase64, captureMode)
       ? await getReviewTargetFromCapturedImage(imageBase64)
       : null;

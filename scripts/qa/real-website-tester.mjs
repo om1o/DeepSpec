@@ -75,6 +75,7 @@ const scenarioHandlers = {
   "scanner-ai-engine": runScannerAiEngine,
   "scanner-quality-retake": runScannerQualityRetake,
   "shared-device-account-switch": runSharedDeviceAccountSwitch,
+  "device-storage-capacity": runDeviceStorageCapacity,
   "saved-history": runSavedHistory,
   scanner: runScanner,
   "shop-history-search": runShopHistorySearch,
@@ -383,6 +384,63 @@ async function runScanner() {
     likelyFiles: ["src/screens/Scanner.tsx", "src/components/scanner/IdentifyButton.tsx"],
     status: "pass",
   };
+}
+
+async function runDeviceStorageCapacity() {
+  await requireAuthForProtectedRoute("device-storage-capacity");
+  const prefix = await qaStoragePrefix();
+  const base = createSeedLookups()[0];
+  const records = Array.from({ length: 50 }, (_, index) => ({
+    ...base, id: "qa-capacity-" + index, notes: "Retain generated intake notes " + index,
+    result: { ...base.result, partName: "QA Capacity " + index },
+  }));
+  await page.evaluate(({ prefix, records }) => localStorage.setItem(prefix + "deep-spec:lookups", JSON.stringify(records)), { prefix, records });
+  const readRecords = () => page.evaluate((prefix) => JSON.parse(localStorage.getItem(prefix + "deep-spec:lookups") ?? "[]"), prefix);
+  const dataUrl = await page.evaluate(() => {
+    const canvas = globalThis.document.createElement("canvas"); canvas.width = 320; canvas.height = 240;
+    const ctx = canvas.getContext("2d"); ctx.fillStyle = "black"; ctx.fillRect(0, 0, 320, 240);
+    return canvas.toDataURL("image/png");
+  });
+  const fixture = { name: "capacity-check.png", mimeType: "image/png", buffer: Buffer.from(dataUrl.split(",")[1], "base64") };
+  let identifyRequests = 0;
+  let observingRemoval = false;
+  let cloudDeletes = 0;
+  const onRequest = (request) => {
+    if (new URL(request.url()).pathname === "/api/identify") identifyRequests += 1;
+    if (observingRemoval && request.method() === "DELETE") cloudDeletes += 1;
+  };
+  page.on("request", onRequest);
+  try {
+    await gotoPath("/scan");
+    await page.getByLabel("Upload photo", { exact: true }).setInputFiles(fixture);
+    await page.getByText(/Device limit reached/).waitFor({ state: "visible" });
+    if (JSON.stringify(await readRecords()) !== JSON.stringify(records) || identifyRequests) throw new QaIssue("frontend", "Full-device upload changed prior records or called identification.");
+    await gotoPath("/history");
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Export JSON", exact: true }).click();
+    const exportPath = join(artifactDir, "capacity-export.json");
+    await (await downloadPromise).saveAs(exportPath);
+    const exported = JSON.parse(readFileSync(exportPath, "utf8"));
+    if (exported.length !== 50 || exported.find((row) => row.id === "qa-capacity-0")?.notes !== records[0].notes || !exported[0].chatHistory.length) throw new QaIssue("frontend", "Capacity export lost generated records, notes or chat.");
+    const remove = page.getByRole("button", { name: "Remove QA Capacity 0 from this device", exact: true });
+    observingRemoval = true;
+    page.once("dialog", (dialog) => dialog.dismiss());
+    await remove.click();
+    if ((await readRecords()).length !== 50) throw new QaIssue("frontend", "Canceled removal changed device records.");
+    page.once("dialog", (dialog) => dialog.accept());
+    await remove.click();
+    await page.waitForFunction((prefix) => JSON.parse(localStorage.getItem(prefix + "deep-spec:lookups") ?? "[]").length === 49, prefix);
+    observingRemoval = false;
+    if (cloudDeletes) throw new QaIssue("backend", "Removing a device record issued a cloud deletion.");
+    await gotoPath("/scan");
+    await page.getByLabel("Upload photo", { exact: true }).setInputFiles(fixture);
+    await page.getByRole("button", { name: "Upload one retake", exact: true }).waitFor({ state: "visible" });
+    const after = await readRecords();
+    if (after.length !== 50 || after.some((row) => row.id === "qa-capacity-0") || !after.some((row) => row.id === "qa-capacity-49") || !after.some((row) => row.errorCode === "quality_rejected") || identifyRequests) throw new QaIssue("frontend", "Freeing device space did not allow a new saved photo while retaining earlier evidence.");
+    return { status: "pass", details: "50 generated records preserved at capacity; identification blocked; downloaded export retained notes/chat; cancellation retained data; explicit device removal issued no cloud DELETE; a new rejected photo saved after freeing space." };
+  } finally {
+    page.off("request", onRequest);
+  }
 }
 
 async function runScannerQualityRetake() {

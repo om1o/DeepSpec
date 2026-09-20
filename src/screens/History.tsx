@@ -5,19 +5,21 @@ import ScanThumb from "../components/ui/ScanThumb";
 import { signOut } from "../services/auth";
 import { readCloudLookups } from "../services/cloudHistory";
 import { getScanQualityMetrics, type ScanQualityFailureReason, type ScanQualityMetrics } from "../services/scanQualityMetrics";
-import { MAX_SAVED_LOOKUPS, getLookups, scanStateFromLookup } from "../services/storage";
+import { DEVICE_SCAN_LIMIT_MESSAGE, MAX_SAVED_LOOKUPS, deleteLookup, getLookups, scanStateFromLookup } from "../services/storage";
 import { getTrainingReadiness } from "../services/trainingReadiness";
 import { getLocalDateStamp } from "../lib/utils";
 import { withLatestInspection } from "../lib/partInspection";
 import { getIntakeReview } from "../lib/intakeReview";
-import { hasUnassignedDeviceRecords, withAccountRouteState } from "../lib/accountScope";
+import { getAccountScope, isAccountScopeCurrent, hasUnassignedDeviceRecords, withAccountRouteState } from "../lib/accountScope";
 import { SCAN_CATEGORIES, type Lookup, type Rating, type ScanCategory, type TrainingStatus } from "../types";
 
 export default function History() {
   const navigate = useNavigate();
+  const [mountedScope] = useState(getAccountScope);
   // The on-device cap counts what this device stores, not the merged list that also holds cloud scans.
-  const [deviceLookups] = useState<Lookup[]>(() => getLookups());
+  const [deviceLookups, setDeviceLookups] = useState<Lookup[]>(() => getLookups());
   const [lookups, setLookups] = useState<Lookup[]>(deviceLookups);
+  const [storageMessage, setStorageMessage] = useState<string | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [query, setQuery] = useState("");
   const qualityMetrics = useMemo(() => getScanQualityMetrics(), []);
@@ -50,6 +52,18 @@ export default function History() {
     } catch {
       setIsSigningOut(false);
     }
+  }
+
+  function removeDeviceRecord(lookup: Lookup) {
+    if (!isAccountScopeCurrent(mountedScope)) return;
+    const title = lookup.result?.partName ?? "this scan";
+    if (!window.confirm(`Remove the stored device copy of ${title}? Export first if you need a backup. Cloud records are not deleted. Open pages or cached previews may still show this scan.`)) return;
+    if (!isAccountScopeCurrent(mountedScope)) return;
+    const removed = deleteLookup(lookup.id);
+    if (!removed.ok) { setStorageMessage(`Removal failed. ${removed.message}`); return; }
+    setDeviceLookups(getLookups());
+    setLookups((current) => current.filter((entry) => entry.id !== lookup.id));
+    setStorageMessage("Stored device copy removed. Cloud records are not deleted; cloud history and open views may still show this scan.");
   }
 
   const [categoryFilter, setCategoryFilter] = useState<ScanCategory | "all">("all");
@@ -98,6 +112,7 @@ export default function History() {
         </header>
 
         <ScanQualityMetricsPanel metrics={qualityMetrics} />
+        {storageMessage ? <p role="status" className="mt-4 rounded-2xl bg-white p-4 text-sm text-slate-700">{storageMessage}</p> : null}
         {hasUnassignedDeviceRecords() ? <p role="status" className="mt-4 rounded-2xl bg-white p-4 text-sm text-slate-700">Older device records are preserved separately. Their account owner is unknown, so they are not shown or uploaded automatically. Owner-confirmed recovery is required.</p> : null}
 
         {lookups.length > 0 ? (
@@ -150,7 +165,7 @@ export default function History() {
             </div>
             {deviceLookups.length >= MAX_SAVED_LOOKUPS ? (
               <p className="mt-2 text-xs font-semibold leading-5 text-[var(--ds-warn-ink)]">
-                {MAX_SAVED_LOOKUPS}-scan cap reached. Export to keep older scans.
+                {DEVICE_SCAN_LIMIT_MESSAGE}
               </p>
             ) : null}
           </section>
@@ -159,7 +174,12 @@ export default function History() {
         {filteredLookups.length > 0 ? (
           <div className="mt-6 space-y-3">
             {filteredLookups.map((lookup) => (
-              <LookupCard key={lookup.id} lookup={lookup} />
+              <div key={lookup.id}>
+                <LookupCard lookup={lookup} />
+                {deviceLookups.some((local) => local.id === lookup.id) ? (
+                  <button type="button" className="mt-2 px-3 py-2 text-xs font-semibold text-[var(--ds-fg-3)] underline" aria-label={`Remove ${lookup.result?.partName ?? "scan"} from this device`} onClick={() => removeDeviceRecord(lookup)}>Remove device record</button>
+                ) : null}
+              </div>
             ))}
           </div>
         ) : lookups.length > 0 ? (

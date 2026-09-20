@@ -363,30 +363,21 @@ describe("storage", () => {
     expect(getLookup(lookup.id)?.chatHistory).toHaveLength(2);
   });
 
-  it("caps saved scans so the local database stays bounded", () => {
-    const firstLookup = createLookup(scanState).value;
-    appendChatMessages(firstLookup.id, [createChatMessage("user", "Keep this with the first scan.")]);
-
-    for (let index = 0; index < MAX_SAVED_LOOKUPS + 5; index += 1) {
-      createLookup({
-        ...scanState,
-        frame: {
-          ...scanState.frame,
-          capturedAt: `2026-05-16T00:00:${String(index).padStart(2, "0")}.000Z`,
-        },
-        result: {
-          ...scanState.result!,
-          partName: `Alternator ${index}`,
-        },
-      });
-    }
-
-    const lookups = getLookups();
-
-    expect(lookups).toHaveLength(MAX_SAVED_LOOKUPS);
-    expect(lookups[0].result?.partName).toBe(`Alternator ${MAX_SAVED_LOOKUPS + 4}`);
-    expect(lookups.some((lookup) => lookup.id === firstLookup.id)).toBe(false);
-    expect(localStorage.getItem(accountStorageKey(`deep-spec:chat:${firstLookup.id}`))).toBeNull();
+  it("refuses a 51st scan without discarding existing evidence, and permits freeing space", () => {
+    const first = createLookup(scanState).value;
+    updateLookup(first.id, { notes: "Unsynced bench notes" });
+    appendChatMessages(first.id, [createChatMessage("user", "Keep the first scan's chat")]);
+    for (let index = 1; index < MAX_SAVED_LOOKUPS; index += 1) expect(createLookup(scanState).ok).toBe(true);
+    const before = localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY));
+    expect(createLookup(scanState)).toMatchObject({ ok: false, message: expect.stringContaining("50") });
+    expect(saveExistingLookup({ ...first, id: "new-cloud-copy" }).ok).toBe(false);
+    expect(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY))).toBe(before);
+    expect(getLookup(first.id)).toMatchObject({ notes: "Unsynced bench notes", chatHistory: [expect.objectContaining({ content: "Keep the first scan's chat" })] });
+    expect(updateLookup(first.id, { notes: "Updated at capacity" }).ok).toBe(true);
+    expect(deleteLookup(getLookups()[0].id).ok).toBe(true);
+    expect(createLookup(scanState).ok).toBe(true);
+    expect(getLookups()).toHaveLength(MAX_SAVED_LOOKUPS);
+    expect(getLookup(first.id)?.notes).toBe("Updated at capacity");
   });
 
   it("persists human inspection without changing AI or training labels", () => {

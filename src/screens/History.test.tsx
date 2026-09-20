@@ -1,11 +1,11 @@
-import { accountStorageKey } from "../lib/accountScope";
+import { accountStorageKey, setActiveAccount } from "../lib/accountScope";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { vi } from "vitest";
 import History from "./History";
 import { readCloudLookups } from "../services/cloudHistory";
-import { LOOKUPS_STORAGE_KEY, MAX_SAVED_LOOKUPS } from "../services/storage";
+import { getLookups, LOOKUPS_STORAGE_KEY, MAX_SAVED_LOOKUPS } from "../services/storage";
 import type { Lookup } from "../types";
 import { emptyPartInspection } from "../lib/partInspection";
 
@@ -71,6 +71,58 @@ describe("History", () => {
       ok: false,
       message: "No verified Supabase session was found.",
     });
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("keeps a device record when removal is canceled", async () => {
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderHistory();
+    await userEvent.click(screen.getByRole("button", { name: "Remove Alternator from this device" }));
+    expect(getLookups()).toHaveLength(1);
+    expect(screen.getByRole("link", { name: /Alternator/ })).toBeInTheDocument();
+  });
+
+  it("removes only the device record while retaining the cloud row and another account", async () => {
+    setActiveAccount("other");
+    const otherKey = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    localStorage.setItem(otherKey, JSON.stringify([lookup]));
+    setActiveAccount("test-user");
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    readCloudLookupsMock.mockResolvedValue({ ok: true, value: [lookup] });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderHistory();
+    await userEvent.click(screen.getByRole("button", { name: "Remove Alternator from this device" }));
+    expect(getLookups()).toHaveLength(0);
+    expect(JSON.parse(localStorage.getItem(otherKey)!)).toHaveLength(1);
+    expect(await screen.findByRole("link", { name: /Alternator/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove Alternator from this device" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Cloud records are not deleted");
+  });
+
+  it("retains the record and reports failure if device removal cannot be saved", async () => {
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderHistory();
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("storage unavailable"); });
+    await userEvent.click(screen.getByRole("button", { name: "Remove Alternator from this device" }));
+    expect(getLookups()).toHaveLength(1);
+    expect(screen.getByRole("link", { name: /Alternator/ })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("could not save");
+  });
+
+  it("rejects removal when the account changes while confirming", async () => {
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    setActiveAccount("other");
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    setActiveAccount("test-user");
+    vi.spyOn(window, "confirm").mockImplementation(() => { setActiveAccount("other"); return true; });
+    renderHistory();
+    await userEvent.click(screen.getByRole("button", { name: "Remove Alternator from this device" }));
+    expect(getLookups()).toHaveLength(1);
+    setActiveAccount("test-user");
+    expect(getLookups()).toHaveLength(1);
   });
 
   it("shows an empty saved scan state", () => {
@@ -185,7 +237,7 @@ describe("History", () => {
 
     const total = MAX_SAVED_LOOKUPS + 11;
     expect(await screen.findByText(`${total}/${total} saved scans`)).toBeInTheDocument();
-    expect(screen.queryByText(/scan cap reached/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Device limit reached/i)).not.toBeInTheDocument();
   });
 
   it("warns when the on-device store itself is full", () => {
@@ -193,7 +245,7 @@ describe("History", () => {
 
     renderHistory();
 
-    expect(screen.getByText(`${MAX_SAVED_LOOKUPS}-scan cap reached. Export to keep older scans.`)).toBeInTheDocument();
+    expect(screen.getByText(/Device limit reached \(50 scans\)/)).toBeInTheDocument();
   });
 });
 
