@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
+import { assertPrivateStorageDenied } from "./qa/storage-access-check.mjs";
 
 const SCAN_BUCKET = "scan-images";
 const TEST_IMAGE_BYTES = Buffer.from(
@@ -128,7 +129,11 @@ try {
   await assertNoError(await ownerClient.storage.from(SCAN_BUCKET).download(imagePath), "Owner storage download failed");
   await assertNoError(await ownerClient.storage.from(SCAN_BUCKET).download(secondImagePath), "Second owner storage download failed");
 
-  console.log("[8/9] Confirmed one user can save multiple private scan records.");
+  console.log("[8/9] Checking that the other account cannot download the private images...");
+  assertPrivateStorageDenied(await otherClient.storage.from(SCAN_BUCKET).download(imagePath));
+  assertPrivateStorageDenied(await otherClient.storage.from(SCAN_BUCKET).download(secondImagePath));
+
+  console.log("[9/9] Confirmed owner access and cross-account isolation for rows and images.");
   console.log("Phase 8 cloud sync verification passed.");
 } catch (error) {
   failureMessage = error instanceof Error ? error.message : "Unknown verification error.";
