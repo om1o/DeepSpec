@@ -881,7 +881,7 @@ function getFriendlySyncError(error: unknown) {
   }
 
   if (/failed to fetch|networkerror|network error|fetch failed|load failed|timed out|timeout|aborted/i.test(message)) {
-    return "Saved on this device. Cloud sync will retry when you are back online.";
+    return "Cloud save was not confirmed. Reconnect and retry the save.";
   }
 
   if (/row-level security|policy|permission|not authorized|unauthorized/i.test(message)) {

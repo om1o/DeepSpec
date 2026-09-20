@@ -23,6 +23,17 @@ describe("cloudSync", () => {
     vi.unstubAllEnvs();
   });
 
+  it.each(["Failed to fetch", "Request timed out"])("does not promise an automatic retry after %s", async (message) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    mocks.createClient.mockReturnValue({ auth: { getSession: vi.fn().mockRejectedValue(new Error(message)) } });
+    const { syncLookupToCloud } = await import("./cloudSync");
+    await expect(syncLookupToCloud(makeLookup())).resolves.toEqual({
+      ok: false,
+      message: "Cloud save was not confirmed. Reconnect and retry the save.",
+    });
+  });
+
   it("stops a batch after the account changes during its first upload", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
