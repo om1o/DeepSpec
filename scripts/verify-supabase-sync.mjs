@@ -3,8 +3,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { assertPrivateStorageDenied } from "./qa/storage-access-check.mjs";
+import { assertInspectionSchema, cleanupCloudFixture, verifyInspectionRoundTrip } from "./qa/cloud-fixture-checks.mjs";
 
 const SCAN_BUCKET = "scan-images";
+const inspectionMode = process.argv.includes("--inspection");
 const TEST_IMAGE_BYTES = Buffer.from(
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/Aaf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/Aaf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAY/Aqf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/IV//2gAMAwEAAgADAAAAEP/EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8QH//Z",
   "base64",
@@ -52,8 +54,13 @@ try {
   });
 
   console.log("[1/9] Signing in as an anonymous Supabase user...");
+  console.log("      Generated scan fixtures will be removed and checked; temporary anonymous auth accounts cannot be removed with public credentials.");
   const firstUser = await signInAnonymously(ownerClient, config);
   userId = firstUser.id;
+  if (inspectionMode) {
+    console.log("      Checking inspection schema before any scan or image writes...");
+    await assertInspectionSchema(ownerClient);
+  }
   imagePath = `${userId}/${testId}.jpg`;
   secondImagePath = `${userId}/${secondTestId}.jpg`;
 
@@ -125,6 +132,11 @@ try {
   await assertCrossUserCannotRead(otherClient, "scan_model_runs", "scan_local_id", secondTestId);
   await assertCrossUserCannotRead(otherClient, "sync_events", "scan_local_id", secondTestId);
 
+  if (inspectionMode) {
+    console.log("      Verifying inspection save/read/update, retained evidence and cross-account write denial...");
+    await verifyInspectionRoundTrip(ownerClient, otherClient, userId, testId);
+  }
+
   console.log("[7/9] Downloading the private images as the owner...");
   await assertNoError(await ownerClient.storage.from(SCAN_BUCKET).download(imagePath), "Owner storage download failed");
   await assertNoError(await ownerClient.storage.from(SCAN_BUCKET).download(secondImagePath), "Second owner storage download failed");
@@ -134,19 +146,19 @@ try {
   assertPrivateStorageDenied(await otherClient.storage.from(SCAN_BUCKET).download(secondImagePath));
 
   console.log("[9/9] Confirmed owner access and cross-account isolation for rows and images.");
-  console.log("Phase 8 cloud sync verification passed.");
 } catch (error) {
   failureMessage = error instanceof Error ? error.message : "Unknown verification error.";
 } finally {
-  if (ownerClient && userId && imagePath) {
-    await cleanupTestData(ownerClient, userId, testId, imagePath);
-  }
-  if (ownerClient && userId && secondImagePath) {
-    await cleanupTestData(ownerClient, userId, secondTestId, secondImagePath);
+  for (const [id, path] of [[testId, imagePath], [secondTestId, secondImagePath]]) {
+    if (!ownerClient || !userId || !path) continue;
+    try { await cleanupCloudFixture(ownerClient, userId, id, path); }
+    catch (error) { failureMessage = [failureMessage, error instanceof Error ? error.message : "Unknown fixture cleanup failure."].filter(Boolean).join("\n"); }
   }
 
   if (failureMessage) {
     fail(failureMessage);
+  } else {
+    console.log(inspectionMode ? "Inspection cloud verification passed; generated scan/image cleanup verified." : "Phase 8 cloud sync verification passed; generated scan/image cleanup verified.");
   }
 }
 
@@ -457,12 +469,6 @@ function formatSupabaseError(error) {
   }
 
   return `${message}${code}`;
-}
-
-async function cleanupTestData(supabase, userId, testId, imagePath) {
-  await supabase.from("sync_events").delete().eq("user_id", userId).eq("scan_local_id", testId);
-  await supabase.from("scan_lookups").delete().eq("user_id", userId).eq("local_id", testId);
-  await supabase.storage.from(SCAN_BUCKET).remove([imagePath]);
 }
 
 function loadLocalEnv(filename) {

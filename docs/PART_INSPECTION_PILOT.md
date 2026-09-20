@@ -32,6 +32,16 @@ It does not add 3D measurement, identify hidden failures, certify a part, licens
 a parts catalog, or establish model accuracy. Automated cloud tests use mocks;
 live database/RLS verification is still required after migration deployment.
 
+## Inspection-cloud release check
+
+Run `npm run verify:supabase -- --inspection` after deploying the existing inspection migration through the normal process. This command does not deploy SQL or change policies. It uses public credentials and isolated anonymous QA accounts, leaving browser sessions untouched.
+
+The command first authenticates and probes `inspection_json` before writing scan/image fixtures. Missing schema is an explicit blocker with a nonzero exit. Once available, it writes and updates synthetic inspection evidence, reads it back, checks that AI results, notes, chat, feedback and image metadata are unchanged, then proves a second account cannot read or alter the fixture. Ambiguous network/auth errors do not count as successful isolation.
+
+Both this mode and the ordinary `npm run verify:supabase` now check cleanup of generated rows and images before reporting final success. Cleanup targets only the generated fixture IDs and paths. Temporary anonymous auth accounts remain because public credentials cannot delete auth users. Requests do not yet have a verifier-wide time limit; stop a stalled run and inspect its generated fixtures before treating it as completed. This gate does not establish shop-member sharing permissions, inspector identity certification, concurrent-write resolution, or broader model accuracy.
+
+September 20 evidence: 27 helper tests passed. The live inspection mode exited 1 at the missing-column preflight before fixture writes; inspection cloud save/read remains unverified. The ordinary cloud verifier passed with checked cleanup. Local evidence is in `artifacts/qa/inspection-cloud-2026-09-20/inspection-preflight.txt` and `baseline-checked-cleanup.txt`.
+
 ## Next pilot experiment
 
 Recruit one parts business and select one part category together. Have staff
