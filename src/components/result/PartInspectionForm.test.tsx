@@ -1,8 +1,8 @@
 import { setActiveAccount } from "../../lib/accountScope";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PartInspectionForm } from "./PartInspectionForm";
-import { createLookup, getLookup } from "../../services/storage";
+import { createLookup, deleteLookup, getLookup, saveLookupInspection } from "../../services/storage";
 import * as cloud from "../../services/cloudSync";
 
 beforeEach(() => {
@@ -10,6 +10,35 @@ beforeEach(() => {
   vi.spyOn(cloud, "getCloudSyncStatus").mockReturnValue({ configured: false, message: "Local only" });
 });
 afterEach(() => vi.restoreAllMocks());
+
+it.each(["updated", "removed", "updated-rejected", "removed-rejected", "unchanged"])("reports delayed inspection sync against current device evidence: %s", async (mode) => {
+  const user = userEvent.setup();
+  vi.mocked(cloud.getCloudSyncStatus).mockReturnValue({ configured: true, message: "Ready" });
+  let finish!: (value: Awaited<ReturnType<typeof cloud.syncLookupToCloud>>) => void;
+  let fail!: (error: Error) => void;
+  vi.spyOn(cloud, "syncLookupToCloud").mockReturnValue(new Promise((resolve, reject) => { finish = resolve; fail = reject; }));
+  const { lookup } = setup();
+  await user.click(screen.getByText("Human inspection — optional"));
+  await user.type(screen.getByLabelText("Inspector name (self-reported)"), "Pat");
+  await user.click(screen.getByRole("button", { name: "Save inspection" }));
+  expect(screen.getByRole("button", { name: "Syncing inspection…" })).toBeDisabled();
+  if (mode.startsWith("updated")) {
+    expect(saveLookupInspection(lookup.id, { ...getLookup(lookup.id)!.inspection!, inspectorName: "Alex" }).ok).toBe(true);
+  } else if (mode.startsWith("removed")) {
+    expect(deleteLookup(lookup.id).ok).toBe(true);
+  }
+  await act(async () => {
+    if (mode.endsWith("rejected")) fail(new Error("Network interrupted"));
+    else finish({ ok: true, message: "Synced" });
+  });
+  if (mode === "unchanged") {
+    expect(screen.getByRole("status")).toHaveTextContent("Inspection saved on this device and synced to the cloud.");
+  } else {
+    expect(screen.getByRole("status")).toHaveTextContent("Device inspection changed or was removed while syncing. Reopen the scan to review its current save status.");
+    expect(getLookup(lookup.id)?.inspection?.inspectorName).toBe(mode.startsWith("updated") ? "Alex" : undefined);
+  }
+  expect(screen.getByRole("button", { name: "Save inspection" })).toBeEnabled();
+});
 
 function setup() {
   const lookup = createLookup({ frame: { imageBase64: "data:image/jpeg;base64,test", capturedAt: "2026-09-20T12:00:00Z" } }).value;

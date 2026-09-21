@@ -2,7 +2,7 @@ import { getAccountScope, isAccountScopeCurrent } from "../../lib/accountScope";
 import { useState } from "react";
 import { emptyPartInspection, inspectionValidationError } from "../../lib/partInspection";
 import { getCloudSyncStatus, syncLookupToCloud } from "../../services/cloudSync";
-import { saveLookupInspection } from "../../services/storage";
+import { getLookup, saveLookupInspection } from "../../services/storage";
 import type { Lookup, PartInspectionDraft } from "../../types";
 
 export function PartInspectionForm({ lookup, onSaved }: { lookup: Lookup; onSaved: (lookup: Lookup) => void }) {
@@ -35,7 +35,14 @@ export function PartInspectionForm({ lookup, onSaved }: { lookup: Lookup; onSave
     } catch {
       if (!isAccountScopeCurrent(scope)) return;
       setMessage("Saved on this device. Cloud sync failed; try saving again when connected.");
-    } finally { if (isAccountScopeCurrent(scope)) setSaving(false); }
+    } finally {
+      if (isAccountScopeCurrent(scope)) {
+        if (JSON.stringify(getLookup(lookup.id)?.inspection) !== JSON.stringify(result.value.inspection)) {
+          setMessage("Device inspection changed or was removed while syncing. Reopen the scan to review its current save status.");
+        }
+        setSaving(false);
+      }
+    }
   }
   return (
     <details className="rounded-[22px] border border-neutral-200 bg-white p-4 shadow-sm">
