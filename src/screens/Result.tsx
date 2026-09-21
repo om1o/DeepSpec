@@ -2,7 +2,6 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import { getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
 import Button from "../components/ui/Button";
-import HistoryDockButton from "../components/ui/HistoryDockButton";
 import { IsolatedPartView } from "../components/result/IsolatedPartView";
 import { PartInspectionForm } from "../components/result/PartInspectionForm";
 import { IntakeDraft } from "../components/result/IntakeDraft";
@@ -151,7 +150,7 @@ export default function Result() {
   }
 
   return (
-    <main className="min-h-dvh bg-[var(--ds-bg)] text-slate-950">
+    <main className="ds-result-page ds-workbench min-h-dvh bg-[var(--ds-bg)] text-[var(--ds-fg-1)]">
       <div className="mx-auto grid min-h-dvh w-full max-w-6xl lg:grid-cols-[minmax(0,1fr)_430px] lg:p-4">
         <section className="relative min-h-[48dvh] overflow-hidden bg-[#020617] text-white lg:sticky lg:top-4 lg:min-h-[calc(100dvh-32px)] lg:rounded-[30px]">
           {/* On desktop the answer card is pulled 40px over this panel (lg:-ml-10), so the photo,
@@ -178,13 +177,16 @@ export default function Result() {
           )}
           <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(2,6,23,0.58),rgba(2,6,23,0.02)_38%,rgba(2,6,23,0.76))]" />
           <header className="absolute left-0 right-0 top-0 z-10 lg:right-10 flex items-center justify-between px-4 pt-[max(18px,env(safe-area-inset-top))]">
-            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-11 w-32 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-white/30" />
-            <Link to="/scan" className="rounded-full bg-white/90 px-4 py-2 text-sm font-bold text-slate-800 shadow-sm ring-1 ring-white/40 backdrop-blur-md">
-              Back
-            </Link>
+            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-11 w-32 rounded-xl bg-[var(--ds-elevated)] object-contain p-1 shadow-sm ring-1 ring-white/30" />
+            <nav className="flex gap-2" aria-label="Scan navigation">
+              <Link to="/history" aria-label="Open saved scan history" className="ds-workbench-back">Saved scans</Link>
+              <Link to="/scan" className="ds-workbench-back">
+                Back
+              </Link>
+            </nav>
           </header>
           <div className="absolute bottom-8 left-0 right-0 z-10 px-4 lg:right-10">
-            <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Scanned photo</p>
+            <p className="ds-eyebrow">SCANNED PHOTO · REVIEW THE EVIDENCE</p>
             <h1 className="mt-2 truncate text-3xl font-extrabold tracking-tight text-white">
               {simpleSummary?.title ?? "Captured frame"}
             </h1>
@@ -196,7 +198,7 @@ export default function Result() {
           </div>
         </section>
 
-        <div className="relative z-10 -mt-7 rounded-t-[30px] bg-[var(--ds-page)] px-4 pb-8 pt-4 shadow-[0_-18px_48px_rgba(2,6,23,0.18)] lg:my-8 lg:-ml-10 lg:max-h-[calc(100dvh-64px)] lg:overflow-y-auto lg:rounded-[30px] lg:border lg:border-white/60 lg:shadow-[0_24px_70px_rgba(2,6,23,0.28)]">
+        <div className="ds-result-sheet relative z-10 -mt-7 rounded-t-[30px] bg-[var(--ds-page)] px-4 pb-8 pt-4 shadow-[0_-18px_48px_rgba(2,6,23,0.18)] lg:my-8 lg:-ml-10 lg:max-h-[calc(100dvh-64px)] lg:overflow-y-auto lg:rounded-[30px] lg:border lg:border-[var(--ds-border)] lg:shadow-[0_24px_70px_rgba(2,6,23,0.28)]">
           <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-300 lg:hidden" />
           <div className="space-y-3">
           {storageWarning ? <StorageWarning message={storageWarning} /> : null}
@@ -247,23 +249,22 @@ export default function Result() {
         </div>
       </div>
       <ScanDebugOverlay info={scanState?.debug} />
-      <HistoryDockButton />
     </main>
   );
 }
 
 function ShopJobBanner({ job }: { job: ShopJobRecord }) {
   return (
-    <section className="rounded-[8px] border border-[var(--ds-accent-line)] bg-white p-4 shadow-sm">
+    <section className="rounded-[8px] border border-[var(--ds-accent-line)] bg-[var(--ds-elevated)] p-4 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Saved to shop job</p>
+          <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[#a7cbd4]">Saved to shop job</p>
           <h2 className="mt-1 truncate text-lg font-black tracking-tight">{job.title}</h2>
-          <p className="mt-1 text-sm font-semibold text-slate-500">
+          <p className="mt-1 text-sm font-semibold text-[var(--ds-fg-3)]">
             {job.year} {job.make} {job.model} / {job.technicianName}
           </p>
         </div>
-        <Link to={`/shop/jobs/${encodeURIComponent(job.id)}`} className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-900">
+        <Link to={`/shop/jobs/${encodeURIComponent(job.id)}`} className="rounded-full border border-[var(--ds-border)] bg-[var(--ds-elevated)] px-4 py-2 text-sm font-bold text-[var(--ds-fg-1)]">
           Open job
         </Link>
       </div>
@@ -275,7 +276,7 @@ function StorageWarning({ message }: { message: string }) {
   return (
     <section className="rounded-[24px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-5">
       <p className="text-sm font-bold text-[var(--ds-warn-ink)]">Not saved locally</p>
-      <p className="mt-2 text-sm leading-6 text-neutral-700">{message}</p>
+      <p className="mt-2 text-sm leading-6 text-[var(--ds-fg-2)]">{message}</p>
     </section>
   );
 }
@@ -294,19 +295,19 @@ function TrustControl({
   const flagged = lookup.rating === "down";
 
   return (
-    <section className="rounded-[22px] border border-neutral-200 bg-white p-4 shadow-sm" data-testid="trust-control">
-      <p className="text-sm font-extrabold text-neutral-900">Do you trust this scan?</p>
+    <section className="rounded-[22px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 shadow-sm" data-testid="trust-control">
+      <p className="text-sm font-extrabold text-[var(--ds-fg-1)]">Do you trust this scan?</p>
       <div className="mt-3 flex flex-wrap gap-2">
         <button
           type="button"
-          className={`rounded-full px-4 py-2 text-sm font-extrabold ${trusted ? "bg-[var(--ds-ok)] text-white" : "bg-neutral-100 text-neutral-900"}`}
+          className={`rounded-full px-4 py-2 text-sm font-extrabold ${trusted ? "bg-[var(--ds-ok)] text-white" : "bg-[var(--ds-surface)] text-[var(--ds-fg-1)]"}`}
           onClick={() => { onRating("up"); setShowWhy(false); }}
         >
           Yes
         </button>
         <button
           type="button"
-          className={`rounded-full px-4 py-2 text-sm font-extrabold ${flagged || showWhy ? "bg-[var(--ds-danger)] text-white" : "bg-neutral-100 text-neutral-900"}`}
+          className={`rounded-full px-4 py-2 text-sm font-extrabold ${flagged || showWhy ? "bg-[var(--ds-danger)] text-white" : "bg-[var(--ds-surface)] text-[var(--ds-fg-1)]"}`}
           onClick={() => { onRating("down"); setShowWhy(true); }}
         >
           Why or why not
@@ -314,10 +315,10 @@ function TrustControl({
       </div>
       {showWhy || flagged ? (
         <label className="mt-3 block">
-          <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Tell us what&apos;s off (or right)</span>
+          <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-[var(--ds-fg-3)]">Tell us what&apos;s off (or right)</span>
           <textarea
             aria-label="Why or why not"
-            className="mt-2 min-h-20 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[var(--ds-accent)]"
+            className="mt-2 min-h-20 w-full resize-none rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-3 text-sm leading-6 text-[var(--ds-fg-1)] outline-none placeholder:text-[var(--ds-fg-3)] focus:border-[var(--ds-accent)]"
             maxLength={240}
             onChange={(event) => onCorrectionChange(event.target.value)}
             placeholder="Example: it's actually a coolant cap, not a brake fluid cap"
@@ -325,8 +326,8 @@ function TrustControl({
           />
         </label>
       ) : null}
-      <p className="mt-3 text-xs font-semibold leading-5 text-neutral-400">
-        Stays private on this device. Good scans help train Deep Spec once we go live.
+      <p className="mt-3 text-xs font-semibold leading-5 text-[var(--ds-fg-3)]">
+        Feedback is saved with this scan. Using it for model training requires separate permission.
       </p>
     </section>
   );
@@ -362,14 +363,14 @@ function ReportActions({ lookup }: { lookup: Lookup }) {
   return (
     <section data-testid="report-actions">
       <div className="grid grid-cols-2 gap-2">
-        <Button className="!bg-neutral-100 !text-neutral-900 shadow-none" onClick={handleShare}>
+        <Button className="!bg-[var(--ds-surface)] !text-[var(--ds-fg-1)] shadow-none" onClick={handleShare}>
           Share
         </Button>
-        <Button className="!bg-neutral-100 !text-neutral-900 shadow-none" onClick={handleDownload}>
+        <Button className="!bg-[var(--ds-surface)] !text-[var(--ds-fg-1)] shadow-none" onClick={handleDownload}>
           Export
         </Button>
       </div>
-      {status ? <p className="mt-2 text-xs font-semibold text-[var(--ds-accent)]">{status}</p> : null}
+      {status ? <p className="mt-2 text-xs font-semibold text-[#a7cbd4]">{status}</p> : null}
     </section>
   );
 }
@@ -394,10 +395,10 @@ function AnalysisResult({
 
   return (
     <>
-      <section className="sticky top-2 z-10 rounded-[24px] border border-neutral-200 bg-white p-4 shadow-[0_12px_34px_rgba(15,23,42,0.08)]">
+      <section className="sticky top-2 z-10 rounded-[24px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 shadow-[0_12px_34px_rgba(15,23,42,0.08)]">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">{summary.eyebrow}</p>
+            <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[#a7cbd4]">{summary.eyebrow}</p>
             <h2 className="mt-1 text-2xl font-extrabold tracking-tight">
               {summary.title}
             </h2>
@@ -408,17 +409,17 @@ function AnalysisResult({
           {isOnDeviceResult(result) || shouldShowBackupModelNotice(result) ? <MiniPill label="Estimate" /> : null}
         </div>
         {isOnDeviceResult(result) ? (
-          <p className="mt-3 rounded-2xl border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-3 py-2 text-xs font-semibold leading-5 text-neutral-700">
+          <p className="mt-3 rounded-2xl border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-3 py-2 text-xs font-semibold leading-5 text-[var(--ds-fg-2)]">
             Offline estimate from the on-device model. Reconnect for a full Deep Spec analysis.
           </p>
         ) : shouldShowBackupModelNotice(result) ? (
-          <p className="mt-3 rounded-2xl border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-3 py-2 text-xs font-semibold leading-5 text-neutral-700">
+          <p className="mt-3 rounded-2xl border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-3 py-2 text-xs font-semibold leading-5 text-[var(--ds-fg-2)]">
             Ran on the backup model while the main one was busy. Double-check before relying on it.
           </p>
         ) : null}
         <IssueLine result={result} variant="result" />
-        <p className="mt-3 text-sm leading-6 text-neutral-600">{getAnswerBody(result, summary)}</p>
-        {capturedAt ? <p className="mt-3 text-xs font-semibold text-neutral-400">Captured {capturedAt}</p> : null}
+        <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-3)]">{getAnswerBody(result, summary)}</p>
+        {capturedAt ? <p className="mt-3 text-xs font-semibold text-[var(--ds-fg-3)]">Captured {capturedAt}</p> : null}
         <QuickActions canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} onSaveOnly={onSaveOnly} />
         <SceneCategoryList result={result} variant="result" />
         <ResultDetailSections result={result} variant="result" />
@@ -427,7 +428,7 @@ function AnalysisResult({
       {showSafetyWarning ? (
         <section className="rounded-[22px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-4">
           <p className="text-sm font-extrabold text-[var(--ds-warn-ink)]">Professional check needed</p>
-          <p className="mt-2 text-sm leading-6 text-neutral-700">
+          <p className="mt-2 text-sm leading-6 text-[var(--ds-fg-2)]">
             Verify before driving or repairing. The scan reads visible clues; this category affects safety.
           </p>
         </section>
@@ -447,7 +448,7 @@ function isOnDeviceResult(result: IdentificationResult) {
 
 function MiniPill({ label }: { label: string }) {
   return (
-    <span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-xs font-extrabold capitalize text-neutral-600">
+    <span className="rounded-full border border-[var(--ds-border)] bg-[var(--ds-surface)] px-3 py-1 text-xs font-extrabold capitalize text-[var(--ds-fg-3)]">
       {label.replaceAll("_", " ")}
     </span>
   );
@@ -481,9 +482,9 @@ function QuickActions({
 
   return (
     <div className="mt-4 grid grid-cols-2 gap-2">
-      {askAction ?? <span aria-hidden className="rounded-full bg-neutral-100 px-4 py-3" />}
+      {askAction ?? <span aria-hidden className="rounded-full bg-[var(--ds-surface)] px-4 py-3" />}
       <button
-        className="rounded-full bg-neutral-100 px-4 py-3 text-center text-sm font-extrabold text-neutral-900 disabled:text-neutral-400"
+        className="rounded-full bg-[var(--ds-surface)] px-4 py-3 text-center text-sm font-extrabold text-[var(--ds-fg-1)] disabled:text-[var(--ds-fg-3)]"
         disabled={Boolean(lookupId) || !canSaveForChat}
         onClick={onSaveOnly}
         type="button"
@@ -496,7 +497,7 @@ function QuickActions({
 
 function SourceFinePrint({ urls }: { urls: string[] }) {
   return (
-    <section className="px-1 py-2 text-[11px] leading-5 text-neutral-400">
+    <section className="px-1 py-2 text-[11px] leading-5 text-[var(--ds-fg-3)]">
       <p className="font-extrabold uppercase tracking-[0.14em]">Dataset sources</p>
       <div className="mt-1 space-y-1">
         {urls.map((url, index) => (
@@ -603,13 +604,13 @@ function AnalysisError({
         {errorDetails.category === "provider_unavailable" ? "Provider unavailable" : "Identification needs another pass"}
       </p>
       <h2 className="mt-2 text-xl font-extrabold tracking-tight">{errorDetails.title}</h2>
-      <p className="mt-3 text-sm leading-6 text-neutral-700">{message}</p>
-      <p className="mt-3 text-sm leading-6 text-neutral-700">{errorDetails.description}</p>
-      {capturedAt ? <p className="mt-3 text-xs font-semibold text-neutral-400">Captured {capturedAt}</p> : null}
+      <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-2)]">{message}</p>
+      <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-2)]">{errorDetails.description}</p>
+      {capturedAt ? <p className="mt-3 text-xs font-semibold text-[var(--ds-fg-3)]">Captured {capturedAt}</p> : null}
 
       {frame ? (
-        <div className="mt-4 border-t border-neutral-200 pt-4">
-          <p className="text-xs font-semibold text-neutral-500">
+        <div className="mt-4 border-t border-[var(--ds-border)] pt-4">
+          <p className="text-xs font-semibold text-[var(--ds-fg-3)]">
             {isOnline ? "Connection is active." : "Offline. Reconnect to retry."}
           </p>
           <Button
@@ -630,13 +631,13 @@ function AnalysisError({
 
 function NotAnalyzed({ capturedAt }: { capturedAt: string | null }) {
   return (
-    <section className="rounded-[22px] border border-neutral-200 bg-white p-4">
-      <p className="text-sm font-bold text-[var(--ds-accent)]">Not analyzed yet</p>
+    <section className="rounded-[22px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4">
+      <p className="text-sm font-bold text-[#a7cbd4]">Not analyzed yet</p>
       <h2 className="mt-2 text-xl font-extrabold tracking-tight">Scan again to identify this</h2>
-      <p className="mt-3 text-sm leading-6 text-neutral-500">
+      <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-3)]">
         The frame is here, but no result is attached yet.
       </p>
-      {capturedAt ? <p className="mt-3 text-xs font-semibold text-neutral-400">Captured {capturedAt}</p> : null}
+      {capturedAt ? <p className="mt-3 text-xs font-semibold text-[var(--ds-fg-3)]">Captured {capturedAt}</p> : null}
     </section>
   );
 }

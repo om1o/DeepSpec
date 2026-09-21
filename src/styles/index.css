@@ -230,6 +230,20 @@ button, a {
 .ds-empty-symbol { display: grid; place-items: center; width: 68px; height: 68px; margin: 0 auto 24px; border: 1px solid #8ab6c04d; border-radius: 20px; background: #9fcad40a; color: #9fcad4; }
 .ds-history-empty > p { color: #b2c5d5; }
 .ds-history-empty > a { display: inline-flex; justify-content: center; align-items: center; margin-top: 24px; min-height: 48px; padding: 12px 24px; border-radius: 12px; background: #9fcad4; color: #071520; font-weight: 700; font-size: 14px; }
+.ds-chat-page { background: radial-gradient(ellipse at 10% 0, #172c3e, transparent 640px), var(--ds-bg); }
+.ds-workbench { --ds-accent: #466b8a; --ds-warn-ink: #e0b376; }
+.ds-workbench :is(button, a, input, textarea, select, summary):focus-visible { outline: 2px solid #9fcad4; outline-offset: 4px; }
+.ds-workbench-back { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 10px 14px; border: 1px solid #91adc340; border-radius: 12px; background: #0a172bea; color: #d4e4f0; font-size: 13px; font-weight: 600; }
+.ds-workbench-back:hover { background: #203a50; }
+.ds-result-sheet { scrollbar-width: thin; scrollbar-color: #426178 #07101e; }
+.ds-result-page [data-testid="scan-debug-overlay"] { top: calc(max(18px, env(safe-area-inset-top)) + 72px); }
+.ds-result-sheet > div > :is(section, details) { border-radius: 18px; }
+.ds-workbench :is(input, textarea, select) { background-color: #07121d; border-color: var(--ds-border-em); color: var(--ds-fg-1); }
+.ds-workbench textarea { font-size: 16px; }
+.ds-workbench button[type="submit"] { background: #9fcad4; color: #071520; border-radius: 12px; }
+.ds-chat-page [role="log"] article { overflow-wrap: anywhere; }
+.ds-chat-page [role="log"] article.ml-auto { background: #24465a; border: 1px solid #91adc340; border-bottom-right-radius: 6px; }
+.ds-chat-page [role="log"] article.mr-auto { border-bottom-left-radius: 6px; }
 @media (min-width: 1024px) { .ds-auth-story { display: block; } }
 @media (max-width: 420px) { .ds-auth-card { padding: 24px 18px; } .ds-auth-card > div:first-child { flex-wrap: wrap; gap: 12px; } }
 

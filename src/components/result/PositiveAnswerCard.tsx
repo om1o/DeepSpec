@@ -25,13 +25,13 @@ const THEME: Record<Variant, Theme> = {
     chipMuted: "text-white/55",
   },
   result: {
-    issue: "text-neutral-900",
-    sectionTitle: "text-neutral-400",
-    fact: "text-neutral-700",
-    divider: "border-neutral-200",
-    marker: "text-[var(--ds-accent)]",
-    chip: "border-neutral-200 bg-neutral-50 text-neutral-700",
-    chipMuted: "text-neutral-400",
+    issue: "text-[var(--ds-fg-1)]",
+    sectionTitle: "text-[var(--ds-fg-3)]",
+    fact: "text-[var(--ds-fg-2)]",
+    divider: "border-[var(--ds-border)]",
+    marker: "text-[#a7cbd4]",
+    chip: "border-[var(--ds-border)] bg-[var(--ds-surface)] text-[var(--ds-fg-2)]",
+    chipMuted: "text-[var(--ds-fg-3)]",
   },
 };
 
