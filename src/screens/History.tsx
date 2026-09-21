@@ -110,6 +110,14 @@ export default function History() {
   const [reviewFilter, setReviewFilter] = useState<TrainingStatus | "error" | "all">("all");
   const [ratingFilter, setRatingFilter] = useState<Exclude<Rating, null> | "unrated" | "all">("all");
   const [unresolvedOnly, setUnresolvedOnly] = useState(false);
+  const hasActiveFilters = Boolean(query || categoryFilter !== "all" || reviewFilter !== "all" || ratingFilter !== "all" || unresolvedOnly);
+  function clearFilters() {
+    setQuery("");
+    setCategoryFilter("all");
+    setReviewFilter("all");
+    setRatingFilter("all");
+    setUnresolvedOnly(false);
+  }
   const filteredLookups = useMemo(
     () =>
       lookups.filter(
@@ -194,6 +202,7 @@ export default function History() {
                 <input type="checkbox" checked={unresolvedOnly} onChange={(event) => setUnresolvedOnly(event.target.checked)} />
                 Unresolved identities only
               </label>
+              {hasActiveFilters ? <button type="button" onClick={clearFilters} className="shrink-0 rounded-full px-3 py-2 text-xs font-bold text-[var(--ds-accent)] underline">Clear filters</button> : null}
             </div>
             <div className="mt-3 flex items-center justify-between gap-3">
               <p className="text-xs font-bold text-neutral-500">
@@ -476,6 +485,8 @@ function matchesQuery(lookup: Lookup, query: string) {
       lookup.result?.partName,
       lookup.trainingLabel,
       lookup.correction,
+      lookup.inspection?.confirmedPartName,
+      lookup.inspection?.partNumber,
       lookup.notes,
       lookup.scanCategory,
       lookup.jobId,

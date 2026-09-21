@@ -219,7 +219,8 @@ describe("History", () => {
   });
 
   it("filters saved scans by search, category, review status, and rating", async () => {
-    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup, bodyLookup]));
+    const inspected = { ...lookup, inspection: { ...emptyPartInspection, confirmedPartName: "Generator assembly", partNumber: "ALT-1042", identityEvidence: "Stamped label", inspectorName: "Pat", inspectedAt: "2026-09-20T12:00:00Z" } };
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([inspected, bodyLookup]));
 
     renderHistory();
 
@@ -232,7 +233,30 @@ describe("History", () => {
     expect(screen.getByText("Alternator")).toBeInTheDocument();
     expect(screen.queryByText("Rear bumper")).not.toBeInTheDocument();
 
+    await userEvent.type(screen.getByLabelText("Search saved scans"), "no such part");
+    await userEvent.selectOptions(screen.getByLabelText("Filter category"), "body");
+    await userEvent.selectOptions(screen.getByLabelText("Filter review status"), "user_corrected");
+    await userEvent.selectOptions(screen.getByLabelText("Filter rating"), "down");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Unresolved identities only" }));
+    expect(screen.getByText("No scans match")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getByText("2/2 saved scans")).toBeInTheDocument();
+    expect(screen.getByLabelText("Search saved scans")).toHaveValue("");
+    expect(screen.getByLabelText("Filter category")).toHaveValue("all");
+    expect(screen.getByLabelText("Filter review status")).toHaveValue("all");
+    expect(screen.getByLabelText("Filter rating")).toHaveValue("all");
+    expect(screen.getByRole("checkbox", { name: "Unresolved identities only" })).not.toBeChecked();
+    expect(screen.queryByRole("button", { name: "Clear filters" })).not.toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Search saved scans"), "alt-1042");
+    expect(screen.getByText("Alternator")).toBeInTheDocument();
+    expect(screen.queryByText("Rear bumper")).not.toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText("Search saved scans"));
+    await userEvent.type(screen.getByLabelText("Search saved scans"), "generator assembly");
+    expect(screen.getByText("Alternator")).toBeInTheDocument();
+    expect(screen.queryByText("Rear bumper")).not.toBeInTheDocument();
+
     await userEvent.selectOptions(screen.getByLabelText("Filter category"), "all");
+    await userEvent.clear(screen.getByLabelText("Search saved scans"));
     await userEvent.selectOptions(screen.getByLabelText("Filter review status"), "user_corrected");
     expect(screen.getByText("Rear bumper")).toBeInTheDocument();
     expect(screen.queryByText("Alternator")).not.toBeInTheDocument();
