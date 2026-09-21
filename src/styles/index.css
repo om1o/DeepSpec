@@ -184,6 +184,55 @@ button, a {
   touch-action: manipulation;
 }
 
+/* Workbench entry screens. Keep camera and result presentation independent. */
+.ds-auth-page {
+  background: radial-gradient(ellipse at 75% 20%, #14283b 0, transparent 52%), #060d17;
+}
+.ds-auth-story {
+  display: none;
+  position: relative;
+  min-height: 760px;
+  overflow: hidden;
+  border: 1px solid var(--ds-border);
+  border-radius: 24px;
+  background: #07101e;
+}
+.ds-auth-art { position: absolute; top: 110px; width: 100%; height: calc(100% - 110px); object-fit: cover; }
+.ds-auth-story-top { position: absolute; inset: 0 0 auto; padding: 36px; background: linear-gradient(#07101ef2, #07101e00); }
+.ds-eyebrow { color: #a7cbd4; font-size: 10px; font-weight: 700; letter-spacing: .17em; }
+.ds-auth-story h2 { margin-top: 20px; font-size: clamp(30px, 3.2vw, 44px); font-weight: 600; line-height: 1.13; letter-spacing: -.045em; }
+.ds-auth-story h2 span { color: #a7cbd4; }
+.ds-auth-story-top > p { margin-top: 16px; font-size: 14px; line-height: 1.7; color: #bcccd7; }
+.ds-auth-story-bottom { position: absolute; inset: auto 0 0; padding: 28px 36px; background: linear-gradient(transparent, #07101e 48%); }
+.ds-art-caption { display: block; margin-bottom: 24px; color: #b2c5d5; font-size: 10px; }
+.ds-workflow { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid #ffffff26; padding-top: 20px; }
+.ds-workflow-number { color: #8daaba; font-family: var(--font-data); font-size: 10px; margin-right: 10px; }
+.ds-workflow-label { font-size: 13px; font-weight: 600; }
+.ds-auth-card { border: 1px solid #ffffff1c; border-radius: 24px; background: #101e2be6; box-shadow: 0 24px 80px #00000030; }
+.ds-auth-card input { border-radius: 12px; background-color: #07121d; }
+.ds-auth-card button { border-radius: 12px; }
+.ds-auth-card button[type="submit"] { background: #9fcad4; color: #071520; box-shadow: 0 8px 24px #00000020; }
+.ds-auth-card button[type="submit"]:hover:not(:disabled) { background: #b9dce3; }
+.ds-auth-card :is(button, a, input):focus-visible,
+.ds-history-page :is(button, a, input, select):focus-visible { outline: 2px solid #9fcad4; outline-offset: 4px; }
+.ds-auth-footnote { margin-top: 20px; padding-top: 16px; border-top: 1px solid #ffffff14; font-size: 11px; line-height: 1.7; color: #a4b7c8; }
+.ds-history-page { background: radial-gradient(ellipse at 0 0, #172c3e, transparent 650px), var(--ds-bg); }
+.ds-history-header { padding: 12px 0 28px; border-bottom: 1px solid var(--ds-border); }
+.ds-history-nav { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.ds-history-nav > :is(a, button) { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 10px 16px; border: 1px solid var(--ds-border); border-radius: 12px; color: #c5d5e2; font-size: 13px; font-weight: 600; background: #0c1b2b; }
+.ds-history-nav > a:last-child { margin-left: auto; border-color: #9fcad4; background: #9fcad4; color: #071520; }
+.ds-history-nav > :is(a, button):hover { filter: brightness(1.15); }
+.ds-quality-details { margin-top: 20px; }
+.ds-quality-details > summary { cursor: pointer; padding: 14px 16px; border: 1px solid var(--ds-border); border-radius: 12px; color: #d4e4f0; background: #0e1d2c; font-size: 13px; font-weight: 600; }
+.ds-quality-details > summary span { float: right; color: #a4b7c8; font-weight: 400; }
+.ds-quality-details > summary:focus-visible { outline: 2px solid #9fcad4; outline-offset: 4px; }
+.ds-history-empty { margin-top: 28px; border: 1px solid var(--ds-border); border-radius: 24px; background: #0e1d2c; padding: 40px 24px; text-align: center; color: #eef5fb; }
+.ds-empty-symbol { display: grid; place-items: center; width: 68px; height: 68px; margin: 0 auto 24px; border: 1px solid #8ab6c04d; border-radius: 20px; background: #9fcad40a; color: #9fcad4; }
+.ds-history-empty > p { color: #b2c5d5; }
+.ds-history-empty > a { display: inline-flex; justify-content: center; align-items: center; margin-top: 24px; min-height: 48px; padding: 12px 24px; border-radius: 12px; background: #9fcad4; color: #071520; font-weight: 700; font-size: 14px; }
+@media (min-width: 1024px) { .ds-auth-story { display: block; } }
+@media (max-width: 420px) { .ds-auth-card { padding: 24px 18px; } .ds-auth-card > div:first-child { flex-wrap: wrap; gap: 12px; } }
+
 /* ============================================================================
    Scanner – bracket corners
    ========================================================================= */

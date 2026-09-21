@@ -131,44 +131,49 @@ export default function History() {
   );
 
   return (
-    <main className="min-h-dvh bg-[var(--ds-page)] px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-slate-950">
-      <div className="mx-auto w-full max-w-md">
-        <header className="flex items-center justify-between gap-3">
+    <main className="ds-history-page min-h-dvh px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-[var(--ds-fg-1)]">
+      <div className="mx-auto w-full max-w-2xl">
+        <header className="ds-history-header">
           <div className="min-w-0">
-            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-12 w-36 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-[var(--ds-accent-line)]" />
-            <h1 className="mt-2 text-2xl font-extrabold tracking-tight text-[var(--ds-fg-1)]">Saved scans</h1>
+            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-12 w-36 rounded-xl bg-[var(--ds-elevated)] object-contain p-1 shadow-sm ring-1 ring-[var(--ds-accent-line)]" />
+            <p className="ds-eyebrow mt-7">YOUR PARTS LIBRARY</p>
+            <h1 className="mt-2 text-3xl font-bold tracking-tight text-[var(--ds-fg-1)]">Saved scans</h1>
+            <p className="mt-2 text-sm leading-6 text-[var(--ds-fg-3)]">A place for every capture, correction, and inspection.</p>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <nav className="ds-history-nav" aria-label="Saved scans navigation">
             <button
               type="button"
               onClick={handleSignOut}
               disabled={isSigningOut}
-              className="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200 disabled:opacity-60"
+              className="rounded-full bg-[var(--ds-elevated)] px-4 py-2 text-sm font-bold text-[var(--ds-fg-2)] shadow-sm ring-1 ring-[var(--ds-border)] disabled:opacity-60"
             >
               {isSigningOut ? "Signing out..." : "Sign out"}
             </button>
-            <Link to="/early-access" className="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200">
+            <Link to="/early-access" className="rounded-full bg-[var(--ds-elevated)] px-4 py-2 text-sm font-bold text-[var(--ds-fg-2)] shadow-sm ring-1 ring-[var(--ds-border)]">
               Join
             </Link>
-            <Link to="/shop" className="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200">
+            <Link to="/shop" className="rounded-full bg-[var(--ds-elevated)] px-4 py-2 text-sm font-bold text-[var(--ds-fg-2)] shadow-sm ring-1 ring-[var(--ds-border)]">
               Shop
             </Link>
             <Link to="/scan" className="rounded-full bg-[var(--ds-accent)] px-4 py-2 text-sm font-bold text-white shadow-sm">
               Scan
             </Link>
-          </div>
+          </nav>
         </header>
 
-        <ScanQualityMetricsPanel metrics={qualityMetrics} />
-        {storageMessage ? <p role="status" className="mt-4 rounded-2xl bg-white p-4 text-sm text-slate-700">{storageMessage}</p> : null}
-        {hasUnassignedDeviceRecords() ? <p role="status" className="mt-4 rounded-2xl bg-white p-4 text-sm text-slate-700">Older device records are preserved separately. Their account owner is unknown, so they are not shown or uploaded automatically. Owner-confirmed recovery is required.</p> : null}
+        <details className="ds-quality-details">
+          <summary>Scan quality insights <span>{qualityMetrics.attempts} attempts</span></summary>
+          <ScanQualityMetricsPanel metrics={qualityMetrics} />
+        </details>
+        {storageMessage ? <p role="status" className="mt-4 rounded-2xl bg-[var(--ds-elevated)] p-4 text-sm text-[var(--ds-fg-2)]">{storageMessage}</p> : null}
+        {hasUnassignedDeviceRecords() ? <p role="status" className="mt-4 rounded-2xl bg-[var(--ds-elevated)] p-4 text-sm text-[var(--ds-fg-2)]">Older device records are preserved separately. Their account owner is unknown, so they are not shown or uploaded automatically. Owner-confirmed recovery is required.</p> : null}
 
         {lookups.length > 0 ? (
-          <section className="mt-5 rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+          <section className="mt-5 rounded-[24px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 shadow-sm">
             <label className="block">
               <span className="sr-only">Search saved scans</span>
               <input
-                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
+                className="w-full rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-elevated)] px-3 py-2 text-sm font-semibold text-[var(--ds-fg-1)] outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search saved scans"
                 value={query}
@@ -202,10 +207,10 @@ export default function History() {
                 <input type="checkbox" checked={unresolvedOnly} onChange={(event) => setUnresolvedOnly(event.target.checked)} />
                 Unresolved identities only
               </label>
-              {hasActiveFilters ? <button type="button" onClick={clearFilters} className="shrink-0 rounded-full px-3 py-2 text-xs font-bold text-[var(--ds-accent)] underline">Clear filters</button> : null}
+              {hasActiveFilters ? <button type="button" onClick={clearFilters} className="shrink-0 rounded-full px-3 py-2 text-xs font-bold text-[#a7cbd4] underline">Clear filters</button> : null}
             </div>
             <div className="mt-3 flex items-center justify-between gap-3">
-              <p className="text-xs font-bold text-neutral-500">
+              <p className="text-xs font-bold text-[var(--ds-fg-3)]">
                 {filteredLookups.length}/{lookups.length} saved scans
               </p>
               <Button type="button" onClick={() => exportLookups(lookups)}>
@@ -238,20 +243,23 @@ export default function History() {
             ))}
           </div>
         ) : lookups.length > 0 ? (
-          <section className="mt-6 rounded-[24px] border border-dashed border-slate-200 bg-white p-6 text-center shadow-sm">
-            <p className="text-sm font-bold text-[var(--ds-accent)]">No scans match</p>
-            <p className="mt-2 text-sm leading-6 text-neutral-500">Clear the filters to see every saved scan.</p>
+          <section className="ds-history-empty">
+            <p className="text-sm font-bold">No scans match</p>
+            <p className="mt-2 text-sm leading-6 text-[var(--ds-fg-3)]">Clear the filters to see every saved scan.</p>
           </section>
         ) : (
-          <section className="mt-8 rounded-[24px] border border-dashed border-slate-200 bg-white p-6 text-center shadow-sm">
-            <p className="text-sm font-bold text-[var(--ds-accent)]">No saved scans yet</p>
+          <section className="ds-history-empty">
+            <div className="ds-empty-symbol" aria-hidden="true">
+              <svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M10 4H4v6m18-6h6v6M4 22v6h6m18-6v6h-6" /><rect x="10" y="10" width="12" height="12" rx="3" /><path d="M14 16h4m-2-2v4" /></svg>
+            </div>
+            <p className="text-sm font-bold">No saved scans yet</p>
             <h2 className="mt-2 text-xl font-extrabold tracking-tight">Scan your first part</h2>
-            <p className="mt-3 text-sm leading-6 text-neutral-500">
+            <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-3)]">
               Photo, result, rating, correction, and notes stay on this device.
             </p>
-            <Button className="mt-5 w-full" onClick={() => window.location.assign("/scan")}>
+            <Link to="/scan">
               Open scanner
-            </Button>
+            </Link>
           </section>
         )}
       </div>
@@ -289,13 +297,13 @@ function ScanQualityMetricsPanel({ metrics }: { metrics: ScanQualityMetrics }) {
   const retakeRates = getRetakeRates(metrics);
 
   return (
-    <section className="mt-5 rounded-[24px] border border-[var(--ds-accent-line)] bg-white p-4 shadow-sm">
+    <section className="mt-5 rounded-[24px] border border-[var(--ds-accent-line)] bg-[var(--ds-elevated)] p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Scan quality</p>
+          <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[#a7cbd4]">Scan quality</p>
           <h2 className="mt-1 text-xl font-extrabold tracking-tight">Quality coach metrics</h2>
         </div>
-        <span className="rounded-full bg-[var(--ds-accent-soft)] px-3 py-1 text-xs font-black text-[var(--ds-accent)]">
+        <span className="rounded-full bg-[var(--ds-accent-soft)] px-3 py-1 text-xs font-black text-[#a7cbd4]">
           {metrics.attempts} attempts
         </span>
       </div>
@@ -308,18 +316,18 @@ function ScanQualityMetricsPanel({ metrics }: { metrics: ScanQualityMetrics }) {
         <MetricTile label="Trust score" value={averageTrust} />
       </div>
       {topFailure ? (
-        <p className="mt-3 text-sm font-semibold text-neutral-500">
+        <p className="mt-3 text-sm font-semibold text-[var(--ds-fg-3)]">
           Top blocker: {formatReason(topFailure.reason)} ({topFailure.count}).
         </p>
       ) : (
-        <p className="mt-3 text-sm font-semibold text-neutral-500">
+        <p className="mt-3 text-sm font-semibold text-[var(--ds-fg-3)]">
           No quality issues logged yet.
         </p>
       )}
       {retakeRates.length ? (
         <div className="mt-3 flex flex-wrap gap-2">
           {retakeRates.map(({ rate, reason }) => (
-            <span key={reason} className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-bold text-neutral-600">
+            <span key={reason} className="rounded-full bg-[var(--ds-surface)] px-3 py-1 text-xs font-bold text-[var(--ds-fg-3)]">
               {formatReason(reason)} retake {rate}
             </span>
           ))}
@@ -331,9 +339,9 @@ function ScanQualityMetricsPanel({ metrics }: { metrics: ScanQualityMetrics }) {
 
 function MetricTile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3">
-      <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-neutral-400">{label}</p>
-      <p className="mt-1 text-lg font-extrabold text-neutral-950">{value}</p>
+    <div className="rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-surface)] px-3 py-3">
+      <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--ds-fg-3)]">{label}</p>
+      <p className="mt-1 text-lg font-extrabold text-[var(--ds-fg-1)]">{value}</p>
     </div>
   );
 }
@@ -354,7 +362,7 @@ function FilterSelect({
       <span className="sr-only">{label}</span>
       <select
         aria-label={label}
-        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-[var(--ds-accent)]"
+        className="w-full rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-elevated)] px-3 py-2 text-sm font-bold text-[var(--ds-fg-2)] outline-none focus:border-[var(--ds-accent)]"
         onChange={(event) => onChange(event.target.value)}
         value={value}
       >
@@ -410,29 +418,29 @@ function LookupCard({ lookup }: { lookup: Lookup }) {
     <Link
       to={`/result/${lookup.id}`}
       state={withAccountRouteState({ ...scanStateFromLookup(lookup), savedLookup: lookup })}
-      className="grid grid-cols-[88px_1fr] gap-3 rounded-[24px] border border-slate-200 bg-white p-3 text-slate-950 shadow-sm transition hover:border-blue-200"
+      className="grid grid-cols-[88px_1fr] gap-3 rounded-[24px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-3 text-[var(--ds-fg-1)] shadow-sm transition hover:border-blue-200"
     >
       <ScanThumb
         alt=""
-        className="aspect-square w-full rounded-[18px] border border-neutral-200 bg-neutral-100 object-cover"
+        className="aspect-square w-full rounded-[18px] border border-[var(--ds-border)] bg-[var(--ds-surface)] object-cover"
         src={lookup.frame.imageBase64}
       />
       <div className="min-w-0 py-1">
         <div className="flex items-start justify-between gap-2">
           <h2 className="truncate text-base font-extrabold tracking-tight">{title}</h2>
-          {lookup.rating ? <span className="shrink-0 text-xs font-bold text-neutral-400">{lookup.rating === "up" ? "Helpful" : "Wrong"}</span> : null}
+          {lookup.rating ? <span className="shrink-0 text-xs font-bold text-[var(--ds-fg-3)]">{lookup.rating === "up" ? "Helpful" : "Wrong"}</span> : null}
         </div>
-        <p className="mt-1 truncate text-xs font-semibold text-neutral-400">{createdAt}</p>
-        <p className="mt-3 text-sm font-semibold text-neutral-500">{status}</p>
-        <p className="mt-2 text-xs font-bold text-[var(--ds-accent)]">{getIntakeReview(lookup).label}</p>
+        <p className="mt-1 truncate text-xs font-semibold text-[var(--ds-fg-3)]">{createdAt}</p>
+        <p className="mt-3 text-sm font-semibold text-[var(--ds-fg-3)]">{status}</p>
+        <p className="mt-2 text-xs font-bold text-[#a7cbd4]">{getIntakeReview(lookup).label}</p>
         {lookup.jobId || lookup.vehicleContext?.technicianName ? (
-          <p className="mt-2 truncate text-xs font-bold text-[var(--ds-accent)]">
+          <p className="mt-2 truncate text-xs font-bold text-[#a7cbd4]">
             {lookup.vehicleContext?.jobTitle ?? "Shop job"}
             {lookup.vehicleContext?.technicianName ? ` / ${lookup.vehicleContext.technicianName}` : ""}
           </p>
         ) : null}
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-neutral-400">{lookup.scanCategory}</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--ds-fg-3)]">{lookup.scanCategory}</p>
           <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${getReadinessChipClass(readiness.level)}`}>
             {readiness.label}
           </span>
@@ -451,7 +459,7 @@ function getReadinessChipClass(level: ReturnType<typeof getTrainingReadiness>["l
     return "bg-[var(--ds-warn-soft)] text-[var(--ds-warn-ink)]";
   }
 
-  return "bg-[var(--ds-accent-soft)] text-[var(--ds-accent)]";
+  return "bg-[var(--ds-accent-soft)] text-[#a7cbd4]";
 }
 
 function getStatusLabel(lookup: Lookup) {

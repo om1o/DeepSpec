@@ -320,52 +320,39 @@ export default function Auth() {
   }
 
   return (
-    <main className="min-h-dvh overflow-hidden bg-[var(--ds-bg)] px-4 pb-8 pt-[max(20px,env(safe-area-inset-top))] text-white">
-      <section className="mx-auto grid min-h-[calc(100dvh-48px)] w-full max-w-6xl items-center gap-5 lg:grid-cols-[1.02fr_0.98fr] lg:gap-8">
-        <div className="relative hidden min-h-[640px] overflow-hidden rounded-[8px] border border-white/10 bg-slate-950 shadow-[0_24px_90px_rgba(0,0,0,0.36)] lg:block">
-          <img src="/test-fixtures/engine-scan-test.jpg" alt="" className="absolute inset-0 h-full w-full object-cover opacity-70" />
-          <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(6,21,34,0.30),rgba(6,21,34,0.82)),linear-gradient(90deg,rgba(6,21,34,0.92),rgba(6,21,34,0.24))]" />
-          <div className="scanner-corner scanner-corner-tl left-6 top-6" />
-          <div className="scanner-corner scanner-corner-tr right-6 top-6" />
-          <div className="scanner-corner scanner-corner-bl bottom-6 left-6" />
-          <div className="scanner-corner scanner-corner-br bottom-6 right-6" />
-          <div className="absolute left-8 right-8 top-8 flex items-center justify-between">
-            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-14 w-44 rounded-[8px] bg-white object-contain p-1.5 shadow-sm ring-1 ring-white/20" />
-            <span className="rounded-[8px] border border-white/20 bg-white/10 px-4 py-2 text-xs font-black uppercase text-white backdrop-blur-md">
-              Supabase auth
-            </span>
+    <main className="ds-auth-page min-h-dvh px-4 pb-8 pt-[max(20px,env(safe-area-inset-top))] text-white">
+      <section className="mx-auto grid min-h-[calc(100dvh-48px)] w-full max-w-6xl items-center gap-5 lg:grid-cols-[1.08fr_0.92fr] lg:gap-12">
+        <div className="ds-auth-story">
+          <img src="/brand/alternator-workbench.webp" alt="" width="1086" height="1448" className="ds-auth-art" />
+          <div className="ds-auth-story-top">
+            <span className="ds-eyebrow">FROM THE BENCH TO THE RECORD</span>
+            <h2>A clearer picture.<br /><span>A better part record.</span></h2>
+            <p>Capture a part. Review the evidence.<br />Keep the details that matter.</p>
           </div>
-          <div className="absolute inset-x-10 bottom-10 space-y-5 text-white">
-            <div className="max-w-xl">
-              <p className="text-sm font-black uppercase tracking-[0.16em] text-[var(--ds-accent)]">Protected scanner access</p>
-              <h1 className="mt-3 text-5xl font-black leading-none">Login built for the shop floor.</h1>
-              <p className="mt-4 max-w-lg text-base font-semibold leading-7 text-white/74">
-                Deep Spec opens once Supabase verifies the session.
-              </p>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <StatusCell label="Auth" value="Password first" />
-              <StatusCell label="Email" value="Link/code" />
-              <StatusCell label="Session" value="Verified" />
+          <div className="ds-auth-story-bottom">
+            <span className="ds-art-caption">Illustrative render · Not a scan result</span>
+            <div className="ds-workflow" aria-label="Parts documentation workflow">
+              <StatusCell label="01" value="Capture" />
+              <StatusCell label="02" value="Review" />
+              <StatusCell label="03" value="Save" />
             </div>
           </div>
         </div>
 
-        <section className="mx-auto flex w-full max-w-[540px] flex-col rounded-[8px] border border-white/12 bg-white/[0.07] p-5 shadow-[0_20px_70px_rgba(0,0,0,0.26)] backdrop-blur-xl sm:p-7">
+        <section className="ds-auth-card mx-auto flex w-full max-w-[540px] flex-col p-5 sm:p-8">
           <div className="flex items-center justify-between gap-4">
             <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-14 w-44 rounded-[8px] bg-white object-contain p-1 shadow-sm ring-1 ring-white/20" />
             <span className={supabaseConfigured ? "rounded-[8px] border border-[var(--ds-ok-line)] bg-[var(--ds-ok-soft)] px-3 py-1.5 text-xs font-black text-sky-100" : "rounded-[8px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-3 py-1.5 text-xs font-black text-amber-100"}>
-              {supabaseConfigured ? "Cloud ready" : "Auth offline"}
+              {supabaseConfigured ? "Your workspace" : "Sign-in unavailable"}
             </span>
           </div>
 
           <div className="mt-9">
-            <p className="text-sm font-black uppercase tracking-[0.14em] text-[var(--ds-accent)]">Deep Spec account</p>
-            <h1 className="mt-3 text-4xl font-black tracking-normal text-white">Sign in</h1>
+            <p className="ds-eyebrow">YOUR PARTS. YOUR WORKBENCH.</p>
+            <h1 className="mt-3 text-4xl font-bold tracking-tight text-white">Sign in</h1>
             <p className="mt-3 text-base font-semibold leading-7 text-white/68">
-              Use a password account, an email code, or start a private session without email.
+              Pick up where you left off, or capture your first part.
             </p>
-            <p className="mt-2 text-sm leading-6 text-white/68">Retry older device saves from Saved scans after signing in.</p>
           </div>
 
           <div className="mt-8 space-y-3">
@@ -548,6 +535,7 @@ export default function Auth() {
               </button>
               </fieldset>
             </form>
+            <p className="ds-auth-footnote">Review AI suggestions before relying on them. A photo cannot confirm that a part works.</p>
 
             {authMode === "link" && step !== "email" ? (
               <div className="space-y-3">
@@ -590,9 +578,9 @@ export default function Auth() {
 
 function StatusCell({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[8px] border border-white/15 bg-white/10 p-4 backdrop-blur-md">
-      <p className="text-xs font-black uppercase tracking-[0.14em] text-white/60">{label}</p>
-      <p className="mt-2 text-sm font-black text-white">{value}</p>
+    <div>
+      <span className="ds-workflow-number">{label}</span>
+      <span className="ds-workflow-label">{value}</span>
     </div>
   );
 }
