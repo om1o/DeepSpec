@@ -35,7 +35,7 @@ Use a stopwatch or recorded observation. Pause active timing during passive prov
 
 ## Machine-readable copy and summary
 
-Copy [the empty template](pilot-observations.template.json) to `artifacts/pilot/observations.json`. Add one JSON object per fully measured observation. Required fields are:
+Copy [the empty template](pilot-observations.template.json) to `artifacts/pilot/observations.json`. Add one JSON object per attempted physical part, including attempts with missing timing. Required fields are:
 
 | Field | Accepted value |
 | --- | --- |
@@ -46,6 +46,7 @@ Copy [the empty template](pilot-observations.template.json) to `artifacts/pilot/
 | `accepted` | JSON boolean describing the operator's actual decision, not model confidence |
 | `reference` | Human/reference check; required for correct/wrong, empty for unknown |
 | `activeSeconds`, `functionalTestSeconds`, `elapsedSeconds` | Nonnegative numbers; functional time ≤ active time ≤ elapsed time |
+| `timingMissingReason` | If timing is unreliable, set all three timing fields to `null` and record a nonempty reason. Retain any partial timing in raw notes; never substitute zero. |
 | `captureAttempts` | Nonnegative integer; include original and retake captures |
 
 Additional notes can remain in the raw log. The tool does not infer missing values, authenticate reviewer claims or adjudicate reference correctness.
@@ -54,11 +55,11 @@ Additional notes can remain in the raw log. The tool does not infer missing valu
 node scripts/pilot/summarize-intake-pilot.mjs artifacts/pilot/observations.json
 ```
 
-The command reads only that file and prints a JSON summary; it makes no network requests. Empty data reports `no_observations`. Each batch stays separate. Time medians include abandoned cases, which may be artificially short, so always inspect completion/error counts alongside the descriptive reduction. Functional-test time remains in active time. Invalid measurements and repeated physical parts are rejected instead of quietly excluded. Synthetic values in unit tests validate arithmetic only; they are not pilot evidence.
+The command reads only that file and prints a JSON summary; it makes no network requests. Empty data reports `no_observations`. Each batch stays separate. Every attempt remains in outcome counts, including untimed attempts. `timedObservations` and `missingTiming` show the timing denominator. Time medians and totals cover only fully timed attempts (including abandoned cases); totals are `null` when none are timed. Any missing timing in either arm suppresses that batch's percentage reduction. Early abandonment may look artificially fast, so always inspect completion/error counts alongside the descriptive reduction. Functional-test time remains in active time. Invalid measurements and repeated physical parts are rejected instead of quietly excluded. Synthetic values in unit tests validate arithmetic only; they are not pilot evidence.
 
 ## Review after each batch
 
-Report attempted/completed/abandoned counts, correct/wrong/unresolved/unverified identities, accepted-wrong and accepted-unverified cases, capture attempts, median active/elapsed time, support effort and observed service cost. Report missing measurements separately from the summarizer's measured-record count. Show difficult and failed examples, not just successes.
+Report attempted/completed/abandoned counts, correct/wrong/unresolved/unverified identities, accepted-wrong and accepted-unverified cases, capture attempts, median active/elapsed time, support effort and observed service cost. Include the summarizer's timed and missing-timing counts, and reconcile attempted counts with the raw log. Show difficult and failed examples, not just successes.
 
 The proposed continuation target from the week plan is at least 30% lower median active time without more wrong accepted identities than manual intake. That target is not an automatic pass: reject conclusions driven by abandoning hard cases, different functional checks, missing measurements or imbalanced difficulty. A single unreviewed unsupported identity used externally stops expansion and becomes a regression case. Compare the two batches separately and explain changes between them.
 

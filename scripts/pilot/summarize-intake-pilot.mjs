@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 
 const workflows = ["manual", "deepspec"];
 const identities = ["correct", "wrong", "unresolved", "unverified"];
+const timingFields = ["activeSeconds", "functionalTestSeconds", "elapsedSeconds"];
 
 export function summarizeIntakePilot(input) {
   if (!input || typeof input.studyId !== "string" || !input.studyId.trim() || !Array.isArray(input.records)) throw new Error("Provide a studyId and records array.");
@@ -16,11 +17,13 @@ export function summarizeIntakePilot(input) {
     ids.add(row.id.trim());
     parts.add(row.physicalPartId.trim());
     if (!workflows.includes(row.workflow) || !["completed", "abandoned"].includes(row.outcome) || !identities.includes(row.identity) || typeof row.accepted !== "boolean") throw new Error("Invalid workflow, outcome, identity or accepted value.");
-    for (const key of ["activeSeconds", "functionalTestSeconds", "elapsedSeconds", "captureAttempts"]) {
+    const missingTiming = timingFields.every((key) => row[key] === null);
+    if (missingTiming && (typeof row.timingMissingReason !== "string" || !row.timingMissingReason.trim())) throw new Error("Missing timing requires a recorded reason.");
+    for (const key of [...(missingTiming ? [] : timingFields), "captureAttempts"]) {
       if (typeof row[key] !== "number" || !Number.isFinite(row[key]) || row[key] < 0) throw new Error(`${key} must be a finite nonnegative number; missing values are not zero.`);
     }
     if (!Number.isInteger(row.captureAttempts)) throw new Error("captureAttempts must be an integer.");
-    if (row.functionalTestSeconds > row.activeSeconds || row.activeSeconds > row.elapsedSeconds) throw new Error("Functional test time must be included in active time, and active time cannot exceed elapsed time.");
+    if (!missingTiming && (row.functionalTestSeconds > row.activeSeconds || row.activeSeconds > row.elapsedSeconds)) throw new Error("Functional test time must be included in active time, and active time cannot exceed elapsed time.");
     if (["correct", "wrong"].includes(row.identity) && (typeof row.reference !== "string" || !row.reference.trim())) throw new Error("Correct/wrong judgments require a recorded human reference check.");
   }
   const batches = [...new Set(input.records.map((row) => row.batch.trim()))].map((batch) => {
@@ -29,7 +32,7 @@ export function summarizeIntakePilot(input) {
     const deepspec = summarizeArm(records.filter((row) => row.workflow === "deepspec"));
     return {
       batch, manual, deepspec,
-      medianActiveReductionPercent: manual.medianActiveSeconds > 0 && deepspec.attempted > 0
+      medianActiveReductionPercent: !manual.missingTiming && !deepspec.missingTiming && manual.medianActiveSeconds > 0 && deepspec.attempted > 0
         ? 100 * (manual.medianActiveSeconds - deepspec.medianActiveSeconds) / manual.medianActiveSeconds : null,
     };
   });
@@ -38,14 +41,17 @@ export function summarizeIntakePilot(input) {
     status: input.records.length ? "descriptive_only" : "no_observations",
     observations: input.records.length,
     batches,
-    limitations: "All attempts, including abandoned cases, enter time summaries. Compare completion, wrong-accepted and unverified counts alongside time; early abandonment can look faster. Batches are not pooled. This does not establish broad accuracy, causality, willingness to pay or launch readiness.",
+    limitations: "All attempts remain in outcome counts. Time summaries include only fully timed attempts, including abandoned cases; totals cover that subset only. Missing timing suppresses the batch time-reduction comparison. Compare completion, wrong-accepted and unverified counts alongside time; early abandonment can look faster. Batches are not pooled. This does not establish broad accuracy, causality, willingness to pay or launch readiness.",
   };
 }
 
 function summarizeArm(records) {
   const count = (predicate) => records.filter(predicate).length;
+  const timed = records.filter((row) => row.activeSeconds !== null);
   return {
     attempted: records.length,
+    timedObservations: timed.length,
+    missingTiming: records.length - timed.length,
     completed: count((row) => row.outcome === "completed"),
     abandoned: count((row) => row.outcome === "abandoned"),
     ...Object.fromEntries(identities.map((identity) => [identity, count((row) => row.identity === identity)])),
@@ -53,10 +59,10 @@ function summarizeArm(records) {
     wrongAccepted: count((row) => row.accepted && row.identity === "wrong"),
     acceptedUnverified: count((row) => row.accepted && ["unverified", "unresolved"].includes(row.identity)),
     retakes: records.reduce((sum, row) => sum + Math.max(0, row.captureAttempts - 1), 0),
-    totalActiveSeconds: records.reduce((sum, row) => sum + row.activeSeconds, 0),
-    totalFunctionalTestSeconds: records.reduce((sum, row) => sum + row.functionalTestSeconds, 0),
-    medianActiveSeconds: median(records.map((row) => row.activeSeconds)),
-    medianElapsedSeconds: median(records.map((row) => row.elapsedSeconds)),
+    totalActiveSeconds: timed.length ? timed.reduce((sum, row) => sum + row.activeSeconds, 0) : null,
+    totalFunctionalTestSeconds: timed.length ? timed.reduce((sum, row) => sum + row.functionalTestSeconds, 0) : null,
+    medianActiveSeconds: median(timed.map((row) => row.activeSeconds)),
+    medianElapsedSeconds: median(timed.map((row) => row.elapsedSeconds)),
   };
 }
 

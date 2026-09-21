@@ -28,8 +28,41 @@ describe("intake pilot summary", () => {
     const summary = summarizeIntakePilot({ studyId: "pilot", records: [record("a", "deepspec", { identity: "wrong" }), record("b", "deepspec", { identity: "wrong", accepted: false })] });
     expect(summary.batches[0].deepspec).toMatchObject({ wrong: 2, wrongAccepted: 1 });
   });
+  it("retains untimed attempts without treating missing timing as zero", () => {
+    const summary = summarizeIntakePilot({ studyId: "pilot", records: [
+      record("manual", "manual", { activeSeconds: 240, elapsedSeconds: 300 }),
+      record("measured"),
+      record("interrupted", "deepspec", { outcome: "abandoned", identity: "unresolved", accepted: false,
+        activeSeconds: null, functionalTestSeconds: null, elapsedSeconds: null, timingMissingReason: "Stopwatch interrupted", captureAttempts: 2 }),
+    ] });
+    expect(summary.observations).toBe(3);
+    expect(summary.batches[0].deepspec).toMatchObject({ attempted: 2, abandoned: 1, unresolved: 1,
+      timedObservations: 1, missingTiming: 1, medianActiveSeconds: 120, totalActiveSeconds: 120, retakes: 1 });
+    expect(summary.batches[0].medianActiveReductionPercent).toBeNull();
+  });
+  it("reports absent timing totals as null when every attempt is untimed", () => {
+    const summary = summarizeIntakePilot({ studyId: "pilot", records: [record("a", "manual", {
+      activeSeconds: null, functionalTestSeconds: null, elapsedSeconds: null, timingMissingReason: "Recording unavailable",
+    })] });
+    expect(summary.batches[0].manual).toMatchObject({ attempted: 1, timedObservations: 0, missingTiming: 1,
+      medianActiveSeconds: null, medianElapsedSeconds: null, totalActiveSeconds: null, totalFunctionalTestSeconds: null });
+  });
+  it("withholds the comparison when the manual arm is missing timing and retains wrong acceptances", () => {
+    const summary = summarizeIntakePilot({ studyId: "pilot", records: [record("a", "manual", {
+      activeSeconds: null, functionalTestSeconds: null, elapsedSeconds: null,
+      timingMissingReason: "Timer failed", identity: "wrong",
+    }), record("b", "manual"), record("c")] });
+    expect(summary.batches[0].manual).toMatchObject({ attempted: 2, missingTiming: 1, wrongAccepted: 1 });
+    expect(summary.batches[0].medianActiveReductionPercent).toBeNull();
+  });
+  it.each([undefined, "", "   "])("requires a reason for absent timing: %j", (timingMissingReason) => {
+    expect(() => summarizeIntakePilot({ studyId: "pilot", records: [record("a", "manual", {
+      activeSeconds: null, functionalTestSeconds: null, elapsedSeconds: null, timingMissingReason,
+    })] })).toThrow(/reason/i);
+  });
   it.each([
     { activeSeconds: -1 }, { activeSeconds: null }, { activeSeconds: "120" },
+    { activeSeconds: null, elapsedSeconds: null, timingMissingReason: "Partial timing" },
     { elapsedSeconds: 119 }, { functionalTestSeconds: 121 }, { captureAttempts: 1.5 },
     { identity: "correct", reference: "" }, { accepted: "yes" }, { workflow: "other" },
   ])("rejects invalid or unsupported measurements: %j", (changes) => {
