@@ -18,10 +18,39 @@ const AUTH_VERIFIED_CACHE_MS = 30_000;
 const DEFAULT_POST_AUTH_PATH = "/scan";
 let clientPromise: Promise<SupabaseClient> | null = null;
 let authRedirectPromise: Promise<boolean> | null = null;
-let verifiedAuthUserCache: { user: User; verifiedAt: number } | null = null;
+let verifiedAuthUserCache: { user: User; verifiedAt: number; generation: string | null } | null = null;
 let authRevision = 0;
 let signOutRevision = 0;
 let pendingSignOuts = 0;
+const SIGN_OUT_LOCK_KEY = "deep-spec:sign-out-pending";
+const SIGN_OUT_GENERATION_KEY = "deep-spec:sign-out-generation";
+let signOutLock: string | null = null;
+const signOutListeners = new Set<() => void>();
+
+export function hasPendingSignOut() {
+  return readSignOutLock() !== null;
+}
+
+function readSignOutLock() {
+  try { return localStorage.getItem(SIGN_OUT_LOCK_KEY) ?? signOutLock; }
+  catch { return signOutLock; }
+}
+
+function readSignOutGeneration() {
+  try { return localStorage.getItem(SIGN_OUT_GENERATION_KEY); }
+  catch { return String(signOutRevision); }
+}
+
+function setSignOutLock(locked: boolean) {
+  signOutLock = locked ? crypto.randomUUID() : null;
+  try {
+    if (signOutLock) {
+      localStorage.setItem(SIGN_OUT_GENERATION_KEY, signOutLock);
+      localStorage.setItem(SIGN_OUT_LOCK_KEY, signOutLock);
+    }
+    else localStorage.removeItem(SIGN_OUT_LOCK_KEY);
+  } catch { /* In-memory protection remains when browser storage is unavailable. */ }
+}
 
 export function isSupabaseAuthConfigured() {
   return Boolean(getSupabaseAuthConfig());
@@ -37,9 +66,10 @@ export function isGitHubAuthEnabled() {
 
 export async function getVerifiedAuthUser(): Promise<User | null> {
   const revision = authRevision;
-  if (pendingSignOuts) return null;
+  const generation = readSignOutGeneration();
+  if (pendingSignOuts || hasPendingSignOut()) return null;
   const client = await getAuthClient();
-  if (pendingSignOuts || revision !== authRevision) return null;
+  if (pendingSignOuts || revision !== authRevision || generation !== readSignOutGeneration()) return null;
   if (!client) {
     setActiveAccount(null);
     return null;
@@ -48,10 +78,15 @@ export async function getVerifiedAuthUser(): Promise<User | null> {
   return verifyAuthUser(client, revision);
 }
 
-async function verifyAuthUser(client: SupabaseClient, revision = authRevision, expectedUserId?: string): Promise<User | null> {
-  if (pendingSignOuts || revision !== authRevision) return null;
+async function verifyAuthUser(client: SupabaseClient, revision = authRevision, expectedUserId?: string, explicitSignIn = false): Promise<User | null> {
+  const initialLock = readSignOutLock();
+  const generation = readSignOutGeneration();
+  const isCurrent = () => !pendingSignOuts && revision === authRevision
+    && generation === readSignOutGeneration()
+    && (explicitSignIn ? readSignOutLock() === initialLock : !hasPendingSignOut());
+  if (pendingSignOuts || revision !== authRevision || (!explicitSignIn && hasPendingSignOut())) return null;
   const redirectReady = await completeAuthRedirectIfNeeded(client);
-  if (pendingSignOuts || revision !== authRevision) return null;
+  if (!isCurrent()) return null;
   if (!redirectReady) {
     clearVerifiedAuthUserCache();
     setActiveAccount(null);
@@ -65,7 +100,7 @@ async function verifyAuthUser(client: SupabaseClient, revision = authRevision, e
   }
 
   const result = await withTimeout(client.auth.getUser().catch(() => null), AUTH_VERIFY_TIMEOUT_MS);
-  if (pendingSignOuts || revision !== authRevision) return null;
+  if (!isCurrent()) return null;
   if (!result) {
     clearVerifiedAuthUserCache();
     setActiveAccount(null);
@@ -79,12 +114,14 @@ async function verifyAuthUser(client: SupabaseClient, revision = authRevision, e
     return null;
   }
 
-  verifiedAuthUserCache = { user: data.user, verifiedAt: Date.now() };
+  if (explicitSignIn) setSignOutLock(false);
+  verifiedAuthUserCache = { user: data.user, verifiedAt: Date.now(), generation };
   setActiveAccount(data.user.id);
   return data.user;
 }
 
 export async function sendEmailSignInLink(email: string, redirectPath?: string): Promise<EmailSignInResult> {
+  if (hasPendingSignOut()) await signOut();
   const client = await getRequiredAuthClient();
   const emailRedirectTo = getAuthRedirectUrl(redirectPath);
   const result = await client.auth.signInWithOtp({
@@ -125,7 +162,7 @@ export async function sendEmailSignInLink(email: string, redirectPath?: string):
 }
 
 export async function verifyEmailCode(email: string, token: string) {
-  const signOutAtStart = signOutRevision;
+  const signOutAtStart = { revision: signOutRevision, lock: readSignOutLock(), generation: readSignOutGeneration() };
   assertSignInCurrent(signOutAtStart);
   const client = await getRequiredAuthClient();
   assertSignInCurrent(signOutAtStart);
@@ -141,7 +178,7 @@ export async function verifyEmailCode(email: string, token: string) {
 
   assertSignInCurrent(signOutAtStart);
   clearVerifiedAuthUserCache();
-  const user = await verifyAuthUser(client, ++authRevision, result.data?.user?.id);
+  const user = await verifyAuthUser(client, ++authRevision, result.data?.user?.id, true);
   if (!user) {
     throw new Error("Could not verify this session. Request a new code and try again.");
   }
@@ -150,7 +187,7 @@ export async function verifyEmailCode(email: string, token: string) {
 }
 
 export async function signInWithPassword(email: string, password: string) {
-  const signOutAtStart = signOutRevision;
+  const signOutAtStart = { revision: signOutRevision, lock: readSignOutLock(), generation: readSignOutGeneration() };
   assertSignInCurrent(signOutAtStart);
   const client = await getRequiredAuthClient();
   assertSignInCurrent(signOutAtStart);
@@ -165,7 +202,7 @@ export async function signInWithPassword(email: string, password: string) {
 
   assertSignInCurrent(signOutAtStart);
   clearVerifiedAuthUserCache();
-  const user = await verifyAuthUser(client, ++authRevision, result.data?.user?.id);
+  const user = await verifyAuthUser(client, ++authRevision, result.data?.user?.id, true);
   if (!user) {
     throw new Error("Could not verify this session. Check your email and password and try again.");
   }
@@ -174,7 +211,7 @@ export async function signInWithPassword(email: string, password: string) {
 }
 
 export async function signUpWithPassword(email: string, password: string, redirectPath?: string) {
-  const signOutAtStart = signOutRevision;
+  const signOutAtStart = { revision: signOutRevision, lock: readSignOutLock(), generation: readSignOutGeneration() };
   assertSignInCurrent(signOutAtStart);
   const client = await getRequiredAuthClient();
   assertSignInCurrent(signOutAtStart);
@@ -190,13 +227,13 @@ export async function signUpWithPassword(email: string, password: string, redire
     throw new Error(result.error.message);
   }
 
-  if (!result.data.session) {
-    throw new Error("Supabase still requires email confirmation for new password accounts. Disable Confirm Email in the Supabase Email provider, then create the account again.");
-  }
-
   assertSignInCurrent(signOutAtStart);
+  // A successful signup without a session requires inbox confirmation, not
+  // weaker provider settings. Do not activate the unverified account.
+  if (!result.data.session) return null;
+
   clearVerifiedAuthUserCache();
-  const user = await verifyAuthUser(client, ++authRevision, result.data?.user?.id);
+  const user = await verifyAuthUser(client, ++authRevision, result.data?.user?.id, true);
   if (!user) {
     throw new Error("Could not verify this new account session. Try signing in again.");
   }
@@ -205,7 +242,7 @@ export async function signUpWithPassword(email: string, password: string, redire
 }
 
 export async function signInAnonymously() {
-  const signOutAtStart = signOutRevision;
+  const signOutAtStart = { revision: signOutRevision, lock: readSignOutLock(), generation: readSignOutGeneration() };
   assertSignInCurrent(signOutAtStart);
   const client = await getRequiredAuthClient();
   assertSignInCurrent(signOutAtStart);
@@ -217,7 +254,7 @@ export async function signInAnonymously() {
 
   assertSignInCurrent(signOutAtStart);
   clearVerifiedAuthUserCache();
-  const user = await verifyAuthUser(client, ++authRevision, result.data?.user?.id);
+  const user = await verifyAuthUser(client, ++authRevision, result.data?.user?.id, true);
   if (!user) {
     throw new Error("Could not verify this session. Try again.");
   }
@@ -234,6 +271,7 @@ export async function signInWithGitHub(redirectPath?: string) {
 }
 
 async function signInWithOAuthProvider(provider: Provider, redirectPath?: string) {
+  if (hasPendingSignOut()) await signOut();
   const client = await getRequiredAuthClient();
   const result = await client.auth.signInWithOAuth({
     provider,
@@ -247,8 +285,8 @@ async function signInWithOAuthProvider(provider: Provider, redirectPath?: string
   }
 }
 
-function assertSignInCurrent(signOutAtStart: number) {
-  if (pendingSignOuts || signOutAtStart !== signOutRevision) throw new Error("Session changed. Try signing in again.");
+function assertSignInCurrent(signOutAtStart: { revision: number; lock: string | null; generation: string | null }) {
+  if (pendingSignOuts || signOutAtStart.revision !== signOutRevision || signOutAtStart.lock !== readSignOutLock() || signOutAtStart.generation !== readSignOutGeneration()) throw new Error("Session changed. Try signing in again.");
 }
 
 export async function signOut() {
@@ -257,11 +295,15 @@ export async function signOut() {
   authRevision += 1;
   clearVerifiedAuthUserCache();
   setActiveAccount(null);
+  setSignOutLock(true);
+  const ownLock = readSignOutLock();
+  signOutListeners.forEach((listener) => listener());
   try {
     const client = await getAuthClient();
-    if (!client) return;
+    if (!client) throw new Error("Sign-out cannot be confirmed because authentication is not configured.");
     const result = await client.auth.signOut();
     if (result.error) throw new Error(result.error.message);
+    if (readSignOutLock() === ownLock) setSignOutLock(false);
   } finally {
     pendingSignOuts -= 1;
     authRevision += 1;
@@ -305,10 +347,22 @@ export async function subscribeToAuthChanges(
   }
 
   let active = true;
+  const lockScreen = () => {
+    if (!active || !hasPendingSignOut()) return;
+    authRevision += 1;
+    clearVerifiedAuthUserCache();
+    setActiveAccount(null);
+    onChange(null);
+  };
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === SIGN_OUT_LOCK_KEY || event.key === null) lockScreen();
+  };
+  signOutListeners.add(lockScreen);
+  window.addEventListener("storage", onStorage);
   const subscription = client.auth.onAuthStateChange((_event: AuthChangeEvent, session: Session | null) => {
     const revision = ++authRevision;
     clearVerifiedAuthUserCache();
-    if (pendingSignOuts) { setActiveAccount(null); onChange(null); return; }
+    if (pendingSignOuts || hasPendingSignOut()) { setActiveAccount(null); onChange(null); return; }
     if (getAccountScope().userId !== (session?.user?.id ?? null)) {
       setActiveAccount(null);
     }
@@ -332,7 +386,12 @@ export async function subscribeToAuthChanges(
     }, 0);
   });
 
-  return () => { active = false; subscription.data.subscription.unsubscribe(); };
+  return () => {
+    active = false;
+    signOutListeners.delete(lockScreen);
+    window.removeEventListener("storage", onStorage);
+    subscription.data.subscription.unsubscribe();
+  };
 }
 
 function getSupabaseAuthConfig(): SupabaseAuthConfig | null {
@@ -406,7 +465,7 @@ function getCachedVerifiedAuthUser() {
     return null;
   }
 
-  if (Date.now() - verifiedAuthUserCache.verifiedAt > AUTH_VERIFIED_CACHE_MS) {
+  if (verifiedAuthUserCache.generation !== readSignOutGeneration() || Date.now() - verifiedAuthUserCache.verifiedAt > AUTH_VERIFIED_CACHE_MS) {
     clearVerifiedAuthUserCache();
     return null;
   }

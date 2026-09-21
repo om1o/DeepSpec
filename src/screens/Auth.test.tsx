@@ -1,5 +1,5 @@
 import { accountStorageKey, setActiveAccount } from "../lib/accountScope";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +12,7 @@ const supabaseMock = vi.hoisted(() => ({
     signInWithPassword: vi.fn(),
     signInAnonymously: vi.fn(),
     signUp: vi.fn(),
+    signOut: vi.fn(),
     verifyOtp: vi.fn(),
   },
   createClient: vi.fn(),
@@ -43,6 +44,7 @@ describe("Auth", () => {
     supabaseMock.auth.signInWithPassword.mockReset();
     supabaseMock.auth.signInAnonymously.mockReset();
     supabaseMock.auth.signUp.mockReset();
+    supabaseMock.auth.signOut.mockReset();
     supabaseMock.auth.verifyOtp.mockReset();
     supabaseMock.createClient.mockReset();
     cloudSyncMock.syncLookupsToCloud.mockReset();
@@ -207,7 +209,7 @@ describe("Auth", () => {
     expect(screen.queryByText(/apple/i)).not.toBeInTheDocument();
   });
 
-  it("signs in with an email and password after Supabase verifies the session", async () => {
+  it("signs in with an existing short password after Supabase verifies the session", async () => {
     const user = userEvent.setup();
     supabaseMock.auth.getUser
       .mockResolvedValueOnce({ data: { user: null }, error: null })
@@ -216,13 +218,13 @@ describe("Auth", () => {
     await renderAuth();
 
     await user.type(await screen.findByPlaceholderText("you@shop.com"), "Tester@Example.com");
-    await user.type(screen.getByPlaceholderText("Your password"), "correct-password");
+    await user.type(screen.getByPlaceholderText("Your password"), "old123");
     await user.click(screen.getByRole("button", { name: "Sign in to scanner" }));
 
     await waitFor(() => {
       expect(supabaseMock.auth.signInWithPassword).toHaveBeenCalledWith({
         email: "tester@example.com",
-        password: "correct-password",
+        password: "old123",
       });
     });
     expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
@@ -334,7 +336,41 @@ describe("Auth", () => {
     await user.type(screen.getByPlaceholderText("Your password"), "correct-password");
     await user.click(screen.getByRole("button", { name: "Create account" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Supabase still requires email confirmation for new password accounts.");
+    expect(await screen.findByRole("status")).toHaveTextContent("Check your inbox");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Your password")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Sign in to scanner" })).toBeInTheDocument();
+    expect(screen.queryByText("Scanner opened")).not.toBeInTheDocument();
+  });
+
+  it("prevents mode changes and duplicate submissions while a password request is pending", async () => {
+    const user = userEvent.setup();
+    let finish!: (value: unknown) => void;
+    supabaseMock.auth.signInWithPassword.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    await renderAuth();
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "test@example.com");
+    await user.type(screen.getByPlaceholderText("Your password"), "password");
+    await user.click(screen.getByRole("button", { name: "Sign in to scanner" }));
+    expect(screen.getByRole("tab", { name: "Email link" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "No email" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Checking password..." }));
+    expect(supabaseMock.auth.signInWithPassword).toHaveBeenCalledTimes(1);
+    await act(async () => { finish({ data: {}, error: { message: "Invalid login credentials" } }); });
+    expect(screen.getByRole("alert")).toHaveTextContent("Invalid login credentials");
+    expect(screen.getByRole("tab", { name: "Email link" })).toBeEnabled();
+  });
+
+  it("keeps a failed logout locked and offers retry without restoring the stored session", async () => {
+    localStorage.setItem("deep-spec:sign-out-pending", "true");
+    supabaseMock.auth.getUser.mockResolvedValue({ data: { user: makeUser("old-user") }, error: null });
+    supabaseMock.auth.signOut.mockResolvedValue({ error: null });
+    await renderAuth();
+    expect(await screen.findByRole("status")).toHaveTextContent("Private screens are locked");
+    expect(supabaseMock.auth.getUser).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Retry sign out" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Signed out.");
+    expect(screen.queryByRole("button", { name: "Retry sign out" })).not.toBeInTheDocument();
     expect(screen.queryByText("Scanner opened")).not.toBeInTheDocument();
   });
 

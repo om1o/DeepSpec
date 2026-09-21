@@ -2,6 +2,7 @@ import { ClipboardEvent, FormEvent, useCallback, useEffect, useMemo, useRef, use
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   getVerifiedAuthUser,
+  hasPendingSignOut,
   isGitHubAuthEnabled,
   isGoogleAuthEnabled,
   normalizePostAuthRedirectPath,
@@ -11,6 +12,7 @@ import {
   signInWithGitHub,
   signInWithGoogle,
   signInWithPassword,
+  signOut,
   signUpWithPassword,
   verifyEmailCode,
 } from "../services/auth";
@@ -45,11 +47,13 @@ export default function Auth() {
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(() => hasPendingSignOut() ? "Private screens are locked. Sign-out has not been confirmed. Retry signing out, or sign in again explicitly." : null);
   const [isCheckingSession, setIsCheckingSession] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [isGitHubLoading, setIsGitHubLoading] = useState(false);
+  const isBusy = isSubmitting || isGoogleLoading || isGitHubLoading;
+  const requestPending = useRef(false);
   const [resendCooldown, setResendCooldown] = useState(0);
   const codeInputRef = useRef<HTMLInputElement | null>(null);
   const autoSubmittedCodeRef = useRef<string | null>(null);
@@ -70,7 +74,7 @@ export default function Auth() {
 
     getVerifiedAuthUser()
       .then((user) => {
-        if (user) {
+        if (isMounted && user) {
           void finishVerifiedLogin();
         }
       })
@@ -101,7 +105,8 @@ export default function Auth() {
   }, [resendCooldown]);
 
   const verifyCurrentCode = useCallback(async () => {
-    if (isSubmitting || !supabaseConfigured) return;
+    if (requestPending.current || !supabaseConfigured) return;
+    requestPending.current = true;
     setError(null);
     setNotice(null);
     setIsSubmitting(true);
@@ -112,9 +117,10 @@ export default function Auth() {
     } catch (authError) {
       setError(formatAuthError(authError));
     } finally {
+      requestPending.current = false;
       setIsSubmitting(false);
     }
-  }, [code, email, finishVerifiedLogin, isSubmitting, supabaseConfigured]);
+  }, [code, email, finishVerifiedLogin, supabaseConfigured]);
 
   useEffect(() => {
     if (step !== "code" || !supabaseConfigured || isSubmitting) return;
@@ -129,6 +135,7 @@ export default function Auth() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (requestPending.current) return;
     setError(null);
     setNotice(null);
 
@@ -138,6 +145,7 @@ export default function Auth() {
     }
 
     if (authMode === "password") {
+      requestPending.current = true;
       setIsSubmitting(true);
       try {
         const normalizedEmail = email.trim().toLowerCase();
@@ -150,9 +158,15 @@ export default function Auth() {
           await finishVerifiedLogin();
           return;
         }
+        if (passwordMode === "signup") {
+          setPassword("");
+          setPasswordMode("signin");
+          setNotice("Check your inbox for a confirmation link, then sign in. If you already have an account, use your existing password or an email sign-in link.");
+        }
       } catch (authError) {
         setError(formatAuthError(authError));
       } finally {
+        requestPending.current = false;
         setIsSubmitting(false);
       }
       return;
@@ -163,6 +177,7 @@ export default function Auth() {
       return;
     }
 
+    requestPending.current = true;
     setIsSubmitting(true);
 
     try {
@@ -179,11 +194,14 @@ export default function Auth() {
     } catch (authError) {
       setError(formatAuthError(authError));
     } finally {
+      requestPending.current = false;
       setIsSubmitting(false);
     }
   }
 
   async function handleGoogleSignIn() {
+    if (requestPending.current) return;
+    requestPending.current = true;
     setError(null);
     setNotice(null);
     setIsGoogleLoading(true);
@@ -191,12 +209,31 @@ export default function Auth() {
     try {
       await signInWithGoogle(postAuthPath);
     } catch (authError) {
+      requestPending.current = false;
       setError(formatAuthError(authError));
       setIsGoogleLoading(false);
     }
   }
 
+  async function retrySignOut() {
+    if (requestPending.current) return;
+    requestPending.current = true;
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      await signOut();
+      setNotice("Signed out. You can sign in again when ready.");
+    } catch {
+      setNotice("Private screens remain locked. Sign-out could not be confirmed; check your connection and retry.");
+    } finally {
+      requestPending.current = false;
+      setIsSubmitting(false);
+    }
+  }
+
   async function handleGitHubSignIn() {
+    if (requestPending.current) return;
+    requestPending.current = true;
     setError(null);
     setNotice(null);
     setIsGitHubLoading(true);
@@ -204,13 +241,15 @@ export default function Auth() {
     try {
       await signInWithGitHub(postAuthPath);
     } catch (authError) {
+      requestPending.current = false;
       setError(formatAuthError(authError));
       setIsGitHubLoading(false);
     }
   }
 
   async function handleResendLink() {
-    if (resendCooldown > 0) return;
+    if (resendCooldown > 0 || requestPending.current) return;
+    requestPending.current = true;
     setError(null);
     setNotice(null);
     setIsSubmitting(true);
@@ -226,10 +265,12 @@ export default function Auth() {
         setNotice(`New sign-in link sent to ${normalizedEmail}.`);
       }
       setResendCooldown(RESEND_COOLDOWN_SECONDS);
+      setCode("");
       autoSubmittedCodeRef.current = null;
     } catch (authError) {
       setError(formatAuthError(authError));
     } finally {
+      requestPending.current = false;
       setIsSubmitting(false);
     }
   }
@@ -328,6 +369,7 @@ export default function Auth() {
           </div>
 
           <div className="mt-8 space-y-3">
+            {hasPendingSignOut() ? <button type="button" disabled={isBusy} onClick={() => void retrySignOut()} className="h-12 w-full rounded-[8px] border border-white/20 px-4 text-sm font-bold">Retry sign out</button> : null}
             {googleAuthEnabled ? (
               <OAuthButton
                 brand="G"
@@ -359,6 +401,7 @@ export default function Auth() {
             ) : null}
 
             <form className="space-y-4" onSubmit={handleSubmit}>
+              <fieldset disabled={isBusy} className="space-y-4">
               {!supabaseConfigured ? (
                 <div className="rounded-[8px] border border-amber-300/30 bg-amber-500/10 px-4 py-3 text-sm font-semibold leading-6 text-amber-100">
                   Supabase auth is not configured for this build.
@@ -439,7 +482,7 @@ export default function Auth() {
                         className="h-14 w-full rounded-[8px] border border-white/12 bg-white/10 px-4 text-base font-semibold text-white shadow-sm outline-none placeholder:text-white/38 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)]"
                         autoComplete={passwordMode === "signup" ? "new-password" : "current-password"}
                         disabled={isSubmitting}
-                        minLength={8}
+                        minLength={passwordMode === "signup" ? 8 : undefined}
                         name="password"
                         onChange={(event) => setPassword(event.target.value)}
                         placeholder="Your password"
@@ -450,7 +493,7 @@ export default function Auth() {
                     </label>
                   ) : (
                     <p className="rounded-[8px] border border-sky-300/30 bg-sky-400/12 px-4 py-3 text-sm font-bold leading-6 text-sky-100">
-                      No email confirmation required.
+                      Temporary session on this browser. After signing out or clearing browser data, you cannot sign back in to this temporary account. Use an email account for records you need to keep accessing.
                     </p>
                   )}
                 </>
@@ -479,7 +522,7 @@ export default function Auth() {
               ) : null}
 
               {notice ? (
-                <p className="rounded-[8px] border border-sky-300/30 bg-sky-400/12 px-4 py-3 text-sm font-bold leading-6 text-sky-100">
+                <p role="status" className="rounded-[8px] border border-sky-300/30 bg-sky-400/12 px-4 py-3 text-sm font-bold leading-6 text-sky-100">
                   {notice}
                 </p>
               ) : null}
@@ -503,6 +546,7 @@ export default function Auth() {
               >
                 {submitLabel(authMode, passwordMode, step, supabaseConfigured, isSubmitting)}
               </button>
+              </fieldset>
             </form>
 
             {authMode === "link" && step !== "email" ? (
@@ -511,6 +555,7 @@ export default function Auth() {
                   <button
                     type="button"
                     onClick={handleUseDifferentEmail}
+                    disabled={isBusy}
                     className="h-12 rounded-[8px] border border-white/12 bg-white/5 px-3 text-sm font-black text-white shadow-sm active:bg-white/10"
                   >
                     Use another email
@@ -519,7 +564,7 @@ export default function Auth() {
                     type="button"
                     onClick={handleResendLink}
                     className="h-12 rounded-[8px] border border-white/12 bg-white/5 px-3 text-sm font-black text-white shadow-sm active:bg-white/10 disabled:pointer-events-none disabled:opacity-50"
-                    disabled={isSubmitting || resendCooldown > 0}
+                    disabled={isBusy || resendCooldown > 0}
                   >
                     {resendCooldown > 0 ? `Send in ${resendCooldown}s` : "Send another link"}
                   </button>
@@ -528,6 +573,7 @@ export default function Auth() {
                   <button
                     type="button"
                     onClick={handleShowCodeEntry}
+                    disabled={isBusy}
                     className="text-sm font-black text-sky-100 underline decoration-white/30 underline-offset-4"
                   >
                     I have a code
