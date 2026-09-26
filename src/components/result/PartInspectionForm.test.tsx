@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { PartInspectionForm } from "./PartInspectionForm";
 import { createLookup, deleteLookup, getLookup, saveLookupInspection } from "../../services/storage";
 import * as cloud from "../../services/cloudSync";
+import * as report from "../../services/report";
 
 beforeEach(() => {
   localStorage.clear();
@@ -145,6 +146,54 @@ it("does not announce saved or sync when local storage fails", async () => {
   expect(screen.getByRole("status")).toHaveTextContent("storage is full");
   expect(onSaved).not.toHaveBeenCalled();
   expect(sync).not.toHaveBeenCalled();
+});
+
+it("exports an unfinished draft after device storage fails without claiming it was saved", async () => {
+  const user = userEvent.setup();
+  const { onSaved } = setup();
+  const download = vi.spyOn(report, "downloadTextFile").mockImplementation(() => {});
+  const sync = vi.spyOn(cloud, "syncLookupToCloud");
+  await user.click(screen.getByText("Human inspection — optional"));
+  expect(screen.queryByRole("button", { name: "Download draft" })).not.toBeInTheDocument();
+  await user.type(screen.getByLabelText("Inspector name (self-reported)"), "Pat");
+  await user.type(screen.getByLabelText("Visible condition notes"), "Housing crack near mounting bolt");
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("quota", "QuotaExceededError"); });
+  await user.click(screen.getByRole("button", { name: "Save inspection" }));
+  expect(screen.getByRole("status")).toHaveTextContent("storage is full");
+  expect(screen.getByText("Unsaved inspection changes")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Download draft" }));
+  expect(download).toHaveBeenCalledWith("deep-spec-inspection-draft.txt", expect.stringContaining("UNSAVED INSPECTION DRAFT"));
+  const content = download.mock.calls[0][1];
+  expect(content).toContain("Housing crack near mounting bolt");
+  expect(content).toContain("Inspector: Pat");
+  expect(content).toContain("Functional test: not tested");
+  expect(screen.getByRole("status")).toHaveTextContent("storage is full");
+  expect(onSaved).not.toHaveBeenCalled();
+  expect(sync).not.toHaveBeenCalled();
+});
+
+it("removes the unsaved indicator after saving and shows it again for another edit", async () => {
+  const user = userEvent.setup();
+  setup();
+  await user.click(screen.getByText("Human inspection — optional"));
+  await user.type(screen.getByLabelText("Inspector name (self-reported)"), "Pat");
+  expect(screen.getByText("Unsaved inspection changes")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Save inspection" }));
+  expect(screen.queryByText("Unsaved inspection changes")).not.toBeInTheDocument();
+  await user.type(screen.getByLabelText("Visible condition notes"), "Another check");
+  expect(screen.getByText("Unsaved inspection changes")).toBeInTheDocument();
+});
+
+it("blocks draft export from a form belonging to a previous account", async () => {
+  const user = userEvent.setup();
+  setup();
+  const download = vi.spyOn(report, "downloadTextFile").mockImplementation(() => {});
+  await user.click(screen.getByText("Human inspection — optional"));
+  await user.type(screen.getByLabelText("Inspector name (self-reported)"), "Pat");
+  setActiveAccount("other-account");
+  await user.click(screen.getByRole("button", { name: "Download draft" }));
+  expect(download).not.toHaveBeenCalled();
+  expect(screen.getByRole("status")).toHaveTextContent("Account changed");
 });
 
 it.each(["different-account", "round-trip"])("rejects a stale mounted inspection form: %s", async (mode) => {

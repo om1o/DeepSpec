@@ -15,6 +15,7 @@ signatures or certifications.
 
 - Local saves preserve the AI result, feedback and training labels.
 - Open forms check for changed or deleted device inspections before saving, and for newer inspection props supplied by the parent. A conflicting draft stays visible for copying and review. This prevents known stale-form overwrites; it is not an atomic lock across tabs or devices.
+- Edited forms show **Unsaved inspection changes** and offer **Download draft**. This recovery text includes incomplete inputs without pretending they passed validation or were saved. It does not sync, certify the part, or replace a completed report. Keep the page open until you have saved or downloaded the draft; drafts are not automatically restored after closing it.
 - Inspection does not grant training consent or automatically train a model.
 - Configured cloud sync stores a separate `inspection_json` field. Cloud-only
   scans use an owner-scoped metadata update without reuploading signed images.
@@ -48,6 +49,8 @@ September 20 evidence: 27 helper tests passed. The live inspection mode exited 1
 Use the concrete readiness checklist, recruitment draft and timing protocol in [PILOT_RUNBOOK.md](PILOT_RUNBOOK.md). The trial has not been recruited or run yet.
 
 September 25 follow-up (September 26 UTC): two stale-form regressions failed before the guard and passed afterward. The form, storage, cloud sync and pilot-summary suites passed 105 tests; lint and the production build passed. Live inspection verification still stopped at the missing-column preflight, without scan/image fixture writes. Cloud-backed seller work remains blocked on deployment and successful live verification. Simultaneous cross-tab writes and cross-device edits still require server-side conflict protection; the form guard does not solve those races.
+
+September 26 draft recovery: 70 form/storage/report tests, lint and production build passed. QA doctor passed, followed by mobile-emulated auth and result-detail checks with an actual draft download and an unobscured-warning check. Evidence: `artifacts/qa/2026-09-26T09-33-21-415Z/report.md`, `inspection-draft.txt`, and `screenshots/inspection-draft-recovery.png` in that folder. No seller data or live inspection write was used for these browser checks.
 
 Recruit one parts business and select one part category together. Have staff
 record the existing identification/documentation time, then repeat with

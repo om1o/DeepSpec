@@ -735,8 +735,36 @@ async function runResultDetail() {
   await expectText(/AI suggestion — not verified/i, "unverified intake identity", "frontend", ["src/lib/intakeDraft.ts"]);
   await expectText(/Verify vehicle fitment against a trusted catalog/i, "fitment check", "frontend", ["src/lib/intakeDraft.ts"]);
 
+  await page.getByText("Human inspection — optional", { exact: true }).click();
+  await page.getByLabel("Visible condition notes", { exact: true }).fill("QA draft: housing scratch; identity not checked.");
+  await expectText(/Unsaved inspection changes/, "unsaved inspection warning", "frontend", ["src/components/result/PartInspectionForm.tsx"]);
+  const draftDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download draft", exact: true }).click();
+  const downloadedDraft = await draftDownload;
+  const draftPath = join(artifactDir, "inspection-draft.txt");
+  await downloadedDraft.saveAs(draftPath);
+  const draftText = readFileSync(draftPath, "utf8");
+  if (!draftText.includes("UNSAVED INSPECTION DRAFT")
+    || !draftText.includes("QA draft: housing scratch; identity not checked.")
+    || !draftText.includes("Functional test: not tested")) {
+    throw new QaIssue("frontend", "Inspection recovery download lost notes or its draft/untested labels.", {
+      likelyFiles: ["src/components/result/PartInspectionForm.tsx"],
+      suggestedFix: "Export the current form values with explicit unsaved-draft and functional-test status.",
+    });
+  }
+  await page.getByRole("complementary", { name: "Inspection draft recovery" }).scrollIntoViewIfNeeded();
+  const draftWarningReadable = await page.getByText("Unsaved inspection changes", { exact: true }).evaluate((label) => {
+    const rect = label.getBoundingClientRect();
+    const visibleElement = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return label === visibleElement || label.contains(visibleElement);
+  });
+  if (!draftWarningReadable) throw new QaIssue("frontend", "The inspection draft warning is covered by another result panel.", {
+    likelyFiles: ["src/screens/Result.tsx"], suggestedFix: "Keep the result summary in document flow so it cannot cover inspection controls while scrolling.",
+  });
+  await page.getByRole("complementary", { name: "Inspection draft recovery" }).screenshot({ path: join(screenshotDir, "inspection-draft-recovery.png") });
+
   return {
-    details: "Saved result detail rendered the answer, Ask action, automatic intake draft, unverified identity and fitment check.",
+    details: "Saved result detail rendered the answer, Ask action, automatic intake draft, unverified identity and fitment check. Unfinished inspection notes downloaded with unsaved/untested labels; no inspection save or AI request was submitted.",
     likelyFiles: ["src/screens/Result.tsx", "src/services/storage.ts"],
     status: "pass",
   };
