@@ -55,11 +55,16 @@ and failure handling, not live inspection-cloud persistence or email delivery.
 ## Release boundaries
 
 Read-only inspection schema checking still reports missing `inspection_json`.
-The prior published CI head passed quality checks but lacked the Supabase Actions
-settings needed by its auth/cloud gates. The exact SQL, settings, verification
+[CI run 36255542250](https://github.com/om1o/DeepSpec/actions/runs/36255542250)
+on published application commit `8dce4d989be5badcb71e21f13a927be7d36e96e1`
+passed lint, all 1,015 tests and build, then failed the auth gate because
+`VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` were unavailable. The cloud
+step was skipped. This commit has the same application tree as local `df69695`.
+The exact SQL, settings, verification
 commands and seller protocol are in
 [PRIVATE_BETA_RELEASE_CHECKLIST.md](PRIVATE_BETA_RELEASE_CHECKLIST.md).
-Current-head CI evidence belongs in the PR after publication.
+Later documentation/presentation commits must retain these gates and identify
+their own CI run; they do not change the tested application code.
 
 Draft storage is account-scoped browser storage, not encryption or a cloud backup.
 Cleared/evicted storage, browser profiles, physical-device interruption and a fresh
