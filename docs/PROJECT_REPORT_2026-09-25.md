@@ -16,6 +16,12 @@ Assistant-authored fixes in this pass:
 
 ## Runtime evidence
 
+Final code verification: all **74 test files / 965 tests** passed with the repository's default test command. ESLint passed. The local build was interrupted after testing and rerun separately successfully. GitHub independently passed its complete lint/test/build step on commit `0cda74197fd8c7eda30e2714e8ed23675fc4b360`.
+
+**Merge status: not merged.** [GitHub CI run 36207815738](https://github.com/om1o/DeepSpec/actions/runs/36207815738) then failed because Actions secrets `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` are absent; cloud verification did not run in CI. The connector can publish commits but exposes no secrets-management action, the local Git credential lookup has no credential, and the connected GitHub browser is signed out. Configure the existing project's public settings through repository Actions secrets, rerun CI, then merge #114 with the verified head SHA. Do not disable the gate or bypass branch protection. Local source and published source trees match.
+
+Identification release evaluation remains **blocked by provider availability**. The first 50-case run was interrupted before it produced a summary; partial passes are not a completed evaluation. A confirmed fresh, sequential 50-case run with one-second spacing, zero rate-limit retries and stop-after-one-provider-failure stopped on its first sample with `rate_limited`. It did not measure 50-case accuracy. No retry loop was used after that quota response.
+
 QA timestamps below are UTC on September 26; the local audit date is September 25 in New York.
 
 | Check | Observed result | Limits |
@@ -28,6 +34,7 @@ QA timestamps below are UTC on September 26; the local audit date is September 2
 | Inspection verifier | Blocked: hosted `inspection_json` missing; no scan/image fixtures written | Migration requires deployment access |
 | Auth settings | Signup and anonymous access enabled; no configured OAuth providers | Real password and received-email-code checks skipped: no test credentials/inbox code |
 | Billing readiness | Blocked, provider unconfigured and no checkout/webhook evidence | No payment made or live billing enabled |
+| Fifty-image release evaluation | 1 attempted, stopped on provider rate limit | Incomplete; do not infer accuracy from unattempted cases |
 
 Evidence paths:
 
@@ -36,6 +43,8 @@ Evidence paths:
 - Corrected entitlement/feedback browser checks: `artifacts/qa/2026-09-26T01-04-08-016Z/report.md`.
 - Mobile checks: `artifacts/qa/2026-09-26T01-10-50-699Z/report.md`.
 - Each browser folder contains screenshots, HTML, trace and video evidence.
+- Full local lint/test log: `artifacts/qa/2026-09-25-release-check.log` (build completed in a separate verified invocation).
+- Completed blocked eval report: `.deepspec-eval/identify-summary.json`; terminal evidence: `artifacts/qa/2026-09-25-identify-release.log`.
 
 ## Open-issue assessment
 
@@ -44,7 +53,7 @@ This is a current-state assessment of all 16 issues returned by GitHub, not a cl
 | GitHub issue | Current assessment / next action |
 | --- | --- |
 | #57 anonymous auth/cloud sync | Historical anonymous-auth failure no longer reproduces locally. Standard cloud verifier passes; CI evidence still needs to be checked before declaring the whole ticket complete. |
-| #58 Actions configuration | Check the final integration CI result. Local configuration does not prove Actions secrets exist. |
+| #58 Actions configuration | Confirmed still blocked in run 36207815738: both public Supabase Actions secrets are missing. |
 | #59 300-case eval harness | Public 300-case command and summary gate exist; completed live public-quality evidence remains separate. |
 | #60 candidate promotion | Current simplified result has feedback/inspection, not the ticket's full source-backed alternative-promotion UI. Product backlog, not fixed by changing a selector. |
 | #61 durable dataset tables | Standard hosted detail-table/private-image isolation is freshly verified. Inspection is a separate missing migration. |
@@ -57,7 +66,7 @@ This is a current-state assessment of all 16 issues returned by GitHub, not a cl
 | #106 missing auth/tables/storage | Old blocker no longer reproduces: standard hosted nine-step verifier succeeds today. |
 | #115 real phone QA | Still requires physical camera, permissions, glare/low-light and network evidence on an HTTPS deployment. |
 | #116 billing sandbox | No provider configured; current code supports Polar and legacy Stripe. Owner must choose/setup the intended sandbox; do not invent product IDs. |
-| #117 AI reliability | One-sample provider health and real engine scan passed. Broader release evaluation determines beta status; local fallback is not production proof. |
+| #117 AI reliability | Earlier one-sample provider health and real engine scan passed, but the restarted 50-case run hit rate limiting on its first sample. Release remains blocked. |
 | #118 paid go/no-go | Remains blocked by incomplete phone, inspection, credential and billing evidence. A code merge does not authorize paid launch. |
 
 Issue links follow `https://github.com/om1o/DeepSpec/issues/<number>`.
