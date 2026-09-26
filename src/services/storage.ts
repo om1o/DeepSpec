@@ -3,6 +3,7 @@ import type { CandidateMatch, CandidatePart, ChatMessage, Confidence, CustomerVi
 import type { PartInspectionDraft } from "../types";
 import { normalizePartInspection, withLatestInspection } from "../lib/partInspection";
 import { accountStorageKey } from "../lib/accountScope";
+import { inspectionDraftKey } from "./inspectionDraft";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
 export const MAX_SAVED_LOOKUPS = 50;
@@ -285,6 +286,8 @@ export function deleteLookup(id: string): StorageResult<boolean> {
   const writeResult = writeLookups(next);
   if (writeResult.ok && hasLocalStorage()) {
     try { localStorage.removeItem(accountStorageKey(CHAT_KEY(id))); } catch { /* ignore */ }
+    try { localStorage.removeItem(inspectionDraftKey(id)); }
+    catch { return { ok: false, value: true, message: "Scan removed from this device, but its inspection draft could not be removed. Clear this site's browser data to remove the remaining device copy." }; }
   }
   return writeResult.ok ? { ok: true, value: true } : { ok: false, message: writeResult.message, value: false };
 }

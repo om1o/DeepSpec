@@ -813,7 +813,7 @@ async function runInspectionSaveRecovery() {
   };
   const readLookup = () => page.evaluate(({ prefix, lookupId }) => JSON.parse(localStorage.getItem(prefix + "deep-spec:lookups") ?? "[]").find((lookup) => lookup.id === lookupId), { prefix, lookupId });
   const openInspection = async (target) => {
-    const summary = target.getByText(/^Human inspection — (?:optional|saved)$/);
+    const summary = target.getByText(/^Human inspection — (?:optional|saved|draft available)$/);
     await summary.waitFor({ state: "visible", timeout: 10_000 });
     const panel = summary.locator("..");
     if (await panel.getAttribute("open") === null) await summary.click();
@@ -834,6 +834,50 @@ async function runInspectionSaveRecovery() {
   try {
     await gotoPath(`/result/${lookupId}`);
     let panel = await openInspection(page);
+    // Use real reloads and close/reopen navigation. Network is disabled only
+    // while editing: a fresh offline app load is not promised by this feature.
+    const incompleteNote = "QA unfinished draft with no inspector or completed test";
+    await context.setOffline(true);
+    await inspectionField(panel, "visibleNotes").fill(incompleteNote);
+    await panel.getByText("Draft kept on this device. It is not a saved inspection or a cloud backup.", { exact: true }).waitFor();
+    await context.setOffline(false);
+    await page.close();
+    page = await context.newPage();
+    attachLoggers(page);
+    await page.goto(new URL(`/result/${lookupId}`, baseUrl).toString(), { waitUntil: "domcontentloaded" });
+    panel = await openInspection(page);
+    if (await inspectionField(panel, "visibleNotes").inputValue() !== "" || (await readLookup()).inspection) {
+      throw new QaIssue("frontend", "An unfinished draft silently changed the inspection on reload.", { likelyFiles });
+    }
+    await panel.getByRole("button", { name: "Restore draft", exact: true }).click();
+    if (await inspectionField(panel, "visibleNotes").inputValue() !== incompleteNote) throw new QaIssue("frontend", "Draft restore lost the unfinished notes.", { likelyFiles });
+    await panel.screenshot({ path: join(screenshotDir, "inspection-draft-restored.png") });
+    await panel.getByRole("button", { name: "Discard draft", exact: true }).click();
+    await page.reload({ waitUntil: "domcontentloaded" });
+    panel = await openInspection(page);
+    if (await inspectionField(panel, "visibleNotes").inputValue() !== "" || await panel.getByRole("button", { name: "Restore draft", exact: true }).count()) {
+      throw new QaIssue("frontend", "Discarded notes reappeared after reload.", { likelyFiles });
+    }
+    await page.evaluate(() => {
+      const original = Storage.prototype.setItem;
+      globalThis.__qaRestoreDraftStorage = () => { Storage.prototype.setItem = original; delete globalThis.__qaRestoreDraftStorage; };
+      Storage.prototype.setItem = function(key, value) {
+        if (key.includes(":inspection-draft:")) throw new DOMException("QA simulated quota", "QuotaExceededError");
+        return original.call(this, key, value);
+      };
+    });
+    try {
+      await inspectionField(panel, "visibleNotes").fill("QA storage-failure notes retained in the form");
+      await panel.getByText("Draft could not be kept on this device. Download a copy before leaving this page.", { exact: true }).waitFor();
+      const failedDownload = page.waitForEvent("download");
+      await panel.getByRole("button", { name: "Download draft", exact: true }).click();
+      const failedPath = join(artifactDir, "inspection-storage-failure-draft.txt");
+      await (await failedDownload).saveAs(failedPath);
+      if (!readFileSync(failedPath, "utf8").includes("QA storage-failure notes retained in the form")) {
+        throw new QaIssue("frontend", "Device-storage failure lost the current draft's export.", { likelyFiles });
+      }
+    } finally { await page.evaluate(() => globalThis.__qaRestoreDraftStorage?.()); }
+    await panel.getByRole("button", { name: "Discard draft", exact: true }).click();
     await panel.getByRole("button", { name: "Save inspection", exact: true }).click();
     await panel.getByRole("status").filter({ hasText: "Enter the inspector's name." }).waitFor({ state: "visible" });
     await inspectionField(panel, "inspectorName").fill(draft.inspectorName);
@@ -907,6 +951,16 @@ async function runInspectionSaveRecovery() {
     await page.reload({ waitUntil: "domcontentloaded" });
     panel = await openInspection(page);
     await assertFields(panel, { ...draft, visibleNotes: secondNote });
+    if (!await panel.getByRole("button", { name: "Restore draft", exact: true }).isDisabled()) {
+      throw new QaIssue("frontend", "Old recovery notes could replace a newer saved inspection.", { likelyFiles });
+    }
+    const recoveredDownload = page.waitForEvent("download");
+    await panel.getByRole("button", { name: "Download recovery copy", exact: true }).click();
+    const recoveredPath = join(artifactDir, "inspection-reloaded-stale-draft.txt");
+    await (await recoveredDownload).saveAs(recoveredPath);
+    if (!readFileSync(recoveredPath, "utf8").includes(staleNote)) throw new QaIssue("frontend", "Reload lost the stale draft's recovery copy.", { likelyFiles });
+    await panel.screenshot({ path: join(screenshotDir, "inspection-stale-recovery-choice.png") });
+    await panel.getByRole("button", { name: "Discard draft", exact: true }).click();
     const hitTargets = [];
     for (const key of Object.keys(labels)) {
       const field = inspectionField(panel, key);
@@ -934,15 +988,17 @@ async function runInspectionSaveRecovery() {
       syntheticFixture: true, liveAuth: true, controlledCloudFailure: true, liveCloudPersistenceVerified: false,
       blockedCloudWrites, validation: ["inspector required", "identity evidence required"],
       deviceSaveAndReload: "pass", completedReportExactLines: "pass", staleTwoTabProtection: "pass", staleDraftRecovery: "pass", inspectionHitTargets: "pass",
+      offlineEditThenTabCloseReopenRestore: "pass", explicitDiscardAndReload: "pass", storageFailureDownload: "pass", staleRecoveryRestoreBlocked: "pass", recoveredPath,
       reportPath, draftPath,
     });
-    return { status: "pass", details: `Synthetic inspection rejected invalid fields; device save survived ${blockedCloudWrites} deliberately intercepted cloud writes and reload; downloaded report preserved exact notes and untested labels. A second tab saved newer work; the stale form retained its downloadable draft without overwriting it. All ${hitTargets.length} inspection controls were unobstructed after scrolling. Live QA auth, controlled cloud failure; no live cloud inspection persistence was tested.` };
+    return { status: "pass", details: `Offline editing kept an incomplete device draft; reload required explicit restore, and discard survived another reload. Synthetic inspection rejected invalid fields; device save survived ${blockedCloudWrites} deliberately intercepted cloud writes and reload; downloaded report preserved exact notes and untested labels. A second tab saved newer work; the stale form retained a downloadable draft across reload and was blocked from restoring over the new inspection. All ${hitTargets.length} inspection controls were unobstructed after scrolling. Live QA auth, controlled cloud failure; no live cloud inspection persistence was tested.` };
   } catch (error) {
     if (error?.name === "TimeoutError") throw new QaIssue("test_bug", `Inspection QA could not complete a UI wait: ${formatError(error)}`, {
       likelyFiles: ["scripts/qa/real-website-tester.mjs"], suggestedFix: "Inspect the trace and current UI before classifying this selector or timing failure as a product defect.",
     });
     throw error;
   } finally {
+    await context.setOffline(false);
     if (secondPage) await secondPage.close();
     await context.unroute(cloudPaths, preventCloudWrites);
   }
@@ -1618,6 +1674,7 @@ async function qaStoragePrefix() {
 async function seedSavedScans() {
   const prefix = await qaStoragePrefix();
   await page.evaluate(({ lookups, prefix }) => {
+    for (const lookup of lookups) localStorage.removeItem(prefix + `inspection-draft:${encodeURIComponent(lookup.id)}`);
     localStorage.setItem(prefix + "deep-spec:lookups", JSON.stringify(lookups));
     localStorage.setItem(prefix + `deep-spec:chat:${lookups[0].id}`, JSON.stringify(lookups[0].chatHistory));
   }, { lookups: createSeedLookups(), prefix });

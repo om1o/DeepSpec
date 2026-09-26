@@ -15,7 +15,9 @@ signatures or certifications.
 
 - Local saves preserve the AI result, feedback and training labels.
 - Open forms check for changed or deleted device inspections before saving, and for newer inspection props supplied by the parent. A conflicting draft stays visible for copying and review. This prevents known stale-form overwrites; it is not an atomic lock across tabs or devices.
-- Edited forms show **Unsaved inspection changes** and offer **Download draft**. This recovery text includes incomplete inputs without pretending they passed validation or were saved. It does not sync, certify the part, or replace a completed report. Keep the page open until you have saved or downloaded the draft; drafts are not automatically restored after closing it.
+- Edited forms keep an account-scoped device draft on each change, including incomplete text. Reopening a scan offers **Restore draft**, **Download recovery copy**, or **Discard draft**. Restoration is explicit and blocked when the saved inspection has changed. A draft is separate from a completed inspection and is never sent to cloud storage or training.
+- **Download draft** remains available if storage fails or another tab changed its recovery copy. Read the warning before leaving: a failed backup does not preserve the latest edit across refresh. Browser storage is not encrypted by this feature and can be cleared by the browser or device user. Sign back into the same account to find its draft.
+- Successful local inspection save clears its matching draft even if cloud sync fails. Removing a device scan removes its draft, with a warning if cleanup fails. Discard changes only the draft. Storage guards detect known conflicts but are not atomic across tabs; the beta supports one active editor per inspection.
 - Inspection does not grant training consent or automatically train a model.
 - Configured cloud sync stores a separate `inspection_json` field. Cloud-only
   scans use an owner-scoped metadata update without reuploading signed images.
