@@ -1,5 +1,5 @@
 import { accountStorageKey, setActiveAccount } from "../lib/accountScope";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { vi } from "vitest";
@@ -319,6 +319,47 @@ describe("History", () => {
     expect(savedLookup.inspection.inspectorName).toBe(reviewer);
     expect(savedLookup.frame.imageBase64).toBe(lookup.frame.imageBase64);
     expect(savedLookup.id).toBe(lookup.id);
+  });
+
+  it.each([
+    "https://example.test/part.jpg?token=expired",
+    "/brand/deepspec-logo.webp",
+  ])("recovers a cached cloud photo without losing device edits (%s)", async (cachedImage) => {
+    const inspection = { ...emptyPartInspection, inspectorName: "Local reviewer", inspectedAt: "2026-09-20T12:00:00.000Z" };
+    const local = { ...lookup, frame: { ...lookup.frame, imageBase64: cachedImage }, notes: "Receiving notes", correction: "Generator assembly", inspection };
+    const remote = { ...lookup, frame: { imageBase64: "https://example.test/part.jpg?token=fresh", capturedAt: "2026-09-19T12:00:00.000Z" } };
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
+    let complete!: (value: Awaited<ReturnType<typeof readCloudLookups>>) => void;
+    readCloudLookupsMock.mockImplementation(() => new Promise((resolve) => { complete = resolve; }));
+    render(
+      <MemoryRouter initialEntries={["/history"]}>
+        <Routes>
+          <Route path="/history" element={<History />} />
+          <Route path="/result/:id" element={<NavigationLookup />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    const card = screen.getByRole("link", { name: /Alternator/ });
+    fireEvent.error(card.querySelector("img")!);
+    expect(screen.getByRole("img", { name: "Photo unavailable" })).toBeInTheDocument();
+    await act(async () => { complete({ ok: true, value: [remote] }); });
+    expect(card.querySelector("img")).toHaveAttribute("src", remote.frame.imageBase64);
+    await userEvent.click(card);
+    const savedLookup = JSON.parse(screen.getByTestId("navigation-lookup").textContent!);
+    expect(savedLookup).toMatchObject({
+      id: local.id, notes: local.notes, correction: local.correction, rating: local.rating, inspection,
+      frame: { imageBase64: remote.frame.imageBase64, capturedAt: local.frame.capturedAt },
+    });
+    expect(JSON.parse(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY))!)).toEqual([local]);
+  });
+
+  it("keeps the cached photo when cloud signing only returns the fallback image", async () => {
+    const local = { ...lookup, frame: { ...lookup.frame, imageBase64: "https://example.test/cached.jpg" } };
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
+    readCloudLookupsMock.mockResolvedValue({ ok: true, value: [{ ...lookup, frame: { ...lookup.frame, imageBase64: "/brand/deepspec-logo.webp" } }, bodyLookup] });
+    renderHistory();
+    await screen.findByText("Rear bumper");
+    expect(screen.getByRole("link", { name: /Alternator/ }).querySelector("img")).toHaveAttribute("src", local.frame.imageBase64);
   });
 
   it("does not warn about the on-device cap just because cloud history is long", async () => {

@@ -191,10 +191,12 @@ export async function verifyCloudHealth(): Promise<CloudHealthReport> {
 }
 
 const CLOUD_SYNC_TIMEOUT_MS = 20_000;
+const pendingLookupSyncs = new Set<string>();
+const PENDING_SYNC_MESSAGE = "A cloud save for this scan is still finishing. Wait for it to finish before retrying.";
 
-function withCloudTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+function withCloudTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => void): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Cloud sync timed out")), timeoutMs);
+    const timer = setTimeout(() => { onTimeout(); reject(new Error("Cloud sync timed out")); }, timeoutMs);
     promise.then(
       (value) => { clearTimeout(timer); resolve(value); },
       (error) => { clearTimeout(timer); reject(error); },
@@ -214,7 +216,12 @@ async function syncLookupForAccount(lookup: Lookup, scope: AccountScope): Promis
     };
   }
 
+  // Keep the key until the underlying operation settles, even after its UI
+  // timeout. Releasing it early lets an older write overwrite a newer retry.
+  const pendingKey = JSON.stringify([scope.userId, lookup.id]);
+  if (pendingLookupSyncs.has(pendingKey)) return { ok: false, message: PENDING_SYNC_MESSAGE };
   let receipt: Lookup["cloudSave"];
+  let timedOut = false;
   const finish = (status: "acknowledged" | "failed") => {
     if (receipt && isAccountScopeCurrent(scope)) {
       recordCloudSaveAttempt(lookup.id, { ...receipt, status }, receipt.attemptId);
@@ -229,23 +236,29 @@ async function syncLookupForAccount(lookup: Lookup, scope: AccountScope): Promis
       scope: lookup.inspection && !lookup.frame.imageBase64.startsWith("data:") ? "inspection" : "scan",
     };
     recordCloudSaveAttempt(lookup.id, receipt);
-    const result = await withCloudTimeout(performLookupSync(lookup, scope), CLOUD_SYNC_TIMEOUT_MS);
+    pendingLookupSyncs.add(pendingKey);
+    const guard = () => {
+      assertAccount(scope);
+      if (timedOut) throw new Error("Cloud sync timed out");
+    };
+    const operation = performLookupSync(lookup, scope, guard)
+      .finally(() => pendingLookupSyncs.delete(pendingKey));
+    const result = await withCloudTimeout(operation, CLOUD_SYNC_TIMEOUT_MS, () => { timedOut = true; });
     finish(result.ok ? "acknowledged" : "failed");
     return result;
   } catch (error) {
     finish("failed");
     return {
       ok: false,
-      message: getFriendlySyncError(error),
+      message: timedOut ? `Cloud save was not confirmed. ${PENDING_SYNC_MESSAGE}` : getFriendlySyncError(error),
     };
   }
 }
 
-async function performLookupSync(lookup: Lookup, scope: AccountScope): Promise<CloudSyncResult> {
+async function performLookupSync(lookup: Lookup, scope: AccountScope, guard: () => void): Promise<CloudSyncResult> {
   const supabase = await getClient();
-  assertAccount(scope);
+  guard();
   const user = await ensureCloudUser(supabase, scope);
-  const guard = () => assertAccount(scope);
   guard();
   // Cloud history contains signed image URLs, not the original image bytes. Save
   // the inspection without replacing image metadata or stale AI/feedback fields.

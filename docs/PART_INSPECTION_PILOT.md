@@ -27,6 +27,14 @@ signatures or certifications.
 - Cloud writes remain last-write-wins. Concurrent inspection editing, version
   history, and conflict resolution are not implemented. History chooses the
   newer inspection timestamp when combining a local and cloud copy.
+- Within one running app, a scan's cloud retry waits for an earlier request to
+  settle, including after the 20-second confirmation timeout. Timed-out work
+  cannot start later writes, but a request already sent can still complete.
+  A request that never settles keeps that retry blocked. Keep the device copy
+  and export it; a timeout is not confirmation of backup or cancellation.
+- Reloading cloud history can refresh an expired photo URL while preserving
+  device photos and human notes. An already-open result does not automatically
+  renew its signed URL; return to Saved scans to fetch fresh cloud history.
 
 ## What this increment does not prove
 

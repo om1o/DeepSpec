@@ -10,6 +10,7 @@ import { DEVICE_SCAN_LIMIT_MESSAGE, MAX_SAVED_LOOKUPS, deleteLookup, getLookup, 
 import { getTrainingReadiness } from "../services/trainingReadiness";
 import { getLocalDateStamp } from "../lib/utils";
 import { withLatestInspection } from "../lib/partInspection";
+import { mergeCloudLookup } from "../lib/lookupMerge";
 import { getIntakeReview } from "../lib/intakeReview";
 import { getAccountScope, isAccountScopeCurrent, hasUnassignedDeviceRecords, withAccountRouteState } from "../lib/accountScope";
 import { SCAN_CATEGORIES, type Lookup, type Rating, type ScanCategory, type TrainingStatus } from "../types";
@@ -557,7 +558,7 @@ function mergeLookups(localLookups: Lookup[], cloudLookups: Lookup[]) {
 
   for (const lookup of localLookups) {
     const remote = byId.get(lookup.id);
-    byId.set(lookup.id, remote ? withLatestInspection(lookup, remote) : lookup);
+    byId.set(lookup.id, remote ? mergeCloudLookup(lookup, remote) : lookup);
   }
 
   return [...byId.values()].sort((left, right) => getTimestamp(right.createdAt) - getTimestamp(left.createdAt));

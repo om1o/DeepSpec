@@ -24,6 +24,169 @@ describe("cloudSync", () => {
     vi.unstubAllEnvs();
   });
 
+  it.each(["auth", "upload", "row"])("stops later writes after a timeout during %s and holds retries until the request settles", async (stage) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    let complete!: (value: unknown) => void;
+    const pending = new Promise((resolve) => { complete = resolve; });
+    const session = { data: { session: { user: { id: "user-1" } } }, error: null };
+    const getSession = vi.fn().mockResolvedValue(session);
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    const upsert = vi.fn().mockResolvedValue({ error: null });
+    const insert = vi.fn().mockResolvedValue({ error: null });
+    const from = vi.fn().mockReturnValue({ upsert, insert, delete: makeDeleteQuery });
+    const stalled = stage === "auth" ? getSession : stage === "upload" ? upload : upsert;
+    stalled.mockReturnValueOnce(pending);
+    mocks.createClient.mockReturnValue({ auth: { getSession }, storage: { from: vi.fn().mockReturnValue({ upload }) }, from });
+    const { syncLookupToCloud } = await import("./cloudSync");
+    const { saveExistingLookup, getLookup, updateLookup } = await import("./storage");
+    const lookup = makeLookup();
+    saveExistingLookup(lookup);
+    vi.useFakeTimers();
+    try {
+      const saving = syncLookupToCloud(lookup);
+      await vi.waitFor(() => expect(stalled).toHaveBeenCalledOnce());
+      await vi.advanceTimersByTimeAsync(20_001);
+      expect((await saving).ok).toBe(false);
+      expect(getLookup(lookup.id)?.cloudSave?.status).toBe("failed");
+      updateLookup(lookup.id, { notes: "Newer inspection context" });
+      const retry = syncLookupToCloud(lookup);
+      await vi.advanceTimersByTimeAsync(20_001);
+      expect(await retry).toMatchObject({ ok: false, message: expect.stringContaining("still finishing") });
+      expect(stalled).toHaveBeenCalledOnce();
+      complete(stage === "auth" ? session : { error: null });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(upload).toHaveBeenCalledTimes(stage === "auth" ? 0 : 1);
+      expect(upsert).toHaveBeenCalledTimes(stage === "row" ? 1 : 0);
+      expect(insert).not.toHaveBeenCalled();
+      expect(getLookup(lookup.id)?.notes).toBe("Newer inspection context");
+      expect(getLookup(lookup.id)?.cloudSave).toBeUndefined();
+
+      expect((await syncLookupToCloud(lookup)).ok).toBe(true);
+      expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ notes: "Newer inspection context" }), expect.anything());
+      expect(getLookup(lookup.id)?.cloudSave?.status).toBe("acknowledged");
+    } finally { complete(stage === "auth" ? session : { error: null }); vi.useRealTimers(); }
+  });
+
+  it("releases a timed-out save after late rejection so a new attempt can finish", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    let complete!: (value: unknown) => void;
+    let rejectPending!: (reason: Error) => void;
+    const pending = new Promise((resolve, reject) => { complete = resolve; rejectPending = reject; });
+    const session = { data: { session: { user: { id: "user-1" } } }, error: null };
+    const getSession = vi.fn().mockResolvedValue(session).mockReturnValueOnce(pending);
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    const upsert = vi.fn().mockResolvedValue({ error: null });
+    const insert = vi.fn().mockResolvedValue({ error: null });
+    mocks.createClient.mockReturnValue({
+      auth: { getSession }, storage: { from: vi.fn().mockReturnValue({ upload }) },
+      from: vi.fn().mockReturnValue({ upsert, insert, delete: makeDeleteQuery }),
+    });
+    const { syncLookupToCloud } = await import("./cloudSync");
+    const { saveExistingLookup, getLookup } = await import("./storage");
+    const lookup = makeLookup();
+    saveExistingLookup(lookup);
+    vi.useFakeTimers();
+    const saving = syncLookupToCloud(lookup);
+    try {
+      await vi.waitFor(() => expect(getSession).toHaveBeenCalledOnce());
+      await vi.advanceTimersByTimeAsync(20_001);
+      expect((await saving).ok).toBe(false);
+      const failedReceipt = getLookup(lookup.id)?.cloudSave;
+      expect(failedReceipt?.status).toBe("failed");
+      expect(await syncLookupToCloud(lookup)).toMatchObject({ ok: false, message: expect.stringContaining("still finishing") });
+      rejectPending(new Error("Connection closed after timeout"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(upload).not.toHaveBeenCalled();
+      expect(getLookup(lookup.id)?.cloudSave).toEqual(failedReceipt);
+      expect((await syncLookupToCloud(lookup)).ok).toBe(true);
+      expect(getSession).toHaveBeenCalledTimes(2);
+      expect(upload).toHaveBeenCalledOnce();
+      expect(getLookup(lookup.id)?.cloudSave?.status).toBe("acknowledged");
+      expect(getLookup(lookup.id)?.cloudSave?.attemptId).not.toBe(failedReceipt?.attemptId);
+    } finally {
+      complete(session);
+      await saving;
+      vi.useRealTimers();
+    }
+  });
+
+  it("isolates pending saves by owner without allowing account round-trips to bypass them", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const { getAccountScope, setActiveAccount } = await import("../lib/accountScope");
+    let complete!: (value: unknown) => void;
+    const pending = new Promise((resolve) => { complete = resolve; });
+    const upload = vi.fn().mockResolvedValue({ error: null }).mockReturnValueOnce(pending);
+    const upsert = vi.fn().mockResolvedValue({ error: null });
+    const insert = vi.fn().mockResolvedValue({ error: null });
+    mocks.createClient.mockReturnValue({
+      auth: { getSession: vi.fn().mockImplementation(async () => ({ data: { session: { user: { id: getAccountScope().userId } } }, error: null })) },
+      storage: { from: vi.fn().mockReturnValue({ upload }) },
+      from: vi.fn().mockReturnValue({ upsert, insert, delete: makeDeleteQuery }),
+    });
+    const { syncLookupToCloud } = await import("./cloudSync");
+    const { saveExistingLookup, getLookup } = await import("./storage");
+    const lookup = makeLookup();
+    saveExistingLookup({ ...lookup, notes: "Owner A notes" });
+    const saving = syncLookupToCloud(lookup);
+    try {
+      await vi.waitFor(() => expect(upload).toHaveBeenCalledOnce());
+      const originalReceipt = getLookup(lookup.id)?.cloudSave;
+      setActiveAccount("user-2");
+      saveExistingLookup({ ...lookup, notes: "Owner B notes" });
+      expect((await syncLookupToCloud(lookup)).ok).toBe(true);
+      expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ user_id: "user-2", local_id: lookup.id, notes: "Owner B notes" }), expect.anything());
+      const otherReceipt = getLookup(lookup.id)?.cloudSave;
+      expect(otherReceipt?.status).toBe("acknowledged");
+
+      setActiveAccount("user-1");
+      expect(await syncLookupToCloud(lookup)).toMatchObject({ ok: false, message: expect.stringContaining("still finishing") });
+      expect(upload).toHaveBeenCalledTimes(2);
+      expect(getLookup(lookup.id)?.cloudSave).toEqual(originalReceipt);
+      complete({ error: null });
+      expect((await saving).ok).toBe(false);
+      expect(upsert).not.toHaveBeenCalledWith(expect.objectContaining({ user_id: "user-1" }), expect.anything());
+      expect(getLookup(lookup.id)?.cloudSave).toEqual(originalReceipt);
+      expect((await syncLookupToCloud(lookup)).ok).toBe(true);
+      expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ user_id: "user-1", local_id: lookup.id, notes: "Owner A notes" }), expect.anything());
+      setActiveAccount("user-2");
+      expect(getLookup(lookup.id)?.cloudSave).toEqual(otherReceipt);
+    } finally {
+      complete({ error: null });
+      await saving;
+    }
+  });
+
+  it("does not overlap two active saves of the same scan", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    let complete!: (value: unknown) => void;
+    const upload = vi.fn().mockImplementation(() => new Promise((resolve) => { complete = resolve; }));
+    const from = vi.fn();
+    mocks.createClient.mockReturnValue({
+      auth: { getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }) },
+      storage: { from: vi.fn().mockReturnValue({ upload }) }, from,
+    });
+    const { syncLookupToCloud } = await import("./cloudSync");
+    const { saveExistingLookup, getLookup } = await import("./storage");
+    const lookup = makeLookup();
+    saveExistingLookup(lookup);
+    const saving = syncLookupToCloud(lookup);
+    await vi.waitFor(() => expect(upload).toHaveBeenCalledOnce());
+    const attemptId = getLookup(lookup.id)?.cloudSave?.attemptId;
+    const retry = syncLookupToCloud(lookup);
+    // A duplicate save must return immediately, without starting a second upload.
+    await expect(Promise.race([retry, new Promise((resolve) => setTimeout(() => resolve("still waiting"), 100))]))
+      .resolves.toMatchObject({ ok: false, message: expect.stringContaining("still finishing") });
+    expect(upload).toHaveBeenCalledOnce();
+    expect(getLookup(lookup.id)?.cloudSave?.attemptId).toBe(attemptId);
+    complete({ error: { message: "Upload rejected" } });
+    await saving;
+    expect(from).not.toHaveBeenCalled();
+  });
+
   it.each(["Failed to fetch", "Request timed out"])("does not promise an automatic retry after %s", async (message) => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");

@@ -105,6 +105,32 @@ describe("Result", () => {
     expect(getLookup(cloudLookup.id)?.frame.imageBase64).toBe("https://example.com/signed-image.jpg");
   });
 
+  it.each([
+    ["https://example.test/part.jpg?token=expired", "https://example.test/part.jpg?token=fresh", "https://example.test/part.jpg?token=fresh"],
+    [frame.imageBase64, "https://example.test/part.jpg?token=fresh", frame.imageBase64],
+    ["https://example.test/cached.jpg", "/brand/deepspec-logo.webp", "https://example.test/cached.jpg"],
+  ])("preserves the available photo and local inspection after a device edit (%s / %s)", async (localImage, cloudImage, expectedImage) => {
+    const local = makeLookup({
+      frame: { ...frame, imageBase64: localImage },
+      inspection: { ...emptyPartInspection, inspectorName: "Local inspector", inspectedAt: "2026-09-20T12:00:00.000Z" },
+      notes: "Keep receiving notes",
+    });
+    const cloudLookup = makeLookup({
+      frame: { imageBase64: cloudImage, capturedAt: "2026-09-19T12:00:00.000Z" },
+      inspection: { ...emptyPartInspection, inspectorName: "Old inspector", inspectedAt: "2026-09-19T12:00:00.000Z" },
+    });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
+    renderResult({ ...successfulScan, savedLookup: cloudLookup }, `/result/${local.id}`);
+    expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute("src", expectedImage);
+    await userEvent.click(screen.getByRole("button", { name: "Yes", exact: true }));
+    expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute("src", expectedImage);
+    await userEvent.click(screen.getByText("Human inspection — saved"));
+    expect(screen.getByLabelText("Inspector name (self-reported)")).toHaveValue("Local inspector");
+    expect(getLookup(local.id)).toMatchObject({
+      frame: local.frame, notes: local.notes, inspection: local.inspection, rating: "up",
+    });
+  });
+
   it("saves a cloud scan without duplicating its identity or losing its inspection", async () => {
     const user = userEvent.setup();
     const cloudLookup = makeLookup({

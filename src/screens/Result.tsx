@@ -9,6 +9,7 @@ import { ScanDebugOverlay } from "../components/result/ScanDebugOverlay";
 import { IssueLine, ResultDetailSections, SceneCategoryList } from "../components/result/PositiveAnswerCard";
 import { getSimpleResultSummary } from "../lib/simpleResultSummary";
 import { withLatestInspection } from "../lib/partInspection";
+import { mergeCloudLookup } from "../lib/lookupMerge";
 import { getAccountScope, isAccountScopeCurrent, isCurrentAccountRouteState } from "../lib/accountScope";
 import { deriveIssue, getAnswerBody, getSceneChips } from "../lib/resultFacts";
 import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } from "../lib/utils";
@@ -34,11 +35,11 @@ export default function Result() {
   });
   const [liveScanState, setLiveScanState] = useState<ScanAnalysisState | null>(null);
   const inspectionBase = historyLookup && historyLookup.id === id
-    ? (lookup ? withLatestInspection(lookup, historyLookup) : historyLookup)
+    ? (lookup ? mergeCloudLookup(lookup, historyLookup) : historyLookup)
     : lookup;
   const inspectionLookup = inspectionBase ? withRetriedLookupResult(inspectionBase, liveScanState) : null;
   const [saveError, setSaveError] = useState<string | null>(null);
-  const scanState = lookup ? scanStateFromLookup(lookup) : liveScanState ?? getScanState(routeState);
+  const scanState = lookup ? scanStateFromLookup(inspectionBase ?? lookup) : liveScanState ?? getScanState(routeState);
   const frame = scanState?.frame ?? readLatestCapturedFrame();
   const capturedAt = frame?.capturedAt ? new Date(frame.capturedAt).toLocaleString() : null;
   const storageWarning = scanState?.storageWarning;
@@ -395,7 +396,7 @@ function AnalysisResult({
 
   return (
     <>
-      <section className="sticky top-2 z-10 rounded-[24px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 shadow-[0_12px_34px_rgba(15,23,42,0.08)]">
+      <section className="rounded-[24px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 shadow-[0_12px_34px_rgba(15,23,42,0.08)]">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[#a7cbd4]">{summary.eyebrow}</p>

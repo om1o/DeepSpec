@@ -61,6 +61,7 @@ const scenarioHandlers = {
   "early-access": runEarlyAccess,
   "result-chat": runResultChat,
   "result-detail": runResultDetail,
+  "inspection-save-recovery": runInspectionSaveRecovery,
   "account-entitlements": runAccountEntitlements,
   "add-vin-after-result": runAddVinAfterResult,
   "billing-provider-fail-closed": runBillingProviderFailClosed,
@@ -560,13 +561,25 @@ async function runScannerAiEngine() {
   await uploadInput.waitFor({ state: "attached", timeout: 7_000 });
   const controlsReadyMs = Date.now() - routeStartedAtMs;
   const fixture = await createEngineFixture();
+  const documentStartedAt = await page.evaluate(() => globalThis.performance.timeOrigin);
+  const developmentPage = await page.locator('script[src*="/@vite/client"]').count() > 0;
 
   const uploadStartedAtMs = Date.now();
   await uploadInput.setInputFiles(fixture.path);
-  const outcome = await waitForScannerAiOutcome();
+  const outcome = await waitForScannerAiOutcome(documentStartedAt);
   const analysisMs = Date.now() - uploadStartedAtMs;
   const lastIdentifyResponse = getLastNetworkResponse("/api/identify");
   const timingSummary = `scanner controls=${controlsReadyMs}ms, engine upload+AI=${analysisMs}ms, /api/identify=${lastIdentifyResponse?.status ?? "not observed"}`;
+
+  if (outcome.type === "reloaded") {
+    throw new QaIssue(developmentPage ? "environment" : "frontend",
+      `The page reloaded during the engine scan; this attempt cannot establish AI or save behavior. ${timingSummary}.`, {
+        likelyFiles: developmentPage ? [] : ["src/screens/Scanner.tsx"],
+        suggestedFix: developmentPage
+          ? "Use the built app via npm run qa:serve-production for a stable run, or resolve development-server reloads before repeating the scan."
+          : "Inspect the trace for the unexpected document navigation before judging identification or persistence.",
+      });
+  }
 
   if (controlsReadyMs > 5_000) {
     throw new QaIssue(
@@ -755,7 +768,7 @@ async function runResultDetail() {
   await page.getByRole("complementary", { name: "Inspection draft recovery" }).scrollIntoViewIfNeeded();
   const draftWarningReadable = await page.getByText("Unsaved inspection changes", { exact: true }).evaluate((label) => {
     const rect = label.getBoundingClientRect();
-    const visibleElement = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    const visibleElement = label.ownerDocument.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
     return label === visibleElement || label.contains(visibleElement);
   });
   if (!draftWarningReadable) throw new QaIssue("frontend", "The inspection draft warning is covered by another result panel.", {
@@ -768,6 +781,171 @@ async function runResultDetail() {
     likelyFiles: ["src/screens/Result.tsx", "src/services/storage.ts"],
     status: "pass",
   };
+}
+
+async function runInspectionSaveRecovery() {
+  await requireAuthForProtectedRoute("inspection-save-recovery");
+  await seedSavedScans();
+  const prefix = await qaStoragePrefix();
+  const lookupId = "qa-alternator-1";
+  const likelyFiles = ["src/components/result/PartInspectionForm.tsx", "src/services/storage.ts", "src/services/report.ts"];
+  const draft = {
+    confirmedPartName: "QA inspected alternator", partNumber: "QA-ALT-0042",
+    identityEvidence: "QA fictional fixture label; not a real catalog match.",
+    visibleCondition: "no_visible_damage", visibleNotes: "QA visual note: housing examined; no functional test performed.",
+    functionalStatus: "not_tested", functionalNotes: "", inspectorName: "QA inspector",
+  };
+  const labels = {
+    confirmedPartName: "Confirmed part name", partNumber: "Part number",
+    identityEvidence: "Identity evidence (label, catalog, or other check)",
+    visibleCondition: "Visible condition", visibleNotes: "Visible condition notes",
+    functionalStatus: "Functional test", functionalNotes: "Test method and result",
+    inspectorName: "Inspector name (self-reported)",
+  };
+  const cloudPaths = /\/(?:rest|storage)\/v1\//;
+  let blockedCloudWrites = 0;
+  let secondPage;
+  const preventCloudWrites = async (route) => {
+    if (["POST", "PATCH", "PUT", "DELETE"].includes(route.request().method())) {
+      blockedCloudWrites += 1;
+      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ message: "QA controlled cloud failure. No cloud write was sent." }) });
+    } else await route.continue();
+  };
+  const readLookup = () => page.evaluate(({ prefix, lookupId }) => JSON.parse(localStorage.getItem(prefix + "deep-spec:lookups") ?? "[]").find((lookup) => lookup.id === lookupId), { prefix, lookupId });
+  const openInspection = async (target) => {
+    const summary = target.getByText(/^Human inspection — (?:optional|saved)$/);
+    await summary.waitFor({ state: "visible", timeout: 10_000 });
+    const panel = summary.locator("..");
+    if (await panel.getAttribute("open") === null) await summary.click();
+    return panel;
+  };
+  const inspectionField = (panel, key) => {
+    const name = new RegExp("^" + labels[key].replaceAll("(", "\\(").replaceAll(")", "\\)"));
+    return panel.getByRole(key === "visibleCondition" || key === "functionalStatus" ? "combobox" : "textbox", { name });
+  };
+  const assertFields = async (panel, expected) => {
+    for (const [key, value] of Object.entries(expected)) {
+      if (await inspectionField(panel, key).inputValue() !== value) {
+        throw new QaIssue("frontend", `Saved inspection field ${key} did not survive reload.`, { likelyFiles });
+      }
+    }
+  };
+  await context.route(cloudPaths, preventCloudWrites);
+  try {
+    await gotoPath(`/result/${lookupId}`);
+    let panel = await openInspection(page);
+    await panel.getByRole("button", { name: "Save inspection", exact: true }).click();
+    await panel.getByRole("status").filter({ hasText: "Enter the inspector's name." }).waitFor({ state: "visible" });
+    await inspectionField(panel, "inspectorName").fill(draft.inspectorName);
+    await inspectionField(panel, "partNumber").fill(draft.partNumber);
+    await panel.getByRole("button", { name: "Save inspection", exact: true }).click();
+    await panel.getByRole("status").filter({ hasText: "Describe how you confirmed the identity or part number." }).waitFor({ state: "visible" });
+    if ((await readLookup()).inspection || blockedCloudWrites) throw new QaIssue("frontend", "Invalid inspection attempted a save or cloud write.", { likelyFiles });
+
+    for (const [key, value] of Object.entries(draft)) {
+      const field = inspectionField(panel, key);
+      if (key === "visibleCondition" || key === "functionalStatus") await field.selectOption(value);
+      else await field.fill(value);
+    }
+    await panel.getByRole("button", { name: "Save inspection", exact: true }).click();
+    await panel.getByRole("status").filter({ hasText: "Saved on this device. Cloud sync failed:" }).waitFor({ state: "visible", timeout: 30_000 });
+    const saved = await readLookup();
+    if (!blockedCloudWrites || saved.cloudSave?.status !== "failed" || Object.entries(draft).some(([key, value]) => saved.inspection?.[key] !== value)
+      || !Number.isFinite(Date.parse(saved.inspection?.inspectedAt))) {
+      throw new QaIssue("frontend", "Controlled cloud failure did not retain an exact dated device inspection and failed save receipt.", { likelyFiles });
+    }
+    await panel.screenshot({ path: join(screenshotDir, "inspection-device-saved-cloud-failed.png") });
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    panel = await openInspection(page);
+    await assertFields(panel, draft);
+    if ((await readLookup()).cloudSave?.status !== "failed") throw new QaIssue("frontend", "Inspection cloud-failure receipt was lost on reload.", { likelyFiles });
+    await panel.screenshot({ path: join(screenshotDir, "inspection-saved-reloaded.png") });
+    const reportDownload = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Export", exact: true }).click();
+    const reportPath = join(artifactDir, "inspection-saved-report.txt");
+    await (await reportDownload).saveAs(reportPath);
+    const report = readFileSync(reportPath, "utf8");
+    const exactLines = [
+      "Deep Spec Scan Report", "AI scan summary:", "Human inspection (self-reported, separate from AI):",
+      `Inspector: ${draft.inspectorName}`, `Confirmed part: ${draft.confirmedPartName}`, `Part number: ${draft.partNumber}`,
+      `Identity evidence: ${draft.identityEvidence}`, "Visible condition: no visible damage", `Visible notes: ${draft.visibleNotes}`,
+      "Functional test: not tested", "Test method and result: None recorded",
+      "No visible damage does not establish function. Recorded tests are not safety certification.", "QA seeded saved scan.",
+    ];
+    if (exactLines.some((line) => !report.split(/\r?\n/).includes(line)) || report.includes("UNSAVED INSPECTION DRAFT")) {
+      throw new QaIssue("frontend", "Completed inspection report lost exact notes, untested status or separation from AI.", { likelyFiles });
+    }
+
+    secondPage = await context.newPage();
+    attachLoggers(secondPage);
+    await secondPage.goto(new URL(`/result/${lookupId}`, baseUrl).toString(), { waitUntil: "domcontentloaded" });
+    const otherPanel = await openInspection(secondPage);
+    const secondNote = "QA second tab: newer receiving note retained.";
+    const staleNote = "QA first tab: unsaved draft must not overwrite newer work.";
+    await inspectionField(panel, "visibleNotes").fill(staleNote);
+    await inspectionField(otherPanel, "visibleNotes").fill(secondNote);
+    await otherPanel.getByRole("button", { name: "Save inspection", exact: true }).click();
+    await otherPanel.getByRole("status").filter({ hasText: "Saved on this device. Cloud sync failed:" }).waitFor({ state: "visible", timeout: 30_000 });
+    const newest = JSON.stringify(await readLookup());
+    const writesBeforeStaleSave = blockedCloudWrites;
+    await panel.getByRole("button", { name: "Save inspection", exact: true }).click();
+    await panel.getByRole("status").filter({ hasText: "Inspection changed or was removed since you opened this form." }).waitFor({ state: "visible" });
+    if (JSON.stringify(await readLookup()) !== newest || blockedCloudWrites !== writesBeforeStaleSave
+      || await inspectionField(panel, "visibleNotes").inputValue() !== staleNote) {
+      throw new QaIssue("frontend", "A stale inspection form overwrote a newer device record, sent a cloud write or lost its draft.", { likelyFiles });
+    }
+    const draftDownload = page.waitForEvent("download");
+    await panel.getByRole("button", { name: "Download draft", exact: true }).click();
+    const draftPath = join(artifactDir, "inspection-stale-draft.txt");
+    await (await draftDownload).saveAs(draftPath);
+    const recovery = readFileSync(draftPath, "utf8");
+    if (!recovery.includes("UNSAVED INSPECTION DRAFT") || !recovery.includes(`Visible notes: ${staleNote}`) || !recovery.includes("Functional test: not tested")) {
+      throw new QaIssue("frontend", "Blocked stale-form recovery download lost the unsaved notes or untested label.", { likelyFiles });
+    }
+    await panel.screenshot({ path: join(screenshotDir, "inspection-stale-form-protected.png") });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    panel = await openInspection(page);
+    await assertFields(panel, { ...draft, visibleNotes: secondNote });
+    const hitTargets = [];
+    for (const key of Object.keys(labels)) {
+      const field = inspectionField(panel, key);
+      await field.scrollIntoViewIfNeeded();
+      const target = await field.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        const hit = element.ownerDocument.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        return {
+          unobstructed: hit === element || element.contains(hit),
+          rect: { top: rect.top, left: rect.left, width: rect.width, height: rect.height },
+          coveringElement: hit ? { tag: hit.tagName, className: hit.className, text: hit.textContent?.slice(0, 160) } : null,
+        };
+      });
+      hitTargets.push({ field: key, ...target });
+      if (!target.unobstructed || key === "confirmedPartName") {
+        await page.screenshot({ path: join(screenshotDir, `inspection-${key}-viewport.png`) });
+      }
+    }
+    writeJson(join(artifactDir, "inspection-hit-targets.json"), { viewport: viewportProfile, hitTargets });
+    const obstructed = hitTargets.filter((target) => !target.unobstructed).map((target) => target.field);
+    if (obstructed.length) throw new QaIssue("frontend", `Result overlays cover inspection controls after scrolling: ${obstructed.join(", ")}. Viewport screenshots and elementFromPoint evidence confirm this is not screenshot stitching.`, {
+      likelyFiles: ["src/screens/Result.tsx"], suggestedFix: "Keep the result summary in normal document flow so it cannot cover inspection controls while scrolling.",
+    });
+    writeJson(join(artifactDir, "inspection-save-recovery.json"), {
+      syntheticFixture: true, liveAuth: true, controlledCloudFailure: true, liveCloudPersistenceVerified: false,
+      blockedCloudWrites, validation: ["inspector required", "identity evidence required"],
+      deviceSaveAndReload: "pass", completedReportExactLines: "pass", staleTwoTabProtection: "pass", staleDraftRecovery: "pass", inspectionHitTargets: "pass",
+      reportPath, draftPath,
+    });
+    return { status: "pass", details: `Synthetic inspection rejected invalid fields; device save survived ${blockedCloudWrites} deliberately intercepted cloud writes and reload; downloaded report preserved exact notes and untested labels. A second tab saved newer work; the stale form retained its downloadable draft without overwriting it. All ${hitTargets.length} inspection controls were unobstructed after scrolling. Live QA auth, controlled cloud failure; no live cloud inspection persistence was tested.` };
+  } catch (error) {
+    if (error?.name === "TimeoutError") throw new QaIssue("test_bug", `Inspection QA could not complete a UI wait: ${formatError(error)}`, {
+      likelyFiles: ["scripts/qa/real-website-tester.mjs"], suggestedFix: "Inspect the trace and current UI before classifying this selector or timing failure as a product defect.",
+    });
+    throw error;
+  } finally {
+    if (secondPage) await secondPage.close();
+    await context.unroute(cloudPaths, preventCloudWrites);
+  }
 }
 
 async function runResultChat() {
@@ -1362,9 +1540,12 @@ async function createGeneratedEngineFixture() {
   return { path, source: "generated-fallback" };
 }
 
-async function waitForScannerAiOutcome() {
+async function waitForScannerAiOutcome(documentStartedAt) {
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
+    if (await page.evaluate(() => globalThis.performance.timeOrigin) !== documentStartedAt) {
+      return { text: compactText(await getBodyText()), type: "reloaded" };
+    }
     const text = await getBodyText();
     if (/Best match|Identified|Visible issue|Item view|Tell me more|What this is|Next step/i.test(text)) {
       return { text: compactText(text), type: "result" };
@@ -1387,14 +1568,17 @@ async function waitForScannerAiOutcome() {
 async function waitForScannerCloudSyncOutcome() {
   // Allow the service's 20-second timeout to settle and render a final state.
   const deadline = Date.now() + 25_000;
-  let latestText = compactText(await getBodyText());
+  const statusNotice = page.getByTestId("scan-save-status");
+  let latestText = "";
 
   while (Date.now() < deadline) {
-    const text = compactText(await getBodyText());
+    // Read the notice itself: truncating the whole page can remove a valid
+    // save acknowledgement after a long identification answer.
+    const text = await statusNotice.innerText({ timeout: 500 }).catch(() => "");
     latestText = text;
 
     if (/Cloud sync failed|Scan saved to cloud|Cloud sync is off|Cloud sync is not configured/i.test(text)) {
-      const visible = await page.getByTestId("scan-save-status").evaluate((element) => {
+      const visible = await statusNotice.evaluate((element) => {
         const rect = element.getBoundingClientRect();
         const front = element.ownerDocument.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
         return rect.width > 0 && rect.height > 0 && front !== null && element.contains(front);
@@ -1883,6 +2067,7 @@ function likelyFilesForScenario(scenario) {
     "early-access": ["src/screens/EarlyAccess.tsx", "src/services/cloudSync.ts"],
     "result-chat": ["src/screens/Chat.tsx", "api/chat.shared.ts"],
     "result-detail": ["src/screens/Result.tsx", "src/services/storage.ts"],
+    "inspection-save-recovery": ["src/components/result/PartInspectionForm.tsx", "src/services/storage.ts", "src/services/report.ts"],
     "saved-history": ["src/screens/History.tsx", "src/services/storage.ts"],
     "shop-onboarding": ["src/screens/Shop.tsx", "src/services/shop.ts"],
     "create-job": ["src/screens/ShopNewJob.tsx", "src/screens/Scanner.tsx", "src/services/shop.ts"],
