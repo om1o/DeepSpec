@@ -14,7 +14,7 @@ export type RateLimitScope = "identify" | "chat";
 
 export type RateLimitDecision =
   | { ok: true }
-  | { ok: false; status: 429; retryAfterSeconds: number; body: { error: { code: string; message: string } } };
+  | { ok: false; status: 429 | 503; retryAfterSeconds: number; body: { error: { code: string; message: string } } };
 
 // Approved limits: identify 15/min + 150/day, chat 30/min + 300/day (per IP).
 const RULES: Record<RateLimitScope, RateLimitRule[]> = {
@@ -45,46 +45,71 @@ export async function enforceRateLimit(
   const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
   const clientIp = getClientIp(headers);
 
-  // Fail open: without a backing store or a client IP to key on, we cannot rate limit.
-  // Availability beats strictness here — a misconfigured limiter must never block scans.
+  // Local development remains usable without a backing store. Production must
+  // verify the limit before starting a paid provider request.
   if (!supabaseUrl || !serviceRoleKey || !clientIp) {
-    return { ok: true };
+    return limiterUnavailable(env);
   }
 
-  const supabase = createRateLimitClient(supabaseUrl, serviceRoleKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-
-  for (const rule of RULES[scope]) {
-    const key = `${scope}:${rule.label}:${clientIp}`;
-    const { data, error } = await supabase.rpc("check_rate_limit", {
-      p_key: key,
-      p_max: rule.max,
-      p_window_seconds: rule.windowSeconds,
+  try {
+    const supabase = createRateLimitClient(supabaseUrl, serviceRoleKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
     });
 
-    if (error) {
-      // Limiter query failed: fail open for this request, but log so it is visible.
-      console.warn(`[DeepSpec] rate limit check failed (${scope}/${rule.label}):`, error);
-      return { ok: true };
-    }
+    for (const rule of RULES[scope]) {
+      const key = `${scope}:${rule.label}:${clientIp}`;
+      const { data, error } = await supabase.rpc("check_rate_limit", {
+        p_key: key,
+        p_max: rule.max,
+        p_window_seconds: rule.windowSeconds,
+      });
 
-    if (data === false) {
-      return {
-        ok: false,
-        status: 429,
-        retryAfterSeconds: rule.windowSeconds,
-        body: {
-          error: {
-            code: "rate_limited",
-            message: "Too many requests. Please wait a moment and try again.",
+      if (error) {
+        console.warn(`[DeepSpec] rate limit check failed (${scope}/${rule.label}).`);
+        return limiterUnavailable(env);
+      }
+
+      if (data === false) {
+        return {
+          ok: false,
+          status: 429,
+          retryAfterSeconds: rule.windowSeconds,
+          body: {
+            error: {
+              code: "rate_limited",
+              message: "Too many requests. Please wait a moment and try again.",
+            },
           },
-        },
-      };
+        };
+      }
+      if (data !== true) {
+        console.warn(`[DeepSpec] rate limit check returned an invalid decision (${scope}/${rule.label}).`);
+        return limiterUnavailable(env);
+      }
     }
-  }
 
-  return { ok: true };
+    return { ok: true };
+  } catch {
+    console.warn(`[DeepSpec] rate limit check unavailable (${scope}).`);
+    return limiterUnavailable(env);
+  }
+}
+
+function limiterUnavailable(env: RateLimitEnv): RateLimitDecision {
+  if (env.NODE_ENV !== "production" && env.VERCEL_ENV !== "production") {
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    status: 503,
+    retryAfterSeconds: 60,
+    body: {
+      error: {
+        code: "rate_limit_unavailable",
+        message: "DeepSpec cannot verify request limits right now. Please try again in a minute.",
+      },
+    },
+  };
 }
 
 function getClientIp(headers: Record<string, string | string[] | undefined>): string | null {

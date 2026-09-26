@@ -3,6 +3,7 @@ import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { getAuthClient } from "./auth";
 import { getLookup, recordCloudSaveAttempt } from "./storage";
 import type { FeedbackSubmission, Lookup, WaitlistSignup } from "../types";
+import { feedbackCloudMessage } from "./feedbackDetails";
 
 const SCAN_BUCKET = "scan-images";
 const CLOUD_HEALTH_STORAGE_KEY = "deep-spec:cloud-health";
@@ -757,7 +758,7 @@ export async function syncFeedbackToCloud(feedback: FeedbackSubmission): Promise
     const inserted = await supabase.from("feedback_submissions").insert({
       category: feedback.category,
       contact_email: feedback.contactEmail || null,
-      message: feedback.message,
+      message: feedbackCloudMessage(feedback),
       source: "pwa",
     });
 

@@ -242,6 +242,12 @@ export default function Result() {
           {inspectionLookup ? <PartInspectionForm key={inspectionLookup.id} lookup={inspectionLookup} onSaved={setLookup} /> : null}
           {inspectionLookup ? <ReportActions lookup={inspectionLookup} /> : null}
           {datasetSourceUrls.length > 0 ? <SourceFinePrint urls={datasetSourceUrls} /> : null}
+          <Link
+            className="block rounded-xl border border-[var(--ds-border)] p-4 text-center text-sm font-bold text-[var(--ds-fg-1)]"
+            to={`/early-access${lookup ? `?scan=${encodeURIComponent(lookup.id)}` : ""}#feedback`}
+          >
+            Report a result or AR problem
+          </Link>
         </div>
 
         <Button className="mt-6 w-full" onClick={() => window.location.assign("/")}>

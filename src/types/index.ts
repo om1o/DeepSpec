@@ -399,6 +399,8 @@ export type WaitlistSignup = {
 };
 
 export type FeedbackSubmission = {
+  issue?: import("../services/feedbackDetails").FeedbackIssue;
+  context?: import("../services/feedbackDetails").FeedbackContext;
   id: string;
   createdAt: string;
   category: "scanner" | "ai_result" | "saved_scans" | "chat" | "business" | "other";

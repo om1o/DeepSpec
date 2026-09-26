@@ -814,7 +814,22 @@ describe("cloudSync", () => {
         message: "The scanner should explain what to photograph.",
       }),
     ).resolves.toEqual({ ok: true, message: "Feedback synced." });
-    expect(insert).toHaveBeenCalledTimes(2);
+    await syncFeedbackToCloud({
+      category: "ai_result",
+      contactEmail: "",
+      createdAt: "2026-09-26T00:00:00.000Z",
+      id: "feedback-structured",
+      issue: "wrong_part",
+      context: { scanId: "scan-1", predictedPart: "Alternator" },
+      message: "It is a starter.",
+    });
+    expect(insert).toHaveBeenLastCalledWith({
+      category: "ai_result",
+      contact_email: null,
+      message: "DeepSpec report v1\nIssue: wrong_part\nScan: scan-1\nPrediction: Alternator\n\nIt is a starter.",
+      source: "pwa",
+    });
+    expect(insert).toHaveBeenCalledTimes(3);
   });
 
   describe("waitlist signup failures", () => {

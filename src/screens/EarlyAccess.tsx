@@ -1,12 +1,27 @@
-import { FormEvent, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import CloudHealthCard from "../components/CloudHealthCard";
 import Button from "../components/ui/Button";
 import { getCloudSyncStatus, syncFeedbackToCloud, syncWaitlistSignupToCloud } from "../services/cloudSync";
 import { getEngagementData, saveFeedbackSubmission, saveWaitlistSignup } from "../services/engagement";
 import type { FeedbackSubmission, WaitlistSignup } from "../types";
+import { FEEDBACK_ISSUES, getFeedbackIssue, type FeedbackIssue } from "../services/feedbackDetails";
+import { getLookup } from "../services/storage";
+import { getAccountScope, isAccountScopeCurrent } from "../lib/accountScope";
 
 export default function EarlyAccess() {
+  const [mountedScope] = useState(getAccountScope);
+  const [searchParams] = useSearchParams();
+  const scanId = searchParams.get("scan");
+  const reportScan = scanId ? getLookup(scanId) : null;
+  const [feedbackIssue, setFeedbackIssue] = useState<FeedbackIssue | "">("");
+  const [includeContext, setIncludeContext] = useState(false);
+  const [sendingFeedback, setSendingFeedback] = useState(false);
+  const feedbackPending = useRef(false);
+  const reportForm = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (scanId) reportForm.current?.scrollIntoView?.({ block: "start" });
+  }, [scanId]);
   const [stats, setStats] = useState(() => getEngagementData());
   const [email, setEmail] = useState("");
   const [userType, setUserType] = useState<WaitlistSignup["userType"]>("car_owner");
@@ -57,7 +72,10 @@ export default function EarlyAccess() {
 
   async function handleFeedbackSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (feedbackPending.current || !isAccountScopeCurrent(mountedScope)) return;
     const result = saveFeedbackSubmission({
+      issue: feedbackIssue || undefined,
+      context: includeContext && reportScan ? { scanId: reportScan.id, predictedPart: reportScan.result?.partName ?? "" } : undefined,
       category: feedbackCategory,
       contactEmail,
       message: feedbackMessage,
@@ -82,8 +100,19 @@ export default function EarlyAccess() {
     }
 
     setFeedbackStatus("Feedback saved on this device. Syncing.");
-    const syncResult = await syncFeedbackToCloud(result.value);
-    setFeedbackStatus(syncResult.ok ? "Feedback saved on this device and synced to cloud." : `Feedback saved on this device. ${syncResult.message}`);
+    feedbackPending.current = true;
+    setSendingFeedback(true);
+    try {
+      const syncResult = await syncFeedbackToCloud(result.value);
+      if (isAccountScopeCurrent(mountedScope)) {
+        setFeedbackStatus(syncResult.ok ? "Feedback saved on this device and synced to cloud." : `Feedback saved on this device. ${syncResult.message}`);
+      }
+    } catch {
+      if (isAccountScopeCurrent(mountedScope)) setFeedbackStatus("Feedback saved on this device. Cloud delivery could not be confirmed.");
+    } finally {
+      feedbackPending.current = false;
+      setSendingFeedback(false);
+    }
   }
 
   return (
@@ -169,17 +198,36 @@ export default function EarlyAccess() {
           </Button>
         </form>
 
-        <form className="mt-4 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm" onSubmit={handleFeedbackSubmit}>
+        <form ref={reportForm} id="feedback" className="mt-4 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm" onSubmit={handleFeedbackSubmit}>
           <h2 className="text-lg font-extrabold tracking-tight">Send product feedback</h2>
           <p className="mt-2 text-sm leading-6 text-neutral-500">
             Tell us what would make Deep Spec worth keeping in the bay. Saved on this device first, synced when cloud is on.
           </p>
           <label className="mt-4 block">
+            <span className="text-sm font-bold">What went wrong?</span>
+            <select
+              className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-950"
+              value={feedbackIssue}
+              onChange={(event) => setFeedbackIssue(event.target.value as FeedbackIssue | "")}
+            >
+              <option value="">General feedback</option>
+              {FEEDBACK_ISSUES.map((issue) => <option key={issue.id} value={issue.id}>{issue.label}</option>)}
+            </select>
+          </label>
+          {reportScan ? (
+            <label className="mt-4 flex items-start gap-3 text-sm leading-6">
+              <input className="mt-1" type="checkbox" checked={includeContext} onChange={(event) => setIncludeContext(event.target.checked)} />
+              <span>Include scan ID and prediction ({reportScan.result?.partName || "no prediction"}). No photo or chat is attached.</span>
+            </label>
+          ) : null}
+          <p className="mt-2 text-xs leading-5 text-neutral-500">Choose a problem for a quick report. Details are optional when a problem is selected. Reporting does not give permission to train on your photos.</p>
+          <label className="mt-4 block">
             <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Topic</span>
             <select
               className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none focus:border-[var(--ds-accent)]"
               onChange={(event) => setFeedbackCategory(event.target.value as FeedbackSubmission["category"])}
-              value={feedbackCategory}
+              value={getFeedbackIssue(feedbackIssue)?.category ?? feedbackCategory}
+              disabled={Boolean(feedbackIssue)}
             >
               <option value="scanner">Scanner</option>
               <option value="ai_result">AI result</option>
@@ -192,7 +240,7 @@ export default function EarlyAccess() {
             <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Feedback</span>
             <textarea
               className="mt-2 min-h-28 w-full resize-none rounded-2xl border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
-              maxLength={800}
+              maxLength={feedbackIssue || includeContext ? 450 : 800}
               onChange={(event) => setFeedbackMessage(event.target.value)}
               placeholder="What worked, what got in the way, what's worth paying for."
               value={feedbackMessage}
@@ -209,9 +257,9 @@ export default function EarlyAccess() {
               value={contactEmail}
             />
           </label>
-          {feedbackStatus ? <p className="mt-3 text-sm font-semibold text-[var(--ds-accent)]">{feedbackStatus}</p> : null}
-          <Button className="mt-4 w-full" type="submit">
-            Save feedback
+          {feedbackStatus ? <p role="status" className="mt-3 text-sm font-semibold text-[var(--ds-accent)]">{feedbackStatus}</p> : null}
+          <Button className="mt-4 w-full" type="submit" disabled={sendingFeedback}>
+            {sendingFeedback ? "Sending feedback…" : "Save feedback"}
           </Button>
         </form>
       </div>

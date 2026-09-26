@@ -110,9 +110,10 @@ export default function Shop() {
                 type="button"
               >
                 {permission.learningOptIn
-                  ? `DeepSpec learned from ${metrics.learnedCorrections} shop corrections.`
-                  : "Shop corrections stay private. Tap to opt in to learning."}
+                  ? `${metrics.learnedCorrections} shop corrections available for review. Tap to opt out.`
+                  : "Model improvement is off. Tap to allow corrections to be reviewed."}
               </button>
+              <p className="mt-2 text-xs leading-5 text-slate-500">This preference is saved on this device. Corrections are not automatically verified or used to train a model.</p>
             </section>
 
             <section className="rounded-[8px] border border-slate-200 bg-white p-4 shadow-sm">

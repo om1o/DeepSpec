@@ -1,5 +1,7 @@
 # DeepSpec private-beta release checklist
 
+**September 26 update:** the inspection migration has now been applied to the configured live project and `verify:supabase -- --inspection` passed, including cross-account isolation and fixture cleanup. The broader current direction is the [V1 launch plan](V1_LAUNCH_PLAN.md); fresh findings and migration ledger are in the [foundation report](V1_FOUNDATION_REPORT_2026-09-26.md). The original preparation evidence below is retained as history, not the current inspection-cloud status.
+
 Prepared September 26, 2026. Scope: one seller, one operator, one part family,
 supervised and unpaid. This is a review packet, not deployment approval.
 Production SQL, repository settings, deployment and main-branch merge were not
