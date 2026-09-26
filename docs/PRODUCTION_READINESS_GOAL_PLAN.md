@@ -2,6 +2,8 @@
 
 Audit date: May 21, 2026
 
+Historical plan: these observations describe the May checkout, not current readiness. See [the September 25 audit](PROJECT_REPORT_2026-09-25.md) for fresh verification and remaining blockers; do not treat old auth failures or proposed UI features below as current findings.
+
 ## Goal
 
 Make Deep Spec production ready as a domain-specific Google Lens for car parts:

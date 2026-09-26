@@ -1,4 +1,4 @@
-import { ClipboardEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ClipboardEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   getVerifiedAuthUser,
@@ -14,6 +14,7 @@ import {
   signInWithPassword,
   signOut,
   signUpWithPassword,
+  subscribeToPendingSignOut,
   verifyEmailCode,
 } from "../services/auth";
 
@@ -47,7 +48,11 @@ export default function Auth() {
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(() => hasPendingSignOut() ? "Private screens are locked. Sign-out has not been confirmed. Retry signing out, or sign in again explicitly." : null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const pendingSignOut = useSyncExternalStore(subscribeToPendingSignOut, hasPendingSignOut);
+  const visibleNotice = pendingSignOut
+    ? "Private screens are locked. Sign-out has not been confirmed. Retry signing out, or sign in again explicitly."
+    : notice;
   const [isCheckingSession, setIsCheckingSession] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
@@ -356,7 +361,7 @@ export default function Auth() {
           </div>
 
           <div className="mt-8 space-y-3">
-            {hasPendingSignOut() ? <button type="button" disabled={isBusy} onClick={() => void retrySignOut()} className="h-12 w-full rounded-[8px] border border-white/20 px-4 text-sm font-bold">Retry sign out</button> : null}
+            {pendingSignOut ? <button type="button" disabled={isBusy} onClick={() => void retrySignOut()} className="h-12 w-full rounded-[8px] border border-white/20 px-4 text-sm font-bold">Retry sign out</button> : null}
             {googleAuthEnabled ? (
               <OAuthButton
                 brand="G"
@@ -508,9 +513,9 @@ export default function Auth() {
                 </label>
               ) : null}
 
-              {notice ? (
+              {visibleNotice ? (
                 <p role="status" className="rounded-[8px] border border-sky-300/30 bg-sky-400/12 px-4 py-3 text-sm font-bold leading-6 text-sky-100">
-                  {notice}
+                  {visibleNotice}
                 </p>
               ) : null}
 

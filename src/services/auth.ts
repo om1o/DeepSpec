@@ -26,9 +26,22 @@ const SIGN_OUT_LOCK_KEY = "deep-spec:sign-out-pending";
 const SIGN_OUT_GENERATION_KEY = "deep-spec:sign-out-generation";
 let signOutLock: string | null = null;
 const signOutListeners = new Set<() => void>();
+const signOutStateListeners = new Set<() => void>();
 
 export function hasPendingSignOut() {
   return readSignOutLock() !== null;
+}
+
+export function subscribeToPendingSignOut(onChange: () => void) {
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === SIGN_OUT_LOCK_KEY || event.key === null) onChange();
+  };
+  signOutStateListeners.add(onChange);
+  window.addEventListener("storage", onStorage);
+  return () => {
+    signOutStateListeners.delete(onChange);
+    window.removeEventListener("storage", onStorage);
+  };
 }
 
 function readSignOutLock() {
@@ -50,6 +63,7 @@ function setSignOutLock(locked: boolean) {
     }
     else localStorage.removeItem(SIGN_OUT_LOCK_KEY);
   } catch { /* In-memory protection remains when browser storage is unavailable. */ }
+  signOutStateListeners.forEach((listener) => listener());
 }
 
 export function isSupabaseAuthConfigured() {

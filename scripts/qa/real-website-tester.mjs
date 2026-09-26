@@ -830,7 +830,7 @@ async function runAccountEntitlements() {
   await gotoPath("/account");
   await expectText(/Your DeepSpec access/i, "account heading", "frontend", ["src/screens/Account.tsx"]);
   await expectText(/Free preview/i, "default entitlement", "frontend", ["src/screens/Account.tsx", "src/services/revenue.ts"]);
-  await expectText(/Paid access remains fail-closed/i, "fail-closed paid copy", "frontend", ["src/screens/Account.tsx"]);
+  await expectText(/Paid (?:access|scans) stay(?:s)? locked until verified/i, "unverified paid access stays locked", "frontend", ["src/screens/Account.tsx"]);
 
   return {
     details: "Account entitlements rendered the free preview state and fail-closed paid-access copy.",
@@ -893,10 +893,17 @@ async function runJobResultCorrection() {
   await seedShopData();
   await gotoPath("/result/qa-alternator-1");
   await expectText(/Best match/i, "simple result heading", "frontend", ["src/screens/Result.tsx"]);
-  await expectText(/Saved scan tools/i, "collapsed saved scan tools", "frontend", ["src/screens/Result.tsx"]);
+  await clickByRole("button", /Why or why not/i, "open scan feedback");
+  const correction = "QA correction: verify the connector before identifying this alternator.";
+  await page.getByLabel("Why or why not", { exact: true }).fill(correction);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByLabel("Why or why not", { exact: true }).waitFor({ state: "visible" });
+  if (await page.getByLabel("Why or why not", { exact: true }).inputValue() !== correction) {
+    throw new QaIssue("frontend", "Scan feedback did not persist after reload.", { likelyFiles: ["src/screens/Result.tsx", "src/services/storage.ts"] });
+  }
 
   return {
-    details: "Job result rendered the simple answer first and kept saved scan tools collapsed.",
+    details: "Job result accepted correction feedback and preserved its exact text after reload. This verifies feedback persistence, not part identity or model training permission.",
     likelyFiles: ["src/screens/Result.tsx", "src/services/storage.ts"],
     status: "pass",
   };

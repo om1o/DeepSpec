@@ -374,6 +374,49 @@ describe("Auth", () => {
     expect(screen.queryByText("Scanner opened")).not.toBeInTheDocument();
   });
 
+  it("removes the pending logout warning when sign-out finishes after Auth mounts", async () => {
+    let finish!: (value: unknown) => void;
+    supabaseMock.auth.signOut.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const { signOut } = await import("../services/auth");
+    const pending = signOut();
+    await renderAuth();
+    expect(await screen.findByRole("status")).toHaveTextContent("Sign-out has not been confirmed");
+    await act(async () => { finish({ error: null }); await pending; });
+    expect(screen.queryByText(/Sign-out has not been confirmed/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry sign out" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Scanner opened")).not.toBeInTheDocument();
+  });
+
+  it("retains the pending warning when sign-out fails after Auth mounts", async () => {
+    let finish!: (value: unknown) => void;
+    supabaseMock.auth.signOut.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const { signOut } = await import("../services/auth");
+    const pending = signOut().catch(() => undefined);
+    await renderAuth();
+    expect(await screen.findByRole("status")).toHaveTextContent("Sign-out has not been confirmed");
+    await act(async () => { finish({ error: { message: "Network unavailable" } }); await pending; });
+    expect(screen.getByRole("status")).toHaveTextContent("Sign-out has not been confirmed");
+    expect(screen.getByRole("button", { name: "Retry sign out" })).toBeInTheDocument();
+    expect(supabaseMock.auth.getUser).not.toHaveBeenCalled();
+  });
+
+  it("updates the logout warning when another tab changes the persistent lock", async () => {
+    localStorage.setItem("deep-spec:sign-out-pending", "other-tab");
+    await renderAuth();
+    expect(await screen.findByRole("status")).toHaveTextContent("Sign-out has not been confirmed");
+    act(() => {
+      localStorage.removeItem("deep-spec:sign-out-pending");
+      window.dispatchEvent(new StorageEvent("storage", { key: "deep-spec:sign-out-pending" }));
+    });
+    expect(screen.queryByText(/Sign-out has not been confirmed/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Scanner opened")).not.toBeInTheDocument();
+    act(() => {
+      localStorage.setItem("deep-spec:sign-out-pending", "newer-lock");
+      window.dispatchEvent(new StorageEvent("storage", { key: "deep-spec:sign-out-pending" }));
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Sign-out has not been confirmed");
+  });
+
   it("starts GitHub auth when that provider is enabled for the build", async () => {
     vi.stubEnv("VITE_ENABLE_GITHUB_AUTH", "true");
     const user = userEvent.setup();
