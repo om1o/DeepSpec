@@ -2,6 +2,27 @@
 
 Status: ready-to-fill protocol and empty template. No customer study, measured time savings, accuracy result or paid commitment has been collected by this task.
 
+## First seller: ready-to-run checklist
+
+Use one seller, one operator and one part family (for example alternators) for the first trial. A second device may verify readback, but do not edit the same inspection concurrently: cloud writes still lack conflict resolution.
+
+Before scheduling measured work:
+
+- Owner/developer: deploy `supabase/migrations/20260920000100_part_inspection.sql` through the normal database process; run `npm run verify:supabase -- --inspection` and retain its successful readback/isolation evidence. Missing schema blocks a cloud-backed trial.
+- Owner/developer: configure the existing Supabase Actions secrets and pass the integration PR checks. Record the tested commit, not just the app URL.
+- Observer/operator: rehearse on the actual phone with a fictional record. Save an inspection, reload and compare every field; sign out/in and repeat; verify it on a second signed-in device; export the report. Confirm another account cannot see it. Keep evidence outside Git.
+- Observer/operator: disconnect the network, edit the fictional inspection and save. Confirm device-only/failed-cloud wording, reload to verify local retention, reconnect and save again. Confirm cloud readback before calling it backed up. Do not clear browser storage during recovery.
+- Observer/operator: open the same inspection in two tabs, save in one, then attempt to save the older form. It must retain the draft and request review rather than silently overwrite the newer local inspection. This is a stale-form check, not proof of atomic cross-device conflict protection.
+- Seller: approve photo storage and required intake fields; agree on the timing protocol and continuation target below. No training permission is implied.
+
+Schedule one short onboarding/rehearsal session, ten manual baseline observations, then one twenty-part comparison batch (ten manual, ten assisted). Review that batch before scheduling another. Keep onboarding/support time separate and report it alongside savings. Measure all normal inspection/testing steps in both arms.
+
+Recruitment draft for the owner to send personally (not sent by this task):
+
+> Could we observe how you document incoming alternators, then try a small supervised DeepSpec comparison? You would check every identification and keep your normal tests. We would measure staff time, corrections and whether saved records reopen correctly. This is a prototype trial, not a promise that it can determine whether a part works. We would agree on photo storage first; training or public sharing would require separate permission.
+
+Stop the trial for any lost inspection, cross-account exposure, or unsupported identity used externally. Retain the failed observation and investigate before restarting. If the cloud gate or provider availability is blocked, use only a clearly labeled local rehearsal; do not count it as a successful cloud-backed seller trial.
+
 ## Freeze the scope before timing
 
 Record the date, app commit, provider/model configuration, operator pseudonym, chosen part family, existing documentation workflow and required functional checks. Choose one family with a participating business. Record its permission to process/store photos; permission to train or publicly share is a separate decision. Keep customer identifiers, license plates, private reference material and credentials out of committed study files. Store working logs in the ignored `artifacts/pilot/` folder and use coded part/operator IDs.

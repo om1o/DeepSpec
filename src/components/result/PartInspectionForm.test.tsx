@@ -47,6 +47,25 @@ function setup() {
   return { lookup, onSaved, ...view };
 }
 
+it.each(["updated", "removed"])("does not overwrite device changes made while the form was open: %s", async (mode) => {
+  const user = userEvent.setup();
+  const { lookup, onSaved } = setup();
+  const sync = vi.spyOn(cloud, "syncLookupToCloud");
+  await user.click(screen.getByText("Human inspection — optional"));
+  await user.type(screen.getByLabelText("Inspector name (self-reported)"), "Pat");
+  if (mode === "updated") {
+    saveLookupInspection(lookup.id, { confirmedPartName: "", partNumber: "", identityEvidence: "", visibleCondition: "not_inspected", visibleNotes: "", functionalStatus: "not_tested", functionalNotes: "", inspectorName: "Alex" });
+  } else {
+    deleteLookup(lookup.id);
+  }
+  await user.click(screen.getByRole("button", { name: "Save inspection" }));
+  expect(screen.getByRole("status")).toHaveTextContent("Inspection changed or was removed since you opened this form");
+  expect(getLookup(lookup.id)?.inspection?.inspectorName).toBe(mode === "updated" ? "Alex" : undefined);
+  expect(screen.getByLabelText("Inspector name (self-reported)")).toHaveValue("Pat");
+  expect(onSaved).not.toHaveBeenCalled();
+  expect(sync).not.toHaveBeenCalled();
+});
+
 it("saves an inspection and reloads it with function explicitly untested", async () => {
   const user = userEvent.setup();
   const { lookup, onSaved, unmount } = setup();
@@ -74,6 +93,32 @@ it("requires a test record before saving a passed test", async () => {
   await user.selectOptions(screen.getByLabelText("Functional test"), "passed");
   await user.click(screen.getByRole("button", { name: "Save inspection" }));
   expect(screen.getByRole("status")).toHaveTextContent("Record the test performed and its result.");
+  expect(onSaved).not.toHaveBeenCalled();
+});
+
+it("allows another save after the parent receives the saved inspection", async () => {
+  const user = userEvent.setup();
+  const { lookup, onSaved, rerender } = setup();
+  await user.click(screen.getByText("Human inspection — optional"));
+  await user.type(screen.getByLabelText("Inspector name (self-reported)"), "Pat");
+  await user.click(screen.getByRole("button", { name: "Save inspection" }));
+  rerender(<PartInspectionForm lookup={getLookup(lookup.id)!} onSaved={onSaved} />);
+  await user.type(screen.getByLabelText("Visible condition notes"), "Housing checked");
+  await user.click(screen.getByRole("button", { name: "Save inspection" }));
+  expect(getLookup(lookup.id)?.inspection?.visibleNotes).toBe("Housing checked");
+  expect(onSaved).toHaveBeenCalledTimes(2);
+});
+
+it("preserves a draft when newer cloud inspection data arrives through the parent", async () => {
+  const user = userEvent.setup();
+  const { lookup, onSaved, rerender } = setup();
+  await user.click(screen.getByText("Human inspection — optional"));
+  await user.type(screen.getByLabelText("Inspector name (self-reported)"), "Pat");
+  const newer = { ...lookup, inspection: { confirmedPartName: "", partNumber: "", identityEvidence: "", visibleCondition: "not_inspected" as const, visibleNotes: "", functionalStatus: "not_tested" as const, functionalNotes: "", inspectorName: "Alex", inspectedAt: "2026-09-26T12:00:00Z" } };
+  rerender(<PartInspectionForm lookup={newer} onSaved={onSaved} />);
+  await user.click(screen.getByRole("button", { name: "Save inspection" }));
+  expect(screen.getByRole("status")).toHaveTextContent("Inspection changed or was removed since you opened this form");
+  expect(screen.getByLabelText("Inspector name (self-reported)")).toHaveValue("Pat");
   expect(onSaved).not.toHaveBeenCalled();
 });
 

@@ -14,6 +14,7 @@ signatures or certifications.
 ## Persistence and rollout
 
 - Local saves preserve the AI result, feedback and training labels.
+- Open forms check for changed or deleted device inspections before saving, and for newer inspection props supplied by the parent. A conflicting draft stays visible for copying and review. This prevents known stale-form overwrites; it is not an atomic lock across tabs or devices.
 - Inspection does not grant training consent or automatically train a model.
 - Configured cloud sync stores a separate `inspection_json` field. Cloud-only
   scans use an owner-scoped metadata update without reuploading signed images.
@@ -43,6 +44,10 @@ Both this mode and the ordinary `npm run verify:supabase` now check cleanup of g
 September 20 evidence: 27 helper tests passed. The live inspection mode exited 1 at the missing-column preflight before fixture writes; inspection cloud save/read remains unverified. The ordinary cloud verifier passed with checked cleanup. Local evidence is in `artifacts/qa/inspection-cloud-2026-09-20/inspection-preflight.txt` and `baseline-checked-cleanup.txt`.
 
 ## Next pilot experiment
+
+Use the concrete readiness checklist, recruitment draft and timing protocol in [PILOT_RUNBOOK.md](PILOT_RUNBOOK.md). The trial has not been recruited or run yet.
+
+September 25 follow-up (September 26 UTC): two stale-form regressions failed before the guard and passed afterward. The form, storage, cloud sync and pilot-summary suites passed 105 tests; lint and the production build passed. Live inspection verification still stopped at the missing-column preflight, without scan/image fixture writes. Cloud-backed seller work remains blocked on deployment and successful live verification. Simultaneous cross-tab writes and cross-device edits still require server-side conflict protection; the form guard does not solve those races.
 
 Recruit one parts business and select one part category together. Have staff
 record the existing identification/documentation time, then repeat with

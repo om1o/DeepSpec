@@ -1,5 +1,5 @@
 import { getAccountScope, isAccountScopeCurrent } from "../../lib/accountScope";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { emptyPartInspection, inspectionValidationError } from "../../lib/partInspection";
 import { getCloudSyncStatus, syncLookupToCloud } from "../../services/cloudSync";
 import { getLookup, saveLookupInspection } from "../../services/storage";
@@ -10,6 +10,12 @@ export function PartInspectionForm({ lookup, onSaved }: { lookup: Lookup; onSave
   const [draft, setDraft] = useState<PartInspectionDraft>(lookup.inspection ?? { ...emptyPartInspection });
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const [openedDeviceInspection] = useState(() => {
+    const saved = getLookup(lookup.id);
+    return saved ? JSON.stringify(saved.inspection ?? null) : undefined;
+  });
+  const deviceInspection = useRef(openedDeviceInspection);
+  const displayedInspection = useRef(JSON.stringify(lookup.inspection ?? null));
   const fieldClass = "mt-1 w-full rounded-xl border border-neutral-300 bg-[var(--ds-elevated)] p-3 text-sm text-[var(--ds-fg-1)]";
   function change(key: keyof PartInspectionDraft, value: string) {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -19,11 +25,19 @@ export function PartInspectionForm({ lookup, onSaved }: { lookup: Lookup; onSave
     if (!isAccountScopeCurrent(scope)) { setMessage("Account changed. Reopen the scan before saving an inspection."); return; }
     const error = inspectionValidationError(draft);
     if (error) { setMessage(error); return; }
+    const current = getLookup(lookup.id);
+    if ((current ? JSON.stringify(current.inspection ?? null) : undefined) !== deviceInspection.current
+      || JSON.stringify(lookup.inspection ?? null) !== displayedInspection.current) {
+      setMessage("Inspection changed or was removed since you opened this form. Your draft is still here; copy it before reopening the scan to review the saved version.");
+      return;
+    }
     const result = saveLookupInspection(lookup.id, draft, lookup);
     if (!result.ok || !result.value) {
       setMessage(result.ok ? "Saved scan not found." : result.message);
       return;
     }
+    deviceInspection.current = JSON.stringify(result.value.inspection ?? null);
+    displayedInspection.current = deviceInspection.current;
     onSaved(result.value);
     setMessage("Inspection saved on this device.");
     if (!getCloudSyncStatus().configured) return;
