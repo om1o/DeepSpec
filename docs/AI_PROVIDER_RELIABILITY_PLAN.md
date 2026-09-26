@@ -18,6 +18,7 @@ For the non-Gemini backup strategy, see [AI_PROVIDER_FALLBACK_PLAN.md](AI_PROVID
 
 ```powershell
 npm run check
+npm run identify:evidence
 npm run eval:identify:provider-health
 npm run eval:identify:release
 npm run eval:identify:public
@@ -36,6 +37,8 @@ npm run eval:identify -- --sample-set public --sample-size 300 --delay-ms 0 --pr
 `DEEPSPEC_DATASET_ROOT`, `DEEPSPEC_DATASET_INDEX_PATH`, `DEEPSPEC_EVAL_DELAY_MS`, `DEEPSPEC_EVAL_MAX_PROVIDER_FAILURES`, `DEEPSPEC_IDENTIFY_PROVIDER_TIMEOUT_MS`, `GEMINI_FALLBACK_MODELS`, and `GEMINI_CHAT_FALLBACK_MODELS` can set the same defaults for release runs.
 For a fast provider smoke where rate limits should fail immediately instead of waiting through release backoff, add `--rate-limit-retries 0`.
 `npm run eval:identify:provider-health` is the standard fast smoke for that case. It writes `artifacts/release-gates/provider-health-summary.json` and exits `2` when provider quota or availability blocks the release gate.
+
+`npm run identify:evidence` writes a no-secret provider evidence bundle to `artifacts/release-gates/identify-provider-evidence.md` and `.json`. It exits nonzero until a production cloud identify route is configured and the release eval summary passes the configured sample-size gate. Use this after a failed release run to see whether the blocker is missing provider config, provider availability, or model quality.
 
 Optional local identify fallback:
 

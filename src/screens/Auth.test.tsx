@@ -1,4 +1,5 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { accountStorageKey, setActiveAccount } from "../lib/accountScope";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +12,7 @@ const supabaseMock = vi.hoisted(() => ({
     signInWithPassword: vi.fn(),
     signInAnonymously: vi.fn(),
     signUp: vi.fn(),
+    signOut: vi.fn(),
     verifyOtp: vi.fn(),
   },
   createClient: vi.fn(),
@@ -42,6 +44,7 @@ describe("Auth", () => {
     supabaseMock.auth.signInWithPassword.mockReset();
     supabaseMock.auth.signInAnonymously.mockReset();
     supabaseMock.auth.signUp.mockReset();
+    supabaseMock.auth.signOut.mockReset();
     supabaseMock.auth.verifyOtp.mockReset();
     supabaseMock.createClient.mockReset();
     cloudSyncMock.syncLookupsToCloud.mockReset();
@@ -72,13 +75,13 @@ describe("Auth", () => {
     await renderAuth();
 
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
-    expect(screen.getAllByAltText("Deep Spec")).toHaveLength(2);
+    expect(screen.getByAltText("Deep Spec")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Continue with Google" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Continue with GitHub" })).not.toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Enter your email address")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("you@shop.com")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Account" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("button", { name: "Sign in to scanner" })).toBeInTheDocument();
-    expect(screen.getByText("Cloud ready")).toBeInTheDocument();
+    expect(screen.getByText("Your workspace")).toBeInTheDocument();
     expect(screen.queryByText(/facebook/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/microsoft/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/apple/i)).not.toBeInTheDocument();
@@ -103,7 +106,7 @@ describe("Auth", () => {
     await renderAuth();
 
     await user.click(await screen.findByRole("tab", { name: "Email link" }));
-    await user.type(await screen.findByPlaceholderText("Enter your email address"), "Tester@Example.com");
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "Tester@Example.com");
     await user.click(screen.getByRole("button", { name: "Send sign-in link" }));
 
     await waitFor(() => {
@@ -116,10 +119,51 @@ describe("Auth", () => {
       });
     });
 
-    expect(await screen.findByText("Sign-in link sent to tester@example.com. Open it from your email to finish login.")).toBeInTheDocument();
+    expect(await screen.findByText("Sign-in link sent to tester@example.com. Open it to finish.")).toBeInTheDocument();
     expect(screen.queryByLabelText("Verification code")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "I have a code" }));
     await user.type(await screen.findByLabelText("Verification code"), "123456");
+
+    await waitFor(() => {
+      expect(supabaseMock.auth.verifyOtp).toHaveBeenCalledWith({
+        email: "tester@example.com",
+        token: "123456",
+        type: "email",
+      });
+    });
+    expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
+  });
+
+  it("uses code entry immediately when the public email redirect is rejected", async () => {
+    const user = userEvent.setup();
+    supabaseMock.auth.signInWithOtp
+      .mockResolvedValueOnce({
+        data: {},
+        error: {
+          message: "Redirect URL is not allowed",
+        },
+      })
+      .mockResolvedValueOnce({ data: {}, error: null });
+    supabaseMock.auth.getUser
+      .mockResolvedValueOnce({ data: { user: null }, error: null })
+      .mockResolvedValueOnce({ data: { user: makeUser("code-user") }, error: null });
+
+    await renderAuth();
+
+    await user.click(await screen.findByRole("tab", { name: "Email link" }));
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "Tester@Example.com");
+    await user.click(screen.getByRole("button", { name: "Send sign-in link" }));
+
+    expect(await screen.findByText("Code sent to tester@example.com. Enter the 6 digits below.")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Verification code")).toBeInTheDocument();
+    expect(supabaseMock.auth.signInWithOtp).toHaveBeenNthCalledWith(2, {
+      email: "tester@example.com",
+      options: {
+        shouldCreateUser: true,
+      },
+    });
+
+    await user.type(screen.getByLabelText("Verification code"), "123456");
 
     await waitFor(() => {
       expect(supabaseMock.auth.verifyOtp).toHaveBeenCalledWith({
@@ -138,7 +182,7 @@ describe("Auth", () => {
     await renderAuth();
 
     await user.click(await screen.findByRole("tab", { name: "Email link" }));
-    await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "tester@example.com");
     await user.click(screen.getByRole("button", { name: "Send sign-in link" }));
     await user.click(await screen.findByRole("button", { name: "I have a code" }));
     await user.type(await screen.findByLabelText("Verification code"), "123456");
@@ -165,7 +209,7 @@ describe("Auth", () => {
     expect(screen.queryByText(/apple/i)).not.toBeInTheDocument();
   });
 
-  it("signs in with an email and password after Supabase verifies the session", async () => {
+  it("signs in with an existing short password after Supabase verifies the session", async () => {
     const user = userEvent.setup();
     supabaseMock.auth.getUser
       .mockResolvedValueOnce({ data: { user: null }, error: null })
@@ -173,50 +217,53 @@ describe("Auth", () => {
 
     await renderAuth();
 
-    await user.type(await screen.findByPlaceholderText("Enter your email address"), "Tester@Example.com");
-    await user.type(screen.getByPlaceholderText("Enter your password"), "correct-password");
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "Tester@Example.com");
+    await user.type(screen.getByPlaceholderText("Your password"), "old123");
     await user.click(screen.getByRole("button", { name: "Sign in to scanner" }));
 
     await waitFor(() => {
       expect(supabaseMock.auth.signInWithPassword).toHaveBeenCalledWith({
         email: "tester@example.com",
-        password: "correct-password",
+        password: "old123",
       });
     });
     expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
   });
 
-  it("syncs all local saved scans to cloud after a verified login", async () => {
+  it("preserves device records without replaying them over cloud records after login", async () => {
+    setActiveAccount("password-user");
     const user = userEvent.setup();
-    localStorage.setItem("deep-spec:lookups", JSON.stringify([
+    const savedRecords = JSON.stringify([
       makeSavedLookup("lookup-1", "Alternator"),
       makeSavedLookup("lookup-2", "Starter"),
-    ]));
-    cloudSyncMock.syncLookupsToCloud.mockResolvedValueOnce({
-      attempted: 2,
-      failed: 0,
-      failures: [],
-      message: "2 saved scans synced to the cloud.",
-      ok: true,
-      synced: 2,
-    });
+    ]);
+    localStorage.setItem(accountStorageKey("deep-spec:lookups"), savedRecords);
     supabaseMock.auth.getUser
       .mockResolvedValueOnce({ data: { user: null }, error: null })
       .mockResolvedValueOnce({ data: { user: makeUser("password-user") }, error: null });
 
     await renderAuth();
 
-    await user.type(await screen.findByPlaceholderText("Enter your email address"), "Tester@Example.com");
-    await user.type(screen.getByPlaceholderText("Enter your password"), "correct-password");
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "Tester@Example.com");
+    await user.type(screen.getByPlaceholderText("Your password"), "correct-password");
     await user.click(screen.getByRole("button", { name: "Sign in to scanner" }));
 
-    await waitFor(() => {
-      expect(cloudSyncMock.syncLookupsToCloud).toHaveBeenCalledWith([
-        expect.objectContaining({ id: "lookup-1", trainingLabel: "Alternator" }),
-        expect.objectContaining({ id: "lookup-2", trainingLabel: "Starter" }),
-      ]);
-    });
     expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
+    expect(cloudSyncMock.syncLookupsToCloud).not.toHaveBeenCalled();
+    expect(localStorage.getItem(accountStorageKey("deep-spec:lookups"))).toBe(savedRecords);
+  });
+
+  it("restores a verified session without uploading or rewriting older device records", async () => {
+    setActiveAccount("password-user");
+    const savedRecords = JSON.stringify([makeSavedLookup("lookup-1", "Alternator")]);
+    localStorage.setItem(accountStorageKey("deep-spec:lookups"), savedRecords);
+    supabaseMock.auth.getUser.mockResolvedValue({ data: { user: makeUser("password-user") }, error: null });
+
+    await renderAuth();
+
+    expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
+    expect(cloudSyncMock.syncLookupsToCloud).not.toHaveBeenCalled();
+    expect(localStorage.getItem(accountStorageKey("deep-spec:lookups"))).toBe(savedRecords);
   });
 
   it("does not open the scanner when password auth does not verify a user", async () => {
@@ -225,8 +272,8 @@ describe("Auth", () => {
 
     await renderAuth();
 
-    await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
-    await user.type(screen.getByPlaceholderText("Enter your password"), "wrong-password");
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "tester@example.com");
+    await user.type(screen.getByPlaceholderText("Your password"), "wrong-password");
     await user.click(screen.getByRole("button", { name: "Sign in to scanner" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Invalid login credentials");
@@ -242,8 +289,8 @@ describe("Auth", () => {
     await renderAuth();
 
     await user.click(await screen.findByRole("button", { name: "No email" }));
-    expect(screen.queryByPlaceholderText("Enter your email address")).not.toBeInTheDocument();
-    expect(screen.queryByPlaceholderText("Enter your password")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("you@shop.com")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Your password")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Continue without email" }));
 
     await waitFor(() => {
@@ -262,8 +309,8 @@ describe("Auth", () => {
     await renderAuth();
 
     await user.click(await screen.findByRole("button", { name: "Create" }));
-    await user.type(await screen.findByPlaceholderText("Enter your email address"), "New@Example.com");
-    await user.type(screen.getByPlaceholderText("Enter your password"), "correct-password");
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "New@Example.com");
+    await user.type(screen.getByPlaceholderText("Your password"), "correct-password");
     await user.click(screen.getByRole("button", { name: "Create account" }));
 
     await waitFor(() => {
@@ -285,12 +332,89 @@ describe("Auth", () => {
     await renderAuth();
 
     await user.click(await screen.findByRole("button", { name: "Create" }));
-    await user.type(await screen.findByPlaceholderText("Enter your email address"), "new@example.com");
-    await user.type(screen.getByPlaceholderText("Enter your password"), "correct-password");
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "new@example.com");
+    await user.type(screen.getByPlaceholderText("Your password"), "correct-password");
     await user.click(screen.getByRole("button", { name: "Create account" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Supabase still requires email confirmation for new password accounts.");
+    expect(await screen.findByRole("status")).toHaveTextContent("Check your inbox");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Your password")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Sign in to scanner" })).toBeInTheDocument();
     expect(screen.queryByText("Scanner opened")).not.toBeInTheDocument();
+  });
+
+  it("prevents mode changes and duplicate submissions while a password request is pending", async () => {
+    const user = userEvent.setup();
+    let finish!: (value: unknown) => void;
+    supabaseMock.auth.signInWithPassword.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    await renderAuth();
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "test@example.com");
+    await user.type(screen.getByPlaceholderText("Your password"), "password");
+    await user.click(screen.getByRole("button", { name: "Sign in to scanner" }));
+    expect(screen.getByRole("tab", { name: "Email link" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "No email" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Checking password..." }));
+    expect(supabaseMock.auth.signInWithPassword).toHaveBeenCalledTimes(1);
+    await act(async () => { finish({ data: {}, error: { message: "Invalid login credentials" } }); });
+    expect(screen.getByRole("alert")).toHaveTextContent("Invalid login credentials");
+    expect(screen.getByRole("tab", { name: "Email link" })).toBeEnabled();
+  });
+
+  it("keeps a failed logout locked and offers retry without restoring the stored session", async () => {
+    localStorage.setItem("deep-spec:sign-out-pending", "true");
+    supabaseMock.auth.getUser.mockResolvedValue({ data: { user: makeUser("old-user") }, error: null });
+    supabaseMock.auth.signOut.mockResolvedValue({ error: null });
+    await renderAuth();
+    expect(await screen.findByRole("status")).toHaveTextContent("Private screens are locked");
+    expect(supabaseMock.auth.getUser).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Retry sign out" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Signed out.");
+    expect(screen.queryByRole("button", { name: "Retry sign out" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Scanner opened")).not.toBeInTheDocument();
+  });
+
+  it("removes the pending logout warning when sign-out finishes after Auth mounts", async () => {
+    let finish!: (value: unknown) => void;
+    supabaseMock.auth.signOut.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const { signOut } = await import("../services/auth");
+    const pending = signOut();
+    await renderAuth();
+    expect(await screen.findByRole("status")).toHaveTextContent("Sign-out has not been confirmed");
+    await act(async () => { finish({ error: null }); await pending; });
+    expect(screen.queryByText(/Sign-out has not been confirmed/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry sign out" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Scanner opened")).not.toBeInTheDocument();
+  });
+
+  it("retains the pending warning when sign-out fails after Auth mounts", async () => {
+    let finish!: (value: unknown) => void;
+    supabaseMock.auth.signOut.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const { signOut } = await import("../services/auth");
+    const pending = signOut().catch(() => undefined);
+    await renderAuth();
+    expect(await screen.findByRole("status")).toHaveTextContent("Sign-out has not been confirmed");
+    await act(async () => { finish({ error: { message: "Network unavailable" } }); await pending; });
+    expect(screen.getByRole("status")).toHaveTextContent("Sign-out has not been confirmed");
+    expect(screen.getByRole("button", { name: "Retry sign out" })).toBeInTheDocument();
+    expect(supabaseMock.auth.getUser).not.toHaveBeenCalled();
+  });
+
+  it("updates the logout warning when another tab changes the persistent lock", async () => {
+    localStorage.setItem("deep-spec:sign-out-pending", "other-tab");
+    await renderAuth();
+    expect(await screen.findByRole("status")).toHaveTextContent("Sign-out has not been confirmed");
+    act(() => {
+      localStorage.removeItem("deep-spec:sign-out-pending");
+      window.dispatchEvent(new StorageEvent("storage", { key: "deep-spec:sign-out-pending" }));
+    });
+    expect(screen.queryByText(/Sign-out has not been confirmed/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Scanner opened")).not.toBeInTheDocument();
+    act(() => {
+      localStorage.setItem("deep-spec:sign-out-pending", "newer-lock");
+      window.dispatchEvent(new StorageEvent("storage", { key: "deep-spec:sign-out-pending" }));
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Sign-out has not been confirmed");
   });
 
   it("starts GitHub auth when that provider is enabled for the build", async () => {
@@ -351,7 +475,7 @@ describe("Auth", () => {
     await renderAuth();
 
     await user.click(await screen.findByRole("tab", { name: "Email link" }));
-    await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "tester@example.com");
     await user.click(screen.getByRole("button", { name: "Send sign-in link" }));
     await user.click(await screen.findByRole("button", { name: "I have a code" }));
 
@@ -373,7 +497,7 @@ describe("Auth", () => {
     await renderAuth();
 
     await user.click(await screen.findByRole("tab", { name: "Email link" }));
-    await user.type(await screen.findByPlaceholderText("Enter your email address"), "tester@example.com");
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "tester@example.com");
     await user.click(screen.getByRole("button", { name: "Send sign-in link" }));
 
     const resendButton = await screen.findByRole("button", { name: /Send in \d+s/ });
@@ -391,8 +515,8 @@ describe("Auth", () => {
       authState: { from: "/history?filter=recent#scan-1" },
     });
 
-    await user.type(await screen.findByPlaceholderText("Enter your email address"), "Tester@Example.com");
-    await user.type(screen.getByPlaceholderText("Enter your password"), "correct-password");
+    await user.type(await screen.findByPlaceholderText("you@shop.com"), "Tester@Example.com");
+    await user.type(screen.getByPlaceholderText("Your password"), "correct-password");
     await user.click(screen.getByRole("button", { name: "Sign in to scanner" }));
 
     expect(await screen.findByText("History opened")).toBeInTheDocument();

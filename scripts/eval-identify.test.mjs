@@ -189,6 +189,54 @@ describe("identify eval scoring", () => {
     });
   });
 
+  it("scores mechanic-grade candidate parts and damage observations without accepting negated damage", () => {
+    expect(
+      scoreIdentificationResult(
+        {
+          ...result,
+          partName: "Front bumper",
+          primaryPart: {
+            partName: "Front bumper",
+            confidence: "high",
+            scanCategory: "body",
+            evidence: ["The bumper cover is detached and hanging near the mounting point."],
+          },
+          candidateParts: [
+            {
+              partName: "Front bumper cover",
+              confidence: "medium",
+              scanCategory: "body",
+              evidence: ["Returned as an alternate visible candidate."],
+            },
+          ],
+          visibleObservations: ["The front fender has damage near the wheel opening."],
+          requiredNextEvidence: ["Second angle showing connectors or mounting tabs."],
+        },
+        ["Broken part", "Missing part"],
+      ),
+    ).toMatchObject({
+      ok: true,
+      matchedLabels: ["Broken part", "Missing part"],
+      failureReasons: [],
+    });
+
+    expect(
+      scoreIdentificationResult(
+        {
+          ...result,
+          partName: "Front bumper",
+          visibleObservations: ["Bumper appears intact with no visible damage."],
+          evidence: ["Local dataset match: Front-bumper (damage, 693 labeled samples)."],
+        },
+        ["Broken part"],
+      ),
+    ).toMatchObject({
+      ok: false,
+      matchedLabels: [],
+      failureReasons: ["wrong_result"],
+    });
+  });
+
   it("keeps provider availability failures out of training review rows", () => {
     expect(isReviewableEvalFailure({ code: "rate_limited" })).toBe(false);
     expect(isReviewableEvalFailure({ code: "network" })).toBe(false);
@@ -275,6 +323,17 @@ describe("identify eval scoring", () => {
   it("marks safety false positives only when the expected label is not safety-critical", () => {
     expect(isSafetyFalsePositive({ ...result, isSafetyCritical: true, safetyTriage: "needs_professional" }, ["Back-bumper"])).toBe(true);
     expect(isSafetyFalsePositive({ ...result, isSafetyCritical: true, safetyTriage: "needs_professional" }, ["Brake caliper"])).toBe(false);
+    expect(
+      isSafetyFalsePositive(
+        {
+          ...result,
+          isSafetyCritical: true,
+          safetyTriage: "needs_professional",
+          visibleObservations: ["Rear bumper is damaged and detached from the mount."],
+        },
+        ["Broken part"],
+      ),
+    ).toBe(false);
     expect(scoreIdentificationResult({ ...result, isSafetyCritical: true, safetyTriage: "needs_professional" }, ["Back-bumper"])).toMatchObject({
       ok: false,
       failureReasons: ["safety_false_positive"],
@@ -287,6 +346,7 @@ describe("identify eval scoring", () => {
         [
           {
             status: 200,
+            expectedLabels: ["alternator"],
             failureReasons: [],
             providerMs: 100,
             totalMs: 140,
@@ -295,6 +355,7 @@ describe("identify eval scoring", () => {
           },
           {
             status: 502,
+            expectedLabels: ["alternator"],
             failureReasons: ["invalid_response"],
             providerMs: 300,
             totalMs: 350,
@@ -303,6 +364,7 @@ describe("identify eval scoring", () => {
           },
           {
             status: 500,
+            expectedLabels: ["brake caliper"],
             failureReasons: ["not_configured"],
             providerMs: 20,
             totalMs: 25,
@@ -322,6 +384,24 @@ describe("identify eval scoring", () => {
       invalidResponseRate: 0.3333,
       safetyFalsePositiveCount: 1,
       safetyFalsePositiveRate: 0.3333,
+      failureModes: {
+        invalid_response: 1,
+        not_configured: 1,
+      },
+      labelBuckets: {
+        alternator: {
+          attemptedCount: 2,
+          failureCount: 1,
+          passCount: 1,
+          passRate: 0.5,
+        },
+        "brake caliper": {
+          attemptedCount: 1,
+          failureCount: 1,
+          passCount: 0,
+          passRate: 0,
+        },
+      },
       latencyMs: {
         provider: {
           average: 140,

@@ -1,9 +1,28 @@
-import type { CandidateMatch, ChatMessage, Confidence, EvidenceRegion, IdentificationResult, IdentifyModelRun, IdentifyProvider, Lookup, Rating, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanCategory, ScanProvenance, ScanQualityFailureReason, ScanQualitySnapshot, SourceLink, TrainingStatus } from "../types";
+import type { CandidateMatch, CandidatePart, ChatMessage, Confidence, CustomerVisibleReport, EvidenceRegion, FitmentConfidence, IdentificationResult, IdentifyModelRun, IdentifyProvider, Lookup, PartMeasurement, PossibleVehicleContext, Rating, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanCategory, SceneObject, ScanProvenance, ScanQualityFailureReason, ScanQualitySnapshot, ShopReviewStatus, ShopVehicleContext, SourceLink, TrainingStatus, VisualFocusBox, VisualFocusMode } from "../types";
+
+import type { PartInspectionDraft } from "../types";
+import { normalizePartInspection, withLatestInspection } from "../lib/partInspection";
+import { accountStorageKey } from "../lib/accountScope";
+import { inspectionDraftKey } from "./inspectionDraft";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
 export const MAX_SAVED_LOOKUPS = 50;
+export const DEVICE_SCAN_LIMIT_MESSAGE = `Device limit reached (${MAX_SAVED_LOOKUPS} scans). Export records, then remove a device record in Saved scans before scanning again. Existing records are preserved.`;
 const MAX_CHAT_MESSAGES = 40;
 const CHAT_KEY = (id: string) => `deep-spec:chat:${id}`;
+const LOOKUPS_CHANGED = "deep-spec:lookups-changed";
+
+export function subscribeToLookupChanges(listener: () => void): () => void {
+  const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
+  const onLocalChange = (event: Event) => { if ((event as CustomEvent<string>).detail === key) listener(); };
+  const onStorageChange = (event: StorageEvent) => { if (event.storageArea === localStorage && (event.key === key || event.key === null)) listener(); };
+  window.addEventListener(LOOKUPS_CHANGED, onLocalChange);
+  window.addEventListener("storage", onStorageChange);
+  return () => {
+    window.removeEventListener(LOOKUPS_CHANGED, onLocalChange);
+    window.removeEventListener("storage", onStorageChange);
+  };
+}
 
 type StorageResult<T> =
   | {
@@ -22,6 +41,9 @@ export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup
     id: createId(),
     createdAt,
     frame: scanState.frame,
+    ...(normalizeVisualFocusBox(scanState.focusBox) ? { focusBox: normalizeVisualFocusBox(scanState.focusBox) } : {}),
+    ...(isVisualFocusMode(scanState.focusMode) ? { focusMode: scanState.focusMode } : {}),
+    ...(cleanImageDataUrl(scanState.isolatedImageBase64) ? { isolatedImageBase64: cleanImageDataUrl(scanState.isolatedImageBase64) } : {}),
     result: scanState.result,
     errorMessage: scanState.errorMessage,
     errorCode: scanState.errorCode,
@@ -35,6 +57,12 @@ export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup
     trainingStatus: "raw_unreviewed",
     chatHistory: [],
     provenance: normalizeScanProvenance(scanState.provenance, createdAt),
+    ...(normalizeCustomerVisibleReport(scanState.customerVisibleReport) ? { customerVisibleReport: normalizeCustomerVisibleReport(scanState.customerVisibleReport) } : {}),
+    ...(cleanTextValue(scanState.jobId, 120) ? { jobId: cleanTextValue(scanState.jobId, 120) } : {}),
+    ...(cleanTextValue(scanState.orgId, 120) ? { orgId: cleanTextValue(scanState.orgId, 120) } : {}),
+    ...(isShopReviewStatus(scanState.reviewStatus) ? { reviewStatus: scanState.reviewStatus } : scanState.jobId ? { reviewStatus: "needs_review" as const } : {}),
+    ...(cleanTextValue(scanState.technicianUserId, 120) ? { technicianUserId: cleanTextValue(scanState.technicianUserId, 120) } : {}),
+    ...(normalizeShopVehicleContext(scanState.vehicleContext) ? { vehicleContext: normalizeShopVehicleContext(scanState.vehicleContext) } : {}),
   };
 
   const lookups = [lookup, ...getLookups()];
@@ -43,13 +71,54 @@ export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup
   return writeResult.ok ? { ok: true, value: lookup } : { ok: false, message: writeResult.message, value: lookup };
 }
 
+export function saveExistingLookup(lookup: Lookup, retryState?: ScanAnalysisState | null): StorageResult<Lookup> {
+  const lookups = getLookups();
+  const local = lookups.find((entry) => entry.id === lookup.id);
+  const existing = local ? withLatestInspection(local, lookup) : lookup;
+  const saved = { ...withRetriedLookupResult(existing, retryState), cloudSave: undefined };
+  const write = writeLookups(local
+    ? lookups.map((entry) => entry.id === saved.id ? saved : entry)
+    : [saved, ...lookups]);
+  return write.ok ? { ok: true, value: saved } : { ok: false, value: saved, message: write.message };
+}
+
+export function withRetriedLookupResult(existing: Lookup, retryState?: ScanAnalysisState | null): Lookup {
+  // A cloud-only retry lives in screen state until Save; retain the original
+  // record's identity and human work while replacing the failed AI attempt.
+  return retryState?.result ? {
+    ...existing,
+    result: retryState.result,
+    analyzedAt: retryState.analyzedAt ?? new Date().toISOString(),
+    errorCode: undefined,
+    errorMessage: undefined,
+    scanCategory: categorizeScan(retryState.result, existing.correction ?? undefined),
+    trainingLabel: getTrainingLabel(retryState.result, existing.correction),
+    trainingStatus: getTrainingStatus(existing.rating, existing.correction),
+    provenance: normalizeScanProvenance({ ...existing.provenance, ...retryState.provenance }, existing.createdAt),
+  } : existing;
+}
+
+export function saveLookupInspection(id: string, draft: PartInspectionDraft, cloudLookup?: Lookup): StorageResult<Lookup | null> {
+  const lookups = getLookups();
+  const existing = lookups.find((lookup) => lookup.id === id)
+    ?? (cloudLookup?.id === id ? normalizeLookup(cloudLookup) : null);
+  if (!existing) return { ok: false, value: null, message: "Saved scan not found." };
+  const inspection = normalizePartInspection({ ...draft, inspectedAt: new Date().toISOString() });
+  if (!inspection) return { ok: false, value: existing, message: "Complete the inspection and supporting evidence before saving." };
+  const updated = { ...existing, inspection, cloudSave: undefined };
+  const write = writeLookups(lookups.some((lookup) => lookup.id === id)
+    ? lookups.map((lookup) => lookup.id === id ? updated : lookup)
+    : [updated, ...lookups]);
+  return write.ok ? { ok: true, value: updated } : { ok: false, value: existing, message: write.message };
+}
+
 export function getLookups(): Lookup[] {
   if (!hasLocalStorage()) {
     return [];
   }
 
   try {
-    const rawLookups = localStorage.getItem(LOOKUPS_STORAGE_KEY);
+    const rawLookups = localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY));
     if (!rawLookups) {
       return [];
     }
@@ -71,6 +140,14 @@ export function getLookup(id: string): Lookup | null {
   return mergeLookupChatHistory(lookup);
 }
 
+// Patch the current row, never a stale upload snapshot or a deleted record.
+export function recordCloudSaveAttempt(id: string, receipt: NonNullable<Lookup["cloudSave"]>, expectedAttemptId?: string): boolean {
+  const lookups = getLookups();
+  const current = lookups.find((lookup) => lookup.id === id);
+  if (!current || (expectedAttemptId && current.cloudSave?.attemptId !== expectedAttemptId)) return false;
+  return writeLookups(lookups.map((lookup) => lookup.id === id ? { ...lookup, cloudSave: receipt } : lookup)).ok;
+}
+
 export function updateLookup(
   id: string,
   patch: Partial<Pick<Lookup, "rating" | "correction" | "notes">>,
@@ -86,10 +163,12 @@ export function updateLookup(
   const updatedLookup = {
     ...lookups[index],
     ...patchData,
+    cloudSave: undefined,
   };
   updatedLookup.trainingStatus = getTrainingStatus(updatedLookup.rating, updatedLookup.correction);
   updatedLookup.trainingLabel = getTrainingLabel(updatedLookup.result, updatedLookup.correction);
   updatedLookup.scanCategory = categorizeScan(updatedLookup.result, updatedLookup.correction ?? undefined);
+  updatedLookup.reviewStatus = getShopReviewStatus(updatedLookup);
 
   const updatedLookups = [...lookups];
   updatedLookups[index] = updatedLookup;
@@ -115,6 +194,7 @@ export function updateLookupResult(
   const existing = lookups[index];
   const updatedLookup: Lookup = {
     ...existing,
+    cloudSave: undefined,
     result,
     errorMessage: undefined,
     errorCode: undefined,
@@ -127,6 +207,12 @@ export function updateLookupResult(
       ...existing.provenance,
       ...provenance,
     }, existing.createdAt),
+    customerVisibleReport: existing.customerVisibleReport,
+    jobId: existing.jobId,
+    orgId: existing.orgId,
+    reviewStatus: getShopReviewStatus(existing),
+    technicianUserId: existing.technicianUserId,
+    vehicleContext: existing.vehicleContext,
   };
 
   const updatedLookups = [...lookups];
@@ -160,7 +246,7 @@ export function appendChatMessages(id: string, messages: ChatMessage[]): Storage
   }
 
   const updatedHistory = [...lookup.chatHistory, ...cleanMessages].slice(-MAX_CHAT_MESSAGES);
-  const updatedLookup: Lookup = { ...lookup, chatHistory: updatedHistory };
+  const updatedLookup: Lookup = { ...lookup, chatHistory: updatedHistory, cloudSave: undefined };
   const lookups = getLookups();
   const index = lookups.findIndex((storedLookup) => storedLookup.id === id);
 
@@ -179,7 +265,7 @@ export function appendChatMessages(id: string, messages: ChatMessage[]): Storage
   const chatWriteResult = writeChatHistory(id, updatedHistory);
   if (!chatWriteResult.ok) {
     try {
-      localStorage.removeItem(CHAT_KEY(id));
+      localStorage.removeItem(accountStorageKey(CHAT_KEY(id)));
     } catch {
       // Fall back to the parent lookup record if the per-scan chat key cannot be updated.
     }
@@ -199,7 +285,9 @@ export function deleteLookup(id: string): StorageResult<boolean> {
 
   const writeResult = writeLookups(next);
   if (writeResult.ok && hasLocalStorage()) {
-    try { localStorage.removeItem(CHAT_KEY(id)); } catch { /* ignore */ }
+    try { localStorage.removeItem(accountStorageKey(CHAT_KEY(id))); } catch { /* ignore */ }
+    try { localStorage.removeItem(inspectionDraftKey(id)); }
+    catch { return { ok: false, value: true, message: "Scan removed from this device, but its inspection draft could not be removed. Clear this site's browser data to remove the remaining device copy." }; }
   }
   return writeResult.ok ? { ok: true, value: true } : { ok: false, message: writeResult.message, value: false };
 }
@@ -207,19 +295,28 @@ export function deleteLookup(id: string): StorageResult<boolean> {
 export function scanStateFromLookup(lookup: Lookup): ScanAnalysisState {
   return {
     frame: lookup.frame,
+    focusBox: lookup.focusBox,
+    focusMode: lookup.focusMode,
+    isolatedImageBase64: lookup.isolatedImageBase64,
     result: lookup.result,
     errorMessage: lookup.errorMessage,
     errorCode: lookup.errorCode,
     analyzedAt: lookup.analyzedAt,
     scanQuality: lookup.scanQuality,
     provenance: lookup.provenance,
+    customerVisibleReport: lookup.customerVisibleReport,
+    jobId: lookup.jobId,
+    orgId: lookup.orgId,
+    reviewStatus: lookup.reviewStatus,
+    technicianUserId: lookup.technicianUserId,
+    vehicleContext: lookup.vehicleContext,
   };
 }
 
 function mergeLookupChatHistory(lookup: Lookup): Lookup {
   if (!hasLocalStorage()) return lookup;
   try {
-    const raw = localStorage.getItem(CHAT_KEY(lookup.id));
+    const raw = localStorage.getItem(accountStorageKey(CHAT_KEY(lookup.id)));
     if (!raw) return lookup;
     const parsed = JSON.parse(raw) as unknown;
     const chatHistory = normalizeChatHistory(parsed);
@@ -235,7 +332,7 @@ function writeChatHistory(id: string, history: ChatMessage[]): StorageResult<Cha
     return { ok: false, message: "Saved scans are not available in this browser.", value: history };
   }
   try {
-    localStorage.setItem(CHAT_KEY(id), JSON.stringify(history));
+    localStorage.setItem(accountStorageKey(CHAT_KEY(id)), JSON.stringify(history));
     return { ok: true, value: history };
   } catch (error) {
     return {
@@ -249,38 +346,31 @@ function writeChatHistory(id: string, history: ChatMessage[]): StorageResult<Cha
 }
 
 function writeLookups(lookups: Lookup[]): StorageResult<Lookup[]> {
-  const cappedLookups = lookups.slice(0, MAX_SAVED_LOOKUPS);
+  if (lookups.length > MAX_SAVED_LOOKUPS) {
+    return { ok: false, message: DEVICE_SCAN_LIMIT_MESSAGE, value: lookups };
+  }
 
   if (!hasLocalStorage()) {
     return {
       ok: false,
       message: "Saved scans are not available in this browser.",
-      value: cappedLookups,
+      value: lookups,
     };
   }
 
   try {
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify(cappedLookups));
-    pruneChatHistory(lookups.slice(MAX_SAVED_LOOKUPS));
-    return { ok: true, value: cappedLookups };
+    const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    localStorage.setItem(key, JSON.stringify(lookups));
+    window.dispatchEvent(new CustomEvent(LOOKUPS_CHANGED, { detail: key }));
+    return { ok: true, value: lookups };
   } catch (error) {
     return {
       ok: false,
       message: isQuotaError(error)
         ? "Your device storage is full. Delete older saved scans, then try again."
         : "Deep Spec could not save this scan on this device.",
-      value: cappedLookups,
+      value: lookups,
     };
-  }
-}
-
-function pruneChatHistory(droppedLookups: Lookup[]) {
-  for (const lookup of droppedLookups) {
-    try {
-      localStorage.removeItem(CHAT_KEY(lookup.id));
-    } catch {
-      // Best-effort cleanup after the bounded lookup index is already saved.
-    }
   }
 }
 
@@ -302,7 +392,7 @@ function sanitizePatch(patch: Partial<Pick<Lookup, "rating" | "correction" | "no
   return sanitized;
 }
 
-function normalizeLookup(value: unknown): Lookup | null {
+export function normalizeLookup(value: unknown): Lookup | null {
   if (typeof value !== "object" || value === null) {
     return null;
   }
@@ -328,9 +418,14 @@ function normalizeLookup(value: unknown): Lookup | null {
     : getTrainingStatus(rating, correction);
 
   return {
+    inspection: normalizePartInspection(lookup.inspection),
+    cloudSave: normalizeCloudSave(lookup.cloudSave),
     id: lookup.id,
     createdAt: lookup.createdAt,
     frame: lookup.frame,
+    ...(normalizeVisualFocusBox(lookup.focusBox) ? { focusBox: normalizeVisualFocusBox(lookup.focusBox) } : {}),
+    ...(isVisualFocusMode(lookup.focusMode) ? { focusMode: lookup.focusMode } : {}),
+    ...(cleanImageDataUrl(lookup.isolatedImageBase64) ? { isolatedImageBase64: cleanImageDataUrl(lookup.isolatedImageBase64) } : {}),
     result,
     errorMessage: lookup.errorMessage,
     errorCode: lookup.errorCode,
@@ -344,7 +439,21 @@ function normalizeLookup(value: unknown): Lookup | null {
     trainingStatus,
     chatHistory: normalizeChatHistory(lookup.chatHistory),
     provenance: normalizeScanProvenance(lookup.provenance, lookup.createdAt),
+    ...(normalizeCustomerVisibleReport(lookup.customerVisibleReport) ? { customerVisibleReport: normalizeCustomerVisibleReport(lookup.customerVisibleReport) } : {}),
+    ...(cleanTextValue(lookup.jobId, 120) ? { jobId: cleanTextValue(lookup.jobId, 120) } : {}),
+    ...(cleanTextValue(lookup.orgId, 120) ? { orgId: cleanTextValue(lookup.orgId, 120) } : {}),
+    ...(isShopReviewStatus(lookup.reviewStatus) ? { reviewStatus: lookup.reviewStatus } : lookup.jobId ? { reviewStatus: getShopReviewStatus({ ...lookup, rating, correction, trainingStatus }) } : {}),
+    ...(cleanTextValue(lookup.technicianUserId, 120) ? { technicianUserId: cleanTextValue(lookup.technicianUserId, 120) } : {}),
+    ...(normalizeShopVehicleContext(lookup.vehicleContext) ? { vehicleContext: normalizeShopVehicleContext(lookup.vehicleContext) } : {}),
   };
+}
+
+function normalizeCloudSave(value: unknown): Lookup["cloudSave"] {
+  if (!isRecord(value) || typeof value.attemptId !== "string" || !value.attemptId
+    || typeof value.attemptedAt !== "string" || !Number.isFinite(Date.parse(value.attemptedAt))
+    || !["unconfirmed", "acknowledged", "failed"].includes(value.status as string)
+    || !["scan", "inspection"].includes(value.scope as string)) return undefined;
+  return { attemptId: value.attemptId, attemptedAt: value.attemptedAt, status: value.status, scope: value.scope } as NonNullable<Lookup["cloudSave"]>;
 }
 
 function normalizeScanProvenance(value: unknown, fallbackSavedAt: string): ScanProvenance {
@@ -377,6 +486,39 @@ function isScanCategory(value: unknown): value is ScanCategory {
 
 function isConfidence(value: unknown): value is Confidence {
   return value === "high" || value === "medium" || value === "low";
+}
+
+function isVisualFocusMode(value: unknown): value is VisualFocusMode {
+  return value === "mask" || value === "crop" || value === "full_frame";
+}
+
+function normalizeVisualFocusBox(value: unknown): VisualFocusBox | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const x = getFiniteNumber(value.x);
+  const y = getFiniteNumber(value.y);
+  const width = getFiniteNumber(value.width);
+  const height = getFiniteNumber(value.height);
+  const confidence = getFiniteNumber(value.confidence);
+  if (x === null || y === null || width === null || height === null || confidence === null || width <= 0 || height <= 0) {
+    return undefined;
+  }
+
+  return {
+    confidence: clampNumber(confidence, 0, 1),
+    height: clampNumber(height, 0.001, 1),
+    width: clampNumber(width, 0.001, 1),
+    x: clampNumber(x, 0, 1),
+    y: clampNumber(y, 0, 1),
+  };
+}
+
+function cleanImageDataUrl(value: unknown) {
+  return typeof value === "string" && /^data:image\/(jpeg|png|webp);base64,/i.test(value)
+    ? value
+    : undefined;
 }
 
 function isScanQualityFailureReason(value: unknown): value is ScanQualityFailureReason {
@@ -426,6 +568,14 @@ function getNullableNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function getFiniteNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
 function normalizeConfidenceScore(value: unknown, confidence: Confidence) {
   if (typeof value === "number" && Number.isFinite(value)) {
     return clampPercent(value);
@@ -465,6 +615,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isTrainingStatus(value: unknown): value is TrainingStatus {
   return value === "raw_unreviewed" || value === "user_confirmed" || value === "user_corrected";
+}
+
+function isShopReviewStatus(value: unknown): value is ShopReviewStatus {
+  return value === "needs_review" || value === "confirmed" || value === "corrected";
 }
 
 function isScanCaptureMode(value: unknown): value is ScanCaptureMode {
@@ -514,20 +668,30 @@ function categorizeScan(result?: Partial<IdentificationResult>, correction?: str
   return categorizeText(text);
 }
 
+// Whole words only, with an optional plural: unanchored patterns matched "oil" inside "coil" and
+// "gas" inside "gasket", and a correction's category overrides the model's, so "Ignition coil"
+// was filed under leak. Rules run in order; the first match wins.
+const CATEGORY_RULES: [ScanCategory, string[]][] = [
+  ["airbag", ["airbag", "srs", "clock spring"]],
+  // Named engine parts that contain a later rule's keyword ("body", "oil", "coolant", "tank").
+  ["engine", ["throttle body", "oil filter", "oil pan", "valve cover", "head gasket", "cylinder head", "coolant reservoir", "coolant tank"]],
+  ["brakes", ["brake", "caliper", "rotor", "pad"]],
+  ["steering", ["steering", "tie rod", "rack and pinion"]],
+  ["suspension", ["suspension", "control arm", "strut", "shock", "ball joint", "spring"]],
+  ["fuel", ["fuel", "gas", "injector", "fuel line", "tank"]],
+  // A leak is a condition, not a part: "oil" or "coolant" alone names engine fluids, not a leak.
+  ["leak", ["leak", "leaking", "leakage", "drip", "dripping", "puddle", "seep", "seeping", "seepage"]],
+  ["electrical", ["battery", "batteries", "alternator", "starter", "wire", "wiring", "connector", "fuse", "sensor", "electrical"]],
+  ["body", ["bumper", "fender", "door", "panel", "body"]],
+  ["engine", ["engine", "belt", "hose", "radiator", "thermostat", "filter", "intake", "manifold", "gasket", "oil", "coolant"]],
+];
+const CATEGORY_MATCHERS = CATEGORY_RULES.map(([category, words]) => [
+  category,
+  new RegExp(`\\b(${words.join("|")})(?:s|es)?\\b`, "i"),
+] as const);
+
 function categorizeText(text: string): ScanCategory {
-  const normalized = text.toLowerCase();
-
-  if (/airbag|srs/.test(normalized)) return "airbag";
-  if (/brake|caliper|rotor|pad/.test(normalized)) return "brakes";
-  if (/steering|tie rod|rack and pinion/.test(normalized)) return "steering";
-  if (/suspension|control arm|strut|shock|ball joint/.test(normalized)) return "suspension";
-  if (/fuel|gas|injector|fuel line|tank/.test(normalized)) return "fuel";
-  if (/leak|oil|coolant|fluid/.test(normalized)) return "leak";
-  if (/battery|alternator|starter|wire|wiring|connector|fuse|sensor|electrical/.test(normalized)) return "electrical";
-  if (/bumper|fender|door|panel|body/.test(normalized)) return "body";
-  if (/engine|belt|hose|radiator|thermostat|filter|intake|manifold/.test(normalized)) return "engine";
-
-  return "unknown";
+  return CATEGORY_MATCHERS.find(([, pattern]) => pattern.test(text))?.[0] ?? "unknown";
 }
 
 function normalizeStoredIdentificationResult(value: unknown, correction?: string): IdentificationResult | undefined {
@@ -559,9 +723,16 @@ function normalizeStoredIdentificationResult(value: unknown, correction?: string
     confirmationNeed: normalizeConfirmationNeed(result.confirmationNeed),
     scanCategory: isScanCategory(result.scanCategory) ? result.scanCategory : categorizeScan(result, correction),
     candidateMatches: normalizeCandidateMatches(result.candidateMatches),
+    primaryPart: normalizeCandidatePart(result.primaryPart, result.partName, result.confidence, result.scanCategory),
+    candidateParts: normalizeCandidateParts(result.candidateParts),
+    possibleVehicleContexts: normalizePossibleVehicleContexts(result.possibleVehicleContexts),
+    measurements: normalizePartMeasurements(result.measurements),
+    requiredNextEvidence: cleanStringArray(result.requiredNextEvidence ?? [], 6, 220),
+    ...(isFitmentConfidence(result.fitmentConfidence) ? { fitmentConfidence: result.fitmentConfidence } : {}),
     whatItDoes: cleanText(result.whatItDoes, 500),
     visibleObservations: cleanStringArray(result.visibleObservations, 6, 180),
     evidenceRegions: normalizeEvidenceRegions(result.evidenceRegions, result.visibleObservations, result.evidence),
+    sceneObjects: normalizeSceneObjects(result.sceneObjects),
     concerns: cleanStringArray(result.concerns, 6, 180),
     safetyTriage: result.safetyTriage,
     isSafetyCritical: result.isSafetyCritical,
@@ -618,6 +789,88 @@ function normalizeCandidateMatches(value: unknown): CandidateMatch[] {
     .slice(0, 4);
 }
 
+function normalizeCandidatePart(
+  value: unknown,
+  fallbackPartName?: string,
+  fallbackConfidence?: Confidence,
+  fallbackCategory?: ScanCategory,
+): CandidatePart | undefined {
+  if (!isRecord(value)) {
+    return fallbackPartName && fallbackConfidence && fallbackCategory
+      ? {
+          partName: cleanText(fallbackPartName, 80),
+          confidence: fallbackConfidence,
+          scanCategory: fallbackCategory,
+          evidence: [],
+        }
+      : undefined;
+  }
+
+  const partName = typeof value.partName === "string" ? cleanText(value.partName, 80) : "";
+  if (!partName) {
+    return undefined;
+  }
+
+  return {
+    partName,
+    confidence: isConfidence(value.confidence) ? value.confidence : "low",
+    scanCategory: isScanCategory(value.scanCategory) ? value.scanCategory : categorizeText(partName),
+    evidence: Array.isArray(value.evidence) ? cleanStringArray(value.evidence, 4, 180) : [],
+    ...(typeof value.whyNotPrimary === "string" && value.whyNotPrimary.trim()
+      ? { whyNotPrimary: cleanText(value.whyNotPrimary, 180) }
+      : {}),
+  };
+}
+
+function normalizeCandidateParts(value: unknown): CandidatePart[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((candidate) => normalizeCandidatePart(candidate))
+    .filter((candidate): candidate is CandidatePart => Boolean(candidate))
+    .slice(0, 4);
+}
+
+function normalizePossibleVehicleContexts(value: unknown): PossibleVehicleContext[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is Partial<PossibleVehicleContext> => isRecord(item))
+    .map((item) => ({
+      label: typeof item.label === "string" ? cleanText(item.label, 100) : "",
+      confidence: isConfidence(item.confidence) ? item.confidence : "low",
+      evidence: Array.isArray(item.evidence) ? cleanStringArray(item.evidence, 4, 180) : [],
+    }))
+    .filter((item) => item.label)
+    .slice(0, 3);
+}
+
+function normalizePartMeasurements(value: unknown): PartMeasurement[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is Partial<PartMeasurement> => isRecord(item))
+    .map((item) => ({
+      label: typeof item.label === "string" ? cleanText(item.label, 80) : "",
+      valueMm: typeof item.valueMm === "number" && Number.isFinite(item.valueMm) ? Math.max(0, item.valueMm) : 0,
+      confidence: isConfidence(item.confidence) ? item.confidence : "low",
+      method: item.method === "reference_object" || item.method === "visible_marking" || item.method === "estimated" ? item.method : "estimated",
+      caveat: typeof item.caveat === "string" ? cleanText(item.caveat, 180) : "Estimated; verify before ordering parts.",
+    }))
+    .filter((item) => item.label && item.valueMm > 0)
+    .slice(0, 4);
+}
+
+function isFitmentConfidence(value: unknown): value is FitmentConfidence {
+  return value === "not_applicable" || value === "needs_vehicle_context" || value === "possible" || value === "supported";
+}
+
 function normalizeEvidenceRegions(regions: unknown, observations: unknown[], evidence: unknown[]): EvidenceRegion[] {
   if (Array.isArray(regions)) {
     const cleaned = regions
@@ -640,6 +893,25 @@ function normalizeEvidenceRegions(regions: unknown, observations: unknown[], evi
     observation,
     regionLabel: "Scanned area",
   }));
+}
+
+function normalizeSceneObjects(value: unknown): SceneObject[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is Partial<SceneObject> => typeof item === "object" && item !== null)
+    .map((entry) => ({
+      name: typeof entry.name === "string" ? cleanText(entry.name, 80) : "",
+      category: typeof entry.category === "string" && entry.category.trim()
+        ? (isScanCategory(entry.category) ? entry.category : cleanText(entry.category, 40))
+        : "unknown",
+      regionLabel: typeof entry.regionLabel === "string" ? cleanText(entry.regionLabel, 40) : "Scanned area",
+      primary: entry.primary === true,
+    }))
+    .filter((entry) => entry.name)
+    .slice(0, 8);
 }
 
 function normalizeSourceLinks(value: unknown): SourceLink[] {
@@ -690,6 +962,58 @@ function isChatRole(value: unknown): value is ChatMessage["role"] {
 
 function cleanText(value: string, maxLength: number) {
   return value.trim().replace(/\s+/g, " ").slice(0, maxLength);
+}
+
+function cleanTextValue(value: unknown, maxLength: number) {
+  return typeof value === "string" ? cleanText(value, maxLength) : "";
+}
+
+function normalizeShopVehicleContext(value: unknown): ShopVehicleContext | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const context: ShopVehicleContext = {};
+  const fields: Array<keyof ShopVehicleContext> = ["bayOrRo", "customerName", "engine", "jobTitle", "make", "mileage", "model", "notes", "plate", "symptom", "technicianName", "vin", "year"];
+  for (const field of fields) {
+    const clean = cleanTextValue(value[field], field === "notes" || field === "symptom" ? 300 : 120);
+    if (clean) {
+      (context as Record<string, string>)[field] = clean;
+    }
+  }
+
+  return Object.keys(context).length ? context : undefined;
+}
+
+function normalizeCustomerVisibleReport(value: unknown): CustomerVisibleReport | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const title = cleanTextValue(value.title, 140);
+  const summary = cleanTextValue(value.summary, 600);
+  const generatedAt = cleanTextValue(value.generatedAt, 80);
+  if (!title || !summary || !generatedAt) {
+    return undefined;
+  }
+
+  return { generatedAt, summary, title };
+}
+
+function getShopReviewStatus(lookup: Pick<Lookup, "correction" | "jobId" | "rating" | "reviewStatus" | "trainingStatus">): ShopReviewStatus | undefined {
+  if (!lookup.jobId && !lookup.reviewStatus) {
+    return undefined;
+  }
+
+  if (lookup.correction?.trim() || lookup.trainingStatus === "user_corrected") {
+    return "corrected";
+  }
+
+  if (lookup.rating === "up" || lookup.trainingStatus === "user_confirmed") {
+    return "confirmed";
+  }
+
+  return "needs_review";
 }
 
 function cleanStringArray(value: unknown[], maxItems: number, maxItemLength: number) {

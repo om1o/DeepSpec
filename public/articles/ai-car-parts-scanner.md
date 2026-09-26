@@ -28,7 +28,7 @@ Deep Spec saves the scan, AI result, category, rating, correction, notes, and fo
 
 ## Safety boundary
 
-For brakes, steering, suspension, fuel, airbags, electrical burning, severe leaks, or unclear high-risk damage, Deep Spec should tell the user to verify with a mechanic.
+For brakes, steering, suspension, fuel, airbags, electrical burning, severe leaks, or unclear high-risk damage, Deep Spec should tell the user to check the issue before driving or repairing.
 
 ## Related Deep Spec guides
 

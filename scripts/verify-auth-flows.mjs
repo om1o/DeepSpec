@@ -11,7 +11,7 @@ const config = {
 };
 
 const testEmail = process.env.DEEPSPEC_AUTH_TEST_EMAIL?.trim();
-const testPassword = process.env.DEEPSPEC_AUTH_TEST_PASSWORD?.trim();
+const testPassword = process.env.DEEPSPEC_AUTH_TEST_PASSWORD;
 const testOtpCode = process.env.DEEPSPEC_AUTH_TEST_EMAIL_CODE?.trim();
 const args = new Set(process.argv.slice(2));
 const shouldSendOtp = process.env.DEEPSPEC_AUTH_SEND_CODE === "true" || args.has("--send-code");
@@ -94,7 +94,12 @@ try {
     console.log("      Code entry skipped. Set DEEPSPEC_AUTH_TEST_EMAIL_CODE after receiving the code.");
   }
 
-  console.log("[5/6] Auth verification completed.");
+  console.log("[5/6] Auth verification coverage:");
+  console.log("      Provider settings: verified (not an end-to-end sign-in).");
+  console.log(`      Password sign-in: ${testEmail && testPassword ? "verified" : "skipped — credentials not supplied"}.`);
+  console.log(`      Email code sign-in: ${testEmail && testOtpCode ? "verified" : "skipped — received code not supplied"}.`);
+  console.log(`      Email code request: ${testEmail && shouldSendOtp ? "accepted by provider; inbox delivery not verified" : "skipped"}.`);
+  console.log("      OAuth browser sign-in: not tested by this verifier.");
 } catch (error) {
   fail(error instanceof Error ? error.message : "Unknown auth verification failure.");
 }
@@ -193,14 +198,19 @@ function loadLocalEnv(filename) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
 
-    const separatorIndex = trimmed.indexOf("=");
+    const separatorIndex = line.indexOf("=");
     if (separatorIndex === -1) continue;
 
-    const key = trimmed.slice(0, separatorIndex).trim();
-    const rawValue = trimmed.slice(separatorIndex + 1).trim();
-    if (!key || process.env[key]) continue;
+    const key = line.slice(0, separatorIndex).trim();
+    const rawValue = line.slice(separatorIndex + 1);
+    if (!key || process.env[key] !== undefined) continue;
 
-    process.env[key] = rawValue.replace(/^["']|["']$/g, "");
+    const value = rawValue.trim();
+    const quoted = (value.startsWith('"') && value.endsWith('"'))
+      || (value.startsWith("'") && value.endsWith("'"));
+    // Password whitespace is significant, whether supplied by the shell or a file.
+    process.env[key] = quoted ? value.slice(1, -1)
+      : key === "DEEPSPEC_AUTH_TEST_PASSWORD" ? rawValue : value;
   }
 }
 

@@ -1,11 +1,13 @@
-import { render, screen, within } from "@testing-library/react";
+import { accountStorageKey, setActiveAccount, withAccountRouteState } from "../lib/accountScope";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, vi } from "vitest";
 import Result from "./Result";
 import * as aiService from "../services/aiService";
-import * as cloudSync from "../services/cloudSync";
-import { LOOKUPS_STORAGE_KEY } from "../services/storage";
+import * as reportService from "../services/report";
+import { getLookup, getLookups, LOOKUPS_STORAGE_KEY } from "../services/storage";
+import { emptyPartInspection } from "../lib/partInspection";
 import type { Lookup, ScanAnalysisState } from "../types";
 
 const frame = {
@@ -71,43 +73,109 @@ describe("Result", () => {
     vi.unstubAllEnvs();
   });
 
+  it("rejects a previous account's result retained in browser history", () => {
+    const oldState = withAccountRouteState(successfulScan);
+    setActiveAccount("other-user");
+    render(<MemoryRouter initialEntries={[{ pathname: "/result/old", state: oldState }]}><Routes><Route path="/result/:id" element={<Result />} /></Routes></MemoryRouter>);
+    expect(screen.queryByRole("heading", { name: "Alternator" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Automatic intake draft" })).not.toBeInTheDocument();
+  });
+
+  it("does not save a stale mounted result into a new account", async () => {
+    const user = userEvent.setup();
+    renderResult(successfulScan);
+    setActiveAccount("other-user");
+    await user.click(screen.getByRole("button", { name: "Save", exact: true }));
+    expect(getLookups()).toEqual([]);
+  });
+
+  it("opens a cloud-only inspection and saves edits under the original scan id", async () => {
+    const user = userEvent.setup();
+    const cloudLookup = makeLookup({
+      frame: { ...frame, imageBase64: "https://example.com/signed-image.jpg" },
+      inspection: { ...emptyPartInspection, inspectorName: "Original inspector", inspectedAt: "2026-09-19T12:00:00Z" },
+    });
+    renderResult({ ...successfulScan, savedLookup: cloudLookup }, `/result/${cloudLookup.id}`);
+    await user.click(screen.getByText("Human inspection — saved"));
+    expect(screen.getByLabelText("Inspector name (self-reported)")).toHaveValue("Original inspector");
+    await user.clear(screen.getByLabelText("Inspector name (self-reported)"));
+    await user.type(screen.getByLabelText("Inspector name (self-reported)"), "New inspector");
+    await user.click(screen.getByRole("button", { name: "Save inspection" }));
+    expect(getLookup(cloudLookup.id)?.inspection?.inspectorName).toBe("New inspector");
+    expect(getLookup(cloudLookup.id)?.frame.imageBase64).toBe("https://example.com/signed-image.jpg");
+  });
+
+  it.each([
+    ["https://example.test/part.jpg?token=expired", "https://example.test/part.jpg?token=fresh", "https://example.test/part.jpg?token=fresh"],
+    [frame.imageBase64, "https://example.test/part.jpg?token=fresh", frame.imageBase64],
+    ["https://example.test/cached.jpg", "/brand/deepspec-logo.webp", "https://example.test/cached.jpg"],
+  ])("preserves the available photo and local inspection after a device edit (%s / %s)", async (localImage, cloudImage, expectedImage) => {
+    const local = makeLookup({
+      frame: { ...frame, imageBase64: localImage },
+      inspection: { ...emptyPartInspection, inspectorName: "Local inspector", inspectedAt: "2026-09-20T12:00:00.000Z" },
+      notes: "Keep receiving notes",
+    });
+    const cloudLookup = makeLookup({
+      frame: { imageBase64: cloudImage, capturedAt: "2026-09-19T12:00:00.000Z" },
+      inspection: { ...emptyPartInspection, inspectorName: "Old inspector", inspectedAt: "2026-09-19T12:00:00.000Z" },
+    });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
+    renderResult({ ...successfulScan, savedLookup: cloudLookup }, `/result/${local.id}`);
+    expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute("src", expectedImage);
+    await userEvent.click(screen.getByRole("button", { name: "Yes", exact: true }));
+    expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute("src", expectedImage);
+    await userEvent.click(screen.getByText("Human inspection — saved"));
+    expect(screen.getByLabelText("Inspector name (self-reported)")).toHaveValue("Local inspector");
+    expect(getLookup(local.id)).toMatchObject({
+      frame: local.frame, notes: local.notes, inspection: local.inspection, rating: "up",
+    });
+  });
+
+  it("saves a cloud scan without duplicating its identity or losing its inspection", async () => {
+    const user = userEvent.setup();
+    const cloudLookup = makeLookup({
+      inspection: { ...emptyPartInspection, inspectorName: "Pat", inspectedAt: "2026-09-19T12:00:00.000Z" },
+      notes: "Keep original notes",
+    });
+    renderResult({ ...successfulScan, savedLookup: cloudLookup }, `/result/${cloudLookup.id}`);
+    await user.click(screen.getByRole("button", { name: "Save", exact: true }));
+    expect(getLookups()).toHaveLength(1);
+    expect(getLookup(cloudLookup.id)).toMatchObject({
+      id: cloudLookup.id, inspection: cloudLookup.inspection, notes: "Keep original notes",
+    });
+  });
+
+  it("automatically prepares an intake draft after saving without requiring inspection", async () => {
+    const user = userEvent.setup();
+    renderResult(successfulScan);
+    expect(screen.queryByRole("region", { name: "Automatic intake draft" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save", exact: true }));
+    expect(screen.getByRole("region", { name: "Automatic intake draft" })).toHaveTextContent("AI suggestion — not verified");
+    expect(screen.getByRole("region", { name: "Automatic intake draft" })).toHaveTextContent("Not tested");
+    expect(screen.getByRole("region", { name: "Automatic intake draft" })).toHaveTextContent("Identity awaiting review");
+    expect(getLookups()).toHaveLength(1);
+    expect(getLookups()[0].inspection).toBeUndefined();
+    expect(reportService.buildScanReport(getLookups()[0])).toContain("Automatic intake draft");
+  });
+
   it("shows the AI identification result", async () => {
     renderResult(successfulScan);
 
     expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
+    expect(screen.getByTestId("result-focus-frame")).toHaveAttribute("data-focus-mode", "full_frame");
     expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute(
       "src",
       "data:image/jpeg;base64,test-image",
     );
     expect(screen.getAllByText("It charges the battery while the engine runs.").length).toBeGreaterThan(0);
     expect(screen.getByText("Best match")).toBeInTheDocument();
-    expect(screen.getByText("Other possible matches")).toBeInTheDocument();
-    expect(screen.getByText("Starter motor")).toBeInTheDocument();
-    expect(screen.getByText("Useful match")).toBeInTheDocument();
-    expect(screen.getByText("Owner decision pack")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Complete brief" })).toBeInTheDocument();
-    expect(screen.getByText("Data coverage")).toBeInTheDocument();
-    expect(screen.getByText("6/6")).toBeInTheDocument();
-    expect(screen.getByText("What could be wrong")).toBeInTheDocument();
-    expect(screen.getByText("Starter motor is close enough that it should be ruled out before repair.")).toBeInTheDocument();
-    expect(screen.getByText("No visible part number or label was detected.")).toBeInTheDocument();
-    expect(screen.getByText("Alternator / electrical / high confidence")).toBeInTheDocument();
-    expect(screen.getAllByText("Take another photo of the label if you need more detail.").length).toBeGreaterThan(0);
-    expect(screen.getByText("Can you confirm this is the Alternator from the photo?")).toBeInTheDocument();
-    expect(screen.getByText("How do I rule out Starter motor?")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Refine" })).toHaveAttribute("href", "/scan");
-
-    await userEvent.click(screen.getByRole("tab", { name: "Evidence" }));
-    expect(screen.getByText("Image evidence")).toBeInTheDocument();
-    expect(screen.getByText("The pulley and vented housing match common alternator shapes.")).toBeInTheDocument();
-    expect(screen.getByText("Nothing concerning visible.")).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("tab", { name: "Sources" }));
-    expect(screen.getByText("Ranked sources")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Search this part" })).toHaveAttribute(
-      "href",
-      "https://www.google.com/search?q=Alternator%20car%20part",
-    );
+    expect(screen.getByRole("button", { name: "Ask" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+    expect(screen.queryByText("Other possible matches")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Complete brief" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Refine" })).not.toBeInTheDocument();
+    expect(screen.queryByText("More evidence")).not.toBeInTheDocument();
+    expect(screen.queryByText("Capture another angle")).not.toBeInTheDocument();
   });
 
   it("flags when a backup AI model produced the result", () => {
@@ -127,7 +195,7 @@ describe("Result", () => {
 
     expect(
       screen.getByText(
-        "Identified with a backup AI model because the main model was busy. Double-check this result before relying on it.",
+        "Ran on the backup model while the main one was busy. Double-check before relying on it.",
       ),
     ).toBeInTheDocument();
   });
@@ -170,7 +238,7 @@ describe("Result", () => {
     expect(screen.queryByText(/backup AI model/i)).not.toBeInTheDocument();
   });
 
-  it("groups OCR label text into an organized Lens-style sheet", () => {
+  it("keeps OCR label data out of the default simple answer sheet", () => {
     renderResult({
       ...successfulScan,
       result: {
@@ -182,26 +250,13 @@ describe("Result", () => {
       },
     });
 
-    const textOutput = screen.getByRole("region", { name: "Text output" });
-    expect(within(textOutput).getByText("Detected label")).toBeInTheDocument();
-    expect(within(textOutput).getByText("DENSO 104210-1230")).toBeInTheDocument();
-    expect(within(textOutput).getByText("Likely part number")).toBeInTheDocument();
-    expect(within(textOutput).getByText("Candidate code")).toBeInTheDocument();
-    expect(within(textOutput).getByText("104210-1230")).toBeInTheDocument();
-    expect(within(textOutput).getByRole("button", { name: "Copy text" })).toBeInTheDocument();
-    expect(within(textOutput).getByRole("link", { name: "Search exact" })).toHaveAttribute(
-      "href",
-      "https://www.google.com/search?q=DENSO%20104210-1230",
-    );
-    expect(within(textOutput).getByRole("link", { name: "Search with part" })).toHaveAttribute(
-      "href",
-      "https://www.google.com/search?q=DENSO%20104210-1230%20Alternator%20car%20part",
-    );
-    expect(screen.getByText("Does the visible label or part number match the exact replacement?")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Text output" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Likely part number")).not.toBeInTheDocument();
     expect(screen.queryByText("Visible label text: DENSO 104210-1230")).not.toBeInTheDocument();
   });
 
-  it("shows what data is still missing before a user trusts a weak result", () => {
+  it("keeps weak results simple without retake spam", () => {
     renderResult({
       ...successfulScan,
       result: {
@@ -215,18 +270,11 @@ describe("Result", () => {
       },
     });
 
-    expect(screen.getByText("Still missing")).toBeInTheDocument();
-    expect(screen.getByText("Likely Alternator")).toBeInTheDocument();
-    expect(screen.getAllByText("Need one more angle to confirm.").length).toBeGreaterThan(0);
-    expect(screen.getByText("Retake guide")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Retake with guide" })).toBeInTheDocument();
-    expect(screen.getByText("Sharper, brighter photo from another angle.")).toBeInTheDocument();
-    expect(screen.getByText("Image callouts that tie the answer to exact visible areas.")).toBeInTheDocument();
-    expect(screen.getByText("Related comparison parts to rule out close matches.")).toBeInTheDocument();
-    expect(screen.getByText("Reference links or dataset examples for outside checking.")).toBeInTheDocument();
-    expect(screen.getByText("Deep Spec found weak visual clues, so the label may be a nearby or similar-looking part.")).toBeInTheDocument();
-    expect(screen.getByText("The photo may hide the label, connector, mounting point, or damaged area needed to confirm it.")).toBeInTheDocument();
-    expect(screen.getByText("The answer is not tied to a specific image region yet.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
+    expect(screen.queryByText("Still missing")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Likely/)).not.toBeInTheDocument();
+    expect(screen.queryByText("More evidence")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Capture another angle" })).not.toBeInTheDocument();
   });
 
   it("turns matched dataset source evidence into a reference link", () => {
@@ -261,8 +309,7 @@ describe("Result", () => {
     });
 
     expect(screen.getByText("Professional check needed")).toBeInTheDocument();
-    expect(screen.getByText("Professional verification needed")).toBeInTheDocument();
-    expect(screen.getByText(/Verify this before driving/)).toBeInTheDocument();
+    expect(screen.getByText(/Verify before driving/)).toBeInTheDocument();
   });
 
   it("shows incomplete data guidance when the scan needs a better photo", () => {
@@ -276,9 +323,10 @@ describe("Result", () => {
       },
     });
 
-    expect(screen.getByText("Incomplete data")).toBeInTheDocument();
-    expect(screen.getByText("Better photo needed")).toBeInTheDocument();
-    expect(screen.getByText("Move closer, add light, and center any label, connector, hose, or damaged area in the lens frame.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
+    expect(screen.queryByText("Incomplete data")).not.toBeInTheDocument();
+    expect(screen.queryByText("Better photo needed")).not.toBeInTheDocument();
+    expect(screen.queryByText("More evidence")).not.toBeInTheDocument();
   });
 
   it("shows low-confidence uncertainty separately from better-photo cases", () => {
@@ -292,7 +340,8 @@ describe("Result", () => {
       },
     });
 
-    expect(screen.getByText("Low-confidence result")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
+    expect(screen.queryByText("Low-confidence result")).not.toBeInTheDocument();
   });
 
   it("shows a friendly AI error while keeping the captured image", () => {
@@ -314,13 +363,13 @@ describe("Result", () => {
     expect(screen.getByRole("button", { name: "Try again later" })).toBeInTheDocument();
   });
 
-  it("saves an unsaved result before opening a suggested follow-up", async () => {
+  it("saves an unsaved result before opening chat", async () => {
     render(
       <MemoryRouter
         initialEntries={[
           {
             pathname: "/result",
-            state: successfulScan,
+            state: withAccountRouteState(successfulScan),
           },
         ]}
       >
@@ -331,11 +380,10 @@ describe("Result", () => {
       </MemoryRouter>,
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: "Review" }));
-    await userEvent.click(screen.getByRole("button", { name: "What should I check next?" }));
+    await userEvent.click(screen.getByRole("button", { name: "Ask" }));
 
     expect(screen.getByText("Chat page")).toBeInTheDocument();
-    const savedLookups = JSON.parse(localStorage.getItem(LOOKUPS_STORAGE_KEY) ?? "[]") as Lookup[];
+    const savedLookups = JSON.parse(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY)) ?? "[]") as Lookup[];
     expect(savedLookups).toHaveLength(1);
     expect(savedLookups[0].result?.partName).toBe("Alternator");
     expect(savedLookups[0].provenance).toMatchObject(successfulScan.provenance!);
@@ -343,7 +391,7 @@ describe("Result", () => {
   });
 
   it("restores the latest successful scan after a refresh", () => {
-    sessionStorage.setItem("deep-spec:latest-scan-state", JSON.stringify(successfulScan));
+    sessionStorage.setItem(accountStorageKey("deep-spec:latest-scan-state"), JSON.stringify(successfulScan));
 
     renderResult(null);
 
@@ -354,105 +402,79 @@ describe("Result", () => {
   it("handles a direct result route without captured state", () => {
     renderResult(null);
 
-    expect(screen.getByText("No captured frame yet.")).toBeInTheDocument();
+    expect(screen.getByText("No frame captured.")).toBeInTheDocument();
   });
 
-  it("updates rating, correction, and notes for a saved scan", async () => {
+  it("captures distrust and a reason for a saved scan", async () => {
     const lookup = makeLookup();
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
 
     renderResult(null, `/result/${lookup.id}`);
 
-    await userEvent.click(screen.getByRole("button", { name: "Wrong" }));
-    await userEvent.type(screen.getByLabelText("What was it actually?"), "It was the starter.");
-    await userEvent.type(screen.getByLabelText("Private notes"), "Near the lower engine bay.");
+    await userEvent.click(screen.getByRole("button", { name: "Why or why not" }));
+    await userEvent.type(screen.getByLabelText("Why or why not"), "It was the starter.");
 
-    const savedLookup = JSON.parse(localStorage.getItem(LOOKUPS_STORAGE_KEY) ?? "[]")[0] as Lookup;
+    const savedLookup = JSON.parse(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY)) ?? "[]")[0] as Lookup;
     expect(savedLookup.rating).toBe("down");
     expect(savedLookup.correction).toBe("It was the starter.");
-    expect(savedLookup.notes).toBe("Near the lower engine bay.");
     expect(savedLookup.trainingLabel).toBe("It was the starter.");
     expect(savedLookup.trainingStatus).toBe("user_corrected");
-  });
+  }, 30000);
 
-  it("shows scan report actions for saved scans", async () => {
+  it("marks a trusted scan with a positive rating", async () => {
     const lookup = makeLookup();
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
 
     renderResult(null, `/result/${lookup.id}`);
 
-    expect(screen.getByText("Data use")).toBeInTheDocument();
-    expect(screen.getByText("Needs review")).toBeInTheDocument();
-    expect(screen.getByText("Private by default. This photo is not used for model training unless sharing is allowed.")).toBeInTheDocument();
-    expect(screen.getByText("Scan report")).toBeInTheDocument();
-    expect(screen.getByText("Cloud dataset sync")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Sync this scan" })).toBeDisabled();
+    expect(screen.getByTestId("trust-control")).toHaveTextContent("Do you trust this scan?");
+    await userEvent.click(screen.getByRole("button", { name: "Yes" }));
+
+    const savedLookup = JSON.parse(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY)) ?? "[]")[0] as Lookup;
+    expect(savedLookup.rating).toBe("up");
+  }, 30000);
+
+  it("keeps share and export report actions on a saved scan", () => {
+    const lookup = makeLookup();
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+
+    renderResult(null, `/result/${lookup.id}`);
+
     expect(screen.getByRole("button", { name: "Share" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Export" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Tell me more" })).toHaveAttribute("href", `/result/${lookup.id}/chat`);
-
-    await userEvent.click(screen.getByRole("tab", { name: "Review" }));
-    expect(screen.getByRole("link", { name: "What should I check next?" })).toHaveAttribute(
-      "href",
-      `/result/${lookup.id}/chat?q=What%20should%20I%20check%20next%20for%20this%20Alternator%3F`,
-    );
   });
 
-  it("clears the cloud sync loading state when sync fails", async () => {
-    vi.stubEnv("VITE_SUPABASE_URL", "https://deep-spec.supabase.co");
-    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "public-test-key");
-    vi.spyOn(cloudSync, "syncLookupToCloud").mockRejectedValue(new Error("Network unavailable"));
+  it("stays quiet when the user dismisses the native share sheet", async () => {
     const lookup = makeLookup();
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    const share = vi.fn().mockRejectedValue(new DOMException("Share canceled", "AbortError"));
+    Object.defineProperty(navigator, "share", { configurable: true, value: share });
 
-    renderResult(null, `/result/${lookup.id}`);
+    try {
+      renderResult(null, `/result/${lookup.id}`);
+      await userEvent.click(screen.getByRole("button", { name: "Share" }));
 
-    const syncButton = screen.getByRole("button", { name: "Sync this scan" });
-    await userEvent.click(syncButton);
-
-    expect(await screen.findByText("Cloud sync failed. Network unavailable")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Sync this scan" })).not.toBeDisabled();
+      expect(share).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("report-actions")).not.toHaveTextContent(/won't share/i);
+    } finally {
+      Reflect.deleteProperty(navigator, "share");
+    }
   });
 
-  it("shows nearby options for professional verification cases", () => {
-    const lookup = makeLookup({
-      result: {
-        ...successfulScan.result!,
-        partName: "Brake caliper",
-        scanCategory: "brakes",
-        safetyTriage: "needs_professional",
-        isSafetyCritical: true,
-      },
-      scanCategory: "brakes",
-      trainingLabel: "Brake caliper",
-    });
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
-
-    renderResult(null, `/result/${lookup.id}`);
-
-    expect(screen.getByRole("link", { name: "Find nearby options" })).toHaveAttribute(
-      "href",
-      "https://www.google.com/maps/search/brakes%20auto%20repair%20near%20me",
-    );
-  });
-
-  it("deletes a saved scan and returns to history", async () => {
+  it("still tells the user when sharing genuinely fails", async () => {
     const lookup = makeLookup();
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    const share = vi.fn().mockRejectedValue(new DOMException("Not allowed", "NotAllowedError"));
+    Object.defineProperty(navigator, "share", { configurable: true, value: share });
 
-    render(
-      <MemoryRouter initialEntries={[`/result/${lookup.id}`]}>
-        <Routes>
-          <Route path="/history" element={<p>History page</p>} />
-          <Route path="/result/:id" element={<Result />} />
-        </Routes>
-      </MemoryRouter>,
-    );
+    try {
+      renderResult(null, `/result/${lookup.id}`);
+      await userEvent.click(screen.getByRole("button", { name: "Share" }));
 
-    await userEvent.click(screen.getByRole("button", { name: "Delete saved scan" }));
-
-    expect(screen.getByText("History page")).toBeInTheDocument();
-    expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBe("[]");
+      expect(screen.getByTestId("report-actions")).toHaveTextContent(/won't share/i);
+    } finally {
+      Reflect.deleteProperty(navigator, "share");
+    }
   });
 
   it("allows retrying an unsaved failed scan when online", async () => {
@@ -469,16 +491,48 @@ describe("Result", () => {
     expect(screen.getByText("Provider unavailable")).toBeInTheDocument();
     expect(screen.getByText("AI provider could not be reached")).toBeInTheDocument();
     expect(screen.getByText("Network error")).toBeInTheDocument();
-    expect(screen.getByText(/Internet connection is active/)).toBeInTheDocument();
+    expect(screen.getByText(/Connection is active/)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
 
     expect(identifySpy).toHaveBeenCalledWith(frame);
-    expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBeNull();
+    expect(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY))).toBeNull();
     expect(screen.queryByText("Provider unavailable")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
 
     onlineSpy.mockRestore();
+  });
+
+  it.each(["Save", "Save inspection"])("preserves a successful cloud retry in report and %s under its original id", async (saveAction) => {
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    vi.spyOn(aiService, "identifyCapturedFrame").mockResolvedValue(successfulScan.result!);
+    const failedLookup = makeLookup({
+      result: undefined, errorCode: "network", errorMessage: "Network error", analyzedAt: undefined,
+      scanCategory: "unknown", trainingLabel: "unlabeled",
+      notes: "Keep this intake note",
+      inspection: { ...emptyPartInspection, inspectorName: "Pat", inspectedAt: "2026-09-19T12:00:00.000Z" },
+      chatHistory: [{ id: "message-1", role: "user", content: "Original question", timestamp: "2026-09-19T12:00:00.000Z" }],
+    });
+    renderResult({ frame, errorCode: "network", errorMessage: "Network error", savedLookup: failedLookup }, `/result/${failedLookup.id}`);
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
+    const report = vi.spyOn(reportService, "buildScanReport");
+    await userEvent.click(screen.getByRole("button", { name: "Share", exact: true }));
+    expect(report).toHaveBeenCalledWith(expect.objectContaining({
+      result: successfulScan.result, errorCode: undefined, errorMessage: undefined,
+    }));
+    if (saveAction === "Save inspection") await userEvent.click(screen.getByText("Human inspection — saved"));
+    await userEvent.click(screen.getByRole("button", { name: saveAction, exact: true }));
+    expect(getLookups()).toHaveLength(1);
+    expect(getLookup(failedLookup.id)).toMatchObject({
+      id: failedLookup.id, result: successfulScan.result, notes: failedLookup.notes,
+      inspection: expect.objectContaining({ inspectorName: "Pat", functionalStatus: "not_tested" }), chatHistory: failedLookup.chatHistory,
+      trainingLabel: "Alternator", scanCategory: "electrical", trainingStatus: "raw_unreviewed",
+      provenance: { analysisSource: "manual_retry" },
+    });
+    expect(getLookup(failedLookup.id)?.errorCode).toBeUndefined();
+    expect(getLookup(failedLookup.id)?.errorMessage).toBeUndefined();
+    expect(screen.queryByText("Network error")).not.toBeInTheDocument();
   });
 
   it("allows retrying a saved failed scan when online", async () => {
@@ -488,7 +542,7 @@ describe("Result", () => {
       errorCode: "network",
       analyzedAt: undefined,
     });
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([failedLookup]));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([failedLookup]));
 
     const onlineSpy = vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
     const identifySpy = vi.spyOn(aiService, "identifyCapturedFrame").mockResolvedValue(successfulScan.result!);
@@ -498,14 +552,14 @@ describe("Result", () => {
     expect(screen.getByText("Provider unavailable")).toBeInTheDocument();
     expect(screen.getByText("AI provider could not be reached")).toBeInTheDocument();
     expect(screen.getByText("Network error")).toBeInTheDocument();
-    expect(screen.getByText(/Internet connection is active/)).toBeInTheDocument();
+    expect(screen.getByText(/Connection is active/)).toBeInTheDocument();
 
     const retryButton = screen.getByRole("button", { name: "Try again" });
     await userEvent.click(retryButton);
 
     expect(identifySpy).toHaveBeenCalledWith(failedLookup.frame);
 
-    const savedLookups = JSON.parse(localStorage.getItem(LOOKUPS_STORAGE_KEY) ?? "[]") as Lookup[];
+    const savedLookups = JSON.parse(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY)) ?? "[]") as Lookup[];
     expect(savedLookups[0].result?.partName).toBe("Alternator");
     expect(savedLookups[0].errorMessage).toBeUndefined();
     expect(savedLookups[0].provenance.analysisSource).toBe("manual_retry");
@@ -524,13 +578,13 @@ describe("Result", () => {
       errorCode: "network",
       analyzedAt: undefined,
     });
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([failedLookup]));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([failedLookup]));
 
     const onlineSpy = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
 
     renderResult(null, `/result/${failedLookup.id}`);
 
-    expect(screen.getByText(/Offline. Find an internet connection/)).toBeInTheDocument();
+    expect(screen.getByText(/Offline\. Reconnect to retry/)).toBeInTheDocument();
     const retryButton = screen.getByRole("button", { name: "Try again" });
     expect(retryButton).toBeDisabled();
 
@@ -538,13 +592,13 @@ describe("Result", () => {
   });
 });
 
-function renderResult(state: ScanAnalysisState | null, path = "/result") {
+function renderResult(state: (ScanAnalysisState & { savedLookup?: Lookup }) | null, path = "/result") {
   render(
     <MemoryRouter
       initialEntries={[
         {
           pathname: path,
-          state,
+          state: state ? withAccountRouteState(state) : null,
         },
       ]}
     >

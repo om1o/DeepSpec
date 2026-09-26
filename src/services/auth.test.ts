@@ -10,6 +10,7 @@ const supabaseMock = vi.hoisted(() => ({
     signInWithPassword: vi.fn(),
     signOut: vi.fn(),
     signUp: vi.fn(),
+    verifyOtp: vi.fn(),
   },
   createClient: vi.fn(),
   unsubscribe: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock("@supabase/supabase-js", () => ({
 
 describe("auth service", () => {
   beforeEach(() => {
+    localStorage.clear();
     vi.useRealTimers();
     vi.resetModules();
     vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
@@ -34,6 +36,7 @@ describe("auth service", () => {
     supabaseMock.auth.signInWithPassword.mockReset();
     supabaseMock.auth.signOut.mockReset();
     supabaseMock.auth.signUp.mockReset();
+    supabaseMock.auth.verifyOtp.mockReset();
     supabaseMock.createClient.mockReset();
     supabaseMock.unsubscribe.mockReset();
     supabaseMock.createClient.mockReturnValue({
@@ -51,6 +54,7 @@ describe("auth service", () => {
     supabaseMock.auth.signInWithOtp.mockResolvedValue({ data: {}, error: null });
     supabaseMock.auth.signInWithPassword.mockResolvedValue({ data: {}, error: null });
     supabaseMock.auth.signUp.mockResolvedValue({ data: { session: { access_token: "token" } }, error: null });
+    supabaseMock.auth.verifyOtp.mockResolvedValue({ data: {}, error: null });
   });
 
   afterEach(() => {
@@ -79,12 +83,48 @@ describe("auth service", () => {
   it("sends email sign-in links with the current scan redirect", async () => {
     const { sendEmailSignInLink } = await import("./auth");
 
-    await expect(sendEmailSignInLink("user@example.com")).resolves.toBeUndefined();
+    await expect(sendEmailSignInLink("user@example.com")).resolves.toEqual({
+      delivery: "link",
+      emailRedirectTo: "http://localhost:3000/auth?next=%2Fscan",
+    });
 
     expect(supabaseMock.auth.signInWithOtp).toHaveBeenCalledWith({
       email: "user@example.com",
       options: {
         emailRedirectTo: "http://localhost:3000/auth?next=%2Fscan",
+        shouldCreateUser: true,
+      },
+    });
+  });
+
+  it("falls back to a code-only email OTP when Supabase rejects the public redirect URL", async () => {
+    const { sendEmailSignInLink } = await import("./auth");
+    supabaseMock.auth.signInWithOtp
+      .mockResolvedValueOnce({
+        data: {},
+        error: {
+          message: "Redirect URL is not allowed",
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {},
+        error: null,
+      });
+
+    await expect(sendEmailSignInLink("user@example.com")).resolves.toEqual({
+      delivery: "code",
+    });
+
+    expect(supabaseMock.auth.signInWithOtp).toHaveBeenNthCalledWith(1, {
+      email: "user@example.com",
+      options: {
+        emailRedirectTo: "http://localhost:3000/auth?next=%2Fscan",
+        shouldCreateUser: true,
+      },
+    });
+    expect(supabaseMock.auth.signInWithOtp).toHaveBeenNthCalledWith(2, {
+      email: "user@example.com",
+      options: {
         shouldCreateUser: true,
       },
     });
@@ -145,13 +185,43 @@ describe("auth service", () => {
     expect(normalizePostAuthRedirectPath("//evil.example.com/steal")).toBe("/scan");
   });
 
-  it("fails password account creation clearly when email confirmation is still required", async () => {
+  it("never lets a hostile next value resolve to another origin", async () => {
+    const { normalizePostAuthRedirectPath } = await import("./auth");
+    const backslash = String.fromCharCode(92);
+    const tab = String.fromCharCode(9);
+    const lineFeed = String.fromCharCode(10);
+    const carriageReturn = String.fromCharCode(13);
+    // The URL parser treats a backslash as a slash and drops tabs/newlines, so each of these
+    // resolves to https://evil.example.com even though none starts with a literal "//".
+    const hostile = [
+      `/${backslash}evil.example.com`,
+      `/${backslash}${backslash}evil.example.com`,
+      `/${tab}/evil.example.com`,
+      `/${lineFeed}/evil.example.com`,
+      `/${carriageReturn}/evil.example.com`,
+      `${backslash}/evil.example.com`,
+      `${backslash}${backslash}evil.example.com`,
+    ];
+
+    for (const value of hostile) {
+      const normalized = normalizePostAuthRedirectPath(value);
+      expect(new URL(normalized, window.location.origin).origin, JSON.stringify(value)).toBe(window.location.origin);
+    }
+  });
+
+  it("keeps ordinary same-origin post-auth paths untouched", async () => {
+    const { normalizePostAuthRedirectPath } = await import("./auth");
+
+    expect(normalizePostAuthRedirectPath("/scan?jobId=abc-123")).toBe("/scan?jobId=abc-123");
+    expect(normalizePostAuthRedirectPath("/result/42/chat?q=is%20it%20safe")).toBe("/result/42/chat?q=is%20it%20safe");
+    expect(normalizePostAuthRedirectPath("/%5Cnot-a-host")).toBe("/%5Cnot-a-host");
+  });
+
+  it("returns pending confirmation without treating an unverified signup as a session", async () => {
     const { signUpWithPassword } = await import("./auth");
     supabaseMock.auth.signUp.mockResolvedValueOnce({ data: { session: null }, error: null });
 
-    await expect(signUpWithPassword("new@example.com", "correct-password")).rejects.toThrow(
-      "Supabase still requires email confirmation for new password accounts.",
-    );
+    await expect(signUpWithPassword("new@example.com", "correct-password")).resolves.toBeNull();
     expect(supabaseMock.auth.getUser).not.toHaveBeenCalled();
   });
 
@@ -164,6 +234,45 @@ describe("auth service", () => {
     await vi.advanceTimersByTimeAsync(8_000);
 
     await expect(userPromise).resolves.toBeNull();
+  });
+
+  it("reuses a recently verified Supabase user without a second network verification", async () => {
+    const { getVerifiedAuthUser } = await import("./auth");
+    supabaseMock.auth.getUser.mockResolvedValue({
+      data: {
+        user: makeAuthUser("verified-user"),
+      },
+      error: null,
+    });
+
+    await expect(getVerifiedAuthUser()).resolves.toEqual(expect.objectContaining({ id: "verified-user" }));
+    await expect(getVerifiedAuthUser()).resolves.toEqual(expect.objectContaining({ id: "verified-user" }));
+
+    expect(supabaseMock.auth.getUser).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the verified user cache after Supabase sign-out succeeds", async () => {
+    const { getVerifiedAuthUser, signOut } = await import("./auth");
+    supabaseMock.auth.getUser
+      .mockResolvedValueOnce({
+        data: {
+          user: makeAuthUser("verified-user"),
+        },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: {
+          user: null,
+        },
+        error: null,
+      });
+    supabaseMock.auth.signOut.mockResolvedValue({ error: null });
+
+    await expect(getVerifiedAuthUser()).resolves.toEqual(expect.objectContaining({ id: "verified-user" }));
+    await expect(signOut()).resolves.toBeUndefined();
+    await expect(getVerifiedAuthUser()).resolves.toBeNull();
+
+    expect(supabaseMock.auth.getUser).toHaveBeenCalledTimes(2);
   });
 
   it("exchanges an OAuth callback code before returning the verified user", async () => {
@@ -208,6 +317,37 @@ describe("auth service", () => {
     expect(supabaseMock.auth.getUser).not.toHaveBeenCalled();
   });
 
+  it("recovers from a spent callback code so a fresh email code can still sign in", async () => {
+    window.history.pushState({}, "", "/auth?next=%2Fscan&code=already-used");
+    const { getVerifiedAuthUser, verifyEmailCode } = await import("./auth");
+    supabaseMock.auth.exchangeCodeForSession.mockResolvedValue({
+      data: {},
+      error: {
+        message: "invalid request: both auth code and code verifier should be non-empty",
+      },
+    });
+    supabaseMock.auth.getUser.mockResolvedValue({
+      data: {
+        user: {
+          app_metadata: {},
+          aud: "authenticated",
+          created_at: new Date(0).toISOString(),
+          id: "otp-user",
+          user_metadata: {},
+        },
+      },
+      error: null,
+    });
+
+    await expect(getVerifiedAuthUser()).resolves.toBeNull();
+
+    await expect(verifyEmailCode("user@example.com", "123456")).resolves.toEqual(
+      expect.objectContaining({ id: "otp-user" }),
+    );
+
+    expect(window.location.search).toBe("?next=%2Fscan");
+  });
+
   it("verifies auth-change sessions with Supabase before reporting a user", async () => {
     const { subscribeToAuthChanges } = await import("./auth");
     const onChange = vi.fn();
@@ -234,6 +374,23 @@ describe("auth service", () => {
 
     await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ id: "verified-user" })));
     expect(onChange).not.toHaveBeenCalledWith(expect.objectContaining({ id: "event-user" }));
+  });
+
+  it("reports a cold saved session as pending, not signed out, until verified", async () => {
+    vi.useFakeTimers();
+    const { subscribeToAuthChanges } = await import("./auth");
+    const { setActiveAccount } = await import("../lib/accountScope");
+    setActiveAccount(null);
+    const onChange = vi.fn();
+    const onVerifying = vi.fn();
+    supabaseMock.auth.getUser.mockResolvedValue({ data: { user: makeAuthUser("saved-user") }, error: null });
+    await subscribeToAuthChanges(onChange, onVerifying);
+    const listener = supabaseMock.auth.onAuthStateChange.mock.calls[0][0];
+    listener("INITIAL_SESSION", { user: { id: "saved-user" } });
+    expect(onVerifying).toHaveBeenCalledWith("saved-user");
+    expect(onChange).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: "saved-user" }));
   });
 
   it("defers Supabase user verification outside the auth-change callback", async () => {
@@ -299,10 +456,181 @@ describe("auth service", () => {
     expect(supabaseMock.auth.signOut).toHaveBeenCalledTimes(1);
   });
 
+  it("does not restore an old verified user after sign-out", async () => {
+    const { getVerifiedAuthUser, signOut } = await import("./auth");
+    const { getAccountScope } = await import("../lib/accountScope");
+    let resolveUser: (value: unknown) => void = () => {};
+    supabaseMock.auth.getUser.mockReturnValue(new Promise((resolve) => { resolveUser = resolve; }));
+    supabaseMock.auth.signOut.mockResolvedValue({ error: null });
+    const pending = getVerifiedAuthUser();
+    await vi.waitFor(() => expect(supabaseMock.auth.getUser).toHaveBeenCalled());
+    await signOut();
+    resolveUser({ data: { user: { id: "old-user" } }, error: null });
+    expect(await pending).toBeNull();
+    expect(getAccountScope().userId).toBeNull();
+  });
+
+  it("does not verify across sign-out while client initialization is pending", async () => {
+    let resolveClient!: (value: unknown) => void;
+    supabaseMock.createClient.mockReturnValue(new Promise((resolve) => { resolveClient = resolve; }));
+    supabaseMock.auth.getUser.mockResolvedValue({ data: { user: makeAuthUser("old-user") }, error: null });
+    supabaseMock.auth.signOut.mockResolvedValue({ error: null });
+    const { getVerifiedAuthUser, signOut } = await import("./auth");
+    const pending = getVerifiedAuthUser();
+    await vi.waitFor(() => expect(supabaseMock.createClient).toHaveBeenCalled());
+    const signingOut = signOut();
+    resolveClient({ auth: supabaseMock.auth });
+    expect(await pending).toBeNull();
+    await signingOut;
+    expect(supabaseMock.auth.getUser).not.toHaveBeenCalled();
+  });
+
+  it("keeps verification blocked while sign-out is pending", async () => {
+    let finishSignOut!: (value: unknown) => void;
+    supabaseMock.auth.signOut.mockReturnValue(new Promise((resolve) => { finishSignOut = resolve; }));
+    supabaseMock.auth.getUser.mockResolvedValue({ data: { user: makeAuthUser("old-user") }, error: null });
+    const { getVerifiedAuthUser, signOut } = await import("./auth");
+    const signingOut = signOut();
+    await vi.waitFor(() => expect(supabaseMock.auth.signOut).toHaveBeenCalled());
+    expect(await getVerifiedAuthUser()).toBeNull();
+    expect(supabaseMock.auth.getUser).not.toHaveBeenCalled();
+    finishSignOut({ error: null });
+    await signingOut;
+    const { getAccountScope } = await import("../lib/accountScope");
+    expect(getAccountScope().userId).toBeNull();
+  });
+
+  it("verifies the newly signed-in identity instead of reusing a previous account cache", async () => {
+    const { getVerifiedAuthUser, signInWithPassword } = await import("./auth");
+    supabaseMock.auth.getUser.mockResolvedValueOnce({ data: { user: makeAuthUser("account-a") }, error: null })
+      .mockResolvedValueOnce({ data: { user: makeAuthUser("account-b") }, error: null });
+    expect((await getVerifiedAuthUser())?.id).toBe("account-a");
+    supabaseMock.auth.signInWithPassword.mockResolvedValue({ data: { user: makeAuthUser("account-b") }, error: null });
+    expect((await signInWithPassword("b@example.com", "password")).id).toBe("account-b");
+    expect(supabaseMock.auth.getUser).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a sign-in completing after sign-out", async () => {
+    let finishSignIn!: (value: unknown) => void;
+    supabaseMock.auth.signInWithPassword.mockReturnValue(new Promise((resolve) => { finishSignIn = resolve; }));
+    supabaseMock.auth.signOut.mockResolvedValue({ error: null });
+    const { signInWithPassword, signOut } = await import("./auth");
+    const pending = signInWithPassword("a@example.com", "password");
+    const rejected = expect(pending).rejects.toThrow("Session changed");
+    await vi.waitFor(() => expect(supabaseMock.auth.signInWithPassword).toHaveBeenCalled());
+    await signOut();
+    finishSignIn({ data: { user: makeAuthUser("account-a") }, error: null });
+    await rejected;
+    expect(supabaseMock.auth.getUser).not.toHaveBeenCalled();
+  });
+
   it("surfaces a sign-out failure instead of failing silently", async () => {
     const { signOut } = await import("./auth");
     supabaseMock.auth.signOut.mockResolvedValue({ error: { message: "Sign-out failed" } });
 
     await expect(signOut()).rejects.toThrow("Sign-out failed");
   });
+
+  it("locks subscribers on failed sign-out without an SDK event and blocks restoration after reload", async () => {
+    const auth = await import("./auth");
+    supabaseMock.auth.getUser.mockResolvedValue({ data: { user: makeAuthUser("old-user") }, error: null });
+    expect((await auth.getVerifiedAuthUser())?.id).toBe("old-user");
+    const onChange = vi.fn();
+    const cleanup = await auth.subscribeToAuthChanges(onChange);
+    supabaseMock.auth.signOut.mockResolvedValue({ error: { message: "Network unavailable" } });
+    await expect(auth.signOut()).rejects.toThrow("Network unavailable");
+    expect(onChange).toHaveBeenCalledWith(null);
+    expect(auth.hasPendingSignOut()).toBe(true);
+    expect(await auth.getVerifiedAuthUser()).toBeNull();
+    cleanup();
+    vi.resetModules();
+    const reloaded = await import("./auth");
+    expect(await reloaded.getVerifiedAuthUser()).toBeNull();
+    supabaseMock.auth.signOut.mockResolvedValue({ error: null });
+    await reloaded.signOut();
+    expect(reloaded.hasPendingSignOut()).toBe(false);
+  });
+
+  it("blocks verification when another tab locks the session during getUser", async () => {
+    let finish!: (value: unknown) => void;
+    supabaseMock.auth.getUser.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const auth = await import("./auth");
+    const pending = auth.getVerifiedAuthUser();
+    await vi.waitFor(() => expect(supabaseMock.auth.getUser).toHaveBeenCalled());
+    localStorage.setItem("deep-spec:sign-out-pending", "other-tab");
+    finish({ data: { user: makeAuthUser("old-user") }, error: null });
+    expect(await pending).toBeNull();
+  });
+
+  it.each(["password", "verification"])("preserves a newer cross-tab logout during %s", async (stage) => {
+    localStorage.setItem("deep-spec:sign-out-pending", "old-lock");
+    let finish!: (value: unknown) => void;
+    const request = stage === "password" ? supabaseMock.auth.signInWithPassword : supabaseMock.auth.getUser;
+    request.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const auth = await import("./auth");
+    const pending = auth.signInWithPassword("a@example.com", "password");
+    const rejected = expect(pending).rejects.toThrow();
+    await vi.waitFor(() => expect(request).toHaveBeenCalled());
+    localStorage.setItem("deep-spec:sign-out-pending", "new-lock");
+    finish({ data: { user: makeAuthUser("new-user") }, error: null });
+    await rejected;
+    expect(localStorage.getItem("deep-spec:sign-out-pending")).toBe("new-lock");
+    expect(await auth.getVerifiedAuthUser()).toBeNull();
+  });
+
+  it("rejects sign-in when another tab completes logout during the request", async () => {
+    let finish!: (value: unknown) => void;
+    supabaseMock.auth.signInWithPassword.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const auth = await import("./auth");
+    const pending = auth.signInWithPassword("a@example.com", "password");
+    const rejected = expect(pending).rejects.toThrow("Session changed");
+    await vi.waitFor(() => expect(supabaseMock.auth.signInWithPassword).toHaveBeenCalled());
+    localStorage.setItem("deep-spec:sign-out-generation", "completed-other-tab-logout");
+    finish({ data: { user: makeAuthUser("old-user") }, error: null });
+    await rejected;
+  });
+
+  it("does not clear a newer logout marker when an older logout completes", async () => {
+    let finish!: (value: unknown) => void;
+    supabaseMock.auth.signOut.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const auth = await import("./auth");
+    const pending = auth.signOut();
+    await vi.waitFor(() => expect(supabaseMock.auth.signOut).toHaveBeenCalled());
+    localStorage.setItem("deep-spec:sign-out-pending", "newer-logout");
+    finish({ error: null });
+    await pending;
+    expect(localStorage.getItem("deep-spec:sign-out-pending")).toBe("newer-logout");
+  });
+
+  it("invalidates a cached identity after another tab completes logout", async () => {
+    const auth = await import("./auth");
+    supabaseMock.auth.getUser.mockResolvedValueOnce({ data: { user: makeAuthUser("old-user") }, error: null });
+    expect((await auth.getVerifiedAuthUser())?.id).toBe("old-user");
+    localStorage.setItem("deep-spec:sign-out-generation", "completed-logout");
+    supabaseMock.auth.getUser.mockResolvedValueOnce({ data: { user: null }, error: null });
+    expect(await auth.getVerifiedAuthUser()).toBeNull();
+    expect(supabaseMock.auth.getUser).toHaveBeenCalledTimes(2);
+  });
+
+  it("only unlocks failed logout after a fresh verified password sign-in", async () => {
+    const auth = await import("./auth");
+    supabaseMock.auth.signOut.mockResolvedValue({ error: { message: "Network unavailable" } });
+    await expect(auth.signOut()).rejects.toThrow();
+    supabaseMock.auth.signInWithPassword.mockResolvedValueOnce({ data: {}, error: { message: "Wrong password" } });
+    await expect(auth.signInWithPassword("a@example.com", "bad")).rejects.toThrow();
+    expect(auth.hasPendingSignOut()).toBe(true);
+    supabaseMock.auth.getUser.mockResolvedValue({ data: { user: makeAuthUser("new-user") }, error: null });
+    expect((await auth.signInWithPassword("a@example.com", "good")).id).toBe("new-user");
+    expect(auth.hasPendingSignOut()).toBe(false);
+  });
 });
+
+function makeAuthUser(id: string) {
+  return {
+    app_metadata: {},
+    aud: "authenticated",
+    created_at: new Date(0).toISOString(),
+    id,
+    user_metadata: {},
+  };
+}

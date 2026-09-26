@@ -57,7 +57,7 @@ const lookup: Lookup = {
 };
 
 describe("getTrainingReadiness", () => {
-  it("marks confirmed clean scans as review-ready without implying training consent", () => {
+  it("marks clean scans rated helpful as review-ready without implying training consent", () => {
     expect(getTrainingReadiness(lookup)).toMatchObject({
       action: "Keep private unless sharing is allowed.",
       label: "Review-ready",
@@ -102,8 +102,8 @@ describe("getTrainingReadiness", () => {
         sharpnessScore: 32,
       },
     })).toMatchObject({
-      action: "Hold still and retake.",
-      label: "Too blurry",
+      action: "Retake a steady photo.",
+      label: "Soft photo",
       level: "not_ready",
       reasons: ["Sharpness is below the usable range."],
     });

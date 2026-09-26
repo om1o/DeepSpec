@@ -42,4 +42,4 @@ Deep Spec is a mobile-first Progressive Web App for car owners who need to under
 
 ## Accuracy note
 
-Deep Spec should not be described as a repair certification tool, exact OEM fitment database, or live pricing database. For brakes, steering, suspension, fuel, airbags, electrical burning, severe leaks, or unclear high-risk damage, Deep Spec should tell users to verify with a mechanic.
+Deep Spec should not be described as a repair certification tool, exact OEM fitment database, or live pricing database. For brakes, steering, suspension, fuel, airbags, electrical burning, severe leaks, or unclear high-risk damage, Deep Spec should tell users to check the issue before driving or repairing.

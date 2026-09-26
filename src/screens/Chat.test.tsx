@@ -1,4 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { accountStorageKey, setActiveAccount } from "../lib/accountScope";
+import { createLookup, getLookup } from "../services/storage";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { vi } from "vitest";
@@ -66,7 +68,7 @@ describe("Chat", () => {
 
   it("sends a follow-up and saves the chat history", async () => {
     sendFollowUpMock.mockResolvedValue("The alternator charges the battery while the engine runs.");
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
 
     renderChat(`/result/${lookup.id}/chat`);
 
@@ -75,14 +77,29 @@ describe("Chat", () => {
 
     expect(await screen.findByText("The alternator charges the battery while the engine runs.")).toBeInTheDocument();
 
-    const chatHistory = JSON.parse(localStorage.getItem(`deep-spec:chat:${lookup.id}`) ?? "[]") as ChatMessage[];
+    const chatHistory = JSON.parse(localStorage.getItem(accountStorageKey(`deep-spec:chat:${lookup.id}`)) ?? "[]") as ChatMessage[];
     expect(chatHistory).toHaveLength(2);
     expect(chatHistory.map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(sendFollowUpMock).toHaveBeenCalledWith(expect.objectContaining({ id: lookup.id }), "What does it do?");
   });
 
+  it.each(["other-user", "test-user"])("discards a pending answer after account change ending at %s", async (finalAccount) => {
+    const saved = createLookup({ frame: lookup.frame, result: lookup.result });
+    let resolveAnswer!: (answer: string) => void;
+    sendFollowUpMock.mockReturnValueOnce(new Promise((resolve) => { resolveAnswer = resolve; }));
+    renderChat(`/result/${saved.value!.id}/chat`);
+    await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "What is this?");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    setActiveAccount("other-user");
+    setActiveAccount(finalAccount);
+    await act(async () => { resolveAnswer("Private answer from old session"); });
+    expect(screen.queryByText("Private answer from old session")).not.toBeInTheDocument();
+    setActiveAccount("test-user");
+    expect(getLookup(saved.value!.id)?.chatHistory.map((message) => message.role)).toEqual(["user"]);
+  });
+
   it("prefills a suggested question from the result screen", () => {
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
 
     renderChat(`/result/${lookup.id}/chat?q=How%20serious%20is%20this%3F`);
 
@@ -91,7 +108,7 @@ describe("Chat", () => {
 
   it("explains provider rate limits without treating them as bad scan answers", async () => {
     sendFollowUpMock.mockRejectedValue(new AIServiceError("rate_limited", "Too many AI chat requests right now. Try again in a few minutes."));
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
 
     renderChat(`/result/${lookup.id}/chat`);
 
@@ -107,7 +124,7 @@ describe("Chat", () => {
     sendFollowUpMock
       .mockRejectedValueOnce(new AIServiceError("provider_error", "The AI provider rejected this request."))
       .mockResolvedValueOnce("Check the belt and battery light symptoms together.");
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
 
     renderChat(`/result/${lookup.id}/chat`);
 
@@ -117,7 +134,7 @@ describe("Chat", () => {
 
     expect(await screen.findByText("Check the belt and battery light symptoms together.")).toBeInTheDocument();
 
-    const chatHistory = JSON.parse(localStorage.getItem(`deep-spec:chat:${lookup.id}`) ?? "[]") as ChatMessage[];
+    const chatHistory = JSON.parse(localStorage.getItem(accountStorageKey(`deep-spec:chat:${lookup.id}`)) ?? "[]") as ChatMessage[];
     expect(chatHistory.map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(chatHistory.filter((message) => message.content === "What should I check next?")).toHaveLength(1);
     expect(sendFollowUpMock).toHaveBeenCalledTimes(2);

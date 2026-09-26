@@ -64,9 +64,9 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(verifier).toContain("sync_events owner read failed");
     expect(verifier).toContain("another anonymous user cannot read");
     expect(verifier).toContain("assertCrossUserCannotRead");
-    expect(verifier).toContain('from("scan_lookups").delete()');
-    expect(verifier).toContain('from("sync_events").delete()');
-    expect(verifier).toContain("storage.from(SCAN_BUCKET).remove");
+    // Cleanup lives in a shared helper with behavioral tests for deletion,
+    // isolation and failed cleanup in scripts/qa/cloud-fixture-checks.test.mjs.
+    expect(verifier).toContain("await cleanupCloudFixture(ownerClient, userId, id, path)");
   });
 
   it("prints actionable Supabase Auth diagnostics when anonymous sign-in fails", () => {
@@ -102,6 +102,7 @@ describe("Phase 8 Supabase validation tooling", () => {
   });
 
   it("does not let production-readiness CI silently skip Supabase verification", () => {
+    expect(ciWorkflow.match(/\[ "\$GITHUB_BASE_REF" = "main" \]/g)).toHaveLength(2);
     expect(ciWorkflow).toContain("npm run verify:auth");
     expect(ciWorkflow).toContain("Supabase public secrets are not configured; auth verifier did not run.");
     expect(ciWorkflow).toContain("Production-readiness branches and main must prove Supabase auth provider readiness.");

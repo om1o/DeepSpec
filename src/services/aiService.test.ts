@@ -73,21 +73,79 @@ describe("aiService", () => {
     onlineSpy.mockRestore();
   });
 
-  it("falls back to the on-device model when the cloud chain is unreachable", async () => {
+  it("uses the on-device model for online cloud provider availability errors", async () => {
     vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "true");
     vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network down"));
-    const offlineResult = {
+    vi.mocked(identifyOnDevice).mockReset().mockResolvedValue({
       ...result,
+      confidence: "low",
       modelRun: { provider: "on-device", model: "SmolVLM-256M", latencyMs: 12, fallbackReason: "offline", ocrUsed: false },
-    };
-    vi.mocked(identifyOnDevice).mockReset().mockResolvedValue(offlineResult as never);
+    } as never);
 
     await expect(
       identifyCapturedFrame({ imageBase64: "data:image/jpeg;base64,test", capturedAt: "2026-05-16T00:00:00.000Z" }),
     ).resolves.toMatchObject({ modelRun: { provider: "on-device" } });
 
     expect(identifyOnDevice).toHaveBeenCalledOnce();
+  });
+
+  it("does not hide unreadable cloud model responses with the on-device fallback", async () => {
+    vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "true");
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: "invalid_response",
+            message: "Deep Spec received an unreadable AI response.",
+          },
+        }),
+        {
+          status: 502,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    vi.mocked(identifyOnDevice).mockReset();
+
+    await expect(
+      identifyCapturedFrame({ imageBase64: "data:image/jpeg;base64,test", capturedAt: "2026-05-16T00:00:00.000Z" }),
+    ).rejects.toMatchObject({ code: "invalid_response" });
+
+    expect(identifyOnDevice).not.toHaveBeenCalled();
+  });
+
+  it("returns the provider error when the online on-device fallback stalls", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "true");
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: "rate_limited",
+            message: "Too many AI lookups right now. Try again in a few minutes.",
+          },
+        }),
+        {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    vi.mocked(identifyOnDevice).mockReset().mockReturnValue(new Promise(() => undefined) as never);
+
+    const scan = identifyCapturedFrame({
+      imageBase64: "data:image/jpeg;base64,test",
+      capturedAt: "2026-05-16T00:00:00.000Z",
+    });
+    const rejection = expect(scan).rejects.toMatchObject({ code: "rate_limited" });
+    await vi.advanceTimersByTimeAsync(90_000);
+
+    await rejection;
+    expect(identifyOnDevice).toHaveBeenCalledOnce();
+    vi.useRealTimers();
   });
 
   it("routes vision calls through the identify API", async () => {
@@ -111,6 +169,26 @@ describe("aiService", () => {
         method: "POST",
       }),
     );
+  });
+
+  it("times out a hung identify request instead of leaving the scan loading", async () => {
+    const realSetTimeout = globalThis.setTimeout;
+    vi.spyOn(globalThis, "setTimeout").mockImplementation(((handler: TimerHandler, _timeout?: number, ...args: unknown[]) =>
+      realSetTimeout(handler, 0, ...args)) as typeof setTimeout);
+    vi.spyOn(globalThis, "fetch").mockImplementation((_path, options) => new Promise((_resolve, reject) => {
+      const signal = (options as RequestInit | undefined)?.signal;
+      signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+    }) as never);
+
+    await expect(
+      identifyCapturedFrame({
+        imageBase64: "data:image/jpeg;base64,test",
+        capturedAt: "2026-05-16T00:00:00.000Z",
+      }),
+    ).rejects.toMatchObject({
+      code: "network",
+      message: "Scan took too long. Try again.",
+    });
   });
 
   it("preserves identify provider metadata from the API response", async () => {
@@ -171,6 +249,7 @@ describe("aiService", () => {
   });
 
   it("throws a clean service error when the API rejects the request", async () => {
+    vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "false");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -263,5 +342,84 @@ describe("aiService", () => {
     ).resolves.toBe("The alternator charges the battery while the engine runs.");
 
     expect(JSON.stringify(fetchSpy.mock.calls[0][1]?.body)).toContain("Part name: Alternator");
+  });
+
+  it("keeps the question inside the server's 3000-char cut on a long, detailed chat, and sends it once", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ message: "Yes, it's fine for a short drive." }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const sentence = (n: number) => `Observation ${n}: ${"detail ".repeat(15).trim()}.`;
+    const question = "Is it safe to drive to the shop tomorrow?";
+    const longAnswer = `Answer: ${"The belt looks serviceable but check the tensioner. ".repeat(8).trim()}`;
+    await sendFollowUp(
+      {
+        id: "lookup-long",
+        createdAt: "2026-05-16T00:00:00.000Z",
+        frame: { imageBase64: "data:image/jpeg;base64,test", capturedAt: "2026-05-16T00:00:00.000Z" },
+        result: {
+          ...result,
+          whatItDoes: "It charges the battery. ".repeat(19).trim(),
+          nextAction: "Check belt tension and the charging voltage. ".repeat(10).trim(),
+          visibleObservations: [1, 2, 3, 4, 5, 6].map(sentence),
+          concerns: [7, 8, 9, 10, 11, 12].map(sentence),
+        },
+        rating: null,
+        correction: null,
+        notes: "",
+        scanCategory: "electrical",
+        trainingLabel: "Alternator",
+        trainingStatus: "raw_unreviewed",
+        chatHistory: [
+          { id: "m1", role: "user", content: "Is the belt worn?", createdAt: "2026-05-16T00:01:00.000Z" },
+          { id: "m2", role: "assistant", content: longAnswer, createdAt: "2026-05-16T00:01:05.000Z" },
+          { id: "m3", role: "user", content: "What about the pulley?", createdAt: "2026-05-16T00:02:00.000Z" },
+          { id: "m4", role: "assistant", content: longAnswer, createdAt: "2026-05-16T00:02:05.000Z" },
+          // Chat saves the question before sending, so it is already the last message.
+          { id: "m5", role: "user", content: question, createdAt: "2026-05-16T00:03:00.000Z" },
+        ],
+      },
+      question,
+    );
+
+    const sent = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)) as { userMessage: string };
+    const seenByServer = sent.userMessage.trim().slice(0, 3000); // api/chat.shared.ts parseChatRequest
+    expect(seenByServer).toContain(`User question: ${question}`);
+    expect(sent.userMessage.split(question)).toHaveLength(2); // sent exactly once
+    expect(seenByServer).toContain("Part name: Alternator");
+  });
+
+  it("sends a multi-line question once even though the saved copy has its whitespace collapsed", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ message: "Probably, but check it first." }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    // The textarea allows newlines; createChatMessage stores the question with whitespace collapsed.
+    const typed = "Is it safe to drive\nto the shop   tomorrow?";
+    const saved = "Is it safe to drive to the shop tomorrow?";
+    await sendFollowUp(
+      {
+        id: "lookup-multiline",
+        createdAt: "2026-05-16T00:00:00.000Z",
+        frame: { imageBase64: "data:image/jpeg;base64,test", capturedAt: "2026-05-16T00:00:00.000Z" },
+        result,
+        rating: null,
+        correction: null,
+        notes: "",
+        scanCategory: "electrical",
+        trainingLabel: "Alternator",
+        trainingStatus: "raw_unreviewed",
+        chatHistory: [{ id: "m1", role: "user", content: saved, createdAt: "2026-05-16T00:03:00.000Z" }],
+      },
+      typed,
+    );
+
+    const sent = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)) as { userMessage: string };
+    expect(sent.userMessage).not.toContain("Recent chat:");
+    expect(sent.userMessage.match(/to the shop/g)).toHaveLength(1);
   });
 });

@@ -1,13 +1,19 @@
 import type { ReactNode } from "react";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { Fragment, lazy, Suspense, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import Auth from "./screens/Auth";
 import Chat from "./screens/Chat";
 import EarlyAccess from "./screens/EarlyAccess";
 import History from "./screens/History";
+import Account from "./screens/Account";
+import Pricing from "./screens/Pricing";
 import Result from "./screens/Result";
+import Shop from "./screens/Shop";
+import ShopJob from "./screens/ShopJob";
+import ShopNewJob from "./screens/ShopNewJob";
 import { getVerifiedAuthUser, subscribeToAuthChanges } from "./services/auth";
 import { startOfflineUpgradeWatcher } from "./services/offlineUpgrade";
+import { getAccountScope, setActiveAccount } from "./lib/accountScope";
 
 const loadScanner = () => import("./screens/Scanner");
 const Scanner = lazy(loadScanner);
@@ -20,27 +26,39 @@ type AuthStatus = "checking" | "allowed" | "blocked";
 function RequireAuth({ children }: { children: ReactNode }) {
   const location = useLocation();
   const [status, setStatus] = useState<AuthStatus>("checking");
+  const [userId, setUserId] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
     let unsubscribe: () => void = () => undefined;
+    let revision = 0;
+    const applyUser = (user: { id: string } | null) => {
+      setActiveAccount(user?.id ?? null);
+      setUserId(user?.id ?? null);
+      setStatus(user ? "allowed" : "blocked");
+    };
 
     getVerifiedAuthUser()
       .then((user) => {
-        if (isMounted) {
-          setStatus(user ? "allowed" : "blocked");
+        if (isMounted && revision === 0) {
+          applyUser(user);
         }
       })
       .catch(() => {
-        if (isMounted) {
-          setStatus("blocked");
+        if (isMounted && revision === 0) {
+          applyUser(null);
         }
       });
 
     subscribeToAuthChanges((user) => {
       if (isMounted) {
-        setStatus(user ? "allowed" : "blocked");
+        revision += 1;
+        applyUser(user);
       }
+    }, (pendingUserId) => {
+      if (!isMounted) return;
+      revision += 1;
+      setStatus((current) => current === "allowed" && getAccountScope().userId === pendingUserId ? current : "checking");
     }).then((cleanup) => {
       if (isMounted) {
         unsubscribe = cleanup;
@@ -61,6 +79,11 @@ function RequireAuth({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (status !== "allowed" || !userId) return;
+    return startOfflineUpgradeWatcher();
+  }, [status, userId]);
+
   if (status === "checking") {
     return (
       <main className="flex min-h-dvh items-center justify-center bg-[var(--ds-bg)] px-4 text-center text-sm font-bold text-[var(--ds-fg-3)]">
@@ -73,7 +96,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
     return <Navigate to="/auth" replace state={{ from: `${location.pathname}${location.search}${location.hash}` }} />;
   }
 
-  return <>{children}</>;
+  return <Fragment key={userId}>{children}</Fragment>;
 }
 
 function ScannerRouteFallback() {
@@ -85,8 +108,6 @@ function ScannerRouteFallback() {
 }
 
 export default function App() {
-  useEffect(() => startOfflineUpgradeWatcher(), []);
-
   return (
     <Routes>
       <Route path="/auth" element={<Auth />} />
@@ -114,6 +135,46 @@ export default function App() {
         element={
           <RequireAuth>
             <EarlyAccess />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/pricing"
+        element={
+          <RequireAuth>
+            <Pricing />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/shop"
+        element={
+          <RequireAuth>
+            <Shop />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/shop/new"
+        element={
+          <RequireAuth>
+            <ShopNewJob />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/shop/jobs/:jobId"
+        element={
+          <RequireAuth>
+            <ShopJob />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/account"
+        element={
+          <RequireAuth>
+            <Account />
           </RequireAuth>
         }
       />

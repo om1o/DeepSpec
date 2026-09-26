@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 const migrationsDir = join(process.cwd(), "supabase", "migrations");
 const foundationMigrationPath = join(migrationsDir, "20260518000100_deepspec_secure_foundation.sql");
 const durableDatasetMigrationPath = join(migrationsDir, "20260528000309_durable_dataset_tables.sql");
+const mechanicShopMigrationPath = join(migrationsDir, "20260618000100_mechanic_shop_mode.sql");
 const srcPath = join(process.cwd(), "src");
 
 describe("Supabase secure foundation migration", () => {
@@ -48,6 +49,45 @@ describe("Supabase secure foundation migration", () => {
     const source = readSourceFiles(srcPath);
     expect(source).not.toMatch(/service[_-]?role/i);
     expect(source).not.toMatch(/SUPABASE_SERVICE/i);
+  });
+});
+
+describe("Supabase mechanic shop migration", () => {
+  const sql = readFileSync(mechanicShopMigrationPath, "utf8");
+
+  it("creates organization, member, job, feedback permission, and job scan tables", () => {
+    expect(sql).toContain("create table if not exists public.organizations");
+    expect(sql).toContain("create table if not exists public.organization_members");
+    expect(sql).toContain("create table if not exists public.shop_feedback_permissions");
+    expect(sql).toContain("create table if not exists public.shop_jobs");
+    expect(sql).toContain("create table if not exists public.job_scans");
+  });
+
+  it("extends scan lookups with shop context without removing private history", () => {
+    expect(sql).toContain("add column if not exists org_id uuid");
+    expect(sql).toContain("add column if not exists job_id uuid");
+    expect(sql).toContain("add column if not exists vehicle_context jsonb");
+    expect(sql).toContain("add column if not exists customer_visible_report_json jsonb");
+    expect(sql).toContain("add column if not exists review_status text");
+    expect(sql).toContain("org_id is null");
+  });
+
+  it("enables RLS and constrains shop records to authenticated org members", () => {
+    for (const table of ["organizations", "organization_members", "shop_feedback_permissions", "shop_jobs", "job_scans"]) {
+      expect(sql).toContain(`alter table public.${table} enable row level security`);
+      expect(sql).toContain(`revoke all on public.${table} from anon`);
+    }
+    expect(sql).toContain("organization_members.user_id = (select auth.uid())");
+    expect(sql).toContain("organization_members.role in ('owner', 'admin', 'technician')");
+    expect(sql).toContain("scan_lookups_select_own");
+  });
+
+  it("adds provider-neutral billing fields while retaining legacy adapter columns", () => {
+    expect(sql).toContain("add column if not exists billing_provider text not null default 'stripe'");
+    expect(sql).toContain("add column if not exists provider_customer_id text");
+    expect(sql).toContain("provider_customer_id = coalesce(provider_customer_id, stripe_customer_id)");
+    expect(sql).toContain("alter column stripe_customer_id drop not null");
+    expect(sql).toContain("billing_entitlements_provider_subscription_key");
   });
 });
 

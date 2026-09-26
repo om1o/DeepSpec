@@ -1,32 +1,44 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Button from "../components/ui/Button";
 import ScanThumb from "../components/ui/ScanThumb";
 import { signOut } from "../services/auth";
 import { readCloudLookups } from "../services/cloudHistory";
+import { syncLookupToCloud } from "../services/cloudSync";
 import { getScanQualityMetrics, type ScanQualityFailureReason, type ScanQualityMetrics } from "../services/scanQualityMetrics";
-import { MAX_SAVED_LOOKUPS, getLookups, scanStateFromLookup } from "../services/storage";
+import { DEVICE_SCAN_LIMIT_MESSAGE, MAX_SAVED_LOOKUPS, deleteLookup, getLookup, getLookups, saveExistingLookup, scanStateFromLookup, subscribeToLookupChanges } from "../services/storage";
 import { getTrainingReadiness } from "../services/trainingReadiness";
+import { getLocalDateStamp } from "../lib/utils";
+import { withLatestInspection } from "../lib/partInspection";
+import { mergeCloudLookup } from "../lib/lookupMerge";
+import { getIntakeReview } from "../lib/intakeReview";
+import { getAccountScope, isAccountScopeCurrent, hasUnassignedDeviceRecords, withAccountRouteState } from "../lib/accountScope";
 import { SCAN_CATEGORIES, type Lookup, type Rating, type ScanCategory, type TrainingStatus } from "../types";
 
 export default function History() {
   const navigate = useNavigate();
-  const [lookups, setLookups] = useState<Lookup[]>(() => getLookups());
+  const [mountedScope] = useState(getAccountScope);
+  // The on-device cap counts what this device stores, not the merged list that also holds cloud scans.
+  const [deviceLookups, setDeviceLookups] = useState<Lookup[]>(() => getLookups());
+  const [cloudLookups, setCloudLookups] = useState<Lookup[]>([]);
+  const lookups = useMemo(() => mergeLookups(deviceLookups, cloudLookups), [deviceLookups, cloudLookups]);
+  const retryPending = useRef(false);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [storageMessage, setStorageMessage] = useState<string | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [query, setQuery] = useState("");
   const qualityMetrics = useMemo(() => getScanQualityMetrics(), []);
 
   useEffect(() => {
     let isMounted = true;
-    const localLookups = getLookups();
 
     void readCloudLookups()
       .then((result) => {
-        if (!isMounted || !result.ok) {
+        if (!isMounted || !isAccountScopeCurrent(mountedScope) || !result.ok) {
           return;
         }
 
-        setLookups(mergeLookups(localLookups, result.value));
+        setCloudLookups(result.value);
       })
       .catch(() => {
         // Keep local history if cloud history fails to load.
@@ -35,7 +47,44 @@ export default function History() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [mountedScope]);
+
+  useEffect(() => {
+    if (!isAccountScopeCurrent(mountedScope)) return;
+    return subscribeToLookupChanges(() => {
+      if (isAccountScopeCurrent(mountedScope)) setDeviceLookups(getLookups());
+    });
+  }, [mountedScope]);
+
+  async function retryCloudSave(id: string) {
+    if (retryPending.current || !isAccountScopeCurrent(mountedScope)) return;
+    let current = getLookup(id);
+    if (!current) return;
+    const remote = cloudLookups.find((lookup) => lookup.id === id);
+    const withKnownInspection = remote ? withLatestInspection(current, remote) : current;
+    if (withKnownInspection !== current) {
+      const preserved = saveExistingLookup(withKnownInspection);
+      if (!preserved.ok) { setStorageMessage(`Cloud save stopped to protect the newer inspection. ${preserved.message}`); return; }
+      current = preserved.value;
+    }
+    retryPending.current = true;
+    setRetryingId(id);
+    setStorageMessage(null);
+    try {
+      const result = await syncLookupToCloud(current);
+      if (!isAccountScopeCurrent(mountedScope)) return;
+      const latest = getLookup(id);
+      setStorageMessage(result.ok && latest?.cloudSave?.status !== "acknowledged"
+        ? "The cloud accepted the request, but these device changes are not confirmed. Check the saved record before retrying."
+        : result.message);
+      setDeviceLookups(getLookups());
+    } catch {
+      if (isAccountScopeCurrent(mountedScope)) setStorageMessage("Cloud save could not be confirmed. Your device record is retained; retry when connected.");
+    } finally {
+      retryPending.current = false;
+      if (isAccountScopeCurrent(mountedScope)) setRetryingId(null);
+    }
+  }
 
   async function handleSignOut() {
     setIsSigningOut(true);
@@ -47,9 +96,29 @@ export default function History() {
     }
   }
 
+  function removeDeviceRecord(lookup: Lookup) {
+    if (!isAccountScopeCurrent(mountedScope)) return;
+    const title = lookup.result?.partName ?? "this scan";
+    if (!window.confirm(`Remove the stored device copy of ${title}? Export first if you need a backup. Cloud records are not deleted. Open pages or cached previews may still show this scan.`)) return;
+    if (!isAccountScopeCurrent(mountedScope)) return;
+    const removed = deleteLookup(lookup.id);
+    if (!removed.ok) { setStorageMessage(`Removal failed. ${removed.message}`); return; }
+    setDeviceLookups(getLookups());
+    setStorageMessage("Stored device copy removed. Cloud records are not deleted; cloud history and open views may still show this scan.");
+  }
+
   const [categoryFilter, setCategoryFilter] = useState<ScanCategory | "all">("all");
   const [reviewFilter, setReviewFilter] = useState<TrainingStatus | "error" | "all">("all");
   const [ratingFilter, setRatingFilter] = useState<Exclude<Rating, null> | "unrated" | "all">("all");
+  const [unresolvedOnly, setUnresolvedOnly] = useState(false);
+  const hasActiveFilters = Boolean(query || categoryFilter !== "all" || reviewFilter !== "all" || ratingFilter !== "all" || unresolvedOnly);
+  function clearFilters() {
+    setQuery("");
+    setCategoryFilter("all");
+    setReviewFilter("all");
+    setRatingFilter("all");
+    setUnresolvedOnly(false);
+  }
   const filteredLookups = useMemo(
     () =>
       lookups.filter(
@@ -58,44 +127,54 @@ export default function History() {
           matchesCategory(lookup, categoryFilter) &&
           matchesReviewStatus(lookup, reviewFilter) &&
           matchesRating(lookup, ratingFilter),
-      ),
-    [categoryFilter, lookups, query, ratingFilter, reviewFilter],
+      ).filter((lookup) => !unresolvedOnly || getIntakeReview(lookup).status === "unresolved"),
+    [categoryFilter, lookups, query, ratingFilter, reviewFilter, unresolvedOnly],
   );
 
   return (
-    <main className="min-h-dvh bg-[var(--ds-page)] px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-slate-950">
-      <div className="mx-auto w-full max-w-md">
-        <header className="flex items-center justify-between gap-3">
+    <main className="ds-history-page min-h-dvh px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-[var(--ds-fg-1)]">
+      <div className="mx-auto w-full max-w-2xl">
+        <header className="ds-history-header">
           <div className="min-w-0">
-            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-12 w-36 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-[var(--ds-accent-line)]" />
-            <h1 className="mt-2 text-2xl font-extrabold tracking-tight">Saved scans</h1>
+            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-12 w-36 rounded-xl bg-[var(--ds-elevated)] object-contain p-1 shadow-sm ring-1 ring-[var(--ds-accent-line)]" />
+            <p className="ds-eyebrow mt-7">YOUR PARTS LIBRARY</p>
+            <h1 className="mt-2 text-3xl font-bold tracking-tight text-[var(--ds-fg-1)]">Saved scans</h1>
+            <p className="mt-2 text-sm leading-6 text-[var(--ds-fg-3)]">A place for every capture, correction, and inspection.</p>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <nav className="ds-history-nav" aria-label="Saved scans navigation">
             <button
               type="button"
               onClick={handleSignOut}
               disabled={isSigningOut}
-              className="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200 disabled:opacity-60"
+              className="rounded-full bg-[var(--ds-elevated)] px-4 py-2 text-sm font-bold text-[var(--ds-fg-2)] shadow-sm ring-1 ring-[var(--ds-border)] disabled:opacity-60"
             >
               {isSigningOut ? "Signing out..." : "Sign out"}
             </button>
-            <Link to="/early-access" className="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200">
+            <Link to="/early-access" className="rounded-full bg-[var(--ds-elevated)] px-4 py-2 text-sm font-bold text-[var(--ds-fg-2)] shadow-sm ring-1 ring-[var(--ds-border)]">
               Join
+            </Link>
+            <Link to="/shop" className="rounded-full bg-[var(--ds-elevated)] px-4 py-2 text-sm font-bold text-[var(--ds-fg-2)] shadow-sm ring-1 ring-[var(--ds-border)]">
+              Shop
             </Link>
             <Link to="/scan" className="rounded-full bg-[var(--ds-accent)] px-4 py-2 text-sm font-bold text-white shadow-sm">
               Scan
             </Link>
-          </div>
+          </nav>
         </header>
 
-        <ScanQualityMetricsPanel metrics={qualityMetrics} />
+        <details className="ds-quality-details">
+          <summary>Scan quality insights <span>{qualityMetrics.attempts} attempts</span></summary>
+          <ScanQualityMetricsPanel metrics={qualityMetrics} />
+        </details>
+        {storageMessage ? <p role="status" className="mt-4 rounded-2xl bg-[var(--ds-elevated)] p-4 text-sm text-[var(--ds-fg-2)]">{storageMessage}</p> : null}
+        {hasUnassignedDeviceRecords() ? <p role="status" className="mt-4 rounded-2xl bg-[var(--ds-elevated)] p-4 text-sm text-[var(--ds-fg-2)]">Older device records are preserved separately. Their account owner is unknown, so they are not shown or uploaded automatically. Owner-confirmed recovery is required.</p> : null}
 
         {lookups.length > 0 ? (
-          <section className="mt-5 rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+          <section className="mt-5 rounded-[24px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 shadow-sm">
             <label className="block">
               <span className="sr-only">Search saved scans</span>
               <input
-                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
+                className="w-full rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-elevated)] px-3 py-2 text-sm font-semibold text-[var(--ds-fg-1)] outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search saved scans"
                 value={query}
@@ -113,7 +192,7 @@ export default function History() {
               <FilterSelect label="Filter review status" value={reviewFilter} onChange={(value) => setReviewFilter(value as TrainingStatus | "error" | "all")}>
                 <option value="all">All review states</option>
                 <option value="raw_unreviewed">Unreviewed</option>
-                <option value="user_confirmed">Confirmed</option>
+                <option value="user_confirmed">Marked helpful</option>
                 <option value="user_corrected">Corrected</option>
                 <option value="error">AI errors</option>
               </FilterSelect>
@@ -125,16 +204,23 @@ export default function History() {
               </FilterSelect>
             </div>
             <div className="mt-3 flex items-center justify-between gap-3">
-              <p className="text-xs font-bold text-neutral-500">
+              <label className="flex items-center gap-2 text-xs font-semibold">
+                <input type="checkbox" checked={unresolvedOnly} onChange={(event) => setUnresolvedOnly(event.target.checked)} />
+                Unresolved identities only
+              </label>
+              {hasActiveFilters ? <button type="button" onClick={clearFilters} className="shrink-0 rounded-full px-3 py-2 text-xs font-bold text-[#a7cbd4] underline">Clear filters</button> : null}
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <p className="text-xs font-bold text-[var(--ds-fg-3)]">
                 {filteredLookups.length}/{lookups.length} saved scans
               </p>
               <Button type="button" onClick={() => exportLookups(lookups)}>
                 Export JSON
               </Button>
             </div>
-            {lookups.length >= MAX_SAVED_LOOKUPS ? (
+            {deviceLookups.length >= MAX_SAVED_LOOKUPS ? (
               <p className="mt-2 text-xs font-semibold leading-5 text-[var(--ds-warn-ink)]">
-                Local storage is at the {MAX_SAVED_LOOKUPS}-scan cap. Export before replacing older scans.
+                {DEVICE_SCAN_LIMIT_MESSAGE}
               </p>
             ) : null}
           </section>
@@ -143,29 +229,56 @@ export default function History() {
         {filteredLookups.length > 0 ? (
           <div className="mt-6 space-y-3">
             {filteredLookups.map((lookup) => (
-              <LookupCard key={lookup.id} lookup={lookup} />
+              <div key={lookup.id}>
+                <LookupCard lookup={lookup} />
+                <p className="mt-2 px-3 text-xs font-semibold text-[var(--ds-fg-3)]">{cloudSaveLabel(deviceLookups.find((local) => local.id === lookup.id))}</p>
+                {deviceLookups.some((local) => local.id === lookup.id) ? (
+                  <div className="flex flex-wrap gap-2">
+                    {lookup.frame.imageBase64.startsWith("data:") || lookup.inspection ? (
+                      <button type="button" disabled={retryingId !== null} className="mt-2 px-3 py-2 text-xs font-semibold text-[var(--ds-fg-3)] underline disabled:opacity-50" aria-label={`Save ${lookup.result?.partName ?? "scan"} to cloud`} onClick={() => void retryCloudSave(lookup.id)}>{retryingId === lookup.id ? "Saving…" : !lookup.frame.imageBase64.startsWith("data:") ? "Save inspection to cloud" : "Save to cloud"}</button>
+                    ) : null}
+                    <button type="button" disabled={retryingId === lookup.id} className="mt-2 px-3 py-2 text-xs font-semibold text-[var(--ds-fg-3)] underline disabled:opacity-50" aria-label={`Remove ${lookup.result?.partName ?? "scan"} from this device`} onClick={() => removeDeviceRecord(lookup)}>Remove device record</button>
+                  </div>
+                ) : null}
+              </div>
             ))}
           </div>
         ) : lookups.length > 0 ? (
-          <section className="mt-6 rounded-[24px] border border-dashed border-slate-200 bg-white p-6 text-center shadow-sm">
-            <p className="text-sm font-bold text-[var(--ds-accent)]">No scans match</p>
-            <p className="mt-2 text-sm leading-6 text-neutral-500">Clear the filters to see the full saved scan list.</p>
+          <section className="ds-history-empty">
+            <p className="text-sm font-bold">No scans match</p>
+            <p className="mt-2 text-sm leading-6 text-[var(--ds-fg-3)]">Clear the filters to see every saved scan.</p>
           </section>
         ) : (
-          <section className="mt-8 rounded-[24px] border border-dashed border-slate-200 bg-white p-6 text-center shadow-sm">
-            <p className="text-sm font-bold text-[var(--ds-accent)]">No saved scans yet</p>
+          <section className="ds-history-empty">
+            <div className="ds-empty-symbol" aria-hidden="true">
+              <svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M10 4H4v6m18-6h6v6M4 22v6h6m18-6v6h-6" /><rect x="10" y="10" width="12" height="12" rx="3" /><path d="M14 16h4m-2-2v4" /></svg>
+            </div>
+            <p className="text-sm font-bold">No saved scans yet</p>
             <h2 className="mt-2 text-xl font-extrabold tracking-tight">Scan your first part</h2>
-            <p className="mt-3 text-sm leading-6 text-neutral-500">
-              Deep Spec will save the photo, AI result, rating, correction, and notes on this device.
+            <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-3)]">
+              Photo, result, rating, correction, and notes stay on this device.
             </p>
-            <Button className="mt-5 w-full" onClick={() => window.location.assign("/scan")}>
+            <Link to="/scan">
               Open scanner
-            </Button>
+            </Link>
           </section>
         )}
       </div>
     </main>
   );
+}
+
+function cloudSaveLabel(local?: Lookup): string {
+  if (!local) return "Loaded from cloud";
+  if (!local.cloudSave) return "Device copy · Cloud save not confirmed for these changes";
+  if (local.cloudSave.status === "acknowledged") {
+    return local.cloudSave.scope === "inspection"
+      ? "Last inspection save acknowledged · Other changes not confirmed"
+      : "Last cloud save acknowledged";
+  }
+  return local.cloudSave.status === "failed"
+    ? "Device copy · Cloud save failed or timed out; retry required"
+    : "Device copy · Cloud confirmation unavailable";
 }
 
 function ScanQualityMetricsPanel({ metrics }: { metrics: ScanQualityMetrics }) {
@@ -185,13 +298,13 @@ function ScanQualityMetricsPanel({ metrics }: { metrics: ScanQualityMetrics }) {
   const retakeRates = getRetakeRates(metrics);
 
   return (
-    <section className="mt-5 rounded-[24px] border border-[var(--ds-accent-line)] bg-white p-4 shadow-sm">
+    <section className="mt-5 rounded-[24px] border border-[var(--ds-accent-line)] bg-[var(--ds-elevated)] p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Scan quality</p>
+          <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[#a7cbd4]">Scan quality</p>
           <h2 className="mt-1 text-xl font-extrabold tracking-tight">Quality coach metrics</h2>
         </div>
-        <span className="rounded-full bg-[var(--ds-accent-soft)] px-3 py-1 text-xs font-black text-[var(--ds-accent)]">
+        <span className="rounded-full bg-[var(--ds-accent-soft)] px-3 py-1 text-xs font-black text-[#a7cbd4]">
           {metrics.attempts} attempts
         </span>
       </div>
@@ -204,18 +317,18 @@ function ScanQualityMetricsPanel({ metrics }: { metrics: ScanQualityMetrics }) {
         <MetricTile label="Trust score" value={averageTrust} />
       </div>
       {topFailure ? (
-        <p className="mt-3 text-sm font-semibold text-neutral-500">
+        <p className="mt-3 text-sm font-semibold text-[var(--ds-fg-3)]">
           Top blocker: {formatReason(topFailure.reason)} ({topFailure.count}).
         </p>
       ) : (
-        <p className="mt-3 text-sm font-semibold text-neutral-500">
-          No scan-quality failures recorded yet.
+        <p className="mt-3 text-sm font-semibold text-[var(--ds-fg-3)]">
+          No quality issues logged yet.
         </p>
       )}
       {retakeRates.length ? (
         <div className="mt-3 flex flex-wrap gap-2">
           {retakeRates.map(({ rate, reason }) => (
-            <span key={reason} className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-bold text-neutral-600">
+            <span key={reason} className="rounded-full bg-[var(--ds-surface)] px-3 py-1 text-xs font-bold text-[var(--ds-fg-3)]">
               {formatReason(reason)} retake {rate}
             </span>
           ))}
@@ -227,9 +340,9 @@ function ScanQualityMetricsPanel({ metrics }: { metrics: ScanQualityMetrics }) {
 
 function MetricTile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-3 py-3">
-      <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-neutral-400">{label}</p>
-      <p className="mt-1 text-lg font-extrabold text-neutral-950">{value}</p>
+    <div className="rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-surface)] px-3 py-3">
+      <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--ds-fg-3)]">{label}</p>
+      <p className="mt-1 text-lg font-extrabold text-[var(--ds-fg-1)]">{value}</p>
     </div>
   );
 }
@@ -250,7 +363,7 @@ function FilterSelect({
       <span className="sr-only">{label}</span>
       <select
         aria-label={label}
-        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-[var(--ds-accent)]"
+        className="w-full rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-elevated)] px-3 py-2 text-sm font-bold text-[var(--ds-fg-2)] outline-none focus:border-[var(--ds-accent)]"
         onChange={(event) => onChange(event.target.value)}
         value={value}
       >
@@ -297,7 +410,7 @@ function formatReason(reason: ScanQualityFailureReason) {
 }
 
 function LookupCard({ lookup }: { lookup: Lookup }) {
-  const title = lookup.result?.partName ?? (lookup.errorMessage ? "AI lookup failed" : "Captured frame");
+  const title = lookup.result?.partName ?? (lookup.errorMessage ? "Lookup didn't land" : "Captured frame");
   const createdAt = new Date(lookup.createdAt).toLocaleString();
   const status = getStatusLabel(lookup);
   const readiness = getTrainingReadiness(lookup);
@@ -305,23 +418,30 @@ function LookupCard({ lookup }: { lookup: Lookup }) {
   return (
     <Link
       to={`/result/${lookup.id}`}
-      state={scanStateFromLookup(lookup)}
-      className="grid grid-cols-[88px_1fr] gap-3 rounded-[24px] border border-slate-200 bg-white p-3 text-slate-950 shadow-sm transition hover:border-blue-200"
+      state={withAccountRouteState({ ...scanStateFromLookup(lookup), savedLookup: lookup })}
+      className="grid grid-cols-[88px_1fr] gap-3 rounded-[24px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-3 text-[var(--ds-fg-1)] shadow-sm transition hover:border-blue-200"
     >
       <ScanThumb
         alt=""
-        className="aspect-square w-full rounded-[18px] border border-neutral-200 bg-neutral-100 object-cover"
+        className="aspect-square w-full rounded-[18px] border border-[var(--ds-border)] bg-[var(--ds-surface)] object-cover"
         src={lookup.frame.imageBase64}
       />
       <div className="min-w-0 py-1">
         <div className="flex items-start justify-between gap-2">
           <h2 className="truncate text-base font-extrabold tracking-tight">{title}</h2>
-          {lookup.rating ? <span className="shrink-0 text-xs font-bold text-neutral-400">{lookup.rating === "up" ? "Helpful" : "Wrong"}</span> : null}
+          {lookup.rating ? <span className="shrink-0 text-xs font-bold text-[var(--ds-fg-3)]">{lookup.rating === "up" ? "Helpful" : "Wrong"}</span> : null}
         </div>
-        <p className="mt-1 truncate text-xs font-semibold text-neutral-400">{createdAt}</p>
-        <p className="mt-3 text-sm font-semibold text-neutral-500">{status}</p>
+        <p className="mt-1 truncate text-xs font-semibold text-[var(--ds-fg-3)]">{createdAt}</p>
+        <p className="mt-3 text-sm font-semibold text-[var(--ds-fg-3)]">{status}</p>
+        <p className="mt-2 text-xs font-bold text-[#a7cbd4]">{getIntakeReview(lookup).label}</p>
+        {lookup.jobId || lookup.vehicleContext?.technicianName ? (
+          <p className="mt-2 truncate text-xs font-bold text-[#a7cbd4]">
+            {lookup.vehicleContext?.jobTitle ?? "Shop job"}
+            {lookup.vehicleContext?.technicianName ? ` / ${lookup.vehicleContext.technicianName}` : ""}
+          </p>
+        ) : null}
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-neutral-400">{lookup.scanCategory}</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--ds-fg-3)]">{lookup.scanCategory}</p>
           <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${getReadinessChipClass(readiness.level)}`}>
             {readiness.label}
           </span>
@@ -340,12 +460,12 @@ function getReadinessChipClass(level: ReturnType<typeof getTrainingReadiness>["l
     return "bg-[var(--ds-warn-soft)] text-[var(--ds-warn-ink)]";
   }
 
-  return "bg-[var(--ds-accent-soft)] text-[var(--ds-accent)]";
+  return "bg-[var(--ds-accent-soft)] text-[#a7cbd4]";
 }
 
 function getStatusLabel(lookup: Lookup) {
   if (lookup.errorMessage) {
-    return "AI error saved";
+    return "Lookup didn't land";
   }
 
   if (!lookup.result) {
@@ -353,11 +473,11 @@ function getStatusLabel(lookup: Lookup) {
   }
 
   if (lookup.result.safetyTriage === "needs_professional" || lookup.result.isSafetyCritical) {
-    return "Professional verification needed";
+    return "Safety check needed";
   }
 
   if (lookup.result.needsBetterPhoto || lookup.result.safetyTriage === "needs_better_photo") {
-    return "Better photo needed";
+    return "Reshoot for a cleaner read";
   }
 
   return `${lookup.result.confidence} confidence`;
@@ -374,8 +494,22 @@ function matchesQuery(lookup: Lookup, query: string) {
       lookup.result?.partName,
       lookup.trainingLabel,
       lookup.correction,
+      lookup.inspection?.confirmedPartName,
+      lookup.inspection?.partNumber,
       lookup.notes,
       lookup.scanCategory,
+      lookup.jobId,
+      lookup.orgId,
+      lookup.vehicleContext?.bayOrRo,
+      lookup.vehicleContext?.customerName,
+      lookup.vehicleContext?.jobTitle,
+      lookup.vehicleContext?.make,
+      lookup.vehicleContext?.model,
+      lookup.vehicleContext?.plate,
+      lookup.vehicleContext?.symptom,
+      lookup.vehicleContext?.technicianName,
+      lookup.vehicleContext?.vin,
+      lookup.vehicleContext?.year,
       lookup.result?.whatItDoes,
       ...(lookup.result?.visibleObservations ?? []),
       ...(lookup.result?.concerns ?? []),
@@ -423,7 +557,8 @@ function mergeLookups(localLookups: Lookup[], cloudLookups: Lookup[]) {
   }
 
   for (const lookup of localLookups) {
-    byId.set(lookup.id, lookup);
+    const remote = byId.get(lookup.id);
+    byId.set(lookup.id, remote ? mergeCloudLookup(lookup, remote) : lookup);
   }
 
   return [...byId.values()].sort((left, right) => getTimestamp(right.createdAt) - getTimestamp(left.createdAt));
@@ -439,7 +574,7 @@ function exportLookups(lookups: Lookup[]) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `deepspec-saved-scans-${new Date().toISOString().slice(0, 10)}.json`;
+  anchor.download = `deepspec-saved-scans-${getLocalDateStamp()}.json`;
   anchor.click();
   URL.revokeObjectURL(url);
 }

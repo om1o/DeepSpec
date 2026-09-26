@@ -1,16 +1,35 @@
 import { SCAN_CATEGORIES, type CapturedFrame, type IdentificationResult, type ScanCategory } from "../types";
 
-// Small vision-language model that runs fully in the browser (WebGPU, WASM fallback).
+// Small zero-shot image classifier that runs fully in the browser (WebGPU, WASM fallback).
 // The weights download once on first use and are cached by the browser, so later
 // scans work with no network. This is an OFFLINE FALLBACK only — the cloud chain
 // stays primary and gives the full Deep Spec analysis whenever there is a connection.
-const ON_DEVICE_MODEL = "HuggingFaceTB/SmolVLM-256M-Instruct";
-const ON_DEVICE_PROMPT =
-  "Identify the single main car part in this photo. Answer in one line as: " +
-  "part: <specific part name>; category: <one of " +
-  SCAN_CATEGORIES.join(", ") +
-  ">; note: <one short visible observation>.";
-const MAX_NEW_TOKENS = 128;
+const ON_DEVICE_MODEL = "Xenova/clip-vit-base-patch32";
+const ON_DEVICE_LABELS = [
+  "car damage on fender",
+  "damaged front fender",
+  "damaged car fender",
+  "front fender",
+  "damaged rear fender",
+  "rear fender",
+  "broken car front bumper",
+  "damaged front bumper",
+  "front bumper",
+  "headlight",
+  "broken car tail light",
+  "tail light",
+  "damaged car side mirror",
+  "broken side mirror",
+  "side mirror",
+  "car disc brake",
+  "disc brake",
+  "brake rotor",
+  "brake caliper",
+  "car radiator close up",
+  "car radiator",
+  "radiator",
+  "engine assembly",
+];
 
 export function isOnDeviceFallbackEnabled() {
   return import.meta.env.VITE_ENABLE_ON_DEVICE_FALLBACK === "true";
@@ -56,10 +75,10 @@ async function loadGenerator(): Promise<OnDeviceGenerator> {
       task: string,
       model: string,
       options?: Record<string, unknown>,
-    ) => Promise<(input: unknown, options?: Record<string, unknown>) => Promise<unknown>>;
+    ) => Promise<(input: string, labels: string[], options?: Record<string, unknown>) => Promise<unknown>>;
   };
   const device = (await supportsWebGpu()) ? "webgpu" : "wasm";
-  const pipe = await transformers.pipeline("image-text-to-text", ON_DEVICE_MODEL, {
+  const pipe = await transformers.pipeline("zero-shot-image-classification", ON_DEVICE_MODEL, {
     device,
     dtype: "q4",
     progress_callback: (event: { status?: string; progress?: number }) => {
@@ -70,18 +89,11 @@ async function loadGenerator(): Promise<OnDeviceGenerator> {
   });
   emitProgress({ stage: "ready", percent: 100 });
 
-  return async (imageUrl, prompt) => {
-    const messages = [
-      {
-        role: "user",
-        content: [
-          { type: "image", image: imageUrl },
-          { type: "text", text: prompt },
-        ],
-      },
-    ];
-    const output = await pipe(messages, { max_new_tokens: MAX_NEW_TOKENS });
-    return extractGeneratedText(output);
+  return async (imageUrl) => {
+    const output = await pipe(imageUrl, ON_DEVICE_LABELS, {
+      hypothesis_template: "This is a photo of a car {}",
+    });
+    return extractZeroShotLabelText(output);
   };
 }
 
@@ -101,7 +113,7 @@ async function supportsWebGpu() {
 export async function identifyOnDevice(frame: CapturedFrame): Promise<IdentificationResult> {
   const generate = await getGenerator();
   const startedAt = typeof performance !== "undefined" ? performance.now() : 0;
-  const text = await generate(frame.imageBase64, ON_DEVICE_PROMPT);
+  const text = await generate(frame.imageBase64, "");
   const latencyMs = typeof performance !== "undefined" ? Math.round(performance.now() - startedAt) : 0;
   const result = mapOnDeviceTextToResult(text);
   if (result.modelRun) {
@@ -109,6 +121,21 @@ export async function identifyOnDevice(frame: CapturedFrame): Promise<Identifica
   }
 
   return result;
+}
+
+export function extractZeroShotLabelText(output: unknown): string {
+  const first = Array.isArray(output) ? output[0] : null;
+  if (!isRecord(first) || typeof first.label !== "string") {
+    return "";
+  }
+
+  const label = first.label.trim();
+  const score = typeof first.score === "number" && Number.isFinite(first.score)
+    ? Math.max(0, Math.min(100, Math.round(first.score * 100)))
+    : null;
+  const category = categorizeOnDeviceLabel(label);
+  const note = score === null ? "on-device visual fallback" : `on-device visual fallback, ${score}% label score`;
+  return `part: ${label}; category: ${category}; note: ${note}`;
 }
 
 // transformers.js pipelines return [{ generated_text }] where, for chat input,
@@ -186,6 +213,15 @@ function matchCategory(text: string): ScanCategory {
   const lower = text.toLowerCase();
   const mentioned = SCAN_CATEGORIES.find((category) => category !== "unknown" && lower.includes(category));
   return mentioned ?? "unknown";
+}
+
+function categorizeOnDeviceLabel(label: string): ScanCategory {
+  const lower = label.toLowerCase();
+  if (/brake|rotor|caliper/.test(lower)) return "brakes";
+  if (/battery|alternator|starter/.test(lower)) return "electrical";
+  if (/radiator|engine/.test(lower)) return "engine";
+  if (/fender|bumper|headlight|tail\s*light|mirror|wheel|tire|hood|door|panel|grille/.test(lower)) return "body";
+  return matchCategory(label);
 }
 
 function firstMeaningfulLine(text: string) {

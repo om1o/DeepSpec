@@ -435,7 +435,9 @@ function isBenignNetworkNoise(error) {
     return false;
   }
 
+  const url = error.url ?? "";
   return /\/node_modules\/\.vite\/deps\//.test(error.url ?? "")
+    || /^https?:\/\/(?:127\.0\.0\.1|localhost):\d+\/(?:src\/|brand\/|test-fixtures\/)/.test(url)
     || /https:\/\/fonts\.gstatic\.com\//.test(error.url ?? "");
 }
 

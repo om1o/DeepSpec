@@ -1,4 +1,6 @@
 import type { FeedbackSubmission, WaitlistSignup } from "../types";
+import { accountStorageKey } from "../lib/accountScope";
+import { getFeedbackIssue, normalizeFeedbackContext } from "./feedbackDetails";
 
 export const ENGAGEMENT_STORAGE_KEY = "deep-spec:engagement";
 const MAX_ENTRIES = 100;
@@ -25,7 +27,7 @@ export function getEngagementData(): EngagementData {
   }
 
   try {
-    const rawData = localStorage.getItem(ENGAGEMENT_STORAGE_KEY);
+    const rawData = localStorage.getItem(accountStorageKey(ENGAGEMENT_STORAGE_KEY));
     if (!rawData) {
       return { waitlist: [], feedback: [] };
     }
@@ -74,12 +76,19 @@ export function saveWaitlistSignup(input: {
 }
 
 export function saveFeedbackSubmission(input: {
+  issue?: FeedbackSubmission["issue"];
+  context?: FeedbackSubmission["context"];
   category: FeedbackSubmission["category"];
   contactEmail: string;
   message: string;
 }): SaveResult<FeedbackSubmission | null> {
   const message = cleanText(input.message, 800);
-  if (message.length < 8) {
+  const issue = getFeedbackIssue(input.issue);
+  const context = normalizeFeedbackContext(input.context);
+  if ((issue || context) && message.length > 450) {
+    return { ok: false, message: "Keep report details under 450 characters so the issue and scan context fit too.", value: null };
+  }
+  if (!issue && message.length < 8) {
     return { ok: false, message: "Write a little more detail first.", value: null };
   }
 
@@ -92,8 +101,10 @@ export function saveFeedbackSubmission(input: {
   const feedback: FeedbackSubmission = {
     id: createId(),
     createdAt: new Date().toISOString(),
-    category: isFeedbackCategory(input.category) ? input.category : "other",
-    message,
+    category: issue?.category ?? (isFeedbackCategory(input.category) ? input.category : "other"),
+    message: message || issue?.label || "",
+    ...(issue ? { issue: issue.id } : {}),
+    ...(context ? { context } : {}),
     contactEmail,
   };
 
@@ -116,7 +127,7 @@ function writeEngagementData(data: EngagementData): SaveResult<EngagementData> {
   }
 
   try {
-    localStorage.setItem(ENGAGEMENT_STORAGE_KEY, JSON.stringify(data));
+    localStorage.setItem(accountStorageKey(ENGAGEMENT_STORAGE_KEY), JSON.stringify(data));
     return { ok: true, value: data };
   } catch (error) {
     return {
@@ -169,6 +180,8 @@ function normalizeFeedback(value: unknown): FeedbackSubmission | null {
     id: feedback.id,
     createdAt: feedback.createdAt,
     category: isFeedbackCategory(feedback.category) ? feedback.category : "other",
+    ...(getFeedbackIssue(feedback.issue) ? { issue: getFeedbackIssue(feedback.issue)!.id } : {}),
+    ...(normalizeFeedbackContext(feedback.context) ? { context: normalizeFeedbackContext(feedback.context) } : {}),
     message: cleanText(feedback.message, 800),
     contactEmail: isEmail(contactEmail) ? contactEmail : "",
   };

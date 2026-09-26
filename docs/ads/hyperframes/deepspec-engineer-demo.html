@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DeepSpec Auto Engineer Demo</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        background: #05070c;
+        color: #f8fafc;
+        font-family: "Space Grotesk", "Aptos", "Segoe UI", system-ui, sans-serif;
+      }
+
+      [data-composition-id="deepspec-engineer-demo"] {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #05070c;
+      }
+
+      .scene {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 34px;
+        padding: 108px 132px;
+        background-color: #05070c;
+        box-sizing: border-box;
+      }
+
+      .kicker {
+        width: fit-content;
+        border: 1px solid rgba(66, 215, 255, 0.42);
+        border-radius: 999px;
+        padding: 12px 16px;
+        color: #42d7ff;
+        font-family: "JetBrains Mono", "Consolas", monospace;
+        font-size: 18px;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .title {
+        max-width: 1260px;
+        font-size: 106px;
+        font-weight: 900;
+        line-height: 0.95;
+        letter-spacing: 0;
+      }
+
+      .body {
+        max-width: 860px;
+        color: #aeb8c7;
+        font-size: 34px;
+        line-height: 1.32;
+      }
+
+      .two-up {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 48px;
+        align-items: center;
+      }
+
+      .hud {
+        border: 1px solid rgba(226, 232, 240, 0.16);
+        border-radius: 34px;
+        background: #10141c;
+        padding: 42px;
+        box-shadow: 0 32px 110px rgba(0, 0, 0, 0.46);
+      }
+
+      .target {
+        position: relative;
+        height: 420px;
+        border-radius: 24px;
+        background:
+          linear-gradient(90deg, rgba(255, 255, 255, 0.055) 1px, rgba(255, 255, 255, 0) 1px),
+          linear-gradient(0deg, rgba(255, 255, 255, 0.055) 1px, rgba(255, 255, 255, 0) 1px),
+          #171d27;
+        background-size: 72px 72px;
+        border: 1px solid rgba(226, 232, 240, 0.13);
+      }
+
+      .box {
+        position: absolute;
+        left: 18%;
+        top: 30%;
+        width: 54%;
+        height: 31%;
+        border: 3px solid #42d7ff;
+        border-radius: 18px;
+        background: rgba(66, 215, 255, 0.07);
+      }
+
+      .context {
+        position: absolute;
+        left: 10%;
+        top: 22%;
+        width: 72%;
+        height: 46%;
+        border: 2px dashed rgba(226, 232, 240, 0.35);
+        border-radius: 28px;
+      }
+
+      .tag {
+        position: absolute;
+        left: 17%;
+        top: 18%;
+        border: 1px solid rgba(66, 215, 255, 0.62);
+        border-radius: 12px;
+        background: rgba(5, 7, 12, 0.94);
+        padding: 14px 18px;
+        font-size: 24px;
+        font-weight: 900;
+      }
+
+      .tag span {
+        display: block;
+        color: #42d7ff;
+        font-family: "JetBrains Mono", "Consolas", monospace;
+        font-size: 15px;
+        text-transform: uppercase;
+      }
+
+      .proof {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+      }
+
+      .proof div {
+        border: 1px solid rgba(110, 231, 183, 0.22);
+        border-radius: 14px;
+        background: rgba(110, 231, 183, 0.10);
+        color: #6ee7b7;
+        padding: 20px;
+        font-family: "JetBrains Mono", "Consolas", monospace;
+        font-size: 18px;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .transition {
+        position: absolute;
+        inset: 0;
+        background: #42d7ff;
+        transform-origin: left center;
+        z-index: 20;
+      }
+
+      .fine {
+        color: #aeb8c7;
+        font-size: 26px;
+        line-height: 1.35;
+      }
+    </style>
+  </head>
+  <body>
+    <div data-composition-id="deepspec-engineer-demo" data-width="1920" data-height="1080">
+      <section id="scene-1" class="scene" data-start="0" data-duration="8" data-track-index="0">
+        <p class="kicker">DeepSpec Auto Visual Evidence</p>
+        <h1 class="title">AI-assisted scan evidence for engineers and shop teams.</h1>
+        <p class="body">Not magic diagnosis. A cleaner way to lock onto the visible target, show confidence, and ask for the next proof.</p>
+      </section>
+
+      <div id="wipe-1" class="transition" data-start="7.6" data-duration="0.55" data-track-index="3"></div>
+
+      <section id="scene-2" class="scene" data-start="8" data-duration="8" data-track-index="1">
+        <div class="two-up">
+          <div>
+            <p class="kicker">Lock. Ground. Verify.</p>
+            <h2 class="title">The overlay shows what the model is using.</h2>
+            <p class="body">Target, label, confidence range, visible clues, uncertainty, and required next evidence stay in one clear visual layer.</p>
+          </div>
+          <div class="hud">
+            <div class="target">
+              <div class="context"></div>
+              <div class="box"></div>
+              <div class="tag"><span>Grounded</span>Front passenger door</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div id="wipe-2" class="transition" data-start="15.6" data-duration="0.55" data-track-index="4"></div>
+
+      <section id="scene-3" class="scene" data-start="16" data-duration="10" data-track-index="2">
+        <p class="kicker">Polar sandbox only</p>
+        <h2 class="title">Paid beta waits for proof, too.</h2>
+        <div class="proof">
+          <div>Checkout</div>
+          <div>Webhook</div>
+          <div>Entitlement</div>
+          <div>Portal</div>
+        </div>
+        <p class="fine">Live payments remain off until Dad completes provider setup and DeepSpec passes phone, AI, billing, and launch-readiness gates.</p>
+      </section>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      tl.from("#scene-1 .kicker", { x: -44, opacity: 0, duration: 0.55, ease: "expo.out" }, 0.2);
+      tl.from("#scene-1 .title", { y: 62, opacity: 0, duration: 0.75, ease: "power3.out" }, 0.38);
+      tl.from("#scene-1 .body", { scale: 0.96, opacity: 0, duration: 0.68, ease: "sine.out" }, 0.7);
+      tl.fromTo("#wipe-1", { scaleX: 0 }, { scaleX: 1, duration: 0.24, ease: "power4.inOut" }, 7.6);
+      tl.to("#wipe-1", { xPercent: 105, duration: 0.28, ease: "power3.inOut" }, 7.86);
+
+      tl.from("#scene-2 .kicker", { y: -34, opacity: 0, duration: 0.42, ease: "back.out(1.3)" }, 8.18);
+      tl.from("#scene-2 .title", { x: -58, opacity: 0, duration: 0.66, ease: "expo.out" }, 8.34);
+      tl.from("#scene-2 .body", { y: 36, opacity: 0, duration: 0.52, ease: "power2.out" }, 8.66);
+      tl.from("#scene-2 .hud", { scale: 0.94, opacity: 0, duration: 0.72, ease: "power3.out" }, 8.44);
+      tl.from("#scene-2 .box", { scale: 0.86, opacity: 0, duration: 0.5, ease: "back.out(1.6)" }, 8.95);
+      tl.fromTo("#wipe-2", { scaleX: 0 }, { scaleX: 1, duration: 0.24, ease: "power4.inOut" }, 15.6);
+      tl.to("#wipe-2", { xPercent: 105, duration: 0.28, ease: "power3.inOut" }, 15.86);
+
+      tl.from("#scene-3 .kicker", { x: 38, opacity: 0, duration: 0.48, ease: "power3.out" }, 16.16);
+      tl.from("#scene-3 .title", { y: 56, opacity: 0, duration: 0.7, ease: "expo.out" }, 16.36);
+      tl.from("#scene-3 .proof div", { y: 30, opacity: 0, scale: 0.94, duration: 0.42, stagger: 0.09, ease: "back.out(1.4)" }, 16.88);
+      tl.from("#scene-3 .fine", { opacity: 0, duration: 0.55, ease: "sine.out" }, 17.55);
+      tl.to("#scene-3", { opacity: 0, duration: 0.55, ease: "power2.in" }, 25.3);
+
+      window.__timelines["deepspec-engineer-demo"] = tl;
+    </script>
+  </body>
+</html>

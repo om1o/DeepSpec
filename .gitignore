@@ -8,6 +8,8 @@ supabase/.temp/
 .deepspec-eval/
 .playwright-mcp/
 artifacts/qa/
+artifacts/pilot/
+artifacts/release-gates/
 datasets/raw/
 datasets/derived/
 

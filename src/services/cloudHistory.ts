@@ -1,15 +1,25 @@
+import { getAccountScope, isAccountScopeCurrent } from "../lib/accountScope";
 import { getAuthClient, isSupabaseAuthConfigured } from "./auth";
+import { normalizePartInspection } from "../lib/partInspection";
 import type {
   CandidateMatch,
+  CandidatePart,
   ChatMessage,
   Confidence,
+  CustomerVisibleReport,
   EvidenceRegion,
+  FitmentConfidence,
   IdentificationResult,
   IdentifyModelRun,
   IdentifyProvider,
   Lookup,
+  PartMeasurement,
+  PossibleVehicleContext,
   Rating,
   ScanCategory,
+  SceneObject,
+  ShopReviewStatus,
+  ShopVehicleContext,
   SourceLink,
   TrainingStatus,
 } from "../types";
@@ -18,6 +28,11 @@ const SCAN_BUCKET = "scan-images";
 const SIGNED_URL_TTL_SECONDS = 60 * 60;
 const DEFAULT_HISTORY_LIMIT = 200;
 const FALLBACK_IMAGE = "/brand/deepspec-logo.webp";
+const CLOUD_HISTORY_CORE_SELECT = "local_id,created_at,captured_at,analyzed_at,error_code,error_message,rating,correction,notes,scan_category,training_label,training_status,chat_history,result_json,image_path";
+// Shop-mode columns (mechanic_shop_mode migration). Not every deployed database has them, so the
+// read asks for them and falls back to the core columns only when PostgREST reports one missing —
+// reading the core columns alone dropped the job, vehicle, and review status from every cloud scan.
+const CLOUD_HISTORY_SHOP_COLUMNS = ["customer_visible_report_json", "job_id", "org_id", "review_status", "technician_user_id", "vehicle_context"];
 
 type CloudHistoryRow = {
   local_id: unknown;
@@ -33,8 +48,15 @@ type CloudHistoryRow = {
   training_label: unknown;
   training_status: unknown;
   chat_history: unknown;
+  customer_visible_report_json: unknown;
+  job_id: unknown;
+  org_id: unknown;
   result_json: unknown;
+  review_status: unknown;
+  technician_user_id: unknown;
+  vehicle_context: unknown;
   image_path: unknown;
+  inspection_json?: unknown;
 };
 
 type SignedImageRow = {
@@ -44,42 +66,83 @@ type SignedImageRow = {
   error?: unknown;
 };
 
+type CloudHistoryQueryResult = {
+  data: unknown;
+  error: { message?: string } | null;
+};
+
 type ReadCloudHistoryResult =
   | { ok: true; value: Lookup[] }
   | { ok: false; message: string };
 
 export async function readCloudLookups(limit = DEFAULT_HISTORY_LIMIT): Promise<ReadCloudHistoryResult> {
+  const scope = getAccountScope();
+  const changed = () => ({ ok: false as const, message: "Account changed. Reload your saved scans." });
+  if (!isAccountScopeCurrent(scope)) return changed();
   if (!isSupabaseAuthConfigured()) {
     return { ok: false, message: "Supabase auth is not configured for this build." };
   }
 
   const supabase = await getAuthClient();
+  if (!isAccountScopeCurrent(scope)) return changed();
   if (!supabase) {
     return { ok: false, message: "Supabase auth is not configured for this build." };
   }
 
   const userResult = await supabase.auth.getUser();
-  if (userResult.error || !userResult.data.user) {
+  if (!isAccountScopeCurrent(scope)) return changed();
+  if (userResult.error || !userResult.data.user || userResult.data.user.id !== scope.userId) {
     return { ok: false, message: "No verified Supabase session was found." };
   }
 
-  const rowsResult = await supabase
+  const selectRows = (columns: string): PromiseLike<CloudHistoryQueryResult> => supabase
     .from("scan_lookups")
-    .select("local_id,created_at,captured_at,analyzed_at,error_code,error_message,rating,correction,notes,scan_category,training_label,training_status,chat_history,result_json,image_path")
+    .select(columns)
+    .eq("user_id", scope.userId)
     .order("created_at", { ascending: false })
     .limit(limit);
+  let optionalColumns = [...CLOUD_HISTORY_SHOP_COLUMNS, "inspection_json"];
+  let rowsResult = await selectRows(`${CLOUD_HISTORY_CORE_SELECT},${optionalColumns.join(",")}`);
+  if (!isAccountScopeCurrent(scope)) return changed();
+  // The shop and inspection migrations may be deployed independently. Drop only the
+  // missing group, preserving whichever fields this database supports.
+  for (let attempt = 0; attempt < 2 && rowsResult.error; attempt += 1) {
+    if (isMissingShopColumn(rowsResult.error)) {
+      optionalColumns = optionalColumns.filter((column) => !CLOUD_HISTORY_SHOP_COLUMNS.includes(column));
+    } else if (isMissingInspectionColumn(rowsResult.error)) {
+      optionalColumns = optionalColumns.filter((column) => column !== "inspection_json");
+    } else {
+      break;
+    }
+    rowsResult = await selectRows([CLOUD_HISTORY_CORE_SELECT, ...optionalColumns].join(","));
+    if (!isAccountScopeCurrent(scope)) return changed();
+  }
 
   if (rowsResult.error) {
-    return { ok: false, message: rowsResult.error.message };
+    return { ok: false, message: rowsResult.error.message ?? "Could not load cloud scan history." };
   }
 
   const rows = Array.isArray(rowsResult.data) ? (rowsResult.data as CloudHistoryRow[]) : [];
   const signedImageMap = await getSignedImageMap(supabase, rows);
+  if (!isAccountScopeCurrent(scope)) return changed();
   const lookups = rows
     .map((row, index) => mapCloudRowToLookup(row, signedImageMap, index))
     .filter((lookup): lookup is Lookup => Boolean(lookup));
 
   return { ok: true, value: lookups };
+}
+
+/** A select naming a shop column the database doesn't have (Postgres 42703 or a stale schema cache). */
+function isMissingShopColumn(error: { message?: string } | null) {
+  const message = error?.message ?? "";
+  return /does not exist|schema cache|could not find .* column/i.test(message)
+    && CLOUD_HISTORY_SHOP_COLUMNS.some((column) => message.includes(column));
+}
+
+function isMissingInspectionColumn(error: { message?: string } | null) {
+  const message = error?.message ?? "";
+  return /does not exist|schema cache|could not find .* column/i.test(message)
+    && message.includes("inspection_json");
 }
 
 async function getSignedImageMap(
@@ -140,13 +203,20 @@ function mapCloudRowToLookup(
     rating: parseRating(row.rating),
     correction,
     notes: isString(row.notes) ? row.notes : "",
+    inspection: normalizePartInspection(row.inspection_json),
     scanCategory,
     trainingLabel: isString(row.training_label)
       ? row.training_label
       : correction?.trim() || result?.partName || "unlabeled",
     trainingStatus: parseTrainingStatus(row.training_status),
     chatHistory: parseChatHistory(row.chat_history),
+    customerVisibleReport: parseCustomerVisibleReport(row.customer_visible_report_json),
+    jobId: isString(row.job_id) ? row.job_id : undefined,
+    orgId: isString(row.org_id) ? row.org_id : undefined,
     result,
+    reviewStatus: parseShopReviewStatus(row.review_status),
+    technicianUserId: isString(row.technician_user_id) ? row.technician_user_id : undefined,
+    vehicleContext: parseShopVehicleContext(row.vehicle_context),
     provenance: {
       analysisSource: "ai_detection",
       captureMode: "camera",
@@ -173,9 +243,16 @@ function parseIdentificationResult(value: unknown, fallbackCategory: ScanCategor
     confirmationNeed: parseConfirmationNeed(value.confirmationNeed),
     scanCategory: parseScanCategory(value.scanCategory, fallbackCategory),
     candidateMatches: parseCandidateMatches(value.candidateMatches),
+    primaryPart: parseCandidatePart(value.primaryPart, partName, parseConfidence(value.confidence), parseScanCategory(value.scanCategory, fallbackCategory)),
+    candidateParts: parseCandidateParts(value.candidateParts),
+    possibleVehicleContexts: parsePossibleVehicleContexts(value.possibleVehicleContexts),
+    measurements: parsePartMeasurements(value.measurements),
+    requiredNextEvidence: parseStringList(value.requiredNextEvidence, 8, 220),
+    ...(parseFitmentConfidence(value.fitmentConfidence) ? { fitmentConfidence: parseFitmentConfidence(value.fitmentConfidence) } : {}),
     whatItDoes: isString(value.whatItDoes) ? value.whatItDoes : "",
     visibleObservations: parseStringList(value.visibleObservations, 8, 220),
     evidenceRegions: parseEvidenceRegions(value.evidenceRegions),
+    sceneObjects: parseSceneObjects(value.sceneObjects),
     concerns: parseStringList(value.concerns, 8, 220),
     safetyTriage: parseSafetyTriage(value.safetyTriage),
     isSafetyCritical: value.isSafetyCritical === true,
@@ -230,6 +307,87 @@ function parseCandidateMatches(value: unknown): CandidateMatch[] {
     .filter((item) => Boolean(item.partName));
 }
 
+function parseCandidatePart(
+  value: unknown,
+  fallbackPartName?: string,
+  fallbackConfidence?: Confidence,
+  fallbackCategory?: ScanCategory,
+): CandidatePart | undefined {
+  if (!isObject(value)) {
+    return fallbackPartName && fallbackConfidence && fallbackCategory
+      ? {
+          confidence: fallbackConfidence,
+          evidence: [],
+          partName: fallbackPartName,
+          scanCategory: fallbackCategory,
+        }
+      : undefined;
+  }
+
+  const partName = isString(value.partName) ? value.partName.trim().slice(0, 120) : "";
+  if (!partName) {
+    return undefined;
+  }
+
+  return {
+    confidence: parseConfidence(value.confidence),
+    evidence: parseStringList(value.evidence, 6, 220),
+    partName,
+    scanCategory: parseScanCategory(value.scanCategory),
+    ...(isString(value.whyNotPrimary) ? { whyNotPrimary: value.whyNotPrimary.trim().slice(0, 220) } : {}),
+  };
+}
+
+function parseCandidateParts(value: unknown): CandidatePart[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => parseCandidatePart(item))
+    .filter((item): item is CandidatePart => Boolean(item))
+    .slice(0, 4);
+}
+
+function parsePossibleVehicleContexts(value: unknown): PossibleVehicleContext[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isObject)
+    .map((item) => ({
+      confidence: parseConfidence(item.confidence),
+      evidence: parseStringList(item.evidence, 4, 220),
+      label: isString(item.label) ? item.label.trim().slice(0, 120) : "",
+    }))
+    .filter((item) => item.label)
+    .slice(0, 3);
+}
+
+function parsePartMeasurements(value: unknown): PartMeasurement[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isObject)
+    .map((item): PartMeasurement => {
+      const method = item.method === "reference_object" || item.method === "visible_marking" || item.method === "estimated"
+        ? item.method
+        : "estimated";
+      return {
+        caveat: isString(item.caveat) ? item.caveat.trim().slice(0, 220) : "Estimated; verify before ordering parts.",
+        confidence: parseConfidence(item.confidence),
+        label: isString(item.label) ? item.label.trim().slice(0, 120) : "",
+        method,
+        valueMm: typeof item.valueMm === "number" && Number.isFinite(item.valueMm) ? item.valueMm : 0,
+      };
+    })
+    .filter((item) => item.label && item.valueMm > 0)
+    .slice(0, 4);
+}
+
 function parseEvidenceRegions(value: unknown): EvidenceRegion[] {
   if (!Array.isArray(value)) {
     return [];
@@ -243,6 +401,51 @@ function parseEvidenceRegions(value: unknown): EvidenceRegion[] {
       regionLabel: isString(item.regionLabel) ? item.regionLabel : "",
     }))
     .filter((item) => Boolean(item.label || item.observation));
+}
+
+function parseSceneObjects(value: unknown): SceneObject[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(isObject)
+    .map((item) => ({
+      name: isString(item.name) ? item.name.trim().slice(0, 80) : "",
+      category: isString(item.category) && item.category.trim() ? item.category.trim().slice(0, 40) : "unknown",
+      regionLabel: isString(item.regionLabel) ? item.regionLabel.trim().slice(0, 40) : "Scanned area",
+      primary: item.primary === true,
+    }))
+    .filter((item) => Boolean(item.name))
+    .slice(0, 8);
+}
+
+function parseCustomerVisibleReport(value: unknown): CustomerVisibleReport | undefined {
+  if (!isObject(value) || !isString(value.generatedAt) || !isString(value.summary) || !isString(value.title)) {
+    return undefined;
+  }
+
+  return {
+    generatedAt: value.generatedAt,
+    summary: value.summary.slice(0, 600),
+    title: value.title.slice(0, 140),
+  };
+}
+
+function parseShopVehicleContext(value: unknown): ShopVehicleContext | undefined {
+  if (!isObject(value)) {
+    return undefined;
+  }
+
+  const context: ShopVehicleContext = {};
+  const fields: Array<keyof ShopVehicleContext> = ["bayOrRo", "customerName", "engine", "jobTitle", "make", "mileage", "model", "notes", "plate", "symptom", "technicianName", "vin", "year"];
+  for (const field of fields) {
+    if (isString(value[field])) {
+      (context as Record<string, string>)[field] = value[field].trim().slice(0, field === "notes" || field === "symptom" ? 300 : 120);
+    }
+  }
+
+  return Object.keys(context).length ? context : undefined;
 }
 
 function parseSourceLinks(value: unknown): SourceLink[] {
@@ -354,6 +557,16 @@ function parseTrainingStatus(value: unknown): TrainingStatus {
   return value === "user_confirmed" || value === "user_corrected" || value === "raw_unreviewed"
     ? value
     : "raw_unreviewed";
+}
+
+function parseShopReviewStatus(value: unknown): ShopReviewStatus | undefined {
+  return value === "needs_review" || value === "confirmed" || value === "corrected" ? value : undefined;
+}
+
+function parseFitmentConfidence(value: unknown): FitmentConfidence | undefined {
+  return value === "not_applicable" || value === "needs_vehicle_context" || value === "possible" || value === "supported"
+    ? value
+    : undefined;
 }
 
 function parseSourceType(value: unknown): SourceLink["sourceType"] {

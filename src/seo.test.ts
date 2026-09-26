@@ -72,7 +72,7 @@ describe("SEO assets", () => {
     expect(scannerMarkdown).toContain("identify car parts with camera");
 
     expect(damageArticle).toContain("Car damage AI scanner");
-    expect(damageArticle).toContain("verify with a mechanic");
+    expect(damageArticle).toContain("check before driving");
     expect(damageMarkdown).toContain("car damage AI scanner");
 
     expect(inspectionArticle).toContain("Visual AI inspection tools");

@@ -1,4 +1,5 @@
 import type { IdentificationResult } from "../types/index";
+import { accountStorageKey } from "./accountScope";
 
 export const SCAN_CACHE_KEY = "deep-spec:scan-cache";
 export const SCAN_CACHE_MAX = 20;
@@ -30,7 +31,7 @@ export async function hashImageDataUrl(dataUrl: string): Promise<string | null> 
 
 function loadCache(): CacheEntry[] {
   try {
-    const raw = localStorage.getItem(SCAN_CACHE_KEY);
+    const raw = localStorage.getItem(accountStorageKey(SCAN_CACHE_KEY));
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -42,19 +43,30 @@ function loadCache(): CacheEntry[] {
 
 function saveCache(entries: CacheEntry[]): void {
   try {
-    localStorage.setItem(SCAN_CACHE_KEY, JSON.stringify(entries));
+    localStorage.setItem(accountStorageKey(SCAN_CACHE_KEY), JSON.stringify(entries));
   } catch {
     // Scan caching is best-effort and must not break identification.
   }
 }
 
+// An offline estimate is a stopgap, not an answer: caching it would hand the same photo that
+// estimate again after the connection or provider recovers, instead of a real analysis.
+function isOnDeviceEstimate(result: IdentificationResult | undefined): boolean {
+  return result?.modelRun?.provider === "on-device";
+}
+
 export function getCachedScanResult(hash: string): IdentificationResult | null {
   const entries = loadCache();
   const entry = entries.find((e) => e.hash === hash);
-  return entry?.result ?? null;
+  // Also skips estimates an earlier build already cached.
+  return entry && !isOnDeviceEstimate(entry.result) ? entry.result : null;
 }
 
 export function setCachedScanResult(hash: string, result: IdentificationResult): void {
+  if (isOnDeviceEstimate(result)) {
+    return;
+  }
+
   const entries = loadCache().filter((e) => e.hash !== hash);
   entries.push({ hash, result, cachedAt: new Date().toISOString() });
   if (entries.length > SCAN_CACHE_MAX) {
@@ -65,7 +77,7 @@ export function setCachedScanResult(hash: string, result: IdentificationResult):
 
 export function clearScanCache(): void {
   try {
-    localStorage.removeItem(SCAN_CACHE_KEY);
+    localStorage.removeItem(accountStorageKey(SCAN_CACHE_KEY));
   } catch {
     // Ignore cache cleanup failures.
   }
