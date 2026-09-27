@@ -248,6 +248,9 @@ export type SourceLink = {
 export type IdentifyProvider = "gemini" | "huggingface" | "groq" | "ollama" | "on-device";
 
 export type IdentifyModelRun = {
+  runId?: string;
+  promptVersion?: string;
+  pipelineVersion?: string;
   provider: IdentifyProvider;
   model: string;
   latencyMs: number;
@@ -287,6 +290,7 @@ export type IdentificationResult = {
 };
 
 export type ScanAnalysisState = {
+  analysisAttemptId?: string;
   frame: CapturedFrame;
   focusBox?: VisualFocusBox;
   focusMode?: VisualFocusMode;
@@ -356,6 +360,8 @@ export type PartInspection = {
 export type PartInspectionDraft = Omit<PartInspection, "inspectedAt">;
 
 export type Lookup = {
+  analysisAttemptId?: string;
+  analysisFailures?: { attemptId: string; errorCode: string; errorMessage: string; attemptedAt: string }[];
   cloudSave?: {
     attemptId: string;
     attemptedAt: string;

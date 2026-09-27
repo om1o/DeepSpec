@@ -1,4 +1,5 @@
-import { IDENTIFY_PROMPT } from "../src/services/systemPrompts";
+import { IDENTIFY_PROMPT, IDENTIFY_PROMPT_VERSION, IDENTIFY_PIPELINE_VERSION } from "../src/services/systemPrompts";
+import { randomUUID } from "node:crypto";
 import {
   SCAN_CATEGORIES,
   type CandidatePart,
@@ -487,6 +488,7 @@ function getGeminiIdentifyHedgeDelayMs(env: Record<string, string | undefined>) 
 }
 
 function withModelRun(result: IdentificationResult, modelRun: IdentifyModelRun) {
+  modelRun = { ...modelRun, runId: randomUUID(), promptVersion: IDENTIFY_PROMPT_VERSION, pipelineVersion: IDENTIFY_PIPELINE_VERSION };
   const resultWithModelRun: IdentificationResult = {
     ...result,
     modelRun,

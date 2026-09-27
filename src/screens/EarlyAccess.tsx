@@ -105,7 +105,7 @@ export default function EarlyAccess() {
     try {
       const syncResult = await syncFeedbackToCloud(result.value);
       if (isAccountScopeCurrent(mountedScope)) {
-        setFeedbackStatus(syncResult.ok ? "Feedback saved on this device and synced to cloud." : `Feedback saved on this device. ${syncResult.message}`);
+        setFeedbackStatus(`Feedback saved on this device. ${syncResult.message}`);
       }
     } catch {
       if (isAccountScopeCurrent(mountedScope)) setFeedbackStatus("Feedback saved on this device. Cloud delivery could not be confirmed.");

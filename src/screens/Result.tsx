@@ -1,9 +1,12 @@
+import { createAnalysisAttemptId } from "../lib/analysisAttempt";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
-import { getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
+import { AIServiceError, getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
+import { syncAnalysisFailuresToCloud } from "../services/cloudSync";
 import Button from "../components/ui/Button";
 import { IsolatedPartView } from "../components/result/IsolatedPartView";
 import { PartInspectionForm } from "../components/result/PartInspectionForm";
+import { TrainingConsentPanel } from "../components/result/TrainingConsentPanel";
 import { IntakeDraft } from "../components/result/IntakeDraft";
 import { ScanDebugOverlay } from "../components/result/ScanDebugOverlay";
 import { IssueLine, ResultDetailSections, SceneCategoryList } from "../components/result/PositiveAnswerCard";
@@ -16,7 +19,7 @@ import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } fro
 import { buildScanReport, downloadTextFile, getScanReportFilename } from "../services/report";
 import { recordManualCorrection } from "../services/scanQualityMetrics";
 import { getShopJob } from "../services/shop";
-import { createLookup, getLookup, normalizeLookup, saveExistingLookup, scanStateFromLookup, updateLookup, updateLookupResult, withRetriedLookupResult } from "../services/storage";
+import { createLookup, getLookup, normalizeLookup, recordLookupAnalysisFailure, saveExistingLookup, scanStateFromLookup, updateLookup, updateLookupResult, withRetriedLookupResult } from "../services/storage";
 import type { CapturedFrame, IdentificationResult, Lookup, Rating, ScanAnalysisState, ShopJob as ShopJobRecord } from "../types";
 
 export default function Result() {
@@ -241,6 +244,7 @@ export default function Result() {
           ) : null}
           {inspectionLookup ? <PartInspectionForm key={inspectionLookup.id} lookup={inspectionLookup} onSaved={setLookup} /> : null}
           {inspectionLookup ? <ReportActions lookup={inspectionLookup} /> : null}
+          {inspectionLookup ? <TrainingConsentPanel key={`consent:${inspectionLookup.id}`} scanId={inspectionLookup.id} /> : null}
           {datasetSourceUrls.length > 0 ? <SourceFinePrint urls={datasetSourceUrls} /> : null}
           <Link
             className="block rounded-xl border border-[var(--ds-border)] p-4 text-center text-sm font-bold text-[var(--ds-fg-1)]"
@@ -568,6 +572,7 @@ function AnalysisError({
     if (!retryFrame || isRetrying || !isAccountScopeCurrent(scope)) return;
     setIsRetrying(true);
     setRetryError(null);
+    const attemptId = createAnalysisAttemptId();
 
     try {
       const result = await identifyCapturedFrame(retryFrame);
@@ -590,6 +595,7 @@ function AnalysisError({
         onScanRetrySuccess({
           frame: retryFrame,
           result,
+          analysisAttemptId: attemptId,
           analyzedAt: new Date().toISOString(),
           provenance: {
             analysisSource: "manual_retry",
@@ -599,7 +605,17 @@ function AnalysisError({
         });
       }
     } catch (err) {
-      if (isAccountScopeCurrent(scope)) setRetryError(getAIErrorMessage(err));
+      if (isAccountScopeCurrent(scope)) {
+        const message = getAIErrorMessage(err);
+        setRetryError(message);
+        if (lookup) {
+          const saved = recordLookupAnalysisFailure(lookup.id, { attemptId,
+            errorCode: err instanceof AIServiceError ? err.code : "analysis_failed",
+            errorMessage: message, attemptedAt: new Date().toISOString() }, lookup);
+          if (!saved.ok) setRetryError(`${message} ${saved.message}`);
+          else if (saved.value) void syncAnalysisFailuresToCloud(saved.value);
+        }
+      }
     } finally {
       setIsRetrying(false);
     }

@@ -87,6 +87,12 @@ describe("onDeviceIdentify", () => {
     });
     expect(pipeline).toHaveBeenCalledTimes(2);
     expect(pipeline).toHaveBeenCalledWith("zero-shot-image-classification", expect.any(String), expect.any(Object));
+    const first = await identifyOnDevice(frame);
+    const second = await identifyOnDevice(frame);
+    expect(first.modelRun?.runId).toMatch(/^[a-f0-9-]{36}$/);
+    expect(first.modelRun?.runId).not.toBe(second.modelRun?.runId);
+    expect(first.modelRun?.promptVersion).toBe("clip-labels-2026-09-27-v1");
+    expect(first.modelRun?.pipelineVersion).toBe("on-device-2026-09-27-v1");
 
     vi.doUnmock("@huggingface/transformers");
     vi.resetModules();

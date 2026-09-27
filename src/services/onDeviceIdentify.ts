@@ -1,3 +1,4 @@
+import { createAnalysisAttemptId } from "../lib/analysisAttempt";
 import { SCAN_CATEGORIES, type CapturedFrame, type IdentificationResult, type ScanCategory } from "../types";
 
 // Small zero-shot image classifier that runs fully in the browser (WebGPU, WASM fallback).
@@ -118,6 +119,9 @@ export async function identifyOnDevice(frame: CapturedFrame): Promise<Identifica
   const result = mapOnDeviceTextToResult(text);
   if (result.modelRun) {
     result.modelRun.latencyMs = latencyMs;
+    result.modelRun.runId = createAnalysisAttemptId();
+    result.modelRun.promptVersion = "clip-labels-2026-09-27-v1";
+    result.modelRun.pipelineVersion = "on-device-2026-09-27-v1";
   }
 
   return result;

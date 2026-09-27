@@ -56,6 +56,7 @@ type CloudHistoryRow = {
   technician_user_id: unknown;
   vehicle_context: unknown;
   image_path: unknown;
+  analysis_attempt_id?: unknown;
   inspection_json?: unknown;
 };
 
@@ -101,16 +102,18 @@ export async function readCloudLookups(limit = DEFAULT_HISTORY_LIMIT): Promise<R
     .eq("user_id", scope.userId)
     .order("created_at", { ascending: false })
     .limit(limit);
-  let optionalColumns = [...CLOUD_HISTORY_SHOP_COLUMNS, "inspection_json"];
+  let optionalColumns = [...CLOUD_HISTORY_SHOP_COLUMNS, "inspection_json", "analysis_attempt_id"];
   let rowsResult = await selectRows(`${CLOUD_HISTORY_CORE_SELECT},${optionalColumns.join(",")}`);
   if (!isAccountScopeCurrent(scope)) return changed();
   // The shop and inspection migrations may be deployed independently. Drop only the
   // missing group, preserving whichever fields this database supports.
-  for (let attempt = 0; attempt < 2 && rowsResult.error; attempt += 1) {
+  for (let attempt = 0; attempt < 3 && rowsResult.error; attempt += 1) {
     if (isMissingShopColumn(rowsResult.error)) {
       optionalColumns = optionalColumns.filter((column) => !CLOUD_HISTORY_SHOP_COLUMNS.includes(column));
     } else if (isMissingInspectionColumn(rowsResult.error)) {
       optionalColumns = optionalColumns.filter((column) => column !== "inspection_json");
+    } else if (/does not exist|schema cache|could not find .* column/i.test(rowsResult.error.message ?? "") && rowsResult.error.message?.includes("analysis_attempt_id")) {
+      optionalColumns = optionalColumns.filter((column) => column !== "analysis_attempt_id");
     } else {
       break;
     }
@@ -192,6 +195,7 @@ function mapCloudRowToLookup(
 
   return {
     id: isString(row.local_id) ? row.local_id : `cloud-${index}`,
+    analysisAttemptId: isString(row.analysis_attempt_id) ? row.analysis_attempt_id : undefined,
     createdAt,
     frame: {
       imageBase64: signedImageMap.get(imagePath) ?? FALLBACK_IMAGE,
@@ -277,6 +281,8 @@ function parseIdentifyModelRun(value: unknown): IdentifyModelRun | undefined {
   return {
     provider: value.provider,
     model: model.slice(0, 160),
+    ...Object.fromEntries(["runId", "promptVersion", "pipelineVersion"].flatMap((key) =>
+      isString(value[key]) && /^[a-zA-Z0-9._:-]{1,160}$/.test(value[key]) ? [[key, value[key]]] : [])),
     latencyMs: typeof value.latencyMs === "number" && Number.isFinite(value.latencyMs) && value.latencyMs >= 0
       ? Math.round(value.latencyMs)
       : 0,

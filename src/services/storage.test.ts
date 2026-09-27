@@ -14,6 +14,7 @@ import {
   updateLookup,
   updateLookupResult,
   recordCloudSaveAttempt,
+  recordLookupAnalysisFailure,
   subscribeToLookupChanges,
 } from "./storage";
 import type { ScanAnalysisState } from "../types";
@@ -165,6 +166,21 @@ describe("storage", () => {
     if (mutation === "copy") saveExistingLookup(getLookup(saved.id)!);
     if (mutation === "inspection") saveLookupInspection(saved.id, { ...emptyPartInspection, inspectorName: "Sam", confirmedPartName: "Alternator", identityEvidence: "Stamped marking" });
     expect(getLookup(saved.id)?.cloudSave).toBeUndefined();
+  });
+
+  it("keeps run provenance and failed retry records without replacing the successful prediction", () => {
+    const result = { ...scanState.result!, modelRun: { ...scanState.result!.modelRun!, runId: "run-1", promptVersion: "prompt-1", pipelineVersion: "pipeline-1" } };
+    const saved = createLookup({ ...scanState, result, analysisAttemptId: "request-1" }).value;
+    expect(getLookup(saved.id)?.result?.modelRun).toMatchObject({ runId: "run-1", promptVersion: "prompt-1", pipelineVersion: "pipeline-1" });
+    recordLookupAnalysisFailure(saved.id, { attemptId: "request-2", errorCode: "network", errorMessage: "Offline", attemptedAt: "2026-09-27T00:00:00Z" });
+    const reloaded = getLookup(saved.id)!;
+    expect(reloaded.result?.partName).toBe(result.partName);
+    expect(reloaded.analysisFailures).toEqual([{ attemptId: "request-2", errorCode: "network", errorMessage: "Offline", attemptedAt: "2026-09-27T00:00:00Z" }]);
+    expect(scanStateFromLookup(reloaded).analysisAttemptId).toBe("request-1");
+    const failed = createLookup({ ...scanState, result: undefined, analysisAttemptId: "first-failure", errorCode: "network", errorMessage: "Offline" }).value;
+    updateLookupResult(failed.id, result);
+    expect(getLookup(failed.id)?.analysisFailures?.[0].attemptId).toBe("first-failure");
+    expect(getLookup(failed.id)?.result?.modelRun?.runId).toBe("run-1");
   });
 
   it("creates and reads a saved lookup", () => {

@@ -374,6 +374,55 @@ describe("cloudSync", () => {
     expect(mocks.createClient).not.toHaveBeenCalled();
   });
 
+  it("keeps inference identity stable across sync/feedback and separates new runs and isolated image bytes", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    const runUpsert = vi.fn().mockResolvedValue({ error: null });
+    const rowUpsert = vi.fn().mockResolvedValue({ error: null });
+    const insert = vi.fn().mockResolvedValue({ error: null });
+    mocks.createClient.mockReturnValue({
+      auth: { getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }) },
+      storage: { from: vi.fn().mockReturnValue({ upload }) },
+      from: vi.fn((table: string) => ({ upsert: table === "scan_model_runs" ? runUpsert : rowUpsert, insert, delete: makeDeleteQuery })),
+    });
+    const { syncLookupToCloud } = await import("./cloudSync");
+    const legacy = makeLookup();
+    expect((await syncLookupToCloud(legacy)).ok).toBe(true);
+    const legacyKey = runUpsert.mock.calls[0][0].run_key;
+    expect(legacyKey).toMatch(/^legacy:[a-f0-9]{64}$/);
+    expect(runUpsert.mock.calls[0][0].prompt_version).toBeNull();
+    expect((await syncLookupToCloud({ ...legacy, correction: "Human correction", rating: "up", notes: "New note" })).ok).toBe(true);
+    expect(runUpsert.mock.calls[1][0].run_key).toBe(legacyKey);
+    const current = { ...legacy, isolatedImageBase64: "data:image/png;base64,Y3JvcA==", focusMode: "crop" as const,
+      result: { ...legacy.result!, modelRun: { ...legacy.result!.modelRun!, runId: "attempt-1", promptVersion: "prompt-v1", pipelineVersion: "pipeline-v1" } } };
+    expect((await syncLookupToCloud(current)).ok).toBe(true);
+    expect(runUpsert.mock.calls[2][0]).toMatchObject({ run_key: "attempt-1", prompt_version: "prompt-v1", pipeline_version: "pipeline-v1" });
+    expect(runUpsert.mock.calls[2][1]).toEqual({ onConflict: "user_id,scan_local_id,run_key", ignoreDuplicates: true });
+    expect(rowUpsert).toHaveBeenCalledWith(expect.objectContaining({ isolated_image_path: expect.stringMatching(/^user-1\/lookup-1\/isolated-[a-f0-9]{64}\.png$/), isolated_image_kind: "crop", isolated_image_byte_length: 4 }), expect.anything());
+    current.result.modelRun.runId = "attempt-2";
+    current.result.partName = "Different retry prediction";
+    expect((await syncLookupToCloud(current)).ok).toBe(true);
+    expect(runUpsert.mock.calls[3][0].run_key).toBe("attempt-2");
+    expect(runUpsert.mock.calls[2][0].metadata_json.originalPrediction).toBe(legacy.result!.partName);
+    expect(runUpsert.mock.calls[3][0].metadata_json.originalPrediction).toBe("Different retry prediction");
+    expect(runUpsert.mock.calls[2][0].metadata_json.candidatePredictions).toEqual([{ partName: "Starter motor", confidence: "low" }]);
+    const failed = { ...legacy, result: undefined, analysisAttemptId: "failed-attempt-1", errorCode: "network", errorMessage: "No connection" };
+    expect((await syncLookupToCloud(failed)).ok).toBe(true);
+    expect(runUpsert.mock.calls[4][0]).toMatchObject({ run_key: "failed-attempt-1", provider: "unknown", prompt_version: null, error_code: "network" });
+    const { syncAnalysisFailuresToCloud } = await import("./cloudSync");
+    const cloudOnly = { ...legacy, frame: { ...legacy.frame, imageBase64: "https://example.test/signed-image" }, analysisFailures: [
+      { attemptId: "retry-failure-1", errorCode: "network", errorMessage: "Offline", attemptedAt: "2026-09-27T00:00:00Z" },
+      { attemptId: "retry-failure-2", errorCode: "provider_error", errorMessage: "Unavailable", attemptedAt: "2026-09-27T00:00:01Z" },
+    ] };
+    upload.mockClear();
+    expect((await syncAnalysisFailuresToCloud(cloudOnly)).ok).toBe(true);
+    expect(upload).not.toHaveBeenCalled();
+    expect(runUpsert.mock.calls.slice(-2).map(([row]) => row.run_key)).toEqual(["retry-failure-1", "retry-failure-2"]);
+    runUpsert.mockResolvedValueOnce({ error: { message: "Connection lost" } });
+    expect((await syncAnalysisFailuresToCloud(cloudOnly)).ok).toBe(false);
+  });
+
   it("uploads the scan image and upserts the dataset row for the current user", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
@@ -389,7 +438,7 @@ describe("cloudSync", () => {
       if (table === "scan_candidates") return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert: candidateInsert };
       if (table === "scan_evidence") return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert: evidenceInsert };
       if (table === "scan_corrections") return { upsert: correctionUpsert };
-      if (table === "scan_model_runs") return { insert: modelRunInsert };
+      if (table === "scan_model_runs") return { insert: modelRunInsert, upsert: modelRunInsert };
       if (table === "sync_events") return { insert: syncEventInsert };
       throw new Error(`Unexpected table ${table}`);
     });
@@ -484,7 +533,7 @@ describe("cloudSync", () => {
       ocr_used: false,
       provider: "huggingface",
       scan_local_id: "lookup-1",
-    }));
+    }), { onConflict: "user_id,scan_local_id,run_key", ignoreDuplicates: true });
     expect(syncEventInsert).toHaveBeenCalledWith(expect.objectContaining({
       event_type: "upsert",
       metadata_json: expect.objectContaining({
@@ -517,7 +566,7 @@ describe("cloudSync", () => {
       if (table === "scan_candidates") return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert: candidateInsert };
       if (table === "scan_evidence") return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert: evidenceInsert };
       if (table === "scan_corrections") return { upsert: correctionUpsert };
-      if (table === "scan_model_runs") return { insert: modelRunInsert };
+      if (table === "scan_model_runs") return { insert: modelRunInsert, upsert: modelRunInsert };
       if (table === "sync_events") return { insert: syncEventInsert };
       throw new Error(`Unexpected table ${table}`);
     });
@@ -581,7 +630,7 @@ describe("cloudSync", () => {
       if (table === "scan_candidates") return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert: candidateInsert };
       if (table === "scan_evidence") return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert: evidenceInsert };
       if (table === "scan_corrections") return { upsert: correctionUpsert };
-      if (table === "scan_model_runs") return { insert: modelRunInsert };
+      if (table === "scan_model_runs") return { insert: modelRunInsert, upsert: modelRunInsert };
       if (table === "sync_events") return { insert: syncEventInsert };
       throw new Error(`Unexpected table ${table}`);
     });
@@ -662,7 +711,7 @@ describe("cloudSync", () => {
       if (table === "scan_candidates") return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert: candidateInsert };
       if (table === "scan_evidence") return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert: evidenceInsert };
       if (table === "scan_corrections") return { upsert: correctionUpsert };
-      if (table === "scan_model_runs") return { insert: modelRunInsert };
+      if (table === "scan_model_runs") return { insert: modelRunInsert, upsert: modelRunInsert };
       if (table === "sync_events") return { insert: syncEventInsert };
       throw new Error(`Unexpected table ${table}`);
     });
@@ -770,7 +819,7 @@ describe("cloudSync", () => {
           return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert };
         }
         if (table === "scan_model_runs" || table === "sync_events") {
-          return { insert };
+          return { insert, upsert };
         }
         return { upsert };
       }),
@@ -784,12 +833,14 @@ describe("cloudSync", () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
     const insert = vi.fn().mockResolvedValue({ error: null });
+    const scanQuery = { select: vi.fn(), eq: vi.fn(), abortSignal: vi.fn(), maybeSingle: vi.fn().mockResolvedValue({ data: { local_id: "scan-1" }, error: null }) };
+    for (const method of [scanQuery.select, scanQuery.eq, scanQuery.abortSignal]) method.mockReturnValue(scanQuery);
     mocks.createClient.mockReturnValue({
       auth: {
         getSession: vi.fn(),
         signInAnonymously: vi.fn(),
       },
-      from: vi.fn().mockReturnValue({ insert }),
+      from: vi.fn((table) => table === "scan_lookups" ? scanQuery : { insert }),
       storage: {
         from: vi.fn(),
       },
@@ -824,12 +875,46 @@ describe("cloudSync", () => {
       message: "It is a starter.",
     });
     expect(insert).toHaveBeenLastCalledWith({
+      user_id: "user-1",
       category: "ai_result",
+      issue_code: "wrong_part",
+      scan_local_id: "scan-1",
+      reported_prediction: "Alternator",
       contact_email: null,
       message: "DeepSpec report v1\nIssue: wrong_part\nScan: scan-1\nPrediction: Alternator\n\nIt is a starter.",
       source: "pwa",
     });
     expect(insert).toHaveBeenCalledTimes(3);
+    expect(scanQuery.eq).toHaveBeenCalledWith("user_id", "user-1");
+    expect(scanQuery.eq).toHaveBeenCalledWith("local_id", "scan-1");
+  });
+
+  it.each(["no-context", "local-only", "read-error", "account-switch"])("sends only permitted structured report fields: %s", async (mode) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const insert = vi.fn().mockResolvedValue({ error: null });
+    const { setActiveAccount } = await import("../lib/accountScope");
+    const query = { select: vi.fn(), eq: vi.fn(), abortSignal: vi.fn(), maybeSingle: vi.fn(async () => {
+      if (mode === "account-switch") { setActiveAccount("user-2"); setActiveAccount("user-1"); }
+      return { data: null, error: mode === "read-error" ? { message: "Offline" } : null };
+    }) };
+    for (const method of [query.select, query.eq, query.abortSignal]) method.mockReturnValue(query);
+    mocks.createClient.mockReturnValue({ from: vi.fn((table) => table === "scan_lookups" ? query : { insert }) });
+    const { syncFeedbackToCloud } = await import("./cloudSync");
+    const result = await syncFeedbackToCloud({ id: "report-1", createdAt: "2026-09-27T00:00:00Z", category: "ai_result", contactEmail: "", issue: "wrong_part", message: "Starter, not alternator.",
+      ...(mode === "no-context" ? {} : { context: { scanId: "local-scan", predictedPart: "Alternator", imageBase64: "private-photo", chat: "private-chat", session: "private-token" } }),
+    });
+    if (mode === "read-error" || mode === "account-switch") {
+      expect(result.ok).toBe(false);
+      expect(insert).not.toHaveBeenCalled();
+      return;
+    }
+    expect(result.ok).toBe(true);
+    expect(insert).toHaveBeenCalledWith({ user_id: "user-1", category: "ai_result", contact_email: null, source: "pwa", issue_code: "wrong_part", scan_local_id: null, reported_prediction: null,
+      message: mode === "no-context" ? "DeepSpec report v1\nIssue: wrong_part\n\nStarter, not alternator." : "DeepSpec report v1\nIssue: wrong_part\nScan: local-scan\nPrediction: Alternator\n\nStarter, not alternator.",
+    });
+    if (mode === "no-context") expect(query.select).not.toHaveBeenCalled();
+    else expect(result.message).toContain("not linked to a cloud record");
   });
 
   describe("waitlist signup failures", () => {
@@ -909,7 +994,7 @@ describe("cloudSync", () => {
           if (table === "scan_candidates") return { insert: candidateInsert };
           if (table === "scan_evidence") return { insert: evidenceInsert };
           if (table === "scan_corrections") return { upsert: correctionUpsert };
-          if (table === "scan_model_runs") return { insert: modelRunInsert };
+          if (table === "scan_model_runs") return { insert: modelRunInsert, upsert: modelRunInsert };
           if (table === "sync_events") {
             return {
               delete: vi.fn().mockReturnValue(ownerDeleteQuery),

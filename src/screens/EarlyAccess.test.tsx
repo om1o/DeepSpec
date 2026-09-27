@@ -74,7 +74,7 @@ describe("EarlyAccess", () => {
     });
     await userEvent.click(screen.getByRole("button", { name: "Save feedback" }));
 
-    expect(await screen.findByText("Feedback saved on this device and synced to cloud.")).toBeInTheDocument();
+    expect(await screen.findByText("Feedback saved on this device. Feedback synced.")).toBeInTheDocument();
     expect(feedbackSync).toHaveBeenCalledWith(expect.objectContaining({ message: "I would pay for scan reports I can send to a mechanic." }));
   });
 
@@ -93,6 +93,16 @@ describe("EarlyAccess", () => {
     expect(await screen.findByText("Saved on this device. Cloud sync failed: network unavailable")).toBeInTheDocument();
     const savedData = JSON.parse(localStorage.getItem(accountStorageKey(ENGAGEMENT_STORAGE_KEY)) ?? "{}");
     expect(savedData.waitlist).toHaveLength(1);
+  });
+
+  it("shows when an opted-in report's scan context was sent as text without a cloud link", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    vi.spyOn(cloudSync, "syncFeedbackToCloud").mockResolvedValue({ ok: true, message: "Feedback synced. Scan context is included as text; this scan is not linked to a cloud record." });
+    renderEarlyAccess();
+    fireEvent.change(screen.getByLabelText("Feedback"), { target: { value: "The scan picked the wrong part." } });
+    await userEvent.click(screen.getByRole("button", { name: "Save feedback" }));
+    expect(await screen.findByText(/Feedback saved on this device\. Feedback synced\. Scan context is included as text/)).toBeInTheDocument();
   });
 
   it("submits a specific AR report with no required notes and no attached context by default", async () => {

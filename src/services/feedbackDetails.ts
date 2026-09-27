@@ -38,8 +38,8 @@ export function normalizeFeedbackContext(value: unknown): FeedbackContext | unde
   };
 }
 
-// The existing cloud table has no issue/context columns. Keep a versioned,
-// human-readable envelope in its message until a dedicated migration is shipped.
+// Preserve the versioned, human-readable envelope alongside structured columns
+// so older reports and device-only scan context remain understandable.
 export function feedbackCloudMessage(feedback: FeedbackSubmission) {
   const issue = getFeedbackIssue(feedback.issue);
   const context = normalizeFeedbackContext(feedback.context);

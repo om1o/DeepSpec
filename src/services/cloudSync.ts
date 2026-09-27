@@ -3,7 +3,7 @@ import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { getAuthClient } from "./auth";
 import { getLookup, recordCloudSaveAttempt } from "./storage";
 import type { FeedbackSubmission, Lookup, WaitlistSignup } from "../types";
-import { feedbackCloudMessage } from "./feedbackDetails";
+import { feedbackCloudMessage, getFeedbackIssue, normalizeFeedbackContext } from "./feedbackDetails";
 
 const SCAN_BUCKET = "scan-images";
 const CLOUD_HEALTH_STORAGE_KEY = "deep-spec:cloud-health";
@@ -274,6 +274,7 @@ async function performLookupSync(lookup: Lookup, scope: AccountScope, guard: () 
     if (!Array.isArray(updated.data) || updated.data.length === 0) {
       return { ok: false, message: "Inspection is saved on this device, but its cloud scan was not found for this account." };
     }
+    await syncAnalysisFailureRows(supabase, user.id, lookup, guard);
     return { ok: true, message: "Inspection synced to your saved scan." };
   }
   const image = dataUrlToBlob(lookup.frame.imageBase64);
@@ -290,7 +291,11 @@ async function performLookupSync(lookup: Lookup, scope: AccountScope, guard: () 
     throw new Error(uploaded.error.message);
   }
 
+  const isolatedImage = await uploadIsolatedImage(supabase, user.id, lookup, guard);
+  guard();
   const saved = await upsertScanLookupRow(supabase, {
+    ...isolatedImage,
+    analysis_attempt_id: lookup.analysisAttemptId ?? null,
     analyzed_at: lookup.analyzedAt ?? null,
     captured_at: lookup.frame.capturedAt,
     chat_history: lookup.chatHistory,
@@ -431,6 +436,8 @@ async function syncDatasetDetailTables(supabase: SupabaseClient, userId: string,
   guard();
   await insertScanModelRun(supabase, userId, lookup);
   guard();
+  await syncAnalysisFailureRows(supabase, userId, lookup, guard);
+  guard();
   await insertSyncEvent(supabase, userId, lookup, "upsert", "success", "Scan dataset details synced.");
 }
 
@@ -514,14 +521,57 @@ async function upsertScanCorrection(supabase: SupabaseClient, userId: string, lo
   );
 }
 
+export async function syncAnalysisFailuresToCloud(lookup: Lookup): Promise<CloudSyncResult> {
+  const scope = getAccountScope();
+  const guard = () => { if (!isAccountScopeCurrent(scope)) throw new Error("Account changed."); };
+  try {
+    const supabase = await getClient();
+    guard();
+    const user = await ensureCloudUser(supabase, scope);
+    guard();
+    await syncAnalysisFailureRows(supabase, user.id, lookup, guard);
+    return { ok: true, message: "Failed attempts synced." };
+  } catch {
+    return { ok: false, message: "Failed attempt is on this device; cloud sync was not confirmed." };
+  }
+}
+
+async function syncAnalysisFailureRows(supabase: SupabaseClient, userId: string, lookup: Lookup, guard: () => void) {
+  for (const failure of lookup.analysisFailures ?? []) {
+    guard();
+    await assertCloudResult(await supabase.from("scan_model_runs").upsert({
+      user_id: userId, scan_local_id: lookup.id, run_key: failure.attemptId,
+      provider: "unknown", model: "unknown", prompt_version: null, pipeline_version: null,
+      error_code: failure.errorCode, error_message: failure.errorMessage,
+      metadata_json: { attemptedAt: failure.attemptedAt, attemptScope: "client-identify-request", hasResult: false },
+    }, { onConflict: "user_id,scan_local_id,run_key", ignoreDuplicates: true }), "Failed attempt sync failed");
+    guard();
+  }
+}
+
 async function insertScanModelRun(supabase: SupabaseClient, userId: string, lookup: Lookup) {
   const modelRun = lookup.result?.modelRun;
+  // Historical snapshots have unknown attempt counts; this digest only deduplicates sync.
+  const legacyHash = modelRun?.runId || lookup.analysisAttemptId ? null : await hashBytes(new TextEncoder().encode(JSON.stringify({
+    result: lookup.result ?? null, errorCode: lookup.errorCode ?? null,
+    errorMessage: lookup.errorMessage ?? null, analyzedAt: lookup.analyzedAt ?? null,
+  })));
+  if (!modelRun?.runId && !lookup.analysisAttemptId && !legacyHash) throw new Error("A secure connection is required to verify historical inference identity.");
+  const runKey = modelRun?.runId || lookup.analysisAttemptId || `legacy:${legacyHash}`;
   await assertCloudResult(
-    await supabase.from("scan_model_runs").insert({
+    await supabase.from("scan_model_runs").upsert({
+      run_key: runKey,
+      pipeline_version: modelRun?.pipelineVersion ?? null,
       error_code: lookup.errorCode ?? null,
       error_message: lookup.errorMessage ?? null,
       metadata_json: {
         analysisSource: lookup.provenance.analysisSource,
+        analysisAttemptId: lookup.analysisAttemptId ?? null,
+        historicalSnapshot: !modelRun?.runId && !lookup.analysisAttemptId,
+        originalPrediction: lookup.result?.partName.slice(0, 160) ?? null,
+        candidatePredictions: (lookup.result?.candidateMatches ?? []).slice(0, 5).map((candidate) => ({
+          partName: candidate.partName.slice(0, 160), confidence: candidate.confidence,
+        })),
         captureMode: lookup.provenance.captureMode,
         confidence: lookup.result?.confidence ?? null,
         confidenceRange: lookup.result?.confidenceRange ?? null,
@@ -539,13 +589,31 @@ async function insertScanModelRun(supabase: SupabaseClient, userId: string, look
       latency_ms: modelRun?.latencyMs ?? null,
       model: modelRun?.model ?? "unknown",
       ocr_used: modelRun?.ocrUsed ?? hasOcrEvidence(lookup),
-      prompt_version: null,
+      prompt_version: modelRun?.promptVersion ?? null,
       provider: modelRun?.provider ?? "unknown",
       scan_local_id: lookup.id,
       user_id: userId,
-    }),
+    }, { onConflict: "user_id,scan_local_id,run_key", ignoreDuplicates: true }),
     "scan_model_runs insert failed",
   );
+}
+
+async function uploadIsolatedImage(supabase: SupabaseClient, userId: string, lookup: Lookup, guard: () => void) {
+  // No crop on this device does not mean a previously saved crop should be cleared.
+  if (!lookup.isolatedImageBase64?.startsWith("data:")) return {};
+  const image = dataUrlToBlob(lookup.isolatedImageBase64);
+  const hash = await hashBytes(image.bytes);
+  if (!hash) throw new Error("A secure connection is required to verify the isolated image.");
+  guard();
+  const path = `${userId}/${lookup.id}/isolated-${hash}.${image.extension}`;
+  const uploaded = await supabase.storage.from(SCAN_BUCKET).upload(path, image.blob, { contentType: image.contentType, upsert: true });
+  guard();
+  if (uploaded.error) throw new Error(uploaded.error.message);
+  return {
+    isolated_image_path: path, isolated_image_hash: hash,
+    isolated_image_mime_type: image.contentType, isolated_image_byte_length: image.byteLength,
+    isolated_image_kind: lookup.focusMode === "mask" ? "segmentation" : lookup.focusMode === "crop" ? "crop" : null,
+  };
 }
 
 async function insertSyncEvent(
@@ -748,6 +816,11 @@ export async function syncWaitlistSignupToCloud(signup: WaitlistSignup): Promise
 }
 
 export async function syncFeedbackToCloud(feedback: FeedbackSubmission): Promise<CloudSyncResult> {
+  const scope = getAccountScope();
+  function checkFeedbackAccount() {
+    const current = getAccountScope();
+    if (current.userId !== scope.userId || current.generation !== scope.generation) throw new Error("Account changed. Reopen feedback before sending it again.");
+  }
   const config = getCloudSyncConfig();
   if (!config) {
     return { ok: false, message: "Cloud sync is not configured yet." };
@@ -755,18 +828,36 @@ export async function syncFeedbackToCloud(feedback: FeedbackSubmission): Promise
 
   try {
     const supabase = await getClient();
+    checkFeedbackAccount();
+    const issue = getFeedbackIssue(feedback.issue);
+    const context = normalizeFeedbackContext(feedback.context);
+    let linkedScan = false;
+    if (context && scope.userId) {
+      const ownedScan = await supabase.from("scan_lookups").select("local_id")
+        .eq("user_id", scope.userId).eq("local_id", context.scanId)
+        .abortSignal(AbortSignal.timeout(15000)).maybeSingle();
+      checkFeedbackAccount();
+      if (ownedScan.error) throw new Error("Could not verify the cloud scan for this report. Check your connection and retry.");
+      linkedScan = ownedScan.data?.local_id === context.scanId;
+    }
+    checkFeedbackAccount();
     const inserted = await supabase.from("feedback_submissions").insert({
+      ...(scope.userId ? { user_id: scope.userId } : {}),
       category: feedback.category,
+      issue_code: issue?.id ?? null,
+      scan_local_id: linkedScan && context ? context.scanId : null,
+      reported_prediction: linkedScan && context ? context.predictedPart : null,
       contact_email: feedback.contactEmail || null,
       message: feedbackCloudMessage(feedback),
       source: "pwa",
     });
+    checkFeedbackAccount();
 
     if (inserted.error) {
       throw new Error(inserted.error.message);
     }
 
-    return { ok: true, message: "Feedback synced." };
+    return { ok: true, message: context && !linkedScan ? "Feedback synced. Scan context is included as text; this scan is not linked to a cloud record." : "Feedback synced." };
   } catch (error) {
     return { ok: false, message: getFriendlySyncError(error) };
   }

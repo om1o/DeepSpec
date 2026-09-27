@@ -1,3 +1,4 @@
+import { createAnalysisAttemptId } from "../lib/analysisAttempt";
 import { getAccountScope, isAccountScopeCurrent, withAccountRouteState } from "../lib/accountScope";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -542,6 +543,7 @@ export default function Scanner() {
     }
 
     if (!isScanRequestActive(requestId)) return;
+    const analysisAttemptId = createAnalysisAttemptId();
     try {
       setAnalysisStep("Reading photo");
       const identifyStartedAt = performance.now();
@@ -593,6 +595,7 @@ export default function Scanner() {
           frame,
           result,
           debug,
+          analysisAttemptId,
           analyzedAt: new Date().toISOString(),
           focusBox,
           focusMode,
@@ -624,6 +627,7 @@ export default function Scanner() {
           frame,
           errorMessage: getSimpleScanErrorMessage(analysisError),
           errorCode: analysisError instanceof AIServiceError ? analysisError.code : "analysis_failed",
+          analysisAttemptId,
           analyzedAt: new Date().toISOString(),
           focusBox,
           focusMode,

@@ -45,6 +45,11 @@ export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup
     ...(isVisualFocusMode(scanState.focusMode) ? { focusMode: scanState.focusMode } : {}),
     ...(cleanImageDataUrl(scanState.isolatedImageBase64) ? { isolatedImageBase64: cleanImageDataUrl(scanState.isolatedImageBase64) } : {}),
     result: scanState.result,
+    analysisAttemptId: cleanTextValue(scanState.analysisAttemptId, 160) || undefined,
+    ...(scanState.errorCode && scanState.analysisAttemptId ? { analysisFailures: [{
+      attemptId: scanState.analysisAttemptId, errorCode: scanState.errorCode,
+      errorMessage: scanState.errorMessage ?? "Analysis failed", attemptedAt: scanState.analyzedAt ?? createdAt,
+    }] } : {}),
     errorMessage: scanState.errorMessage,
     errorCode: scanState.errorCode,
     analyzedAt: scanState.analyzedAt,
@@ -88,6 +93,7 @@ export function withRetriedLookupResult(existing: Lookup, retryState?: ScanAnaly
   return retryState?.result ? {
     ...existing,
     result: retryState.result,
+    analysisAttemptId: retryState.analysisAttemptId,
     analyzedAt: retryState.analyzedAt ?? new Date().toISOString(),
     errorCode: undefined,
     errorMessage: undefined,
@@ -196,6 +202,7 @@ export function updateLookupResult(
     ...existing,
     cloudSave: undefined,
     result,
+    analysisAttemptId: result.modelRun?.runId,
     errorMessage: undefined,
     errorCode: undefined,
     analyzedAt: new Date().toISOString(),
@@ -224,6 +231,16 @@ export function updateLookupResult(
     : { ok: false, message: writeResult.message, value: updatedLookup };
 }
 
+
+export function recordLookupAnalysisFailure(id: string, failure: NonNullable<Lookup["analysisFailures"]>[number], cloudLookup?: Lookup): StorageResult<Lookup | null> {
+  const lookups = getLookups();
+  const local = lookups.find((lookup) => lookup.id === id);
+  const existing = local ?? (cloudLookup?.id === id ? normalizeLookup(cloudLookup) : null);
+  if (!existing) return { ok: false, message: "This saved scan was not found.", value: null };
+  const updated = { ...existing, cloudSave: undefined, analysisFailures: [...(existing.analysisFailures ?? []), failure] };
+  const write = writeLookups(local ? lookups.map((lookup) => lookup.id === id ? updated : lookup) : [updated, ...lookups]);
+  return write.ok ? { ok: true, value: updated } : { ok: false, message: write.message, value: updated };
+}
 
 export function createChatMessage(role: ChatMessage["role"], content: string): ChatMessage {
   return {
@@ -294,6 +311,7 @@ export function deleteLookup(id: string): StorageResult<boolean> {
 
 export function scanStateFromLookup(lookup: Lookup): ScanAnalysisState {
   return {
+    analysisAttemptId: lookup.analysisAttemptId,
     frame: lookup.frame,
     focusBox: lookup.focusBox,
     focusMode: lookup.focusMode,
@@ -419,6 +437,10 @@ export function normalizeLookup(value: unknown): Lookup | null {
 
   return {
     inspection: normalizePartInspection(lookup.inspection),
+    analysisFailures: Array.isArray(lookup.analysisFailures) ? lookup.analysisFailures.filter((failure) =>
+      isRecord(failure) && typeof failure.attemptId === "string" && /^[a-zA-Z0-9._:-]{1,160}$/.test(failure.attemptId)
+      && typeof failure.errorCode === "string" && typeof failure.errorMessage === "string"
+      && typeof failure.attemptedAt === "string" && Number.isFinite(Date.parse(failure.attemptedAt))) : undefined,
     cloudSave: normalizeCloudSave(lookup.cloudSave),
     id: lookup.id,
     createdAt: lookup.createdAt,
@@ -428,6 +450,7 @@ export function normalizeLookup(value: unknown): Lookup | null {
     ...(cleanImageDataUrl(lookup.isolatedImageBase64) ? { isolatedImageBase64: cleanImageDataUrl(lookup.isolatedImageBase64) } : {}),
     result,
     errorMessage: lookup.errorMessage,
+    analysisAttemptId: cleanTextValue(lookup.analysisAttemptId, 160) || undefined,
     errorCode: lookup.errorCode,
     analyzedAt: lookup.analyzedAt,
     scanQuality,
@@ -761,11 +784,17 @@ function normalizeIdentifyModelRun(value: unknown): IdentifyModelRun | undefined
     provider: value.provider,
     model,
     latencyMs,
+    ...normalizeRunProvenance(value),
     ...(typeof value.fallbackReason === "string" && value.fallbackReason.trim()
       ? { fallbackReason: cleanText(value.fallbackReason, 120) }
       : {}),
     ocrUsed: value.ocrUsed === true,
   };
+}
+
+function normalizeRunProvenance(value: Record<string, unknown>) {
+  return Object.fromEntries(["runId", "promptVersion", "pipelineVersion"].flatMap((key) =>
+    typeof value[key] === "string" && /^[a-zA-Z0-9._:-]{1,160}$/.test(value[key]) ? [[key, value[key]]] : []));
 }
 
 function isIdentifyProvider(value: unknown): value is IdentifyProvider {
