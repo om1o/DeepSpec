@@ -28,6 +28,8 @@ const passingQuality = {
 };
 const createFocusedScanCrop = vi.fn(async () => "data:image/jpeg;base64,target-crop");
 const createSegmentedProductIsolation = vi.fn(async () => null);
+const createPromptedProductIsolation = vi.fn(async () => null);
+const supportsWebGpu = vi.fn(async () => false);
 const isPromptableSegmentationEnabled = vi.fn(() => false);
 const isolateSceneObjects = vi.fn(async () => []);
 const detectObjectTargetFromImageData = vi.fn(() => null);
@@ -165,11 +167,13 @@ vi.mock("../lib/productSegmentation", () => ({
 }));
 
 vi.mock("../lib/promptableSegmentation", () => ({
-  createPromptedProductIsolation: async () => null,
+  createPromptedProductIsolation: (...args: unknown[]) => createPromptedProductIsolation(...args),
   isolateSceneObjects: (...args: unknown[]) => isolateSceneObjects(...args),
   isPromptableSegmentationEnabled: () => isPromptableSegmentationEnabled(),
   warmPromptableSegmentation: () => {},
 }));
+
+vi.mock("../lib/webgpu", () => ({ supportsWebGpu: () => supportsWebGpu() }));
 
 vi.mock("../lib/objectTargeting", () => ({
   detectObjectTargetFromImageData: (...args: unknown[]) => detectObjectTargetFromImageData(...args),
@@ -201,6 +205,10 @@ describe("Scanner", () => {
     createFocusedScanCrop.mockResolvedValue("data:image/jpeg;base64,target-crop");
     createSegmentedProductIsolation.mockReset();
     createSegmentedProductIsolation.mockResolvedValue(null);
+    createPromptedProductIsolation.mockReset();
+    createPromptedProductIsolation.mockResolvedValue(null);
+    supportsWebGpu.mockReset();
+    supportsWebGpu.mockResolvedValue(false);
     isPromptableSegmentationEnabled.mockReturnValue(false);
     isolateSceneObjects.mockReset();
     isolateSceneObjects.mockResolvedValue([]);
@@ -269,6 +277,37 @@ describe("Scanner", () => {
       trainingStatus: "raw_unreviewed",
     });
   }, 20000);
+
+  it.each(["SAM", "MVANet", "scene", "debug GPU"])("shows and saves a valid result when optional %s never settles, ignoring its late result", async (stage) => {
+    mockStillImageTarget({ confidence: 0.9, x: 0.2, y: 0.2, width: 0.3, height: 0.3 });
+    const focusBox = { x: 0.2, y: 0.2, width: 0.3, height: 0.3 };
+    const cutout = { focusBox, frame: { imageBase64: "data:image/png;base64,isolated", capturedAt: new Date().toISOString() }, isolatedImageBase64: "data:image/png;base64,isolated" };
+    let settle!: (value: unknown) => void;
+    const pending = new Promise((resolve) => { settle = resolve; });
+    if (stage === "SAM") createPromptedProductIsolation.mockReturnValue(pending);
+    if (stage === "MVANet") createSegmentedProductIsolation.mockReturnValue(pending);
+    if (stage === "scene") {
+      createSegmentedProductIsolation.mockResolvedValue(cutout);
+      isPromptableSegmentationEnabled.mockReturnValue(true);
+      isolateSceneObjects.mockReturnValue(pending);
+      identifyCapturedFrame.mockResolvedValue({ ...makeScanResult("Alternator"), sceneObjects: [{ name: "Wrench", category: "tools", regionLabel: "right", confidence: "high" }] });
+    }
+    if (stage === "debug GPU") {
+      vi.stubEnv("VITE_DEEPSPEC_DEBUG", "true");
+      supportsWebGpu.mockReturnValue(pending);
+    }
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await screen.findByRole("button", { name: "Close result card" }, { timeout: 6000 });
+    expect(getLookups()).toHaveLength(1);
+    expect(getLookups()[0].result?.partName).toBe("Alternator");
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
+    const snapshot = JSON.stringify(getLookups());
+    await act(async () => { settle(stage === "debug GPU" ? true : stage === "scene" ? [{ ...cutout, name: "Late object" }] : cutout); await pending; });
+    expect(JSON.stringify(getLookups())).toBe(snapshot);
+    expect(screen.queryByRole("button", { name: "Isolated Late object" })).not.toBeInTheDocument();
+    vi.unstubAllEnvs();
+  }, 10000);
 
   it.each(["success", "failure"])("ignores a previous scan's late object-analysis %s", async (outcome) => {
     mockStillImageTarget({ confidence: 0.9, x: 0.2, y: 0.2, width: 0.3, height: 0.3 });

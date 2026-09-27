@@ -1,4 +1,5 @@
 import { createAnalysisAttemptId } from "../lib/analysisAttempt";
+import { applyShopFitmentContext } from "../lib/shopFitmentContext";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import { AIServiceError, getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
@@ -226,6 +227,7 @@ export default function Result() {
               capturedAt={capturedAt} 
               frame={frame}
               lookup={lookup}
+              vehicleContext={lookup?.vehicleContext ?? scanState.vehicleContext}
               onLookupRetrySuccess={setLookup}
               onScanRetrySuccess={(nextScanState) => {
                 setLiveScanState(nextScanState);
@@ -534,6 +536,7 @@ function AnalysisError({
   frame,
   lookup,
   message,
+  vehicleContext,
   onLookupRetrySuccess,
   onScanRetrySuccess,
 }: {
@@ -542,6 +545,7 @@ function AnalysisError({
   code?: string;
   frame: CapturedFrame | null | undefined;
   lookup: Lookup | null;
+  vehicleContext?: Lookup["vehicleContext"];
   message: string;
   onLookupRetrySuccess: (updatedLookup: Lookup) => void;
   onScanRetrySuccess: (scanState: ScanAnalysisState) => void;
@@ -575,7 +579,7 @@ function AnalysisError({
     const attemptId = createAnalysisAttemptId();
 
     try {
-      const result = await identifyCapturedFrame(retryFrame);
+      const result = applyShopFitmentContext(await identifyCapturedFrame(retryFrame, undefined, undefined, { vehicleContext }), vehicleContext);
       if (!isAccountScopeCurrent(scope)) return;
       if (lookup) {
         const updateResult = updateLookupResult(lookup.id, result, {
@@ -596,6 +600,7 @@ function AnalysisError({
           frame: retryFrame,
           result,
           analysisAttemptId: attemptId,
+          vehicleContext,
           analyzedAt: new Date().toISOString(),
           provenance: {
             analysisSource: "manual_retry",

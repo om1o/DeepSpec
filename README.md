@@ -74,7 +74,7 @@ turn on the on-screen debug overlay. A kid can follow this:
 6. Paste it into a message and send it back (a screenshot helps too).
 
 What the readout means:
-- **WebGPU: no** → this device can't run SAM in the browser; it falls back to MVANet (the hand may stay). No stall.
+- **WebGPU: no** → optional SAM/MVANet isolation is skipped; the scanner uses a plain crop or full photo. It does not load the heavy WASM background-removal fallback. Visual preparation is time-limited so identification can continue.
 - **WebGPU: yes · SAM ok: yes · small inference ms** → SAM is working. 🎉
 - **WebGPU: yes · SAM error / SAM ok: no** → send the error line; we tweak the model or move SAM to the server.
 

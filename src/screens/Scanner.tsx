@@ -1,4 +1,5 @@
 import { createAnalysisAttemptId } from "../lib/analysisAttempt";
+import { applyShopFitmentContext } from "../lib/shopFitmentContext";
 import { getAccountScope, isAccountScopeCurrent, withAccountRouteState } from "../lib/accountScope";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -52,9 +53,11 @@ console.info(`[DeepSpec UI] Scanner chunk ${SCANNER_UI_TRACE} loaded`);
 
 const SECOND_FRAME_DELAY_MS = 120;
 const IDENTIFY_BUDGET_WARN_MS = 15000;
+const VISUAL_PREPARATION_BUDGET_MS = 3000;
+const SCENE_VISUAL_BUDGET_MS = 1000;
 // Last-resort safety: if a scan ever stalls (a hung image decode, a wedged network),
 // force the loading overlay to clear and let the user try again. Generous so it never
-// trips a normal scan (identify caps at ~45s, segmentation at ~13s).
+// trips a normal scan (identify caps at ~45s; optional visual work has short budgets).
 const SCAN_WATCHDOG_TIMEOUT_MS = 90000;
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
 const UPLOAD_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
@@ -121,22 +124,15 @@ function buildShopScanContext(
   };
 }
 
-function applyShopFitmentContext(result: IdentificationResult, vehicleContext: ShopVehicleContext | undefined): IdentificationResult {
-  if (!vehicleContext) {
-    return result;
+async function optionalVisual<T>(work: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([work, new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), timeoutMs); })]);
+  } catch {
+    return fallback;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
-
-  const requiredNextEvidence = Array.from(new Set([
-    ...(result.requiredNextEvidence ?? []),
-    ...(!vehicleContext.vin ? ["VIN"] : []),
-    "label photo or second angle if the part number is not visible",
-  ]));
-
-  return {
-    ...result,
-    fitmentConfidence: vehicleContext.vin ? result.fitmentConfidence ?? "possible" : "needs_vehicle_context",
-    requiredNextEvidence,
-  };
 }
 
 export default function Scanner() {
@@ -440,13 +436,13 @@ export default function Scanner() {
     let secondFrame: CapturedFrame | undefined;
     const focusedCropTarget = reviewTarget?.normalized ?? null;
     const focusedCrop = focusedCropTarget
-      ? await createFocusedScanCrop(imageBase64, focusedCropTarget)
+      ? await optionalVisual(createFocusedScanCrop(imageBase64, focusedCropTarget), 1000, null)
       : null;
     if (!isScanRequestActive(requestId)) return;
     if (focusedCrop) {
-      const cropQuality = await assessImageQuality(focusedCrop);
+      const cropQuality = await optionalVisual(assessImageQuality(focusedCrop), 1000, null);
       if (!isScanRequestActive(requestId)) return;
-      if (cropQuality.ok) {
+      if (cropQuality?.ok) {
         focusedFrame = { imageBase64: focusedCrop, capturedAt: new Date().toISOString() };
         setAnalysisStep("Preparing scan view");
         // Step 5: a promptable segmenter (SlimSAM) isolates just the boxed object — it can
@@ -454,8 +450,9 @@ export default function Scanner() {
         // frame and returns a full-frame focus box; MVANet works on the crop. Fall back
         // SAM -> MVANet -> crop.
         const promptTargetBox = focusedCropTarget ? objectTargetBoxToVisualFocusBox(focusedCropTarget) : focusBox;
+        const visualDeadline = performance.now() + VISUAL_PREPARATION_BUDGET_MS;
         const prompted = promptTargetBox
-          ? await createPromptedProductIsolation(frame, promptTargetBox)
+          ? await optionalVisual(createPromptedProductIsolation(frame, promptTargetBox), VISUAL_PREPARATION_BUDGET_MS, null)
           : null;
         if (!isScanRequestActive(requestId)) return;
 
@@ -467,7 +464,10 @@ export default function Scanner() {
           focusBox = prompted.focusBox;
           focusTarget = getReviewTargetFromNormalizedFocusBox(focusBox);
         } else {
-          const segmented = await createSegmentedProductIsolation(focusedFrame);
+          const remainingMs = visualDeadline - performance.now();
+          const segmented = remainingMs > 0
+            ? await optionalVisual(createSegmentedProductIsolation(focusedFrame), remainingMs, null)
+            : null;
           isolatedFrame = segmented?.frame ?? focusedFrame;
           isolatedImageBase64 = segmented?.isolatedImageBase64;
           if (segmented && focusedCropTarget) {
@@ -573,7 +573,7 @@ export default function Scanner() {
             { name: getSimpleResultSummary(result).title, category: String(result.scanCategory), box: focusBox, primary: true },
             ...sceneChips.map((chip) => ({ name: chip.object.name, category: String(chip.object.category), box: chip.box, primary: false })),
           ];
-          const objects = await isolateSceneObjects(frame, inputs);
+          const objects = await optionalVisual(isolateSceneObjects(frame, inputs), SCENE_VISUAL_BUDGET_MS, []);
           if (!isScanRequestActive(requestId)) return;
           if (objects.length >= 2) {
             isolatedObjects = objects;
@@ -584,7 +584,7 @@ export default function Scanner() {
       recordScanDebug({ segmenter: isolationSource, focusMode });
       let debug: ScanDebugInfo | undefined;
       if (isScanDebugEnabled()) {
-        debug = { ...getScanDebug(), webgpu: await supportsWebGpu() };
+        debug = { ...getScanDebug(), webgpu: await optionalVisual(supportsWebGpu(), 100, false) };
         if (!isScanRequestActive(requestId)) return;
       }
 

@@ -43,6 +43,7 @@ export async function createSegmentedProductIsolation(frame: CapturedFrame): Pro
   if (!isProductSegmentationEnabled() || !canUseBrowserSegmentation()) {
     return null;
   }
+  if (!(await supportsWebGpu())) return null;
 
   const model = getProductSegmentationModel();
   const pipeline = await withTimeout(getBackgroundRemovalPipeline(model), SEGMENTATION_LOAD_TIMEOUT_MS);
@@ -156,7 +157,7 @@ export function warmProductSegmentation(): void {
     return;
   }
   void Promise.resolve()
-    .then(() => getBackgroundRemovalPipeline(getProductSegmentationModel()))
+    .then(async () => (await supportsWebGpu()) ? getBackgroundRemovalPipeline(getProductSegmentationModel()) : undefined)
     .catch(() => {});
 }
 
@@ -182,16 +183,8 @@ function getBackgroundRemovalPipeline(model: string) {
     .then(async (mod) => {
       const transformers = mod as TransformersModule;
       const dtype = getSegmentationDtype();
-      const device = (await supportsWebGpu()) ? "webgpu" : "wasm";
-      try {
-        return await transformers.pipeline("background-removal", model, { dtype, device });
-      } catch (error) {
-        // WebGPU can reject for this model on some devices — fall back to WASM (the validated path).
-        if (device === "webgpu") {
-          return await transformers.pipeline("background-removal", model, { dtype, device: "wasm" });
-        }
-        throw error;
-      }
+      // Optional visual preparation must not initialize a heavy CPU/WASM fallback.
+      return transformers.pipeline("background-removal", model, { dtype, device: "webgpu" });
     })
     .catch((error) => {
       pipelinesByModel.delete(model);

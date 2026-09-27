@@ -12,7 +12,6 @@ import Shop from "./screens/Shop";
 import ShopJob from "./screens/ShopJob";
 import ShopNewJob from "./screens/ShopNewJob";
 import { getVerifiedAuthUser, subscribeToAuthChanges } from "./services/auth";
-import { startOfflineUpgradeWatcher } from "./services/offlineUpgrade";
 import { getAccountScope, setActiveAccount } from "./lib/accountScope";
 
 const loadScanner = () => import("./screens/Scanner");
@@ -78,11 +77,6 @@ function RequireAuth({ children }: { children: ReactNode }) {
       unsubscribe();
     };
   }, []);
-
-  useEffect(() => {
-    if (status !== "allowed" || !userId) return;
-    return startOfflineUpgradeWatcher();
-  }, [status, userId]);
 
   if (status === "checking") {
     return (

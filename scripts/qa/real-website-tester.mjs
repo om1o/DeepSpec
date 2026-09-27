@@ -709,7 +709,18 @@ async function runSavedHistory() {
   await seedSavedScans();
   await gotoPath("/history");
   await expectText(/Saved scans/i, "history heading", "frontend", ["src/screens/History.tsx"]);
-  const headingContrast = await page.getByRole("heading", { name: "Saved scans", exact: true }).evaluate((heading) => {
+  const headingContrast = await page.getByRole("heading", { name: "Saved scans", exact: true }).evaluate(contrastAgainstMain);
+  if (headingContrast < 4.5) throw new QaIssue("frontend", `History heading contrast is only ${headingContrast.toFixed(2)}:1 against the page background.`, { likelyFiles: ["src/screens/History.tsx"], suggestedFix: "Use the page foreground color for the heading while preserving dark text inside white cards." });
+  await expectText(/QA Alternator/i, "seeded saved scan", "frontend", ["src/screens/History.tsx", "src/services/storage.ts"]);
+
+  return {
+    details: `Saved scan history rendered seeded local QA scans; heading contrast ${headingContrast.toFixed(2)}:1.`,
+    likelyFiles: ["src/screens/History.tsx", "src/services/storage.ts"],
+    status: "pass",
+  };
+}
+
+function contrastAgainstMain(heading) {
     const canvas = globalThis.document.createElement("canvas");
     canvas.width = canvas.height = 1;
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
@@ -726,15 +737,6 @@ async function runSavedHistory() {
     const foreground = luminance(globalThis.getComputedStyle(heading).color);
     const background = luminance(globalThis.getComputedStyle(heading.closest("main")).backgroundColor);
     return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
-  });
-  if (headingContrast < 4.5) throw new QaIssue("frontend", `History heading contrast is only ${headingContrast.toFixed(2)}:1 against the page background.`, { likelyFiles: ["src/screens/History.tsx"], suggestedFix: "Use the page foreground color for the heading while preserving dark text inside white cards." });
-  await expectText(/QA Alternator/i, "seeded saved scan", "frontend", ["src/screens/History.tsx", "src/services/storage.ts"]);
-
-  return {
-    details: `Saved scan history rendered seeded local QA scans; heading contrast ${headingContrast.toFixed(2)}:1.`,
-    likelyFiles: ["src/screens/History.tsx", "src/services/storage.ts"],
-    status: "pass",
-  };
 }
 
 async function runResultDetail() {
@@ -1108,9 +1110,12 @@ async function runShopOnboarding() {
   await expectText(/Work queue/i, "shop queue heading", "frontend", ["src/screens/Shop.tsx"]);
   await expectText(/QA alternator RO/i, "seeded shop job", "frontend", ["src/screens/Shop.tsx", "src/services/shop.ts"]);
   await expectText(/Accuracy feedback/i, "shop accuracy dashboard", "frontend", ["src/screens/Shop.tsx"]);
+  const headingContrast = await page.getByRole("heading", { name: "Work queue", exact: true }).evaluate(contrastAgainstMain);
+  const organizationContrast = await page.getByText("QA Repair Shop", { exact: true }).evaluate(contrastAgainstMain);
+  if (headingContrast < 4.5 || organizationContrast < 4.5) throw new QaIssue("frontend", `Shop heading/organization contrast is ${headingContrast.toFixed(2)}:1 / ${organizationContrast.toFixed(2)}:1 against the page background.`, { likelyFiles: ["src/screens/Shop.tsx"], suggestedFix: "Use page foreground colors outside the white cards." });
 
   return {
-    details: "Shop mode rendered the work queue, seeded job, and accuracy dashboard.",
+    details: `Shop mode rendered the work queue, seeded job, and accuracy dashboard. Heading contrast ${headingContrast.toFixed(2)}:1; organization name ${organizationContrast.toFixed(2)}:1.`,
     likelyFiles: ["src/screens/Shop.tsx", "src/services/shop.ts"],
     status: "pass",
   };
@@ -1234,11 +1239,15 @@ async function runOrgMemberPermissions() {
   await requireAuthForProtectedRoute("org-member-permissions");
   await seedShopData();
   await gotoPath("/shop");
-  await expectText(/Shop corrections stay private/i, "shop privacy copy", "frontend", ["src/screens/Shop.tsx", "src/services/shop.ts"]);
+  await expectText(/Model improvement is off\. Tap to allow corrections to be reviewed\./i, "shop review preference defaults off", "frontend", ["src/screens/Shop.tsx", "src/services/shop.ts"]);
+  const preference = page.getByRole("button", { name: /Model improvement is off\. Tap to allow corrections to be reviewed\./i });
+  if (await preference.getAttribute("aria-pressed") !== "false") {
+    throw new QaIssue("frontend", "The seeded shop review preference is not off by default.", { likelyFiles: ["src/screens/Shop.tsx", "src/services/shop.ts"] });
+  }
+  await expectText(/This preference is saved on this device\. Corrections are not automatically verified or used to train a model\./i, "device-only preference and no automatic training explanation", "frontend", ["src/screens/Shop.tsx"]);
 
   return {
-    details: "Shop dashboard defaulted correction learning to private until explicit opt-in.",
-    likelyFiles: ["src/screens/Shop.tsx", "src/services/shop.ts", "supabase/migrations"],
+    details: "Shop review preference defaulted off with aria-pressed=false and explains device-only storage and no automatic verification or model training. This copy/state check does not verify organization-member database permissions.",
     status: "pass",
   };
 }

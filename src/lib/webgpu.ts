@@ -13,10 +13,16 @@ export function supportsWebGpu(): Promise<boolean> {
     if (!gpu) {
       return false;
     }
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      return Boolean(await gpu.requestAdapter());
+      return await Promise.race([
+        gpu.requestAdapter().then(Boolean),
+        new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), 500); }),
+      ]);
     } catch {
       return false;
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   })();
   return cachedSupport;

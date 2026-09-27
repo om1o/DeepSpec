@@ -495,7 +495,7 @@ describe("Result", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
 
-    expect(identifySpy).toHaveBeenCalledWith(frame);
+    expect(identifySpy).toHaveBeenCalledWith(frame, undefined, undefined, { vehicleContext: undefined });
     expect(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY))).toBeNull();
     expect(screen.queryByText("Provider unavailable")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
@@ -535,6 +535,21 @@ describe("Result", () => {
     expect(screen.queryByText("Network error")).not.toBeInTheDocument();
   });
 
+  it.each(["device", "unsaved"])("retains vehicle context and fitment safeguards on a %s retry", async (source) => {
+    const vehicleContext = { year: "2012", make: "Honda", model: "Civic" };
+    const identifySpy = vi.spyOn(aiService, "identifyCapturedFrame").mockResolvedValue({ ...successfulScan.result!, fitmentConfidence: "supported" });
+    const failure = { frame, vehicleContext, errorCode: "network", errorMessage: "Network error" };
+    if (source === "device") {
+      const failedLookup = makeLookup({ ...failure, result: undefined });
+      localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([failedLookup]));
+      renderResult(null, `/result/${failedLookup.id}`);
+    } else renderResult(failure);
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(identifySpy).toHaveBeenCalledWith(frame, undefined, undefined, { vehicleContext });
+    if (source === "unsaved") await userEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+    expect(getLookups()[0]).toMatchObject({ vehicleContext, result: { fitmentConfidence: "needs_vehicle_context", requiredNextEvidence: expect.arrayContaining(["VIN"]) } });
+  });
+
   it("allows retrying a saved failed scan when online", async () => {
     const failedLookup = makeLookup({
       result: undefined,
@@ -557,7 +572,7 @@ describe("Result", () => {
     const retryButton = screen.getByRole("button", { name: "Try again" });
     await userEvent.click(retryButton);
 
-    expect(identifySpy).toHaveBeenCalledWith(failedLookup.frame);
+    expect(identifySpy).toHaveBeenCalledWith(failedLookup.frame, undefined, undefined, { vehicleContext: undefined });
 
     const savedLookups = JSON.parse(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY)) ?? "[]") as Lookup[];
     expect(savedLookups[0].result?.partName).toBe("Alternator");

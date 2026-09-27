@@ -3,16 +3,16 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { getAccountScope, setActiveAccount } from "./lib/accountScope";
+import { createLookup } from "./services/storage";
 
 const authMock = vi.hoisted(() => ({
   getVerifiedAuthUser: vi.fn(),
   subscribeToAuthChanges: vi.fn(),
-  startOfflineUpgradeWatcher: vi.fn(),
-  stopOfflineUpgradeWatcher: vi.fn(),
+  identifyCapturedFrame: vi.fn(),
 }));
 
 vi.mock("./services/auth", () => authMock);
-vi.mock("./services/offlineUpgrade", () => ({ startOfflineUpgradeWatcher: authMock.startOfflineUpgradeWatcher }));
+vi.mock("./services/aiService", () => ({ identifyCapturedFrame: authMock.identifyCapturedFrame }));
 vi.mock("./screens/Auth", () => ({ default: () => <div>Auth screen</div> }));
 vi.mock("./screens/Chat", () => ({ default: () => <div>Chat screen</div> }));
 vi.mock("./screens/EarlyAccess", () => ({ default: () => <div>Early access screen</div> }));
@@ -29,10 +29,22 @@ describe("App auth guard", () => {
   beforeEach(() => {
     authMock.getVerifiedAuthUser.mockReset();
     authMock.subscribeToAuthChanges.mockReset();
-    authMock.stopOfflineUpgradeWatcher.mockReset();
-    authMock.startOfflineUpgradeWatcher.mockReset().mockReturnValue(authMock.stopOfflineUpgradeWatcher);
+    authMock.identifyCapturedFrame.mockReset();
 
     authMock.subscribeToAuthChanges.mockResolvedValue(() => undefined);
+  });
+
+  it("does not spend scan requests on app mount or reconnect with pending offline estimates", async () => {
+    setActiveAccount("verified-user");
+    createLookup({ frame: { imageBase64: "data:image/png;base64,test", capturedAt: new Date().toISOString() },
+      result: { partName: "Estimate", confidence: "low", scanCategory: "unknown", candidateMatches: [], whatItDoes: "", visibleObservations: [], concerns: [], safetyTriage: "can_help", isSafetyCritical: false, nextAction: "", needsBetterPhoto: false, evidence: [], sourceLinks: [], modelRun: { provider: "on-device", model: "test", latencyMs: 0, ocrUsed: false } } });
+    authMock.getVerifiedAuthUser.mockResolvedValue({ id: "verified-user" });
+    vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "true");
+    renderApp("/history");
+    expect(await screen.findByText("History screen")).toBeInTheDocument();
+    await act(async () => { window.dispatchEvent(new Event("online")); });
+    expect(authMock.identifyCapturedFrame).not.toHaveBeenCalled();
+    vi.unstubAllEnvs();
   });
 
   it("redirects protected routes when Supabase does not verify a user", async () => {
@@ -80,10 +92,8 @@ describe("App auth guard", () => {
     await act(async () => { verifying("saved-user"); resolveInitial(null); });
     expect(screen.getByText("Checking your session...")).toBeInTheDocument();
     expect(screen.queryByText("Auth screen")).not.toBeInTheDocument();
-    expect(authMock.startOfflineUpgradeWatcher).not.toHaveBeenCalled();
     await act(async () => { notify({ id: "saved-user" }); });
     expect(screen.getByText("History screen")).toBeInTheDocument();
-    expect(authMock.startOfflineUpgradeWatcher).toHaveBeenCalledTimes(1);
   });
 
   it("keeps same-account refresh mounted but stops work and remounts for a different account", async () => {
@@ -95,17 +105,14 @@ describe("App auth guard", () => {
     const original = await screen.findByText("History screen");
     await act(async () => { verifying("account-a"); });
     expect(screen.getByText("History screen")).toBe(original);
-    expect(authMock.stopOfflineUpgradeWatcher).not.toHaveBeenCalled();
     await act(async () => { notify({ id: "account-a" }); });
     expect(screen.getByText("History screen")).toBe(original);
     await act(async () => { setActiveAccount(null); verifying("account-b"); });
     expect(screen.getByText("Checking your session...")).toBeInTheDocument();
-    expect(authMock.stopOfflineUpgradeWatcher).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("Auth screen")).not.toBeInTheDocument();
     await act(async () => { notify({ id: "account-b" }); });
     expect(screen.getByText("History screen")).not.toBe(original);
     expect(getAccountScope().userId).toBe("account-b");
-    expect(authMock.startOfflineUpgradeWatcher).toHaveBeenCalledTimes(2);
   });
 
   it("does not downgrade an allowed route when the auth listener setup fails later", async () => {
