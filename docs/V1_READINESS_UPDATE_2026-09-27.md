@@ -28,3 +28,11 @@ The project owner confirmed that no domain has been purchased yet. Domain setup 
 [Launch-content drafts](V1_LAUNCH_CONTENT_DRAFTS.md) include positioning, SEO title/description, organic posts, a real-demo script and two ad variants. Nothing was posted and no advertising spend was started. Existing placeholder-domain SEO files were intentionally left unchanged until a real production origin is chosen.
 
 Next external gates: owner configures GitHub public settings; a dedicated account verifies email/password/recovery; actual phones exercise capture/save/reopen; one seller tests usefulness and time taken. Hosting and domain choice then allow deployed verification and final SEO URLs. Optional billing/shop review findings remain separate gates before those features are enabled.
+
+## September 29 handoff check
+
+PR #114 remains open at code head `809645840dccb3e69cf32d7c64d1c71b2b0504a8`. Its [CI run 36329077468](https://github.com/om1o/DeepSpec/actions/runs/36329077468) completed: lint, all **1,101 tests across 81 files**, and build passed. The overall quality job failed because the public Supabase settings were still missing; auth verification did not execute its verifier and cloud sync was skipped. This supersedes the earlier incomplete full-suite evidence for that code head, but does not establish cloud CI readiness.
+
+The user authorized a merge. It was deferred because the quality gate remains failed, not because merge authorization is missing. The available connected GitHub tools do not expose a repository variable/secret setter. Complete [CI setup](CI_SETUP.md), rerun the current head's checks, and resolve material review findings before merging. No public deployment is implied by a future merge.
+
+The code was already committed and the local/remote trees matched before this documentation change. The [Claude continuation prompt](CLAUDE_V1_CONTINUATION_PROMPT.md) records the completed steps, verification limits, safe Git handoff and next operational-visibility/camera/trial work.
