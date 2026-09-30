@@ -77,6 +77,7 @@ const scenarioHandlers = {
   "scanner-quality-retake": runScannerQualityRetake,
   "shared-device-account-switch": runSharedDeviceAccountSwitch,
   "device-storage-capacity": runDeviceStorageCapacity,
+  "device-storage-recovery": runDeviceStorageRecovery,
   "cloud-save-receipt": runCloudSaveReceipt,
   "auth-restore-no-upload": runAuthRestoreNoUpload,
   "saved-history": runSavedHistory,
@@ -444,6 +445,46 @@ async function runDeviceStorageCapacity() {
   } finally {
     page.off("request", onRequest);
   }
+}
+
+async function runDeviceStorageRecovery() {
+  await requireAuthForProtectedRoute("device-storage-recovery");
+  const key = await qaStoragePrefix() + "deep-spec:lookups";
+  const raw = "{unfinished synthetic QA history";
+  const likelyFiles = ["src/services/storage.ts", "src/screens/History.tsx", "src/screens/Scanner.tsx"];
+  await page.evaluate(({ key, raw }) => localStorage.setItem(key, raw), { key, raw });
+  await gotoPath("/history");
+  const alert = page.getByRole("alert").filter({ hasText: "Saved scans could not be read safely" });
+  await alert.waitFor({ state: "visible" });
+  if (await page.getByText("No saved scans yet", { exact: true }).count()) throw new QaIssue("frontend", "Unreadable device history is presented as an empty library.", { likelyFiles });
+  await page.getByRole("button", { name: "Retry reading saved scans", exact: true }).click();
+  if (await page.evaluate((key) => localStorage.getItem(key), key) !== raw) throw new QaIssue("frontend", "Retrying a failed device read changed the original stored bytes.", { likelyFiles });
+  const warningPath = join(screenshotDir, "device-storage-recovery-warning.png");
+  await page.screenshot({ path: warningPath, fullPage: true });
+  let identifyRequests = 0;
+  const onRequest = (request) => { if (new URL(request.url()).pathname === "/api/identify") identifyRequests += 1; };
+  page.on("request", onRequest);
+  try {
+    await gotoPath("/scan");
+    const dataUrl = await page.evaluate(() => {
+      const canvas = globalThis.document.createElement("canvas"); canvas.width = 320; canvas.height = 240;
+      const drawing = canvas.getContext("2d"); drawing.fillStyle = "black"; drawing.fillRect(0, 0, 320, 240);
+      return canvas.toDataURL("image/png");
+    });
+    await page.getByLabel("Upload photo", { exact: true }).setInputFiles({ name: "unreadable-history.png", mimeType: "image/png", buffer: Buffer.from(dataUrl.split(",")[1], "base64") });
+    await page.getByText(/Saved scans could not be read safely/).waitFor({ state: "visible" });
+    if (identifyRequests || await page.evaluate((key) => localStorage.getItem(key), key) !== raw) throw new QaIssue("frontend", "Unreadable history did not stop identification or preserve original device bytes.", { likelyFiles });
+  } finally { page.off("request", onRequest); }
+  await gotoPath("/history");
+  await alert.waitFor({ state: "visible" });
+  const records = createSeedLookups();
+  const restored = JSON.stringify(records);
+  // Simulate storage becoming readable using only this isolated browser's synthetic fixtures.
+  await page.evaluate(({ key, restored }) => localStorage.setItem(key, restored), { key, restored });
+  await page.getByRole("button", { name: "Retry reading saved scans", exact: true }).click();
+  await expectText(/QA Alternator/i, "recovered saved scan", "frontend", likelyFiles);
+  if (await alert.count() || await page.evaluate((key) => localStorage.getItem(key), key) !== restored) throw new QaIssue("frontend", "Successful read retry did not clear the warning or changed recovered records.", { likelyFiles });
+  return { status: "pass", details: "Unreadable synthetic history showed a recovery warning rather than an empty library; retries preserved original bytes; upload stopped before identification; a later healthy read restored the saved scan without rewriting it.", evidence: { warningPath } };
 }
 
 async function runAuthRestoreNoUpload() {

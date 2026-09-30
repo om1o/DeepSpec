@@ -1,5 +1,5 @@
 import { accountStorageKey, setActiveAccount } from "../lib/accountScope";
-import { createLookup, getLookups, MAX_SAVED_LOOKUPS } from "../services/storage";
+import { createLookup, getLookups, LOOKUPS_STORAGE_KEY, MAX_SAVED_LOOKUPS } from "../services/storage";
 import { hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -785,6 +785,19 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     expect(await screen.findByTestId("scan-save-status")).toHaveTextContent("Not saved on this device");
     expect(syncLookupToCloud).not.toHaveBeenCalled();
+  });
+
+  it.each(["camera", "upload"])("stops %s analysis when existing records cannot be read", async (mode) => {
+    const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    const raw = "{unfinished";
+    localStorage.setItem(key, raw);
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    if (mode === "camera") await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    else await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["test-image"], "part.jpg", { type: "image/jpeg" }));
+    expect(await screen.findByText(/Saved scans could not be read safely/)).toBeInTheDocument();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    expect(syncLookupToCloud).not.toHaveBeenCalled();
+    expect(localStorage.getItem(key)).toBe(raw);
   });
 
   it("captures a second camera frame as a confidence boost when no crop target is present", async () => {

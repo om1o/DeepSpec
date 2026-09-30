@@ -6,7 +6,7 @@ import { signOut } from "../services/auth";
 import { readCloudLookups } from "../services/cloudHistory";
 import { syncLookupToCloud } from "../services/cloudSync";
 import { getScanQualityMetrics, type ScanQualityFailureReason, type ScanQualityMetrics } from "../services/scanQualityMetrics";
-import { DEVICE_SCAN_LIMIT_MESSAGE, MAX_SAVED_LOOKUPS, deleteLookup, getLookup, getLookups, saveExistingLookup, scanStateFromLookup, subscribeToLookupChanges } from "../services/storage";
+import { DEVICE_SCAN_LIMIT_MESSAGE, MAX_SAVED_LOOKUPS, deleteLookup, getLookup, readLookups, saveExistingLookup, scanStateFromLookup, subscribeToLookupChanges } from "../services/storage";
 import { getTrainingReadiness } from "../services/trainingReadiness";
 import { getLocalDateStamp } from "../lib/utils";
 import { withLatestInspection } from "../lib/partInspection";
@@ -19,7 +19,8 @@ export default function History() {
   const navigate = useNavigate();
   const [mountedScope] = useState(getAccountScope);
   // The on-device cap counts what this device stores, not the merged list that also holds cloud scans.
-  const [deviceLookups, setDeviceLookups] = useState<Lookup[]>(() => getLookups());
+  const [deviceRead, setDeviceRead] = useState(readLookups);
+  const deviceLookups = deviceRead.value;
   const [cloudLookups, setCloudLookups] = useState<Lookup[]>([]);
   const lookups = useMemo(() => mergeLookups(deviceLookups, cloudLookups), [deviceLookups, cloudLookups]);
   const retryPending = useRef(false);
@@ -52,7 +53,7 @@ export default function History() {
   useEffect(() => {
     if (!isAccountScopeCurrent(mountedScope)) return;
     return subscribeToLookupChanges(() => {
-      if (isAccountScopeCurrent(mountedScope)) setDeviceLookups(getLookups());
+      if (isAccountScopeCurrent(mountedScope)) setDeviceRead(readLookups());
     });
   }, [mountedScope]);
 
@@ -77,7 +78,7 @@ export default function History() {
       setStorageMessage(result.ok && latest?.cloudSave?.status !== "acknowledged"
         ? "The cloud accepted the request, but these device changes are not confirmed. Check the saved record before retrying."
         : result.message);
-      setDeviceLookups(getLookups());
+      setDeviceRead(readLookups());
     } catch {
       if (isAccountScopeCurrent(mountedScope)) setStorageMessage("Cloud save could not be confirmed. Your device record is retained; retry when connected.");
     } finally {
@@ -103,7 +104,7 @@ export default function History() {
     if (!isAccountScopeCurrent(mountedScope)) return;
     const removed = deleteLookup(lookup.id);
     if (!removed.ok) { setStorageMessage(`Removal failed. ${removed.message}`); return; }
-    setDeviceLookups(getLookups());
+    setDeviceRead(readLookups());
     setStorageMessage("Stored device copy removed. Cloud records are not deleted; cloud history and open views may still show this scan.");
   }
 
@@ -167,6 +168,15 @@ export default function History() {
           <ScanQualityMetricsPanel metrics={qualityMetrics} />
         </details>
         {storageMessage ? <p role="status" className="mt-4 rounded-2xl bg-[var(--ds-elevated)] p-4 text-sm text-[var(--ds-fg-2)]">{storageMessage}</p> : null}
+        {!deviceRead.ok ? (
+          <section role="alert" className="mt-4 rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 text-sm">
+            <p>{deviceRead.message}</p>
+            {cloudLookups.length > 0 ? <p className="mt-2">Cloud records shown below may not include your latest device changes. Export includes only the records shown.</p> : null}
+            <button type="button" className="mt-3 rounded-full px-3 py-2 font-bold underline" onClick={() => {
+              if (isAccountScopeCurrent(mountedScope)) setDeviceRead(readLookups());
+            }}>Retry reading saved scans</button>
+          </section>
+        ) : null}
         {hasUnassignedDeviceRecords() ? <p role="status" className="mt-4 rounded-2xl bg-[var(--ds-elevated)] p-4 text-sm text-[var(--ds-fg-2)]">Older device records are preserved separately. Their account owner is unknown, so they are not shown or uploaded automatically. Owner-confirmed recovery is required.</p> : null}
 
         {lookups.length > 0 ? (
@@ -248,7 +258,7 @@ export default function History() {
             <p className="text-sm font-bold">No scans match</p>
             <p className="mt-2 text-sm leading-6 text-[var(--ds-fg-3)]">Clear the filters to see every saved scan.</p>
           </section>
-        ) : (
+        ) : deviceRead.ok ? (
           <section className="ds-history-empty">
             <div className="ds-empty-symbol" aria-hidden="true">
               <svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M10 4H4v6m18-6h6v6M4 22v6h6m18-6v6h-6" /><rect x="10" y="10" width="12" height="12" rx="3" /><path d="M14 16h4m-2-2v4" /></svg>
@@ -262,7 +272,7 @@ export default function History() {
               Open scanner
             </Link>
           </section>
-        )}
+        ) : null}
       </div>
     </main>
   );

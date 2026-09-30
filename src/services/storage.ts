@@ -70,14 +70,18 @@ export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup
     ...(normalizeShopVehicleContext(scanState.vehicleContext) ? { vehicleContext: normalizeShopVehicleContext(scanState.vehicleContext) } : {}),
   };
 
-  const lookups = [lookup, ...getLookups()];
+  const read = readLookups();
+  if (!read.ok) return { ok: false, message: read.message, value: lookup };
+  const lookups = [lookup, ...read.value];
   const writeResult = writeLookups(lookups);
 
   return writeResult.ok ? { ok: true, value: lookup } : { ok: false, message: writeResult.message, value: lookup };
 }
 
 export function saveExistingLookup(lookup: Lookup, retryState?: ScanAnalysisState | null): StorageResult<Lookup> {
-  const lookups = getLookups();
+  const read = readLookups();
+  if (!read.ok) return { ok: false, message: read.message, value: lookup };
+  const lookups = read.value;
   const local = lookups.find((entry) => entry.id === lookup.id);
   const existing = local ? withLatestInspection(local, lookup) : lookup;
   const saved = { ...withRetriedLookupResult(existing, retryState), cloudSave: undefined };
@@ -105,7 +109,9 @@ export function withRetriedLookupResult(existing: Lookup, retryState?: ScanAnaly
 }
 
 export function saveLookupInspection(id: string, draft: PartInspectionDraft, cloudLookup?: Lookup): StorageResult<Lookup | null> {
-  const lookups = getLookups();
+  const read = readLookups();
+  if (!read.ok) return { ok: false, message: read.message, value: null };
+  const lookups = read.value;
   const existing = lookups.find((lookup) => lookup.id === id)
     ?? (cloudLookup?.id === id ? normalizeLookup(cloudLookup) : null);
   if (!existing) return { ok: false, value: null, message: "Saved scan not found." };
@@ -119,36 +125,40 @@ export function saveLookupInspection(id: string, draft: PartInspectionDraft, clo
 }
 
 export function getLookups(): Lookup[] {
-  if (!hasLocalStorage()) {
-    return [];
-  }
+  return readLookups().value;
+}
 
+// Mutations must distinguish an empty history from an unreadable history.
+export function readLookups(): StorageResult<Lookup[]> {
+  const unreadable: StorageResult<Lookup[]> = {
+    ok: false, value: [],
+    message: "Saved scans could not be read safely on this device. Existing data was left unchanged. Try reopening DeepSpec; if it continues, keep this browser data and get help recovering it.",
+  };
   try {
+    if (!hasLocalStorage()) return unreadable;
     const rawLookups = localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY));
-    if (!rawLookups) {
-      return [];
-    }
-
+    if (rawLookups === null) return { ok: true, value: [] };
     const parsed = JSON.parse(rawLookups) as unknown;
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
-    return parsed.map(normalizeLookup).filter((lookup): lookup is Lookup => Boolean(lookup));
+    if (!Array.isArray(parsed)) return unreadable;
+    const lookups = parsed.map(normalizeLookup);
+    if (lookups.some((lookup) => lookup === null)) return unreadable;
+    return { ok: true, value: lookups as Lookup[] };
   } catch {
-    return [];
+    return unreadable;
   }
 }
 
-export function getLookup(id: string): Lookup | null {
-  const lookup = getLookups().find((l) => l.id === id) ?? null;
+export function getLookup(id: string, lookups: Lookup[] = getLookups()): Lookup | null {
+  const lookup = lookups.find((l) => l.id === id) ?? null;
   if (!lookup) return null;
   return mergeLookupChatHistory(lookup);
 }
 
 // Patch the current row, never a stale upload snapshot or a deleted record.
 export function recordCloudSaveAttempt(id: string, receipt: NonNullable<Lookup["cloudSave"]>, expectedAttemptId?: string): boolean {
-  const lookups = getLookups();
+  const read = readLookups();
+  if (!read.ok) return false;
+  const lookups = read.value;
   const current = lookups.find((lookup) => lookup.id === id);
   if (!current || (expectedAttemptId && current.cloudSave?.attemptId !== expectedAttemptId)) return false;
   return writeLookups(lookups.map((lookup) => lookup.id === id ? { ...lookup, cloudSave: receipt } : lookup)).ok;
@@ -158,7 +168,9 @@ export function updateLookup(
   id: string,
   patch: Partial<Pick<Lookup, "rating" | "correction" | "notes">>,
 ): StorageResult<Lookup | null> {
-  const lookups = getLookups();
+  const read = readLookups();
+  if (!read.ok) return { ok: false, message: read.message, value: null };
+  const lookups = read.value;
   const index = lookups.findIndex((lookup) => lookup.id === id);
 
   if (index === -1) {
@@ -190,7 +202,9 @@ export function updateLookupResult(
   result: IdentificationResult,
   provenance?: Partial<ScanProvenance>,
 ): StorageResult<Lookup | null> {
-  const lookups = getLookups();
+  const read = readLookups();
+  if (!read.ok) return { ok: false, message: read.message, value: null };
+  const lookups = read.value;
   const index = lookups.findIndex((lookup) => lookup.id === id);
 
   if (index === -1) {
@@ -233,7 +247,9 @@ export function updateLookupResult(
 
 
 export function recordLookupAnalysisFailure(id: string, failure: NonNullable<Lookup["analysisFailures"]>[number], cloudLookup?: Lookup): StorageResult<Lookup | null> {
-  const lookups = getLookups();
+  const read = readLookups();
+  if (!read.ok) return { ok: false, message: read.message, value: null };
+  const lookups = read.value;
   const local = lookups.find((lookup) => lookup.id === id);
   const existing = local ?? (cloudLookup?.id === id ? normalizeLookup(cloudLookup) : null);
   if (!existing) return { ok: false, message: "This saved scan was not found.", value: null };
@@ -252,10 +268,14 @@ export function createChatMessage(role: ChatMessage["role"], content: string): C
 }
 
 export function appendChatMessages(id: string, messages: ChatMessage[]): StorageResult<Lookup | null> {
-  const lookup = getLookup(id);
-  if (!lookup) {
+  const read = readLookups();
+  if (!read.ok) return { ok: false, message: read.message, value: null };
+  const lookups = read.value;
+  const index = lookups.findIndex((storedLookup) => storedLookup.id === id);
+  if (index === -1) {
     return { ok: false, message: "This saved scan was not found.", value: null };
   }
+  const lookup = mergeLookupChatHistory(lookups[index]);
 
   const cleanMessages = messages.map(normalizeChatMessage).filter((message): message is ChatMessage => Boolean(message));
   if (cleanMessages.length === 0) {
@@ -264,13 +284,6 @@ export function appendChatMessages(id: string, messages: ChatMessage[]): Storage
 
   const updatedHistory = [...lookup.chatHistory, ...cleanMessages].slice(-MAX_CHAT_MESSAGES);
   const updatedLookup: Lookup = { ...lookup, chatHistory: updatedHistory, cloudSave: undefined };
-  const lookups = getLookups();
-  const index = lookups.findIndex((storedLookup) => storedLookup.id === id);
-
-  if (index === -1) {
-    return { ok: false, message: "This saved scan was not found.", value: null };
-  }
-
   const updatedLookups = [...lookups];
   updatedLookups[index] = updatedLookup;
 
@@ -293,7 +306,9 @@ export function appendChatMessages(id: string, messages: ChatMessage[]): Storage
 }
 
 export function deleteLookup(id: string): StorageResult<boolean> {
-  const existing = getLookups();
+  const read = readLookups();
+  if (!read.ok) return { ok: false, message: read.message, value: false };
+  const existing = read.value;
   const next = existing.filter((lookup) => lookup.id !== id);
 
   if (next.length === existing.length) {

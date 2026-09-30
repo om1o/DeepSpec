@@ -1,7 +1,7 @@
 import { accountStorageKey, getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { getAuthClient } from "./auth";
-import { getLookup, recordCloudSaveAttempt } from "./storage";
+import { getLookup, readLookups, recordCloudSaveAttempt } from "./storage";
 import type { FeedbackSubmission, Lookup, WaitlistSignup } from "../types";
 import { feedbackCloudMessage, getFeedbackIssue, normalizeFeedbackContext } from "./feedbackDetails";
 
@@ -231,7 +231,9 @@ async function syncLookupForAccount(lookup: Lookup, scope: AccountScope): Promis
   try {
     assertAccount(scope);
     // Screens can hold an older snapshot. Upload current device content when present.
-    lookup = getLookup(lookup.id) ?? lookup;
+    const deviceRead = readLookups();
+    if (!deviceRead.ok) return { ok: false, message: deviceRead.message };
+    lookup = getLookup(lookup.id, deviceRead.value) ?? lookup;
     receipt = {
       attemptId: createRuntimeId(), attemptedAt: new Date().toISOString(), status: "unconfirmed",
       scope: lookup.inspection && !lookup.frame.imageBase64.startsWith("data:") ? "inspection" : "scan",

@@ -78,6 +78,53 @@ describe("History", () => {
 
   afterEach(() => vi.restoreAllMocks());
 
+  it("distinguishes unreadable device records from an empty library and leaves their bytes intact", async () => {
+    const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    const raw = '{"unfinished":';
+    localStorage.setItem(key, raw);
+    renderHistory();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Saved scans could not be read safely");
+    expect(screen.queryByText("No saved scans yet")).not.toBeInTheDocument();
+    expect(localStorage.getItem(key)).toBe(raw);
+  });
+
+  it("keeps cloud records available but warns that exports cannot include unreadable device changes", async () => {
+    const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    localStorage.setItem(key, "{unfinished");
+    readCloudLookupsMock.mockResolvedValue({ ok: true, value: [lookup] });
+    renderHistory();
+    expect(await screen.findByRole("link", { name: /Alternator/ })).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Export includes only the records shown.");
+    expect(localStorage.getItem(key)).toBe("{unfinished");
+  });
+
+  it("can retry a failed device read without changing saved records", async () => {
+    const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    localStorage.setItem(key, JSON.stringify([lookup]));
+    const originalRead = Storage.prototype.getItem;
+    const read = vi.spyOn(Storage.prototype, "getItem").mockImplementation(function (this: Storage, name) {
+      if (name === key) throw new DOMException("Unavailable", "SecurityError");
+      return originalRead.call(this, name);
+    });
+    renderHistory();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Existing data was left unchanged");
+    read.mockRestore();
+    await userEvent.click(screen.getByRole("button", { name: "Retry reading saved scans" }));
+    expect(await screen.findByRole("link", { name: /Alternator/ })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem(key)!)).toEqual([lookup]);
+  });
+
+  it("does not read another account from a stale recovery button", async () => {
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), "not-json");
+    renderHistory();
+    const retry = await screen.findByRole("button", { name: "Retry reading saved scans" });
+    setActiveAccount("other");
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([{ ...lookup, result: { ...lookup.result, partName: "Other account part" } }]));
+    await userEvent.click(retry);
+    expect(screen.queryByText("Other account part")).not.toBeInTheDocument();
+  });
+
   it("refreshes a receipt while History stays open without refetching cloud history", async () => {
     localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
     renderHistory();

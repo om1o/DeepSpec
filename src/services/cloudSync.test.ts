@@ -24,6 +24,32 @@ describe("cloudSync", () => {
     vi.unstubAllEnvs();
   });
 
+  it.each(["malformed", "mixed", "transient"])("does not upload an older screen snapshot when device history is %s", async (mode) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const { accountStorageKey } = await import("../lib/accountScope");
+    const { LOOKUPS_STORAGE_KEY } = await import("./storage");
+    const { syncLookupToCloud } = await import("./cloudSync");
+    const lookup = makeLookup();
+    const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    const raw = mode === "malformed" ? "{bad json" : JSON.stringify(mode === "mixed" ? [lookup, {}] : [lookup]);
+    localStorage.setItem(key, raw);
+    const originalGetItem = Storage.prototype.getItem;
+    let failed = false;
+    const read = vi.spyOn(Storage.prototype, "getItem").mockImplementation(function (this: Storage, itemKey: string) {
+      if (mode === "transient" && itemKey === key && !failed) {
+        failed = true;
+        throw new DOMException("Storage unavailable", "SecurityError");
+      }
+      return originalGetItem.call(this, itemKey);
+    });
+    try {
+      expect(await syncLookupToCloud(lookup)).toMatchObject({ ok: false, message: expect.stringContaining("Saved scans could not be read safely") });
+      expect(mocks.createClient).not.toHaveBeenCalled();
+      expect(originalGetItem.call(localStorage, key)).toBe(raw);
+    } finally { read.mockRestore(); }
+  });
+
   it.each(["auth", "upload", "row"])("stops later writes after a timeout during %s and holds retries until the request settles", async (stage) => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");

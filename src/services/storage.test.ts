@@ -8,6 +8,7 @@ import {
   deleteLookup,
   getLookup,
   getLookups,
+  readLookups,
   LOOKUPS_STORAGE_KEY,
   MAX_SAVED_LOOKUPS,
   scanStateFromLookup,
@@ -155,6 +156,18 @@ describe("storage", () => {
     deleteLookup(saved.id);
     expect(recordCloudSaveAttempt(saved.id, receipt)).toBe(false);
     expect(getLookups()).toEqual([]);
+  });
+
+  it("uses a validated lookup snapshot without rereading it and still merges separately saved chat", () => {
+    const saved = createLookup(scanState).value;
+    const snapshot = readLookups();
+    expect(snapshot.ok).toBe(true);
+    const chat = createChatMessage("user", "New separate chat message");
+    localStorage.setItem(accountStorageKey(`deep-spec:chat:${saved.id}`), JSON.stringify([chat]));
+    const reads = vi.spyOn(Storage.prototype, "getItem");
+    expect(getLookup(saved.id, snapshot.value)?.chatHistory).toEqual([chat]);
+    expect(reads).not.toHaveBeenCalledWith(accountStorageKey(LOOKUPS_STORAGE_KEY));
+    expect(reads).toHaveBeenCalledWith(accountStorageKey(`deep-spec:chat:${saved.id}`));
   });
 
   it.each(["notes", "result", "chat", "copy", "inspection"])("invalidates cloud confirmation after a %s change", (mutation) => {
@@ -510,6 +523,57 @@ describe("storage", () => {
     localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), "{bad json");
 
     expect(getLookups()).toEqual([]);
+  });
+
+  it.each(["malformed", "empty-string", "non-array", "mixed-invalid", "transient-read"])("preserves unreadable device records during every mutation: %s", (mode) => {
+    const original = createLookup(scanState).value;
+    const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    const raw = mode === "malformed" ? "{bad json"
+      : mode === "empty-string" ? ""
+      : mode === "non-array" ? JSON.stringify({ records: [original] })
+      : mode === "mixed-invalid" ? JSON.stringify([original, { id: "recoverable-record", notes: "Keep these notes" }])
+      : JSON.stringify([original]);
+    const mutations = [
+      () => createLookup(scanState),
+      () => saveExistingLookup(original),
+      () => saveLookupInspection(original.id, { ...emptyPartInspection, inspectorName: "Sam" }, original),
+      () => updateLookup(original.id, { notes: "New notes" }),
+      () => updateLookupResult(original.id, scanState.result!),
+      () => recordLookupAnalysisFailure(original.id, { attemptId: "failed-attempt", attemptedAt: original.createdAt, errorCode: "network", errorMessage: "Offline" }, original),
+      () => appendChatMessages(original.id, [createChatMessage("user", "Check this part")]),
+      () => deleteLookup(original.id),
+      () => ({ ok: recordCloudSaveAttempt(original.id, { attemptId: "receipt", attemptedAt: original.createdAt, status: "acknowledged", scope: "scan" }) }),
+    ];
+    for (const mutate of mutations) {
+      vi.restoreAllMocks();
+      localStorage.setItem(key, raw);
+      const originalRead = Storage.prototype.getItem;
+      let failed = false;
+      if (mode === "transient-read") vi.spyOn(Storage.prototype, "getItem").mockImplementation(function (this: Storage, name: string) {
+        if (name === key && !failed) { failed = true; throw new Error("temporary read failure"); }
+        return originalRead.call(this, name);
+      });
+      const write = vi.spyOn(Storage.prototype, "setItem");
+      const remove = vi.spyOn(Storage.prototype, "removeItem");
+      const result = mutate();
+      expect(result.ok).toBe(false);
+      if ("message" in result) expect(result.message).toMatch(/read|recover/i);
+      expect(write).not.toHaveBeenCalled();
+      expect(remove).not.toHaveBeenCalled();
+      expect(localStorage.getItem(key)).toBe(raw);
+    }
+  });
+
+  it("distinguishes unreadable history from an empty history and recovers after a temporary read failure", () => {
+    expect(readLookups()).toEqual({ ok: true, value: [] });
+    const original = createLookup(scanState).value;
+    const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    const raw = localStorage.getItem(key);
+    vi.spyOn(Storage.prototype, "getItem").mockImplementationOnce(() => { throw new Error("temporary read failure"); });
+    expect(readLookups()).toMatchObject({ ok: false, value: [], message: expect.stringContaining("keep this browser data") });
+    expect(localStorage.getItem(key)).toBe(raw);
+    expect(updateLookup(original.id, { notes: "Recovered safely" }).ok).toBe(true);
+    expect(readLookups()).toMatchObject({ ok: true, value: [expect.objectContaining({ id: original.id, notes: "Recovered safely" })] });
   });
 
   it("returns a clean error when device storage is full", () => {
