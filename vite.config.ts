@@ -239,6 +239,7 @@ export default defineConfig(async ({ mode }) => {
       setupFiles: "./src/test/setup.ts",
       testTimeout: 15_000,
       exclude: [
+        "**/.claude/worktrees/**",
         "**/.codex-gitdir-*/**",
         "**/.ditto-site/**",
         "**/artifacts/**",

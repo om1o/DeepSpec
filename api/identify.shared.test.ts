@@ -658,6 +658,7 @@ describe("createIdentifyResponse", () => {
   });
 
   it("uses comma-separated identify fallback models before the built-in fallback", async () => {
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(
@@ -683,11 +684,15 @@ describe("createIdentifyResponse", () => {
       {
         GEMINI_API_KEY: "test-key",
         GEMINI_FALLBACK_MODELS: "gemini-custom-fast, gemini-2.5-flash-lite",
+        DEEPSPEC_DIAGNOSTICS: "1",
       },
     );
 
     expect(fetchSpy.mock.calls[0][0]).toEqual(expect.stringContaining("/models/gemini-2.5-flash:generateContent"));
     expect(fetchSpy.mock.calls[1][0]).toEqual(expect.stringContaining("/models/gemini-custom-fast:generateContent"));
+    const diagnostics = log.mock.calls.filter(([message]) => typeof message === "string" && message.startsWith("[DeepSpec diagnostics] "));
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0][0]).toContain('"code":"ok"');
   });
 
   it("falls back to Hugging Face after Gemini identify models are rate limited", async () => {

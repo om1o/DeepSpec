@@ -8,12 +8,13 @@ Use one seller, one operator and one part family (for example alternators) for t
 
 Before scheduling measured work:
 
-- Owner/developer: deploy `supabase/migrations/20260920000100_part_inspection.sql` through the normal database process; run `npm run verify:supabase -- --inspection` and retain its successful readback/isolation evidence. Missing schema blocks a cloud-backed trial.
-- Owner/developer: configure the existing Supabase Actions secrets and pass the integration PR checks. Record the tested commit, not just the app URL.
+- Owner/developer: verify the live inspection schema and recorded migration history before applying anything; the inspection migration has already been deployed in the project's existing environment. Run `npm run verify:supabase -- --inspection` against the intended trial environment and retain successful readback/isolation evidence. Missing schema blocks a cloud-backed trial; do not blindly reapply migrations.
+- Owner/developer: configure the Supabase Actions variables or secrets described in [CI setup](CI_SETUP.md) and pass the integration PR checks. Record the tested commit, not just the app URL.
 - Observer/operator: rehearse on the actual phone with a fictional record. Save an inspection, reload and compare every field; sign out/in and repeat; verify it on a second signed-in device; export the report. Confirm another account cannot see it. Keep evidence outside Git.
 - Observer/operator: disconnect the network, edit the fictional inspection and save. Confirm device-only/failed-cloud wording, reload to verify local retention, reconnect and save again. Confirm cloud readback before calling it backed up. Do not clear browser storage during recovery.
 - Observer/operator: open the same inspection in two tabs, save in one, then attempt to save the older form. It must retain the draft and request review rather than silently overwrite the newer local inspection. This is a stale-form check, not proof of atomic cross-device conflict protection.
 - Seller: approve photo storage and required intake fields; agree on the timing protocol and continuation target below. No training permission is implied.
+- Operator: if [private diagnostics](OPERATIONAL_DIAGNOSTICS.md) are enabled, verify restricted log access and retention, review a synthetic service failure, and review the trial's safe summary afterward. These logs do not prove a successful save; still perform the explicit save/reopen checks above.
 
 Schedule one short onboarding/rehearsal session, ten manual baseline observations, then one twenty-part comparison batch (ten manual, ten assisted). Review that batch before scheduling another. Keep onboarding/support time separate and report it alongside savings. Measure all normal inspection/testing steps in both arms.
 

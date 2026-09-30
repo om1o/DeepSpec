@@ -1,5 +1,6 @@
 import { IDENTIFY_PROMPT, IDENTIFY_PROMPT_VERSION, IDENTIFY_PIPELINE_VERSION } from "../src/services/systemPrompts";
 import { randomUUID } from "node:crypto";
+import { observeIdentification } from "./identifyDiagnostics.shared";
 import {
   SCAN_CATEGORIES,
   type CandidatePart,
@@ -97,6 +98,10 @@ const OLLAMA_IDENTIFY_PROMPT = [
 ].join(" ");
 
 export async function createIdentifyResponse(body: unknown, env: Record<string, string | undefined>): Promise<IdentifyResponse> {
+  return observeIdentification(() => identifyResponse(body, env), env);
+}
+
+async function identifyResponse(body: unknown, env: Record<string, string | undefined>): Promise<IdentifyResponse> {
   const parsed = parseIdentifyRequest(body);
   if ("error" in parsed) {
     return parsed.error;

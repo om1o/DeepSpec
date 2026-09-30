@@ -52,6 +52,8 @@ export default function Result() {
   const datasetSourceUrls = scanState?.result ? getDatasetSourceUrls(scanState.result.evidence) : [];
   const simpleSummary = scanState?.result ? getSimpleResultSummary(scanState.result) : null;
   const manualCorrectionTrackedRef = useRef(false);
+  const pendingRatingRef = useRef<Rating | undefined>(undefined);
+  const pendingCorrectionRef = useRef<string | null | undefined>(undefined);
 
   function trackManualCorrectionOnce() {
     if (manualCorrectionTrackedRef.current) {
@@ -76,6 +78,7 @@ export default function Result() {
       rating,
       correction: rating === "down" ? lookup.correction : null,
     });
+    pendingRatingRef.current = result.ok ? undefined : rating;
     handleLookupUpdate(result);
   }
 
@@ -89,7 +92,18 @@ export default function Result() {
       trackManualCorrectionOnce();
     }
 
-    handleLookupUpdate(updateLookup(lookup.id, { correction }));
+    handleLookupUpdate(updateLookup(lookup.id, {
+      ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
+      correction,
+    }));
+  }
+
+  function retryFeedbackSave() {
+    if (!lookup || !isAccountScopeCurrent(mountedScope)) return;
+    handleLookupUpdate(updateLookup(lookup.id, {
+      ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
+      correction: lookup.correction,
+    }));
   }
 
 
@@ -143,6 +157,8 @@ export default function Result() {
 
   function handleLookupUpdate(result: ReturnType<typeof updateLookup>) {
     if (result.ok) {
+      pendingRatingRef.current = undefined;
+      pendingCorrectionRef.current = undefined;
       setLookup(result.value);
       setSaveError(null);
       return;
@@ -150,6 +166,7 @@ export default function Result() {
 
     setSaveError(result.message);
     if (result.value) {
+      pendingCorrectionRef.current = result.value.correction;
       setLookup(result.value);
     }
   }
@@ -207,7 +224,7 @@ export default function Result() {
           <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-300 lg:hidden" />
           <div className="space-y-3">
           {storageWarning ? <StorageWarning message={storageWarning} /> : null}
-          {!lookup && saveError ? <StorageWarning message={saveError} /> : null}
+          {saveError ? <StorageWarning message={saveError} /> : null}
           {shopJob ? <ShopJobBanner job={shopJob} /> : null}
           {scanState?.result ? (
             <AnalysisResult
@@ -242,9 +259,15 @@ export default function Result() {
               lookup={lookup}
               onCorrectionChange={handleCorrection}
               onRating={handleRating}
+              saveFailed={Boolean(saveError)}
+              onRetrySave={retryFeedbackSave}
             />
           ) : null}
-          {inspectionLookup ? <PartInspectionForm key={inspectionLookup.id} lookup={inspectionLookup} onSaved={setLookup} /> : null}
+          {inspectionLookup ? <PartInspectionForm key={inspectionLookup.id} lookup={inspectionLookup} onSaved={(saved) => setLookup({
+            ...saved,
+            ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
+            ...(pendingCorrectionRef.current !== undefined ? { correction: pendingCorrectionRef.current } : {}),
+          })} /> : null}
           {inspectionLookup ? <ReportActions lookup={inspectionLookup} /> : null}
           {inspectionLookup ? <TrainingConsentPanel key={`consent:${inspectionLookup.id}`} scanId={inspectionLookup.id} /> : null}
           {datasetSourceUrls.length > 0 ? <SourceFinePrint urls={datasetSourceUrls} /> : null}
@@ -298,10 +321,14 @@ function TrustControl({
   lookup,
   onCorrectionChange,
   onRating,
+  saveFailed,
+  onRetrySave,
 }: {
   lookup: Lookup;
   onCorrectionChange: (correction: string) => void;
   onRating: (rating: Rating) => void;
+  saveFailed: boolean;
+  onRetrySave: () => void;
 }) {
   const [showWhy, setShowWhy] = useState(false);
   const trusted = lookup.rating === "up";
@@ -340,8 +367,9 @@ function TrustControl({
         </label>
       ) : null}
       <p className="mt-3 text-xs font-semibold leading-5 text-[var(--ds-fg-3)]">
-        Feedback is saved with this scan. Using it for model training requires separate permission.
+        {saveFailed ? "Feedback is not saved. Keep this page open or copy your text before leaving." : "Feedback is saved with this scan."} Using it for model training requires separate permission.
       </p>
+      {saveFailed ? <button type="button" onClick={onRetrySave} className="mt-3 rounded-full border border-[var(--ds-border)] px-4 py-2 text-sm font-bold">Retry saving feedback</button> : null}
     </section>
   );
 }

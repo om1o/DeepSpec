@@ -1,12 +1,12 @@
 import { accountStorageKey, setActiveAccount, withAccountRouteState } from "../lib/accountScope";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, vi } from "vitest";
 import Result from "./Result";
 import * as aiService from "../services/aiService";
 import * as reportService from "../services/report";
-import { getLookup, getLookups, LOOKUPS_STORAGE_KEY } from "../services/storage";
+import { getLookup, getLookups, LOOKUPS_STORAGE_KEY, updateLookup } from "../services/storage";
 import { emptyPartInspection } from "../lib/partInspection";
 import type { Lookup, ScanAnalysisState } from "../types";
 
@@ -433,6 +433,107 @@ describe("Result", () => {
     const savedLookup = JSON.parse(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY)) ?? "[]")[0] as Lookup;
     expect(savedLookup.rating).toBe("up");
   }, 30000);
+
+  it("keeps failed feedback edits visible and retries saving them without claiming success", () => {
+    const lookup = makeLookup();
+    const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    localStorage.setItem(key, JSON.stringify([lookup]));
+    renderResult(null, `/result/${lookup.id}`);
+    const originalSetItem = Storage.prototype.setItem;
+    const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, name, value) {
+      if (name === key) throw new DOMException("Full", "QuotaExceededError");
+      originalSetItem.call(this, name, value);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Why or why not" }));
+    fireEvent.change(screen.getByLabelText("Why or why not"), { target: { value: "Actually a starter" } });
+    expect(screen.getByLabelText("Why or why not")).toHaveValue("Actually a starter");
+    expect(screen.getByText("Not saved locally")).toBeInTheDocument();
+    expect(screen.getByText(/Your device storage is full/)).toBeInTheDocument();
+    expect(screen.getByTestId("trust-control")).toHaveTextContent("Feedback is not saved.");
+    expect(screen.getByTestId("trust-control")).not.toHaveTextContent("Feedback is saved with this scan.");
+    expect(getLookup(lookup.id)).toMatchObject({ rating: null, correction: null });
+
+    write.mockRestore();
+    fireEvent.click(screen.getByRole("button", { name: "Retry saving feedback" }));
+    expect(getLookup(lookup.id)).toMatchObject({ rating: "down", correction: "Actually a starter", trainingLabel: "Actually a starter" });
+    expect(screen.queryByText("Not saved locally")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry saving feedback" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("trust-control")).toHaveTextContent("Feedback is saved with this scan.");
+  });
+
+  it("preserves a failed rating when a later correction write succeeds", () => {
+    const lookup = makeLookup();
+    const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    localStorage.setItem(key, JSON.stringify([lookup]));
+    renderResult(null, `/result/${lookup.id}`);
+    const originalSetItem = Storage.prototype.setItem;
+    const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, name, value) {
+      if (name === key) throw new DOMException("Full", "QuotaExceededError");
+      originalSetItem.call(this, name, value);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Why or why not" }));
+    expect(getLookup(lookup.id)?.rating).toBeNull();
+    write.mockRestore();
+    fireEvent.change(screen.getByLabelText("Why or why not"), { target: { value: "Starter label visible" } });
+    expect(getLookup(lookup.id)).toMatchObject({ rating: "down", correction: "Starter label visible" });
+    expect(screen.queryByText("Not saved locally")).not.toBeInTheDocument();
+  });
+
+  it("preserves another tab's latest rating when editing a correction", () => {
+    const lookup = { ...makeLookup(), rating: "down" as const };
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    renderResult(null, `/result/${lookup.id}`);
+    expect(updateLookup(lookup.id, { rating: "up" }).ok).toBe(true);
+
+    fireEvent.change(screen.getByLabelText("Why or why not"), { target: { value: "New detail from this tab" } });
+
+    expect(getLookup(lookup.id)).toMatchObject({ rating: "up", correction: "New detail from this tab" });
+  });
+
+  it("does not overwrite another tab's rating when retrying only a failed correction", () => {
+    const lookup = { ...makeLookup(), rating: "down" as const };
+    const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    localStorage.setItem(key, JSON.stringify([lookup]));
+    renderResult(null, `/result/${lookup.id}`);
+    const originalSetItem = Storage.prototype.setItem;
+    const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, name, value) {
+      if (name === key) throw new DOMException("Full", "QuotaExceededError");
+      originalSetItem.call(this, name, value);
+    });
+    fireEvent.change(screen.getByLabelText("Why or why not"), { target: { value: "Keep my correction" } });
+    write.mockRestore();
+    expect(updateLookup(lookup.id, { rating: "up" }).ok).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Retry saving feedback" }));
+
+    expect(getLookup(lookup.id)).toMatchObject({ rating: "up", correction: "Keep my correction" });
+  });
+
+  it("keeps pending feedback when an inspection is saved on the same page", () => {
+    const lookup = makeLookup();
+    const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    localStorage.setItem(key, JSON.stringify([lookup]));
+    renderResult(null, `/result/${lookup.id}`);
+    const originalSetItem = Storage.prototype.setItem;
+    const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, name, value) {
+      if (name === key) throw new DOMException("Full", "QuotaExceededError");
+      originalSetItem.call(this, name, value);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Why or why not" }));
+    fireEvent.change(screen.getByLabelText("Why or why not"), { target: { value: "Pending correction" } });
+    write.mockRestore();
+
+    fireEvent.click(screen.getByText("Human inspection — optional"));
+    fireEvent.change(screen.getByLabelText("Inspector name (self-reported)"), { target: { value: "Test inspector" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save inspection" }));
+    expect(getLookup(lookup.id)?.inspection?.inspectorName).toBe("Test inspector");
+    expect(getLookup(lookup.id)?.correction).toBeNull();
+    expect(screen.getByLabelText("Why or why not")).toHaveValue("Pending correction");
+    expect(screen.getByTestId("trust-control")).toHaveTextContent("Feedback is not saved.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry saving feedback" }));
+    expect(getLookup(lookup.id)).toMatchObject({ rating: "down", correction: "Pending correction", inspection: { inspectorName: "Test inspector" } });
+  });
 
   it("keeps share and export report actions on a saved scan", () => {
     const lookup = makeLookup();
