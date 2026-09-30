@@ -1,3 +1,5 @@
+import { getLocalDateStamp } from "../lib/utils";
+import { formatIntakeDraft } from "../lib/intakeDraft";
 import type { CandidateMatch, EvidenceRegion, Lookup, SourceLink } from "../types";
 
 export function buildScanReport(lookup: Lookup) {
@@ -9,11 +11,13 @@ export function buildScanReport(lookup: Lookup) {
     `Created: ${formatDate(lookup.createdAt)}`,
     `Captured: ${formatDate(lookup.frame.capturedAt)}`,
     "",
-    "Mechanic summary:",
+    formatIntakeDraft(lookup),
+    "",
+    "AI scan summary:",
     `${result?.partName ?? "Unidentified part"} - ${result?.confidence ?? "unknown"} confidence - ${lookup.scanCategory}`,
     result?.safetyTriage === "needs_professional" || result?.isSafetyCritical
-      ? "Safety: verify with a qualified mechanic before driving or repairing."
-      : "Safety: no immediate safety-critical flag from the scan.",
+      ? "Safety: check this before driving or repairing."
+      : result ? "Safety: no immediate safety-critical flag from the scan." : "Safety: not assessed; no AI result saved.",
     "",
     `Part: ${result?.partName ?? "Not identified"}`,
     `Confidence: ${result?.confidence ?? "unknown"}`,
@@ -38,7 +42,7 @@ export function buildScanReport(lookup: Lookup) {
     formatList(detectedText, "None detected."),
     "",
     "Concerns:",
-    formatList(result?.concerns, "Nothing concerning visible."),
+    formatList(result?.concerns, "No concerns recorded; this does not establish condition."),
     "",
     "Dataset evidence:",
     formatList(datasetEvidence, "No local labeled dataset evidence matched this result."),
@@ -47,7 +51,21 @@ export function buildScanReport(lookup: Lookup) {
     formatSourceLinks(result?.sourceLinks),
     "",
     "Next action:",
-    result?.nextAction ?? "Scan again or ask a professional if this looks unsafe.",
+    result?.nextAction ?? "Review the saved evidence and unresolved checks before deciding on another scan or inspection.",
+    "",
+    "Human inspection (self-reported, separate from AI):",
+    ...(lookup.inspection ? [
+      `Inspector: ${lookup.inspection.inspectorName}`,
+      `Recorded: ${formatDate(lookup.inspection.inspectedAt)}`,
+      `Confirmed part: ${lookup.inspection.confirmedPartName || "Not confirmed"}`,
+      `Part number: ${lookup.inspection.partNumber || "Not recorded"}`,
+      `Identity evidence: ${lookup.inspection.identityEvidence || "None recorded"}`,
+      `Visible condition: ${lookup.inspection.visibleCondition.replaceAll("_", " ")}`,
+      `Visible notes: ${lookup.inspection.visibleNotes || "None recorded"}`,
+      `Functional test: ${lookup.inspection.functionalStatus.replaceAll("_", " ")}`,
+      `Test method and result: ${lookup.inspection.functionalNotes || "None recorded"}`,
+      "No visible damage does not establish function. Recorded tests are not safety certification.",
+    ] : ["No human inspection recorded. Function not verified."]),
     "",
     "User correction:",
     lookup.correction?.trim() || "None",
@@ -56,7 +74,7 @@ export function buildScanReport(lookup: Lookup) {
     lookup.notes.trim() || "None",
     "",
     "Safety note:",
-    "Deep Spec is not a repair certification tool. Safety-critical parts should be verified with a mechanic.",
+    "Deep Spec is not a repair certification tool. Safety-critical items should be checked before driving or repairing.",
   ];
 
   return lines.join("\n");
@@ -68,7 +86,7 @@ export function getScanReportFilename(lookup: Lookup) {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 40);
-  const date = lookup.createdAt.slice(0, 10);
+  const date = getLocalDateStamp(lookup.createdAt);
 
   return `deep-spec-${part || "scan"}-${date}.txt`;
 }

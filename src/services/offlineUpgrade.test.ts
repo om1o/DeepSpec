@@ -1,6 +1,7 @@
+import { setActiveAccount } from "../lib/accountScope";
 import { identifyCapturedFrame } from "./aiService";
 import { createLookup, getLookup } from "./storage";
-import { getOfflineEstimateLookups, startOfflineUpgradeWatcher, upgradeOfflineEstimates } from "./offlineUpgrade";
+import { getOfflineEstimateLookups, upgradeOfflineEstimates } from "./offlineUpgrade";
 import type { IdentificationResult, IdentifyProvider } from "../types";
 
 vi.mock("./aiService", () => ({ identifyCapturedFrame: vi.fn() }));
@@ -94,18 +95,46 @@ describe("offlineUpgrade", () => {
     expect(getLookup(created.value!.id)?.result?.modelRun?.provider).toBe("gemini");
   });
 
-  it("only attaches the reconnect watcher when the fallback is enabled", () => {
-    const addSpy = vi.spyOn(window, "addEventListener");
+  it("starts a separate upgrade for another account and discards old completion after returning", async () => {
+    const original = createLookup({ frame, result: makeResult("on-device") });
+    createLookup({ frame, result: makeResult("on-device") });
+    let resolveOriginal!: (result: IdentificationResult) => void;
+    let resolveOther!: (result: IdentificationResult) => void;
+    vi.mocked(identifyCapturedFrame)
+      .mockReturnValueOnce(new Promise((resolve) => { resolveOriginal = resolve; }))
+      .mockReturnValueOnce(new Promise((resolve) => { resolveOther = resolve; }));
+    const oldUpgrade = upgradeOfflineEstimates();
+    setActiveAccount("other-user");
+    const other = createLookup({ frame, result: makeResult("on-device") });
+    const otherUpgrade = upgradeOfflineEstimates();
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(2);
+    resolveOther(makeResult("gemini"));
+    expect(await otherUpgrade).toBe(1);
+    expect(getLookup(other.value!.id)?.result?.modelRun?.provider).toBe("gemini");
+    setActiveAccount("test-user");
+    resolveOriginal(makeResult("gemini"));
+    expect(await oldUpgrade).toBe(0);
+    expect(getLookup(original.value!.id)?.result?.modelRun?.provider).toBe("on-device");
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(2);
+  });
 
-    vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "false");
-    startOfflineUpgradeWatcher()();
-    expect(addSpy).not.toHaveBeenCalledWith("online", expect.any(Function));
+  it("preserves vehicle context and normalizes fitment during an explicit upgrade", async () => {
+    const vehicleContext = { year: "2012", make: "Honda", model: "Civic" };
+    const created = createLookup({ frame, vehicleContext, result: makeResult("on-device") });
+    vi.mocked(identifyCapturedFrame).mockResolvedValue({ ...makeResult("gemini"), fitmentConfidence: "supported" });
+    expect(await upgradeOfflineEstimates()).toBe(1);
+    expect(identifyCapturedFrame).toHaveBeenCalledWith(frame, undefined, undefined, { vehicleContext });
+    expect(getLookup(created.value.id)?.result).toMatchObject({ fitmentConfidence: "needs_vehicle_context", requiredNextEvidence: expect.arrayContaining(["VIN"]) });
+    expect(getLookup(created.value.id)?.vehicleContext).toEqual(vehicleContext);
+  });
 
-    vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "true");
-    const stop = startOfflineUpgradeWatcher();
-    expect(addSpy).toHaveBeenCalledWith("online", expect.any(Function));
-    stop();
-
-    addSpy.mockRestore();
+  it("does not count an upgrade whose device save failed", async () => {
+    const created = createLookup({ frame, result: makeResult("on-device") });
+    vi.mocked(identifyCapturedFrame).mockResolvedValue(makeResult("gemini"));
+    const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("Full device storage"); });
+    try {
+      expect(await upgradeOfflineEstimates()).toBe(0);
+      expect(getLookup(created.value.id)?.result?.modelRun?.provider).toBe("on-device");
+    } finally { write.mockRestore(); }
   });
 });

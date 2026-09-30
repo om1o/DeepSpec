@@ -1,0 +1,60 @@
+{
+  "datasetId": "hf-automotive-sources-v1",
+  "generatedAt": "2026-06-24T06:13:08.183Z",
+  "recordCount": 35,
+  "skipped": [],
+  "sources": [
+    {
+      "datasetId": "AshimaVinod/car-parts-and-damage-dataset",
+      "datasetUrl": "https://huggingface.co/datasets/AshimaVinod/car-parts-and-damage-dataset",
+      "downloads": 1637,
+      "license": "mit",
+      "sizeCategory": "1K<n<10K",
+      "taskCategories": [
+        "image-segmentation",
+        "object-detection"
+      ],
+      "totalRows": null
+    },
+    {
+      "datasetId": "SaiVaibhavS/comprehensive-car-damage",
+      "datasetUrl": "https://huggingface.co/datasets/SaiVaibhavS/comprehensive-car-damage",
+      "downloads": 2364,
+      "license": "mit",
+      "sizeCategory": "1K<n<10K",
+      "taskCategories": [
+        "image-classification"
+      ],
+      "totalRows": 2300
+    },
+    {
+      "datasetId": "DrBimmer/comprehensive-car-damage",
+      "datasetUrl": "https://huggingface.co/datasets/DrBimmer/comprehensive-car-damage",
+      "downloads": 289,
+      "license": "mit",
+      "sizeCategory": "1K<n<10K",
+      "taskCategories": [
+        "image-classification"
+      ],
+      "totalRows": 2300
+    },
+    {
+      "datasetId": "Abijith/car-damage-segmentation-small",
+      "datasetUrl": "https://huggingface.co/datasets/Abijith/car-damage-segmentation-small",
+      "downloads": 23,
+      "license": "apache-2.0",
+      "sizeCategory": "n<1K",
+      "taskCategories": [],
+      "totalRows": 16
+    },
+    {
+      "datasetId": "Reverb/CarDamage",
+      "datasetUrl": "https://huggingface.co/datasets/Reverb/CarDamage",
+      "downloads": 25,
+      "license": "mit",
+      "sizeCategory": "1K<n<10K",
+      "taskCategories": [],
+      "totalRows": 3003
+    }
+  ]
+}

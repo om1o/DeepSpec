@@ -1,3 +1,4 @@
+import { accountStorageKey } from "../lib/accountScope";
 import {
   SCAN_QUALITY_METRICS_KEY,
   getScanQualityMetrics,
@@ -62,7 +63,7 @@ describe("scanQualityMetrics", () => {
   });
 
   it("falls back to empty metrics when stored data is corrupt", () => {
-    localStorage.setItem(SCAN_QUALITY_METRICS_KEY, "{bad-json");
+    localStorage.setItem(accountStorageKey(SCAN_QUALITY_METRICS_KEY), "{bad-json");
 
     expect(getScanQualityMetrics()).toMatchObject({
       acceptableScans: 0,

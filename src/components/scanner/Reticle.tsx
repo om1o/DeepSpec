@@ -1,7 +1,8 @@
 import { cx } from "../../lib/utils";
 import {
-  SCANNER_RETICLE_ASPECT_RATIO,
   SCANNER_RETICLE_CENTER_Y_RATIO,
+  SCANNER_RETICLE_HEIGHT_RATIO,
+  SCANNER_RETICLE_MAX_HEIGHT_PX,
   SCANNER_RETICLE_MAX_WIDTH_PX,
   SCANNER_RETICLE_WIDTH_RATIO,
 } from "../../lib/scannerReticle";
@@ -25,7 +26,7 @@ export default function Reticle({ isLocked, isVisible, label, progress }: Reticl
         isVisible ? "opacity-100" : "opacity-0",
       )}
       style={{
-        aspectRatio: `${SCANNER_RETICLE_ASPECT_RATIO}`,
+        height: `min(${SCANNER_RETICLE_HEIGHT_RATIO * 100}vw, ${SCANNER_RETICLE_MAX_HEIGHT_PX}px)`,
         top: `${SCANNER_RETICLE_CENTER_Y_RATIO * 100}dvh`,
         width: `min(${SCANNER_RETICLE_WIDTH_RATIO * 100}vw, ${SCANNER_RETICLE_MAX_WIDTH_PX}px)`,
       }}

@@ -12,6 +12,19 @@ export const DEEPSPEC_QA_SCENARIOS = [
   "result-chat",
   "early-access",
   "api-cloud-health",
+  "pricing",
+  "checkout",
+  "account-entitlements",
+  "shop-onboarding",
+  "create-job",
+  "job-scan",
+  "job-result-correction",
+  "add-vin-after-result",
+  "second-angle-refinement",
+  "shop-history-search",
+  "customer-report-export",
+  "org-member-permissions",
+  "billing-provider-fail-closed",
 ];
 
 const originalEnvKeys = new Set(Object.keys(process.env));
@@ -27,6 +40,7 @@ export function parseQaArgs(argv) {
     headless: false,
     scenarios: [],
     url: "",
+    viewport: "",
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -52,6 +66,17 @@ export function parseQaArgs(argv) {
     if (arg === "--headless") {
       parsed.headless = true;
       parsed.headed = false;
+      continue;
+    }
+
+    if (arg === "--viewport") {
+      parsed.viewport = argv[index + 1] ?? "";
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--viewport=")) {
+      parsed.viewport = arg.slice("--viewport=".length);
       continue;
     }
 
@@ -155,6 +180,25 @@ export function classifyIdentifyApiIssue({ status, text = "" } = {}) {
   }
 
   return null;
+}
+
+export function classifyQaTransportError(error) {
+  const details = formatError(error);
+  if (!/net::ERR_(?:ABORTED|CONNECTION_[A-Z_]+|NAME_NOT_RESOLVED|TIMED_OUT)|\bfetch failed\b|\bThis operation was aborted\b|page\.goto: Timeout \d+ms exceeded/i.test(details)) return null;
+  return {
+    category: "environment", status: "blocked", details, likelyFiles: [],
+    suggestedFix: "Check local server and network health, then rerun QA without competing browser or build jobs.",
+  };
+}
+
+export function getAuthDependencyBlocker(scenario, rootFailure) {
+  return {
+    category: rootFailure?.category ?? "auth/session",
+    status: "blocked",
+    message: `${scenario} was not tested because auth-login did not establish a session. ${rootFailure?.details ?? "Resolve auth-login first."}`,
+    likelyFiles: [],
+    suggestedFix: rootFailure?.suggestedFix ?? "Resolve auth-login and rerun dependent flows without bypassing authentication.",
+  };
 }
 
 function loadEnvFile(filename) {

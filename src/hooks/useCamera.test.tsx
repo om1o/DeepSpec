@@ -67,7 +67,7 @@ describe("useCamera", () => {
 
     expect(getUserMedia).toHaveBeenCalledWith({
       audio: false,
-      video: true,
+      video: { facingMode: { ideal: "environment" } },
     });
     expect(stopCameraTrack).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("state")).toHaveTextContent("loading");
@@ -107,20 +107,41 @@ describe("useCamera", () => {
     expect(screen.getByTestId("state")).toHaveTextContent("blocked");
     expect(screen.getByTestId("error")).toHaveTextContent("already open in another tab or app");
   });
+
+  it("switches between rear and front camera constraints when device labels are unavailable", async () => {
+    render(<CameraProbe />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch" }));
+    expect(screen.getByTestId("facing")).toHaveTextContent("user");
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      await Promise.resolve();
+    });
+
+    expect(getUserMedia).toHaveBeenLastCalledWith({
+      audio: false,
+      video: { facingMode: { ideal: "user" } },
+    });
+  });
 });
 
 function CameraProbe() {
-  const { cameraError, cameraState, markReady, retryCamera } = useCamera();
+  const { cameraError, cameraFacingMode, cameraState, markReady, retryCamera, switchCamera } = useCamera();
 
   return (
     <div>
       <p data-testid="state">{cameraState}</p>
       <p data-testid="error">{cameraError ?? "none"}</p>
+      <p data-testid="facing">{cameraFacingMode}</p>
       <button type="button" onClick={markReady}>
         Ready
       </button>
       <button type="button" onClick={retryCamera}>
         Retry
+      </button>
+      <button type="button" onClick={switchCamera}>
+        Switch
       </button>
     </div>
   );

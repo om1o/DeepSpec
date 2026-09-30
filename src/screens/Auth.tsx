@@ -1,7 +1,8 @@
-import { ClipboardEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ClipboardEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   getVerifiedAuthUser,
+  hasPendingSignOut,
   isGitHubAuthEnabled,
   isGoogleAuthEnabled,
   normalizePostAuthRedirectPath,
@@ -11,11 +12,11 @@ import {
   signInWithGitHub,
   signInWithGoogle,
   signInWithPassword,
+  signOut,
   signUpWithPassword,
+  subscribeToPendingSignOut,
   verifyEmailCode,
 } from "../services/auth";
-import { syncLookupsToCloud } from "../services/cloudSync";
-import { getLookups } from "../services/storage";
 
 type AuthStep = "email" | "sent" | "code";
 type AuthMode = "link" | "password";
@@ -27,9 +28,9 @@ function formatAuthError(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
   // Supabase returns a verbose policy dump for weak passwords — replace it.
   if (/Password should contain/i.test(message) || /weak password/i.test(message)) {
-    return "Password must be at least 8 characters and include an uppercase letter, a lowercase letter, a number, and a special character.";
+    return "Password needs 8+ characters with an uppercase, a lowercase, a number, and a symbol.";
   }
-  return message || "Authentication failed. Try again.";
+  return message || "Sign-in didn't go through. Try again.";
 }
 
 export default function Auth() {
@@ -48,10 +49,16 @@ export default function Auth() {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const pendingSignOut = useSyncExternalStore(subscribeToPendingSignOut, hasPendingSignOut);
+  const visibleNotice = pendingSignOut
+    ? "Private screens are locked. Sign-out has not been confirmed. Retry signing out, or sign in again explicitly."
+    : notice;
   const [isCheckingSession, setIsCheckingSession] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [isGitHubLoading, setIsGitHubLoading] = useState(false);
+  const isBusy = isSubmitting || isGoogleLoading || isGitHubLoading;
+  const requestPending = useRef(false);
   const [resendCooldown, setResendCooldown] = useState(0);
   const codeInputRef = useRef<HTMLInputElement | null>(null);
   const autoSubmittedCodeRef = useRef<string | null>(null);
@@ -62,19 +69,8 @@ export default function Auth() {
   }, [location.search, location.state]);
 
   const finishVerifiedLogin = useCallback(async () => {
-    const localLookups = getLookups();
-    if (localLookups.length) {
-      setNotice(`Syncing ${localLookups.length} saved scan${localLookups.length === 1 ? "" : "s"} to cloud.`);
-      try {
-        const syncResult = await syncLookupsToCloud(localLookups);
-        if (!syncResult.ok) {
-          console.warn("[DeepSpec] Local scan cloud sync after login was incomplete.", syncResult);
-        }
-      } catch (syncError) {
-        console.warn("[DeepSpec] Local scan cloud sync after login failed.", syncError);
-      }
-    }
-
+    // Older device records can be behind cloud edits. Retry them explicitly from
+    // Saved scans until server revision checks make automatic replay safe.
     navigate(postAuthPath, { replace: true });
   }, [navigate, postAuthPath]);
 
@@ -83,7 +79,7 @@ export default function Auth() {
 
     getVerifiedAuthUser()
       .then((user) => {
-        if (user) {
+        if (isMounted && user) {
           void finishVerifiedLogin();
         }
       })
@@ -114,7 +110,8 @@ export default function Auth() {
   }, [resendCooldown]);
 
   const verifyCurrentCode = useCallback(async () => {
-    if (isSubmitting || !supabaseConfigured) return;
+    if (requestPending.current || !supabaseConfigured) return;
+    requestPending.current = true;
     setError(null);
     setNotice(null);
     setIsSubmitting(true);
@@ -125,9 +122,10 @@ export default function Auth() {
     } catch (authError) {
       setError(formatAuthError(authError));
     } finally {
+      requestPending.current = false;
       setIsSubmitting(false);
     }
-  }, [code, email, finishVerifiedLogin, isSubmitting, supabaseConfigured]);
+  }, [code, email, finishVerifiedLogin, supabaseConfigured]);
 
   useEffect(() => {
     if (step !== "code" || !supabaseConfigured || isSubmitting) return;
@@ -142,6 +140,7 @@ export default function Auth() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (requestPending.current) return;
     setError(null);
     setNotice(null);
 
@@ -151,6 +150,7 @@ export default function Auth() {
     }
 
     if (authMode === "password") {
+      requestPending.current = true;
       setIsSubmitting(true);
       try {
         const normalizedEmail = email.trim().toLowerCase();
@@ -163,9 +163,15 @@ export default function Auth() {
           await finishVerifiedLogin();
           return;
         }
+        if (passwordMode === "signup") {
+          setPassword("");
+          setPasswordMode("signin");
+          setNotice("Check your inbox for a confirmation link, then sign in. If you already have an account, use your existing password or an email sign-in link.");
+        }
       } catch (authError) {
         setError(formatAuthError(authError));
       } finally {
+        requestPending.current = false;
         setIsSubmitting(false);
       }
       return;
@@ -176,22 +182,31 @@ export default function Auth() {
       return;
     }
 
+    requestPending.current = true;
     setIsSubmitting(true);
 
     try {
       const normalizedEmail = email.trim().toLowerCase();
-      await sendEmailSignInLink(normalizedEmail, postAuthPath);
-      setStep("sent");
-      setNotice(`Sign-in link sent to ${normalizedEmail}. Open it from your email to finish login.`);
+      const delivery = await sendEmailSignInLink(normalizedEmail, postAuthPath);
+      if (delivery.delivery === "code") {
+        setStep("code");
+        setNotice(`Code sent to ${normalizedEmail}. Enter the 6 digits below.`);
+      } else {
+        setStep("sent");
+        setNotice(`Sign-in link sent to ${normalizedEmail}. Open it to finish.`);
+      }
       setResendCooldown(RESEND_COOLDOWN_SECONDS);
     } catch (authError) {
       setError(formatAuthError(authError));
     } finally {
+      requestPending.current = false;
       setIsSubmitting(false);
     }
   }
 
   async function handleGoogleSignIn() {
+    if (requestPending.current) return;
+    requestPending.current = true;
     setError(null);
     setNotice(null);
     setIsGoogleLoading(true);
@@ -199,12 +214,31 @@ export default function Auth() {
     try {
       await signInWithGoogle(postAuthPath);
     } catch (authError) {
+      requestPending.current = false;
       setError(formatAuthError(authError));
       setIsGoogleLoading(false);
     }
   }
 
+  async function retrySignOut() {
+    if (requestPending.current) return;
+    requestPending.current = true;
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      await signOut();
+      setNotice("Signed out. You can sign in again when ready.");
+    } catch {
+      setNotice("Private screens remain locked. Sign-out could not be confirmed; check your connection and retry.");
+    } finally {
+      requestPending.current = false;
+      setIsSubmitting(false);
+    }
+  }
+
   async function handleGitHubSignIn() {
+    if (requestPending.current) return;
+    requestPending.current = true;
     setError(null);
     setNotice(null);
     setIsGitHubLoading(true);
@@ -212,26 +246,36 @@ export default function Auth() {
     try {
       await signInWithGitHub(postAuthPath);
     } catch (authError) {
+      requestPending.current = false;
       setError(formatAuthError(authError));
       setIsGitHubLoading(false);
     }
   }
 
   async function handleResendLink() {
-    if (resendCooldown > 0) return;
+    if (resendCooldown > 0 || requestPending.current) return;
+    requestPending.current = true;
     setError(null);
     setNotice(null);
     setIsSubmitting(true);
 
     try {
       const normalizedEmail = email.trim().toLowerCase();
-      await sendEmailSignInLink(normalizedEmail, postAuthPath);
-      setNotice(`New sign-in link sent to ${normalizedEmail}.`);
+      const delivery = await sendEmailSignInLink(normalizedEmail, postAuthPath);
+      if (delivery.delivery === "code") {
+        setStep("code");
+        setNotice(`New code sent to ${normalizedEmail}.`);
+      } else {
+        setStep("sent");
+        setNotice(`New sign-in link sent to ${normalizedEmail}.`);
+      }
       setResendCooldown(RESEND_COOLDOWN_SECONDS);
+      setCode("");
       autoSubmittedCodeRef.current = null;
     } catch (authError) {
       setError(formatAuthError(authError));
     } finally {
+      requestPending.current = false;
       setIsSubmitting(false);
     }
   }
@@ -256,7 +300,7 @@ export default function Auth() {
     setStep("code");
     setCode("");
     setError(null);
-    setNotice("Enter the 6-digit code from your email.");
+    setNotice("Enter the 6 digits from your email.");
     autoSubmittedCodeRef.current = null;
   }
 
@@ -274,61 +318,50 @@ export default function Auth() {
     return (
       <main className="flex min-h-dvh items-center justify-center bg-[var(--ds-bg)] px-4 text-center text-sm font-bold text-[var(--ds-fg-3)]">
         <div className="rounded-[8px] border border-white/10 bg-white/10 px-5 py-3 shadow-sm backdrop-blur-md">
-          Checking your session...
+          Checking session...
         </div>
       </main>
     );
   }
 
   return (
-    <main className="min-h-dvh overflow-hidden bg-[var(--ds-bg)] px-4 pb-8 pt-[max(20px,env(safe-area-inset-top))] text-white">
-      <section className="mx-auto grid min-h-[calc(100dvh-48px)] w-full max-w-6xl items-center gap-5 lg:grid-cols-[1.02fr_0.98fr] lg:gap-8">
-        <div className="relative hidden min-h-[640px] overflow-hidden rounded-[8px] border border-white/10 bg-slate-950 shadow-[0_24px_90px_rgba(0,0,0,0.36)] lg:block">
-          <img src="/test-fixtures/engine-scan-test.jpg" alt="" className="absolute inset-0 h-full w-full object-cover opacity-70" />
-          <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(6,21,34,0.30),rgba(6,21,34,0.82)),linear-gradient(90deg,rgba(6,21,34,0.92),rgba(6,21,34,0.24))]" />
-          <div className="scanner-corner scanner-corner-tl left-6 top-6" />
-          <div className="scanner-corner scanner-corner-tr right-6 top-6" />
-          <div className="scanner-corner scanner-corner-bl bottom-6 left-6" />
-          <div className="scanner-corner scanner-corner-br bottom-6 right-6" />
-          <div className="absolute left-8 right-8 top-8 flex items-center justify-between">
-            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-14 w-44 rounded-[8px] bg-white object-contain p-1.5 shadow-sm ring-1 ring-white/20" />
-            <span className="rounded-[8px] border border-white/20 bg-white/10 px-4 py-2 text-xs font-black uppercase text-white backdrop-blur-md">
-              Supabase auth
-            </span>
+    <main className="ds-auth-page min-h-dvh px-4 pb-8 pt-[max(20px,env(safe-area-inset-top))] text-white">
+      <section className="mx-auto grid min-h-[calc(100dvh-48px)] w-full max-w-6xl items-center gap-5 lg:grid-cols-[1.08fr_0.92fr] lg:gap-12">
+        <div className="ds-auth-story">
+          <img src="/brand/alternator-workbench.webp" alt="" width="1086" height="1448" className="ds-auth-art" />
+          <div className="ds-auth-story-top">
+            <span className="ds-eyebrow">FROM THE BENCH TO THE RECORD</span>
+            <h2>A clearer picture.<br /><span>A better part record.</span></h2>
+            <p>Capture a part. Review the evidence.<br />Keep the details that matter.</p>
           </div>
-          <div className="absolute inset-x-10 bottom-10 space-y-5 text-white">
-            <div className="max-w-xl">
-              <p className="text-sm font-black uppercase tracking-[0.16em] text-[var(--ds-accent)]">Protected scanner access</p>
-              <h1 className="mt-3 text-5xl font-black leading-none">Login that matches the shop floor.</h1>
-              <p className="mt-4 max-w-lg text-base font-semibold leading-7 text-white/74">
-                Deep Spec opens only after Supabase returns a verified user session.
-              </p>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <StatusCell label="Auth" value="Password first" />
-              <StatusCell label="Email" value="Optional" />
-              <StatusCell label="Session" value="Verified" />
+          <div className="ds-auth-story-bottom">
+            <span className="ds-art-caption">Illustrative render · Not a scan result</span>
+            <div className="ds-workflow" aria-label="Parts documentation workflow">
+              <StatusCell label="01" value="Capture" />
+              <StatusCell label="02" value="Review" />
+              <StatusCell label="03" value="Save" />
             </div>
           </div>
         </div>
 
-        <section className="mx-auto flex w-full max-w-[540px] flex-col rounded-[8px] border border-white/12 bg-white/[0.07] p-5 shadow-[0_20px_70px_rgba(0,0,0,0.26)] backdrop-blur-xl sm:p-7">
+        <section className="ds-auth-card mx-auto flex w-full max-w-[540px] flex-col p-5 sm:p-8">
           <div className="flex items-center justify-between gap-4">
             <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-14 w-44 rounded-[8px] bg-white object-contain p-1 shadow-sm ring-1 ring-white/20" />
             <span className={supabaseConfigured ? "rounded-[8px] border border-[var(--ds-ok-line)] bg-[var(--ds-ok-soft)] px-3 py-1.5 text-xs font-black text-sky-100" : "rounded-[8px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-3 py-1.5 text-xs font-black text-amber-100"}>
-              {supabaseConfigured ? "Cloud ready" : "Auth offline"}
+              {supabaseConfigured ? "Your workspace" : "Sign-in unavailable"}
             </span>
           </div>
 
           <div className="mt-9">
-            <p className="text-sm font-black uppercase tracking-[0.14em] text-[var(--ds-accent)]">Deep Spec account</p>
-            <h1 className="mt-3 text-4xl font-black tracking-normal text-white">Sign in</h1>
+            <p className="ds-eyebrow">YOUR PARTS. YOUR WORKBENCH.</p>
+            <h1 className="mt-3 text-4xl font-bold tracking-tight text-white">Sign in</h1>
             <p className="mt-3 text-base font-semibold leading-7 text-white/68">
-              Use an existing password account or start a private Supabase session without email.
+              Pick up where you left off, or capture your first part.
             </p>
           </div>
 
           <div className="mt-8 space-y-3">
+            {pendingSignOut ? <button type="button" disabled={isBusy} onClick={() => void retrySignOut()} className="h-12 w-full rounded-[8px] border border-white/20 px-4 text-sm font-bold">Retry sign out</button> : null}
             {googleAuthEnabled ? (
               <OAuthButton
                 brand="G"
@@ -360,6 +393,7 @@ export default function Auth() {
             ) : null}
 
             <form className="space-y-4" onSubmit={handleSubmit}>
+              <fieldset disabled={isBusy} className="space-y-4">
               {!supabaseConfigured ? (
                 <div className="rounded-[8px] border border-amber-300/30 bg-amber-500/10 px-4 py-3 text-sm font-semibold leading-6 text-amber-100">
                   Supabase auth is not configured for this build.
@@ -399,7 +433,7 @@ export default function Auth() {
                     inputMode="email"
                     name="email"
                     onChange={(event) => setEmail(event.target.value)}
-                    placeholder="Enter your email address"
+                    placeholder="you@shop.com"
                     required={(authMode === "link" || passwordMode !== "anonymous") && supabaseConfigured}
                     spellCheck={false}
                     type="email"
@@ -440,10 +474,10 @@ export default function Auth() {
                         className="h-14 w-full rounded-[8px] border border-white/12 bg-white/10 px-4 text-base font-semibold text-white shadow-sm outline-none placeholder:text-white/38 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)]"
                         autoComplete={passwordMode === "signup" ? "new-password" : "current-password"}
                         disabled={isSubmitting}
-                        minLength={8}
+                        minLength={passwordMode === "signup" ? 8 : undefined}
                         name="password"
                         onChange={(event) => setPassword(event.target.value)}
-                        placeholder="Enter your password"
+                        placeholder="Your password"
                         required={supabaseConfigured}
                         type="password"
                         value={password}
@@ -451,7 +485,7 @@ export default function Auth() {
                     </label>
                   ) : (
                     <p className="rounded-[8px] border border-sky-300/30 bg-sky-400/12 px-4 py-3 text-sm font-bold leading-6 text-sky-100">
-                      No email confirmation required.
+                      Temporary session on this browser. After signing out or clearing browser data, you cannot sign back in to this temporary account. Use an email account for records you need to keep accessing.
                     </p>
                   )}
                 </>
@@ -479,14 +513,14 @@ export default function Auth() {
                 </label>
               ) : null}
 
-              {notice ? (
-                <p className="rounded-[8px] border border-sky-300/30 bg-sky-400/12 px-4 py-3 text-sm font-bold leading-6 text-sky-100">
-                  {notice}
+              {visibleNotice ? (
+                <p role="status" className="rounded-[8px] border border-sky-300/30 bg-sky-400/12 px-4 py-3 text-sm font-bold leading-6 text-sky-100">
+                  {visibleNotice}
                 </p>
               ) : null}
 
               {error ? (
-                <p className="rounded-[8px] border border-red-300/30 bg-red-500/10 px-4 py-3 text-sm font-bold leading-6 text-red-100" role="alert">
+                <p className="rounded-[8px] border border-white/15 bg-white/8 px-4 py-3 text-sm font-bold leading-6 text-white/85" role="alert">
                   {error}
                 </p>
               ) : null}
@@ -504,7 +538,9 @@ export default function Auth() {
               >
                 {submitLabel(authMode, passwordMode, step, supabaseConfigured, isSubmitting)}
               </button>
+              </fieldset>
             </form>
+            <p className="ds-auth-footnote">Review AI suggestions before relying on them. A photo cannot confirm that a part works.</p>
 
             {authMode === "link" && step !== "email" ? (
               <div className="space-y-3">
@@ -512,6 +548,7 @@ export default function Auth() {
                   <button
                     type="button"
                     onClick={handleUseDifferentEmail}
+                    disabled={isBusy}
                     className="h-12 rounded-[8px] border border-white/12 bg-white/5 px-3 text-sm font-black text-white shadow-sm active:bg-white/10"
                   >
                     Use another email
@@ -520,7 +557,7 @@ export default function Auth() {
                     type="button"
                     onClick={handleResendLink}
                     className="h-12 rounded-[8px] border border-white/12 bg-white/5 px-3 text-sm font-black text-white shadow-sm active:bg-white/10 disabled:pointer-events-none disabled:opacity-50"
-                    disabled={isSubmitting || resendCooldown > 0}
+                    disabled={isBusy || resendCooldown > 0}
                   >
                     {resendCooldown > 0 ? `Send in ${resendCooldown}s` : "Send another link"}
                   </button>
@@ -529,6 +566,7 @@ export default function Auth() {
                   <button
                     type="button"
                     onClick={handleShowCodeEntry}
+                    disabled={isBusy}
                     className="text-sm font-black text-sky-100 underline decoration-white/30 underline-offset-4"
                   >
                     I have a code
@@ -545,9 +583,9 @@ export default function Auth() {
 
 function StatusCell({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[8px] border border-white/15 bg-white/10 p-4 backdrop-blur-md">
-      <p className="text-xs font-black uppercase tracking-[0.14em] text-white/60">{label}</p>
-      <p className="mt-2 text-sm font-black text-white">{value}</p>
+    <div>
+      <span className="ds-workflow-number">{label}</span>
+      <span className="ds-workflow-label">{value}</span>
     </div>
   );
 }

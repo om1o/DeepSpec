@@ -1,3 +1,4 @@
+import { accountStorageKey } from "./accountScope";
 import {
   cx,
   getScaledDimensions,
@@ -45,7 +46,7 @@ describe("latest captured frame storage", () => {
   });
 
   it("ignores invalid saved frame data", () => {
-    sessionStorage.setItem("deep-spec:latest-captured-frame", JSON.stringify({ imageBase64: 123 }));
+    sessionStorage.setItem(accountStorageKey("deep-spec:latest-captured-frame"), JSON.stringify({ imageBase64: 123 }));
 
     expect(readLatestCapturedFrame()).toBeNull();
   });
