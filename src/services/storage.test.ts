@@ -438,6 +438,26 @@ describe("storage", () => {
     expect(getLookup(lookup.id)?.chatHistory).toHaveLength(2);
   });
 
+  it("preserves structured long-form assistant answers across save and reload", () => {
+    const lookup = createLookup(scanState).value;
+    const assistantContent = [
+      "OVERVIEW",
+      "The charging system needs context from the belt, connector, and label. ".repeat(12).trim(),
+      "WHAT TO CHECK",
+      "Photograph each visible marking and the full belt path. ".repeat(12).trim(),
+      "MORE DETAIL",
+      "Similar accessories can share a housing shape, so one photo may not settle the identity. ".repeat(12).trim(),
+    ].join("\n");
+
+    appendChatMessages(lookup.id, [createChatMessage("assistant", assistantContent)]);
+
+    const savedContent = getLookup(lookup.id)?.chatHistory[0].content ?? "";
+    expect(savedContent.length).toBeGreaterThan(1200);
+    expect(savedContent).toContain("OVERVIEW\n");
+    expect(savedContent).toContain("WHAT TO CHECK\n");
+    expect(savedContent).toContain("MORE DETAIL\n");
+  });
+
   it("refuses a 51st scan without discarding existing evidence, and permits freeing space", () => {
     const first = createLookup(scanState).value;
     updateLookup(first.id, { notes: "Unsynced bench notes" });

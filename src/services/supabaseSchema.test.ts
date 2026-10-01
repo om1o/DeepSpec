@@ -6,6 +6,7 @@ const migrationsDir = join(process.cwd(), "supabase", "migrations");
 const foundationMigrationPath = join(migrationsDir, "20260518000100_deepspec_secure_foundation.sql");
 const durableDatasetMigrationPath = join(migrationsDir, "20260528000309_durable_dataset_tables.sql");
 const mechanicShopMigrationPath = join(migrationsDir, "20260618000100_mechanic_shop_mode.sql");
+const foundingTesterRolesMigrationPath = join(migrationsDir, "20261001230627_expand_founding_tester_roles.sql");
 const srcPath = join(process.cwd(), "src");
 
 describe("Supabase secure foundation migration", () => {
@@ -120,6 +121,18 @@ describe("Supabase durable dataset migration", () => {
   it("links detail rows back to the user-owned scan row", () => {
     expect(sql).toContain("references public.scan_lookups (user_id, local_id)");
     expect(sql).toContain("on delete cascade");
+    expect(sql).toContain("notify pgrst, 'reload schema'");
+  });
+});
+
+describe("Supabase founding tester roles migration", () => {
+  const sql = readFileSync(foundingTesterRolesMigrationPath, "utf8");
+
+  it("keeps existing waitlist roles and adds the shop and resale tester audiences", () => {
+    expect(sql).toContain("drop constraint if exists waitlist_signups_user_type_check");
+    for (const role of ["mechanic", "mechanic_student", "parts_seller", "salvage_yard", "marketplace_seller", "shop_advisor"]) {
+      expect(sql).toContain(`'${role}'`);
+    }
     expect(sql).toContain("notify pgrst, 'reload schema'");
   });
 });

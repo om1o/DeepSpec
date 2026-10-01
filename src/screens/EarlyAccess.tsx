@@ -9,6 +9,32 @@ import { FEEDBACK_ISSUES, getFeedbackIssue, type FeedbackIssue } from "../servic
 import { getLookup } from "../services/storage";
 import { getAccountScope, isAccountScopeCurrent } from "../lib/accountScope";
 
+const TESTER_AUDIENCES = [
+  {
+    title: "DIY owners",
+    body: "Name an unfamiliar visible part, understand its role, and know what evidence to capture next.",
+  },
+  {
+    title: "Mechanics and trainees",
+    body: "Use a second opinion for unusual parts, train newer staff, and keep a searchable scan record.",
+  },
+  {
+    title: "Parts sellers and salvage teams",
+    body: "Speed up intake, organize uncertain inventory, and preserve evidence for listings and handoffs.",
+  },
+  {
+    title: "Shop advisors and marketplace sellers",
+    body: "Turn a scan into a clearer customer explanation or a more useful listing note.",
+  },
+];
+
+const TESTER_CHECKLIST = [
+  "Scan 10 real vehicle parts.",
+  "Mark every result right, wrong, or unresolved.",
+  "Send at least 3 useful feedback notes.",
+  "Save and reopen at least 3 scan results.",
+];
+
 export default function EarlyAccess() {
   const [mountedScope] = useState(getAccountScope);
   const [searchParams] = useSearchParams();
@@ -35,7 +61,7 @@ export default function EarlyAccess() {
   const cloudStatusMessage = cloudSync.message;
   const demandSignals = useMemo(
     () => [
-      { label: "Local waitlist entries", value: String(stats.waitlist.length) },
+      { label: "Tester applications", value: String(stats.waitlist.length) },
       { label: "Feedback notes", value: String(stats.feedback.length) },
       { label: "Cloud sync", value: cloudSync.configured ? "On" : "Off" },
     ],
@@ -117,11 +143,11 @@ export default function EarlyAccess() {
 
   return (
     <main className="min-h-dvh bg-[var(--ds-page)] px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-slate-950">
-      <div className="mx-auto w-full max-w-md">
+      <div className="mx-auto w-full max-w-2xl">
         <header className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-12 w-36 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-[var(--ds-accent-line)]" />
-            <h1 className="mt-2 text-2xl font-extrabold tracking-tight">Early access</h1>
+            <h1 className="mt-2 text-2xl font-extrabold tracking-tight text-white">Early access</h1>
           </div>
           <Link to="/scan" className="rounded-full bg-[var(--ds-accent)] px-4 py-2 text-sm font-bold text-white shadow-sm">
             Scan
@@ -132,11 +158,11 @@ export default function EarlyAccess() {
         </header>
 
         <section className="mt-6 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-sm font-bold text-[var(--ds-accent)]">The visual layer for parts</p>
-          <h2 className="mt-2 text-2xl font-extrabold tracking-tight">Point, isolate, identify.</h2>
+          <p className="text-sm font-bold text-[var(--ds-accent)]">Founding Tester Program</p>
+          <h2 className="mt-2 text-2xl font-extrabold tracking-tight">Use it on real parts. Tell us where it fails.</h2>
           <p className="mt-3 text-sm leading-6 text-neutral-500">
-            Deep Spec reads the part through your camera and returns the answer. Join the waitlist and shape
-            what ships first.
+            Deep Spec turns a part photo into a cautious identification, visible evidence, saved history, and
+            follow-up answers. Testers help decide what is reliable enough to ship.
           </p>
           <p className="mt-3 rounded-2xl border border-neutral-100 bg-neutral-50 p-3 text-sm leading-6 text-neutral-500">
             {cloudStatusMessage}
@@ -152,10 +178,41 @@ export default function EarlyAccess() {
           <CloudHealthCard className="mt-4" />
         </section>
 
-        <form className="mt-4 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm" onSubmit={handleWaitlistSubmit}>
-          <h2 className="text-lg font-extrabold tracking-tight">Join the waitlist</h2>
+        <section className="mt-6 text-white" aria-labelledby="who-uses-deepspec">
+          <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-[var(--electric-300)]">Who it is for</p>
+          <h2 id="who-uses-deepspec" className="mt-2 text-xl font-extrabold tracking-tight text-white">Different jobs, one visual record</h2>
+          <div className="mt-4 divide-y divide-white/[0.14] border-y border-white/[0.14]">
+            {TESTER_AUDIENCES.map((audience) => (
+              <div key={audience.title} className="grid gap-1 py-4 sm:grid-cols-[180px_1fr] sm:gap-5">
+                <h3 className="text-sm font-extrabold text-slate-100">{audience.title}</h3>
+                <p className="text-sm leading-6 text-slate-300">{audience.body}</p>
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-xs leading-5 text-slate-400">
+            Deep Spec is an identification and documentation aid. It does not prove exact fitment, hidden condition, or repair safety.
+          </p>
+        </section>
+
+        <section className="mt-6 border-y border-white/[0.14] bg-white/[0.06] px-4 py-5 text-white" aria-labelledby="tester-reward">
+          <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-[var(--electric-300)]">Tester reward</p>
+          <h2 id="tester-reward" className="mt-2 text-xl font-extrabold tracking-tight text-white">Free beta access, then six months free</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-200">
+            Founding testers who complete the checklist receive six months of Deep Spec access after paid launch.
+            Approved seller and shop pilots can receive up to one year when the testing scope is agreed first.
+          </p>
+          <ul className="mt-4 grid gap-2 text-sm font-semibold text-slate-100 sm:grid-cols-2">
+            {TESTER_CHECKLIST.map((item) => <li key={item}>{item}</li>)}
+          </ul>
+          <p className="mt-3 text-xs leading-5 text-slate-400">
+            Rewards apply to the accepted tester account, have no cash value, and start only when paid access launches.
+          </p>
+        </section>
+
+        <form id="join-testing" className="mt-6 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm" onSubmit={handleWaitlistSubmit}>
+          <h2 className="text-lg font-extrabold tracking-tight">Apply to test Deep Spec</h2>
           <p className="mt-2 text-sm leading-6 text-neutral-500">
-            Saved on this device first. With cloud sync on, the entry goes to the private waitlist too.
+            Tell us what kind of parts you can test. Applications save on this device first and sync to the private tester list when cloud is on.
           </p>
           <label className="mt-4 block">
             <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Email</span>
@@ -175,33 +232,39 @@ export default function EarlyAccess() {
               onChange={(event) => setUserType(event.target.value as WaitlistSignup["userType"])}
               value={userType}
             >
-              <option value="car_owner">Car owner</option>
+              <option value="car_owner">DIY car owner</option>
               <option value="van_life">Van life owner</option>
               <option value="used_car_buyer">Used car buyer</option>
               <option value="weekend_wrencher">Weekend wrenching beginner</option>
+              <option value="mechanic">Mechanic or technician</option>
+              <option value="mechanic_student">Mechanic trainee or student</option>
+              <option value="parts_seller">Parts seller</option>
+              <option value="salvage_yard">Salvage yard team</option>
+              <option value="marketplace_seller">Marketplace seller</option>
+              <option value="shop_advisor">Shop advisor</option>
               <option value="other">Other</option>
             </select>
           </label>
           <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">What should Deep Spec solve?</span>
+            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">What will you test?</span>
             <textarea
               className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
               maxLength={240}
               onChange={(event) => setMainProblem(event.target.value)}
-              placeholder="ID an unmarked part fast, before I order the wrong one."
+              placeholder="Example: alternators and starters during parts intake."
               value={mainProblem}
             />
           </label>
           {waitlistStatus ? <p className="mt-3 text-sm font-semibold text-[var(--ds-accent)]">{waitlistStatus}</p> : null}
           <Button className="mt-4 w-full" type="submit">
-            Save waitlist entry
+            Apply for tester access
           </Button>
         </form>
 
         <form ref={reportForm} id="feedback" className="mt-4 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm" onSubmit={handleFeedbackSubmit}>
           <h2 className="text-lg font-extrabold tracking-tight">Send product feedback</h2>
           <p className="mt-2 text-sm leading-6 text-neutral-500">
-            Tell us what would make Deep Spec worth keeping in the bay. Saved on this device first, synced when cloud is on.
+            Tell us what worked, what failed, or what would make Deep Spec worth keeping. Saved on this device first, synced when cloud is on.
           </p>
           <label className="mt-4 block">
             <span className="text-sm font-bold">What went wrong?</span>

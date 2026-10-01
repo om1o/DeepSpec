@@ -45,6 +45,17 @@ describe("engagement", () => {
     expect(result.value).toBeNull();
   });
 
+  it("keeps founding tester roles used by parts and shop workflows", () => {
+    const result = saveWaitlistSignup({
+      email: "parts@example.com",
+      mainProblem: "Test alternator intake and listing notes.",
+      userType: "parts_seller",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(getEngagementData().waitlist[0].userType).toBe("parts_seller");
+  });
+
   it("saves feedback locally", () => {
     const result = saveFeedbackSubmission({
       category: "business",

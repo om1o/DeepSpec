@@ -106,6 +106,57 @@ describe("Chat", () => {
     expect(screen.getByLabelText("Ask a follow-up question")).toHaveValue("How serious is this?");
   });
 
+  it("automatically sends a question submitted from the result screen", async () => {
+    sendFollowUpMock.mockResolvedValue("Check the belt, connector, and visible label next.");
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+
+    renderChat(
+      `/result/${lookup.id}/chat?q=What%20should%20I%20check%20next%3F`,
+      { autoSend: true },
+    );
+
+    expect(await screen.findByText("Check the belt, connector, and visible label next.")).toBeInTheDocument();
+    expect(sendFollowUpMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: lookup.id }),
+      "What should I check next?",
+    );
+    expect(getLookup(lookup.id)?.chatHistory.map((message) => message.role)).toEqual(["user", "assistant"]);
+  });
+
+  it("renders a long answer in calm zones with optional detail", async () => {
+    const structuredAnswer = [
+      "OVERVIEW",
+      "This is the likely charging component. It supports the electrical system while the engine runs.",
+      "WHAT TO CHECK",
+      "Inspect the belt path first. Look for a readable label next. Check the connector without forcing it.",
+      "MORE DETAIL",
+      "The housing shape supports the match. Similar rotating accessories can still look alike from one angle. A second photo can reduce that uncertainty.",
+    ].join("\n");
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([{
+      ...lookup,
+      chatHistory: [{ id: "answer-1", role: "assistant", content: structuredAnswer, timestamp: "2026-05-16T00:01:00.000Z" }],
+    }]));
+
+    renderChat(`/result/${lookup.id}/chat`);
+
+    expect(screen.getByText("Overview")).toBeInTheDocument();
+    expect(screen.getByText("What to check")).toBeInTheDocument();
+    const details = screen.getByText("More detail").closest("details");
+    expect(details).not.toHaveAttribute("open");
+    await userEvent.click(screen.getByText("More detail"));
+    expect(details).toHaveAttribute("open");
+  });
+
+  it("offers a small set of follow-up prompts without sending them immediately", async () => {
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+
+    renderChat(`/result/${lookup.id}/chat`);
+
+    await userEvent.click(screen.getByRole("button", { name: "What could this be confused with?" }));
+    expect(screen.getByLabelText("Ask a follow-up question")).toHaveValue("What could this be confused with?");
+    expect(sendFollowUpMock).not.toHaveBeenCalled();
+  });
+
   it("explains provider rate limits without treating them as bad scan answers", async () => {
     sendFollowUpMock.mockRejectedValue(new AIServiceError("rate_limited", "Too many AI chat requests right now. Try again in a few minutes."));
     localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
@@ -141,9 +192,10 @@ describe("Chat", () => {
   });
 });
 
-function renderChat(path: string) {
+function renderChat(path: string, state?: unknown) {
+  const url = new URL(path, "https://deepspec.test");
   render(
-    <MemoryRouter initialEntries={[path]}>
+    <MemoryRouter initialEntries={[{ pathname: url.pathname, search: url.search, state }]}>
       <Routes>
         <Route path="/result/:id/chat" element={<Chat />} />
       </Routes>

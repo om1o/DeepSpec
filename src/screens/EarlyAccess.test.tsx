@@ -25,7 +25,9 @@ describe("EarlyAccess", () => {
     renderEarlyAccess();
 
     expect(screen.getByRole("heading", { name: "Early access" })).toBeInTheDocument();
-    expect(screen.getByText("The visual layer for parts")).toBeInTheDocument();
+    expect(screen.getByText("Founding Tester Program")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Free beta access, then six months free" })).toBeInTheDocument();
+    expect(screen.getByText("Parts sellers and salvage teams")).toBeInTheDocument();
     expect(screen.getByText("Off")).toBeInTheDocument();
     expect(screen.getByText("Your scans are saved on this device. Cloud sync is off for this build.")).toBeInTheDocument();
   });
@@ -34,10 +36,10 @@ describe("EarlyAccess", () => {
     renderEarlyAccess();
 
     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "tester@example.com" } });
-    fireEvent.change(screen.getByLabelText("What should Deep Spec solve?"), {
+    fireEvent.change(screen.getByLabelText("What will you test?"), {
       target: { value: "Help me understand used-car leaks." },
     });
-    await userEvent.click(screen.getByRole("button", { name: "Save waitlist entry" }));
+    await userEvent.click(screen.getByRole("button", { name: "Apply for tester access" }));
 
     expect(await screen.findByText("Saved on this device. Cloud sync is off for this build.")).toBeInTheDocument();
 
@@ -61,10 +63,10 @@ describe("EarlyAccess", () => {
     renderEarlyAccess();
 
     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "tester@example.com" } });
-    fireEvent.change(screen.getByLabelText("What should Deep Spec solve?"), {
+    fireEvent.change(screen.getByLabelText("What will you test?"), {
       target: { value: "Help me understand used-car leaks." },
     });
-    await userEvent.click(screen.getByRole("button", { name: "Save waitlist entry" }));
+    await userEvent.click(screen.getByRole("button", { name: "Apply for tester access" }));
 
     expect(await screen.findByText("Saved on this device and synced to cloud.")).toBeInTheDocument();
     expect(waitlistSync).toHaveBeenCalledWith(expect.objectContaining({ email: "tester@example.com" }));
@@ -85,10 +87,10 @@ describe("EarlyAccess", () => {
     renderEarlyAccess();
 
     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "tester@example.com" } });
-    fireEvent.change(screen.getByLabelText("What should Deep Spec solve?"), {
+    fireEvent.change(screen.getByLabelText("What will you test?"), {
       target: { value: "Help me understand used-car leaks." },
     });
-    await userEvent.click(screen.getByRole("button", { name: "Save waitlist entry" }));
+    await userEvent.click(screen.getByRole("button", { name: "Apply for tester access" }));
 
     expect(await screen.findByText("Saved on this device. Cloud sync failed: network unavailable")).toBeInTheDocument();
     const savedData = JSON.parse(localStorage.getItem(accountStorageKey(ENGAGEMENT_STORAGE_KEY)) ?? "{}");

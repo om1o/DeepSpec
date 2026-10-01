@@ -1,4 +1,4 @@
-import { CHAT_USER_MESSAGE_MAX_CHARS, FOLLOWUP_PROMPT } from "../src/services/systemPrompts";
+import { CHAT_USER_MESSAGE_MAX_CHARS, FOLLOWUP_MAX_SENTENCES, FOLLOWUP_PROMPT } from "../src/services/systemPrompts";
 
 type JsonObject = Record<string, unknown>;
 
@@ -155,7 +155,7 @@ function fetchGeminiChat(model: string, userMessage: string, apiKey: string) {
       ],
       generationConfig: {
         temperature: 0.3,
-        maxOutputTokens: 480,
+        maxOutputTokens: 900,
       },
     }),
   }).catch(() => null);
@@ -210,8 +210,44 @@ function cleanChatMessage(value: string | null) {
     return null;
   }
 
-  const cleaned = value.trim().replace(/\s+/g, " ");
-  return cleaned ? cleaned.slice(0, 1200) : null;
+  const cleaned = value
+    .trim()
+    .replace(/[ \t]+/g, " ")
+    .replace(/ *\n+ */g, "\n");
+  if (!cleaned) return null;
+
+  let remainingSentences = FOLLOWUP_MAX_SENTENCES;
+  const output: string[] = [];
+
+  for (const line of cleaned.split("\n")) {
+    const heading = normalizeFollowUpHeading(line);
+    if (heading) {
+      if (remainingSentences > 0) output.push(heading);
+      continue;
+    }
+
+    const sentences = splitSentences(line);
+    if (sentences.length === 0 || remainingSentences === 0) continue;
+    const kept = sentences.slice(0, remainingSentences);
+    output.push(kept.join(" "));
+    remainingSentences -= kept.length;
+  }
+
+  return output.join("\n").slice(0, 6000) || null;
+}
+
+function normalizeFollowUpHeading(value: string) {
+  const normalized = value.replace(/[*#:_-]+/g, " ").trim().replace(/\s+/g, " ").toUpperCase();
+  return normalized === "OVERVIEW" || normalized === "WHAT TO CHECK" || normalized === "MORE DETAIL"
+    ? normalized
+    : null;
+}
+
+function splitSentences(value: string) {
+  return value
+    .match(/[^.!?]+(?:[.!?]+|$)/g)
+    ?.map((sentence) => sentence.trim())
+    .filter(Boolean) ?? [];
 }
 
 function getProviderErrorMessage(responseBody: JsonObject | null) {

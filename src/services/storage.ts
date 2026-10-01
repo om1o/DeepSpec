@@ -262,7 +262,7 @@ export function createChatMessage(role: ChatMessage["role"], content: string): C
   return {
     id: createId(),
     role,
-    content: cleanText(content, role === "user" ? 500 : 1200),
+    content: role === "user" ? cleanText(content, 500) : cleanMultilineText(content, 6000),
     timestamp: new Date().toISOString(),
   };
 }
@@ -995,7 +995,7 @@ function normalizeChatMessage(value: unknown): ChatMessage | null {
   return {
     id: typeof message.id === "string" ? message.id : createId(),
     role: message.role,
-    content: cleanText(message.content, message.role === "user" ? 500 : 1200),
+    content: message.role === "user" ? cleanText(message.content, 500) : cleanMultilineText(message.content, 6000),
     timestamp: message.timestamp,
   };
 }
@@ -1006,6 +1006,14 @@ function isChatRole(value: unknown): value is ChatMessage["role"] {
 
 function cleanText(value: string, maxLength: number) {
   return value.trim().replace(/\s+/g, " ").slice(0, maxLength);
+}
+
+function cleanMultilineText(value: string, maxLength: number) {
+  return value
+    .trim()
+    .replace(/[ \t]+/g, " ")
+    .replace(/ *\n+ */g, "\n")
+    .slice(0, maxLength);
 }
 
 function cleanTextValue(value: unknown, maxLength: number) {

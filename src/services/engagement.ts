@@ -205,6 +205,12 @@ function isUserType(value: unknown): value is WaitlistSignup["userType"] {
     value === "van_life" ||
     value === "used_car_buyer" ||
     value === "weekend_wrencher" ||
+    value === "mechanic" ||
+    value === "mechanic_student" ||
+    value === "parts_seller" ||
+    value === "salvage_yard" ||
+    value === "marketplace_seller" ||
+    value === "shop_advisor" ||
     value === "other"
   );
 }

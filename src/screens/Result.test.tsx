@@ -169,7 +169,8 @@ describe("Result", () => {
     );
     expect(screen.getAllByText("It charges the battery while the engine runs.").length).toBeGreaterThan(0);
     expect(screen.getByText("Best match")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Ask" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Ask a follow-up about this result")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ask AI" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
     expect(screen.queryByText("Other possible matches")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Complete brief" })).not.toBeInTheDocument();
@@ -380,7 +381,8 @@ describe("Result", () => {
       </MemoryRouter>,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+    await userEvent.type(screen.getByLabelText("Ask a follow-up about this result"), "What should I check next?");
+    await userEvent.click(screen.getByRole("button", { name: "Ask AI" }));
 
     expect(screen.getByText("Chat page")).toBeInTheDocument();
     const savedLookups = JSON.parse(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY)) ?? "[]") as Lookup[];

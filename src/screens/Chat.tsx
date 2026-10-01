@@ -1,6 +1,6 @@
 import { getAccountScope, isAccountScopeCurrent } from "../lib/accountScope";
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
 import Button from "../components/ui/Button";
 import ScanThumb from "../components/ui/ScanThumb";
 import { AIServiceError, getAIErrorDetails, getAIErrorMessage, sendFollowUp } from "../services/aiService";
@@ -10,6 +10,7 @@ import type { Lookup } from "../types";
 export default function Chat() {
   const accountScopeRef = useRef(getAccountScope());
   const { id } = useParams();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const [lookup, setLookup] = useState<Lookup | null>(() => (id ? getLookup(id) : null));
   const [question, setQuestion] = useState(() => searchParams.get("q")?.trim().slice(0, 500) ?? "");
@@ -17,10 +18,21 @@ export default function Chat() {
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const questionFormRef = useRef<HTMLFormElement | null>(null);
+  const questionInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const autoSubmitRef = useRef(
+    Boolean((location.state as { autoSend?: unknown } | null)?.autoSend),
+  );
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView?.({ behavior: "smooth", block: "end" });
   }, [lookup?.chatHistory.length, isSending]);
+
+  useEffect(() => {
+    if (!autoSubmitRef.current) return;
+    autoSubmitRef.current = false;
+    questionFormRef.current?.requestSubmit();
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -45,6 +57,13 @@ export default function Chat() {
     }
 
     await sendQuestion(lastUserMessage.content, false);
+  }
+
+  function chooseSuggestedQuestion(nextQuestion: string) {
+    setQuestion(nextQuestion);
+    setError(null);
+    setErrorCode(null);
+    questionInputRef.current?.focus();
   }
 
   async function sendQuestion(trimmedQuestion: string, shouldSaveUserMessage: boolean) {
@@ -128,6 +147,7 @@ export default function Chat() {
   const showSafetyWarning = lookup.result?.isSafetyCritical || lookup.result?.safetyTriage === "needs_professional";
   const lastUnansweredUserMessage = getLastUnansweredUserMessage(lookup);
   const canRetryLastQuestion = Boolean(error && lastUnansweredUserMessage && canChat && !isSending);
+  const suggestedQuestions = getSuggestedQuestions(showSafetyWarning);
 
   return (
     <main className="ds-chat-page ds-workbench min-h-dvh px-4 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-[var(--ds-fg-1)]">
@@ -150,7 +170,7 @@ export default function Chat() {
             <h2 className="truncate text-base font-extrabold tracking-tight">{partName}</h2>
             <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--ds-fg-3)]">{lookup.scanCategory}</p>
             <p className="mt-2 text-sm leading-6 text-[var(--ds-fg-3)]">
-              {canChat ? "Short follow-ups. Safety rules still apply." : "Get an AI result first, then chat."}
+              {canChat ? "Structured answers. Safety rules still apply." : "Get an AI result first, then chat."}
             </p>
           </div>
         </section>
@@ -175,7 +195,11 @@ export default function Chat() {
                   }
                 >
                   <p className="mb-1 text-xs font-bold opacity-80">{message.role === "user" ? "You" : "DeepSpec"}</p>
-                  <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                  {message.role === "assistant" ? (
+                    <StructuredFollowUp content={message.content} />
+                  ) : (
+                    <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                  )}
                 </article>
               ))
             ) : (
@@ -209,10 +233,29 @@ export default function Chat() {
             </section>
           ) : null}
 
-          <form className="mt-4 space-y-3" onSubmit={handleSubmit}>
+          {canChat && !isSending ? (
+            <section className="mt-4" aria-label="Suggested follow-up questions">
+              <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-[var(--ds-fg-3)]">Ask next</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {suggestedQuestions.map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    className="rounded-[8px] border border-[var(--ds-border)] bg-[var(--ds-surface)] px-3 py-2 text-left text-xs font-bold leading-5 text-[var(--ds-fg-2)]"
+                    onClick={() => chooseSuggestedQuestion(suggestion)}
+                    type="button"
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          <form ref={questionFormRef} className="mt-4 space-y-3" onSubmit={handleSubmit}>
             <label className="block">
               <span className="sr-only">Ask a follow-up question</span>
               <textarea
+                ref={questionInputRef}
                 className="min-h-20 w-full resize-none rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-3 text-sm leading-6 text-[var(--ds-fg-1)] outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
                 disabled={!canChat || isSending}
                 maxLength={500}
@@ -237,4 +280,66 @@ export default function Chat() {
 function getLastUnansweredUserMessage(lookup: Lookup) {
   const lastMessage = lookup.chatHistory.at(-1);
   return lastMessage?.role === "user" ? lastMessage : null;
+}
+
+const FOLLOW_UP_TITLES = new Map([
+  ["OVERVIEW", "Overview"],
+  ["WHAT TO CHECK", "What to check"],
+  ["MORE DETAIL", "More detail"],
+]);
+
+function StructuredFollowUp({ content }: { content: string }) {
+  const sections = parseFollowUpSections(content);
+  if (sections.length <= 1) {
+    return <p className="whitespace-pre-wrap break-words">{content}</p>;
+  }
+
+  return (
+    <div className="divide-y divide-[var(--ds-border)]">
+      {sections.map((section) => (
+        section.title === "More detail" ? (
+          <details key={section.title} className="py-3 last:pb-0">
+            <summary className="cursor-pointer text-xs font-extrabold uppercase tracking-[0.1em] text-[#a7cbd4]">
+              {section.title}
+            </summary>
+            <p className="mt-2 whitespace-pre-wrap break-words">{section.body}</p>
+          </details>
+        ) : (
+          <section key={section.title} className="py-3 first:pt-1 last:pb-0">
+            <p className="text-xs font-extrabold uppercase tracking-[0.1em] text-[#a7cbd4]">{section.title}</p>
+            <p className="mt-2 whitespace-pre-wrap break-words">{section.body}</p>
+          </section>
+        )
+      ))}
+    </div>
+  );
+}
+
+function parseFollowUpSections(content: string) {
+  const sections: { title: string; body: string }[] = [];
+  let active: { title: string; lines: string[] } | null = null;
+
+  for (const line of content.split(/\n+/).map((item) => item.trim()).filter(Boolean)) {
+    const normalizedHeading = line.replace(/[*#:_-]+/g, " ").trim().replace(/\s+/g, " ").toUpperCase();
+    const title = FOLLOW_UP_TITLES.get(normalizedHeading);
+    if (title) {
+      if (active?.lines.length) sections.push({ title: active.title, body: active.lines.join(" ") });
+      active = { title, lines: [] };
+      continue;
+    }
+
+    if (!active) active = { title: "Answer", lines: [] };
+    active.lines.push(line);
+  }
+
+  if (active?.lines.length) sections.push({ title: active.title, body: active.lines.join(" ") });
+  return sections;
+}
+
+function getSuggestedQuestions(showSafetyWarning: boolean) {
+  return [
+    "What should I photograph next?",
+    "What could this be confused with?",
+    showSafetyWarning ? "Which warning signs mean stop driving?" : "What visible wear should I look for?",
+  ];
 }

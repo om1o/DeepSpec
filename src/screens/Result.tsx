@@ -1,7 +1,7 @@
 import { createAnalysisAttemptId } from "../lib/analysisAttempt";
 import { applyShopFitmentContext } from "../lib/shopFitmentContext";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { useEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { AIServiceError, getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
 import { syncAnalysisFailuresToCloud } from "../services/cloudSync";
 import Button from "../components/ui/Button";
@@ -152,7 +152,9 @@ export default function Result() {
     }
 
     const query = question ? `?q=${encodeURIComponent(question)}` : "";
-    navigate(`/result/${saved.id}/chat${query}`);
+    navigate(`/result/${saved.id}/chat${query}`, {
+      state: question ? { autoSend: true } : null,
+    });
   }
 
   function handleLookupUpdate(result: ReturnType<typeof updateLookup>) {
@@ -461,7 +463,7 @@ function AnalysisResult({
         <IssueLine result={result} variant="result" />
         <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-3)]">{getAnswerBody(result, summary)}</p>
         {capturedAt ? <p className="mt-3 text-xs font-semibold text-[var(--ds-fg-3)]">Captured {capturedAt}</p> : null}
-        <QuickActions canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} onSaveOnly={onSaveOnly} />
+        <FollowUpActions canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} onSaveOnly={onSaveOnly} />
         <SceneCategoryList result={result} variant="result" />
         <ResultDetailSections result={result} variant="result" />
       </section>
@@ -495,7 +497,7 @@ function MiniPill({ label }: { label: string }) {
   );
 }
 
-function QuickActions({
+function FollowUpActions({
   canSaveForChat,
   lookupId,
   onSaveAndAsk,
@@ -503,35 +505,60 @@ function QuickActions({
 }: {
   canSaveForChat: boolean;
   lookupId: string | null;
-  onSaveAndAsk: () => void;
+  onSaveAndAsk: (question?: string) => void;
   onSaveOnly: () => void;
 }) {
-  let askAction = null;
-  if (lookupId) {
-    askAction = (
-      <Link className="rounded-full bg-[var(--ds-accent)] px-4 py-3 text-center text-sm font-extrabold text-white" to={`/result/${lookupId}/chat`}>
-        Ask
-      </Link>
-    );
-  } else if (canSaveForChat) {
-    askAction = (
-      <button className="rounded-full bg-[var(--ds-accent)] px-4 py-3 text-center text-sm font-extrabold text-white" type="button" onClick={onSaveAndAsk}>
-        Ask
-      </button>
-    );
+  const [question, setQuestion] = useState("");
+  const canAsk = Boolean(lookupId) || canSaveForChat;
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmedQuestion = question.trim();
+    if (!trimmedQuestion || !canAsk) return;
+    onSaveAndAsk(trimmedQuestion);
   }
 
   return (
-    <div className="mt-4 grid grid-cols-2 gap-2">
-      {askAction ?? <span aria-hidden className="rounded-full bg-[var(--ds-surface)] px-4 py-3" />}
-      <button
-        className="rounded-full bg-[var(--ds-surface)] px-4 py-3 text-center text-sm font-extrabold text-[var(--ds-fg-1)] disabled:text-[var(--ds-fg-3)]"
-        disabled={Boolean(lookupId) || !canSaveForChat}
-        onClick={onSaveOnly}
-        type="button"
-      >
-        {lookupId ? "Saved" : "Save"}
-      </button>
+    <div className="mt-4 border-t border-[var(--ds-border)] pt-4">
+      <p className="text-sm font-extrabold text-[var(--ds-fg-1)]">Ask a follow-up</p>
+      <p className="mt-1 text-xs font-semibold leading-5 text-[var(--ds-fg-3)]">
+        Ask what it does, what to photograph next, or which visible clue needs checking.
+      </p>
+      <form className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] gap-2" onSubmit={handleSubmit}>
+        <label className="min-w-0">
+          <span className="sr-only">Ask a follow-up about this result</span>
+          <input
+            className="h-11 w-full min-w-0 rounded-[8px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] px-3 text-sm text-[var(--ds-fg-1)] outline-none placeholder:text-[var(--ds-fg-3)] focus:border-[var(--ds-accent)]"
+            disabled={!canAsk}
+            maxLength={500}
+            onChange={(event) => setQuestion(event.target.value)}
+            placeholder="What should I check next?"
+            value={question}
+          />
+        </label>
+        <button
+          className="h-11 rounded-[8px] bg-[var(--ds-accent)] px-4 text-sm font-extrabold text-white disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={!canAsk || !question.trim()}
+          type="submit"
+        >
+          Ask AI
+        </button>
+      </form>
+      <div className="mt-2 flex items-center justify-between gap-3">
+        <p className="text-xs font-semibold text-[var(--ds-fg-3)]">
+          {lookupId ? "Saved with this scan." : "Your scan will be saved before chat opens."}
+        </p>
+        {!lookupId ? (
+          <button
+            className="shrink-0 rounded-[8px] bg-[var(--ds-surface)] px-3 py-2 text-xs font-extrabold text-[var(--ds-fg-1)] disabled:text-[var(--ds-fg-3)]"
+            disabled={!canSaveForChat}
+            onClick={onSaveOnly}
+            type="button"
+          >
+            Save
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

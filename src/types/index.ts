@@ -400,7 +400,18 @@ export type WaitlistSignup = {
   id: string;
   createdAt: string;
   email: string;
-  userType: "car_owner" | "van_life" | "used_car_buyer" | "weekend_wrencher" | "other";
+  userType:
+    | "car_owner"
+    | "van_life"
+    | "used_car_buyer"
+    | "weekend_wrencher"
+    | "mechanic"
+    | "mechanic_student"
+    | "parts_seller"
+    | "salvage_yard"
+    | "marketplace_seller"
+    | "shop_advisor"
+    | "other";
   mainProblem: string;
 };
 
