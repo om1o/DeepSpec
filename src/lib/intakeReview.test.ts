@@ -22,6 +22,7 @@ it.each([
   { result: { ...result, confirmationNeed: "one_more_angle" as const } },
   { result: { ...result, confirmationNeed: "reference_needed" as const } },
   { result, rating: "down" as const },
+  { result, rating: "unsure" as const },
   { result, errorMessage: "Provider failed" },
 ])("marks insufficient evidence as unresolved: %j", (input) => {
   const review = getIntakeReview(input);

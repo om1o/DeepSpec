@@ -504,7 +504,7 @@ function normalizeScanProvenance(value: unknown, fallbackSavedAt: string): ScanP
 }
 
 function isRating(value: unknown): value is Rating {
-  return value === "up" || value === "down" || value === null;
+  return value === "up" || value === "down" || value === "unsure" || value === null;
 }
 
 function isScanCategory(value: unknown): value is ScanCategory {

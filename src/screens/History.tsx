@@ -210,6 +210,7 @@ export default function History() {
                 <option value="all">All ratings</option>
                 <option value="up">Helpful</option>
                 <option value="down">Wrong</option>
+                <option value="unsure">Unresolved</option>
                 <option value="unrated">Unrated</option>
               </FilterSelect>
             </div>
@@ -439,7 +440,7 @@ function LookupCard({ lookup }: { lookup: Lookup }) {
       <div className="min-w-0 py-1">
         <div className="flex items-start justify-between gap-2">
           <h2 className="truncate text-base font-extrabold tracking-tight">{title}</h2>
-          {lookup.rating ? <span className="shrink-0 text-xs font-bold text-[var(--ds-fg-3)]">{lookup.rating === "up" ? "Helpful" : "Wrong"}</span> : null}
+          {lookup.rating ? <span className="shrink-0 text-xs font-bold text-[var(--ds-fg-3)]">{getRatingLabel(lookup.rating)}</span> : null}
         </div>
         <p className="mt-1 truncate text-xs font-semibold text-[var(--ds-fg-3)]">{createdAt}</p>
         <p className="mt-3 text-sm font-semibold text-[var(--ds-fg-3)]">{status}</p>
@@ -553,6 +554,12 @@ function matchesRating(lookup: Lookup, ratingFilter: Exclude<Rating, null> | "un
   }
 
   return lookup.rating === ratingFilter;
+}
+
+function getRatingLabel(rating: Exclude<Rating, null>) {
+  if (rating === "up") return "Helpful";
+  if (rating === "down") return "Wrong";
+  return "Unresolved";
 }
 
 function normalizeText(value: string) {

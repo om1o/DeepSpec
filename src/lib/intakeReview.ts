@@ -15,6 +15,7 @@ export function getIntakeReview(scan: Partial<Pick<Lookup, "result" | "rating" |
     if (result.scanCategory === "unknown" || !result.partName.trim()) reasons.push("The part is not supported by a usable identification.");
   }
   if (scan.rating === "down") reasons.push("The suggested identity was marked wrong.");
+  if (scan.rating === "unsure") reasons.push("The user marked the identity unresolved.");
   return reasons.length
     ? { status: "unresolved" as const, label: "Identity unresolved", reasons }
     : { status: "needs_review" as const, label: "Identity awaiting review", reasons };

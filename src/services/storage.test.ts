@@ -413,6 +413,18 @@ describe("storage", () => {
     });
   });
 
+  it("preserves an explicit unsure rating without promoting it to confirmed data", () => {
+    const lookup = createLookup(scanState).value;
+
+    updateLookup(lookup.id, { rating: "unsure" });
+
+    expect(getLookup(lookup.id)).toMatchObject({
+      rating: "unsure",
+      trainingLabel: "Alternator",
+      trainingStatus: "raw_unreviewed",
+    });
+  });
+
   it("stores follow-up chat with the parent scan", () => {
     const lookup = createLookup(scanState).value;
     const userMessage = createChatMessage("user", "What does it do?".repeat(60));

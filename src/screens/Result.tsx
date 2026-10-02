@@ -332,38 +332,45 @@ function TrustControl({
   saveFailed: boolean;
   onRetrySave: () => void;
 }) {
-  const [showWhy, setShowWhy] = useState(false);
   const trusted = lookup.rating === "up";
   const flagged = lookup.rating === "down";
+  const unresolved = lookup.rating === "unsure";
 
   return (
     <section className="rounded-[22px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 shadow-sm" data-testid="trust-control">
-      <p className="text-sm font-extrabold text-[var(--ds-fg-1)]">Do you trust this scan?</p>
-      <div className="mt-3 flex flex-wrap gap-2">
+      <p className="text-sm font-extrabold text-[var(--ds-fg-1)]">Is this identification right?</p>
+      <div className="mt-3 grid grid-cols-3 gap-2" role="group" aria-label="Identification review">
         <button
           type="button"
-          className={`rounded-full px-4 py-2 text-sm font-extrabold ${trusted ? "bg-[var(--ds-ok)] text-white" : "bg-[var(--ds-surface)] text-[var(--ds-fg-1)]"}`}
-          onClick={() => { onRating("up"); setShowWhy(false); }}
+          className={`min-h-11 rounded-[8px] px-2 text-sm font-extrabold ${trusted ? "bg-[var(--ds-ok)] text-white" : "bg-[var(--ds-surface)] text-[var(--ds-fg-1)]"}`}
+          onClick={() => onRating("up")}
         >
-          Yes
+          Looks right
         </button>
         <button
           type="button"
-          className={`rounded-full px-4 py-2 text-sm font-extrabold ${flagged || showWhy ? "bg-[var(--ds-danger)] text-white" : "bg-[var(--ds-surface)] text-[var(--ds-fg-1)]"}`}
-          onClick={() => { onRating("down"); setShowWhy(true); }}
+          className={`min-h-11 rounded-[8px] px-2 text-sm font-extrabold ${flagged ? "bg-[var(--ds-danger)] text-white" : "bg-[var(--ds-surface)] text-[var(--ds-fg-1)]"}`}
+          onClick={() => onRating("down")}
         >
-          Why or why not
+          Looks wrong
+        </button>
+        <button
+          type="button"
+          className={`min-h-11 rounded-[8px] px-2 text-sm font-extrabold ${unresolved ? "border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] text-[var(--ds-warn-ink)]" : "bg-[var(--ds-surface)] text-[var(--ds-fg-1)]"}`}
+          onClick={() => onRating("unsure")}
+        >
+          Not sure
         </button>
       </div>
-      {showWhy || flagged ? (
+      {flagged ? (
         <label className="mt-3 block">
-          <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-[var(--ds-fg-3)]">Tell us what&apos;s off (or right)</span>
+          <span className="text-xs font-extrabold text-[var(--ds-fg-3)]">Correct part name, if known</span>
           <textarea
-            aria-label="Why or why not"
+            aria-label="Correct part name, if known"
             className="mt-2 min-h-20 w-full resize-none rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-3 text-sm leading-6 text-[var(--ds-fg-1)] outline-none placeholder:text-[var(--ds-fg-3)] focus:border-[var(--ds-accent)]"
             maxLength={240}
             onChange={(event) => onCorrectionChange(event.target.value)}
-            placeholder="Example: it's actually a coolant cap, not a brake fluid cap"
+            placeholder="Example: starter motor"
             value={lookup.correction ?? ""}
           />
         </label>

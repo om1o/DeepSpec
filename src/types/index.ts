@@ -324,7 +324,7 @@ export type AIInput = {
   responseAsJson?: boolean;
 };
 
-export type Rating = "up" | "down" | null;
+export type Rating = "up" | "down" | "unsure" | null;
 
 export type TrainingStatus = "raw_unreviewed" | "user_confirmed" | "user_corrected";
 

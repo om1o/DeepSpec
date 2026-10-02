@@ -7,6 +7,7 @@ const foundationMigrationPath = join(migrationsDir, "20260518000100_deepspec_sec
 const durableDatasetMigrationPath = join(migrationsDir, "20260528000309_durable_dataset_tables.sql");
 const mechanicShopMigrationPath = join(migrationsDir, "20260618000100_mechanic_shop_mode.sql");
 const foundingTesterRolesMigrationPath = join(migrationsDir, "20261001230627_expand_founding_tester_roles.sql");
+const unsureRatingMigrationPath = join(migrationsDir, "20261002012446_add_unsure_scan_rating.sql");
 const srcPath = join(process.cwd(), "src");
 
 describe("Supabase secure foundation migration", () => {
@@ -133,6 +134,18 @@ describe("Supabase founding tester roles migration", () => {
     for (const role of ["mechanic", "mechanic_student", "parts_seller", "salvage_yard", "marketplace_seller", "shop_advisor"]) {
       expect(sql).toContain(`'${role}'`);
     }
+    expect(sql).toContain("notify pgrst, 'reload schema'");
+  });
+});
+
+describe("Supabase unresolved scan rating migration", () => {
+  const sql = readFileSync(unsureRatingMigrationPath, "utf8");
+
+  it("adds an explicit unsure rating to scan rows and durable corrections", () => {
+    expect(sql).toContain("drop constraint if exists scan_lookups_rating_check");
+    expect(sql).toContain("drop constraint if exists scan_corrections_rating_check");
+    expect(sql.match(/'unsure'/g)).toHaveLength(2);
+    expect(sql).toContain("not reviewed");
     expect(sql).toContain("notify pgrst, 'reload schema'");
   });
 });

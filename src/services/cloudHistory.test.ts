@@ -64,6 +64,13 @@ describe("readCloudLookups", () => {
     expect(result.ok && result.value[0].result).toBeUndefined();
   });
 
+  it("retains an explicit unresolved rating from cloud history", async () => {
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, rating: "unsure" }], error: null });
+    const { readCloudLookups } = await import("./cloudHistory");
+    const result = await readCloudLookups();
+    expect(result.ok && result.value[0].rating).toBe("unsure");
+  });
+
   it("retains shop columns when only the inspection migration is missing", async () => {
     mocks.select.mockImplementation((columns) => columns.includes("inspection_json")
       ? { data: null, error: { message: "column scan_lookups.inspection_json does not exist" } }

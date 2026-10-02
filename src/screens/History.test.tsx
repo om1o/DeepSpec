@@ -314,6 +314,23 @@ describe("History", () => {
     expect(screen.queryByText("Rear bumper")).not.toBeInTheDocument();
   });
 
+  it("filters and labels explicitly unresolved reviews", async () => {
+    const unresolved = {
+      ...lookup,
+      id: "lookup-unsure",
+      result: { ...lookup.result, partName: "Unknown pulley" },
+      rating: "unsure" as const,
+      trainingStatus: "raw_unreviewed" as const,
+    };
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup, unresolved]));
+
+    renderHistory();
+    await userEvent.selectOptions(screen.getByLabelText("Filter rating"), "unsure");
+
+    expect(screen.getByRole("link", { name: /Unknown pulley/ })).toHaveTextContent("Unresolved");
+    expect(screen.queryByRole("link", { name: /Alternator/ })).not.toBeInTheDocument();
+  });
+
   it("loads cloud-backed scans", async () => {
     readCloudLookupsMock.mockResolvedValue({
       ok: true,

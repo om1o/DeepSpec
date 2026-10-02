@@ -122,7 +122,7 @@ describe("Result", () => {
     localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
     renderResult({ ...successfulScan, savedLookup: cloudLookup }, `/result/${local.id}`);
     expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute("src", expectedImage);
-    await userEvent.click(screen.getByRole("button", { name: "Yes", exact: true }));
+    await userEvent.click(screen.getByRole("button", { name: "Looks right", exact: true }));
     expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute("src", expectedImage);
     await userEvent.click(screen.getByText("Human inspection — saved"));
     expect(screen.getByLabelText("Inspector name (self-reported)")).toHaveValue("Local inspector");
@@ -413,8 +413,8 @@ describe("Result", () => {
 
     renderResult(null, `/result/${lookup.id}`);
 
-    await userEvent.click(screen.getByRole("button", { name: "Why or why not" }));
-    await userEvent.type(screen.getByLabelText("Why or why not"), "It was the starter.");
+    await userEvent.click(screen.getByRole("button", { name: "Looks wrong" }));
+    await userEvent.type(screen.getByLabelText("Correct part name, if known"), "It was the starter.");
 
     const savedLookup = JSON.parse(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY)) ?? "[]")[0] as Lookup;
     expect(savedLookup.rating).toBe("down");
@@ -429,12 +429,24 @@ describe("Result", () => {
 
     renderResult(null, `/result/${lookup.id}`);
 
-    expect(screen.getByTestId("trust-control")).toHaveTextContent("Do you trust this scan?");
-    await userEvent.click(screen.getByRole("button", { name: "Yes" }));
+    expect(screen.getByTestId("trust-control")).toHaveTextContent("Is this identification right?");
+    await userEvent.click(screen.getByRole("button", { name: "Looks right" }));
 
     const savedLookup = JSON.parse(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY)) ?? "[]")[0] as Lookup;
     expect(savedLookup.rating).toBe("up");
   }, 30000);
+
+  it("stores an explicit unresolved review separately from an untouched rating", async () => {
+    const lookup = makeLookup();
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+
+    renderResult(null, `/result/${lookup.id}`);
+
+    await userEvent.click(screen.getByRole("button", { name: "Not sure" }));
+
+    expect(getLookup(lookup.id)).toMatchObject({ rating: "unsure", trainingStatus: "raw_unreviewed" });
+    expect(screen.queryByLabelText("Correct part name, if known")).not.toBeInTheDocument();
+  });
 
   it("keeps failed feedback edits visible and retries saving them without claiming success", () => {
     const lookup = makeLookup();
@@ -447,9 +459,9 @@ describe("Result", () => {
       originalSetItem.call(this, name, value);
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Why or why not" }));
-    fireEvent.change(screen.getByLabelText("Why or why not"), { target: { value: "Actually a starter" } });
-    expect(screen.getByLabelText("Why or why not")).toHaveValue("Actually a starter");
+    fireEvent.click(screen.getByRole("button", { name: "Looks wrong" }));
+    fireEvent.change(screen.getByLabelText("Correct part name, if known"), { target: { value: "Actually a starter" } });
+    expect(screen.getByLabelText("Correct part name, if known")).toHaveValue("Actually a starter");
     expect(screen.getByText("Not saved locally")).toBeInTheDocument();
     expect(screen.getByText(/Your device storage is full/)).toBeInTheDocument();
     expect(screen.getByTestId("trust-control")).toHaveTextContent("Feedback is not saved.");
@@ -474,10 +486,10 @@ describe("Result", () => {
       if (name === key) throw new DOMException("Full", "QuotaExceededError");
       originalSetItem.call(this, name, value);
     });
-    fireEvent.click(screen.getByRole("button", { name: "Why or why not" }));
+    fireEvent.click(screen.getByRole("button", { name: "Looks wrong" }));
     expect(getLookup(lookup.id)?.rating).toBeNull();
     write.mockRestore();
-    fireEvent.change(screen.getByLabelText("Why or why not"), { target: { value: "Starter label visible" } });
+    fireEvent.change(screen.getByLabelText("Correct part name, if known"), { target: { value: "Starter label visible" } });
     expect(getLookup(lookup.id)).toMatchObject({ rating: "down", correction: "Starter label visible" });
     expect(screen.queryByText("Not saved locally")).not.toBeInTheDocument();
   });
@@ -488,7 +500,7 @@ describe("Result", () => {
     renderResult(null, `/result/${lookup.id}`);
     expect(updateLookup(lookup.id, { rating: "up" }).ok).toBe(true);
 
-    fireEvent.change(screen.getByLabelText("Why or why not"), { target: { value: "New detail from this tab" } });
+    fireEvent.change(screen.getByLabelText("Correct part name, if known"), { target: { value: "New detail from this tab" } });
 
     expect(getLookup(lookup.id)).toMatchObject({ rating: "up", correction: "New detail from this tab" });
   });
@@ -503,7 +515,7 @@ describe("Result", () => {
       if (name === key) throw new DOMException("Full", "QuotaExceededError");
       originalSetItem.call(this, name, value);
     });
-    fireEvent.change(screen.getByLabelText("Why or why not"), { target: { value: "Keep my correction" } });
+    fireEvent.change(screen.getByLabelText("Correct part name, if known"), { target: { value: "Keep my correction" } });
     write.mockRestore();
     expect(updateLookup(lookup.id, { rating: "up" }).ok).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Retry saving feedback" }));
@@ -521,8 +533,8 @@ describe("Result", () => {
       if (name === key) throw new DOMException("Full", "QuotaExceededError");
       originalSetItem.call(this, name, value);
     });
-    fireEvent.click(screen.getByRole("button", { name: "Why or why not" }));
-    fireEvent.change(screen.getByLabelText("Why or why not"), { target: { value: "Pending correction" } });
+    fireEvent.click(screen.getByRole("button", { name: "Looks wrong" }));
+    fireEvent.change(screen.getByLabelText("Correct part name, if known"), { target: { value: "Pending correction" } });
     write.mockRestore();
 
     fireEvent.click(screen.getByText("Human inspection — optional"));
@@ -530,7 +542,7 @@ describe("Result", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save inspection" }));
     expect(getLookup(lookup.id)?.inspection?.inspectorName).toBe("Test inspector");
     expect(getLookup(lookup.id)?.correction).toBeNull();
-    expect(screen.getByLabelText("Why or why not")).toHaveValue("Pending correction");
+    expect(screen.getByLabelText("Correct part name, if known")).toHaveValue("Pending correction");
     expect(screen.getByTestId("trust-control")).toHaveTextContent("Feedback is not saved.");
 
     fireEvent.click(screen.getByRole("button", { name: "Retry saving feedback" }));

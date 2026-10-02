@@ -556,7 +556,7 @@ function parseSafetyTriage(value: unknown): IdentificationResult["safetyTriage"]
 }
 
 function parseRating(value: unknown): Rating {
-  return value === "up" || value === "down" ? value : null;
+  return value === "up" || value === "down" || value === "unsure" ? value : null;
 }
 
 function parseTrainingStatus(value: unknown): TrainingStatus {
