@@ -117,7 +117,7 @@ VITE_ENABLE_GOOGLE_AUTH=true
 VITE_ENABLE_GITHUB_AUTH=true
 ```
 
-There is no local continue or fixture login path. A protected route opens only after Supabase verifies an email code, password, or OAuth session.
+There is no local fixture login path. A protected route opens only after Supabase verifies an email code, password, OAuth session, or the explicitly labeled temporary no-email account.
 
 ## Current scope
 
@@ -128,8 +128,8 @@ There is no local continue or fixture login path. A protected route opens only a
 - Gemini-backed result screen through `/api/identify`
 - Model-backed scan category saved on every AI result, with deterministic fallback for old scans and user corrections
 - Saved scan database in localStorage with photo, AI result/error, category, training label, rating, correction, notes, and chat history
-- Follow-up chat attached to each saved scan through `/api/chat`
-- Early access page at `/early-access` for waitlist and feedback validation
+- Focused result-level follow-up attached to each saved scan through `/api/chat`, with answer depth selected from 9 to 25 sentences
+- Public founding tester page at `/early-access` with the test plan, reward terms, application form, and contextual scan feedback
 - Scan report sharing/export from saved scan results
 - Nearby repair options CTA for professional-verification cases
 - Optional Supabase cloud sync for saved scans, waitlist entries, and feedback

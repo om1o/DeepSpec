@@ -1,10 +1,12 @@
 # DeepSpec full product presentation
 
+Current deck: [`DeepSpec-Full-Product-V1-Tester-Edition.pptx`](DeepSpec-Full-Product-V1-Tester-Edition.pptx). It is an October 2026 private-beta edition, not a public-launch or investment claim.
+
 ## 1. DeepSpec
 
-The V1 aim is to let someone photograph an automotive part, receive an AI identification suggestion and useful information, inspect the result, and easily report or correct problems. Human inspection records add traceable evidence for seller and shop workflows. Actual time savings and real-user accuracy remain unmeasured. The cover uses existing original AI-generated brand artwork, not a customer scan.
+DeepSpec is now a private-beta candidate: photograph a vehicle part, review an AI suggestion, ask focused follow-ups, mark the answer right, wrong or unresolved, and keep the photo, answer and human feedback together. Public launch still depends on provider evaluation, physical-phone checks, monitoring and real tester evidence. The cover uses existing original AI-generated brand artwork, not a customer scan.
 
-Sources: `docs/V1_V2_MASTER_PLAN.md`, `docs/PART_INSPECTION_PILOT.md`, `docs/PILOT_RUNBOOK.md`, `public/brand/alternator-workbench.webp`, `docs/UI_POLISH_2026-09-21.md`
+Sources: `docs/V1_LAUNCH_PLAN.md`, `docs/V1_CREATIVE_RESEARCH_2026-10-01.md`, `src/screens/Result.tsx`, `src/screens/EarlyAccess.tsx`, `public/brand/alternator-workbench.webp`
 
 ## 2. When a part is unfamiliar
 
@@ -14,9 +16,9 @@ Sources: `docs/V1_V2_MASTER_PLAN.md`, `docs/PILOT_RUNBOOK.md`, `docs/PART_INSPEC
 
 ## 3. People DeepSpec can help
 
-Audience roles are intended uses, not existing customer counts. Seller intake is one candidate workflow in the broader trusted-user beta. Shop mode currently stores jobs locally for the account/device, rather than providing a live shared workspace. DIY users should treat AI output as a starting point and seek appropriate human checks.
+These are intended-use cohorts, not customer counts or validated demand. DeepSpec should not compete as a generic visual search tool or OEM catalog. Its V1 wedge is a reviewable record: photo, AI suggestion, visible clues, focused follow-up and human feedback kept together. Experienced mechanics may use it for documentation, teaching and handoff even when they already know the part.
 
-Sources: `docs/PILOT_RUNBOOK.md`, `src/screens/Shop.tsx`, `src/services/shop.ts`
+Sources: `docs/V1_CREATIVE_RESEARCH_2026-10-01.md`, `src/screens/Shop.tsx`, `https://support.google.com/websearch/answer/1325808?hl=en`, `https://docs.partium.io/partium-find/partium-search-engine/how-partium-image-part-search-works/`
 
 ## 4. The core DeepSpec workflow
 
@@ -30,11 +32,11 @@ The scanner accepts camera and upload input, assesses capture quality and can fo
 
 Sources: `docs/V1_V2_MASTER_PLAN.md`, `src/screens/Scanner.tsx`, `src/lib/imageQuality.ts`, `src/lib/promptableSegmentation.ts`
 
-## 6. AI result and follow-up chat
+## 6. AI result with focused follow-ups
 
-The screenshot records a live engine-image QA response on September 26. It is a feature example, not a measured identification-accuracy study. Results and follow-up chat can contain errors. A separate result chat lets users ask about the scan. Scan upload cloud receipt in the screenshot does not prove the new human-inspection cloud column exists.
+The screenshot is a current local QA capture of the result page. The result keeps a focused follow-up field beside the evidence and stores the conversation with the scan. Answer depth may vary from 9 to 25 sentences based on complexity. It remains an AI suggestion, not proof of function, safety, fitment or hidden condition.
 
-Sources: `artifacts/qa/2026-09-26T11-35-19-272Z/screenshots/scanner-ai-engine.png`, `artifacts/qa/2026-09-26T11-35-19-272Z/report.md`, `src/screens/Result.tsx`, `src/screens/Chat.tsx`
+Sources: `src/screens/Result.tsx`, `src/services/resultChat.ts`, `src/services/storage.ts`
 
 ## 7. Human checks stay separate
 
@@ -78,32 +80,32 @@ These audiences and pricing structures are hypotheses, not current offers, reven
 
 Sources: `docs/PILOT_RUNBOOK.md`
 
-## 14. Evidence behind the current build
+## 14. Evidence behind the beta build
 
-Counts refer to the recorded review-branch implementation, not every future commit. The 1,015 tests plus lint/build evidence is historical. Browser recovery checks used controlled cloud failures. A later live verifier, after the existing additive inspection migration, passed inspection save/read/update, original AI/evidence retention, second-account read/write denial, private image access isolation and generated fixture cleanup. This supersedes the earlier missing-column blocker. Production email authentication, physical-phone testing and real-user usefulness remain separate release checks.
+This slide reports current branch evidence, not public-launch proof. Focused tests, lint and production build pass. The public tester page and right/wrong/unresolved result review were checked in a real browser at mobile and desktop widths. The live Supabase constraints accept all three review states. Real identification accuracy, real-user usefulness, physical-phone behavior and production monitoring remain release gates.
 
-Sources: `docs/DRAFT_RECOVERY_RELEASE_REPORT_2026-09-26.md`, `artifacts/qa/v1-foundation-2026-09-26/cloud-inspection.txt`, `docs/V1_LAUNCH_PLAN.md`, `artifacts/qa/2026-09-26T11-35-19-272Z/report.md`, `https://github.com/om1o/DeepSpec/actions/runs/36255542250`, `https://github.com/om1o/DeepSpec/pull/114`
+Sources: `docs/V1_CREATIVE_RESEARCH_2026-10-01.md`, `src/screens/EarlyAccess.test.tsx`, `src/screens/Result.test.tsx`, `supabase/migrations/20261002012446_add_unsure_scan_rating.sql`
 
-## 15. A focused V1, with room for V2
+## 15. V1 is now a private-beta candidate
 
-Current means implemented in the reviewed prototype, not publicly launched. Live inspection persistence now passes the cited verifier. Structured feedback categories, review infrastructure and explicit per-example consent/lineage remain planned or in review until their implementation passes verification. Existing ratings and corrections are a starting point. V1 should not wait for custom model training or full 3D reconstruction.
+Current means implemented and verified on the review branch, not publicly launched. The tester program, focused follow-up, explicit unresolved feedback and opt-in training consent are built. Public launch still requires a labeled automotive provider evaluation, physical iOS and Android checks, actual tester observations, monitoring, cost controls, access controls and rollback evidence.
 
-Sources: `docs/V1_V2_MASTER_PLAN.md`, `docs/V1_LAUNCH_PLAN.md`, `artifacts/qa/v1-foundation-2026-09-26/cloud-inspection.txt`, `docs/DRAFT_RECOVERY_RELEASE_REPORT_2026-09-26.md`, `docs/PART_INSPECTION_PILOT.md`, `src/screens/Shop.tsx`, `src/services/cloudSync.ts`
+Sources: `docs/V1_LAUNCH_PLAN.md`, `docs/PRIVATE_BETA_RELEASE_CHECKLIST.md`, `docs/PRODUCTION_READINESS_GOAL_PLAN.md`, `src/screens/EarlyAccess.tsx`, `src/screens/Result.tsx`
 
-## 16. A one-month route to real users
+## 16. A four-stage route to V1 evidence
 
-This is the user’s approximately one-month target, governed by readiness rather than a guaranteed deadline. V1 should serve a broader group of 5–15 trusted users. Measure scan success, wrong identifications, corrections, AR failures, latency, crashes and usefulness. One seller can form a focused cohort using the existing separate 10-observation baseline and 20-part comparison protocol. The pilot’s 30% time reduction threshold remains a proposed test target, not a product claim. Keep normal tests in both seller workflows.
+The product is ready for controlled private-beta preparation, not public launch. Recruit 5–15 founding testers across DIY, trainee, mechanic, seller and shop workflows. Each tester scans 10 real parts, judges every result as right, wrong or unresolved, sends at least three useful notes and reopens records to verify persistence. The reward is free beta access plus six months after paid launch for accepted testers who complete the checklist.
 
-Sources: `docs/V1_V2_MASTER_PLAN.md`, `docs/V1_LAUNCH_PLAN.md`, `docs/PILOT_RUNBOOK.md`
+Sources: `docs/V1_CREATIVE_RESEARCH_2026-10-01.md`, `src/screens/EarlyAccess.tsx`, `https://support.google.com/googleplay/android-developer/answer/14151465?hl=en`
 
 ## 17. Feedback that can support V2
 
-The pipeline is the current product plan, not a claim that a full review dashboard and versioned dataset system already exist. Preserve both good and bad outputs when permitted. A useful wrong-part correction may be valuable, but incorrect corrections, faces, plates and private details require filtering and review. Keep explicit consent, provenance, review status and dataset lineage. Honor opt-out/deletion through the eventual lineage system. Evaluate improved prompts, retrieval, routing and preprocessing before committing to custom training.
+The capture path is live: users can mark a result right, wrong or unresolved, add a correction when known, submit categorized feedback and separately opt a scan into future review. Those records still require review before dataset approval. No upload automatically enters model training.
 
-Sources: `docs/V1_V2_MASTER_PLAN.md`, `docs/V1_LAUNCH_PLAN.md`, `docs/PART_INSPECTION_PILOT.md`, `src/services/trainingReadiness.ts`, `src/services/shop.ts`
+Sources: `src/screens/Result.tsx`, `src/screens/EarlyAccess.tsx`, `src/components/result/TrainingConsentPanel.tsx`, `src/lib/intakeReview.ts`, `supabase/migrations/20261002012446_add_unsure_scan_rating.sql`
 
 ## 18. The DeepSpec vision
 
-The user’s V1 purpose is to help people photograph a car part and better understand what it might be, with useful information and a clear way to inspect/report/correct the answer. Seller and shop documentation are meaningful applications within this broader purpose. The next step is focused reliability and AR/feedback polish, followed by 5–15 real testers. Do not promise verified function, hidden damage detection, fitment, valuation accuracy, revenue or measured time savings.
+The immediate objective is evidence, not revenue or scale. Run the founding tester program, measure right/wrong/unresolved outcomes, record failure patterns and verify the app on real phones. Public launch should follow only after repeated failures are fixed and the release gates are satisfied. Do not promise verified function, hidden damage detection, fitment, valuation accuracy, revenue or measured time savings.
 
-Sources: `docs/V1_V2_MASTER_PLAN.md`, `docs/V1_LAUNCH_PLAN.md`, `docs/PILOT_RUNBOOK.md`, `public/brand/deepspec-logo.png`
+Sources: `docs/V1_LAUNCH_PLAN.md`, `docs/PRIVATE_BETA_RELEASE_CHECKLIST.md`, `docs/V1_CREATIVE_RESEARCH_2026-10-01.md`, `public/brand/deepspec-logo.png`

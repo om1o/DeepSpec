@@ -1,6 +1,6 @@
 # Browser QA Matrix
 
-Last updated: May 27, 2026
+Last updated: October 1, 2026
 
 Use this matrix before release PRs and after scanner, result, auth, history, chat, or early-access changes. It is a production browser QA checklist, not a replacement for `npm run check`, `npm run eval:identify:release`, or `npm run verify:supabase`.
 
@@ -26,12 +26,12 @@ If provider quota or Supabase availability blocks a gate, record the exact comma
 
 | Route | Required state | Browser checks | Expected evidence |
 | --- | --- | --- | --- |
-| `/auth` | Signed out. Supabase config must be present for interactive sign-in. | Page renders without redirect loops. Email code/link and password methods are visible. Password create-account does not open the scanner unless Supabase returns a verified session. Google and GitHub sign-in appear only when the matching `VITE_ENABLE_*_AUTH` flag is `true` and Supabase exposes that provider. No local continue or fixture login control is present. | Snapshot shows `Sign in`, email field, email-code/password tabs, optional configured OAuth buttons, and no local bypass. Console has no errors. |
+| `/auth` | Signed out. Supabase config must be present for interactive sign-in. | Page renders without redirect loops. Email code/link, password, configured OAuth and no-email anonymous access behave as labeled. No-email access must create a verified Supabase anonymous session; it is not a local fixture bypass. | Snapshot shows `Sign in`, the configured methods and the temporary-account warning. Console has no errors. |
 | `/scan` | Signed in with a verified Supabase session. Camera may be denied. | Scanner shell loads. Manual `Scan now`, `Upload photo`, and paste/drop paths remain visible. Denied camera state keeps gallery fallback available. No stale `?test=1` fixture panel appears. | Snapshot shows live scanner status plus manual controls. Mobile viewport has no overlapping header, reticle, result card, or action buttons. |
-| `/result/:id` | Seed `deep-spec:lookups` with one saved scan. | Saved result opens directly. Primary match, related parts, evidence, sources, review controls, and chat entry are reachable. Delete and report/export controls do not cover content. | Snapshot shows the saved part label, `Tell me more`, review/rating controls, and no missing-data fallback. |
+| `/result/:id` | Seed the account-scoped lookup key with one saved scan. | Saved result opens directly. Primary match, evidence, sources, inline follow-up, right/wrong/not-sure review and report/export controls are reachable. Selecting `Not sure` persists `rating: "unsure"`. | Snapshot shows the saved part label, focused follow-up field, three review choices and no missing-data fallback. |
 | `/history` | Seed at least two saved scans with different categories or ratings. | History opens with saved count, search, category filter, review/rating filters, export, and links to result detail. Empty state must not appear when seed data exists. | Snapshot shows saved scan cards, filter controls, and a working `/result/:id` link. |
 | `/result/:id/chat` | Seed the same lookup used by result detail. | Chat opens from the saved scan. Prompt query parameter pre-fills/sends only when intended. Follow-up submission records chat history locally. | Snapshot shows the scan context, input, saved-scan back link, and no missing-scan fallback. |
-| `/early-access` | Signed in with a verified Supabase session. | Waitlist and feedback sections render. Cloud readiness copy does not claim Supabase is verified unless `npm run verify:supabase` passed for this environment. | Snapshot shows waitlist email/user-type controls, feedback category/message controls, and non-contradictory cloud sync copy. |
+| `/early-access` | Public; no session required to read or apply. Add `?scan=<id>#feedback` from an authenticated result to test contextual feedback. | Founding Tester Program hero, test checklist, audiences, reward terms and application form render. The page keeps application data local first and does not expose internal cloud diagnostics. Contextual scan feedback expands only when appropriate. | Mobile and desktop snapshots show no horizontal overflow, one clear application CTA and honest reward/safety copy. |
 | Unknown route | Signed in or signed out. | Unknown paths redirect through `/` to the auth-gated scanner flow without a 404 shell. | Network log has no app-route 404 and final page is `/auth` or `/scan` depending on auth state. |
 
 ## Browser Evidence To Capture
