@@ -2,11 +2,13 @@ node_modules/
 .claude/worktrees/
 dist/
 dev-dist/
+output/
 dist-ssr/
 .vite/
 .vercel/
 supabase/.temp/
 .deepspec-eval/
+.playwright-cli/
 .playwright-mcp/
 artifacts/qa/
 artifacts/pilot/

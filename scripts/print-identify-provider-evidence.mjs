@@ -127,7 +127,7 @@ function buildProviderStatuses(env) {
       enabled: groqEnabled,
       endpointOrigin: originFor(env.GROQ_IDENTIFY_ENDPOINT_URL, "https://api.groq.com"),
       localOnly: false,
-      model: env.GROQ_IDENTIFY_MODEL?.trim() || "meta-llama/llama-4-scout-17b-16e-instruct",
+      model: env.GROQ_IDENTIFY_MODEL?.trim() || "qwen/qwen3.8-27b",
       name: "Groq",
       productionRoute: groqEnabled,
       ready: groqEnabled && groqTokenPresent,

@@ -13,6 +13,7 @@ import {
   isReviewableEvalFailure,
   isSafetyFalsePositive,
   loadEvalSample,
+  mergeEvalEnv,
   parseArgs,
   scoreIdentificationResult,
   summarizeEvalMetrics,
@@ -49,6 +50,16 @@ const result = {
 };
 
 describe("identify eval scoring", () => {
+  it("lets runtime environment values override dotenv files", () => {
+    expect(mergeEvalEnv(
+      { GROQ_IDENTIFY_MODEL: "deprecated-model", GEMINI_MODEL: "file-model" },
+      { GROQ_IDENTIFY_MODEL: "current-model" },
+    )).toMatchObject({
+      GEMINI_MODEL: "file-model",
+      GROQ_IDENTIFY_MODEL: "current-model",
+    });
+  });
+
   it("uses a fixed 50-case release sample set split across damage and parts", () => {
     expect(RELEASE_SAMPLE_IMAGES).toHaveLength(50);
     expect(new Set(RELEASE_SAMPLE_IMAGES).size).toBe(50);

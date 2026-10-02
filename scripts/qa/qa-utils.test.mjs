@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyIdentifyApiIssue, classifyQaTransportError, getAuthDependencyBlocker } from "./qa-utils.mjs";
+import { classifyIdentifyApiIssue, classifyQaTransportError, getAuthDependencyBlocker, isEngineRecognitionMiss } from "./qa-utils.mjs";
 
 describe("QA transport and auth dependency classification", () => {
   it.each([
@@ -50,5 +50,18 @@ describe("classifyIdentifyApiIssue", () => {
 
   it("does not hide a generic server failure as provider availability", () => {
     expect(classifyIdentifyApiIssue({ status: 500, text: "Internal Server Error" })).toBeNull();
+  });
+});
+
+describe("isEngineRecognitionMiss", () => {
+  it("accepts a focused engine-related primary label", () => {
+    expect(isEngineRecognitionMiss("Engine assembly (V6)")).toBe(false);
+    expect(isEngineRecognitionMiss("Alternator")).toBe(false);
+  });
+
+  it("rejects generic, uncertain, or unrelated primary labels", () => {
+    expect(isEngineRecognitionMiss("Vehicle component")).toBe(true);
+    expect(isEngineRecognitionMiss("Unknown component - low confidence")).toBe(true);
+    expect(isEngineRecognitionMiss("Brake caliper")).toBe(true);
   });
 });

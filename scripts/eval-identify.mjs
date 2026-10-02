@@ -688,14 +688,18 @@ function datasetImagePathFromRecord(record) {
 }
 
 async function loadEnv() {
-  const env = { ...process.env };
+  const fileEnv = {};
 
   for (const file of [".env", ".env.local"]) {
     const values = await readDotEnv(file);
-    Object.assign(env, values);
+    Object.assign(fileEnv, values);
   }
 
-  return env;
+  return mergeEvalEnv(fileEnv, process.env);
+}
+
+export function mergeEvalEnv(fileEnv, runtimeEnv) {
+  return { ...fileEnv, ...runtimeEnv };
 }
 
 async function readDotEnv(path) {

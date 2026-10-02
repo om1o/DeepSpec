@@ -182,6 +182,18 @@ export function classifyIdentifyApiIssue({ status, text = "" } = {}) {
   return null;
 }
 
+export function isEngineRecognitionMiss(primaryLabel = "") {
+  const lower = primaryLabel.toLowerCase();
+  if (
+    /\b(unknown component|unidentified|vehicle component|placeholder|does not depict a real car part|please upload a clear photograph)\b/.test(lower)
+    || /\b(20-40%|25-40%|low confidence)\b/.test(lower)
+  ) {
+    return true;
+  }
+
+  return !/\b(engine|motor|alternator|intake|manifold|oil cap|valve cover|serpentine|pulley|engine bay)\b/.test(lower);
+}
+
 export function classifyQaTransportError(error) {
   const details = formatError(error);
   if (!/net::ERR_(?:ABORTED|CONNECTION_[A-Z_]+|NAME_NOT_RESOLVED|TIMED_OUT)|\bfetch failed\b|\bThis operation was aborted\b|page\.goto: Timeout \d+ms exceeded/i.test(details)) return null;

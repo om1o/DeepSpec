@@ -14,6 +14,7 @@ export default tseslint.config(
       "datasets",
       "dev-dist",
       "dist",
+      "output",
     ],
   },
   js.configs.recommended,

@@ -136,7 +136,7 @@ There is no local fixture login path. A protected route opens only after Supabas
 
 Pricing, account sync, public share links, and settings are not included yet.
 
-Scans are private product records, not automatically approved training data. Future training requires explicit consent, privacy and quality checks, human verification, and dataset lineage. LocalStorage is the default storage layer, capped at 50 saved scans and validated on read. Supabase sync is optional and preserves the same dataset fields with auth ownership, row-level security, a private storage bucket, and explicit grants for browser-safe access. The current direction and launch gates are in [the V1 launch plan](docs/V1_LAUNCH_PLAN.md).
+Scans are private product records, not automatically approved training data. Future training requires explicit consent, privacy and quality checks, human verification, and dataset lineage. LocalStorage is the default storage layer, capped at 50 saved scans and validated on read. Supabase sync is optional and preserves the same dataset fields with auth ownership, row-level security, a private storage bucket, and explicit grants for browser-safe access. The current direction and launch gates are in [the V1 launch plan](docs/V1_LAUNCH_PLAN.md); the exact founding-tester assignment and go/stop decision are in [the V1 tester brief](docs/V1_TESTER_BRIEF_2026-10-01.md).
 
 Waitlist and feedback entries save locally first, then sync to Supabase only when cloud config exists. A real public launch still needs parent-approved privacy terms.
 

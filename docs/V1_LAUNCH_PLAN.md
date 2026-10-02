@@ -12,7 +12,7 @@ V1 includes reliable saving, useful camera highlighting with a photo fallback, r
 
 | Area | Evidence / status | Remaining gate |
 | --- | --- | --- |
-| Capture and explanation | Camera/upload, quality coaching, candidate results, reports and result-level follow-ups exist. Follow-up depth adapts from 9 to 25 sentences and stays with the scan. | Run labeled-image evaluation with a working provider; record wrong and failed cases, not just successes. |
+| Capture and explanation | Camera/upload, quality coaching, candidate results, reports and result-level follow-ups exist. Follow-up depth adapts from 9 to 25 sentences and stays with the scan. A one-image health check passes on the current Groq Qwen 3.8 vision model. | The fixed 50-case release run remains blocked by sustained account-level provider throttling. Configure capacity, rerun all 50 cases, and retain wrong and failed cases rather than only successes. |
 | Saved inspections | Existing device drafts/recovery plus live cloud inspection round-trip passed September 26. | Final deployed-app smoke test and actual-phone interruptions. |
 | Private storage | Live `scan-images` bucket private; ownership policies; second-account denial tested. | Verify final deployment points at this same project. |
 | Feedback | Public tester page, durable application/report forms, 18 issue reasons, explicit scan context, and right/wrong/unresolved result states exist. Ratings and corrections are preserved; the administrator SQL review queue remains available. | Exercise the flow with real testers. Retry/outbox and attachments remain. |
@@ -45,6 +45,8 @@ If a gate fails, reduce exposure or keep the beta private rather than asserting 
 4. **Founding tester flow implemented October 1:** `/early-access` is public, describes the test and reward without requiring an account, and keeps application and scan feedback durable locally before cloud sync. Result review now distinguishes right, wrong and unresolved. See [creative and market research](V1_CREATIVE_RESEARCH_2026-10-01.md). Actual recruitment and observation remain human work.
 5. **Operational visibility, first slice implemented September 29:** opt-in private identification-service logs record release, event UUID, time, allowlisted code/status and latency; a bounded operator summarizer validates and deduplicates exports. A local synthetic configuration failure reached the summary without a provider call. See [diagnostics scope and operator steps](OPERATIONAL_DIAGNOSTICS.md). No photo, user ID or raw error text is included. Deployed log access/retention, other HTTP stages, client save failures and broader beta aggregation remain gates; this is not complete production monitoring.
 6. **AR quality:** finish the captured-image flow first; add live tracking only with measured stability. Graceful retry, lighting/steadiness guidance and photo upload must remain reachable.
+
+The current external-testing handoff is [the October 1 founding tester brief](V1_TESTER_BRIEF_2026-10-01.md). It permits an owner-run physical-phone and one-person supervised rehearsal, not the wider cohort or public launch.
 
 Training/evaluation use is separate from product storage and a thumbs-up. Successful and failed cases can be review candidates; neither is automatically approved ground truth. New review tables must use RLS, explicit grants and ownership checks. No new ML training or scraping is a V1 dependency.
 
