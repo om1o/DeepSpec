@@ -17,6 +17,8 @@ export const FEEDBACK_ISSUES = [
   { id: "ar_label", label: "AR: incorrect label", category: "scanner" },
   { id: "ar_detection", label: "AR: poor detection", category: "scanner" },
   { id: "ar_other", label: "AR: other problem", category: "scanner" },
+  { id: "followup_unhelpful", label: "Follow-up answer was not useful", category: "chat" },
+  { id: "save_reopen", label: "Save or reopen problem", category: "saved_scans" },
   { id: "bug", label: "General bug", category: "other" },
   { id: "feature_request", label: "Feature request", category: "other" },
 ] as const;

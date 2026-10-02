@@ -129,7 +129,7 @@ There is no local fixture login path. A protected route opens only after Supabas
 - Model-backed scan category saved on every AI result, with deterministic fallback for old scans and user corrections
 - Saved scan database in localStorage with photo, AI result/error, category, training label, rating, correction, notes, and chat history
 - Focused result-level follow-up attached to each saved scan through `/api/chat`, with answer depth selected from 9 to 25 sentences
-- Public founding tester page at `/early-access` with the test plan, reward terms, application form, and contextual scan feedback
+- Public V1 test page at `/early-access` with the invite-only test plan, launch-update form, and fast contextual scan feedback
 - Scan report sharing/export from saved scan results
 - Nearby repair options CTA for professional-verification cases
 - Optional Supabase cloud sync for saved scans, waitlist entries, and feedback

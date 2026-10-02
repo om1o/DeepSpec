@@ -31,7 +31,9 @@ describe("SEO assets", () => {
     expect(sitemap).toContain("https://deepspec.app/articles/ai-car-parts-scanner.html");
     expect(sitemap).toContain("https://deepspec.app/articles/car-damage-ai-scanner.html");
     expect(sitemap).toContain("https://deepspec.app/articles/visual-ai-inspection-tools.html");
-    expect(sitemap).toContain("https://deepspec.app/early-access");
+    // The client-rendered tester route stays out of the sitemap until it has
+    // route-specific server-rendered metadata.
+    expect(sitemap).not.toContain("https://deepspec.app/early-access");
     expect(sitemap).not.toContain(".md</loc>");
     expect(llms).toContain("AI car part finding");
     expect(llms).toContain("Follow-up chat attached to saved scans");

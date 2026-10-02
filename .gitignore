@@ -13,6 +13,7 @@ supabase/.temp/
 artifacts/qa/
 artifacts/pilot/
 artifacts/release-gates/
+artifacts/seo/
 datasets/raw/
 datasets/derived/
 

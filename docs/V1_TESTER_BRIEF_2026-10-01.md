@@ -1,4 +1,4 @@
-# DeepSpec V1 founding tester brief
+# DeepSpec private V1 tester brief
 
 Date: October 1, 2026
 
@@ -10,12 +10,12 @@ DeepSpec's V1 job is narrow:
 
 It does not prove exact fitment, hidden condition, function, repair safety, value, or an OEM part number from one photo.
 
-## Tester offer
+## Tester policy
 
-- Accepted testers use DeepSpec free during the beta.
-- A tester who completes the assignment receives six months of free access after paid access launches.
-- A seller or shop pilot may receive up to one year only when its scope is agreed before testing.
-- Rewards have no cash value. Participation does not guarantee acceptance into a later plan.
+- Start with family and trusted reviewers in supervised sessions.
+- There is no paid tester program and no promise of future free access.
+- Keep beta access free while the product is being tested.
+- Expand only after the core flow works on real phones and real parts.
 
 ## The assignment
 
@@ -82,7 +82,7 @@ Groq retired the previous Llama 4 Scout model on July 17, 2026. The repository n
 3. Configure provider quota that can finish `npm run eval:identify:release`, then retain the complete 50-case summary. Do not turn an incomplete 19-case prefix into an accuracy claim.
 4. Require green CI on the exact tester commit. Record the commit, deployment URL and run URL.
 5. Verify deployed monitoring access, rate limiting, spend cap and rollback. Trigger one synthetic failure and confirm an operator can see it without exposing photos or personal data.
-6. Run one supervised rehearsal. If it passes, invite 5-15 accepted testers in small waves and review failures before expanding.
+6. Run supervised family tests first. If they pass, invite a small trusted group in waves and review failures before expanding.
 
 Public feedback abuse throttling, retention/deletion operations, email recovery, payment concurrency and shared-shop permissions remain separate public or paid launch gates.
 

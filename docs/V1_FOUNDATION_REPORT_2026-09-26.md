@@ -43,9 +43,9 @@ Security advisors after changes report expected anonymous-session access warning
 
 ## Presentation
 
-- [Original editable 18-slide PowerPoint](presentations/DeepSpec-Full-Product.pptx), [October private-beta tester edition](presentations/DeepSpec-Full-Product-V1-Tester-Edition.pptx), [presenter notes](presentations/DeepSpec-Full-Product-Notes.md), and [interactive presentation](presentations/DeepSpec-Full-Interactive.html).
+- [Original editable 18-slide PowerPoint](presentations/DeepSpec-Full-Product.pptx), [October private-beta launch edition](presentations/DeepSpec-Full-Product-V1-Launch-Edition.pptx), [presenter notes](presentations/DeepSpec-Full-Product-Notes.md), and [interactive presentation](presentations/DeepSpec-Full-Interactive.html).
 - Product purpose, real app screenshots, human inspection evidence, storage boundaries, buyer hypotheses, hypothetical labor model, V1/V2 boundaries and the one-month plan. No invented customer, accuracy or savings results.
-- PowerPoint: 18 rendered/reviewed slides, three native tables, native chart with embedded workbook, structural and layout checks passed with zero findings. Native PowerPoint opening not tested. Evidence: `artifacts/pilot/product-presentation/pptx/build/validation-v3.json` and `visual-review-v3.json`.
+- PowerPoint: the 18-slide launch edition was rendered and reviewed slide by slide. Three native tables and the native time-savings chart remain editable; the chart's explicit 4.5/6.0 hypothetical values now have an embedded workbook. Structural, layout, source-fidelity and first-party import checks passed with zero findings. Native PowerPoint opening was not tested.
 - Interactive: all 18 sections at 1440/390/320px, navigation, roles, tour, recovery/stale simulation, and default/zero/negative calculator outcomes passed without JS errors or document overflow. Evidence: `artifacts/pilot/product-presentation/interactive-qa/report.json`. Self-contained HTML makes no customer-data connection.
 - Uses existing DeepSpec logo and original generated illustrative artwork; QA screenshots contain test fixtures. Source template/assets are under `docs/presentations/full-product/`; rebuild with `node docs/presentations/full-product/build-interactive.mjs`.
 

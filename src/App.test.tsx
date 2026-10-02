@@ -168,7 +168,7 @@ describe("App auth guard", () => {
     expect(await screen.findByText("Auth screen")).toBeInTheDocument();
   });
 
-  it("keeps the founding tester program public", () => {
+  it("keeps the private V1 test page public", () => {
     authMock.getVerifiedAuthUser.mockResolvedValue(null);
 
     renderApp("/early-access");

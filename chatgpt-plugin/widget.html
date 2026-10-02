@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>DeepSpec vehicle result</title>
+    <style>
+      :root { color-scheme: light dark; font: 14px/1.5 Inter, ui-sans-serif, system-ui, sans-serif; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: transparent; color: CanvasText; }
+      main { padding: 16px; }
+      .eyebrow { color: #4c8190; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+      h1 { margin: 5px 0 4px; font-size: 22px; line-height: 1.15; }
+      .confidence { margin: 0; color: GrayText; }
+      section { margin-top: 18px; border-top: 1px solid color-mix(in srgb, CanvasText 16%, transparent); padding-top: 14px; }
+      h2 { margin: 0 0 7px; font-size: 13px; }
+      p { margin: 0; }
+      ul { margin: 0; padding-left: 18px; }
+      li + li { margin-top: 5px; }
+      a { color: LinkText; }
+      .notice { margin-top: 18px; border-left: 3px solid #b56b32; padding-left: 11px; color: GrayText; font-size: 12px; }
+      label { display: flex; align-items: flex-start; gap: 9px; margin-top: 18px; }
+      input { margin-top: 3px; }
+      button { width: 100%; min-height: 42px; margin-top: 12px; border: 0; border-radius: 7px; background: #a8d2dc; color: #071520; font: inherit; font-weight: 800; cursor: pointer; }
+      button:disabled { cursor: not-allowed; opacity: .5; }
+      .status { min-height: 21px; margin-top: 8px; color: #4c8190; font-weight: 700; }
+      .empty { color: GrayText; }
+    </style>
+  </head>
+  <body>
+    <main id="root"><p class="empty">Waiting for a DeepSpec result...</p></main>
+    <script>
+      let latest = null;
+      let input = null;
+      let rpcId = 0;
+      const pending = new Map();
+
+      window.addEventListener("message", (event) => {
+        if (event.source !== window.parent) return;
+        const message = event.data;
+        if (!message || message.jsonrpc !== "2.0") return;
+        if (message.id && pending.has(message.id)) {
+          const handler = pending.get(message.id); pending.delete(message.id);
+          message.error ? handler.reject(message.error) : handler.resolve(message.result);
+          return;
+        }
+        if (message.method === "ui/notifications/tool-input") input = message.params?.arguments || message.params || input;
+        if (message.method === "ui/notifications/tool-result") {
+          latest = message.params?.structuredContent || message.params?.result?.structuredContent || latest;
+          render();
+        }
+      });
+
+      window.addEventListener("openai:set_globals", (event) => {
+        const globals = event.detail?.globals || {};
+        latest = globals.toolOutput || latest;
+        input = globals.toolInput || input;
+        render();
+      });
+
+      function rpc(method, params) {
+        const id = ++rpcId;
+        window.parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
+        return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
+      }
+
+      async function initialize() {
+        try {
+          await rpc("ui/initialize", { appInfo: { name: "deepspec-result", version: "0.1.0" }, appCapabilities: {}, protocolVersion: "2026-01-26" });
+          window.parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} }, "*");
+        } catch { /* window.openai remains the compatibility fallback. */ }
+        latest = window.openai?.toolOutput || latest;
+        input = window.openai?.toolInput || input;
+        render();
+      }
+
+      async function callTool(name, args) {
+        if (window.openai?.callTool) return window.openai.callTool(name, args);
+        return rpc("tools/call", { name, arguments: args });
+      }
+
+      function escapeHtml(value) {
+        return String(value || "").replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char]);
+      }
+
+      function render() {
+        if (!latest?.analysis) return;
+        const result = latest.analysis;
+        const list = (items) => (items || []).slice(0, 4).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+        const sources = (latest.sourceLinks || []).map((source) => `<li><a href="${escapeHtml(source.url)}" target="_blank" rel="noreferrer">${escapeHtml(source.label)}</a></li>`).join("");
+        document.getElementById("root").innerHTML = `
+          <p class="eyebrow">DeepSpec result</p>
+          <h1>${escapeHtml(result.partName)}</h1>
+          <p class="confidence">${escapeHtml(result.confidence)} confidence</p>
+          <section><h2>What it does</h2><p>${escapeHtml(result.whatItDoes)}</p></section>
+          <section><h2>Visible evidence</h2><ul>${list(result.visibleObservations)}</ul></section>
+          <section><h2>Concerns</h2><ul>${list(result.concerns?.length ? result.concerns : ["No specific visible concern was returned."])}</ul></section>
+          <section><h2>Next action</h2><p>${escapeHtml(result.nextAction)}</p></section>
+          <section><h2>Sources</h2><ul>${sources}</ul></section>
+          <p class="notice">${escapeHtml(latest.disclaimer)} Saving does not grant permission to train on this image.</p>
+          <label><input id="consent" type="checkbox"> <span>Save this image and analysis to my private DeepSpec history.</span></label>
+          <button id="save" disabled>Save to DeepSpec</button>
+          <p class="status" id="status" role="status"></p>`;
+        const consent = document.getElementById("consent");
+        const save = document.getElementById("save");
+        consent.addEventListener("change", () => { save.disabled = !consent.checked; });
+        save.addEventListener("click", async () => {
+          if (!consent.checked || !input?.file) return;
+          save.disabled = true;
+          document.getElementById("status").textContent = "Saving...";
+          try {
+            const response = await callTool("save_deepspec_scan", {
+              file: input.file,
+              analysisId: latest.analysisId,
+              analysis: latest.analysis,
+              question: latest.question || "",
+              userConfirmed: true,
+            });
+            const output = response?.structuredContent || response?.result?.structuredContent || response;
+            document.getElementById("status").textContent = output?.saved ? "Saved to your private DeepSpec history." : "DeepSpec could not confirm the save.";
+          } catch {
+            document.getElementById("status").textContent = "DeepSpec could not confirm the save.";
+            save.disabled = false;
+          }
+        });
+      }
+
+      void initialize();
+    </script>
+  </body>
+</html>

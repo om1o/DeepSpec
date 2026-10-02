@@ -7,6 +7,7 @@ import EarlyAccess from "./screens/EarlyAccess";
 import History from "./screens/History";
 import Account from "./screens/Account";
 import Pricing from "./screens/Pricing";
+import OAuthConsent from "./screens/OAuthConsent";
 import Result from "./screens/Result";
 import Shop from "./screens/Shop";
 import ShopJob from "./screens/ShopJob";
@@ -105,6 +106,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/auth" element={<Auth />} />
+      <Route path="/oauth/consent" element={<OAuthConsent />} />
       <Route path="/" element={<Navigate to="/scan" replace />} />
       <Route
         path="/scan"

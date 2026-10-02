@@ -39,7 +39,6 @@ export default function EarlyAccess() {
   const [searchParams] = useSearchParams();
   const scanId = searchParams.get("scan");
   const reportScan = scanId ? getLookup(scanId) : null;
-  const [feedbackOpen, setFeedbackOpen] = useState(Boolean(scanId));
   const [feedbackIssue, setFeedbackIssue] = useState<FeedbackIssue | "">("");
   const [includeContext, setIncludeContext] = useState(false);
   const [sendingFeedback, setSendingFeedback] = useState(false);
@@ -59,10 +58,10 @@ export default function EarlyAccess() {
     const previousTitle = document.title;
     const description = document.querySelector<HTMLMetaElement>('meta[name="description"]');
     const previousDescription = description?.content;
-    document.title = "DeepSpec Founding Tester Program";
+    document.title = "DeepSpec Private V1 Test";
     description?.setAttribute(
       "content",
-      "Apply to test DeepSpec on real vehicle parts, report wrong or uncertain results, and help shape the first public version.",
+      "Test DeepSpec on real vehicle parts, report wrong or uncertain results, and help shape the first public version.",
     );
 
     return () => {
@@ -168,7 +167,7 @@ export default function EarlyAccess() {
               alt="DeepSpec"
               className="h-11 w-36 rounded-[8px] bg-white object-contain p-1 shadow-sm"
             />
-            <nav className="flex items-center gap-2" aria-label="Tester program navigation">
+            <nav className="flex items-center gap-2" aria-label="V1 test navigation">
               <Link to="/auth" className="rounded-[8px] border border-white/25 px-3 py-2 text-sm font-bold text-white">
                 Sign in
               </Link>
@@ -181,14 +180,14 @@ export default function EarlyAccess() {
           <div className="my-auto max-w-3xl py-12">
             <p className="text-sm font-black text-[#a8d2dc]">DEEPSPEC BETA</p>
             <h1 className="mt-4 max-w-2xl text-4xl font-black leading-[1.04] text-white sm:text-5xl lg:text-6xl">
-              Founding Tester Program
+              Private V1 Test
             </h1>
             <p className="mt-5 max-w-2xl text-base font-semibold leading-7 text-slate-200 sm:text-lg">
-              Scan real vehicle parts. Tell us where DeepSpec gets the answer wrong or leaves you unsure. Help decide what is ready for V1.
+              Scan real vehicle parts. Tell us where DeepSpec is wrong, confusing, or uncertain. Help decide what is ready before public promotion begins.
             </p>
             <div className="mt-7 flex flex-wrap gap-3">
-              <a href="#apply" className="rounded-[8px] bg-white px-5 py-3 text-sm font-black text-[#071520] shadow-lg">
-                Apply to test
+              <a href="#feedback" className="rounded-[8px] bg-white px-5 py-3 text-sm font-black text-[#071520] shadow-lg">
+                Report a test
               </a>
               <a href="#test-plan" className="rounded-[8px] border border-white/30 px-5 py-3 text-sm font-black text-white">
                 See the test plan
@@ -197,8 +196,8 @@ export default function EarlyAccess() {
           </div>
 
           <div className="grid gap-4 border-t border-white/20 pt-5 text-sm sm:grid-cols-2">
-            <p><strong className="block text-white">Free during beta</strong><span className="text-slate-300">No payment required to participate.</span></p>
-            <p><strong className="block text-white">Six months after paid launch</strong><span className="text-slate-300">For accepted testers who complete the checklist.</span></p>
+            <p><strong className="block text-white">Invite-only V1</strong><span className="text-slate-300">Family and trusted reviewers test first.</span></p>
+            <p><strong className="block text-white">No paid tester program</strong><span className="text-slate-300">The goal is honest evidence, not a reward campaign.</span></p>
           </div>
           <p className="mt-4 text-xs text-slate-400">Illustrative part image. Not a scan result.</p>
         </div>
@@ -251,13 +250,13 @@ export default function EarlyAccess() {
         </div>
       </section>
 
-      <section id="apply" className="bg-white py-14 text-slate-950">
+      <section id="updates" className="bg-white py-14 text-slate-950">
         <div className="mx-auto grid w-full max-w-5xl gap-10 px-5 sm:px-8 lg:grid-cols-[0.8fr_1.2fr]">
           <div>
-            <p className="text-sm font-black text-[#416b78]">TESTER REWARD</p>
-            <h2 className="mt-3 text-3xl font-black leading-tight">Free beta access, then six months free</h2>
+            <p className="text-sm font-black text-[#416b78]">LAUNCH UPDATES</p>
+            <h2 className="mt-3 text-3xl font-black leading-tight">Test privately, promote after the evidence</h2>
             <p className="mt-4 text-sm leading-6 text-slate-600">
-              Approved seller and shop pilots can receive up to one year when the scope is agreed before testing. Rewards have no cash value and begin only after paid access launches.
+              V1 testing starts with family and trusted reviewers. DeepSpec is not promising cash, free years, or special pricing for testing. Public promotion starts after the core flow works on real phones and real parts.
             </p>
             <p className="mt-6 border-l-4 border-[#b56b32] pl-4 text-sm leading-6 text-slate-600">
               DeepSpec is an identification and documentation aid. A photo cannot prove exact fitment, hidden condition, or repair safety.
@@ -265,8 +264,8 @@ export default function EarlyAccess() {
           </div>
 
           <form className="rounded-[8px] border border-slate-200 bg-[#f8fafb] p-5 shadow-sm sm:p-7" onSubmit={handleWaitlistSubmit}>
-            <h2 className="text-xl font-black">Apply to test DeepSpec</h2>
-            <p className="mt-2 text-sm leading-6 text-slate-600">Tell us what kind of parts and workflow you can test.</p>
+            <h2 className="text-xl font-black">Get DeepSpec launch updates</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">Tell us what kind of parts or workflow you want DeepSpec to support.</p>
             <label className="mt-5 block">
               <span className="text-sm font-bold">Email</span>
               <input
@@ -300,33 +299,34 @@ export default function EarlyAccess() {
               </select>
             </label>
             <label className="mt-4 block">
-              <span className="text-sm font-bold">What will you test?</span>
+              <span className="text-sm font-bold">What would you use DeepSpec for?</span>
               <textarea
                 className="mt-2 min-h-24 w-full resize-none rounded-[8px] border border-slate-300 bg-white p-3 text-sm leading-6 text-slate-950 outline-none placeholder:text-slate-400 focus:border-[#416b78]"
                 maxLength={240}
                 onChange={(event) => setMainProblem(event.target.value)}
-                placeholder="Example: alternators and starters during parts intake."
+                placeholder="Example: identifying alternators and starters during parts intake."
                 required
                 value={mainProblem}
               />
             </label>
             {waitlistStatus ? <p role="status" className="mt-3 text-sm font-bold text-[#416b78]">{waitlistStatus}</p> : null}
-            <Button className="mt-5 w-full" type="submit">Apply for tester access</Button>
+            <Button className="mt-5 w-full" type="submit">Join launch updates</Button>
           </form>
         </div>
       </section>
 
-      <section className="bg-[#f4f6f7] py-12 text-slate-950">
-        <div className="mx-auto w-full max-w-5xl px-5 sm:px-8">
-          <details
-            open={Boolean(scanId) || feedbackOpen}
-            onToggle={(event) => setFeedbackOpen(event.currentTarget.open)}
-            className="border-y border-slate-300 py-5"
-          >
-            <summary className="cursor-pointer list-none text-lg font-black marker:hidden">
-              {reportScan ? "Report a problem with this scan" : "Already testing? Send product feedback"}
-            </summary>
-            <form ref={reportForm} id="feedback" className="mt-6 max-w-2xl" onSubmit={handleFeedbackSubmit}>
+      <section id="feedback" className="bg-[#f4f6f7] py-14 text-slate-950">
+        <div className="mx-auto grid w-full max-w-5xl gap-10 px-5 sm:px-8 lg:grid-cols-[0.75fr_1.25fr]">
+          <div>
+            <p className="text-sm font-black text-[#416b78]">FAST TEST REPORT</p>
+            <h2 className="mt-3 text-3xl font-black leading-tight">
+              {reportScan ? "Report this scan" : "Tell us what broke or caused doubt"}
+            </h2>
+            <p className="mt-4 text-sm leading-6 text-slate-600">
+              Pick the closest problem. Notes are optional for a specific issue, so a report can take less than a minute.
+            </p>
+          </div>
+          <form ref={reportForm} className="rounded-[8px] border border-slate-200 bg-white p-5 shadow-sm sm:p-7" onSubmit={handleFeedbackSubmit}>
               <p className="text-sm leading-6 text-slate-600">
                 Tell us what worked, what failed, or what would make DeepSpec worth keeping. Feedback saves on this device first and syncs when cloud delivery is available.
               </p>
@@ -360,6 +360,7 @@ export default function EarlyAccess() {
                 >
                   <option value="scanner">Scanner</option>
                   <option value="ai_result">AI result</option>
+                  <option value="saved_scans">Saved scans</option>
                   <option value="chat">Follow-up chat</option>
                   <option value="business">Would pay for</option>
                   <option value="other">Other</option>
@@ -390,8 +391,7 @@ export default function EarlyAccess() {
               <Button className="mt-5" type="submit" disabled={sendingFeedback}>
                 {sendingFeedback ? "Sending feedback..." : "Save feedback"}
               </Button>
-            </form>
-          </details>
+          </form>
         </div>
       </section>
 

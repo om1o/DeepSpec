@@ -49,7 +49,7 @@ The V1 assignment is intentionally small:
 3. Send at least three specific feedback notes.
 4. Reopen at least three saved records.
 
-The reward can motivate participation, but it is a real commitment. The current offer is free beta access plus six months after paid launch for accepted testers who complete the checklist. Approved seller or shop pilots can receive up to one year only when the scope is agreed before testing.
+V1 starts with family and trusted reviewers. There is no paid tester program and no promise of future free access. Keep the beta free while testing, then decide whether a broader tester offer is necessary from the quality of the feedback rather than assuming a reward is required.
 
 Google Play's current closed-test guidance recommends a clear test brief, an explicit feedback channel, and evidence of how testers used the product. Its 12-testers-for-14-days rule applies to qualifying Android developer accounts, not to this web beta, but the discipline is useful for DeepSpec. Source: [Google Play testing requirements](https://support.google.com/googleplay/android-developer/answer/14151465?hl=en).
 

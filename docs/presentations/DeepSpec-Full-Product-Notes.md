@@ -1,6 +1,6 @@
 # DeepSpec full product presentation
 
-Current deck: [`DeepSpec-Full-Product-V1-Tester-Edition.pptx`](DeepSpec-Full-Product-V1-Tester-Edition.pptx). It is an October 2026 private-beta edition, not a public-launch or investment claim.
+Current deck: [`DeepSpec-Full-Product-V1-Launch-Edition.pptx`](DeepSpec-Full-Product-V1-Launch-Edition.pptx). It is an October 2026 private-beta launch edition, not a public-launch or investment claim.
 
 ## 1. DeepSpec
 
@@ -94,7 +94,7 @@ Sources: `docs/V1_LAUNCH_PLAN.md`, `docs/PRIVATE_BETA_RELEASE_CHECKLIST.md`, `do
 
 ## 16. A four-stage route to V1 evidence
 
-The product is ready for controlled private-beta preparation, not public launch. Recruit 5–15 founding testers across DIY, trainee, mechanic, seller and shop workflows. Each tester scans 10 real parts, judges every result as right, wrong or unresolved, sends at least three useful notes and reopens records to verify persistence. The reward is free beta access plus six months after paid launch for accepted testers who complete the checklist.
+The product is ready for controlled private-beta preparation, not public launch. Start with supervised family and trusted reviewers. Each tester scans 10 real parts, judges every result as right, wrong or unresolved, sends at least three useful notes and reopens records to verify persistence. V1 has no paid tester program or promise of future free access.
 
 Sources: `docs/V1_CREATIVE_RESEARCH_2026-10-01.md`, `src/screens/EarlyAccess.tsx`, `https://support.google.com/googleplay/android-developer/answer/14151465?hl=en`
 
@@ -106,6 +106,6 @@ Sources: `src/screens/Result.tsx`, `src/screens/EarlyAccess.tsx`, `src/component
 
 ## 18. The DeepSpec vision
 
-The immediate objective is evidence, not revenue or scale. Run the founding tester program, measure right/wrong/unresolved outcomes, record failure patterns and verify the app on real phones. Public launch should follow only after repeated failures are fixed and the release gates are satisfied. Do not promise verified function, hidden damage detection, fitment, valuation accuracy, revenue or measured time savings.
+The immediate objective is evidence, not revenue or scale. Run the private family test, measure right/wrong/unresolved outcomes, record failure patterns and verify the app on real phones. Public launch should follow only after repeated failures are fixed and the release gates are satisfied. Do not promise verified function, hidden damage detection, fitment, valuation accuracy, revenue or measured time savings.
 
 Sources: `docs/V1_LAUNCH_PLAN.md`, `docs/PRIVATE_BETA_RELEASE_CHECKLIST.md`, `docs/V1_CREATIVE_RESEARCH_2026-10-01.md`, `public/brand/deepspec-logo.png`
