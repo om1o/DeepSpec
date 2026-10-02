@@ -21,15 +21,15 @@ describe("EarlyAccess", () => {
     vi.unstubAllEnvs();
   });
 
-  it("shows the business experiment page", () => {
+  it("shows the public tester offer without internal cloud diagnostics", () => {
     renderEarlyAccess();
 
-    expect(screen.getByRole("heading", { name: "Early access" })).toBeInTheDocument();
-    expect(screen.getByText("Founding Tester Program")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Founding Tester Program" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Free beta access, then six months free" })).toBeInTheDocument();
     expect(screen.getByText("Parts sellers and salvage teams")).toBeInTheDocument();
-    expect(screen.getByText("Off")).toBeInTheDocument();
-    expect(screen.getByText("Your scans are saved on this device. Cloud sync is off for this build.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Apply to test" })).toHaveAttribute("href", "#apply");
+    expect(screen.queryByText("Cloud sync")).not.toBeInTheDocument();
+    expect(document.title).toBe("DeepSpec Founding Tester Program");
   });
 
   it("saves waitlist and feedback entries locally", async () => {
@@ -43,6 +43,7 @@ describe("EarlyAccess", () => {
 
     expect(await screen.findByText("Saved on this device. Cloud sync is off for this build.")).toBeInTheDocument();
 
+    await userEvent.click(screen.getByText("Already testing? Send product feedback"));
     fireEvent.change(screen.getByLabelText("Feedback"), {
       target: { value: "I would pay for scan reports I can send to a mechanic." },
     });
@@ -68,9 +69,10 @@ describe("EarlyAccess", () => {
     });
     await userEvent.click(screen.getByRole("button", { name: "Apply for tester access" }));
 
-    expect(await screen.findByText("Saved on this device and synced to cloud.")).toBeInTheDocument();
+    expect(await screen.findByText("Application received.")).toBeInTheDocument();
     expect(waitlistSync).toHaveBeenCalledWith(expect.objectContaining({ email: "tester@example.com" }));
 
+    await userEvent.click(screen.getByText("Already testing? Send product feedback"));
     fireEvent.change(screen.getByLabelText("Feedback"), {
       target: { value: "I would pay for scan reports I can send to a mechanic." },
     });
@@ -102,6 +104,7 @@ describe("EarlyAccess", () => {
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
     vi.spyOn(cloudSync, "syncFeedbackToCloud").mockResolvedValue({ ok: true, message: "Feedback synced. Scan context is included as text; this scan is not linked to a cloud record." });
     renderEarlyAccess();
+    await userEvent.click(screen.getByText("Already testing? Send product feedback"));
     fireEvent.change(screen.getByLabelText("Feedback"), { target: { value: "The scan picked the wrong part." } });
     await userEvent.click(screen.getByRole("button", { name: "Save feedback" }));
     expect(await screen.findByText(/Feedback saved on this device\. Feedback synced\. Scan context is included as text/)).toBeInTheDocument();
@@ -139,9 +142,10 @@ describe("EarlyAccess", () => {
     let finish!: (result: { ok: boolean; message: string }) => void;
     const sync = vi.spyOn(cloudSync, "syncFeedbackToCloud").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
     renderEarlyAccess();
+    await userEvent.click(screen.getByText("Already testing? Send product feedback"));
     await userEvent.selectOptions(screen.getByLabelText("What went wrong?"), "bug");
     await userEvent.click(screen.getByRole("button", { name: "Save feedback" }));
-    const pendingButton = screen.getByRole("button", { name: "Sending feedback…" });
+    const pendingButton = screen.getByRole("button", { name: "Sending feedback..." });
     expect(pendingButton).toBeDisabled();
     fireEvent.submit(pendingButton.closest("form")!);
     expect(sync).toHaveBeenCalledTimes(1);

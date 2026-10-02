@@ -168,6 +168,15 @@ describe("App auth guard", () => {
     expect(await screen.findByText("Auth screen")).toBeInTheDocument();
   });
 
+  it("keeps the founding tester program public", () => {
+    authMock.getVerifiedAuthUser.mockResolvedValue(null);
+
+    renderApp("/early-access");
+
+    expect(screen.getByText("Early access screen")).toBeInTheDocument();
+    expect(authMock.getVerifiedAuthUser).not.toHaveBeenCalled();
+  });
+
   it("opens account after the Supabase auth check passes", async () => {
     authMock.getVerifiedAuthUser.mockResolvedValue({
       app_metadata: {},

@@ -126,11 +126,7 @@ export default function App() {
       />
       <Route
         path="/early-access"
-        element={
-          <RequireAuth>
-            <EarlyAccess />
-          </RequireAuth>
-        }
+        element={<EarlyAccess />}
       />
       <Route
         path="/pricing"

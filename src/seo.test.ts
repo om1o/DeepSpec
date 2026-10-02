@@ -8,12 +8,13 @@ describe("SEO assets", () => {
   it("adds search and social metadata to the app shell", () => {
     const html = read("index.html");
 
-    expect(html).toContain("Deep Spec - AI Car Part Finding Helper");
-    expect(html).toContain("AI car part finding");
+    expect(html).toContain("DeepSpec - AI-Assisted Vehicle Part Identification");
+    expect(html).toContain("car part identification app");
     expect(html).toContain("AI car parts scanner");
-    expect(html).toContain("identify car parts with camera");
+    expect(html).toContain("identify vehicle parts with camera");
     expect(html).toContain("application/ld+json");
-    expect(html).toContain("https://deepspec.app/brand/deepspec-logo.png");
+    expect(html).toContain("https://deepspec.app/brand/deepspec-social-card.png");
+    expect(html).toContain("/early-access");
     expect(html).toContain("/articles/ai-car-part-finding.html");
     expect(html).toContain("/articles/visual-ai-inspection-tools.html");
   });
@@ -30,6 +31,8 @@ describe("SEO assets", () => {
     expect(sitemap).toContain("https://deepspec.app/articles/ai-car-parts-scanner.html");
     expect(sitemap).toContain("https://deepspec.app/articles/car-damage-ai-scanner.html");
     expect(sitemap).toContain("https://deepspec.app/articles/visual-ai-inspection-tools.html");
+    expect(sitemap).toContain("https://deepspec.app/early-access");
+    expect(sitemap).not.toContain(".md</loc>");
     expect(llms).toContain("AI car part finding");
     expect(llms).toContain("Follow-up chat attached to saved scans");
     expect(llms).not.toContain("AI identification is the next planned phase");

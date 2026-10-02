@@ -1,26 +1,25 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import CloudHealthCard from "../components/CloudHealthCard";
 import Button from "../components/ui/Button";
+import { getAccountScope, isAccountScopeCurrent } from "../lib/accountScope";
 import { getCloudSyncStatus, syncFeedbackToCloud, syncWaitlistSignupToCloud } from "../services/cloudSync";
-import { getEngagementData, saveFeedbackSubmission, saveWaitlistSignup } from "../services/engagement";
-import type { FeedbackSubmission, WaitlistSignup } from "../types";
+import { saveFeedbackSubmission, saveWaitlistSignup } from "../services/engagement";
 import { FEEDBACK_ISSUES, getFeedbackIssue, type FeedbackIssue } from "../services/feedbackDetails";
 import { getLookup } from "../services/storage";
-import { getAccountScope, isAccountScopeCurrent } from "../lib/accountScope";
+import type { FeedbackSubmission, WaitlistSignup } from "../types";
 
 const TESTER_AUDIENCES = [
   {
     title: "DIY owners",
-    body: "Name an unfamiliar visible part, understand its role, and know what evidence to capture next.",
+    body: "Understand an unfamiliar visible part and learn what evidence to photograph next.",
   },
   {
     title: "Mechanics and trainees",
-    body: "Use a second opinion for unusual parts, train newer staff, and keep a searchable scan record.",
+    body: "Use a second opinion for unusual parts and keep a scan that can support teaching or review.",
   },
   {
     title: "Parts sellers and salvage teams",
-    body: "Speed up intake, organize uncertain inventory, and preserve evidence for listings and handoffs.",
+    body: "Document uncertain inventory and keep the evidence behind an intake or listing decision.",
   },
   {
     title: "Shop advisors and marketplace sellers",
@@ -28,11 +27,11 @@ const TESTER_AUDIENCES = [
   },
 ];
 
-const TESTER_CHECKLIST = [
-  "Scan 10 real vehicle parts.",
-  "Mark every result right, wrong, or unresolved.",
-  "Send at least 3 useful feedback notes.",
-  "Save and reopen at least 3 scan results.",
+const TESTER_STEPS = [
+  { number: "01", title: "Scan 10 real parts", body: "Use ordinary shop, driveway, or inventory photos." },
+  { number: "02", title: "Judge every result", body: "Mark it right, wrong, or unresolved." },
+  { number: "03", title: "Send 3 useful notes", body: "Tell us what helped, failed, or caused doubt." },
+  { number: "04", title: "Reopen 3 records", body: "Confirm the photo, result, and feedback stayed together." },
 ];
 
 export default function EarlyAccess() {
@@ -40,15 +39,12 @@ export default function EarlyAccess() {
   const [searchParams] = useSearchParams();
   const scanId = searchParams.get("scan");
   const reportScan = scanId ? getLookup(scanId) : null;
+  const [feedbackOpen, setFeedbackOpen] = useState(Boolean(scanId));
   const [feedbackIssue, setFeedbackIssue] = useState<FeedbackIssue | "">("");
   const [includeContext, setIncludeContext] = useState(false);
   const [sendingFeedback, setSendingFeedback] = useState(false);
   const feedbackPending = useRef(false);
   const reportForm = useRef<HTMLFormElement>(null);
-  useEffect(() => {
-    if (scanId) reportForm.current?.scrollIntoView?.({ block: "start" });
-  }, [scanId]);
-  const [stats, setStats] = useState(() => getEngagementData());
   const [email, setEmail] = useState("");
   const [userType, setUserType] = useState<WaitlistSignup["userType"]>("car_owner");
   const [mainProblem, setMainProblem] = useState("");
@@ -58,15 +54,27 @@ export default function EarlyAccess() {
   const [waitlistStatus, setWaitlistStatus] = useState<string | null>(null);
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
   const cloudSync = getCloudSyncStatus();
-  const cloudStatusMessage = cloudSync.message;
-  const demandSignals = useMemo(
-    () => [
-      { label: "Tester applications", value: String(stats.waitlist.length) },
-      { label: "Feedback notes", value: String(stats.feedback.length) },
-      { label: "Cloud sync", value: cloudSync.configured ? "On" : "Off" },
-    ],
-    [cloudSync.configured, stats],
-  );
+
+  useEffect(() => {
+    const previousTitle = document.title;
+    const description = document.querySelector<HTMLMetaElement>('meta[name="description"]');
+    const previousDescription = description?.content;
+    document.title = "DeepSpec Founding Tester Program";
+    description?.setAttribute(
+      "content",
+      "Apply to test DeepSpec on real vehicle parts, report wrong or uncertain results, and help shape the first public version.",
+    );
+
+    return () => {
+      document.title = previousTitle;
+      if (description && previousDescription) description.content = previousDescription;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!scanId) return;
+    window.requestAnimationFrame(() => reportForm.current?.scrollIntoView?.({ block: "start" }));
+  }, [scanId]);
 
   async function handleWaitlistSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -79,7 +87,6 @@ export default function EarlyAccess() {
 
     setEmail("");
     setMainProblem("");
-    setStats(getEngagementData());
 
     if (!result.value) {
       setWaitlistStatus("Saved on this device. Cloud sync skipped this entry.");
@@ -93,7 +100,7 @@ export default function EarlyAccess() {
 
     setWaitlistStatus("Saved on this device. Syncing.");
     const syncResult = await syncWaitlistSignupToCloud(result.value);
-    setWaitlistStatus(syncResult.ok ? "Saved on this device and synced to cloud." : `Saved on this device. ${syncResult.message}`);
+    setWaitlistStatus(syncResult.ok ? "Application received." : `Saved on this device. ${syncResult.message}`);
   }
 
   async function handleFeedbackSubmit(event: FormEvent<HTMLFormElement>) {
@@ -113,7 +120,6 @@ export default function EarlyAccess() {
     }
 
     setFeedbackMessage("");
-    setStats(getEngagementData());
 
     if (!result.value) {
       setFeedbackStatus("Feedback saved on this device. Cloud sync skipped it.");
@@ -134,7 +140,9 @@ export default function EarlyAccess() {
         setFeedbackStatus(`Feedback saved on this device. ${syncResult.message}`);
       }
     } catch {
-      if (isAccountScopeCurrent(mountedScope)) setFeedbackStatus("Feedback saved on this device. Cloud delivery could not be confirmed.");
+      if (isAccountScopeCurrent(mountedScope)) {
+        setFeedbackStatus("Feedback saved on this device. Cloud delivery could not be confirmed.");
+      }
     } finally {
       feedbackPending.current = false;
       setSendingFeedback(false);
@@ -142,190 +150,254 @@ export default function EarlyAccess() {
   }
 
   return (
-    <main className="min-h-dvh bg-[var(--ds-page)] px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-slate-950">
-      <div className="mx-auto w-full max-w-2xl">
-        <header className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-12 w-36 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-[var(--ds-accent-line)]" />
-            <h1 className="mt-2 text-2xl font-extrabold tracking-tight text-white">Early access</h1>
-          </div>
-          <Link to="/scan" className="rounded-full bg-[var(--ds-accent)] px-4 py-2 text-sm font-bold text-white shadow-sm">
-            Scan
-          </Link>
-          <Link to="/pricing" className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-900 shadow-sm">
-            Pricing
-          </Link>
-        </header>
+    <main className="min-h-dvh bg-[var(--ds-page)] text-white">
+      <section className="relative min-h-[min(74dvh,650px)] overflow-hidden border-b border-white/10">
+        <img
+          src="/brand/alternator-workbench.webp"
+          alt="Alternator on a workbench"
+          className="absolute inset-0 h-full w-full object-cover object-center"
+          width="1086"
+          height="1448"
+        />
+        <div className="absolute inset-0 bg-[#06101bd9]" />
 
-        <section className="mt-6 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
-          <p className="text-sm font-bold text-[var(--ds-accent)]">Founding Tester Program</p>
-          <h2 className="mt-2 text-2xl font-extrabold tracking-tight">Use it on real parts. Tell us where it fails.</h2>
-          <p className="mt-3 text-sm leading-6 text-neutral-500">
-            Deep Spec turns a part photo into a cautious identification, visible evidence, saved history, and
-            follow-up answers. Testers help decide what is reliable enough to ship.
-          </p>
-          <p className="mt-3 rounded-2xl border border-neutral-100 bg-neutral-50 p-3 text-sm leading-6 text-neutral-500">
-            {cloudStatusMessage}
-          </p>
-          <div className="mt-4 grid grid-cols-1 gap-3">
-            {demandSignals.map((item) => (
-              <div key={item.label} className="rounded-2xl border border-neutral-100 bg-neutral-50 p-3">
-                <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-neutral-400">{item.label}</p>
-                <p className="mt-1 text-lg font-extrabold text-neutral-900">{item.value}</p>
+        <div className="relative mx-auto flex min-h-[min(74dvh,650px)] w-full max-w-6xl flex-col px-5 pb-10 pt-[max(18px,env(safe-area-inset-top))] sm:px-8">
+          <header className="flex items-center justify-between gap-3">
+            <img
+              src="/brand/deepspec-logo.webp"
+              alt="DeepSpec"
+              className="h-11 w-36 rounded-[8px] bg-white object-contain p-1 shadow-sm"
+            />
+            <nav className="flex items-center gap-2" aria-label="Tester program navigation">
+              <Link to="/auth" className="rounded-[8px] border border-white/25 px-3 py-2 text-sm font-bold text-white">
+                Sign in
+              </Link>
+              <Link to="/scan" className="rounded-[8px] bg-[#a8d2dc] px-3 py-2 text-sm font-black text-[#071520]">
+                Try scanner
+              </Link>
+            </nav>
+          </header>
+
+          <div className="my-auto max-w-3xl py-12">
+            <p className="text-sm font-black text-[#a8d2dc]">DEEPSPEC BETA</p>
+            <h1 className="mt-4 max-w-2xl text-4xl font-black leading-[1.04] text-white sm:text-5xl lg:text-6xl">
+              Founding Tester Program
+            </h1>
+            <p className="mt-5 max-w-2xl text-base font-semibold leading-7 text-slate-200 sm:text-lg">
+              Scan real vehicle parts. Tell us where DeepSpec gets the answer wrong or leaves you unsure. Help decide what is ready for V1.
+            </p>
+            <div className="mt-7 flex flex-wrap gap-3">
+              <a href="#apply" className="rounded-[8px] bg-white px-5 py-3 text-sm font-black text-[#071520] shadow-lg">
+                Apply to test
+              </a>
+              <a href="#test-plan" className="rounded-[8px] border border-white/30 px-5 py-3 text-sm font-black text-white">
+                See the test plan
+              </a>
+            </div>
+          </div>
+
+          <div className="grid gap-4 border-t border-white/20 pt-5 text-sm sm:grid-cols-2">
+            <p><strong className="block text-white">Free during beta</strong><span className="text-slate-300">No payment required to participate.</span></p>
+            <p><strong className="block text-white">Six months after paid launch</strong><span className="text-slate-300">For accepted testers who complete the checklist.</span></p>
+          </div>
+          <p className="mt-4 text-xs text-slate-400">Illustrative part image. Not a scan result.</p>
+        </div>
+      </section>
+
+      <section id="test-plan" className="bg-[#f4f6f7] py-14 text-slate-950">
+        <div className="mx-auto w-full max-w-5xl px-5 sm:px-8">
+          <div className="max-w-3xl">
+            <p className="text-sm font-black text-[#416b78]">THE V1 TEST</p>
+            <h2 className="mt-3 text-3xl font-black leading-tight">A useful result needs more than a part name</h2>
+            <p className="mt-4 text-base leading-7 text-slate-600">
+              DeepSpec should help someone inspect the visible evidence, ask a better follow-up, and keep a record they can reopen. It should also make uncertainty obvious.
+            </p>
+          </div>
+
+          <div className="mt-10 grid border-y border-slate-300 md:grid-cols-2">
+            {TESTER_STEPS.map((step, index) => (
+              <div
+                key={step.number}
+                className={`grid grid-cols-[48px_1fr] gap-4 py-6 ${index % 2 === 0 ? "md:border-r md:border-slate-300 md:pr-8" : "md:pl-8"} ${index < 2 ? "border-b border-slate-300" : ""}`}
+              >
+                <span className="text-sm font-black text-[#416b78]">{step.number}</span>
+                <div>
+                  <h3 className="text-base font-black">{step.title}</h3>
+                  <p className="mt-1 text-sm leading-6 text-slate-600">{step.body}</p>
+                </div>
               </div>
             ))}
           </div>
-          <CloudHealthCard className="mt-4" />
-        </section>
+        </div>
+      </section>
 
-        <section className="mt-6 text-white" aria-labelledby="who-uses-deepspec">
-          <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-[var(--electric-300)]">Who it is for</p>
-          <h2 id="who-uses-deepspec" className="mt-2 text-xl font-extrabold tracking-tight text-white">Different jobs, one visual record</h2>
-          <div className="mt-4 divide-y divide-white/[0.14] border-y border-white/[0.14]">
+      <section className="bg-[#dce9ed] py-14 text-[#071520]">
+        <div className="mx-auto grid w-full max-w-5xl gap-10 px-5 sm:px-8 lg:grid-cols-[0.82fr_1.18fr]">
+          <div>
+            <p className="text-sm font-black text-[#416b78]">WHO IT HELPS</p>
+            <h2 className="mt-3 text-3xl font-black leading-tight">One visual record, several real jobs</h2>
+            <p className="mt-4 text-sm leading-6 text-[#37505a]">
+              An experienced engineer may already know the part. DeepSpec can still help document the evidence, explain it to someone else, or train a newer teammate.
+            </p>
+          </div>
+          <div className="divide-y divide-[#9bb3bb] border-y border-[#9bb3bb]">
             {TESTER_AUDIENCES.map((audience) => (
-              <div key={audience.title} className="grid gap-1 py-4 sm:grid-cols-[180px_1fr] sm:gap-5">
-                <h3 className="text-sm font-extrabold text-slate-100">{audience.title}</h3>
-                <p className="text-sm leading-6 text-slate-300">{audience.body}</p>
+              <div key={audience.title} className="grid gap-1 py-4 sm:grid-cols-[190px_1fr] sm:gap-6">
+                <h3 className="text-sm font-black">{audience.title}</h3>
+                <p className="text-sm leading-6 text-[#37505a]">{audience.body}</p>
               </div>
             ))}
           </div>
-          <p className="mt-3 text-xs leading-5 text-slate-400">
-            Deep Spec is an identification and documentation aid. It does not prove exact fitment, hidden condition, or repair safety.
-          </p>
-        </section>
+        </div>
+      </section>
 
-        <section className="mt-6 border-y border-white/[0.14] bg-white/[0.06] px-4 py-5 text-white" aria-labelledby="tester-reward">
-          <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-[var(--electric-300)]">Tester reward</p>
-          <h2 id="tester-reward" className="mt-2 text-xl font-extrabold tracking-tight text-white">Free beta access, then six months free</h2>
-          <p className="mt-2 text-sm leading-6 text-slate-200">
-            Founding testers who complete the checklist receive six months of Deep Spec access after paid launch.
-            Approved seller and shop pilots can receive up to one year when the testing scope is agreed first.
-          </p>
-          <ul className="mt-4 grid gap-2 text-sm font-semibold text-slate-100 sm:grid-cols-2">
-            {TESTER_CHECKLIST.map((item) => <li key={item}>{item}</li>)}
-          </ul>
-          <p className="mt-3 text-xs leading-5 text-slate-400">
-            Rewards apply to the accepted tester account, have no cash value, and start only when paid access launches.
-          </p>
-        </section>
+      <section id="apply" className="bg-white py-14 text-slate-950">
+        <div className="mx-auto grid w-full max-w-5xl gap-10 px-5 sm:px-8 lg:grid-cols-[0.8fr_1.2fr]">
+          <div>
+            <p className="text-sm font-black text-[#416b78]">TESTER REWARD</p>
+            <h2 className="mt-3 text-3xl font-black leading-tight">Free beta access, then six months free</h2>
+            <p className="mt-4 text-sm leading-6 text-slate-600">
+              Approved seller and shop pilots can receive up to one year when the scope is agreed before testing. Rewards have no cash value and begin only after paid access launches.
+            </p>
+            <p className="mt-6 border-l-4 border-[#b56b32] pl-4 text-sm leading-6 text-slate-600">
+              DeepSpec is an identification and documentation aid. A photo cannot prove exact fitment, hidden condition, or repair safety.
+            </p>
+          </div>
 
-        <form id="join-testing" className="mt-6 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm" onSubmit={handleWaitlistSubmit}>
-          <h2 className="text-lg font-extrabold tracking-tight">Apply to test Deep Spec</h2>
-          <p className="mt-2 text-sm leading-6 text-neutral-500">
-            Tell us what kind of parts you can test. Applications save on this device first and sync to the private tester list when cloud is on.
-          </p>
-          <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Email</span>
-            <input
-              className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
-              inputMode="email"
-              onChange={(event) => setEmail(event.target.value)}
-              placeholder="you@example.com"
-              type="email"
-              value={email}
-            />
-          </label>
-          <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">I am a</span>
-            <select
-              className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none focus:border-[var(--ds-accent)]"
-              onChange={(event) => setUserType(event.target.value as WaitlistSignup["userType"])}
-              value={userType}
-            >
-              <option value="car_owner">DIY car owner</option>
-              <option value="van_life">Van life owner</option>
-              <option value="used_car_buyer">Used car buyer</option>
-              <option value="weekend_wrencher">Weekend wrenching beginner</option>
-              <option value="mechanic">Mechanic or technician</option>
-              <option value="mechanic_student">Mechanic trainee or student</option>
-              <option value="parts_seller">Parts seller</option>
-              <option value="salvage_yard">Salvage yard team</option>
-              <option value="marketplace_seller">Marketplace seller</option>
-              <option value="shop_advisor">Shop advisor</option>
-              <option value="other">Other</option>
-            </select>
-          </label>
-          <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">What will you test?</span>
-            <textarea
-              className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
-              maxLength={240}
-              onChange={(event) => setMainProblem(event.target.value)}
-              placeholder="Example: alternators and starters during parts intake."
-              value={mainProblem}
-            />
-          </label>
-          {waitlistStatus ? <p className="mt-3 text-sm font-semibold text-[var(--ds-accent)]">{waitlistStatus}</p> : null}
-          <Button className="mt-4 w-full" type="submit">
-            Apply for tester access
-          </Button>
-        </form>
-
-        <form ref={reportForm} id="feedback" className="mt-4 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm" onSubmit={handleFeedbackSubmit}>
-          <h2 className="text-lg font-extrabold tracking-tight">Send product feedback</h2>
-          <p className="mt-2 text-sm leading-6 text-neutral-500">
-            Tell us what worked, what failed, or what would make Deep Spec worth keeping. Saved on this device first, synced when cloud is on.
-          </p>
-          <label className="mt-4 block">
-            <span className="text-sm font-bold">What went wrong?</span>
-            <select
-              className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-950"
-              value={feedbackIssue}
-              onChange={(event) => setFeedbackIssue(event.target.value as FeedbackIssue | "")}
-            >
-              <option value="">General feedback</option>
-              {FEEDBACK_ISSUES.map((issue) => <option key={issue.id} value={issue.id}>{issue.label}</option>)}
-            </select>
-          </label>
-          {reportScan ? (
-            <label className="mt-4 flex items-start gap-3 text-sm leading-6">
-              <input className="mt-1" type="checkbox" checked={includeContext} onChange={(event) => setIncludeContext(event.target.checked)} />
-              <span>Include scan ID and prediction ({reportScan.result?.partName || "no prediction"}). No photo or chat is attached.</span>
+          <form className="rounded-[8px] border border-slate-200 bg-[#f8fafb] p-5 shadow-sm sm:p-7" onSubmit={handleWaitlistSubmit}>
+            <h2 className="text-xl font-black">Apply to test DeepSpec</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">Tell us what kind of parts and workflow you can test.</p>
+            <label className="mt-5 block">
+              <span className="text-sm font-bold">Email</span>
+              <input
+                className="mt-2 h-12 w-full rounded-[8px] border border-slate-300 bg-white px-3 text-sm text-slate-950 outline-none placeholder:text-slate-400 focus:border-[#416b78]"
+                inputMode="email"
+                onChange={(event) => setEmail(event.target.value)}
+                placeholder="you@example.com"
+                required
+                type="email"
+                value={email}
+              />
             </label>
-          ) : null}
-          <p className="mt-2 text-xs leading-5 text-neutral-500">Choose a problem for a quick report. Details are optional when a problem is selected. Reporting does not give permission to train on your photos.</p>
-          <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Topic</span>
-            <select
-              className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none focus:border-[var(--ds-accent)]"
-              onChange={(event) => setFeedbackCategory(event.target.value as FeedbackSubmission["category"])}
-              value={getFeedbackIssue(feedbackIssue)?.category ?? feedbackCategory}
-              disabled={Boolean(feedbackIssue)}
-            >
-              <option value="scanner">Scanner</option>
-              <option value="ai_result">AI result</option>
-              <option value="chat">Follow-up chat</option>
-              <option value="business">Would pay for</option>
-              <option value="other">Other</option>
-            </select>
-          </label>
-          <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Feedback</span>
-            <textarea
-              className="mt-2 min-h-28 w-full resize-none rounded-2xl border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
-              maxLength={feedbackIssue || includeContext ? 450 : 800}
-              onChange={(event) => setFeedbackMessage(event.target.value)}
-              placeholder="What worked, what got in the way, what's worth paying for."
-              value={feedbackMessage}
-            />
-          </label>
-          <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Contact email optional</span>
-            <input
-              className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
-              inputMode="email"
-              onChange={(event) => setContactEmail(event.target.value)}
-              placeholder="only if you want a follow-up"
-              type="email"
-              value={contactEmail}
-            />
-          </label>
-          {feedbackStatus ? <p role="status" className="mt-3 text-sm font-semibold text-[var(--ds-accent)]">{feedbackStatus}</p> : null}
-          <Button className="mt-4 w-full" type="submit" disabled={sendingFeedback}>
-            {sendingFeedback ? "Sending feedback…" : "Save feedback"}
-          </Button>
-        </form>
-      </div>
+            <label className="mt-4 block">
+              <span className="text-sm font-bold">Your role</span>
+              <select
+                className="mt-2 h-12 w-full rounded-[8px] border border-slate-300 bg-white px-3 text-sm text-slate-950 outline-none focus:border-[#416b78]"
+                onChange={(event) => setUserType(event.target.value as WaitlistSignup["userType"])}
+                value={userType}
+              >
+                <option value="car_owner">DIY car owner</option>
+                <option value="van_life">Van life owner</option>
+                <option value="used_car_buyer">Used car buyer</option>
+                <option value="weekend_wrencher">Weekend wrenching beginner</option>
+                <option value="mechanic">Mechanic or technician</option>
+                <option value="mechanic_student">Mechanic trainee or student</option>
+                <option value="parts_seller">Parts seller</option>
+                <option value="salvage_yard">Salvage yard team</option>
+                <option value="marketplace_seller">Marketplace seller</option>
+                <option value="shop_advisor">Shop advisor</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <label className="mt-4 block">
+              <span className="text-sm font-bold">What will you test?</span>
+              <textarea
+                className="mt-2 min-h-24 w-full resize-none rounded-[8px] border border-slate-300 bg-white p-3 text-sm leading-6 text-slate-950 outline-none placeholder:text-slate-400 focus:border-[#416b78]"
+                maxLength={240}
+                onChange={(event) => setMainProblem(event.target.value)}
+                placeholder="Example: alternators and starters during parts intake."
+                required
+                value={mainProblem}
+              />
+            </label>
+            {waitlistStatus ? <p role="status" className="mt-3 text-sm font-bold text-[#416b78]">{waitlistStatus}</p> : null}
+            <Button className="mt-5 w-full" type="submit">Apply for tester access</Button>
+          </form>
+        </div>
+      </section>
+
+      <section className="bg-[#f4f6f7] py-12 text-slate-950">
+        <div className="mx-auto w-full max-w-5xl px-5 sm:px-8">
+          <details
+            open={Boolean(scanId) || feedbackOpen}
+            onToggle={(event) => setFeedbackOpen(event.currentTarget.open)}
+            className="border-y border-slate-300 py-5"
+          >
+            <summary className="cursor-pointer list-none text-lg font-black marker:hidden">
+              {reportScan ? "Report a problem with this scan" : "Already testing? Send product feedback"}
+            </summary>
+            <form ref={reportForm} id="feedback" className="mt-6 max-w-2xl" onSubmit={handleFeedbackSubmit}>
+              <p className="text-sm leading-6 text-slate-600">
+                Tell us what worked, what failed, or what would make DeepSpec worth keeping. Feedback saves on this device first and syncs when cloud delivery is available.
+              </p>
+              <label className="mt-5 block">
+                <span className="text-sm font-bold">What went wrong?</span>
+                <select
+                  className="mt-2 h-12 w-full rounded-[8px] border border-slate-300 bg-white px-3 text-sm text-slate-950"
+                  value={feedbackIssue}
+                  onChange={(event) => setFeedbackIssue(event.target.value as FeedbackIssue | "")}
+                >
+                  <option value="">General feedback</option>
+                  {FEEDBACK_ISSUES.map((issue) => <option key={issue.id} value={issue.id}>{issue.label}</option>)}
+                </select>
+              </label>
+              {reportScan ? (
+                <label className="mt-4 flex items-start gap-3 text-sm leading-6">
+                  <input className="mt-1" type="checkbox" checked={includeContext} onChange={(event) => setIncludeContext(event.target.checked)} />
+                  <span>Include scan ID and prediction ({reportScan.result?.partName || "no prediction"}). No photo or chat is attached.</span>
+                </label>
+              ) : null}
+              <p className="mt-2 text-xs leading-5 text-slate-500">
+                Details are optional when a specific problem is selected. Reporting does not give permission to train on your photos.
+              </p>
+              <label className="mt-4 block">
+                <span className="text-sm font-bold">Topic</span>
+                <select
+                  className="mt-2 h-12 w-full rounded-[8px] border border-slate-300 bg-white px-3 text-sm text-slate-950"
+                  onChange={(event) => setFeedbackCategory(event.target.value as FeedbackSubmission["category"])}
+                  value={getFeedbackIssue(feedbackIssue)?.category ?? feedbackCategory}
+                  disabled={Boolean(feedbackIssue)}
+                >
+                  <option value="scanner">Scanner</option>
+                  <option value="ai_result">AI result</option>
+                  <option value="chat">Follow-up chat</option>
+                  <option value="business">Would pay for</option>
+                  <option value="other">Other</option>
+                </select>
+              </label>
+              <label className="mt-4 block">
+                <span className="text-sm font-bold">Feedback</span>
+                <textarea
+                  className="mt-2 min-h-28 w-full resize-none rounded-[8px] border border-slate-300 bg-white p-3 text-sm leading-6 text-slate-950 outline-none placeholder:text-slate-400 focus:border-[#416b78]"
+                  maxLength={feedbackIssue || includeContext ? 450 : 800}
+                  onChange={(event) => setFeedbackMessage(event.target.value)}
+                  placeholder="What worked, what got in the way, or what would make this useful?"
+                  value={feedbackMessage}
+                />
+              </label>
+              <label className="mt-4 block">
+                <span className="text-sm font-bold">Contact email, optional</span>
+                <input
+                  className="mt-2 h-12 w-full rounded-[8px] border border-slate-300 bg-white px-3 text-sm text-slate-950 outline-none placeholder:text-slate-400 focus:border-[#416b78]"
+                  inputMode="email"
+                  onChange={(event) => setContactEmail(event.target.value)}
+                  placeholder="Only if you want a reply"
+                  type="email"
+                  value={contactEmail}
+                />
+              </label>
+              {feedbackStatus ? <p role="status" className="mt-3 text-sm font-bold text-[#416b78]">{feedbackStatus}</p> : null}
+              <Button className="mt-5" type="submit" disabled={sendingFeedback}>
+                {sendingFeedback ? "Sending feedback..." : "Save feedback"}
+              </Button>
+            </form>
+          </details>
+        </div>
+      </section>
+
+      <footer className="border-t border-white/10 px-5 py-8 text-center text-xs leading-5 text-slate-400">
+        DeepSpec suggestions can be wrong. Check the visible evidence and use qualified help for safety-critical work.
+      </footer>
     </main>
   );
 }
