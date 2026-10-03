@@ -286,10 +286,9 @@ async function runScenario(browser, baseUrl, runId, scenario, doctor) {
 }
 
 async function signInIfConfigured(page, baseUrl, stepsExecuted) {
-  const authMode = process.env.DEEPSPEC_QA_AUTH_MODE?.trim().toLowerCase();
   const email = process.env.DEEPSPEC_AUTH_TEST_EMAIL?.trim();
   const password = process.env.DEEPSPEC_AUTH_TEST_PASSWORD?.trim();
-  if (authMode !== "anonymous" && (!email || !password)) {
+  if (!email || !password) {
     return;
   }
 
@@ -297,16 +296,10 @@ async function signInIfConfigured(page, baseUrl, stepsExecuted) {
   await page.goto(`${baseUrl}/auth`, { waitUntil: "domcontentloaded", timeout: 15_000 });
   await page.waitForLoadState("networkidle", { timeout: 8_000 }).catch(() => undefined);
 
-  if (authMode === "anonymous") {
-    stepsExecuted.push("Start the no-email QA session.");
-    await page.getByRole("button", { name: /no email/i }).click({ timeout: 8_000 });
-    await page.getByRole("button", { name: /continue without email/i }).click({ timeout: 8_000 });
-  } else {
-    stepsExecuted.push("Sign in with the configured QA password account.");
-    await page.getByLabel(/email address/i).fill(email);
-    await page.getByLabel(/^password$/i).fill(password);
-    await page.getByRole("button", { name: /sign in to scanner/i }).click();
-  }
+  stepsExecuted.push("Sign in with the configured QA password account.");
+  await page.getByLabel(/email address/i).fill(email);
+  await page.getByLabel(/^password$/i).fill(password);
+  await page.getByRole("button", { name: /sign in to scanner/i }).click();
 
   await page.waitForURL(/\/scan(?:\?|$)/, { timeout: 15_000 }).catch(() => undefined);
 }

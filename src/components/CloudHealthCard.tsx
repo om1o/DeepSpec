@@ -10,7 +10,7 @@ import {
 
 const CLOUD_HEALTH_STEPS = [
   "configured",
-  "anonymousAuth",
+  "authSession",
   "storageUpload",
   "rowUpsert",
   "datasetDetails",

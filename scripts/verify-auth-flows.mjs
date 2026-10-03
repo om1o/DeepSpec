@@ -36,8 +36,6 @@ try {
   const settings = await fetchAuthSettings(config);
   assert(settings.disable_signup !== true, "Supabase signup is disabled.");
   console.log("      Signup is enabled.");
-  assert(settings.external?.anonymous_users === true, "Supabase anonymous sign-ins are disabled. Enable Anonymous sign-ins so new users can start without email confirmation.");
-  console.log("      Anonymous sign-ins are enabled for no-email access.");
 
   console.log("[1/6] Checking configured OAuth providers...");
   if (enabledOAuthProviders.length > 0) {

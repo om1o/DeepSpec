@@ -66,8 +66,7 @@ describe("cloudSync", () => {
     });
     mocks.createClient.mockReturnValue({
       auth: {
-        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
-        signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } }, error: null }),
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
       },
       from,
       storage: {
@@ -182,7 +181,6 @@ describe("cloudSync", () => {
     mocks.createClient.mockReturnValue({
       auth: {
         getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
-        signInAnonymously: vi.fn(),
       },
       from,
       storage: {
@@ -244,7 +242,6 @@ describe("cloudSync", () => {
     mocks.createClient.mockReturnValue({
       auth: {
         getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
-        signInAnonymously: vi.fn(),
       },
       from,
       storage: {
@@ -325,7 +322,6 @@ describe("cloudSync", () => {
     mocks.createClient.mockReturnValue({
       auth: {
         getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
-        signInAnonymously: vi.fn(),
       },
       from,
       storage: {
@@ -380,13 +376,12 @@ describe("cloudSync", () => {
     });
   });
 
-  it("returns a plain-language error when anonymous sign-in is not enabled", async () => {
+  it("returns a plain-language error when an email-authenticated session is missing", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
     mocks.createClient.mockReturnValue({
       auth: {
         getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
-        signInAnonymously: vi.fn().mockResolvedValue({ data: { user: null }, error: { message: "Anonymous sign-ins are disabled" } }),
       },
       from: vi.fn(),
       storage: {
@@ -397,7 +392,7 @@ describe("cloudSync", () => {
 
     await expect(syncLookupToCloud(makeLookup())).resolves.toEqual({
       ok: false,
-      message: "Cloud sync needs Supabase anonymous sign-ins enabled before scans can upload.",
+      message: "Cloud sync needs an email-authenticated Supabase session before scans can upload.",
     });
   });
 
@@ -417,8 +412,7 @@ describe("cloudSync", () => {
     const insert = vi.fn().mockResolvedValue({ error: null });
     mocks.createClient.mockReturnValue({
       auth: {
-        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
-        signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "user-retry" } }, error: null }),
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-retry" } } }, error: null }),
       },
       from: vi.fn((table: string) => {
         if (table === "scan_candidates" || table === "scan_evidence") {
@@ -442,7 +436,6 @@ describe("cloudSync", () => {
     mocks.createClient.mockReturnValue({
       auth: {
         getSession: vi.fn(),
-        signInAnonymously: vi.fn(),
       },
       from: vi.fn().mockReturnValue({ insert }),
       storage: {
@@ -491,7 +484,7 @@ describe("cloudSync", () => {
     mocks.createClient
       .mockReturnValueOnce({
         auth: {
-          signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "owner-1" } }, error: null }),
+          getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "owner-1" } } }, error: null }),
         },
         from: vi.fn((table: string) => {
           if (table === "scan_lookups") {
@@ -517,9 +510,7 @@ describe("cloudSync", () => {
         },
       })
       .mockReturnValueOnce({
-        auth: {
-          signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "other-1" } }, error: null }),
-        },
+        auth: {},
         from: crossReadFrom,
         storage: {
           from: vi.fn(),
@@ -532,7 +523,7 @@ describe("cloudSync", () => {
     expect(report.overall).toBe("ready");
     expect(report.lastVerifiedAt).toBe(report.checkedAt);
     expect(report.checks.configured.status).toBe("pass");
-    expect(report.checks.anonymousAuth.status).toBe("pass");
+    expect(report.checks.authSession.status).toBe("pass");
     expect(report.checks.storageUpload.status).toBe("pass");
     expect(report.checks.rowUpsert.status).toBe("pass");
     expect(report.checks.datasetDetails.status).toBe("pass");
@@ -571,13 +562,13 @@ describe("cloudSync", () => {
     expect(getCloudHealthSnapshot().overall).toBe("ready");
   });
 
-  it("reports the anonymous auth step as blocked before storage checks run", async () => {
+  it("reports the account session step as blocked before storage checks run", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
     const upload = vi.fn();
     mocks.createClient.mockReturnValue({
       auth: {
-        signInAnonymously: vi.fn().mockResolvedValue({ data: { user: null }, error: { message: "Database error creating anonymous user" } }),
+        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
       },
       from: vi.fn(),
       storage: {
@@ -590,7 +581,7 @@ describe("cloudSync", () => {
 
     expect(report.overall).toBe("blocked");
     expect(report.checks.configured.status).toBe("pass");
-    expect(report.checks.anonymousAuth.status).toBe("fail");
+    expect(report.checks.authSession.status).toBe("fail");
     expect(report.checks.storageUpload.status).toBe("unknown");
     expect(report.checks.datasetDetails.status).toBe("unknown");
     expect(report.lastVerifiedAt).toBeNull();
@@ -604,8 +595,7 @@ describe("cloudSync", () => {
     mocks.createClient.mockReturnValue({
       auth: {
         getUser: vi.fn().mockResolvedValue({ data: { user: { id: "shared-user" } }, error: null }),
-        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
-        signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "shared-user" } }, error: null }),
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "shared-user" } } }, error: null }),
         onAuthStateChange: vi.fn().mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } }),
       },
       from: vi.fn().mockReturnValue({ insert }),

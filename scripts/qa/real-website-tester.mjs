@@ -284,8 +284,21 @@ async function runAuthLogin() {
   }
 
   await selectTabIfNeeded(/Account/i, "account auth tab");
-  await clickByRole("button", /^No email$/i, "no-email auth mode");
-  await clickByRole("button", /Continue without email/i, "continue without email");
+  const email = process.env.DEEPSPEC_AUTH_TEST_EMAIL?.trim();
+  const password = process.env.DEEPSPEC_AUTH_TEST_PASSWORD?.trim();
+  if (!email || !password) {
+    throw new QaIssue(
+      "missing_env",
+      "Email/password browser QA is required now that the no-email path is removed. Set DEEPSPEC_AUTH_TEST_EMAIL and DEEPSPEC_AUTH_TEST_PASSWORD, or use `npm run verify:auth -- --send-code` for the email-link/code send checkpoint.",
+      {
+        likelyFiles: [".env.local", ".env.example", "src/screens/Auth.tsx", "scripts/qa/real-website-tester.mjs"],
+        suggestedFix: "Configure a dedicated QA email/password account before running protected browser scenarios.",
+      },
+    );
+  }
+  await page.fill('input[name="email"]', email);
+  await page.fill('input[name="password"]', password);
+  await clickByRole("button", /Sign in to scanner/i, "email/password sign in");
 
   try {
     await page.waitForURL((url) => url.pathname === "/scan", { timeout: 20_000 });
@@ -296,10 +309,10 @@ async function runAuthLogin() {
 
     throw new QaIssue(
       /not configured|missing/i.test(failureText) ? "missing_env" : "auth/session",
-      `No-email Supabase auth did not reach /scan. Visible failure: ${failureText}`,
+      `Email/password Supabase auth did not reach /scan. Visible failure: ${failureText}`,
       {
         likelyFiles: ["src/screens/Auth.tsx", "src/services/auth.ts", "scripts/verify-auth-flows.mjs", "supabase/migrations"],
-        suggestedFix: "Run `npm run verify:auth` and inspect Supabase Auth logs for anonymous sign-in failures before changing frontend code.",
+        suggestedFix: "Run `npm run verify:auth -- --require-credentials` and inspect Supabase Auth logs for email/password sign-in failures before changing frontend code.",
       },
     );
   }
@@ -309,7 +322,7 @@ async function runAuthLogin() {
 
   return {
     category: "auth/session",
-    details: "DeepSpec no-email Supabase auth reached the protected scanner.",
+    details: "DeepSpec email/password Supabase auth reached the protected scanner.",
     likelyFiles: ["src/screens/Auth.tsx", "src/services/auth.ts"],
     status: "pass",
   };
@@ -1364,11 +1377,10 @@ async function fetchSupabaseAuthSettings(supabaseUrl, supabaseKey) {
       method: "GET",
     }, 10_000);
     const body = await response.json().catch(() => null);
-    const anonymousEnabled = body?.external?.anonymous_users === true;
 
-    return response.ok && anonymousEnabled
-      ? { ok: true, message: "Supabase anonymous sign-ins are enabled." }
-      : { ok: false, message: `Supabase anonymous sign-ins are not healthy. HTTP ${response.status}.` };
+    return response.ok && body?.disable_signup !== true
+      ? { ok: true, message: "Supabase email auth settings are reachable and signup is enabled." }
+      : { ok: false, message: `Supabase email auth settings are not healthy. HTTP ${response.status}.` };
   } catch (error) {
     return { ok: false, message: `Could not read Supabase Auth settings: ${formatError(error)}` };
   }

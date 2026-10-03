@@ -27,7 +27,7 @@ export type CloudSyncStatus = {
 
 export type CloudHealthStepId =
   | "configured"
-  | "anonymousAuth"
+  | "authSession"
   | "storageUpload"
   | "rowUpsert"
   | "datasetDetails"
@@ -118,10 +118,10 @@ export async function verifyCloudHealth(): Promise<CloudHealthReport> {
   const testId = `health-${createRuntimeId()}`;
 
   try {
-    ownerClient = await createVerificationClient(config);
-    const owner = await signInForHealthCheck(ownerClient);
+    ownerClient = await getClient();
+    const owner = await ensureCloudUser(ownerClient);
     userId = owner.id;
-    report = updateCloudHealthCheck(report, "anonymousAuth", "pass", "Signed you in securely.");
+    report = updateCloudHealthCheck(report, "authSession", "pass", "Signed in with a verified account.");
 
     imagePath = `${userId}/${testId}.jpg`;
     await assertCloudResult(
@@ -167,7 +167,6 @@ export async function verifyCloudHealth(): Promise<CloudHealthReport> {
     report = updateCloudHealthCheck(report, "datasetDetails", "pass", "Scan details saved.");
 
     const otherClient = await createVerificationClient(config);
-    await signInForHealthCheck(otherClient);
     await assertCloudHealthRlsIsolation(otherClient, testId);
     report = updateCloudHealthCheck(report, "rlsIsolation", "pass", "Your scans stay private to you.");
 
@@ -740,21 +739,7 @@ async function ensureCloudUser(supabase: SupabaseClient): Promise<User> {
     return session.data.session.user;
   }
 
-  const anonymousSignIn = await supabase.auth.signInAnonymously();
-  if (anonymousSignIn.error || !anonymousSignIn.data.user) {
-    throw new Error(anonymousSignIn.error?.message ?? "Anonymous sign-in failed.");
-  }
-
-  return anonymousSignIn.data.user;
-}
-
-async function signInForHealthCheck(supabase: SupabaseClient): Promise<User> {
-  const anonymousSignIn = await supabase.auth.signInAnonymously();
-  if (anonymousSignIn.error || !anonymousSignIn.data.user) {
-    throw new Error(anonymousSignIn.error?.message ?? "Anonymous sign-in failed.");
-  }
-
-  return anonymousSignIn.data.user;
+  throw new Error("Sign in with an email account before cloud sync can upload scans.");
 }
 
 async function assertCloudResult(result: { error: { message?: string } | null }, label: string) {
@@ -827,8 +812,8 @@ function getImageExtension(contentType: string) {
 function getFriendlySyncError(error: unknown) {
   const message = error instanceof Error ? error.message : "Unknown cloud sync error.";
 
-  if (/anonymous|signup|sign-in|sign in/i.test(message)) {
-    return "Cloud sync needs Supabase anonymous sign-ins enabled before scans can upload.";
+  if (/signup|sign-in|sign in|email account|session/i.test(message)) {
+    return "Cloud sync needs an email-authenticated Supabase session before scans can upload.";
   }
 
   if (/failed to fetch|networkerror|network error|fetch failed|load failed|timed out|timeout|aborted/i.test(message)) {
@@ -873,7 +858,7 @@ function createCloudHealthReport(config: CloudSyncConfig | null, checkedAt: stri
         configured ? "Cloud sync is connected." : "Cloud sync isn't connected yet.",
         configured ? "pass" : "fail",
       ),
-      anonymousAuth: createCloudHealthCheck("anonymousAuth", "Secure sign-in", "Not checked yet.", "unknown"),
+      authSession: createCloudHealthCheck("authSession", "Account session", "Not checked yet.", "unknown"),
       storageUpload: createCloudHealthCheck("storageUpload", "Photo upload", "Not checked yet.", "unknown"),
       rowUpsert: createCloudHealthCheck("rowUpsert", "Saving scans", "Not checked yet.", "unknown"),
       datasetDetails: createCloudHealthCheck("datasetDetails", "Scan details", "Not checked yet.", "unknown"),

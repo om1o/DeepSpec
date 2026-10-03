@@ -286,7 +286,7 @@ async function runCase(browserInstance, testCase) {
   });
 
   try {
-    await enterNoEmailSession(page);
+    await enterQaEmailSession(page);
     await page.getByLabel("Upload photo").setInputFiles(testCase.localImage);
     await waitForScanResultOrIssue(page);
     if (await hasScanIssue(page)) {
@@ -376,10 +376,17 @@ async function hasScanIssue(page) {
   return /SCAN ISSUE|Too many AI lookups|Could not reach the Deep Spec AI service/i.test(text);
 }
 
-async function enterNoEmailSession(page) {
+async function enterQaEmailSession(page) {
+  const email = process.env.DEEPSPEC_AUTH_TEST_EMAIL?.trim();
+  const password = process.env.DEEPSPEC_AUTH_TEST_PASSWORD?.trim();
+  if (!email || !password) {
+    throw new Error("Set DEEPSPEC_AUTH_TEST_EMAIL and DEEPSPEC_AUTH_TEST_PASSWORD before running web AR QA.");
+  }
+
   await page.goto(`${baseUrl}/auth`, { timeout: 45_000, waitUntil: "domcontentloaded" });
-  await page.getByText("No email", { exact: true }).click({ timeout: 45_000 });
-  await page.getByRole("button", { name: /continue without email/i }).click({ timeout: 45_000 });
+  await page.getByLabel(/email address/i).fill(email);
+  await page.getByLabel(/^password$/i).fill(password);
+  await page.getByRole("button", { name: /sign in to scanner/i }).click({ timeout: 45_000 });
   await page.waitForSelector("input[type=\"file\"]", { timeout: 45_000 });
 }
 

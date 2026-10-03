@@ -9,7 +9,6 @@ const supabaseMock = vi.hoisted(() => ({
     signInWithOAuth: vi.fn(),
     signInWithOtp: vi.fn(),
     signInWithPassword: vi.fn(),
-    signInAnonymously: vi.fn(),
     signUp: vi.fn(),
     verifyOtp: vi.fn(),
   },
@@ -40,7 +39,6 @@ describe("Auth", () => {
     supabaseMock.auth.signInWithOAuth.mockReset();
     supabaseMock.auth.signInWithOtp.mockReset();
     supabaseMock.auth.signInWithPassword.mockReset();
-    supabaseMock.auth.signInAnonymously.mockReset();
     supabaseMock.auth.signUp.mockReset();
     supabaseMock.auth.verifyOtp.mockReset();
     supabaseMock.createClient.mockReset();
@@ -59,7 +57,6 @@ describe("Auth", () => {
     supabaseMock.auth.signInWithOAuth.mockResolvedValue({ data: {}, error: null });
     supabaseMock.auth.signInWithOtp.mockResolvedValue({ data: {}, error: null });
     supabaseMock.auth.signInWithPassword.mockResolvedValue({ data: {}, error: null });
-    supabaseMock.auth.signInAnonymously.mockResolvedValue({ data: {}, error: null });
     supabaseMock.auth.signUp.mockResolvedValue({ data: {}, error: null });
     supabaseMock.auth.verifyOtp.mockResolvedValue({ data: {}, error: null });
   });
@@ -78,6 +75,8 @@ describe("Auth", () => {
     expect(screen.getByPlaceholderText("you@shop.com")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Account" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("button", { name: "Sign in to scanner" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "No email" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Continue without email" })).not.toBeInTheDocument();
     expect(screen.getByText("Cloud ready")).toBeInTheDocument();
     expect(screen.queryByText(/facebook/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/microsoft/i)).not.toBeInTheDocument();
@@ -272,25 +271,6 @@ describe("Auth", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Invalid login credentials");
     expect(screen.queryByText("Scanner opened")).not.toBeInTheDocument();
-  });
-
-  it("opens the scanner with a no-email Supabase session", async () => {
-    const user = userEvent.setup();
-    supabaseMock.auth.getUser
-      .mockResolvedValueOnce({ data: { user: null }, error: null })
-      .mockResolvedValueOnce({ data: { user: makeUser("anonymous-user") }, error: null });
-
-    await renderAuth();
-
-    await user.click(await screen.findByRole("button", { name: "No email" }));
-    expect(screen.queryByPlaceholderText("you@shop.com")).not.toBeInTheDocument();
-    expect(screen.queryByPlaceholderText("Your password")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Continue without email" }));
-
-    await waitFor(() => {
-      expect(supabaseMock.auth.signInAnonymously).toHaveBeenCalledTimes(1);
-    });
-    expect(await screen.findByText("Scanner opened")).toBeInTheDocument();
   });
 
   it("creates a password account when Supabase returns an active session", async () => {

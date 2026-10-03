@@ -173,22 +173,6 @@ export async function signUpWithPassword(email: string, password: string, redire
   return user;
 }
 
-export async function signInAnonymously() {
-  const client = await getRequiredAuthClient();
-  const result = await client.auth.signInAnonymously();
-
-  if (result.error) {
-    throw new Error(result.error.message);
-  }
-
-  const user = await getVerifiedAuthUser();
-  if (!user) {
-    throw new Error("Could not verify this session. Try again.");
-  }
-
-  return user;
-}
-
 export async function signInWithGoogle(redirectPath?: string) {
   return signInWithOAuthProvider("google", redirectPath);
 }

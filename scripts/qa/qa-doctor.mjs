@@ -178,18 +178,15 @@ async function checkDatabaseReachable(config) {
 
 function checkTestAccountConfigured() {
   const hasPasswordAccount = Boolean(process.env.DEEPSPEC_AUTH_TEST_EMAIL?.trim() && process.env.DEEPSPEC_AUTH_TEST_PASSWORD?.trim());
-  const usesAnonymous = process.env.DEEPSPEC_QA_AUTH_MODE?.trim().toLowerCase() !== "password";
 
   return checkResult(
     "test account exists or is configured",
-    hasPasswordAccount || usesAnonymous,
+    hasPasswordAccount,
     hasPasswordAccount
       ? "DEEPSPEC_AUTH_TEST_EMAIL and DEEPSPEC_AUTH_TEST_PASSWORD are configured."
-      : usesAnonymous
-        ? "Using DeepSpec no-email Supabase auth for QA."
-        : "Set DEEPSPEC_AUTH_TEST_EMAIL and DEEPSPEC_AUTH_TEST_PASSWORD, or use the supported no-email QA path.",
+      : "Set DEEPSPEC_AUTH_TEST_EMAIL and DEEPSPEC_AUTH_TEST_PASSWORD for browser QA. Use `npm run verify:auth -- --send-code` to test the email-link/code send path.",
     "missing env",
-    { authMode: usesAnonymous ? "anonymous" : hasPasswordAccount ? "password" : "missing" },
+    { authMode: hasPasswordAccount ? "password" : "missing" },
   );
 }
 
@@ -211,16 +208,13 @@ async function checkAuthSession(config) {
     },
   });
 
-  const authMode = process.env.DEEPSPEC_QA_AUTH_MODE?.trim().toLowerCase() || "anonymous";
   const email = process.env.DEEPSPEC_AUTH_TEST_EMAIL?.trim();
   const password = process.env.DEEPSPEC_AUTH_TEST_PASSWORD?.trim();
 
   try {
-    const result = authMode === "anonymous"
-      ? await client.auth.signInAnonymously()
-      : email && password
+    const result = email && password
         ? await client.auth.signInWithPassword({ email, password })
-        : { error: new Error("No QA auth mode or test credentials configured."), data: null };
+        : { error: new Error("No email/password test credentials configured."), data: null };
 
     if (result.error || !result.data?.user || !result.data?.session) {
       return checkResult(
@@ -232,7 +226,7 @@ async function checkAuthSession(config) {
     }
 
     await client.auth.signOut();
-    return checkResult("auth/session is valid", true, `Verified ${authMode === "anonymous" ? "anonymous" : "password"} Supabase session.`, "auth/session issue");
+    return checkResult("auth/session is valid", true, "Verified password Supabase session.", "auth/session issue");
   } catch (error) {
     return checkResult(
       "auth/session is valid",
@@ -457,11 +451,12 @@ async function checkSelectors(state) {
       const text = globalThis.document.body.innerText;
       return {
         hasEmailInput: Boolean(globalThis.document.querySelector("input[name='email']")),
-        hasPrimarySubmit: text.includes("Sign in to scanner") || text.includes("Continue without email"),
-        hasNoEmailPath: text.includes("No email"),
+        hasPrimarySubmit: text.includes("Sign in to scanner"),
+        hasEmailLinkTab: text.includes("Email link"),
+        hasNoEmailPath: text.includes("No email") || text.includes("Continue without email"),
       };
     });
-    const passed = selectorState.hasEmailInput && selectorState.hasPrimarySubmit && selectorState.hasNoEmailPath;
+    const passed = selectorState.hasEmailInput && selectorState.hasPrimarySubmit && selectorState.hasEmailLinkTab && !selectorState.hasNoEmailPath;
 
     return checkResult(
       "selectors are not stale",
@@ -485,7 +480,7 @@ async function waitForAuthSurface(page) {
     const text = globalThis.document.body?.innerText ?? "";
     return Boolean(globalThis.document.querySelector("input[name='email']"))
       && text.includes("Sign in")
-      && text.includes("No email");
+      && text.includes("Email link");
   }, { timeout: 30_000 });
 }
 
