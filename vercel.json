@@ -1,0 +1,21 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Content-Security-Policy", "value": "default-src 'self'; base-uri 'self'; connect-src 'self' https://*.supabase.co wss://*.supabase.co; font-src 'self' https://fonts.gstatic.com data:; form-action 'self'; frame-ancestors 'self'; img-src 'self' data: blob: https://*.supabase.co; manifest-src 'self'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; worker-src 'self' blob:" },
+        { "key": "Permissions-Policy", "value": "camera=(self), microphone=(), geolocation=()" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "SAMEORIGIN" }
+      ]
+    }
+  ],
+  "rewrites": [
+    { "source": "/mcp", "destination": "/api/mcp" },
+    { "source": "/.well-known/oauth-protected-resource", "destination": "/api/oauth-protected-resource" },
+    { "source": "/.well-known/oauth-protected-resource/mcp", "destination": "/api/oauth-protected-resource" },
+    { "source": "/((?!api/|articles/|brand/|test-fixtures/|assets/|sitemap.xml|robots.txt|llms.txt|favicon.ico|icon-192.png|icon-512.png|manifest.webmanifest|registerSW.js|sw.js|workbox-).*)", "destination": "/index.html" }
+  ]
+}

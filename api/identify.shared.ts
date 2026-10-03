@@ -1471,7 +1471,9 @@ function toIdentificationResult(value: unknown): IdentificationResult | null {
     nextAction,
     needsBetterPhoto: typeof value.needsBetterPhoto === "boolean" ? value.needsBetterPhoto : false,
     evidence,
-    sourceLinks: coerceSourceLinks(value.sourceLinks, partName),
+    // Model-provided URLs are never trusted as provenance. The server adds
+    // owned source links after normalization.
+    sourceLinks: [],
   };
 }
 
@@ -1752,34 +1754,6 @@ function coerceSceneObjects(value: unknown): SceneObject[] {
     .slice(0, 8);
 }
 
-function coerceSourceLinks(value: unknown, partName: string): SourceLink[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .map((link) => {
-      if (typeof link === "string") {
-        return {
-          label: "Model reference",
-          url: link,
-          sourceType: "search" as const,
-        };
-      }
-
-      if (!isRecord(link) || typeof link.url !== "string") {
-        return null;
-      }
-
-      return {
-        label: typeof link.label === "string" && link.label.trim() ? link.label : `Search ${partName}`,
-        url: link.url,
-        sourceType: isSourceType(link.sourceType) ? link.sourceType : "search",
-      };
-    })
-    .filter((link): link is SourceLink => Boolean(link));
-}
-
 function isOptionalFitmentConfidence(value: unknown) {
   return value === "not_applicable" || value === "needs_vehicle_context" || value === "possible" || value === "supported";
 }
@@ -2012,7 +1986,7 @@ function normalizeIdentificationResult(
   const needsBetterPhoto = normalizeNeedsBetterPhoto(result, safety.safetyTriage, partName, confidence);
   const candidateMatches = normalizeCandidateMatches(result, datasetMatches, partName, resolvedScanCategory);
   const evidenceRegions = normalizeEvidenceRegions(result.evidenceRegions, visibleObservations, cleanEvidence, partName);
-  const sourceLinks = normalizeSourceLinks(result.sourceLinks, datasetMatches, partName);
+  const sourceLinks = normalizeSourceLinks(datasetMatches, partName);
 
   return {
     ...result,
@@ -2584,21 +2558,17 @@ function uniqueEvidenceRegions(regions: EvidenceRegion[]) {
   return unique;
 }
 
-function normalizeSourceLinks(sourceLinks: SourceLink[], datasetMatches: DatasetMatch[], partName: string) {
-  const cleanLinks = sourceLinks
-    .map((link) => ({
-      label: cleanText(link.label, ""),
-      url: cleanUrl(link.url),
-      sourceType: link.sourceType,
-    }))
-    .filter((link): link is SourceLink => Boolean(link.label && link.url && isSourceType(link.sourceType)));
-
+function normalizeSourceLinks(datasetMatches: DatasetMatch[], partName: string) {
   const datasetLinks = datasetMatches
     .filter((match) => match.sourceUrl)
     .map((match) => ({
       label: `Dataset sample: ${match.label}`,
       url: match.sourceUrl as string,
       sourceType: "dataset" as const,
+      sourceTier: "unverified_reference" as const,
+      verificationStatus: "unverified" as const,
+      evidenceRole: "research_only" as const,
+      sourceName: "Deep Spec dataset index",
     }));
 
   const defaultLinks: SourceLink[] = [
@@ -2606,15 +2576,23 @@ function normalizeSourceLinks(sourceLinks: SourceLink[], datasetMatches: Dataset
       label: "Search this part",
       url: `https://www.google.com/search?q=${encodeURIComponent(`${partName} car part`)}`,
       sourceType: "search",
+      sourceTier: "unverified_reference",
+      verificationStatus: "unverified",
+      evidenceRole: "research_only",
+      sourceName: "Google Search",
     },
     {
       label: "NHTSA recalls",
       url: "https://www.nhtsa.gov/recalls",
       sourceType: "safety",
+      sourceTier: "tier_1_government",
+      verificationStatus: "constrained",
+      evidenceRole: "constrains_claim",
+      sourceName: "National Highway Traffic Safety Administration",
     },
   ];
 
-  return uniqueSourceLinks([...datasetLinks, ...cleanLinks, ...defaultLinks]).slice(0, 6);
+  return uniqueSourceLinks([...datasetLinks, ...defaultLinks]).slice(0, 6);
 }
 
 function uniqueSourceLinks(links: SourceLink[]) {
@@ -3062,16 +3040,6 @@ function cleanText(value: string, fallback: string) {
 
 function cleanList(value: string[]) {
   return value.map((item) => item.trim().replace(/\s+/g, " ")).filter(Boolean).slice(0, 6);
-}
-
-function cleanUrl(value: string) {
-  const cleaned = value.trim();
-  try {
-    const url = new URL(cleaned);
-    return url.protocol === "https:" ? url.toString() : "";
-  } catch {
-    return "";
-  }
 }
 
 function isIdentificationResult(value: unknown): value is IdentificationResult {

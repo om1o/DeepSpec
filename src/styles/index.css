@@ -200,9 +200,9 @@ button, a {
 .ds-auth-art { position: absolute; top: 110px; width: 100%; height: calc(100% - 110px); object-fit: cover; }
 .ds-auth-story-top { position: absolute; inset: 0 0 auto; padding: 36px; background: linear-gradient(#07101ef2, #07101e00); }
 .ds-eyebrow { color: #a7cbd4; font-size: 10px; font-weight: 700; letter-spacing: .17em; }
-.ds-auth-story h2 { margin-top: 20px; font-size: clamp(30px, 3.2vw, 44px); font-weight: 600; line-height: 1.13; letter-spacing: -.045em; }
-.ds-auth-story h2 span { color: #a7cbd4; }
-.ds-auth-story-top > p { margin-top: 16px; font-size: 14px; line-height: 1.7; color: #bcccd7; }
+.ds-auth-story-title { margin-top: 20px; font-size: clamp(30px, 3.2vw, 44px); font-weight: 600; line-height: 1.13; letter-spacing: 0; }
+.ds-auth-story-title span { color: #a7cbd4; }
+.ds-auth-story-copy { margin-top: 16px; font-size: 14px; line-height: 1.7; color: #bcccd7; }
 .ds-auth-story-bottom { position: absolute; inset: auto 0 0; padding: 28px 36px; background: linear-gradient(transparent, #07101e 48%); }
 .ds-art-caption { display: block; margin-bottom: 24px; color: #b2c5d5; font-size: 10px; }
 .ds-workflow { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid #ffffff26; padding-top: 20px; }

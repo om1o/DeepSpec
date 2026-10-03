@@ -87,7 +87,13 @@
         if (!latest?.analysis) return;
         const result = latest.analysis;
         const list = (items) => (items || []).slice(0, 4).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
-        const sources = (latest.sourceLinks || []).map((source) => `<li><a href="${escapeHtml(source.url)}" target="_blank" rel="noreferrer">${escapeHtml(source.label)}</a></li>`).join("");
+        const roleLabel = (source) => {
+          if (["verified", "user_confirmed"].includes(source.verificationStatus)) return "Verified evidence";
+          if (source.evidenceRole === "constrains_claim" || source.verificationStatus === "constrained") return "Constraint, not visual proof";
+          if (source.evidenceRole === "product_reference") return "Deep Spec product reference";
+          return "Research link, not proof";
+        };
+        const sources = (latest.sourceLinks || []).map((source) => `<li><a href="${escapeHtml(source.url)}" target="_blank" rel="noreferrer">${escapeHtml(source.label)}</a><br><small>${escapeHtml(roleLabel(source))} · ${escapeHtml(source.sourceName)}</small></li>`).join("");
         document.getElementById("root").innerHTML = `
           <p class="eyebrow">DeepSpec result</p>
           <h1>${escapeHtml(result.partName)}</h1>
@@ -96,7 +102,7 @@
           <section><h2>Visible evidence</h2><ul>${list(result.visibleObservations)}</ul></section>
           <section><h2>Concerns</h2><ul>${list(result.concerns?.length ? result.concerns : ["No specific visible concern was returned."])}</ul></section>
           <section><h2>Next action</h2><p>${escapeHtml(result.nextAction)}</p></section>
-          <section><h2>Sources</h2><ul>${sources}</ul></section>
+          <section><h2>Evidence and research links</h2><ul>${sources}</ul></section>
           <p class="notice">${escapeHtml(latest.disclaimer)} Saving does not grant permission to train on this image.</p>
           <label><input id="consent" type="checkbox"> <span>Save this image and analysis to my private DeepSpec history.</span></label>
           <button id="save" disabled>Save to DeepSpec</button>

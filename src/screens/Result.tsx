@@ -21,7 +21,7 @@ import { buildScanReport, downloadTextFile, getScanReportFilename } from "../ser
 import { recordManualCorrection } from "../services/scanQualityMetrics";
 import { getShopJob } from "../services/shop";
 import { createLookup, getLookup, normalizeLookup, recordLookupAnalysisFailure, saveExistingLookup, scanStateFromLookup, updateLookup, updateLookupResult, withRetriedLookupResult } from "../services/storage";
-import type { CapturedFrame, IdentificationResult, Lookup, Rating, ScanAnalysisState, ShopJob as ShopJobRecord } from "../types";
+import type { CapturedFrame, IdentificationResult, Lookup, Rating, ScanAnalysisState, ShopJob as ShopJobRecord, SourceLink } from "../types";
 
 export default function Result() {
   const [mountedScope] = useState(getAccountScope);
@@ -49,7 +49,7 @@ export default function Result() {
   const storageWarning = scanState?.storageWarning;
   const shopJob = scanState?.jobId ? getShopJob(scanState.jobId) : null;
   const canSaveForChat = Boolean(scanState?.frame && scanState.result);
-  const datasetSourceUrls = scanState?.result ? getDatasetSourceUrls(scanState.result.evidence) : [];
+  const sourceLinks = scanState?.result?.sourceLinks ?? [];
   const simpleSummary = scanState?.result ? getSimpleResultSummary(scanState.result) : null;
   const manualCorrectionTrackedRef = useRef(false);
   const pendingRatingRef = useRef<Rating | undefined>(undefined);
@@ -272,7 +272,7 @@ export default function Result() {
           })} /> : null}
           {inspectionLookup ? <ReportActions lookup={inspectionLookup} /> : null}
           {inspectionLookup ? <TrainingConsentPanel key={`consent:${inspectionLookup.id}`} scanId={inspectionLookup.id} /> : null}
-          {datasetSourceUrls.length > 0 ? <SourceFinePrint urls={datasetSourceUrls} /> : null}
+          {sourceLinks.length > 0 ? <SourceLinks links={sourceLinks} /> : null}
           <Link
             className="block rounded-xl border border-[var(--ds-border)] p-4 text-center text-sm font-bold text-[var(--ds-fg-1)]"
             to={`/early-access${lookup ? `?scan=${encodeURIComponent(lookup.id)}` : ""}#feedback`}
@@ -570,25 +570,36 @@ function FollowUpActions({
   );
 }
 
-function SourceFinePrint({ urls }: { urls: string[] }) {
+function SourceLinks({ links }: { links: SourceLink[] }) {
   return (
-    <section className="px-1 py-2 text-[11px] leading-5 text-[var(--ds-fg-3)]">
-      <p className="font-extrabold uppercase tracking-[0.14em]">Dataset sources</p>
-      <div className="mt-1 space-y-1">
-        {urls.map((url, index) => (
-          <a
-            key={url}
-            className="block truncate underline decoration-neutral-300 underline-offset-4"
-            href={url}
-            rel="noreferrer"
-            target="_blank"
-          >
-            Hugging Face source {index + 1}
-          </a>
+    <section aria-labelledby="source-links-title" className="border-t border-[var(--ds-border)] px-1 py-3 text-xs leading-5 text-[var(--ds-fg-3)]">
+      <p id="source-links-title" className="font-extrabold uppercase tracking-[0.14em]">Evidence and research links</p>
+      <div className="mt-2 space-y-2">
+        {links.map((link) => (
+          <div key={link.url}>
+            <a className="font-bold text-[var(--ds-fg-2)] underline decoration-neutral-300 underline-offset-4" href={link.url} rel="noreferrer" target="_blank">
+              {link.label}
+            </a>
+            <p>{getSourceRoleLabel(link)} · {link.sourceName ?? getLegacySourceName(link.sourceType)}</p>
+          </div>
         ))}
       </div>
     </section>
   );
+}
+
+function getSourceRoleLabel(link: SourceLink) {
+  if (link.verificationStatus === "verified" || link.verificationStatus === "user_confirmed") return "Verified evidence";
+  if (link.evidenceRole === "constrains_claim" || link.verificationStatus === "constrained") return "Constraint, not visual proof";
+  if (link.evidenceRole === "product_reference") return "Deep Spec product reference";
+  return "Research link, not proof";
+}
+
+function getLegacySourceName(sourceType: SourceLink["sourceType"]) {
+  if (sourceType === "safety") return "Government safety resource";
+  if (sourceType === "dataset") return "Dataset reference";
+  if (sourceType === "search") return "Web search";
+  return "Reference";
 }
 
 function AnalysisError({
@@ -730,21 +741,6 @@ function NotAnalyzed({ capturedAt }: { capturedAt: string | null }) {
       {capturedAt ? <p className="mt-3 text-xs font-semibold text-[var(--ds-fg-3)]">Captured {capturedAt}</p> : null}
     </section>
   );
-}
-
-function getDatasetSourceUrls(evidence: string[]) {
-  const urls = new Set<string>();
-
-  for (const item of evidence) {
-    const matches = item.match(/https:\/\/[^\s)]+/g) ?? [];
-    for (const match of matches) {
-      if (match.includes("huggingface.co/datasets/")) {
-        urls.add(match);
-      }
-    }
-  }
-
-  return [...urls].slice(0, 3);
 }
 
 function getScanState(state: unknown): ScanAnalysisState | null {

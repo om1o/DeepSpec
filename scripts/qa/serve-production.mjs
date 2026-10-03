@@ -11,6 +11,13 @@ loadQaEnv();
 const rootDir = process.cwd();
 const distDir = resolve(rootDir, "dist");
 const defaultPort = Number.parseInt(process.env.PORT ?? "5175", 10);
+const securityHeaders = {
+  "Content-Security-Policy": "default-src 'self'; base-uri 'self'; connect-src 'self' https://*.supabase.co wss://*.supabase.co; font-src 'self' https://fonts.gstatic.com data:; form-action 'self'; frame-ancestors 'self'; img-src 'self' data: blob: https://*.supabase.co; manifest-src 'self'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; worker-src 'self' blob:",
+  "Permissions-Policy": "camera=(self), microphone=(), geolocation=()",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "SAMEORIGIN",
+};
 
 const apiModules = new Map([
   ["/api/account-entitlement", "/api/account-entitlement.ts"],
@@ -36,6 +43,7 @@ const contentTypes = new Map([
   [".wasm", "application/wasm"],
   [".webmanifest", "application/manifest+json; charset=utf-8"],
   [".webp", "image/webp"],
+  [".xml", "application/xml; charset=utf-8"],
 ]);
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -134,6 +142,7 @@ async function handleStaticRequest(requestUrl, response) {
     "Cache-Control": basename(staticFile) === "index.html" ? "no-store" : "public, max-age=31536000, immutable",
     "Content-Length": fileStats.size,
     "Content-Type": contentTypes.get(extname(staticFile)) ?? "application/octet-stream",
+    ...securityHeaders,
   });
   createReadStream(staticFile).pipe(response);
 }

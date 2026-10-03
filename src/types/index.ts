@@ -243,6 +243,12 @@ export type SourceLink = {
   label: string;
   url: string;
   sourceType: "dataset" | "reference" | "search" | "safety";
+  sourceTier?: "tier_1_government" | "tier_1_oem" | "tier_2_licensed" | "tier_3_user_verified" | "unverified_reference";
+  verificationStatus?: "verified" | "constrained" | "user_confirmed" | "unverified";
+  evidenceRole?: "supports_claim" | "constrains_claim" | "research_only" | "product_reference";
+  sourceName?: string;
+  sourceLicense?: string;
+  retrievedAt?: string;
 };
 
 export type IdentifyProvider = "gemini" | "huggingface" | "groq" | "ollama" | "on-device";

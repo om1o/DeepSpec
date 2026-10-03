@@ -671,6 +671,18 @@ function isSourceType(value: unknown): value is SourceLink["sourceType"] {
   return value === "dataset" || value === "reference" || value === "search" || value === "safety";
 }
 
+function isSourceTier(value: unknown): value is NonNullable<SourceLink["sourceTier"]> {
+  return value === "tier_1_government" || value === "tier_1_oem" || value === "tier_2_licensed" || value === "tier_3_user_verified" || value === "unverified_reference";
+}
+
+function isVerificationStatus(value: unknown): value is NonNullable<SourceLink["verificationStatus"]> {
+  return value === "verified" || value === "constrained" || value === "user_confirmed" || value === "unverified";
+}
+
+function isEvidenceRole(value: unknown): value is NonNullable<SourceLink["evidenceRole"]> {
+  return value === "supports_claim" || value === "constrains_claim" || value === "research_only" || value === "product_reference";
+}
+
 function getTrainingStatus(rating: Rating | undefined, correction: string | null | undefined): TrainingStatus {
   if (correction?.trim()) {
     return "user_corrected";
@@ -969,6 +981,12 @@ function normalizeSourceLinks(value: unknown): SourceLink[] {
       label: typeof link.label === "string" ? cleanText(link.label, 80) : "",
       url: typeof link.url === "string" ? cleanText(link.url, 300) : "",
       sourceType: isSourceType(link.sourceType) ? link.sourceType : "reference",
+      ...(isSourceTier(link.sourceTier) ? { sourceTier: link.sourceTier } : {}),
+      ...(isVerificationStatus(link.verificationStatus) ? { verificationStatus: link.verificationStatus } : {}),
+      ...(isEvidenceRole(link.evidenceRole) ? { evidenceRole: link.evidenceRole } : {}),
+      ...(typeof link.sourceName === "string" ? { sourceName: cleanText(link.sourceName, 120) } : {}),
+      ...(typeof link.sourceLicense === "string" ? { sourceLicense: cleanText(link.sourceLicense, 120) } : {}),
+      ...(typeof link.retrievedAt === "string" && Number.isFinite(Date.parse(link.retrievedAt)) ? { retrievedAt: link.retrievedAt } : {}),
     }))
     .filter((link) => link.label && /^https:\/\//.test(link.url))
     .slice(0, 6);

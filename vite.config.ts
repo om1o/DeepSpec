@@ -1,5 +1,7 @@
 import react from "@vitejs/plugin-react";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { join } from "node:path";
 import { defineConfig } from "vitest/config";
 import { loadEnv } from "vite";
 import type { PreviewServer, ViteDevServer } from "vite";
@@ -15,9 +17,11 @@ export default defineConfig(async ({ mode }) => {
     ...process.env,
     ...env,
   };
+  const publicOrigin = getPublicOrigin(serverEnv);
 
   return {
     plugins: [
+      publicOriginPlugin(publicOrigin),
       react(),
       tailwindcss(),
       {
@@ -239,6 +243,9 @@ export default defineConfig(async ({ mode }) => {
       setupFiles: "./src/test/setup.ts",
       testTimeout: 15_000,
       exclude: [
+        "**/scripts/seo-audit.test.mjs",
+        "**/scripts/siteone-audit.test.mjs",
+        "**/scripts/verify-deployment-indexing.test.mjs",
         "**/.claude/worktrees/**",
         "**/.codex-gitdir-*/**",
         "**/.ditto-site/**",
@@ -271,6 +278,44 @@ export default defineConfig(async ({ mode }) => {
     },
   };
 });
+
+const DEFAULT_PUBLIC_ORIGIN = "https://deepspec.app";
+
+function getPublicOrigin(env: Record<string, string | undefined>) {
+  const configured = env.VITE_PUBLIC_SITE_URL
+    || (env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${env.VERCEL_PROJECT_PRODUCTION_URL}` : "")
+    || DEFAULT_PUBLIC_ORIGIN;
+  const url = new URL(configured);
+  if (url.protocol !== "https:" && !["localhost", "127.0.0.1"].includes(url.hostname)) {
+    throw new Error("VITE_PUBLIC_SITE_URL must use HTTPS outside local development.");
+  }
+  return url.toString().replace(/\/$/, "");
+}
+
+function publicOriginPlugin(publicOrigin: string) {
+  return {
+    name: "deep-spec-public-origin",
+    transformIndexHtml(html: string) {
+      return html.replaceAll(DEFAULT_PUBLIC_ORIGIN, publicOrigin);
+    },
+    async closeBundle() {
+      if (publicOrigin === DEFAULT_PUBLIC_ORIGIN) return;
+      await replaceOriginInDirectory(join(process.cwd(), "dist"), publicOrigin);
+    },
+  };
+}
+
+async function replaceOriginInDirectory(directory: string, publicOrigin: string): Promise<void> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  await Promise.all(entries.map(async (entry) => {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) return replaceOriginInDirectory(path, publicOrigin);
+    if (!/\.(?:html|md|txt|xml)$/i.test(entry.name)) return;
+    const original = await readFile(path, "utf8");
+    const updated = original.replaceAll(DEFAULT_PUBLIC_ORIGIN, publicOrigin);
+    if (updated !== original) await writeFile(path, updated);
+  }));
+}
 
 async function readJsonBody(request: IncomingMessage) {
   const rawBody = await readRawBody(request);

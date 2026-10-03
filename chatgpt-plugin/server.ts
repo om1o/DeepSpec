@@ -39,8 +39,14 @@ const fileSchema = z.object({
 const sourceSchema = z.object({
   label: z.string(),
   url: z.string().url().refine((value) => ["http:", "https:"].includes(new URL(value).protocol), "Source URL must use HTTP or HTTPS."),
-  sourceType: z.string(),
-});
+  sourceType: z.enum(["dataset", "reference", "search", "safety"]),
+  sourceTier: z.enum(["tier_1_government", "tier_1_oem", "tier_2_licensed", "tier_3_user_verified", "unverified_reference"]),
+  verificationStatus: z.enum(["verified", "constrained", "user_confirmed", "unverified"]),
+  evidenceRole: z.enum(["supports_claim", "constrains_claim", "research_only", "product_reference"]),
+  sourceName: z.string(),
+  sourceLicense: z.string().optional(),
+  retrievedAt: z.string().datetime().optional(),
+}).strict();
 
 const analysisSchema = z.object({
   partName: z.string(),
@@ -76,6 +82,28 @@ export function createOAuthMetadata(env: PluginEnv) {
     scopes_supported: ["openid", "email", "profile"],
     bearer_methods_supported: ["header"],
   };
+}
+
+export function validateAccessTokenClaims(claims: Record<string, unknown>, env: PluginEnv, nowSeconds = Math.floor(Date.now() / 1000)) {
+  const expectedIssuer = `${getSupabaseUrl(env)}/auth/v1`;
+  if (claims.iss !== expectedIssuer) throw new Error("The access token issuer does not match DeepSpec.");
+
+  const audiences = typeof claims.aud === "string"
+    ? [claims.aud]
+    : Array.isArray(claims.aud) ? claims.aud.filter((value): value is string => typeof value === "string") : [];
+  if (!audiences.includes(getPluginPublicUrl(env))) throw new Error("The access token audience does not match this DeepSpec plugin.");
+
+  if (typeof claims.exp !== "number" || claims.exp <= nowSeconds) throw new Error("The access token has expired.");
+  if (typeof claims.nbf === "number" && claims.nbf > nowSeconds) throw new Error("The access token is not active yet.");
+  if (typeof claims.sub !== "string" || !claims.sub) throw new Error("The access token has no user subject.");
+
+  const scopes = typeof claims.scope === "string"
+    ? claims.scope.split(/\s+/).filter(Boolean)
+    : Array.isArray(claims.scopes) ? claims.scopes.filter((value): value is string => typeof value === "string") : [];
+  const missingScopes = oauthSchemes[0].scopes.filter((scope) => !scopes.includes(scope));
+  if (missingScopes.length) throw new Error(`The access token is missing required scopes: ${missingScopes.join(", ")}.`);
+
+  return { subject: claims.sub, scopes };
 }
 
 export function validateDownloadUrl(value: string) {
@@ -131,7 +159,7 @@ export function createDeepSpecPlugin(accessToken: string | null, env: PluginEnv 
       mimeType: RESOURCE_MIME_TYPE,
       text: widgetHtml,
       _meta: {
-        ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: [] } },
+        ui: { prefersBorder: true, domain: getPluginPublicUrl(env), csp: { connectDomains: [], resourceDomains: [] } },
         "openai/widgetDescription": "A compact DeepSpec vehicle-part result with evidence, sources, and an explicit private-save control.",
       },
     }],
@@ -233,14 +261,32 @@ export function createDeepSpecPlugin(accessToken: string | null, env: PluginEnv 
 }
 
 export function startPluginServer(port = Number(process.env.PORT || 8787), env: PluginEnv = process.env): Server {
+  const httpServer = createHttpServer(createPluginHttpApp(env));
+  httpServer.listen(port, () => {
+    const address = httpServer.address();
+    const activePort = typeof address === "object" && address ? address.port : port;
+    console.log(`DeepSpec ChatGPT plugin listening on http://localhost:${activePort}/mcp`);
+  });
+  return httpServer;
+}
+
+export function createPluginHttpApp(env: PluginEnv = process.env) {
   const app = express();
-  app.use(cors({ origin: true, allowedHeaders: ["authorization", "content-type", "mcp-session-id"], exposedHeaders: ["Mcp-Session-Id"] }));
+  const allowedBrowserOrigins = getAllowedBrowserOrigins(env);
+  app.use(cors({
+    origin(origin, callback) {
+      if (!origin || allowedBrowserOrigins.has(origin)) return callback(null, true);
+      return callback(new Error("Origin is not allowed by the DeepSpec plugin."));
+    },
+    allowedHeaders: ["authorization", "content-type", "mcp-session-id"],
+    exposedHeaders: ["Mcp-Session-Id"],
+  }));
   app.use(express.json({ limit: "1mb" }));
   const metadata = () => createOAuthMetadata(env);
 
   app.get("/", (_req, res) => res.type("text/plain").send("DeepSpec ChatGPT plugin"));
   app.get(["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"], (_req, res) => res.json(metadata()));
-  app.all("/mcp", async (req, res) => {
+  app.all(["/mcp", "/api/mcp"], async (req, res) => {
     const server = createDeepSpecPlugin(readBearerToken(req), env);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on("close", () => {
@@ -255,13 +301,7 @@ export function startPluginServer(port = Number(process.env.PORT || 8787), env: 
     }
   });
 
-  const httpServer = createHttpServer(app);
-  httpServer.listen(port, () => {
-    const address = httpServer.address();
-    const activePort = typeof address === "object" && address ? address.port : port;
-    console.log(`DeepSpec ChatGPT plugin listening on http://localhost:${activePort}/mcp`);
-  });
-  return httpServer;
+  return app;
 }
 
 async function requireUser(accessToken: string | null, env: PluginEnv): Promise<
@@ -271,8 +311,14 @@ async function requireUser(accessToken: string | null, env: PluginEnv): Promise<
   if (!accessToken) return { ok: false, result: authError(env, "Connect your DeepSpec account to continue.") };
   try {
     const client = createUserClient(accessToken, env);
+    const claimsResponse = await client.auth.getClaims(accessToken);
+    if (claimsResponse.error || !claimsResponse.data?.claims) {
+      return { ok: false, result: authError(env, "Your DeepSpec connection expired. Reconnect and try again.") };
+    }
+    const validated = validateAccessTokenClaims(claimsResponse.data.claims as Record<string, unknown>, env);
     const response = await client.auth.getUser(accessToken);
     if (response.error || !response.data.user) return { ok: false, result: authError(env, "Your DeepSpec connection expired. Reconnect and try again.") };
+    if (response.data.user.id !== validated.subject) return { ok: false, result: authError(env, "The access token subject does not match this DeepSpec account.") };
     return { ok: true, userId: response.data.user.id, email: response.data.user.email ?? "DeepSpec user" };
   } catch {
     return { ok: false, result: authError(env, "DeepSpec could not verify this account connection.") };
@@ -413,7 +459,15 @@ function withDeepSpecGuide(value: unknown, category: string, env: PluginEnv) {
     : category === "unknown"
       ? "/articles/ai-car-part-finding.html"
       : "/articles/ai-car-parts-scanner.html";
-  const guide = { label: "DeepSpec guide for reviewing vehicle-image results", url: `${getDeepSpecWebUrl(env)}${path}`, sourceType: "reference" };
+  const guide = {
+    label: "DeepSpec guide for reviewing vehicle-image results",
+    url: `${getDeepSpecWebUrl(env)}${path}`,
+    sourceType: "reference" as const,
+    sourceTier: "unverified_reference" as const,
+    verificationStatus: "unverified" as const,
+    evidenceRole: "product_reference" as const,
+    sourceName: "Deep Spec",
+  };
   return [...sources.filter((source) => source.url !== guide.url), guide].slice(0, 5);
 }
 
@@ -421,7 +475,7 @@ function formatAnalysisText(analysis: VehicleAnalysis, sources: z.infer<typeof s
   const visible = analysis.visibleObservations.slice(0, 3).map((item) => `- ${item}`).join("\n");
   const concerns = analysis.concerns.slice(0, 3).map((item) => `- ${item}`).join("\n") || "- No specific visible concern was returned.";
   const links = sources.map((source) => `- ${source.label}: ${source.url}`).join("\n");
-  return `${analysis.partName} (${analysis.confidence} confidence)\n\nWhat it does: ${analysis.whatItDoes}\n\nVisible evidence:\n${visible}\n\nConcerns:\n${concerns}\n\nNext action: ${analysis.nextAction}\n\nSources:\n${links}\n\nProbable identification only. A photo does not prove exact fitment, hidden condition, function, or repair safety.`;
+  return `${analysis.partName} (${analysis.confidence} confidence)\n\nWhat it does: ${analysis.whatItDoes}\n\nVisible evidence:\n${visible}\n\nConcerns:\n${concerns}\n\nNext action: ${analysis.nextAction}\n\nEvidence and research links:\n${links}\n\nProbable identification only. A photo does not prove exact fitment, hidden condition, function, or repair safety.`;
 }
 
 function getSupabaseUrl(env: PluginEnv) {
@@ -437,15 +491,36 @@ function getSupabaseKey(env: PluginEnv) {
 }
 
 function getPluginPublicUrl(env: PluginEnv) {
-  return (env.DEEPSPEC_PLUGIN_PUBLIC_URL || "http://localhost:8787").replace(/\/$/, "");
+  return getPublicUrl(env.DEEPSPEC_PLUGIN_PUBLIC_URL || getVercelPublicUrl(env), "http://localhost:8787", "DEEPSPEC_PLUGIN_PUBLIC_URL", env);
 }
 
 function getDeepSpecApiUrl(env: PluginEnv) {
-  return (env.DEEPSPEC_API_BASE_URL || "http://localhost:5174").replace(/\/$/, "");
+  return getPublicUrl(env.DEEPSPEC_API_BASE_URL || getVercelPublicUrl(env), "http://localhost:5174", "DEEPSPEC_API_BASE_URL", env);
 }
 
 function getDeepSpecWebUrl(env: PluginEnv) {
-  return (env.DEEPSPEC_WEB_URL || "https://deepspec.app").replace(/\/$/, "");
+  return getPublicUrl(env.DEEPSPEC_WEB_URL || getVercelPublicUrl(env), "http://localhost:5174", "DEEPSPEC_WEB_URL", env);
+}
+
+function getVercelPublicUrl(env: PluginEnv) {
+  return env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${env.VERCEL_PROJECT_PRODUCTION_URL}` : undefined;
+}
+
+function getPublicUrl(value: string | undefined, developmentDefault: string, name: string, env: PluginEnv) {
+  if (!value && env.NODE_ENV === "production") throw new Error(`${name} is required in production.`);
+  const url = new URL(value || developmentDefault);
+  if (env.NODE_ENV === "production" && url.protocol !== "https:") throw new Error(`${name} must use HTTPS in production.`);
+  return url.toString().replace(/\/$/, "");
+}
+
+function getAllowedBrowserOrigins(env: PluginEnv) {
+  const configured = (env.DEEPSPEC_PLUGIN_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((value) => value.trim().replace(/\/$/, ""))
+    .filter(Boolean);
+  if (configured.length) return new Set(configured);
+  if (env.NODE_ENV === "production") return new Set<string>();
+  return new Set(["http://localhost:3000", "http://localhost:5174", "http://localhost:8787"]);
 }
 
 function isPrivateAddress(hostname: string) {

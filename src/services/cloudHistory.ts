@@ -465,6 +465,12 @@ function parseSourceLinks(value: unknown): SourceLink[] {
       label: isString(item.label) ? item.label : "",
       url: isString(item.url) ? item.url : "",
       sourceType: parseSourceType(item.sourceType),
+      ...(isSourceTier(item.sourceTier) ? { sourceTier: item.sourceTier } : {}),
+      ...(isVerificationStatus(item.verificationStatus) ? { verificationStatus: item.verificationStatus } : {}),
+      ...(isEvidenceRole(item.evidenceRole) ? { evidenceRole: item.evidenceRole } : {}),
+      ...(isString(item.sourceName) ? { sourceName: item.sourceName } : {}),
+      ...(isString(item.sourceLicense) ? { sourceLicense: item.sourceLicense } : {}),
+      ...(isString(item.retrievedAt) ? { retrievedAt: item.retrievedAt } : {}),
     }))
     .filter((item) => Boolean(item.label && item.url));
 }
@@ -579,6 +585,18 @@ function parseSourceType(value: unknown): SourceLink["sourceType"] {
   return value === "dataset" || value === "reference" || value === "search" || value === "safety"
     ? value
     : "reference";
+}
+
+function isSourceTier(value: unknown): value is NonNullable<SourceLink["sourceTier"]> {
+  return value === "tier_1_government" || value === "tier_1_oem" || value === "tier_2_licensed" || value === "tier_3_user_verified" || value === "unverified_reference";
+}
+
+function isVerificationStatus(value: unknown): value is NonNullable<SourceLink["verificationStatus"]> {
+  return value === "verified" || value === "constrained" || value === "user_confirmed" || value === "unverified";
+}
+
+function isEvidenceRole(value: unknown): value is NonNullable<SourceLink["evidenceRole"]> {
+  return value === "supports_claim" || value === "constrains_claim" || value === "research_only" || value === "product_reference";
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

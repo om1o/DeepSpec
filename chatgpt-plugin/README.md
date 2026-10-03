@@ -15,18 +15,23 @@ The plugin cannot appear automatically in every ChatGPT conversation about a car
 1. Upgrade the Supabase project's JWT signing key to RS256 or ES256 if it still uses HS256.
 2. In Supabase Authentication > OAuth Server, enable OAuth 2.1 and dynamic client registration.
 3. Set the authorization path to `/oauth/consent` and the Auth Site URL to the DeepSpec web origin.
-4. Set the environment variables below.
-5. Run `npm run dev` for the DeepSpec API and `npm run plugin:dev` for the MCP server.
-6. Expose port 8787 through an HTTPS tunnel and add `https://<tunnel>/mcp` in ChatGPT developer mode.
+4. Configure the Supabase custom access-token hook so OAuth access tokens include the exact `DEEPSPEC_PLUGIN_PUBLIC_URL` in `aud` and include `openid email profile` in `scope`. DeepSpec rejects tokens that do not prove this audience and these scopes.
+5. Set the environment variables below.
+6. Run `npm run dev` for the DeepSpec API and `npm run plugin:dev` for the MCP server.
+7. Expose port 8787 through an HTTPS tunnel and add `https://<tunnel>/mcp` in ChatGPT developer mode.
 
 ```text
 SUPABASE_URL=https://<project-ref>.supabase.co
 SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 DEEPSPEC_API_BASE_URL=http://localhost:5174
 DEEPSPEC_PLUGIN_PUBLIC_URL=https://<public-plugin-origin>
-DEEPSPEC_WEB_URL=https://deepspec.app
+DEEPSPEC_WEB_URL=https://<deepspec-web-origin>
+# Optional comma-separated browser origins. MCP requests without Origin are allowed.
+DEEPSPEC_PLUGIN_ALLOWED_ORIGINS=https://chatgpt.com
 PORT=8787
 ```
+
+On Vercel, `/mcp` and both protected-resource metadata paths are routed to serverless functions. `VERCEL_PROJECT_PRODUCTION_URL` supplies the stable production origin automatically, so the web app and plugin can share one free `vercel.app` domain. Explicit `DEEPSPEC_*_URL` values take precedence.
 
 The provider keys used by `/api/identify` remain on the DeepSpec API host. Do not place a Supabase secret/service-role key in this plugin or the browser widget.
 
@@ -39,6 +44,15 @@ npm run build
 ```
 
 For an end-to-end check, connect MCP Inspector to `http://localhost:8787/mcp`, confirm the three tools and resource, then test ChatGPT developer mode through HTTPS. A real save requires the Supabase OAuth Server dashboard settings and a signed-in DeepSpec account.
+
+Before promotion, prove all of the following in ChatGPT developer mode:
+
+1. The protected-resource metadata reports the exact HTTPS plugin origin.
+2. Connecting creates a Supabase OAuth client and completes PKCE authorization.
+3. A token with a missing or different audience is rejected.
+4. Analyze returns a result without saving the image.
+5. Save requires explicit confirmation and the record appears only in that user's DeepSpec history.
+6. Source links display their evidence role; an AI-generated URL never appears.
 
 ## Provenance
 

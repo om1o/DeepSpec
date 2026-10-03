@@ -133,7 +133,7 @@ describe("report", () => {
     expect(report).toContain("Detected text:");
     expect(report).toContain("ATE 60-12345");
     expect(report).toContain("Ranked sources:");
-    expect(report).toContain("Dataset sample: Brake caliper (dataset)");
+    expect(report).toContain("Dataset sample: Brake caliper (research_only; unverified)");
     expect(report).toContain("Local dataset match: Brake caliper");
     expect(report).toContain("Dataset source: https://huggingface.co/datasets/DrBimmer/car-parts-and-damage-dataset");
     expect(report).toContain("Front driver side.");

@@ -144,7 +144,7 @@ function formatSourceLinks(links: SourceLink[] | undefined) {
   return visibleLinks.length > 0
     ? visibleLinks
         .slice(0, 6)
-        .map((link) => `- ${trimReportLine(`${link.label} (${link.sourceType}): ${link.url}`)}`)
+        .map((link) => `- ${trimReportLine(`${link.label} (${link.evidenceRole ?? "research_only"}; ${link.verificationStatus ?? "unverified"}): ${link.url}`)}`)
         .join("\n")
     : "None";
 }

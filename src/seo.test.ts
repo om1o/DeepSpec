@@ -31,6 +31,8 @@ describe("SEO assets", () => {
     expect(sitemap).toContain("https://deepspec.app/articles/ai-car-parts-scanner.html");
     expect(sitemap).toContain("https://deepspec.app/articles/car-damage-ai-scanner.html");
     expect(sitemap).toContain("https://deepspec.app/articles/visual-ai-inspection-tools.html");
+    expect(sitemap).toContain("https://deepspec.app/articles/photograph-car-part-identification.html");
+    expect(sitemap).toContain("https://deepspec.app/articles/alternator-or-ac-compressor.html");
     // The client-rendered tester route stays out of the sitemap until it has
     // route-specific server-rendered metadata.
     expect(sitemap).not.toContain("https://deepspec.app/early-access");
@@ -83,5 +85,29 @@ describe("SEO assets", () => {
     expect(inspectionArticle).toContain("Visual AI inspection tools");
     expect(inspectionArticle).toContain("Can AI tools save time for engineers?");
     expect(inspectionMarkdown).toContain("structured scan records");
+  });
+
+  it("publishes the two launch guides with crawlable HTML and Markdown", () => {
+    const photoArticle = read("public/articles/photograph-car-part-identification.html");
+    const compressorArticle = read("public/articles/alternator-or-ac-compressor.html");
+    const photoMarkdown = read("public/articles/photograph-car-part-identification.md");
+    const compressorMarkdown = read("public/articles/alternator-or-ac-compressor.md");
+
+    expect(photoArticle).toContain("How to photograph a car part for identification");
+    expect(photoArticle).toContain('"@type": "HowTo"');
+    expect(photoMarkdown).toContain("Overall view");
+    expect(compressorArticle).toContain("Alternator or A/C compressor?");
+    expect(compressorArticle).toContain("refrigerant line connections");
+    expect(compressorMarkdown).toContain("A/C compressor clues");
+  });
+
+  it("configures Vercel routes and production security headers", () => {
+    const config = JSON.parse(read("vercel.json")) as { headers: unknown[]; rewrites: Array<{ source: string; destination: string }> };
+    expect(config.headers).toHaveLength(1);
+    expect(config.rewrites).toEqual(expect.arrayContaining([
+      { source: "/mcp", destination: "/api/mcp" },
+      { source: "/.well-known/oauth-protected-resource", destination: "/api/oauth-protected-resource" },
+    ]));
+    expect(read("vercel.json")).toContain("Content-Security-Policy");
   });
 });

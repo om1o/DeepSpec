@@ -331,8 +331,8 @@ export default function Auth() {
           <img src="/brand/alternator-workbench.webp" alt="" width="1086" height="1448" className="ds-auth-art" />
           <div className="ds-auth-story-top">
             <span className="ds-eyebrow">FROM THE BENCH TO THE RECORD</span>
-            <h2>A clearer picture.<br /><span>A better part record.</span></h2>
-            <p>Capture a part. Review the evidence.<br />Keep the details that matter.</p>
+            <p className="ds-auth-story-title">A clearer picture.<br /><span>A better part record.</span></p>
+            <p className="ds-auth-story-copy">Capture a part. Review the evidence.<br />Keep the details that matter.</p>
           </div>
           <div className="ds-auth-story-bottom">
             <span className="ds-art-caption">Illustrative render · Not a scan result</span>

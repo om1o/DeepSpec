@@ -230,7 +230,7 @@ describe("createIdentifyResponse", () => {
                           visualEvidence: "Entire engine assembly",
                         },
                       ],
-                      sourceLinks: ["https://www.google.com/search?q=car+engine+assembly+parts"],
+                      sourceLinks: ["https://invented-oem.example/engine-manual"],
                       isSafetyCritical: false,
                       nextAction: "Verify fitment with vehicle context.",
                       confidenceScore: 95,
@@ -282,6 +282,20 @@ describe("createIdentifyResponse", () => {
         },
       },
     });
+    if (response.status !== 200) throw new Error("Expected a successful identification response.");
+    expect(response.body.result.sourceLinks).not.toContainEqual(expect.objectContaining({ url: "https://invented-oem.example/engine-manual" }));
+    expect(response.body.result.sourceLinks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        evidenceRole: "research_only",
+        sourceName: "Google Search",
+        verificationStatus: "unverified",
+      }),
+      expect.objectContaining({
+        evidenceRole: "constrains_claim",
+        sourceName: "National Highway Traffic Safety Administration",
+        verificationStatus: "constrained",
+      }),
+    ]));
   });
 
   it("normalizes Gemini JSON when the answer is nested under primaryPart", async () => {

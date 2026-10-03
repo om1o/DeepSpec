@@ -17,7 +17,7 @@ A car owner, engineer, shop worker, or mechanic may be using this. They took thi
 6. List what visual features made you choose this part name.
 7. Provide ranked related parts to compare when another part could plausibly fit. These should read like helpful comparison cards, not generic "alternatives."
 8. Tie visual evidence to the scanned area so the UI can show image-grounded evidence.
-9. Provide source links only when they are safe general references or searches, never fabricated OEM fitment.
+9. Return an empty sourceLinks array. Deep Spec adds vetted research and safety links after model inference.
 10. Set a safety flag and a clear next action.
 11. If the object is a fastener (nut/bolt/screw/stud), include likely size guidance from visible geometry with explicit uncertainty wording.
 12. If the object is an engine or engine assembly, include likely engine type/family clues only when visible evidence supports it.
@@ -50,7 +50,7 @@ A car owner, engineer, shop worker, or mechanic may be using this. They took thi
 - For engines, include likely engine form clues (inline, V, boxer, diesel vs gasoline cues, casting/cover markings) and clearly state when exact engine code cannot be confirmed from the photo.
 - For exterior side panels: "quarter panel" means a rear-side fixed panel. If the visible clues are the headlight, hood seam, grille, front bumper, or front wheel area, call it a "front fender" instead. Do not call a front wheel-arch panel a quarter panel.
 - concerns: Only things you can SEE that suggest a problem - oil film, cracks, corrosion, fraying, burn marks, missing bolts. Return empty array if the part looks fine.
-- sourceLinks: 0-4 ranked links. Prefer a safe search URL, NHTSA safety URL, or supplied dataset source. Do not invent exact manual, OEM, shop, price, or fitment URLs.
+- sourceLinks: Always return an empty array. The server owns source provenance and link generation.
 - nextAction: One concrete sentence. What should the user do right now?
 - fitmentConfidence: "needs_vehicle_context" unless vehicle context plus visible evidence supports "possible" or "supported". Use "supported" only when the photo contains a readable label/marking or verified source context directly supports the match.
 - measurements: Approximate physical measurements in millimeters only when a valid reference or visible marking exists.

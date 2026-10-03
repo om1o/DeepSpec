@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { createDeepSpecPlugin, createOAuthMetadata, downloadVehicleImage, startPluginServer, validateDownloadUrl } from "./server";
+import { createDeepSpecPlugin, createOAuthMetadata, downloadVehicleImage, startPluginServer, validateAccessTokenClaims, validateDownloadUrl } from "./server";
 import type { Server } from "node:http";
 
 let server: Server | null = null;
@@ -18,6 +18,38 @@ describe("DeepSpec ChatGPT plugin", () => {
       scopes_supported: ["openid", "email", "profile"],
       bearer_methods_supported: ["header"],
     });
+  });
+
+  it("requires an HTTPS plugin resource in production", () => {
+    expect(() => createOAuthMetadata({
+      NODE_ENV: "production",
+      SUPABASE_URL: "https://project.supabase.co",
+      DEEPSPEC_PLUGIN_PUBLIC_URL: "http://plugin.example",
+    })).toThrow(/HTTPS/);
+  });
+
+  it("validates issuer, audience, lifetime, subject, and scopes", () => {
+    const env = {
+      SUPABASE_URL: "https://project.supabase.co",
+      DEEPSPEC_PLUGIN_PUBLIC_URL: "https://plugin.example",
+    };
+    const claims = {
+      iss: "https://project.supabase.co/auth/v1",
+      aud: ["authenticated", "https://plugin.example"],
+      sub: "user-123",
+      exp: 2_000,
+      nbf: 900,
+      scope: "openid email profile",
+    };
+    expect(validateAccessTokenClaims(claims, env, 1_000)).toEqual({
+      subject: "user-123",
+      scopes: ["openid", "email", "profile"],
+    });
+    expect(() => validateAccessTokenClaims({ ...claims, iss: "https://attacker.example" }, env, 1_000)).toThrow(/issuer/);
+    expect(() => validateAccessTokenClaims({ ...claims, aud: "authenticated" }, env, 1_000)).toThrow(/audience/);
+    expect(() => validateAccessTokenClaims({ ...claims, exp: 999 }, env, 1_000)).toThrow(/expired/);
+    expect(() => validateAccessTokenClaims({ ...claims, nbf: 1_001 }, env, 1_000)).toThrow(/not active/);
+    expect(() => validateAccessTokenClaims({ ...claims, scope: "openid" }, env, 1_000)).toThrow(/missing required scopes/);
   });
 
   it("rejects non-HTTPS and private-network image URLs", () => {

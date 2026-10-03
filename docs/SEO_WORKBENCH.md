@@ -16,6 +16,26 @@ The command writes `report.md` and `report.json` under `artifacts/seo/<timestamp
 
 Use Google Search Console after the production domain is verified. It supplies real impressions, queries, pages, countries, devices, and indexing status for free. The local audit does not invent keyword volume, backlink counts, or competitor traffic estimates.
 
+## Free tool stack
+
+| Tool | Cost and license | Use now |
+| --- | --- | --- |
+| DeepSpec `seo:audit` | Project code | Required canonical, metadata, JSON-LD, H1, crawlability, and duplicate gate |
+| SEOnaut | Free hosted tier for a small site; open-source MIT project | Crawl the stable production URL after launch |
+| SiteOne Crawler | Free MIT binary | Weekly and pre-deployment technical, accessibility, performance, and broken-link report |
+| Google Search Console | Free Google service | Indexing, real search queries, impressions, and submitted sitemap |
+| OpenSEO | MIT application, but external keyword/backlink data requires paid DataForSEO usage | Do not install until revenue justifies its data cost |
+
+Install SiteOne Crawler separately from its official release page, then run:
+
+```bash
+npm run seo:siteone -- --url https://<project>.vercel.app
+```
+
+Set `SITEONE_CRAWLER_BIN` when the binary is not on `PATH`. The wrapper enables the crawler's CI gate and browser rendering and writes local HTML, JSON, and text reports under `artifacts/seo/`; it does not enable paid AI features.
+
+Create a Search Console URL-prefix property for the exact stable Vercel production URL and submit `https://<project>.vercel.app/sitemap.xml`. Branch and commit preview URLs are test environments, not separate Search Console properties.
+
 ## Weekly 30-minute routine
 
 1. Run `npm run seo:audit` against production and fix new errors.
@@ -24,6 +44,14 @@ Use Google Search Console after the production domain is verified. It supplies r
 4. Turn repeated tester or interview wording into one useful article, FAQ, or comparison.
 5. Add the page to `sitemap.xml`, link it from one existing article, and rerun the audit.
 6. Record the publish date, target question, and Search Console change after four weeks.
+
+Before each release, also run:
+
+```bash
+npm run verify:deployment-indexing -- --production https://<project>.vercel.app --preview https://<preview>.vercel.app
+```
+
+The production URL must not send `X-Robots-Tag: noindex`; the preview URL must send it.
 
 ## Initial content lanes
 

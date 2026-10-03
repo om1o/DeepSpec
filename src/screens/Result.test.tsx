@@ -278,7 +278,7 @@ describe("Result", () => {
     expect(screen.queryByRole("button", { name: "Capture another angle" })).not.toBeInTheDocument();
   });
 
-  it("turns matched dataset source evidence into a reference link", () => {
+  it("labels a dataset source as research rather than verified evidence", () => {
     const sourceUrl =
       "https://huggingface.co/datasets/DrBimmer/car-parts-and-damage-dataset/resolve/main/Car%20damages%20dataset/File1/img/Car%20damages%20100.png";
 
@@ -290,11 +290,20 @@ describe("Result", () => {
           "Local dataset match: Front-bumper (part, 12 labeled samples)",
           `Dataset source: ${sourceUrl}`,
         ],
+        sourceLinks: [{
+          label: "Dataset sample: Front-bumper",
+          url: sourceUrl,
+          sourceType: "dataset",
+          sourceTier: "unverified_reference",
+          verificationStatus: "unverified",
+          evidenceRole: "research_only",
+          sourceName: "Deep Spec dataset index",
+        }],
       },
     });
 
-    expect(screen.getByRole("link", { name: "Hugging Face source 1" })).toHaveAttribute("href", sourceUrl);
-    expect(screen.queryByRole("link", { name: "Dataset source" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Dataset sample: Front-bumper" })).toHaveAttribute("href", sourceUrl);
+    expect(screen.getByText("Research link, not proof · Deep Spec dataset index")).toBeInTheDocument();
   });
 
   it("shows safety-critical guidance", () => {

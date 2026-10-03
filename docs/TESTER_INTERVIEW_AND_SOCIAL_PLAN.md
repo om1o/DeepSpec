@@ -33,6 +33,29 @@ Use the existing `public/brand/deepspec-social-card.png` or an uncropped product
 
 > DeepSpec V1 is not a repair certificate or exact-fitment guarantee. We are looking for the cases where it picks the wrong object, gives the wrong part, or explains too little. Those failures are the product work.
 
+## Four-week posting calendar
+
+Start on the first Tuesday after every launch gate passes. Times are Eastern. Publish manually on X, then reuse the same vertical video on YouTube Shorts, TikTok, and Instagram Reels.
+
+| When | Post |
+| --- | --- |
+| Week 1 Tuesday, 12 PM | A real 30-second scan: physical part to probable result to evidence to saved record |
+| Week 1 Thursday, 6 PM | Three useful photos: overall view, connector side, and readable label |
+| Week 1 Saturday, 11 AM | An honest incorrect or unsure result, how it was checked, and the saved correction |
+| Week 2 Tuesday, 12 PM | Who DeepSpec helps: DIY learners, trainees, resellers, and junior technicians |
+| Week 2 Thursday, 6 PM | The difference between verified evidence, a constraint, a research link, and an AI guess |
+| Week 2 Saturday, 11 AM | Invite private testers with the stable free link and ask them to report wrong results |
+| Week 3 Tuesday, 12 PM | Compare a disappearing generic AI answer with DeepSpec's saved photo, notes, and follow-up |
+| Week 3 Thursday, 6 PM | One consented tester quote and the specific change made because of it |
+| Week 3 Saturday, 11 AM | A “Can DeepSpec identify this?” photo challenge; reveal the checked answer in a reply |
+| Week 4 Tuesday, 12 PM | Measured test summary: attempts, right, wrong, unsure, failures, and median time |
+| Week 4 Thursday, 6 PM | Link the first useful SEO guide with one practical tip in the post |
+| Week 4 Saturday, 11 AM | Explain the next improvement and invite another small tester wave |
+
+Spend 20 minutes replying after each post. Record repeated questions and turn them into follow-up prompts or useful guides. Do not buy ads until there are at least 20 external test sessions, 40 recorded scans, reliable cost data, and a working feedback loop.
+
 ## Publishing rule
 
 Post screenshots only after removing names, plates, addresses, account details, and private scan identifiers. Get the tester's permission before sharing their image or quote. Codex can prepare images and copy in this repository, but this workspace does not have an X account connector, so a human must approve and publish each post.
+
+Never publish fabricated results or accuracy percentages from incomplete tests. Do not post family-test images or quotes without specific permission for that post.
