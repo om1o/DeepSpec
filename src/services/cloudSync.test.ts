@@ -1008,7 +1008,7 @@ describe("cloudSync", () => {
     mocks.createClient
       .mockReturnValueOnce({
         auth: {
-          signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "owner-1" } }, error: null }),
+          getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
         },
         from: vi.fn((table: string) => {
           if (table === "scan_lookups") {
@@ -1034,9 +1034,7 @@ describe("cloudSync", () => {
         },
       })
       .mockReturnValueOnce({
-        auth: {
-          signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "other-1" } }, error: null }),
-        },
+        auth: {},
         from: crossReadFrom,
         storage: {
           from: vi.fn(),
@@ -1049,23 +1047,23 @@ describe("cloudSync", () => {
     expect(report.overall).toBe("ready");
     expect(report.lastVerifiedAt).toBe(report.checkedAt);
     expect(report.checks.configured.status).toBe("pass");
-    expect(report.checks.anonymousAuth.status).toBe("pass");
+    expect(report.checks.accountAuth.status).toBe("pass");
     expect(report.checks.storageUpload.status).toBe("pass");
     expect(report.checks.rowUpsert.status).toBe("pass");
     expect(report.checks.datasetDetails.status).toBe("pass");
     expect(report.checks.rlsIsolation.status).toBe("pass");
     expect(upload).toHaveBeenCalledWith(
-      expect.stringMatching(/^owner-1\/health-.+\.jpg$/),
+      expect.stringMatching(/^user-1\/health-.+\.jpg$/),
       expect.any(Blob),
       expect.objectContaining({ contentType: "image/jpeg", upsert: false }),
     );
     expect(upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        image_path: expect.stringMatching(/^owner-1\/health-.+\.jpg$/),
+        image_path: expect.stringMatching(/^user-1\/health-.+\.jpg$/),
         scan_category: "unknown",
         training_label: "Runtime Health Check",
         training_status: "raw_unreviewed",
-        user_id: "owner-1",
+        user_id: "user-1",
       }),
       { onConflict: "user_id,local_id" },
     );
@@ -1084,17 +1082,17 @@ describe("cloudSync", () => {
     });
     expect(modelRunInsert).toHaveBeenCalledWith(expect.objectContaining({ provider: "runtime-health" }));
     expect(syncEventInsert).toHaveBeenCalledWith(expect.objectContaining({ event_type: "verify", status: "success" }));
-    expect(remove).toHaveBeenCalledWith([expect.stringMatching(/^owner-1\/health-.+\.jpg$/)]);
+    expect(remove).toHaveBeenCalledWith([expect.stringMatching(/^user-1\/health-.+\.jpg$/)]);
     expect(getCloudHealthSnapshot().overall).toBe("ready");
   });
 
-  it("reports the anonymous auth step as blocked before storage checks run", async () => {
+  it("reports the account auth step as blocked before storage checks run", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
     const upload = vi.fn();
     mocks.createClient.mockReturnValue({
       auth: {
-        signInAnonymously: vi.fn().mockResolvedValue({ data: { user: null }, error: { message: "Database error creating anonymous user" } }),
+        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
       },
       from: vi.fn(),
       storage: {
@@ -1107,7 +1105,7 @@ describe("cloudSync", () => {
 
     expect(report.overall).toBe("blocked");
     expect(report.checks.configured.status).toBe("pass");
-    expect(report.checks.anonymousAuth.status).toBe("fail");
+    expect(report.checks.accountAuth.status).toBe("fail");
     expect(report.checks.storageUpload.status).toBe("unknown");
     expect(report.checks.datasetDetails.status).toBe("unknown");
     expect(report.lastVerifiedAt).toBeNull();

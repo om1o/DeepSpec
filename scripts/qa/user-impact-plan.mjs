@@ -40,7 +40,7 @@ const RISK_RULES = [
     roles: ["parent", "driver", "admin", "school"],
     keywords: ["auth", "session", "password", "reset", "login", "signin", "signup", "sign-in", "sign-up"],
     evidence: ["screenshot", "console logs", "network logs", "database check"],
-    test: "Sign out, sign in with the configured QA account, create or start the supported no-email session, refresh the page, and verify protected routes stay fail-closed without a valid session.",
+    test: "Sign out, sign in with the configured QA account, refresh the page, and verify protected routes stay fail-closed without a valid session.",
     question: "If this is wrong, what would the user experience? A real user could be locked out, dropped into the wrong account state, or reach protected data without a valid session.",
   },
   {

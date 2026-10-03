@@ -30,7 +30,7 @@ const payload = {
   checks: [
     "Open the URL on the real iPhone in Safari over cellular or Wi-Fi.",
     "Tap Share, tap Add to Home Screen, keep the Deep Spec name, then open the new app icon.",
-    "Choose Account > No email > Continue without email.",
+    "Choose Account, enter the family tester email and password, then tap Sign in to scanner.",
     "Allow camera permission when prompted.",
     "Scan a real car part in the camera view and wait for the focused item view and simple answer.",
     "Confirm the focused window lands on the actual part, not the whole car or the wrong nearby panel.",

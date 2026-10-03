@@ -255,27 +255,6 @@ export async function signUpWithPassword(email: string, password: string, redire
   return user;
 }
 
-export async function signInAnonymously() {
-  const signOutAtStart = { revision: signOutRevision, lock: readSignOutLock(), generation: readSignOutGeneration() };
-  assertSignInCurrent(signOutAtStart);
-  const client = await getRequiredAuthClient();
-  assertSignInCurrent(signOutAtStart);
-  const result = await client.auth.signInAnonymously();
-
-  if (result.error) {
-    throw new Error(result.error.message);
-  }
-
-  assertSignInCurrent(signOutAtStart);
-  clearVerifiedAuthUserCache();
-  const user = await verifyAuthUser(client, ++authRevision, result.data?.user?.id, true);
-  if (!user) {
-    throw new Error("Could not verify this session. Try again.");
-  }
-
-  return user;
-}
-
 export async function signInWithGoogle(redirectPath?: string) {
   return signInWithOAuthProvider("google", redirectPath);
 }

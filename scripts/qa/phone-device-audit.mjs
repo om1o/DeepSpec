@@ -51,7 +51,7 @@ const payload = {
   },
   requiredNextEvidence: [
     "Open the temporary URL on a real phone.",
-    "Complete no-email login on the phone.",
+    "Complete email/password or email-link login on the phone.",
     "Allow camera access on the phone browser.",
     "Scan a real car part and capture the resulting label and AR placement.",
     "Upload a known QA image from the phone photo library and capture the resulting label and AR placement.",

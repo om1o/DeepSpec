@@ -46,6 +46,10 @@ const consoleLogs = [];
 const networkLogs = [];
 const pageErrors = [];
 const hasSupabaseConfig = Boolean(process.env.VITE_SUPABASE_URL?.trim() && process.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim());
+const qaEmail = process.env.DEEPSPEC_AUTH_TEST_EMAIL?.trim();
+const qaPassword = process.env.DEEPSPEC_AUTH_TEST_PASSWORD;
+const secondaryQaEmail = process.env.DEEPSPEC_AUTH_TEST_EMAIL_SECONDARY?.trim();
+const secondaryQaPassword = process.env.DEEPSPEC_AUTH_TEST_PASSWORD_SECONDARY;
 const QA_SHOP_ORG_ID = "00000000-0000-4000-8000-000000000001";
 const QA_SHOP_JOB_ID = "11111111-1111-4111-8111-111111111111";
 const SCANNER_CONTROL_TIMEOUT_MS = 20_000;
@@ -299,9 +303,18 @@ async function runAuthLogin() {
     );
   }
 
-  await selectTabIfNeeded(/Account/i, "account auth tab");
-  await clickByRole("button", /^No email$/i, "no-email auth mode");
-  await clickByRole("button", /Continue without email/i, "continue without email");
+  if (!qaEmail || !qaPassword) {
+    throw new QaIssue(
+      "missing_env",
+      "A password QA account is required now that public no-email access is removed.",
+      {
+        likelyFiles: [".env.local", ".env.example", "scripts/qa/real-website-tester.mjs"],
+        suggestedFix: "Set DEEPSPEC_AUTH_TEST_EMAIL and DEEPSPEC_AUTH_TEST_PASSWORD, then rerun `npm run test:website`.",
+      },
+    );
+  }
+
+  await signInWithQaAccount(qaEmail, qaPassword);
 
   try {
     await page.waitForURL((url) => url.pathname === "/scan", { timeout: 20_000 });
@@ -312,10 +325,10 @@ async function runAuthLogin() {
 
     throw new QaIssue(
       /not configured|missing/i.test(failureText) ? "missing_env" : "auth/session",
-      `No-email Supabase auth did not reach /scan. Visible failure: ${failureText}`,
+      `Password Supabase auth did not reach /scan. Visible failure: ${failureText}`,
       {
         likelyFiles: ["src/screens/Auth.tsx", "src/services/auth.ts", "scripts/verify-auth-flows.mjs", "supabase/migrations"],
-        suggestedFix: "Run `npm run verify:auth` and inspect Supabase Auth logs for anonymous sign-in failures before changing frontend code.",
+        suggestedFix: "Run `npm run verify:auth -- --require-credentials` and inspect Supabase Auth logs before changing frontend code.",
       },
     );
   }
@@ -325,7 +338,7 @@ async function runAuthLogin() {
 
   return {
     category: "auth/session",
-    details: "DeepSpec no-email Supabase auth reached the protected scanner.",
+    details: "DeepSpec password auth reached the protected scanner.",
     likelyFiles: ["src/screens/Auth.tsx", "src/services/auth.ts"],
     status: "pass",
   };
@@ -347,9 +360,13 @@ async function runSharedDeviceAccountSwitch() {
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await page.waitForURL((url) => url.pathname === "/auth");
   authEstablished = false;
-  await selectTabIfNeeded(/Account/i, "account auth tab");
-  await clickByRole("button", /^No email$/i, "no-email auth mode");
-  await clickByRole("button", /Continue without email/i, "continue without email");
+  if (!secondaryQaEmail || !secondaryQaPassword) {
+    throw new QaIssue("missing_env", "Shared-device isolation needs a second password QA account.", {
+      likelyFiles: [".env.local", ".env.example"],
+      suggestedFix: "Set DEEPSPEC_AUTH_TEST_EMAIL_SECONDARY and DEEPSPEC_AUTH_TEST_PASSWORD_SECONDARY.",
+    });
+  }
+  await signInWithQaAccount(secondaryQaEmail, secondaryQaPassword);
   await page.waitForURL((url) => ["/scan", "/history"].includes(url.pathname), { timeout: 20_000 });
   const secondUser = await readUserId();
   if (!firstUser || !secondUser || firstUser === secondUser) throw new QaIssue("auth/session", "Could not establish distinct QA accounts for shared-device isolation.");
@@ -1939,6 +1956,13 @@ async function getStatus(url) {
   }
 }
 
+async function signInWithQaAccount(email, password) {
+  await selectTabIfNeeded(/Account/i, "account auth tab");
+  await page.getByLabel(/email address/i).fill(email);
+  await page.getByLabel(/^password$/i).fill(password);
+  await clickByRole("button", /Sign in to scanner/i, "password sign in");
+}
+
 async function fetchSupabaseAuthSettings(supabaseUrl, supabaseKey) {
   try {
     const response = await fetchWithTimeout(`${supabaseUrl.replace(/\/$/, "")}/auth/v1/settings`, {
@@ -1946,11 +1970,11 @@ async function fetchSupabaseAuthSettings(supabaseUrl, supabaseKey) {
       method: "GET",
     }, 10_000);
     const body = await response.json().catch(() => null);
-    const anonymousEnabled = body?.external?.anonymous_users === true;
+    const emailEnabled = body?.external?.email === true;
 
-    return response.ok && anonymousEnabled
-      ? { ok: true, message: "Supabase anonymous sign-ins are enabled." }
-      : { ok: false, message: `Supabase anonymous sign-ins are not healthy. HTTP ${response.status}.` };
+    return response.ok && emailEnabled
+      ? { ok: true, message: "Supabase email sign-ins are enabled." }
+      : { ok: false, message: `Supabase email sign-ins are not healthy. HTTP ${response.status}.` };
   } catch (error) {
     return { ok: false, message: `Could not read Supabase Auth settings: ${formatError(error)}` };
   }

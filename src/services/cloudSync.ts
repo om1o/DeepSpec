@@ -30,7 +30,7 @@ export type CloudSyncStatus = {
 
 export type CloudHealthStepId =
   | "configured"
-  | "anonymousAuth"
+  | "accountAuth"
   | "storageUpload"
   | "rowUpsert"
   | "datasetDetails"
@@ -123,10 +123,11 @@ export async function verifyCloudHealth(): Promise<CloudHealthReport> {
   const testId = `health-${createRuntimeId()}`;
 
   try {
-    ownerClient = await createVerificationClient(config);
-    const owner = await signInForHealthCheck(ownerClient);
+    ownerClient = await getAuthClient();
+    if (!ownerClient) throw new Error("Sign in before checking cloud sync.");
+    const owner = await ensureCloudUser(ownerClient, scope);
     userId = owner.id;
-    report = updateCloudHealthCheck(report, "anonymousAuth", "pass", "Signed you in securely.");
+    report = updateCloudHealthCheck(report, "accountAuth", "pass", "Your account session is verified.");
 
     imagePath = `${userId}/${testId}.jpg`;
     await assertCloudResult(
@@ -172,9 +173,8 @@ export async function verifyCloudHealth(): Promise<CloudHealthReport> {
     report = updateCloudHealthCheck(report, "datasetDetails", "pass", "Scan details saved.");
 
     const otherClient = await createVerificationClient(config);
-    await signInForHealthCheck(otherClient);
     await assertCloudHealthRlsIsolation(otherClient, testId);
-    report = updateCloudHealthCheck(report, "rlsIsolation", "pass", "Your scans stay private to you.");
+    report = updateCloudHealthCheck(report, "rlsIsolation", "pass", "This scan is not publicly readable. Cross-account isolation is checked by release QA.");
 
     return saveReport({
       ...report,
@@ -914,15 +914,6 @@ async function ensureCloudUser(supabase: SupabaseClient, scope: AccountScope): P
   return user;
 }
 
-async function signInForHealthCheck(supabase: SupabaseClient): Promise<User> {
-  const anonymousSignIn = await supabase.auth.signInAnonymously();
-  if (anonymousSignIn.error || !anonymousSignIn.data.user) {
-    throw new Error(anonymousSignIn.error?.message ?? "Anonymous sign-in failed.");
-  }
-
-  return anonymousSignIn.data.user;
-}
-
 async function assertCloudResult(result: { error: { message?: string } | null }, label: string) {
   if (result.error) {
     throw new Error(`${label}: ${result.error.message ?? "Unknown Supabase error."}`);
@@ -1046,7 +1037,7 @@ function createCloudHealthReport(config: CloudSyncConfig | null, checkedAt: stri
         configured ? "Cloud sync is connected." : "Cloud sync isn't connected yet.",
         configured ? "pass" : "fail",
       ),
-      anonymousAuth: createCloudHealthCheck("anonymousAuth", "Secure sign-in", "Not checked yet.", "unknown"),
+      accountAuth: createCloudHealthCheck("accountAuth", "Account session", "Not checked yet.", "unknown"),
       storageUpload: createCloudHealthCheck("storageUpload", "Photo upload", "Not checked yet.", "unknown"),
       rowUpsert: createCloudHealthCheck("rowUpsert", "Saving scans", "Not checked yet.", "unknown"),
       datasetDetails: createCloudHealthCheck("datasetDetails", "Scan details", "Not checked yet.", "unknown"),
@@ -1111,7 +1102,7 @@ function readCloudHealthReport(): CloudHealthReport | null {
     const raw = localStorage.getItem(accountStorageKey(CLOUD_HEALTH_STORAGE_KEY));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as CloudHealthReport;
-    if (!parsed || typeof parsed !== "object" || !parsed.checks) return null;
+    if (!parsed || typeof parsed !== "object" || !parsed.checks?.accountAuth) return null;
     return parsed;
   } catch {
     return null;

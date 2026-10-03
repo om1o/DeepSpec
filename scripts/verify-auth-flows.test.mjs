@@ -33,7 +33,7 @@ beforeEach(() => {
   };
   mocks.createClient.mockReturnValue({ auth });
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-    ok: true, json: async () => ({ external: { anonymous_users: true } }),
+    ok: true, json: async () => ({ external: { email: true } }),
   }));
 });
 

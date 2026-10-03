@@ -43,7 +43,7 @@ VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=your_publishable_or_anon_key
 ```
 
-Never put a Supabase service-role key in a `VITE_` variable. Browser code can only use the publishable/anon key. Apply the migration in `supabase/migrations/20260518000100_deepspec_secure_foundation.sql`, enable Supabase anonymous sign-ins if you want device-only users to sync scans, and keep the `scan-images` bucket private.
+Never put a Supabase service-role key in a `VITE_` variable. Browser code can only use the publishable/anon key. Apply the migration in `supabase/migrations/20260518000100_deepspec_secure_foundation.sql`, enable Supabase email sign-ins, and keep the `scan-images` bucket private.
 
 For email sign-in, the app requests a Supabase OTP email with a `/scan` redirect link. The default Supabase template sends a magic link; if you want typed code entry too, configure the email template to show the OTP token with `{{ .Token }}`. Users can also sign in with Supabase email/password credentials or create a password account. If Supabase requires email confirmation, the app waits for confirmation instead of opening the scanner immediately.
 
@@ -117,7 +117,7 @@ VITE_ENABLE_GOOGLE_AUTH=true
 VITE_ENABLE_GITHUB_AUTH=true
 ```
 
-There is no local fixture login path. A protected route opens only after Supabase verifies an email code, password, OAuth session, or the explicitly labeled temporary no-email account.
+There is no local fixture or no-email login path. A protected route opens only after Supabase verifies an email code, password, or configured OAuth session.
 
 ## Current scope
 
@@ -145,7 +145,7 @@ Waitlist and feedback entries save locally first, then sync to Supabase only whe
 - `public.scan_lookups`: owned by `auth.uid()`, no anonymous table access, RLS for select/insert/update/delete.
 - `storage.scan-images`: private bucket; users can only access files in their own user-id folder.
 - `public.waitlist_signups` and `public.feedback_submissions`: public insert only, narrow validation checks, no public read.
-- The browser uses Supabase Auth anonymous sign-in for scan sync. That creates a real auth user without building a full account system yet.
+- The browser syncs scans only for a verified Supabase email/password, email-link, or configured OAuth account.
 
 To prove a real Supabase project is wired correctly, run:
 
@@ -153,7 +153,7 @@ To prove a real Supabase project is wired correctly, run:
 npm run verify:supabase
 ```
 
-That command signs in anonymously, uploads a private test image, writes a scan row, checks cross-user RLS blocking, downloads the owner image, and cleans up. See `docs/PHASE_8_SUPABASE_VALIDATION.md` for the full Phase 8 checklist.
+That internal verifier creates isolated synthetic users, uploads a private test image, writes a scan row, checks cross-user RLS blocking, downloads the owner image, and cleans up the generated rows and image. It is not a public login path. See `docs/PHASE_8_SUPABASE_VALIDATION.md` for the full Phase 8 checklist.
 
 ## Test before moving on
 

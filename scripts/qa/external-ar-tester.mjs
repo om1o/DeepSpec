@@ -33,6 +33,8 @@ const CASES = [
 ];
 
 const baseUrl = process.env.QA_BASE_URL?.trim() || DEFAULT_BASE_URL;
+const qaEmail = process.env.DEEPSPEC_AUTH_TEST_EMAIL?.trim();
+const qaPassword = process.env.DEEPSPEC_AUTH_TEST_PASSWORD;
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 const outputDir = path.resolve("artifacts", "qa", `external-public-ar-${stamp}`);
 const screenshotDir = path.join(outputDir, "screenshots");
@@ -103,7 +105,7 @@ async function runCase(browserInstance, testCase) {
   });
 
   try {
-    await enterNoEmailSession(page);
+    await enterQaAccountSession(page);
     await page.getByLabel("Upload photo").setInputFiles(testCase.localImage);
     await page.waitForSelector("[data-testid=\"focused-part-label\"]", { timeout: 60_000 });
     await page.waitForSelector("[data-testid=\"focused-part-window\"]", { timeout: 10_000 });
@@ -176,10 +178,14 @@ async function getPartialState(page) {
   };
 }
 
-async function enterNoEmailSession(page) {
+async function enterQaAccountSession(page) {
+  if (!qaEmail || !qaPassword) {
+    throw new Error("Set DEEPSPEC_AUTH_TEST_EMAIL and DEEPSPEC_AUTH_TEST_PASSWORD for external AR QA.");
+  }
   await page.goto(`${baseUrl}/auth`, { timeout: 45_000, waitUntil: "domcontentloaded" });
-  await page.getByText("No email", { exact: true }).click({ timeout: 45_000 });
-  await page.getByRole("button", { name: /continue without email/i }).click({ timeout: 45_000 });
+  await page.getByLabel(/email address/i).fill(qaEmail);
+  await page.getByLabel(/^password$/i).fill(qaPassword);
+  await page.getByRole("button", { name: /sign in to scanner/i }).click({ timeout: 45_000 });
   await page.waitForSelector("input[type=\"file\"]", { timeout: 45_000 });
 }
 
