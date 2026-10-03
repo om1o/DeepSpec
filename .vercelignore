@@ -7,7 +7,9 @@
 .deepspec-eval
 artifacts
 coverage
-datasets
+datasets/*
+!datasets/verified
+!datasets/verified/**
 design-extract
 design-import.html
 dev-dist
