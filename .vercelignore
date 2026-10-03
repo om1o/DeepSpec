@@ -27,3 +27,5 @@ tmp
 !.env.example
 
 *.log
+**/*.test.ts
+**/*.test.tsx

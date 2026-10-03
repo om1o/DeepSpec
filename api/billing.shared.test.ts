@@ -6,7 +6,7 @@ import {
   createPortalResponse,
   createWebhookResponse,
   listConfiguredPlans,
-} from "./billing.shared";
+} from "../server/billing.shared";
 
 const supabaseMock = vi.hoisted(() => ({
   createClient: vi.fn(),

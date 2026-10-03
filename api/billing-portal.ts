@@ -1,4 +1,4 @@
-import { createPortalResponse } from "./billing.shared";
+import { createPortalResponse } from "../server/billing.shared";
 
 type VercelRequest = {
   headers?: Record<string, string | string[] | undefined>;

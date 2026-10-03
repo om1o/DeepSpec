@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { enforceRateLimit } from "./rateLimit.shared";
+import { enforceRateLimit } from "../server/rateLimit.shared";
 
 const supabaseMock = vi.hoisted(() => ({ createClient: vi.fn() }));
 vi.mock("@supabase/supabase-js", () => supabaseMock);

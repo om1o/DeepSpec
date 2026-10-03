@@ -1,5 +1,5 @@
-import { observeIdentification } from "./identifyDiagnostics.shared";
-import { createIdentifyResponse } from "./identify.shared";
+import { observeIdentification } from "../server/identifyDiagnostics.shared";
+import { createIdentifyResponse } from "../server/identify.shared";
 
 describe("identify diagnostics", () => {
   afterEach(() => vi.restoreAllMocks());

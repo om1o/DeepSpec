@@ -1,4 +1,4 @@
-import { createWebhookResponse } from "./billing.shared";
+import { createWebhookResponse } from "../server/billing.shared";
 
 export const config = {
   api: {

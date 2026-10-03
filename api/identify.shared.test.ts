@@ -1,4 +1,4 @@
-import { createIdentifyResponse } from "./identify.shared";
+import { createIdentifyResponse } from "../server/identify.shared";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 

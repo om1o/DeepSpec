@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { consumeReservedScanCredit, reserveScanCredit } from "./billing.shared";
+import { consumeReservedScanCredit, reserveScanCredit } from "../server/billing.shared";
 
 const supabaseMock = vi.hoisted(() => ({
   createClient: vi.fn(),
