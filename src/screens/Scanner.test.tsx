@@ -649,7 +649,40 @@ describe("Scanner", () => {
         trainingLabel: "Alternator",
       }));
     });
+    expect(await screen.findByText("Scan saved to cloud.")).toBeInTheDocument();
   }, 10000);
+
+  it("continues to identify when segmentation does not return", async () => {
+    cameraHookState.current = {
+      cameraError: "Permission denied",
+      cameraRequestId: 7,
+      cameraState: "blocked",
+    };
+    mockStillImageTarget({
+      confidence: 0.81,
+      height: 0.18,
+      width: 0.16,
+      x: 0.42,
+      y: 0.22,
+    });
+    createSegmentedProductIsolation.mockImplementation(() => new Promise(() => {}));
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await userEvent.upload(
+      screen.getByLabelText("Upload photo"),
+      new File(["test-image"], "front-fender.jpg", { type: "image/jpeg" }),
+    );
+    await waitFor(() => expect(createSegmentedProductIsolation).toHaveBeenCalledTimes(1));
+
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1), { timeout: 6000 });
+  }, 15000);
 
   it("captures a second camera frame as a confidence boost when no crop target is present", async () => {
     captureFrame

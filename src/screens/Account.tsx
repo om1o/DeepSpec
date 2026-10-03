@@ -120,6 +120,9 @@ export default function Account() {
             {" "}
             {verification.status === "checking" ? "Checking entitlement..." : getVerificationMessage(verification, entitlement.status)}
           </p>
+          <p className="mt-2 text-sm font-semibold text-slate-600">
+            Paid access remains fail-closed until server entitlement verification confirms an active plan.
+          </p>
           <button
             className="mt-5 h-11 rounded-full bg-slate-950 px-4 text-sm font-bold text-white disabled:opacity-50"
             disabled={verification.status === "checking"}

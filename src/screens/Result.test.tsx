@@ -323,6 +323,7 @@ describe("Result", () => {
 
     renderResult(null, `/result/${lookup.id}`);
 
+    await userEvent.click(screen.getByText("Saved scan tools"));
     await userEvent.click(screen.getByRole("button", { name: "Why or why not" }));
     await userEvent.type(screen.getByLabelText("Why or why not"), "It was the starter.");
 
@@ -339,6 +340,8 @@ describe("Result", () => {
 
     renderResult(null, `/result/${lookup.id}`);
 
+    expect(screen.getByText("Saved scan tools")).toBeInTheDocument();
+    await userEvent.click(screen.getByText("Saved scan tools"));
     expect(screen.getByTestId("trust-control")).toHaveTextContent("Do you trust this scan?");
     await userEvent.click(screen.getByRole("button", { name: "Yes" }));
 
@@ -346,12 +349,14 @@ describe("Result", () => {
     expect(savedLookup.rating).toBe("up");
   }, 30000);
 
-  it("keeps share and export report actions on a saved scan", () => {
+  it("keeps share and export report actions on a saved scan", async () => {
     const lookup = makeLookup();
     localStorage.setItem(LOOKUPS_STORAGE_KEY, JSON.stringify([lookup]));
 
     renderResult(null, `/result/${lookup.id}`);
 
+    expect(screen.getByText("Saved scan tools")).toBeInTheDocument();
+    await userEvent.click(screen.getByText("Saved scan tools"));
     expect(screen.getByRole("button", { name: "Share" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Export" })).toBeInTheDocument();
   });

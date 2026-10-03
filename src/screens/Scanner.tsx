@@ -47,6 +47,7 @@ console.info(`[DeepSpec UI] Scanner chunk ${SCANNER_UI_TRACE} loaded`);
 
 const SECOND_FRAME_DELAY_MS = 120;
 const IDENTIFY_BUDGET_WARN_MS = 15000;
+const SEGMENTATION_FALLBACK_TIMEOUT_MS = 3500;
 // Last-resort safety: if a scan ever stalls (a hung image decode, a wedged network),
 // force the loading overlay to clear and let the user try again. Generous so it never
 // trips a normal scan (identify caps at ~45s, segmentation at ~13s).
@@ -260,12 +261,21 @@ export default function Scanner() {
   }, [selectedCameraId]);
 
   const syncSavedLookup = useCallback((lookup: Lookup) => {
-    if (!getCloudSyncStatus().configured) {
+    const cloudStatus = getCloudSyncStatus();
+    if (!cloudStatus.configured) {
+      setScanCardStatusMessage(cloudStatus.message);
       return;
     }
 
-    // Sync quietly in the background — the user never needs to see sync status.
-    void syncLookupToCloud(lookup).catch(() => {});
+    setScanCardStatusMessage("Saving scan to cloud...");
+    void syncLookupToCloud(lookup)
+      .then((result) => {
+        setScanCardStatusMessage(result.ok ? "Scan saved to cloud." : result.message);
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : "Unknown cloud sync error.";
+        setScanCardStatusMessage(`Cloud sync failed: ${message}`);
+      });
   }, []);
 
   const isScanRequestActive = useCallback((requestId: number) => (
@@ -431,7 +441,10 @@ export default function Scanner() {
           focusBox = prompted.focusBox;
           focusTarget = getReviewTargetFromNormalizedFocusBox(focusBox);
         } else {
-          const segmented = await createSegmentedProductIsolation(focusedFrame);
+          const segmented = await withTimeout(
+            createSegmentedProductIsolation(focusedFrame),
+            SEGMENTATION_FALLBACK_TIMEOUT_MS,
+          );
           isolatedFrame = segmented?.frame ?? focusedFrame;
           isolatedImageBase64 = segmented?.isolatedImageBase64;
           if (segmented && focusedCropTarget) {
@@ -1771,6 +1784,21 @@ function getObjectTargetFromReviewTarget(reviewTarget: ScanReviewTarget): Camera
     top: reviewTarget.y,
     width: reviewTarget.width,
   };
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
+  let timeoutId: number | undefined;
+
+  return Promise.race<T | null>([
+    promise,
+    new Promise<null>((resolve) => {
+      timeoutId = window.setTimeout(() => resolve(null), timeoutMs);
+    }),
+  ]).finally(() => {
+    if (timeoutId !== undefined) {
+      window.clearTimeout(timeoutId);
+    }
+  });
 }
 
 function objectTargetBoxToVisualFocusBox(target: ObjectTargetBox): VisualFocusBox {

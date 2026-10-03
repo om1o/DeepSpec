@@ -203,13 +203,20 @@ export default function Result() {
           ) : null}
           {!scanState?.result && !scanState?.errorMessage ? <NotAnalyzed capturedAt={capturedAt} /> : null}
           {lookup ? (
-            <TrustControl
-              lookup={lookup}
-              onCorrectionChange={handleCorrection}
-              onRating={handleRating}
-            />
+            <details className="rounded-[8px] border border-slate-200 bg-white p-4 shadow-sm">
+              <summary className="cursor-pointer text-sm font-extrabold text-neutral-900">
+                Saved scan tools
+              </summary>
+              <div className="mt-4 space-y-3">
+                <TrustControl
+                  lookup={lookup}
+                  onCorrectionChange={handleCorrection}
+                  onRating={handleRating}
+                />
+                <ReportActions lookup={lookup} />
+              </div>
+            </details>
           ) : null}
-          {lookup ? <ReportActions lookup={lookup} /> : null}
           {datasetSourceUrls.length > 0 ? <SourceFinePrint urls={datasetSourceUrls} /> : null}
         </div>
 
