@@ -152,7 +152,7 @@ export default function Result() {
           )}
           <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(2,6,23,0.58),rgba(2,6,23,0.02)_38%,rgba(2,6,23,0.76))]" />
           <header className="absolute left-0 right-0 top-0 z-10 flex items-center justify-between px-4 pt-[max(18px,env(safe-area-inset-top))]">
-            <img src="/brand/deepspec-neon-logo.webp" alt="Deep Spec" className="deepspec-brand-logo h-11 w-36 p-1" />
+            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="deepspec-brand-logo h-11 w-36 p-1" />
             <Link to="/scan" className="rounded-full bg-white/90 px-4 py-2 text-sm font-bold text-slate-800 shadow-sm ring-1 ring-white/40 backdrop-blur-md">
               Back
             </Link>
