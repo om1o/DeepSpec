@@ -1,0 +1,6 @@
+api/**/*.test.ts
+src/**/*.test.ts
+artifacts
+coverage
+dist
+node_modules
