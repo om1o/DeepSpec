@@ -1,6 +1,6 @@
-import { IDENTIFY_PROMPT, IDENTIFY_PROMPT_VERSION, IDENTIFY_PIPELINE_VERSION } from "../src/services/systemPrompts";
+import { IDENTIFY_PROMPT, IDENTIFY_PROMPT_VERSION, IDENTIFY_PIPELINE_VERSION } from "../src/services/systemPrompts.js";
 import { randomUUID } from "node:crypto";
-import { observeIdentification } from "./identifyDiagnostics.shared";
+import { observeIdentification } from "./identifyDiagnostics.shared.js";
 import {
   SCAN_CATEGORIES,
   type CandidatePart,
@@ -18,7 +18,7 @@ import {
   type ScanCategory,
   type SourceLink,
   type VehicleContext,
-} from "../src/types";
+} from "../src/types/index.js";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 

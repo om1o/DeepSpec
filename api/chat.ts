@@ -1,6 +1,6 @@
-import { createChatResponse } from "../server/chat.shared";
-import { enforceRateLimit } from "../server/rateLimit.shared";
-import { requireSession } from "../server/requireSession.shared";
+import { createChatResponse } from "../server/chat.shared.js";
+import { enforceRateLimit } from "../server/rateLimit.shared.js";
+import { requireSession } from "../server/requireSession.shared.js";
 
 type VercelRequest = {
   headers?: Record<string, string | string[] | undefined>;

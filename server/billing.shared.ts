@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
-import { REVENUE_PLANS, getRevenuePlan, type PlanId, type ServerEntitlement } from "../src/services/revenue";
+import { REVENUE_PLANS, getRevenuePlan, type PlanId, type ServerEntitlement } from "../src/services/revenue.js";
 
 type BillingErrorResponse = {
   status: number;

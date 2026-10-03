@@ -1,7 +1,7 @@
-import { createIdentifyResponse } from "../server/identify.shared";
-import { consumeReservedScanCredit, reserveScanCredit } from "../server/billing.shared";
-import { enforceRateLimit } from "../server/rateLimit.shared";
-import { requireSession } from "../server/requireSession.shared";
+import { createIdentifyResponse } from "../server/identify.shared.js";
+import { consumeReservedScanCredit, reserveScanCredit } from "../server/billing.shared.js";
+import { enforceRateLimit } from "../server/rateLimit.shared.js";
+import { requireSession } from "../server/requireSession.shared.js";
 
 type VercelRequest = {
   headers?: Record<string, string | string[] | undefined>;

@@ -1,4 +1,4 @@
-import { createOAuthMetadata } from "../chatgpt-plugin/server";
+import { createOAuthMetadata } from "../chatgpt-plugin/server.js";
 
 type VercelResponse = {
   setHeader: (name: string, value: string) => void;

@@ -1,4 +1,4 @@
-import { createCheckoutResponse } from "../server/billing.shared";
+import { createCheckoutResponse } from "../server/billing.shared.js";
 
 type VercelRequest = {
   headers?: Record<string, string | string[] | undefined>;

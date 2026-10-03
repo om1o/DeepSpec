@@ -11,6 +11,6 @@
     "strict": true,
     "noEmit": true
   },
-  "include": ["vite.config.ts", "eslint.config.js", "api/**/*.ts", "chatgpt-plugin/**/*.ts"],
+  "include": ["vite.config.ts", "eslint.config.js", "api/**/*.ts", "server/**/*.ts", "chatgpt-plugin/**/*.ts"],
   "exclude": ["api/**/*.test.ts"]
 }

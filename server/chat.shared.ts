@@ -1,4 +1,4 @@
-import { CHAT_USER_MESSAGE_MAX_CHARS, FOLLOWUP_MAX_SENTENCES, FOLLOWUP_PROMPT } from "../src/services/systemPrompts";
+import { CHAT_USER_MESSAGE_MAX_CHARS, FOLLOWUP_MAX_SENTENCES, FOLLOWUP_PROMPT } from "../src/services/systemPrompts.js";
 
 type JsonObject = Record<string, unknown>;
 
