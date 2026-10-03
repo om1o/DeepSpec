@@ -67,7 +67,7 @@ export default function History() {
       <div className="mx-auto w-full max-w-md">
         <header className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="deepspec-brand-logo h-12 w-40 p-1" />
+            <img src="/brand/deepspec-neon-logo.webp" alt="Deep Spec" className="deepspec-brand-logo h-12 w-40 p-1" />
             <h1 className="mt-2 text-2xl font-extrabold tracking-tight">Saved scans</h1>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">

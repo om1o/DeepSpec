@@ -91,7 +91,7 @@ export default function EarlyAccess() {
       <div className="mx-auto w-full max-w-md">
         <header className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="deepspec-brand-logo h-12 w-40 p-1" />
+            <img src="/brand/deepspec-neon-logo.webp" alt="Deep Spec" className="deepspec-brand-logo h-12 w-40 p-1" />
             <h1 className="mt-2 text-2xl font-extrabold tracking-tight">Early access</h1>
           </div>
           <Link to="/scan" className="rounded-full bg-[var(--ds-accent)] px-4 py-2 text-sm font-bold text-white shadow-sm">

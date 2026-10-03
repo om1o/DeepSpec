@@ -31,7 +31,7 @@ export default function Shop() {
       <div className="mx-auto w-full max-w-6xl">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="deepspec-brand-logo h-12 w-40 p-1" />
+            <img src="/brand/deepspec-neon-logo.webp" alt="Deep Spec" className="deepspec-brand-logo h-12 w-40 p-1" />
             <p className="mt-3 text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Shop mode</p>
             <h1 className="mt-1 text-3xl font-black tracking-tight">Work queue</h1>
             <p className="mt-2 text-sm font-semibold text-slate-500">{getCurrentOrganization().name}</p>
