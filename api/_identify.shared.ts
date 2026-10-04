@@ -1,4 +1,6 @@
-import { IDENTIFY_PROMPT } from "../src/services/systemPrompts";
+/// <reference types="node" />
+
+import { IDENTIFY_PROMPT } from "../src/services/systemPrompts.js";
 import {
   SCAN_CATEGORIES,
   type CandidatePart,
@@ -15,7 +17,7 @@ import {
   type ScanCategory,
   type SourceLink,
   type VehicleContext,
-} from "../src/types";
+} from "../src/types/index.js";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 

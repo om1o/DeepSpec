@@ -1,4 +1,6 @@
-import { createChatResponse } from "./chat.shared";
+/// <reference types="node" />
+
+import { createChatResponse } from "./_chat.shared.js";
 
 type VercelRequest = {
   method?: string;

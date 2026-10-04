@@ -1,4 +1,6 @@
-import { createIdentifyResponse } from "./identify.shared";
+/// <reference types="node" />
+
+import { createIdentifyResponse } from "./_identify.shared.js";
 
 type VercelRequest = {
   method?: string;

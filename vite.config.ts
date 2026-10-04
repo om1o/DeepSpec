@@ -38,7 +38,7 @@ export default defineConfig(async ({ mode }) => {
             }
 
             const body = await readJsonBody(request).catch(() => null);
-            const { createIdentifyResponse } = (await server.ssrLoadModule("/api/identify.shared.ts")) as typeof import("./api/identify.shared");
+            const { createIdentifyResponse } = (await server.ssrLoadModule("/api/_identify.shared.ts")) as typeof import("./api/_identify.shared");
             const result = await createIdentifyResponse(body, serverEnv);
             response.statusCode = result.status;
             response.setHeader("Content-Type", "application/json");
@@ -56,7 +56,7 @@ export default defineConfig(async ({ mode }) => {
             }
 
             const body = await readJsonBody(request).catch(() => null);
-            const { createChatResponse } = (await server.ssrLoadModule("/api/chat.shared.ts")) as typeof import("./api/chat.shared");
+            const { createChatResponse } = (await server.ssrLoadModule("/api/_chat.shared.ts")) as typeof import("./api/_chat.shared");
             const result = await createChatResponse(body, serverEnv);
             response.statusCode = result.status;
             response.setHeader("Content-Type", "application/json");
@@ -108,6 +108,13 @@ export default defineConfig(async ({ mode }) => {
     ],
     test: {
       environment: "jsdom",
+      exclude: [
+        "**/node_modules/**",
+        "**/dist/**",
+        "**/dev-dist/**",
+        "**/.{idea,git,cache,output,temp}/**",
+        "**/.vercel/**",
+      ],
       globals: true,
       setupFiles: "./src/test/setup.ts",
       testTimeout: 15_000,
