@@ -101,6 +101,7 @@ describe("Chat", () => {
     expect(await screen.findByText("AI provider is rate-limited")).toBeInTheDocument();
     expect(screen.getByText("Too many AI chat requests right now. Try again in a few minutes.")).toBeInTheDocument();
     expect(screen.getByText(/not proof the model identified the part incorrectly/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry last question" })).not.toBeInTheDocument();
   });
 
   it("retries the last unanswered question without duplicating the saved user message", async () => {

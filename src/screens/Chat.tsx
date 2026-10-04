@@ -125,7 +125,7 @@ export default function Chat() {
   const errorDetails = error ? getAIErrorDetails(errorCode) : null;
   const showSafetyWarning = lookup.result?.isSafetyCritical || lookup.result?.safetyTriage === "needs_professional";
   const lastUnansweredUserMessage = getLastUnansweredUserMessage(lookup);
-  const canRetryLastQuestion = Boolean(error && lastUnansweredUserMessage && canChat && !isSending);
+  const canRetryLastQuestion = Boolean(error && errorCode !== "rate_limited" && lastUnansweredUserMessage && canChat && !isSending);
 
   return (
     <main className="min-h-dvh bg-[var(--ds-page)] px-4 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-slate-950">
