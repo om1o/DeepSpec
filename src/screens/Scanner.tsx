@@ -2634,7 +2634,6 @@ function LensBottomBar({
     <div className="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-between px-8 pb-[max(28px,env(safe-area-inset-bottom))] pt-4">
       <button
         type="button"
-        aria-label="Open gallery"
         onClick={onGallery}
         disabled={isAnalyzing}
         className="grid size-12 place-items-center rounded-2xl text-white disabled:opacity-40"
