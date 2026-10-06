@@ -1,7 +1,7 @@
 import { accountStorageKey, getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { getAuthClient } from "./auth";
-import { getLookup, readLookups, recordCloudSaveAttempt } from "./storage";
+import { getLookup, readLookups, recordCloudRevision, recordCloudSaveAttempt } from "./storage";
 import type { FeedbackSubmission, Lookup, WaitlistSignup } from "../types";
 import { feedbackCloudMessage, getFeedbackIssue, normalizeFeedbackContext } from "./feedbackDetails";
 
@@ -194,6 +194,7 @@ export async function verifyCloudHealth(): Promise<CloudHealthReport> {
 const CLOUD_SYNC_TIMEOUT_MS = 20_000;
 const pendingLookupSyncs = new Set<string>();
 const PENDING_SYNC_MESSAGE = "A cloud save for this scan is still finishing. Wait for it to finish before retrying.";
+const CLOUD_CONFLICT_MESSAGE = "A newer cloud version exists or this device has no confirmed cloud revision. The cloud scan was not overwritten; your changes remain on this device. Compare with the cloud version before saving again.";
 
 function withCloudTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => void): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -266,30 +267,34 @@ async function performLookupSync(lookup: Lookup, scope: AccountScope, guard: () 
   // Cloud history contains signed image URLs, not the original image bytes. Save
   // the inspection without replacing image metadata or stale AI/feedback fields.
   if (lookup.inspection && !lookup.frame.imageBase64.startsWith("data:")) {
+    const revision = lookup.cloudRevision;
+    if (!isCloudRevision(revision)) throw new Error(CLOUD_CONFLICT_MESSAGE);
     const updated = await supabase.from("scan_lookups")
-      .update({ inspection_json: lookup.inspection })
+      .update({ inspection_json: lookup.inspection, revision: revision + 1 })
       .eq("user_id", user.id)
       .eq("local_id", lookup.id)
-      .select("local_id");
+      .eq("revision", revision)
+      .select("revision").maybeSingle();
     guard();
     if (updated.error) throw new Error(updated.error.message);
-    if (!Array.isArray(updated.data) || updated.data.length === 0) {
-      return { ok: false, message: "Inspection is saved on this device, but its cloud scan was not found for this account." };
-    }
+    if (!isCloudRevision(updated.data?.revision)) throw new Error(CLOUD_CONFLICT_MESSAGE);
+    recordCloudRevision(lookup.id, revision, updated.data.revision);
     await syncAnalysisFailureRows(supabase, user.id, lookup, guard);
     return { ok: true, message: "Inspection synced to your saved scan." };
   }
   const image = dataUrlToBlob(lookup.frame.imageBase64);
   const imageHash = await hashBytes(image.bytes);
   guard();
-  const imagePath = `${user.id}/${lookup.id}.${image.extension}`;
+  // Upload before the row CAS, but never overwrite an image another revision
+  // references. A rejected save can leave an unreferenced object, not lost data.
+  const imagePath = `${user.id}/${lookup.id}/original-${imageHash ?? createRuntimeId()}.${image.extension}`;
   const uploaded = await supabase.storage.from(SCAN_BUCKET).upload(imagePath, image.blob, {
     contentType: image.contentType,
-    upsert: true,
+    upsert: false,
   });
 
   guard();
-  if (uploaded.error) {
+  if (uploaded.error && !isExistingImage(uploaded.error)) {
     throw new Error(uploaded.error.message);
   }
 
@@ -319,12 +324,16 @@ async function performLookupSync(lookup: Lookup, scope: AccountScope, guard: () 
     user_id: user.id,
     ...(lookup.inspection ? { inspection_json: lookup.inspection } : {}),
     ...getOptionalScanLookupFields(lookup),
-  }, guard);
+  }, lookup.cloudRevision, guard);
 
   guard();
   if (saved.error) {
     throw new Error(saved.error.message);
   }
+  if (!isCloudRevision(saved.data?.revision)) throw new Error(CLOUD_CONFLICT_MESSAGE);
+  // The canonical write already committed even if a subsequent detail upload
+  // fails. Retain its revision so an explicit retry can still succeed.
+  recordCloudRevision(lookup.id, lookup.cloudRevision, saved.data.revision);
 
   await upsertShopJobScan(supabase, user.id, lookup);
   guard();
@@ -403,15 +412,33 @@ function getOptionalScanLookupFields(lookup: Lookup) {
   return optional;
 }
 
-async function upsertScanLookupRow(supabase: SupabaseClient, row: Record<string, unknown>, guard: () => void) {
-  guard();
-  const result = await supabase.from("scan_lookups").upsert(row, { onConflict: "user_id,local_id" });
-  guard();
-  if (!isMissingOptionalScanLookupColumn(result.error)) {
-    return result;
-  }
+function isCloudRevision(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 && value < Number.MAX_SAFE_INTEGER;
+}
 
-  return supabase.from("scan_lookups").upsert(omitOptionalScanLookupColumns(row), { onConflict: "user_id,local_id" });
+function isExistingImage(error: { status?: number; statusCode?: string; message: string }) {
+  return error.status === 409 || error.statusCode === "409"
+    || ["ResourceAlreadyExists", "KeyAlreadyExists", "Duplicate"].includes(error.statusCode ?? "")
+    || ((error.status === 400 || error.statusCode === "400") && error.message === "The resource already exists");
+}
+
+async function upsertScanLookupRow(supabase: SupabaseClient, row: Record<string, unknown>, revision: number | undefined, guard: () => void) {
+  if (revision !== undefined && !isCloudRevision(revision)) throw new Error(CLOUD_CONFLICT_MESSAGE);
+  const write = (payload: Record<string, unknown>) => revision === undefined
+    // Unknown base includes legacy local scans. A collision must never update.
+    ? supabase.from("scan_lookups").insert({ ...payload, revision: 1 }).select("revision").maybeSingle()
+    : supabase.from("scan_lookups").update({ ...payload, revision: revision + 1 })
+      .eq("user_id", row.user_id).eq("local_id", row.local_id).eq("revision", revision)
+      .select("revision").maybeSingle();
+  guard();
+  let result = await write(row);
+  guard();
+  if (isMissingOptionalScanLookupColumn(result.error)) {
+    result = await write(omitOptionalScanLookupColumns(row));
+    guard();
+  }
+  if (result.error?.code === "23505" || result.error?.code === "40001") throw new Error(CLOUD_CONFLICT_MESSAGE);
+  return result;
 }
 
 function omitOptionalScanLookupColumns(row: Record<string, unknown>) {
@@ -993,6 +1020,10 @@ function getImageExtension(contentType: string) {
 function getFriendlySyncError(error: unknown) {
   const message = error instanceof Error ? error.message : "Unknown cloud sync error.";
   if (message === "Sign in to the account that owns this scan before syncing.") return message;
+  if (message === CLOUD_CONFLICT_MESSAGE || message.includes("scan_lookup_revision_conflict")) return CLOUD_CONFLICT_MESSAGE;
+  if (/revision/i.test(message) && /does not exist|schema cache|could not find .* column/i.test(message)) {
+    return "Cloud save requires the scan lookup revision database migration. Your scan is still saved on this device.";
+  }
 
   if (/inspection_json/i.test(message) && /does not exist|schema cache|could not find .* column/i.test(message)) {
     return "Inspection is saved on this device. Apply the part inspection database migration before syncing it to the cloud.";

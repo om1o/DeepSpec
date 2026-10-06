@@ -46,6 +46,16 @@ describe("readCloudLookups", () => {
     mocks.select.mockReset();
   });
 
+  it("loads the cloud revision with the snapshot, including through optional-column fallback", async () => {
+    mocks.select.mockImplementation((columns) => columns.includes("job_id")
+      ? { data: null, error: { message: "column scan_lookups.job_id does not exist" } }
+      : { data: [{ ...shopRow, revision: 7 }], error: null });
+    const { readCloudLookups } = await import("./cloudHistory");
+    const result = await readCloudLookups();
+    expect(result.ok && result.value[0].cloudRevision).toBe(7);
+    expect(mocks.select.mock.calls.every(([columns]) => columns.split(",").includes("revision"))).toBe(true);
+  });
+
   it.each(["other", "round-trip"])("discards a history response after account changes: %s", async (mode) => {
     mocks.select.mockImplementation(() => {
       setActiveAccount("other");

@@ -360,6 +360,8 @@ export type PartInspection = {
 export type PartInspectionDraft = Omit<PartInspection, "inspectedAt">;
 
 export type Lookup = {
+  // Revision of the cloud content this device last read or successfully wrote.
+  cloudRevision?: number;
   analysisAttemptId?: string;
   analysisFailures?: { attemptId: string; errorCode: string; errorMessage: string; attemptedAt: string }[];
   cloudSave?: {

@@ -164,6 +164,16 @@ export function recordCloudSaveAttempt(id: string, receipt: NonNullable<Lookup["
   return writeLookups(lookups.map((lookup) => lookup.id === id ? { ...lookup, cloudSave: receipt } : lookup)).ok;
 }
 
+// Advance only this device's known base. In-flight local edits keep that base
+// even when they invalidate the save receipt; never replace their content.
+export function recordCloudRevision(id: string, expected: number | undefined, revision: number): boolean {
+  const read = readLookups();
+  if (!read.ok) return false;
+  const current = read.value.find((lookup) => lookup.id === id);
+  if (!current || current.cloudRevision !== expected) return false;
+  return writeLookups(read.value.map((lookup) => lookup.id === id ? { ...lookup, cloudRevision: revision } : lookup)).ok;
+}
+
 export function updateLookup(
   id: string,
   patch: Partial<Pick<Lookup, "rating" | "correction" | "notes">>,
@@ -452,6 +462,7 @@ export function normalizeLookup(value: unknown): Lookup | null {
 
   return {
     inspection: normalizePartInspection(lookup.inspection),
+    cloudRevision: Number.isSafeInteger(lookup.cloudRevision) && lookup.cloudRevision! > 0 ? lookup.cloudRevision : undefined,
     analysisFailures: Array.isArray(lookup.analysisFailures) ? lookup.analysisFailures.filter((failure) =>
       isRecord(failure) && typeof failure.attemptId === "string" && /^[a-zA-Z0-9._:-]{1,160}$/.test(failure.attemptId)
       && typeof failure.errorCode === "string" && typeof failure.errorMessage === "string"

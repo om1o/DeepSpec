@@ -28,13 +28,14 @@ const SCAN_BUCKET = "scan-images";
 const SIGNED_URL_TTL_SECONDS = 60 * 60;
 const DEFAULT_HISTORY_LIMIT = 200;
 const FALLBACK_IMAGE = "/brand/deepspec-logo.webp";
-const CLOUD_HISTORY_CORE_SELECT = "local_id,created_at,captured_at,analyzed_at,error_code,error_message,rating,correction,notes,scan_category,training_label,training_status,chat_history,result_json,image_path";
+const CLOUD_HISTORY_CORE_SELECT = "local_id,created_at,captured_at,analyzed_at,error_code,error_message,rating,correction,notes,scan_category,training_label,training_status,chat_history,result_json,image_path,revision";
 // Shop-mode columns (mechanic_shop_mode migration). Not every deployed database has them, so the
 // read asks for them and falls back to the core columns only when PostgREST reports one missing —
 // reading the core columns alone dropped the job, vehicle, and review status from every cloud scan.
 const CLOUD_HISTORY_SHOP_COLUMNS = ["customer_visible_report_json", "job_id", "org_id", "review_status", "technician_user_id", "vehicle_context"];
 
 type CloudHistoryRow = {
+  revision?: unknown;
   local_id: unknown;
   created_at: unknown;
   captured_at: unknown;
@@ -195,6 +196,7 @@ function mapCloudRowToLookup(
 
   return {
     id: isString(row.local_id) ? row.local_id : `cloud-${index}`,
+    cloudRevision: typeof row.revision === "number" && Number.isSafeInteger(row.revision) && row.revision > 0 ? row.revision : undefined,
     analysisAttemptId: isString(row.analysis_attempt_id) ? row.analysis_attempt_id : undefined,
     createdAt,
     frame: {
