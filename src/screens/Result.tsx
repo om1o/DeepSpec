@@ -1,4 +1,5 @@
 import { createAnalysisAttemptId } from "../lib/analysisAttempt";
+import { prepareRetryFrame } from "../lib/retryFrame";
 import { applyShopFitmentContext } from "../lib/shopFitmentContext";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
@@ -607,7 +608,9 @@ function AnalysisError({
     const attemptId = createAnalysisAttemptId();
 
     try {
-      const result = applyShopFitmentContext(await identifyCapturedFrame(retryFrame, undefined, undefined, { vehicleContext }), vehicleContext);
+      const identificationFrame = await prepareRetryFrame(retryFrame);
+      if (!isAccountScopeCurrent(scope)) return;
+      const result = applyShopFitmentContext(await identifyCapturedFrame(identificationFrame, undefined, undefined, { vehicleContext }), vehicleContext);
       if (!isAccountScopeCurrent(scope)) return;
       if (lookup) {
         const updateResult = updateLookupResult(lookup.id, result, {

@@ -1,5 +1,5 @@
 import { accountStorageKey, setActiveAccount, withAccountRouteState } from "../lib/accountScope";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, vi } from "vitest";
@@ -70,6 +70,7 @@ describe("Result", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     vi.unstubAllEnvs();
   });
 
@@ -649,6 +650,61 @@ describe("Result", () => {
     expect(identifySpy).toHaveBeenCalledWith(frame, undefined, undefined, { vehicleContext });
     if (source === "unsaved") await userEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
     expect(getLookups()[0]).toMatchObject({ vehicleContext, result: { fitmentConfidence: "needs_vehicle_context", requiredNextEvidence: expect.arrayContaining(["VIN"]) } });
+  });
+
+  it("retries a failed cloud-only HTTPS photo with a data URL and retains vehicle context and identity", async () => {
+    const vehicleContext = { year: "2012", make: "Honda", model: "Civic" };
+    const cloudFrame = { ...frame, imageBase64: "https://example.test/private-photo.png?token=signed" };
+    const failedLookup = makeLookup({ frame: cloudFrame, vehicleContext, result: undefined, errorCode: "network", errorMessage: "Network error" });
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9XkAAAAASUVORK5CYII=";
+    const blob = new Blob([Uint8Array.from(atob(png), (char) => char.charCodeAt(0))], { type: "image/png" });
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, blob: async () => blob });
+    vi.stubGlobal("fetch", fetchSpy);
+    const identifySpy = vi.spyOn(aiService, "identifyCapturedFrame").mockResolvedValue({ ...successfulScan.result!, fitmentConfidence: "supported" });
+    renderResult({ frame: cloudFrame, vehicleContext, errorCode: "network", errorMessage: "Network error", savedLookup: failedLookup }, `/result/${failedLookup.id}`);
+    expect(getLookups()).toEqual([]);
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByRole("heading", { level: 1, name: "Alternator" });
+    expect(fetchSpy).toHaveBeenCalledWith(cloudFrame.imageBase64, { signal: expect.any(AbortSignal), credentials: "omit" });
+    expect(identifySpy).toHaveBeenCalledWith({ ...cloudFrame, imageBase64: `data:image/png;base64,${png}` }, undefined, undefined, { vehicleContext });
+    await userEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+    expect(getLookups()).toHaveLength(1);
+    expect(getLookup(failedLookup.id)).toMatchObject({ frame: cloudFrame, vehicleContext, result: { fitmentConfidence: "needs_vehicle_context" } });
+  });
+
+  it.each([
+    [false, "image/png", "photo"],
+    [true, "text/html", "<html>expired link</html>"],
+    [true, "image/png", "not an image"],
+  ])("does not identify an unavailable or invalid cloud photo (%s / %s)", async (ok, type, content) => {
+    const cloudFrame = { ...frame, imageBase64: "https://example.test/expired-photo" };
+    const failedLookup = makeLookup({ frame: cloudFrame, result: undefined, errorCode: "network", errorMessage: "Network error" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok, blob: async () => new Blob([content], { type }) }));
+    const identifySpy = vi.spyOn(aiService, "identifyCapturedFrame");
+    renderResult({ frame: cloudFrame, errorCode: "network", errorMessage: "Network error", savedLookup: failedLookup }, `/result/${failedLookup.id}`);
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByText(/The saved photo/);
+    expect(identifySpy).not.toHaveBeenCalled();
+    expect(screen.getByText("Network error")).toBeInTheDocument();
+    expect(getLookup(failedLookup.id)?.result).toBeUndefined();
+  });
+
+  it("does not identify a cloud photo after the account changes during download", async () => {
+    const cloudFrame = { ...frame, imageBase64: "https://example.test/private-photo.png" };
+    const failedLookup = makeLookup({ frame: cloudFrame, result: undefined, errorCode: "network", errorMessage: "Network error" });
+    let finishDownload!: (blob: Blob) => void;
+    const download = new Promise<Blob>((resolve) => { finishDownload = resolve; });
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, blob: () => download });
+    vi.stubGlobal("fetch", fetchSpy);
+    const identifySpy = vi.spyOn(aiService, "identifyCapturedFrame");
+    renderResult({ frame: cloudFrame, errorCode: "network", errorMessage: "Network error", savedLookup: failedLookup }, `/result/${failedLookup.id}`);
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    setActiveAccount("other-user");
+    finishDownload(new Blob([Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10])], { type: "image/png" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled());
+    expect(identifySpy).not.toHaveBeenCalled();
+    expect(getLookups()).toEqual([]);
   });
 
   it("allows retrying a saved failed scan when online", async () => {
