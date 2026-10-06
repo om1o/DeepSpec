@@ -18,14 +18,17 @@ export async function verifyInspectionRoundTrip(owner, other, userId, localId) {
   const read = async () => checked(await owner.from("scan_lookups").select("*").eq("user_id", userId).eq("local_id", localId).single(), "Owner inspection read").data;
   const before = await read();
   if (!before || before.user_id !== userId || before.local_id !== localId) throw new Error("Owner inspection read returned the wrong fixture.");
+  let revision = before.revision;
+  if (!Number.isSafeInteger(revision) || revision <= 0 || revision >= Number.MAX_SAFE_INTEGER) throw new Error("Owner inspection read returned an invalid revision.");
   const inspection = {
     confirmedPartName: "QA fixture only", partNumber: "QA-000", identityEvidence: "Synthetic verification record",
     visibleCondition: "not_inspected", visibleNotes: "", functionalStatus: "not_tested", functionalNotes: "",
     inspectorName: "Generated QA inspector", inspectedAt: new Date().toISOString(),
   };
   for (const next of [inspection, { ...inspection, visibleCondition: "uncertain", visibleNotes: "Synthetic update; no real part inspected" }]) {
-    const updated = checked(await owner.from("scan_lookups").update({ inspection_json: next }).eq("user_id", userId).eq("local_id", localId).select("local_id"), "Owner inspection update");
-    if (updated.data?.length !== 1 || updated.data[0].local_id !== localId) throw new Error("Owner inspection update did not return the expected fixture.");
+    const updated = checked(await owner.from("scan_lookups").update({ inspection_json: next, revision: revision + 1 }).eq("user_id", userId).eq("local_id", localId).eq("revision", revision).select("local_id,revision"), "Owner inspection update");
+    if (updated.data?.length !== 1 || updated.data[0].local_id !== localId || updated.data[0].revision !== revision + 1) throw new Error("Owner inspection update did not return the expected fixture and next revision.");
+    revision = updated.data[0].revision;
     const actual = await read();
     if (!isDeepStrictEqual(actual.inspection_json, next)) throw new Error("Inspection did not survive cloud save/read.");
     assertEvidencePreserved(before, actual);
@@ -33,7 +36,8 @@ export async function verifyInspectionRoundTrip(owner, other, userId, localId) {
   const expected = await read();
   const deniedRead = checked(await other.from("scan_lookups").select("inspection_json").eq("local_id", localId), "Cross-account inspection read");
   if (!Array.isArray(deniedRead.data) || deniedRead.data.length) throw new Error("Inspection isolation failed: another account could read the fixture.");
-  const deniedWrite = await other.from("scan_lookups").update({ inspection_json: { ...inspection, inspectorName: "Unauthorized QA attempt" } }).eq("user_id", userId).eq("local_id", localId).select("local_id");
+  // Make an otherwise valid write so the revision guard cannot mask broken RLS.
+  const deniedWrite = await other.from("scan_lookups").update({ inspection_json: { ...inspection, inspectorName: "Unauthorized QA attempt" }, revision: expected.revision + 1 }).eq("user_id", userId).eq("local_id", localId).eq("revision", expected.revision).select("local_id");
   if (deniedWrite.error) {
     if (deniedWrite.error.code !== "42501") throw new Error("Inspection write isolation inconclusive: request failed without an explicit permission denial.");
   } else if (!Array.isArray(deniedWrite.data) || deniedWrite.data.length) {

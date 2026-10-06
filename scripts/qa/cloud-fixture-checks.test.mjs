@@ -23,13 +23,13 @@ const userId = "qa-owner";
 const imagePath = `${userId}/${localId}.jpg`;
 
 function fixture(options = {}) {
-  const state = { row: { local_id: localId, user_id: userId, result_json: { partName: "Original AI" }, notes: "Original notes", chat_history: [{ role: "user", content: "Original chat" }], training_status: "raw_unreviewed", image_path: imagePath }, image: true, operations: [] };
+  const state = { row: { local_id: localId, user_id: userId, revision: 7, result_json: { partName: "Original AI" }, notes: "Original notes", chat_history: [{ role: "user", content: "Original chat" }], training_status: "raw_unreviewed", image_path: imagePath }, image: true, operations: [] };
   const client = (other = false) => ({
     from(table) {
-      let operation = "read", patch, single = false, limit;
+      let operation = "read", patch, single = false, limit, columns = "*";
       const filters = [];
       const query = {
-        select() { return query; },
+        select(value = "*") { columns = value; return query; },
         eq(key, value) { filters.push([key, value]); return query; },
         limit(value) { limit = value; return query; },
         single() { single = true; return query; },
@@ -37,7 +37,7 @@ function fixture(options = {}) {
         delete() { operation = "delete"; return query; },
         then(resolve, reject) {
           return Promise.resolve().then(() => {
-            state.operations.push({ other, table, operation, filters, limit });
+            state.operations.push({ other, table, operation, filters, limit, patch });
             if (limit === 0) return { error: options.schemaError ?? null, data: [] };
             if (operation === "delete") {
               if (table === "scan_lookups" && !options.cleanupError && !options.rowsRemain) state.row = null;
@@ -46,8 +46,15 @@ function fixture(options = {}) {
             if (operation === "update") {
               if (other && options.crossError) return { error: options.crossError };
               if (other && !options.crossWrite && !options.silentCrossWrite) return { data: [], error: null };
+              if (!other && options.conflictAtUpdate === state.operations.filter((op) => op.operation === "update" && !op.other).length) {
+                state.row = { ...state.row, revision: state.row.revision + 1, inspection_json: { inspectorName: "Concurrent QA inspector" } };
+              }
+              if (!filters.every(([key, value]) => state.row?.[key] === value)) return { data: [], error: null };
+              if (patch.revision !== state.row.revision + 1) return { error: { code: "40001", message: "scan_lookup_revision_conflict" } };
               state.row = { ...state.row, ...patch, ...(options.corruptEvidence ? { notes: "Lost notes" } : {}) };
-              return { data: options.missingUpdatedRow || (other && options.silentCrossWrite) ? [] : [{ local_id: localId }], error: null };
+              const returned = columns === "*" ? structuredClone(state.row) : Object.fromEntries(columns.split(",").map((key) => [key.trim(), structuredClone(state.row[key.trim()])]));
+              if (options.missingReturnedRevision) delete returned.revision;
+              return { data: options.missingUpdatedRow || (other && options.silentCrossWrite) ? [] : [returned], error: null };
             }
             if (other) return { data: options.crossRead ? [structuredClone(state.row)] : [], error: null };
             const data = table === "scan_lookups" && state.row ? [structuredClone(state.row)] : [];
@@ -76,16 +83,42 @@ it("does not classify permission or infrastructure errors as a missing migration
   await expect(assertInspectionSchema(f.owner)).rejects.toThrow(/preflight failed: permission denied/);
 });
 
-it("verifies owner updates preserve evidence and another account cannot read or change it", async () => {
+it("advances observed revisions through both owner writes and reaches persistence and isolation checks", async () => {
   const f = fixture();
   await assertInspectionSchema(f.owner);
   await verifyInspectionRoundTrip(f.owner, f.other, userId, localId);
   expect(f.state.row.inspection_json.inspectorName).toBe("Generated QA inspector");
   expect(f.state.row.inspection_json.visibleCondition).toBe("uncertain");
   expect(f.state.row.notes).toBe("Original notes");
+  expect(f.state.row.revision).toBe(9);
   const writes = f.state.operations.filter((op) => op.operation === "update");
   expect(writes).toHaveLength(3);
-  expect(writes.every((op) => JSON.stringify(op.filters) === JSON.stringify([["user_id", userId], ["local_id", localId]]))).toBe(true);
+  for (const [index, write] of writes.entries()) {
+    expect(write.filters).toEqual([["user_id", userId], ["local_id", localId], ["revision", 7 + index]]);
+    expect(write.patch.revision).toBe(8 + index);
+  }
+  expect(writes.map((op) => op.other)).toEqual([false, false, true]);
+});
+
+it.each([1, 2])("rejects a revision conflict on owner write %s without overwriting the newer inspection", async (conflictAtUpdate) => {
+  const f = fixture({ conflictAtUpdate });
+  await expect(verifyInspectionRoundTrip(f.owner, f.other, userId, localId)).rejects.toThrow(/expected fixture/);
+  expect(f.state.row.inspection_json).toEqual({ inspectorName: "Concurrent QA inspector" });
+  expect(f.state.row.revision).toBe(7 + conflictAtUpdate);
+  expect(f.state.operations.filter((op) => op.operation === "update")).toHaveLength(conflictAtUpdate);
+});
+
+it.each([undefined, null, 0, "7"])("rejects an invalid observed revision before writing: %s", async (revision) => {
+  const f = fixture();
+  f.state.row.revision = revision;
+  await expect(verifyInspectionRoundTrip(f.owner, f.other, userId, localId)).rejects.toThrow(/invalid revision/);
+  expect(f.state.operations.some((op) => op.operation === "update")).toBe(false);
+});
+
+it("requires the updated revision to be returned before attempting another write", async () => {
+  const f = fixture({ missingReturnedRevision: true });
+  await expect(verifyInspectionRoundTrip(f.owner, f.other, userId, localId)).rejects.toThrow(/expected fixture/);
+  expect(f.state.operations.filter((op) => op.operation === "update")).toHaveLength(1);
 });
 
 it("accepts explicit permission denial only after owner evidence remains unchanged", async () => {
