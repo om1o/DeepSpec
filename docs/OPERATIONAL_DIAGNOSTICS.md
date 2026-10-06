@@ -30,6 +30,6 @@ Operational diagnostics are separate from photo storage and training permission.
 
 ## Verification
 
-`api/identifyDiagnostics.shared.test.ts` covers an actual synthetic unconfigured-provider invocation, explicit opt-in, unknown-code/release redaction, exception preservation and a failed log sink. `scripts/summarize-diagnostics.test.mjs` covers safe operator output, repeated/conflicting IDs, invalid fields, input bounds and incident-list bounds. No provider call or real photo is needed for these checks.
+`server/identifyDiagnostics.shared.test.ts` covers an actual synthetic unconfigured-provider invocation, explicit opt-in, unknown-code/release redaction, exception preservation and a failed log sink. `scripts/summarize-diagnostics.test.mjs` covers safe operator output, repeated/conflicting IDs, invalid fields, input bounds and incident-list bounds. No provider call or real photo is needed for these checks.
 
 Before public deployment, additionally prove host access restrictions, deployed log delivery and retention, then cover remaining save/auth/HTTP failure stages. Local synthetic evidence is not deployed monitoring readiness.

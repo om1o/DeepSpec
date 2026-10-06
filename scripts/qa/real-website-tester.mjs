@@ -197,7 +197,7 @@ function addEnvironmentBlockedResults(reachability) {
     category,
     details: reachability.details,
     evidence: {},
-    likelyFiles: category === "backend" ? ["vite.config.ts", "api/identify.shared.ts", "api/chat.shared.ts"] : [],
+    likelyFiles: category === "backend" ? ["vite.config.ts", "server/identify.shared.ts", "server/chat.shared.ts"] : [],
     name: "environment-preflight",
     status: "fail",
     suggestedFix,
@@ -643,7 +643,7 @@ async function runScannerAiEngine() {
       "missing_env",
       `Engine scan could not reach configured AI. ${identifyApiIssue.reason} Fixture=${fixture.source}. ${timingSummary}. Visible state: ${outcome.text}`,
       {
-        likelyFiles: [".env.local", ".env.example", "api/identify.shared.ts"],
+        likelyFiles: [".env.local", ".env.example", "server/identify.shared.ts"],
         suggestedFix: "Set the server-side AI provider key and rerun `npm run qa:doctor` before judging scanner model quality.",
       },
     );
@@ -667,7 +667,7 @@ async function runScannerAiEngine() {
         "backend",
         `Engine scan completed but was too slow: ${timingSummary}. Visible result: ${outcome.text}`,
         {
-          likelyFiles: ["src/screens/Scanner.tsx", "src/services/aiService.ts", "api/identify.shared.ts"],
+          likelyFiles: ["src/screens/Scanner.tsx", "src/services/aiService.ts", "server/identify.shared.ts"],
           suggestedFix: "Profile /api/identify provider latency, image payload size, fallback model order, and scanner save/render work.",
         },
       );
@@ -711,7 +711,7 @@ async function runScannerAiEngine() {
         "backend",
         `Engine scan completed but returned a generic or low-confidence result. Fixture=${fixture.source}. ${timingSummary}. Visible result: ${outcome.text}`,
         {
-          likelyFiles: ["api/identify.shared.ts", "src/services/systemPrompts.ts", "src/services/aiService.ts"],
+          likelyFiles: ["server/identify.shared.ts", "src/services/systemPrompts.ts", "src/services/aiService.ts"],
           suggestedFix: "Tune the identify prompt, dataset grounding, or provider fallback so a clear engine-bay fixture returns a specific engine-related part with usable confidence.",
         },
       );
@@ -719,7 +719,7 @@ async function runScannerAiEngine() {
 
     return {
       details: `Engine fixture uploaded through scanner, produced a usable AI result, and completed scan data sync. Fixture=${fixture.source}. ${timingSummary}. Visible result: ${cloudSync.text}`,
-      likelyFiles: ["src/screens/Scanner.tsx", "src/services/aiService.ts", "api/identify.shared.ts", "src/services/cloudSync.ts"],
+      likelyFiles: ["src/screens/Scanner.tsx", "src/services/aiService.ts", "server/identify.shared.ts", "src/services/cloudSync.ts"],
       status: "pass",
     };
   }
@@ -739,7 +739,7 @@ async function runScannerAiEngine() {
     "backend",
     `Engine scan did not produce a usable AI result. Fixture=${fixture.source}. ${timingSummary}. Visible state: ${outcome.text}`,
     {
-      likelyFiles: ["src/screens/Scanner.tsx", "src/services/aiService.ts", "api/identify.shared.ts"],
+      likelyFiles: ["src/screens/Scanner.tsx", "src/services/aiService.ts", "server/identify.shared.ts"],
       suggestedFix: "Use the saved trace, network log, and HTML snapshot to inspect the upload, /api/identify response, and result-card render path.",
     },
   );
@@ -1056,7 +1056,7 @@ async function runResultChat() {
 
   return {
     details: "Chat route loaded from the saved scan. The tester typed a question but did not submit it, so no provider quota was spent.",
-    likelyFiles: ["src/screens/Chat.tsx", "src/services/aiService.ts", "api/chat.shared.ts"],
+    likelyFiles: ["src/screens/Chat.tsx", "src/services/aiService.ts", "server/chat.shared.ts"],
     status: "pass",
   };
 }
@@ -1115,7 +1115,7 @@ async function runCheckout() {
       "backend",
       `Checkout did not fail closed for an invalid plan. HTTP ${status.status}.`,
       {
-        likelyFiles: ["api/billing.shared.ts", "src/services/revenue.ts"],
+        likelyFiles: ["server/billing.shared.ts", "src/services/revenue.ts"],
         suggestedFix: "Reject invalid checkout plan ids before contacting the billing provider or redirecting a user.",
       },
     );
@@ -1124,7 +1124,7 @@ async function runCheckout() {
   return {
     category: "backend",
     details: "Checkout endpoint rejected an invalid plan without creating a provider session or redirect.",
-    likelyFiles: ["api/billing.shared.ts", "src/screens/Pricing.tsx"],
+    likelyFiles: ["server/billing.shared.ts", "src/screens/Pricing.tsx"],
     status: "pass",
   };
 }
@@ -1310,7 +1310,7 @@ async function runBillingProviderFailClosed() {
       "backend",
       `Billing provider checkout did not fail closed. HTTP ${status.status}.`,
       {
-        likelyFiles: ["api/billing.shared.ts", "src/screens/Pricing.tsx"],
+        likelyFiles: ["server/billing.shared.ts", "src/screens/Pricing.tsx"],
         suggestedFix: "Require a configured provider adapter and verified session before returning any checkout URL.",
       },
     );
@@ -1319,7 +1319,7 @@ async function runBillingProviderFailClosed() {
   return {
     category: "backend",
     details: `Billing provider checkout failed closed with ${status.body.error.code}.`,
-    likelyFiles: ["api/billing.shared.ts", "src/screens/Pricing.tsx"],
+    likelyFiles: ["server/billing.shared.ts", "src/screens/Pricing.tsx"],
     status: "pass",
   };
 }
@@ -1376,7 +1376,7 @@ async function runApiCloudHealth() {
       transportOnly ? "environment" : "backend",
       failures.join(" "),
       {
-        likelyFiles: transportOnly ? [] : ["api/identify.shared.ts", "api/chat.shared.ts", "src/services/cloudSync.ts", "scripts/verify-supabase-sync.mjs", "supabase/migrations"],
+        likelyFiles: transportOnly ? [] : ["server/identify.shared.ts", "server/chat.shared.ts", "src/services/cloudSync.ts", "scripts/verify-supabase-sync.mjs", "supabase/migrations"],
         suggestedFix: transportOnly ? "Retry Supabase reachability after network and local resource pressure recover." : "Fix API method guards or Supabase schema/Auth health, then rerun `npm run qa:doctor` before calling it a product bug.",
       },
     );
@@ -1385,7 +1385,7 @@ async function runApiCloudHealth() {
   return {
     category: "backend",
     details: "Safe API method guards, Supabase Auth settings, and Supabase REST schema reachability passed.",
-    likelyFiles: ["api/identify.shared.ts", "api/chat.shared.ts", "src/services/cloudSync.ts"],
+    likelyFiles: ["server/identify.shared.ts", "server/chat.shared.ts", "src/services/cloudSync.ts"],
     status: "pass",
   };
 }
@@ -1410,7 +1410,7 @@ async function gotoPath(path) {
       "backend",
       `${path} returned HTTP ${response.status()}.`,
       {
-        likelyFiles: ["vite.config.ts", "api/identify.shared.ts", "api/chat.shared.ts"],
+        likelyFiles: ["vite.config.ts", "server/identify.shared.ts", "server/chat.shared.ts"],
         suggestedFix: "Fix the server error visible in the saved trace/network log.",
       },
     );
@@ -2169,10 +2169,10 @@ function getScenarioOrder(requestedScenarios) {
 
 function likelyFilesForScenario(scenario) {
   const mapping = {
-    "api-cloud-health": ["api/identify.shared.ts", "api/chat.shared.ts", "src/services/cloudSync.ts", "supabase/migrations"],
+    "api-cloud-health": ["server/identify.shared.ts", "server/chat.shared.ts", "src/services/cloudSync.ts", "supabase/migrations"],
     "auth-login": ["src/screens/Auth.tsx", "src/services/auth.ts"],
     "early-access": ["src/screens/EarlyAccess.tsx", "src/services/cloudSync.ts"],
-    "result-chat": ["src/screens/Chat.tsx", "api/chat.shared.ts"],
+    "result-chat": ["src/screens/Chat.tsx", "server/chat.shared.ts"],
     "result-detail": ["src/screens/Result.tsx", "src/services/storage.ts"],
     "inspection-save-recovery": ["src/components/result/PartInspectionForm.tsx", "src/services/storage.ts", "src/services/report.ts"],
     "saved-history": ["src/screens/History.tsx", "src/services/storage.ts"],
@@ -2185,9 +2185,9 @@ function likelyFilesForScenario(scenario) {
     "shop-history-search": ["src/screens/History.tsx", "src/services/storage.ts"],
     "customer-report-export": ["src/screens/ShopJob.tsx", "src/services/shop.ts"],
     "org-member-permissions": ["src/screens/Shop.tsx", "src/services/shop.ts", "supabase/migrations"],
-    "billing-provider-fail-closed": ["api/billing.shared.ts", "src/screens/Pricing.tsx"],
+    "billing-provider-fail-closed": ["server/billing.shared.ts", "src/screens/Pricing.tsx"],
     scanner: ["src/screens/Scanner.tsx"],
-    "scanner-ai-engine": ["src/screens/Scanner.tsx", "src/services/aiService.ts", "api/identify.shared.ts"],
+    "scanner-ai-engine": ["src/screens/Scanner.tsx", "src/services/aiService.ts", "server/identify.shared.ts"],
   };
 
   return mapping[scenario] ?? ["scripts/qa/real-website-tester.mjs"];

@@ -385,7 +385,7 @@ describe("aiService", () => {
     );
 
     const sent = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)) as { userMessage: string };
-    const seenByServer = sent.userMessage.trim().slice(0, 3000); // api/chat.shared.ts parseChatRequest
+    const seenByServer = sent.userMessage.trim().slice(0, 3000); // server/chat.shared.ts parseChatRequest
     expect(seenByServer).toContain(`User question: ${question}`);
     expect(sent.userMessage.split(question)).toHaveLength(2); // sent exactly once
     expect(seenByServer).toContain("Part name: Alternator");

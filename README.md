@@ -49,6 +49,27 @@ For email sign-in, the app requests a Supabase OTP email with a `/scan` redirect
 
 After a session is verified, Deep Spec opens the scanner at `/scan`.
 
+### Vercel preview deployment
+
+Keep `api/` for HTTP entry points only. Vercel discovers each file there as a
+separate function; shared implementation modules and their tests belong in
+`server/`. The six endpoint URLs remain `/api/account-entitlement`,
+`/api/billing-checkout`, `/api/billing-portal`, `/api/billing-webhook`, `/api/chat`,
+and `/api/identify`. Imported server modules are bundled with those endpoints.
+
+This layout uses six of Hobby's 12 function slots. It does not require a root
+`vercel.json` or a Pro upgrade to address the function-count limit. Use the Vite
+project preset, repository-root directory, `npm run build`, and `dist` output.
+Keep the existing Preview environment variables configured in Vercel.
+
+Before pushing, run `npm test -- server scripts/eval-identify.test.mjs` and
+`npm run check`. The layout regression test rejects helpers/tests added under
+`api/` and loads all six handlers. After pushing the PR branch, check the new
+commit's Vercel status and Deployment Summary for a Ready preview with only
+these six functions. Local checks do not substitute for that deployed check.
+
+See [Vercel's function-count rules](https://vercel.com/docs/functions/runtimes#functions-created-per-deployment).
+
 ### Test the isolation on a phone or iPad (debug overlay)
 
 The scanner tries a few ways to cut the part out of the photo (SAM, then MVANet, then a plain

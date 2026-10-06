@@ -440,7 +440,7 @@ function inferFallbackRule(lower) {
     return RISK_RULES.find((rule) => rule.risk === "low");
   }
 
-  if (lower.startsWith("api/") || lower.startsWith("src/services/") || lower.startsWith("src/lib/")) {
+  if (lower.startsWith("api/") || lower.startsWith("server/") || lower.startsWith("src/services/") || lower.startsWith("src/lib/")) {
     return RISK_RULES.find((rule) => rule.risk === "medium");
   }
 

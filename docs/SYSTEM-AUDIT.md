@@ -76,7 +76,7 @@ A single shared component used by both the in-scanner review and the saved Resul
 ### 1e. Multi-object "categorize all of them" (scene objects)  ✅ (cloud-only)
 - The cloud AI returns an optional **`sceneObjects: { name, category, regionLabel, primary }[]`** listing every
   distinct visible object (the part **and** background items like posters/tools).
-- Threaded end-to-end: prompt (`systemPrompts.ts` + `api/identify.shared.ts`) → tolerant parse/validate
+- Threaded end-to-end: prompt (`systemPrompts.ts` + `server/identify.shared.ts`) → tolerant parse/validate
   (`coerceSceneObjects` / `isSceneObjectArray`) → local normalize (`storage.ts`) → cloud round-trip
   (`cloudHistory.ts` `parseSceneObjects`).
 - UI: on-image chips (above) + a compact **"Also in view"** category list in the card (`PositiveAnswerCard.tsx`).
@@ -99,7 +99,7 @@ A single shared component used by both the in-scanner review and the saved Resul
 ## 2. THE AI IDENTIFY PIPELINE (cloud + on-device)
 
 Entry: client `src/services/aiService.ts` `identifyCapturedFrame()` → POST `/api/identify` →
-`api/identify.shared.ts` `createIdentifyResponse()`. **Multi-provider with hedging, rescue, and OCR.**
+`server/identify.shared.ts` `createIdentifyResponse()`. **Multi-provider with hedging, rescue, and OCR.**
 
 ### Provider order & "model tools"  ✅ (Gemini required for full quality)
 Effective order in `createIdentifyResponse()`:
@@ -172,7 +172,7 @@ Google/GitHub OAuth** (`VITE_ENABLE_GOOGLE_AUTH` / `VITE_ENABLE_GITHUB_AUTH`). S
   guard and the auth UI shows "not configured." This is the single biggest "doesn't work without setup" gap.
 
 ## 5. BILLING / PAYMENTS  🟡 sandbox/testing-only by design
-`api/billing.shared.ts` + `billing-checkout/portal/webhook.ts`, `src/services/revenue.ts`, `Pricing.tsx`,
+`server/billing.shared.ts` + `billing-checkout/portal/webhook.ts`, `src/services/revenue.ts`, `Pricing.tsx`,
 `Account.tsx`. **Dual provider: Polar (default, sandbox) or Stripe**, selected by `BILLING_PROVIDER`.
 - Plans: `plus_monthly` $9.99/100 scans, `plus_yearly` $59/1200, `scan_pack` $4.99/20, `pro_beta` $49/500.
 - Entitlements in Supabase table `billing_entitlements` (RLS: user can read own row; **writes are webhook/service-
@@ -204,7 +204,7 @@ framework around a single default local org.
 
 ## 8. CHAT + REPORTS  ✅
 - `Chat.tsx` at `/result/:id/chat`: needs a saved scan with a result; questions (≤500 chars) persist in
-  `lookup.chatHistory`; `sendFollowUp` → POST `/api/chat` → `api/chat.shared.ts` → Gemini (**gemini-2.5-flash**,
+  `lookup.chatHistory`; `sendFollowUp` → POST `/api/chat` → `server/chat.shared.ts` → Gemini (**gemini-2.5-flash**,
   temp 0.3, 480 tokens, 20 s server / 30 s client, `FOLLOWUP_PROMPT`). Same model-fallback list as identify.
 - `report.ts`: `buildScanReport` (60+ line text report), `getScanReportFilename`, `downloadTextFile`; Result.tsx
   share/export uses `navigator.share()` or download.

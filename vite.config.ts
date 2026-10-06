@@ -41,8 +41,8 @@ export default defineConfig(async ({ mode }) => {
               return;
             }
 
-            const { enforceRateLimit } = (await server.ssrLoadModule("/api/rateLimit.shared.ts")) as typeof import("./api/rateLimit.shared");
-            const { requireSession } = (await server.ssrLoadModule("/api/requireSession.shared.ts")) as typeof import("./api/requireSession.shared");
+            const { enforceRateLimit } = (await server.ssrLoadModule("/server/rateLimit.shared.ts")) as typeof import("./server/rateLimit.shared");
+            const { requireSession } = (await server.ssrLoadModule("/server/requireSession.shared.ts")) as typeof import("./server/requireSession.shared");
             const identifyRateLimit = await enforceRateLimit("identify", request.headers, serverEnv);
             if (!identifyRateLimit.ok) {
               response.statusCode = identifyRateLimit.status;
@@ -60,8 +60,8 @@ export default defineConfig(async ({ mode }) => {
             }
 
             const body = await readJsonBody(request).catch(() => null);
-            const { createIdentifyResponse } = (await server.ssrLoadModule("/api/identify.shared.ts")) as typeof import("./api/identify.shared");
-            const { consumeReservedScanCredit, reserveScanCredit } = (await server.ssrLoadModule("/api/billing.shared.ts")) as typeof import("./api/billing.shared");
+            const { createIdentifyResponse } = (await server.ssrLoadModule("/server/identify.shared.ts")) as typeof import("./server/identify.shared");
+            const { consumeReservedScanCredit, reserveScanCredit } = (await server.ssrLoadModule("/server/billing.shared.ts")) as typeof import("./server/billing.shared");
             const reservation = await reserveScanCredit(request.headers, serverEnv);
             if (!reservation.ok) {
               response.statusCode = reservation.error.status;
@@ -88,8 +88,8 @@ export default defineConfig(async ({ mode }) => {
               return;
             }
 
-            const { enforceRateLimit } = (await server.ssrLoadModule("/api/rateLimit.shared.ts")) as typeof import("./api/rateLimit.shared");
-            const { requireSession } = (await server.ssrLoadModule("/api/requireSession.shared.ts")) as typeof import("./api/requireSession.shared");
+            const { enforceRateLimit } = (await server.ssrLoadModule("/server/rateLimit.shared.ts")) as typeof import("./server/rateLimit.shared");
+            const { requireSession } = (await server.ssrLoadModule("/server/requireSession.shared.ts")) as typeof import("./server/requireSession.shared");
             const chatRateLimit = await enforceRateLimit("chat", request.headers, serverEnv);
             if (!chatRateLimit.ok) {
               response.statusCode = chatRateLimit.status;
@@ -107,7 +107,7 @@ export default defineConfig(async ({ mode }) => {
             }
 
             const body = await readJsonBody(request).catch(() => null);
-            const { createChatResponse } = (await server.ssrLoadModule("/api/chat.shared.ts")) as typeof import("./api/chat.shared");
+            const { createChatResponse } = (await server.ssrLoadModule("/server/chat.shared.ts")) as typeof import("./server/chat.shared");
             const result = await createChatResponse(body, serverEnv);
             response.statusCode = result.status;
             response.setHeader("Content-Type", "application/json");
@@ -125,7 +125,7 @@ export default defineConfig(async ({ mode }) => {
             }
 
             const body = await readJsonBody(request).catch(() => null);
-            const { createCheckoutResponse } = (await server.ssrLoadModule("/api/billing.shared.ts")) as typeof import("./api/billing.shared");
+            const { createCheckoutResponse } = (await server.ssrLoadModule("/server/billing.shared.ts")) as typeof import("./server/billing.shared");
             const result = await createCheckoutResponse(body, serverEnv, request.headers);
             response.statusCode = result.status;
             response.setHeader("Content-Type", "application/json");
@@ -143,7 +143,7 @@ export default defineConfig(async ({ mode }) => {
             }
 
             const body = await readJsonBody(request).catch(() => null);
-            const { createPortalResponse } = (await server.ssrLoadModule("/api/billing.shared.ts")) as typeof import("./api/billing.shared");
+            const { createPortalResponse } = (await server.ssrLoadModule("/server/billing.shared.ts")) as typeof import("./server/billing.shared");
             const result = await createPortalResponse(body, serverEnv);
             response.statusCode = result.status;
             response.setHeader("Content-Type", "application/json");
@@ -161,7 +161,7 @@ export default defineConfig(async ({ mode }) => {
             }
 
             const rawBody = await readRawBody(request).catch(() => "");
-            const { createWebhookResponse } = (await server.ssrLoadModule("/api/billing.shared.ts")) as typeof import("./api/billing.shared");
+            const { createWebhookResponse } = (await server.ssrLoadModule("/server/billing.shared.ts")) as typeof import("./server/billing.shared");
             const result = await createWebhookResponse(rawBody, request.headers, serverEnv);
             response.statusCode = result.status;
             response.setHeader("Content-Type", "application/json");
@@ -178,7 +178,7 @@ export default defineConfig(async ({ mode }) => {
               return;
             }
 
-            const { createAccountEntitlementResponse } = (await server.ssrLoadModule("/api/billing.shared.ts")) as typeof import("./api/billing.shared");
+            const { createAccountEntitlementResponse } = (await server.ssrLoadModule("/server/billing.shared.ts")) as typeof import("./server/billing.shared");
             const result = await createAccountEntitlementResponse(request.headers, serverEnv);
             response.statusCode = result.status;
             response.setHeader("Content-Type", "application/json");

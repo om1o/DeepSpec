@@ -1,4 +1,4 @@
-import { createAccountEntitlementResponse } from "./billing.shared";
+import { createAccountEntitlementResponse } from "../server/billing.shared";
 
 type VercelRequest = {
   headers?: Record<string, string | string[] | undefined>;

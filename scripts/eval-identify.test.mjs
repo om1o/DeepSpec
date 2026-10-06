@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { createIdentifyResponse } from "../api/identify.shared.ts";
+import { createIdentifyResponse } from "../server/identify.shared.ts";
 import {
   DATASET_FETCH_TIMEOUT_MS,
   PUBLIC_SAMPLE_SIZE,

@@ -24,7 +24,7 @@ V1 includes reliable saving, useful camera highlighting with a photo fallback, r
 | Auth | Live signup and no-email auth enabled; anonymous owner/isolation test passed. | Email/password, delivery, recovery and cross-device login require test credentials. CI public configuration was missing on baseline. |
 | Pricing | Possible seller/shop/occasional-user offers are hypotheses. | Validate value; paid-credit concurrency and billing gates are separate from an unpaid beta. |
 
-Code evidence: `src/screens/Scanner.tsx`, `src/components/scanner/FocusedPartOverlay.tsx`, `src/services/cloudSync.ts`, `src/services/scanQualityMetrics.ts`, `src/services/trainingReadiness.ts`, `src/services/shop.ts`, `api/rateLimit.shared.ts`, `api/requireSession.shared.ts`, `api/billing.shared.ts`. See [foundation report](V1_FOUNDATION_REPORT_2026-09-26.md) for changes and checks.
+Code evidence: `src/screens/Scanner.tsx`, `src/components/scanner/FocusedPartOverlay.tsx`, `src/services/cloudSync.ts`, `src/services/scanQualityMetrics.ts`, `src/services/trainingReadiness.ts`, `src/services/shop.ts`, `server/rateLimit.shared.ts`, `server/requireSession.shared.ts`, `server/billing.shared.ts`. See [foundation report](V1_FOUNDATION_REPORT_2026-09-26.md) for changes and checks.
 
 ## One-month sequence
 
