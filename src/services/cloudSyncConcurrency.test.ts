@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Lookup } from "../types";
 import { setActiveAccount } from "../lib/accountScope";
-import { getLookup, saveExistingLookup, updateLookup } from "./storage";
+import { getLookup, recordCloudRevision, saveExistingLookup, updateLookup } from "./storage";
 import { syncLookupToCloud } from "./cloudSync";
 import { mergeCloudLookup } from "../lib/lookupMerge";
 import { emptyPartInspection } from "../lib/partInspection";
@@ -14,6 +14,7 @@ vi.mock("./auth", () => ({ getAuthClient: async () => mocks.client }));
 function cloud() {
   let row: Record<string, unknown> | null = null;
   let beforeWrite: (() => void) | undefined;
+  let afterWrite: (() => Promise<void>) | undefined;
   let detailError = false;
   let beforeDetails: (() => Promise<void>) | undefined;
   const details: Record<string, unknown> = {};
@@ -60,7 +61,9 @@ function cloud() {
           return { data: null, error: null };
         }
         row = { ...row, ...structuredClone(payload), revision: Number(row?.revision ?? 0) + 1 };
-        return { data: { revision: row.revision }, error: null };
+        const response = { data: { revision: row.revision }, error: null };
+        const after = afterWrite; afterWrite = undefined; await after?.();
+        return response;
       };
       const query = {
         insert: (value: Record<string, unknown>) => { operation = "insert"; payload = value; return query; },
@@ -76,6 +79,7 @@ function cloud() {
     },
   };
   return { client, details, detailWrites, objects, upload,
+    delayWriteResponse: (hook: () => Promise<void>) => { afterWrite = hook; },
     interleaveDetails: (hook: () => Promise<void>) => { beforeDetails = hook; }, get row() { return row; }, race: (hook: () => void) => { beforeWrite = hook; },
     failDetails: (fail: boolean) => { detailError = fail; },
     rejectNextWrite: (error: { message: string; code?: string }) => { writeError = error; },
@@ -257,6 +261,69 @@ describe("cross-device cloud saves", () => {
     expect(db.row!.notes).toBe("");
     expect((await syncLookupToCloud(lookup())).ok).toBe(true);
     expect(db.row).toMatchObject({ revision: 2, notes: "Typed during save" });
+  });
+
+  it.each(["insert", "update", "fallback", "inspection"])("reconciles a late %s commit without acknowledging unfinished details, then retries with CAS", async (mode) => {
+    const db = cloud(); mocks.client = db.client;
+    const original = lookup(); saveExistingLookup(original);
+    if (mode !== "insert") expect((await syncLookupToCloud(original)).ok).toBe(true);
+    if (mode === "inspection") saveExistingLookup({ ...getLookup(original.id)!,
+      frame: { ...original.frame, imageBase64: "https://example.test/signed" },
+      inspection: { ...emptyPartInspection, inspectorName: "Pat", inspectedAt: original.createdAt },
+    });
+    if (mode === "fallback") db.rejectNextWrite({ message: "Could not find the 'job_id' column in the schema cache" });
+    const base = getLookup(original.id)?.cloudRevision;
+    const committed = (base ?? 0) + 1;
+    const writesBefore = db.detailWrites.length;
+    const rpcCallsBefore = db.client.rpc.mock.calls.length;
+    let release!: () => void;
+    db.delayWriteResponse(() => new Promise<void>((resolve) => { release = resolve; }));
+    vi.useFakeTimers();
+    try {
+      const saving = syncLookupToCloud(original);
+      await vi.waitFor(() => expect(db.row?.revision).toBe(committed));
+      expect(getLookup(original.id)?.cloudRevision).toBe(base);
+      await vi.advanceTimersByTimeAsync(20_001);
+      expect((await saving).ok).toBe(false);
+      const failedReceipt = getLookup(original.id)?.cloudSave;
+      expect(failedReceipt?.status).toBe("failed");
+      expect(await syncLookupToCloud(original)).toMatchObject({ ok: false, message: expect.stringContaining("still finishing") });
+      release();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getLookup(original.id)?.cloudRevision).toBe(committed);
+      expect(getLookup(original.id)?.cloudSave).toEqual(failedReceipt);
+      expect(db.detailWrites).toHaveLength(writesBefore);
+      expect(db.client.rpc).toHaveBeenCalledTimes(rpcCallsBefore);
+
+      updateLookup(original.id, { notes: "Newer local edit" });
+      // Retry the original screen snapshot: the sync must read the reconciled device base.
+      expect((await syncLookupToCloud(original)).ok).toBe(true);
+      expect(db.row?.revision).toBe(committed + 1);
+      expect(getLookup(original.id)).toMatchObject({ cloudRevision: committed + 1, notes: "Newer local edit", cloudSave: { status: "acknowledged" } });
+      if (mode !== "inspection") expect(db.details.scan_corrections).toMatchObject({ notes: "Newer local edit" });
+    } finally { release?.(); await vi.advanceTimersByTimeAsync(0); vi.useRealTimers(); }
+  });
+
+  it.each(["account", "revision"])("does not apply a late committed revision after the device %s changes", async (changed) => {
+    const db = cloud(); mocks.client = db.client;
+    const original = lookup(); saveExistingLookup(original);
+    let release!: () => void;
+    db.delayWriteResponse(() => new Promise<void>((resolve) => { release = resolve; }));
+    vi.useFakeTimers();
+    try {
+      const saving = syncLookupToCloud(original);
+      await vi.waitFor(() => expect(db.row?.revision).toBe(1));
+      await vi.advanceTimersByTimeAsync(20_001);
+      expect((await saving).ok).toBe(false);
+      if (changed === "account") setActiveAccount("user-2");
+      if (changed === "account") saveExistingLookup({ ...original, cloudRevision: 7 });
+      else recordCloudRevision(original.id, undefined, 7);
+      updateLookup(original.id, { notes: "Newer device state" });
+      release(); await vi.advanceTimersByTimeAsync(0);
+      expect(getLookup(original.id)).toMatchObject({ cloudRevision: 7, notes: "Newer device state" });
+      expect(db.detailWrites).toEqual([]);
+      expect(db.client.rpc).not.toHaveBeenCalled();
+    } finally { release?.(); await vi.advanceTimersByTimeAsync(0); vi.useRealTimers(); }
   });
 
   it("retains the committed revision when detail sync fails so retry uses CAS", async () => {

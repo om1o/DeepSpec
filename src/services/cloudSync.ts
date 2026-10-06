@@ -275,10 +275,11 @@ async function performLookupSync(lookup: Lookup, scope: AccountScope, guard: () 
       .eq("local_id", lookup.id)
       .eq("revision", revision)
       .select("revision").maybeSingle();
-    guard();
     if (updated.error) throw new Error(updated.error.message);
     if (!isCloudRevision(updated.data?.revision)) throw new Error(CLOUD_CONFLICT_MESSAGE);
+    assertAccount(scope);
     recordCloudRevision(lookup.id, revision, updated.data.revision);
+    guard();
     await syncAnalysisFailureRows(supabase, user.id, lookup, guard);
     return { ok: true, message: "Inspection synced to your saved scan." };
   }
@@ -326,14 +327,16 @@ async function performLookupSync(lookup: Lookup, scope: AccountScope, guard: () 
     ...getOptionalScanLookupFields(lookup),
   }, lookup.cloudRevision, guard);
 
-  guard();
   if (saved.error) {
     throw new Error(saved.error.message);
   }
   if (!isCloudRevision(saved.data?.revision)) throw new Error(CLOUD_CONFLICT_MESSAGE);
-  // The canonical write already committed even if a subsequent detail upload
-  // fails. Retain its revision so an explicit retry can still succeed.
+  // Reconcile a committed parent even after the UI timeout, while this owner's
+  // save lock still holds. The timeout guard must still stop child work and
+  // leave the save unacknowledged until an explicit retry finishes it.
+  assertAccount(scope);
   recordCloudRevision(lookup.id, lookup.cloudRevision, saved.data.revision);
+  guard();
 
   await syncDatasetDetailTables(supabase, user.id, lookup, saved.data.revision, guard);
   guard();
@@ -430,10 +433,11 @@ async function upsertScanLookupRow(supabase: SupabaseClient, row: Record<string,
       .select("revision").maybeSingle();
   guard();
   let result = await write(row);
-  guard();
   if (isMissingOptionalScanLookupColumn(result.error)) {
-    result = await write(omitOptionalScanLookupColumns(row));
+    // A failed schema write has no committed revision to reconcile. Check the
+    // deadline before starting another write, but let late successes return.
     guard();
+    result = await write(omitOptionalScanLookupColumns(row));
   }
   if (result.error?.code === "23505" || result.error?.code === "40001") throw new Error(CLOUD_CONFLICT_MESSAGE);
   return result;
