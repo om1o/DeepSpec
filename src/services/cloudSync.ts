@@ -335,9 +335,7 @@ async function performLookupSync(lookup: Lookup, scope: AccountScope, guard: () 
   // fails. Retain its revision so an explicit retry can still succeed.
   recordCloudRevision(lookup.id, lookup.cloudRevision, saved.data.revision);
 
-  await upsertShopJobScan(supabase, user.id, lookup);
-  guard();
-  await syncDatasetDetailTables(supabase, user.id, lookup, guard);
+  await syncDatasetDetailTables(supabase, user.id, lookup, saved.data.revision, guard);
   guard();
 
   return {
@@ -455,99 +453,52 @@ function isMissingOptionalScanLookupColumn(error: { message?: string } | null | 
     && SCAN_LOOKUP_OPTIONAL_COLUMNS.some((column) => message.includes(column));
 }
 
-async function syncDatasetDetailTables(supabase: SupabaseClient, userId: string, lookup: Lookup, guard: () => void) {
+async function syncDatasetDetailTables(supabase: SupabaseClient, userId: string, lookup: Lookup, revision: number, guard: () => void) {
+  const orgId = asUuid(lookup.orgId);
+  const jobId = asUuid(lookup.jobId);
   guard();
-  await replaceScanCandidates(supabase, userId, lookup, guard);
+  // The RPC checks and locks the committed parent revision for the entire child
+  // replacement. A client-side revision read would leave another TOCTOU race.
+  const details = await supabase.rpc("sync_scan_details", {
+    p_scan_local_id: lookup.id,
+    p_revision: revision,
+    p_candidates: (lookup.result?.candidateMatches ?? []).map((candidate, index) => ({
+      candidate_json: candidate,
+      candidate_rank: index,
+      confidence: candidate.confidence,
+      part_name: candidate.partName,
+      reason: candidate.reason,
+      scan_category: candidate.scanCategory,
+    })),
+    p_evidence: buildEvidenceRows(userId, lookup),
+    p_correction: {
+      corrected_category: lookup.correction ? lookup.scanCategory : null,
+      corrected_part_name: lookup.correction?.trim() || null,
+      correction_text: lookup.correction,
+      damage_severity: "unknown",
+      notes: lookup.notes,
+      rating: lookup.rating,
+      region_label: null,
+      training_status: lookup.trainingStatus,
+    },
+    p_job_scan: orgId && jobId ? {
+      customer_visible_report_json: lookup.customerVisibleReport ?? null,
+      job_id: jobId,
+      org_id: orgId,
+      review_status: lookup.reviewStatus ?? "needs_review",
+    } : null,
+  });
   guard();
-  await replaceScanEvidence(supabase, userId, lookup, guard);
-  guard();
-  await upsertScanCorrection(supabase, userId, lookup);
-  guard();
+  if (details.error?.code === "40001") throw new Error(CLOUD_CONFLICT_MESSAGE);
+  if (details.error) throw new Error(details.error.message);
+  if (details.data !== true) throw new Error(CLOUD_CONFLICT_MESSAGE);
+  // Model runs are append-only by run_key (ignoreDuplicates), so delayed saves
+  // cannot replace a newer prediction's provenance. Keep that identity intact.
   await insertScanModelRun(supabase, userId, lookup);
   guard();
   await syncAnalysisFailureRows(supabase, userId, lookup, guard);
   guard();
   await insertSyncEvent(supabase, userId, lookup, "upsert", "success", "Scan dataset details synced.");
-}
-
-async function upsertShopJobScan(supabase: SupabaseClient, userId: string, lookup: Lookup) {
-  const orgId = asUuid(lookup.orgId);
-  const jobId = asUuid(lookup.jobId);
-  if (!orgId || !jobId) {
-    return;
-  }
-
-  await assertCloudResult(
-    await supabase.from("job_scans").upsert(
-      {
-        customer_visible_report_json: lookup.customerVisibleReport ?? null,
-        job_id: jobId,
-        org_id: orgId,
-        review_status: lookup.reviewStatus ?? "needs_review",
-        scan_local_id: lookup.id,
-        user_id: userId,
-      },
-      { onConflict: "job_id,user_id,scan_local_id" },
-    ),
-    "job_scans upsert failed",
-  );
-}
-
-async function replaceScanCandidates(supabase: SupabaseClient, userId: string, lookup: Lookup, guard: () => void) {
-  await deleteScanDetails(supabase, "scan_candidates", userId, lookup.id);
-  guard();
-  const candidates = lookup.result?.candidateMatches ?? [];
-  if (!candidates.length) {
-    return;
-  }
-
-  await assertCloudResult(
-    await supabase.from("scan_candidates").insert(
-      candidates.map((candidate, index) => ({
-        candidate_json: candidate,
-        candidate_rank: index,
-        confidence: candidate.confidence,
-        part_name: candidate.partName,
-        reason: candidate.reason,
-        scan_category: candidate.scanCategory,
-        scan_local_id: lookup.id,
-        user_id: userId,
-      })),
-    ),
-    "scan_candidates insert failed",
-  );
-}
-
-async function replaceScanEvidence(supabase: SupabaseClient, userId: string, lookup: Lookup, guard: () => void) {
-  await deleteScanDetails(supabase, "scan_evidence", userId, lookup.id);
-  guard();
-  const evidence = buildEvidenceRows(userId, lookup);
-  if (!evidence.length) {
-    return;
-  }
-
-  await assertCloudResult(await supabase.from("scan_evidence").insert(evidence), "scan_evidence insert failed");
-}
-
-async function upsertScanCorrection(supabase: SupabaseClient, userId: string, lookup: Lookup) {
-  await assertCloudResult(
-    await supabase.from("scan_corrections").upsert(
-      {
-        corrected_category: lookup.correction ? lookup.scanCategory : null,
-        corrected_part_name: lookup.correction?.trim() || null,
-        correction_text: lookup.correction,
-        damage_severity: "unknown",
-        notes: lookup.notes,
-        rating: lookup.rating,
-        region_label: null,
-        scan_local_id: lookup.id,
-        training_status: lookup.trainingStatus,
-        user_id: userId,
-      },
-      { onConflict: "user_id,scan_local_id" },
-    ),
-    "scan_corrections upsert failed",
-  );
 }
 
 export async function syncAnalysisFailuresToCloud(lookup: Lookup): Promise<CloudSyncResult> {
@@ -674,49 +625,38 @@ async function insertSyncEvent(
 }
 
 async function writeCloudHealthDatasetDetails(supabase: SupabaseClient, userId: string, scanLocalId: string) {
-  await assertCloudResult(
-    await supabase.from("scan_candidates").insert({
+  const details = await supabase.rpc("sync_scan_details", {
+    p_scan_local_id: scanLocalId,
+    p_revision: 1, // This check just inserted its unique synthetic parent.
+    p_candidates: [{
       candidate_json: { source: "runtime-health" },
       candidate_rank: 0,
       confidence: "low",
       part_name: "Runtime Health Related Part",
       reason: "Synthetic row for runtime durable dataset verification.",
       scan_category: "unknown",
-      scan_local_id: scanLocalId,
-      user_id: userId,
-    }),
-    "scan_candidates insert failed",
-  );
-  await assertCloudResult(
-    await supabase.from("scan_evidence").insert({
+    }],
+    p_evidence: [{
       evidence_json: { source: "runtime-health" },
       evidence_rank: 0,
       evidence_text: "Synthetic visual observation for runtime durable dataset verification.",
       evidence_type: "observation",
       label: "Runtime health observation",
-      scan_local_id: scanLocalId,
-      user_id: userId,
-    }),
-    "scan_evidence insert failed",
-  );
-  await assertCloudResult(
-    await supabase.from("scan_corrections").upsert(
-      {
-        corrected_category: null,
-        corrected_part_name: null,
-        correction_text: null,
-        damage_severity: "unknown",
-        notes: "Synthetic correction row for runtime durable dataset verification.",
-        rating: null,
-        region_label: null,
-        scan_local_id: scanLocalId,
-        training_status: "raw_unreviewed",
-        user_id: userId,
-      },
-      { onConflict: "user_id,scan_local_id" },
-    ),
-    "scan_corrections upsert failed",
-  );
+    }],
+    p_correction: {
+      corrected_category: null,
+      corrected_part_name: null,
+      correction_text: null,
+      damage_severity: "unknown",
+      notes: "Synthetic correction row for runtime durable dataset verification.",
+      rating: null,
+      region_label: null,
+      training_status: "raw_unreviewed",
+    },
+    p_job_scan: null,
+  });
+  await assertCloudResult(details, "Scan detail transaction failed");
+  if (details.data !== true) throw new Error(CLOUD_CONFLICT_MESSAGE);
   await assertCloudResult(
     await supabase.from("scan_model_runs").insert({
       error_code: null,
@@ -752,13 +692,6 @@ async function assertCloudHealthRlsIsolation(supabase: SupabaseClient, scanLocal
       throw new Error(`RLS failed: another anonymous user could read ${check.table}.`);
     }
   }
-}
-
-async function deleteScanDetails(supabase: SupabaseClient, table: "scan_candidates" | "scan_evidence", userId: string, scanLocalId: string) {
-  await assertCloudResult(
-    await supabase.from(table).delete().eq("user_id", userId).eq("scan_local_id", scanLocalId),
-    `${table} cleanup failed`,
-  );
 }
 
 function buildEvidenceRows(userId: string, lookup: Lookup) {
@@ -1021,6 +954,9 @@ function getFriendlySyncError(error: unknown) {
   const message = error instanceof Error ? error.message : "Unknown cloud sync error.";
   if (message === "Sign in to the account that owns this scan before syncing.") return message;
   if (message === CLOUD_CONFLICT_MESSAGE || message.includes("scan_lookup_revision_conflict")) return CLOUD_CONFLICT_MESSAGE;
+  if (/sync_scan_details/i.test(message) && /does not exist|schema cache|could not find/i.test(message)) {
+    return "Cloud save requires the scan child revision database migration. Your scan is still saved on this device.";
+  }
   if (/revision/i.test(message) && /does not exist|schema cache|could not find .* column/i.test(message)) {
     return "Cloud save requires the scan lookup revision database migration. Your scan is still saved on this device.";
   }

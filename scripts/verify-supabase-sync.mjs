@@ -284,8 +284,11 @@ async function assertNoError(result, label) {
 }
 
 async function writeDatasetDetailRows(supabase, userId, scanLocalId) {
-  await assertNoError(
-    await supabase.from("scan_candidates").insert({
+  const details = await supabase.rpc("sync_scan_details", {
+    p_scan_local_id: scanLocalId,
+    // Every verifier scan has a fresh UUID; the parent insert starts at revision 1.
+    p_revision: 1,
+    p_candidates: [{
       candidate_json: {
         source: "phase8-verifier",
       },
@@ -294,14 +297,8 @@ async function writeDatasetDetailRows(supabase, userId, scanLocalId) {
       part_name: "Phase 8 Related Part",
       reason: "Synthetic row for durable dataset verification.",
       scan_category: "unknown",
-      scan_local_id: scanLocalId,
-      user_id: userId,
-    }),
-    "scan_candidates insert failed",
-  );
-
-  await assertNoError(
-    await supabase.from("scan_evidence").insert([
+    }],
+    p_evidence: [
       {
         evidence_json: {
           source: "phase8-verifier",
@@ -311,8 +308,6 @@ async function writeDatasetDetailRows(supabase, userId, scanLocalId) {
         evidence_type: "observation",
         label: "Phase 8 observation",
         region_label: "full image",
-        scan_local_id: scanLocalId,
-        user_id: userId,
       },
       {
         evidence_json: {
@@ -322,33 +317,24 @@ async function writeDatasetDetailRows(supabase, userId, scanLocalId) {
         evidence_text: "Synthetic reference link for durable dataset verification.",
         evidence_type: "source_link",
         label: "Phase 8 reference",
-        scan_local_id: scanLocalId,
         source_type: "reference",
         url: "https://example.com/deepspec-phase8-verifier",
-        user_id: userId,
       },
-    ]),
-    "scan_evidence insert failed",
-  );
-
-  await assertNoError(
-    await supabase.from("scan_corrections").upsert(
-      {
-        corrected_category: null,
-        corrected_part_name: null,
-        correction_text: null,
-        damage_severity: "unknown",
-        notes: "Synthetic correction row for durable dataset verification.",
-        rating: null,
-        region_label: null,
-        scan_local_id: scanLocalId,
-        training_status: "raw_unreviewed",
-        user_id: userId,
-      },
-      { onConflict: "user_id,scan_local_id" },
-    ),
-    "scan_corrections upsert failed",
-  );
+    ],
+    p_correction: {
+      corrected_category: null,
+      corrected_part_name: null,
+      correction_text: null,
+      damage_severity: "unknown",
+      notes: "Synthetic correction row for durable dataset verification.",
+      rating: null,
+      region_label: null,
+      training_status: "raw_unreviewed",
+    },
+    p_job_scan: null,
+  });
+  await assertNoError(details, "sync_scan_details failed");
+  if (details.data !== true) throw new Error("sync_scan_details rejected the verifier scan revision.");
 
   await assertNoError(
     await supabase.from("scan_model_runs").insert({

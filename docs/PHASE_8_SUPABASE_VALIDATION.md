@@ -26,6 +26,32 @@ VITE_ENABLE_GITHUB_AUTH=
 
 Do not put a service-role key in `.env.local`, especially not in a `VITE_` variable.
 
+## Revision-protected child sync rollout
+
+Apply `20261006001910_scan_lookup_revision.sql`, then
+`20261006204712_scan_child_revision.sql`, before releasing the updated client.
+The client requires `sync_scan_details`; it fails closed if the RPC is missing.
+Both runtime cloud health and `verify:supabase` now exercise that RPC.
+
+The child RPC checks the authenticated owner's committed parent revision and
+holds a parent row lock while replacing candidates, evidence, corrections and
+the optional job bridge. A stale revision changes nothing; a child error rolls
+back the whole child transaction. The parent remains committed, and the device
+retains its revision for an explicit retry. Model-run writes keep their existing
+`run_key` deduplication, and inspection-only saves keep their separate parent CAS.
+
+Refresh older browser/PWA clients during rollout: direct child-table grants
+remain available for existing tooling, so clients predating this RPC still use
+their unprotected child-write path. This migration alone does not upgrade them.
+Private scans do not require the optional shop migration to call the RPC.
+
+Run `supabase/tests/scan_child_revision.sql` against a disposable database with
+the parent, dataset, inspection, shop and revision migrations installed. Its
+synthetic fixtures roll back. It covers delayed stale replacements/deletions,
+rollback after evidence/job failures, retry behavior, owner isolation, missing
+parents/revisions and anonymous execution. The client interleaving regression is
+in `src/services/cloudSyncConcurrency.test.ts`.
+
 ## Verification Command
 
 For Auth and login provider readiness, run:

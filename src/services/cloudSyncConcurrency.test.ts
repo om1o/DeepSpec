@@ -15,6 +15,11 @@ function cloud() {
   let row: Record<string, unknown> | null = null;
   let beforeWrite: (() => void) | undefined;
   let detailError = false;
+  let beforeDetails: (() => Promise<void>) | undefined;
+  const details: Record<string, unknown> = {};
+  const pauseDetails = async () => {
+    const hook = beforeDetails; beforeDetails = undefined; await hook?.();
+  };
   let writeError: { message: string; code?: string } | undefined;
   const detailWrites: string[] = [];
   const objects = new Map<string, Blob>();
@@ -26,13 +31,26 @@ function cloud() {
   const client = {
     auth: { getSession: async () => ({ data: { session: { user: { id: "user-1" } } }, error: null }) },
     storage: { from: () => ({ upload }) },
+    rpc: vi.fn(async (_name: string, args: Record<string, unknown>) => {
+      await pauseDetails();
+      if (detailError) return { data: null, error: { message: "Detail network error" } };
+      if (row?.revision !== args.p_revision || row?.local_id !== args.p_scan_local_id) return { data: false, error: null };
+      Object.assign(details, structuredClone({
+        scan_candidates: args.p_candidates, scan_evidence: args.p_evidence,
+        scan_corrections: args.p_correction, job_scans: args.p_job_scan,
+      }));
+      detailWrites.push(...Object.keys(details));
+      return { data: true, error: null };
+    }),
     from: (table: string) => {
       let operation = "";
       let payload: Record<string, unknown> = {};
       const filters: Record<string, unknown> = {};
       const execute = async () => {
         if (table !== "scan_lookups") {
+          await pauseDetails();
           detailWrites.push(table);
+          details[table] = structuredClone(payload);
           return { data: null, error: detailError ? { message: "Detail network error" } : null };
         }
         if (writeError) { const error = writeError; writeError = undefined; return { data: null, error }; }
@@ -57,7 +75,8 @@ function cloud() {
       return query;
     },
   };
-  return { client, detailWrites, objects, upload, get row() { return row; }, race: (hook: () => void) => { beforeWrite = hook; },
+  return { client, details, detailWrites, objects, upload,
+    interleaveDetails: (hook: () => Promise<void>) => { beforeDetails = hook; }, get row() { return row; }, race: (hook: () => void) => { beforeWrite = hook; },
     failDetails: (fail: boolean) => { detailError = fail; },
     rejectNextWrite: (error: { message: string; code?: string }) => { writeError = error; },
     change: (patch: Record<string, unknown>) => { row = { ...row, ...patch }; } };
@@ -108,6 +127,51 @@ describe("cross-device cloud saves", () => {
     expect(db.detailWrites).toHaveLength(detailsBefore);
     expect(getLookup(deviceA.id)?.correction).toBe("Stale device A correction");
     expect(getLookup(deviceA.id)?.cloudSave?.status).toBe("failed");
+  });
+
+  it("rejects device A's delayed child writes after device B commits a newer revision", async () => {
+    const db = cloud(); mocks.client = db.client;
+    const deviceA = { ...lookup(), notes: "Device A", correction: "Old correction",
+      jobId: "00000000-0000-4000-8000-000000000101", orgId: "00000000-0000-4000-8000-000000000001",
+      result: { partName: "Old analysis", confidence: "high" as const, scanCategory: "electrical" as const,
+        whatItDoes: "Generates power", visibleObservations: ["Old evidence"], evidenceRegions: [], concerns: [],
+        safetyTriage: "can_help" as const, isSafetyCritical: false, nextAction: "Inspect", needsBetterPhoto: false,
+        evidence: [], sourceLinks: [], candidateMatches: [{ partName: "Old candidate", confidence: "low" as const,
+          scanCategory: "electrical" as const, reason: "Old reason" }] },
+    };
+    saveExistingLookup(deviceA);
+    let winningDetails: Record<string, unknown> = {};
+    let writesAtWinner = 0;
+    db.interleaveDetails(async () => {
+      // A committed its parent and is now stalled before its child request executes.
+      expect(db.row?.revision).toBe(1);
+      const deviceASnapshot = getLookup(deviceA.id)!;
+      const deviceAStorage = Object.entries(localStorage);
+      // Independent module instance models device B's separate pending-save lock.
+      vi.resetModules();
+      const accountB = await import("../lib/accountScope");
+      accountB.setActiveAccount("user-1");
+      const storageB = await import("./storage");
+      const syncB = await import("./cloudSync");
+      const deviceB = { ...deviceASnapshot, notes: "Device B", correction: "New correction", rating: "up" as const,
+        result: { ...deviceASnapshot.result!, visibleObservations: ["New evidence"],
+          candidateMatches: [{ ...deviceASnapshot.result!.candidateMatches[0], partName: "New candidate" }] },
+        reviewStatus: "confirmed" as const, customerVisibleReport: { title: "B report", summary: "New report", generatedAt: deviceA.createdAt } };
+      localStorage.clear(); storageB.saveExistingLookup(deviceB);
+      expect((await syncB.syncLookupToCloud(deviceB)).ok).toBe(true);
+      expect(db.row).toMatchObject({ revision: 2, correction: "New correction" });
+      winningDetails = structuredClone(db.details);
+      writesAtWinner = db.detailWrites.length;
+      localStorage.clear(); for (const [key, value] of deviceAStorage) localStorage.setItem(key, value);
+    });
+    expect(await syncLookupToCloud(deviceA)).toMatchObject({ ok: false, message: expect.stringMatching(/newer cloud/i) });
+    expect(db.details).toEqual(winningDetails);
+    expect(db.detailWrites).toHaveLength(writesAtWinner);
+    expect(db.details.scan_candidates).toMatchObject([{ part_name: "New candidate" }]);
+    expect(db.details.scan_evidence).toEqual(expect.arrayContaining([expect.objectContaining({ evidence_text: "New evidence" })]));
+    expect(db.details.scan_corrections).toMatchObject({ correction_text: "New correction", rating: "up" });
+    expect(db.details.job_scans).toMatchObject({ review_status: "confirmed", customer_visible_report_json: { title: "B report" } });
+    expect(getLookup(deviceA.id)).toMatchObject({ cloudRevision: 1, correction: "Old correction", cloudSave: { status: "failed" } });
   });
 
   it("rejects an unknown legacy base and a concurrent first insert without overwriting the winner", async () => {
@@ -203,6 +267,22 @@ describe("cross-device cloud saves", () => {
     db.failDetails(false);
     expect((await syncLookupToCloud(lookup())).ok).toBe(true);
     expect(db.row!.revision).toBe(2);
+  });
+
+  it.each([
+    { data: null, error: { code: "PGRST202", message: "Could not find the function public.sync_scan_details in the schema cache" } },
+    { data: false, error: null },
+    { data: null, error: null },
+    { data: null, error: { code: "40001", message: "Serialization failure" } },
+  ])("fails closed when the child transaction is unavailable or rejected: %j", async (response) => {
+    const db = cloud(); mocks.client = db.client;
+    saveExistingLookup(lookup());
+    db.client.rpc.mockResolvedValueOnce(response);
+    const result = await syncLookupToCloud(lookup());
+    expect(result).toMatchObject({ ok: false });
+    expect(result.message).toMatch(response.error?.code === "PGRST202" ? /child revision database migration/ : /newer cloud/);
+    expect(db.detailWrites).toEqual([]);
+    expect(getLookup("shared-scan")).toMatchObject({ cloudRevision: 1, cloudSave: { status: "failed" } });
   });
 
   it("protects inspection-only saves and never uploads a signed image URL", async () => {

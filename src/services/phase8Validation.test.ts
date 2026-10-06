@@ -51,9 +51,9 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(verifier).toContain("image_mime_type");
     expect(verifier).toContain("image_byte_length");
     expect(verifier).toContain("durable dataset detail rows");
-    expect(verifier).toContain('from("scan_candidates").insert');
-    expect(verifier).toContain('from("scan_evidence").insert');
-    expect(verifier).toContain('from("scan_corrections").upsert');
+    expect(verifier).toContain('rpc("sync_scan_details"');
+    expect(verifier).toContain("p_revision: 1");
+    expect(verifier).toContain("details.data !== true");
     expect(verifier).toContain('from("scan_model_runs").insert');
     expect(verifier).toContain('from("sync_events").insert');
     expect(verifier).toContain("Owner read failed");
