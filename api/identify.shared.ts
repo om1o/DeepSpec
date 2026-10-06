@@ -165,7 +165,7 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
     parsed,
     sourceContext,
   });
-  if (geminiResult.response.status === 200) {
+  if (geminiResult.response.status === 200 || getIdentifyErrorCode(geminiResult.response) === "invalid_response") {
     return geminiResult.response;
   }
 
@@ -304,7 +304,7 @@ async function createGeminiIdentifyResponse({
     }
 
     attempts.push(attempt);
-    if (attempt.response.status === 200) {
+    if (attempt.response.status === 200 || getIdentifyErrorCode(attempt.response) === "invalid_response") {
       for (const controller of controllers.values()) {
         controller.abort();
       }
@@ -413,6 +413,10 @@ async function createGeminiIdentifyAttempt(
 }
 
 function isRetryableIdentifyResponse(response: IdentifyResponse) {
+  // Model-quality failures use 502 too, but must remain visible to evaluation.
+  if (getIdentifyErrorCode(response) === "invalid_response") {
+    return false;
+  }
   return response.status === 429 || RETRYABLE_PROVIDER_STATUSES.has(response.status);
 }
 

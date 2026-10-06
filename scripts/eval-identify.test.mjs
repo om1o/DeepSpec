@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { createIdentifyResponse } from "../api/identify.shared.ts";
 import {
   DATASET_FETCH_TIMEOUT_MS,
   PUBLIC_SAMPLE_SIZE,
@@ -49,6 +50,40 @@ const result = {
 };
 
 describe("identify eval scoring", () => {
+  it.each([
+    ["empty", { candidates: [] }],
+    ["malformed", { candidates: [{ content: { parts: [{ text: "not JSON" }] } }] }],
+  ])("keeps %s Gemini output as a reviewable evaluation failure", async (_label, payload) => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      new Response(JSON.stringify(String(input).includes("generativelanguage.googleapis.com")
+        ? payload
+        : { choices: [{ message: { content: JSON.stringify(result) } }] }), { status: 200 }),
+    );
+    try {
+      const response = await createIdentifyResponseWithRetry({ createIdentifyResponse },
+        "data:image/png;base64,aGVsbG8=", {
+          GEMINI_API_KEY: "test-key",
+          DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true",
+          HF_TOKEN: "hf-test",
+        });
+      expect(response).toMatchObject({ status: 502, body: { error: { code: "invalid_response" } } });
+      expect(isReviewableEvalFailure(response.body.error)).toBe(true);
+      const lookup = buildReviewLookup({
+        analyzedAt: "2026-05-20T12:00:00.000Z",
+        dataUrl: "data:image/png;base64,aGVsbG8=",
+        error: response.body.error,
+        expectedLabels: ["Back-bumper"],
+        imagePath: "Car damages dataset/File1/img/Car damages 100.png",
+        result: null,
+        score: { ok: false, matchedLabels: [], failureReasons: ["pipeline_error"] },
+      });
+      expect(lookup).toMatchObject({ rating: "down", trainingLabel: "Back-bumper" });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it("uses a fixed 50-case release sample set split across damage and parts", () => {
     expect(RELEASE_SAMPLE_IMAGES).toHaveLength(50);
     expect(new Set(RELEASE_SAMPLE_IMAGES).size).toBe(50);

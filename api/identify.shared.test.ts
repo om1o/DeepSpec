@@ -2246,6 +2246,31 @@ describe("createIdentifyResponse", () => {
     });
   });
 
+  it.each([
+    ["empty", { candidates: [] }],
+    ["malformed", { candidates: [{ content: { parts: [{ text: "not JSON" }] } }] }],
+  ])("preserves %s Gemini output with a successful backup available", async (_label, payload) => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      new Response(JSON.stringify(String(input).includes("generativelanguage.googleapis.com")
+        ? payload
+        : { choices: [{ message: { content: JSON.stringify(result) } }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(createIdentifyResponse({ imageBase64 }, {
+      GEMINI_API_KEY: "test-key",
+      DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true",
+      HF_TOKEN: "hf-test",
+      DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK: "true",
+    })).resolves.toMatchObject({
+      status: 502,
+      body: { error: { code: "invalid_response" } },
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("returns an invalid_response error when Gemini returns an empty candidates array", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ candidates: [] }), {
