@@ -83,11 +83,14 @@ export function useCamera() {
 
   const switchCamera = useCallback(() => {
     if (cameraDevices.length > 1) {
-      const currentIndex = cameraDevices.findIndex((device) => device.deviceId === selectedCameraId);
-      const rearCameraIndex = cameraDevices.findIndex((device) => /back|rear|environment/i.test(device.label));
-      const nextIndex = currentIndex === -1 && rearCameraIndex !== -1
-        ? rearCameraIndex
-        : (Math.max(0, currentIndex) + 1) % cameraDevices.length;
+      const activeDeviceId = webcamRef.current?.stream?.getVideoTracks()[0]?.getSettings().deviceId;
+      const currentIndex = cameraDevices.findIndex((device) => device.deviceId === (selectedCameraId || activeDeviceId));
+      const facingCameraIndex = cameraDevices.findIndex((device) =>
+        (cameraFacingMode === "environment" ? /back|rear|environment/i : /front|user|facetime/i).test(device.label),
+      );
+      // The initial facing-mode request has no selected ID; advance past that camera too.
+      const startIndex = currentIndex === -1 ? facingCameraIndex : currentIndex;
+      const nextIndex = (Math.max(0, startIndex) + 1) % cameraDevices.length;
       selectCamera(cameraDevices[nextIndex].deviceId);
       return;
     }
@@ -97,7 +100,7 @@ export function useCamera() {
     setCameraState("loading");
     setCameraError(null);
     setCameraRequestId((current) => current + 1);
-  }, [cameraDevices, selectCamera, selectedCameraId]);
+  }, [cameraDevices, cameraFacingMode, selectCamera, selectedCameraId]);
 
   useEffect(() => {
     if (cameraState !== "loading") {
