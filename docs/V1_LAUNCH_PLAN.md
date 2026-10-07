@@ -20,7 +20,7 @@ V1 includes reliable saving, useful camera highlighting with a photo fallback, r
 | Camera overlays | Captured-frame highlighting and viewport placement exist. Active Scanner does not currently use the separate live tracking hook. | Physical iOS/Android tests; polish bounded component lock/highlight without claiming spatial tracking. |
 | Training permission | Durable default-off per-scan cloud consent, withdrawal, server revisions and administrator-only review queues added September 27. Local shop preference is not authority. | Versioned administrator-only membership and checked exporter added September 27. Human review, export-copy purging and a full consent-event history remain operational limits. No automatic training. |
 | Operational data | Cloud model/candidate/evidence/sync records exist; quality counters are device-local. | Stable run IDs, prompt/pipeline versions and idempotent new detail syncs added September 27. Central error visibility and beta aggregation remain; old duplicate rows are not distinct inference counts. |
-| Cost protection | Server limiter SQL deployed; browser execution revoked; production limiter failure returns 503 before inference. | Production service credential, trusted proxy IP and rate-limit smoke test; provider spend cap; scheduled counter cleanup. |
+| Cost protection | Server limiter SQL deployed; browser execution revoked; production limiter failure returns 503 before inference. | Production service credential, trusted proxy IP and rate-limit smoke test; deploy the free_scan_usage migration before the server credit gate; provider spend cap; scheduled counter cleanup. |
 | Auth | Live signup and no-email auth enabled; anonymous owner/isolation test passed. | Email/password, delivery, recovery and cross-device login require test credentials. CI public configuration was missing on baseline. |
 | Pricing | Possible seller/shop/occasional-user offers are hypotheses. | Validate value; paid-credit concurrency and billing gates are separate from an unpaid beta. |
 
@@ -61,3 +61,13 @@ A parts seller can be one cohort. The [seller runbook](PILOT_RUNBOOK.md) propose
 - Keep public launch blocked by data loss, cross-account access, missing cost protection, or inability to observe failures. Keep training disabled until consent, review and deletion/lineage tests pass.
 
 The target is a useful and trustworthy V1, with evidence determining V2.
+
+## Server scan allowance
+
+The server credit gate defaults to enforcement, including when the flag is absent. `DEEPSPEC_ENFORCE_SCAN_CREDITS=false` bypasses it only outside production. Apply `20261007185329_free_scan_usage.sql` after the billing entitlement migrations and before deploying this gate; a missing RPC fails closed with retryable 503 before identification.
+
+Registered accounts with a confirmed email or phone receive five lifetime free identification attempts, tracked separately from billing. Anonymous/unconfirmed accounts do not receive free credits. Valid input and provider configuration are checked before reservation. Once reserved, a free attempt remains consumed even if the provider fails; this bounds repeated failed-provider spend. Clearing browser storage, switching devices, and paid billing updates cannot reset this counter.
+
+Active paid entitlements use atomic pending holds: successful identification charges `scans_used` once, an explicit provider failure releases its hold, and exhausted paid access does not fall through to free credits. Holds count across webhook period updates because existing billing accounting does not reset usage on those updates. Webhook writes omit consumption counters. Lost finalizations keep a hold, rather than automatically authorizing additional spend. Operators must verify the provider outcome before manually finalizing an abandoned hold through the service-only `finalize_scan_credit` RPC; do not automatically expire unknown outcomes.
+
+Regression SQL is in `supabase/tests/free_scan_usage.sql`. Billing, identify-handler, and account display tests cover the service gate and development bypass. Local SQL validation is not evidence of deployed enforcement; deployment and a live credit-gate smoke test remain release requirements. Per-account limits complement the existing rate limiter and a provider-level spend cap; they are not a global spend cap.

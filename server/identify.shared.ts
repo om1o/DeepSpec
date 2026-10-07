@@ -97,6 +97,18 @@ const OLLAMA_IDENTIFY_PROMPT = [
   `scanCategory: ${SCAN_CATEGORIES.join(", ")}.`,
 ].join(" ");
 
+export function validateIdentifyRequest(body: unknown, env?: Record<string, string | undefined>): IdentifyResponse | null {
+  const parsed = parseIdentifyRequest(body);
+  if ("error" in parsed) return parsed.error;
+  const configured = !env || (isHfIdentifyForced(env)
+    ? Boolean(getHfToken(env))
+    : Boolean(env.GEMINI_API_KEY) || isHfIdentifyFallbackConfigured(env) || isGroqIdentifyFallbackConfigured(env) || isOllamaIdentifyFallbackEnabled(env));
+  if (!configured) {
+    return errorResponse(500, "not_configured", "Deep Spec AI is not configured. Add GEMINI_API_KEY on the server.");
+  }
+  return null;
+}
+
 export async function createIdentifyResponse(body: unknown, env: Record<string, string | undefined>): Promise<IdentifyResponse> {
   return observeIdentification(() => identifyResponse(body, env), env);
 }

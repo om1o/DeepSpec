@@ -1,4 +1,4 @@
-import { createIdentifyResponse } from "../server/identify.shared";
+import { createIdentifyResponse, validateIdentifyRequest } from "../server/identify.shared";
 import { consumeReservedScanCredit, reserveScanCredit } from "../server/billing.shared";
 import { enforceRateLimit } from "../server/rateLimit.shared";
 import { requireSession } from "../server/requireSession.shared";
@@ -43,6 +43,11 @@ export default async function handler(request: VercelRequest, response: VercelRe
     return;
   }
 
+  const invalid = validateIdentifyRequest(request.body, process.env);
+  if (invalid) {
+    response.status(invalid.status).json(invalid.body);
+    return;
+  }
   const reservation = await reserveScanCredit(headers, process.env);
   if (!reservation.ok) {
     response.status(reservation.error.status).json(reservation.error.body);
@@ -50,8 +55,6 @@ export default async function handler(request: VercelRequest, response: VercelRe
   }
 
   const result = await createIdentifyResponse(request.body, process.env);
-  if (result.status === 200) {
-    await consumeReservedScanCredit(reservation, process.env);
-  }
+  await consumeReservedScanCredit(reservation, process.env, result.status === 200);
   response.status(result.status).json(result.body);
 }

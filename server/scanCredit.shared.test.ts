@@ -1,125 +1,76 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { consumeReservedScanCredit, reserveScanCredit } from "./billing.shared";
 
-const supabaseMock = vi.hoisted(() => ({
-  createClient: vi.fn(),
-}));
-
+const supabaseMock = vi.hoisted(() => ({ createClient: vi.fn() }));
 vi.mock("@supabase/supabase-js", () => supabaseMock);
-
-const ENV = {
-  DEEPSPEC_ENFORCE_SCAN_CREDITS: "true",
-  SUPABASE_SERVICE_ROLE_KEY: "service-role",
-  SUPABASE_URL: "https://example.supabase.co",
-};
+const ENV = { DEEPSPEC_ENFORCE_SCAN_CREDITS: "true", SUPABASE_SERVICE_ROLE_KEY: "service-role", SUPABASE_URL: "https://example.supabase.co" };
 const HEADERS = { authorization: "Bearer token-1" };
 
-type EntitlementRow = { user_id: string; status: string; scan_allowance: number; scans_used: number } & Record<string, unknown>;
-
-/**
- * An in-memory billing_entitlements table. update() applies whatever filters were chained on when
- * it is awaited (or .select()ed), the way PostgREST does, so a compare-and-set on scans_used only
- * lands when the stored value still matches.
- */
-function createEntitlementStore(initial: Partial<EntitlementRow> = {}) {
-  const row: EntitlementRow = {
-    user_id: "user-1",
-    status: "active",
-    scan_allowance: 5,
-    scans_used: 0,
-    ...initial,
-  };
-
-  const client = {
-    auth: {
-      getUser: vi.fn(async () => ({ data: { user: { id: "user-1" } }, error: null })),
-    },
-    from: vi.fn(() => ({
-      select: () => ({
-        eq: (_column: string, userId: string) => ({
-          maybeSingle: async () => ({ data: userId === row.user_id ? { ...row } : null, error: null }),
-        }),
-      }),
-      update: (values: Record<string, unknown>) => {
-        const filters: Array<[string, unknown]> = [];
-        const apply = () => {
-          const matches = filters.every(([column, value]) => row[column] === value);
-          if (matches) {
-            Object.assign(row, values);
-          }
-          return matches ? [{ ...row }] : [];
-        };
-        const query = {
-          eq: (column: string, value: unknown) => {
-            filters.push([column, value]);
-            return query;
-          },
-          select: async () => ({ data: apply(), error: null }),
-          then: (resolve: (value: { error: null }) => unknown, reject?: (reason: unknown) => unknown) => {
-            apply();
-            return Promise.resolve({ error: null }).then(resolve, reject);
-          },
-        };
-        return query;
-      },
-    })),
-  };
-
-  supabaseMock.createClient.mockReturnValue(client);
-  return row;
+function setup(result: unknown = { ok: true, reservation_id: null }) {
+  const rpc = vi.fn(async () => ({ data: result, error: null as unknown }));
+  const getUser = vi.fn(async () => ({ data: { user: { id: "user-1", is_anonymous: false, email_confirmed_at: "2026-10-01" } as Record<string, unknown> | null }, error: null }));
+  supabaseMock.createClient.mockReturnValue({ auth: { getUser }, rpc });
+  return { rpc, getUser };
 }
 
-describe("scan credit accounting", () => {
-  afterEach(() => {
-    supabaseMock.createClient.mockReset();
+describe("server scan credit gate", () => {
+  afterEach(() => supabaseMock.createClient.mockReset());
+
+  it("passes only the server-verified account to the atomic reservation", async () => {
+    const { rpc } = setup();
+    await expect(reserveScanCredit(HEADERS, ENV)).resolves.toEqual({ ok: true, enforced: true, userId: "user-1", reservationId: null });
+    expect(rpc).toHaveBeenCalledWith("reserve_scan_credit", { p_user_id: "user-1", p_free_eligible: true });
   });
 
-  it("counts every scan when two finish at the same time", async () => {
-    const row = createEntitlementStore({ scans_used: 0 });
-
-    // Both scans were reserved while the counter read 0 — each then spends 25-45s in the AI call.
-    const first = await reserveScanCredit(HEADERS, ENV);
-    const second = await reserveScanCredit(HEADERS, ENV);
-    await Promise.all([consumeReservedScanCredit(first, ENV), consumeReservedScanCredit(second, ENV)]);
-
-    expect(row.scans_used).toBe(2);
+  it.each(["anonymous", "unconfirmed"])("does not grant a fresh free allowance to an %s account", async (kind) => {
+    const { getUser, rpc } = setup({ ok: false });
+    getUser.mockResolvedValue({ data: { user: { id: "user-1", is_anonymous: kind === "anonymous" } }, error: null });
+    await expect(reserveScanCredit(HEADERS, ENV)).resolves.toMatchObject({ ok: false, error: { status: 402 } });
+    expect(rpc).toHaveBeenCalledWith("reserve_scan_credit", { p_user_id: "user-1", p_free_eligible: false });
   });
 
-  it("counts a scan that finishes after another device already used a credit", async () => {
-    const row = createEntitlementStore({ scans_used: 3 });
-
-    const reservation = await reserveScanCredit(HEADERS, ENV);
-    row.scans_used = 4; // another device's scan completed while this one was in flight
-    await consumeReservedScanCredit(reservation, ENV);
-
-    expect(row.scans_used).toBe(5);
+  it("returns the limit response when the database rejects the sixth scan", async () => {
+    setup({ ok: false });
+    await expect(reserveScanCredit(HEADERS, ENV)).resolves.toMatchObject({ ok: false, error: { status: 402, body: { error: { code: "scan_limit_reached" } } } });
   });
 
-  it("still counts a single uncontended scan once", async () => {
-    const row = createEntitlementStore({ scans_used: 1 });
-
+  it("finalizes successful paid scans and releases failed holds", async () => {
+    const { rpc } = setup({ ok: true, reservation_id: "hold-1" });
     const reservation = await reserveScanCredit(HEADERS, ENV);
     await consumeReservedScanCredit(reservation, ENV);
-
-    expect(row.scans_used).toBe(2);
+    expect(rpc).toHaveBeenLastCalledWith("finalize_scan_credit", { p_user_id: "user-1", p_reservation_id: "hold-1", p_succeeded: true });
+    await consumeReservedScanCredit(reservation, ENV, false);
+    expect(rpc).toHaveBeenLastCalledWith("finalize_scan_credit", { p_user_id: "user-1", p_reservation_id: "hold-1", p_succeeded: false });
   });
 
-  it("does nothing when credit enforcement is off", async () => {
-    const row = createEntitlementStore({ scans_used: 1 });
-
-    const reservation = await reserveScanCredit(HEADERS, {});
-    await consumeReservedScanCredit(reservation, {});
-
-    expect(reservation).toEqual({ enforced: false, ok: true });
-    expect(row.scans_used).toBe(1);
+  it("does not finalize or refund free provider attempts", async () => {
+    const { rpc } = setup();
+    const reservation = await reserveScanCredit(HEADERS, ENV);
+    await consumeReservedScanCredit(reservation, ENV, false);
+    expect(rpc).toHaveBeenCalledTimes(1);
   });
 
-  it("refuses a scan once the allowance is used up", async () => {
-    createEntitlementStore({ scan_allowance: 5, scans_used: 5 });
+  it("bypasses enforcement only when explicitly disabled in development", async () => {
+    await expect(reserveScanCredit({}, { DEEPSPEC_ENFORCE_SCAN_CREDITS: "false", NODE_ENV: "development" })).resolves.toEqual({ enforced: false, ok: true });
+    expect(supabaseMock.createClient).not.toHaveBeenCalled();
+  });
 
-    await expect(reserveScanCredit(HEADERS, ENV)).resolves.toMatchObject({
-      ok: false,
-      error: { status: 402, body: { error: { code: "scan_limit_reached" } } },
-    });
+  it.each([{ NODE_ENV: "production" }, { VERCEL_ENV: "production" }, {}])("defaults to enforcement and fails closed without configuration: %j", async (production) => {
+    const env = Object.keys(production).length ? { ...production, DEEPSPEC_ENFORCE_SCAN_CREDITS: "false" } : {};
+    await expect(reserveScanCredit(HEADERS, env)).resolves.toMatchObject({ ok: false, error: { status: 500 } });
+  });
+
+  it("does not call the database without a valid session", async () => {
+    const { rpc, getUser } = setup();
+    await expect(reserveScanCredit({}, ENV)).resolves.toMatchObject({ ok: false, error: { status: 401 } });
+    getUser.mockResolvedValue({ data: { user: null }, error: null });
+    await expect(reserveScanCredit(HEADERS, ENV)).resolves.toMatchObject({ ok: false, error: { status: 401 } });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the RPC is missing or returns a database error", async () => {
+    const { rpc } = setup();
+    rpc.mockResolvedValue({ data: null, error: { code: "PGRST202" } });
+    await expect(reserveScanCredit(HEADERS, ENV)).resolves.toMatchObject({ ok: false, error: { status: 503 } });
   });
 });

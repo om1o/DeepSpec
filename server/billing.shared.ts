@@ -38,7 +38,7 @@ type ScanCreditReservation =
   | {
       enforced: true;
       ok: true;
-      scansUsed: number;
+      reservationId: string | null;
       userId: string;
     }
   | {
@@ -66,12 +66,16 @@ type BillingSupabaseClient = {
       data: {
         user?: {
           id: string;
+          is_anonymous?: boolean;
+          email_confirmed_at?: string;
+          phone_confirmed_at?: string;
         } | null;
       };
       error: unknown;
     }>;
   };
   from: (table: string) => BillingSupabaseTable;
+  rpc: (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: unknown }>;
 };
 type BillingSupabaseOptions = {
   auth: {
@@ -104,7 +108,6 @@ const createBillingClient = createClient as unknown as (
   options: BillingSupabaseOptions,
 ) => BillingSupabaseClient;
 
-const SCAN_CREDIT_WRITE_ATTEMPTS = 4;
 const STRIPE_CHECKOUT_URL = "https://api.stripe.com/v1/checkout/sessions";
 const STRIPE_PORTAL_URL = "https://api.stripe.com/v1/billing_portal/sessions";
 const STRIPE_SIGNATURE_TOLERANCE_SECONDS = 300;
@@ -444,15 +447,18 @@ export async function createAccountEntitlementResponse(
     return entitlementErrorResponse(502, "entitlement_unavailable", "DeepSpec could not read server entitlement state.");
   }
 
-  if (!isRecord(data) || !isPlanId(String(data.plan_id ?? ""))) {
+  if (!isRecord(data) || data.status !== "active" || !isPlanId(String(data.plan_id ?? ""))) {
+    const { data: freeUsage, error: freeError } = await supabase
+      .from("free_scan_usage").select("scans_used").eq("user_id", userData.user.id).maybeSingle();
+    if (freeError) return entitlementErrorResponse(503, "entitlement_unavailable", "DeepSpec could not read free scan usage.");
     return {
       status: 200,
-      body: {
-        entitlement: {
-          status: "free",
-          verifiedAt: new Date().toISOString(),
-        },
-      },
+      body: { entitlement: {
+        status: "free",
+        scanAllowance: 5,
+        scansUsed: isRecord(freeUsage) ? Number(freeUsage.scans_used ?? 0) : 0,
+        verifiedAt: new Date().toISOString(),
+      } },
     };
   }
 
@@ -479,7 +485,7 @@ export async function reserveScanCredit(
   headers: Record<string, string | string[] | undefined>,
   env: BillingEnv,
 ): Promise<ScanCreditReservation> {
-  if (env.DEEPSPEC_ENFORCE_SCAN_CREDITS !== "true") {
+  if (env.DEEPSPEC_ENFORCE_SCAN_CREDITS === "false" && env.NODE_ENV !== "production" && env.VERCEL_ENV !== "production") {
     return { enforced: false, ok: true };
   }
 
@@ -491,7 +497,7 @@ export async function reserveScanCredit(
 
   const token = parseBearerToken(headers.authorization ?? headers.Authorization);
   if (!token) {
-    return { ok: false, error: errorResponse(401, "missing_session", "Sign in before using paid DeepSpec scans.") };
+    return { ok: false, error: errorResponse(401, "missing_session", "Sign in before using DeepSpec scans.") };
   }
 
   const supabase = createBillingClient(supabaseUrl, serviceRoleKey, {
@@ -505,81 +511,41 @@ export async function reserveScanCredit(
     return { ok: false, error: errorResponse(401, "invalid_session", "DeepSpec could not verify this account session.") };
   }
 
-  const { data, error } = await supabase
-    .from("billing_entitlements")
-    .select("status,scan_allowance,scans_used")
-    .eq("user_id", userData.user.id)
-    .maybeSingle();
-
-  if (error) {
-    return { ok: false, error: errorResponse(502, "entitlement_unavailable", "DeepSpec could not read scan credit state.") };
+  const user = userData.user;
+  const { data, error } = await supabase.rpc("reserve_scan_credit", {
+    p_user_id: user.id,
+    p_free_eligible: user.is_anonymous !== true && Boolean(user.email_confirmed_at || user.phone_confirmed_at),
+  });
+  if (error || !isRecord(data)) {
+    return { ok: false, error: errorResponse(503, "entitlement_unavailable", "DeepSpec could not reserve a scan credit. Try again later.") };
   }
-
-  const allowance = Number(isRecord(data) ? data.scan_allowance : 0);
-  const scansUsed = Number(isRecord(data) ? data.scans_used : 0);
-  const status = isRecord(data) ? data.status : "";
-  if (status !== "active" || !Number.isFinite(allowance) || !Number.isFinite(scansUsed) || scansUsed >= allowance) {
-    return { ok: false, error: errorResponse(402, "scan_limit_reached", "No verified paid scan credits are available.") };
+  if (data.ok !== true) {
+    return { ok: false, error: errorResponse(402, "scan_limit_reached", "No scan credits are available. Verify your account for five free scans or check your paid allowance.") };
   }
-
   return {
     enforced: true,
     ok: true,
-    scansUsed,
-    userId: userData.user.id,
+    reservationId: typeof data.reservation_id === "string" ? data.reservation_id : null,
+    userId: user.id,
   };
 }
 
-export async function consumeReservedScanCredit(reservation: ScanCreditReservation, env: BillingEnv) {
-  if (!reservation.ok || !reservation.enforced) {
-    return;
-  }
-
+// Free provider attempts are charged at reservation. Paid holds are charged only on success.
+// A lost finalization keeps the paid hold in place, failing closed instead of overspending.
+export async function consumeReservedScanCredit(reservation: ScanCreditReservation, env: BillingEnv, succeeded = true) {
+  if (!reservation.ok || !reservation.enforced || !reservation.reservationId) return;
   const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
   const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
-  if (!supabaseUrl || !serviceRoleKey) {
-    return;
-  }
-
+  if (!supabaseUrl || !serviceRoleKey) return;
   const supabase = createBillingClient(supabaseUrl, serviceRoleKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
+    auth: { autoRefreshToken: false, persistSession: false },
   });
-  // reservation.scansUsed was read before a 25-45s AI call, so writing it back plus one would erase
-  // every scan that finished in the meantime (two overlapping scans billed as one). Only write when
-  // the stored count still matches what we last saw; otherwise re-read it and try again.
-  let expected = reservation.scansUsed;
-  for (let attempt = 0; attempt < SCAN_CREDIT_WRITE_ATTEMPTS; attempt += 1) {
-    const { data, error } = await supabase
-      .from("billing_entitlements")
-      .update({
-        scans_used: expected + 1,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("user_id", reservation.userId)
-      .eq("scans_used", expected)
-      .select("scans_used");
-    if (error) {
-      console.warn("[DeepSpec] Could not record a consumed scan credit:", error);
-      return;
-    }
-    if (Array.isArray(data) && data.length > 0) {
-      return;
-    }
-
-    const { data: current, error: readError } = await supabase
-      .from("billing_entitlements")
-      .select("scans_used")
-      .eq("user_id", reservation.userId)
-      .maybeSingle();
-    const latest = isRecord(current) ? Number(current.scans_used) : Number.NaN;
-    if (readError || !Number.isFinite(latest)) {
-      return;
-    }
-    expected = latest;
-  }
+  const { error } = await supabase.rpc("finalize_scan_credit", {
+    p_user_id: reservation.userId,
+    p_reservation_id: reservation.reservationId,
+    p_succeeded: succeeded,
+  });
+  if (error) console.warn("[DeepSpec] Could not finalize a paid scan credit.");
 }
 
 export function listConfiguredPlans(env: BillingEnv) {
@@ -670,7 +636,6 @@ async function writeCheckoutEntitlement(
   }
 
   const currentAllowance = Math.max(0, Number(existing.row?.scan_allowance ?? 0));
-  const currentScansUsed = Math.max(0, Number(existing.row?.scans_used ?? 0));
   const scanAllowance = plan.billingMode === "payment" && Number.isFinite(currentAllowance)
     ? currentAllowance + plan.scanAllowance
     : plan.scanAllowance;
@@ -685,7 +650,6 @@ async function writeCheckoutEntitlement(
       provider_customer_id: customerId,
       provider_subscription_id: getStringValue(session.subscription) || null,
       scan_allowance: scanAllowance,
-      scans_used: Number.isFinite(currentScansUsed) ? currentScansUsed : 0,
       status: getCheckoutStatus(session),
       stripe_checkout_session_id: getStringValue(session.id) || null,
       stripe_customer_id: customerId,
@@ -734,7 +698,6 @@ async function writePolarOrderEntitlement(
   }
 
   const currentAllowance = Math.max(0, Number(existing.row?.scan_allowance ?? 0));
-  const currentScansUsed = Math.max(0, Number(existing.row?.scans_used ?? 0));
   const scanAllowance = plan.billingMode === "payment" && Number.isFinite(currentAllowance)
     ? currentAllowance + plan.scanAllowance
     : plan.scanAllowance;
@@ -750,7 +713,6 @@ async function writePolarOrderEntitlement(
       provider_customer_id: customerId,
       provider_subscription_id: subscriptionId || null,
       scan_allowance: scanAllowance,
-      scans_used: Number.isFinite(currentScansUsed) ? currentScansUsed : 0,
       status: "active",
       updated_at: new Date().toISOString(),
       user_id: userId,
@@ -796,7 +758,6 @@ async function updateSubscriptionEntitlement(
       return existing;
     }
 
-    const currentScansUsed = Math.max(0, Number(existing.row?.scans_used ?? 0));
     const { error } = await supabase
       .from("billing_entitlements")
       .upsert({
@@ -806,7 +767,6 @@ async function updateSubscriptionEntitlement(
         provider_customer_id: customerId,
         provider_subscription_id: subscriptionId || undefined,
         scan_allowance: plan.scanAllowance,
-        scans_used: Number.isFinite(currentScansUsed) ? currentScansUsed : 0,
         stripe_customer_id: customerId,
         user_id: userId,
       }, { onConflict: "user_id" });
@@ -859,7 +819,6 @@ async function updatePolarSubscriptionEntitlement(
       return existing;
     }
 
-    const currentScansUsed = Math.max(0, Number(existing.row?.scans_used ?? 0));
     const { error } = await supabase
       .from("billing_entitlements")
       .upsert({
@@ -869,7 +828,6 @@ async function updatePolarSubscriptionEntitlement(
         provider_customer_id: customerId,
         provider_subscription_id: subscriptionId || undefined,
         scan_allowance: plan.scanAllowance,
-        scans_used: Number.isFinite(currentScansUsed) ? currentScansUsed : 0,
         user_id: userId,
       }, { onConflict: "user_id" });
 

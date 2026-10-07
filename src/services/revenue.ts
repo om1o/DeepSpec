@@ -127,7 +127,9 @@ export function getEntitlementState(scansUsed: number, serverEntitlement?: Serve
   return {
     planName: "Free preview",
     scanAllowance: 5,
-    scansUsed,
+    scansUsed: serverEntitlement?.status === "free" && typeof serverEntitlement.scansUsed === "number" && Number.isFinite(serverEntitlement.scansUsed)
+      ? Math.max(0, Math.floor(serverEntitlement.scansUsed))
+      : scansUsed,
     status: "free",
   };
 }

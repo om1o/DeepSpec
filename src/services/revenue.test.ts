@@ -59,6 +59,12 @@ describe("revenue", () => {
     expect(hasScanEntitlement(entitlement)).toBe(false);
   });
 
+  it("uses server free usage rather than another device's local count", () => {
+    const entitlement = getEntitlementState(0, { status: "free", scanAllowance: 5, scansUsed: 5, verifiedAt: "2026-10-07" });
+    expect(hasScanEntitlement(entitlement)).toBe(false);
+    expect(entitlement.scansUsed).toBe(5);
+  });
+
   it("finds configured paid plans by stable id", () => {
     expect(getRevenuePlan("plus_monthly")).toMatchObject({
       name: "DeepSpec Plus",

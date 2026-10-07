@@ -483,6 +483,16 @@ describe("billing shared", () => {
     });
   });
 
+  it("reports lifetime free usage from the server for a second device", async () => {
+    supabaseMock.createClient.mockReturnValue({
+      auth: { getUser: vi.fn(async () => ({ data: { user: { id: "user-1" } }, error: null })) },
+      from: vi.fn((table: string) => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: table === "free_scan_usage" ? { scans_used: 5 } : null, error: null }) }) }) })),
+    });
+    await expect(createAccountEntitlementResponse({ authorization: "Bearer token" }, {
+      SUPABASE_URL: "https://example.supabase.co", SUPABASE_SERVICE_ROLE_KEY: "service-role",
+    })).resolves.toMatchObject({ status: 200, body: { entitlement: { status: "free", scanAllowance: 5, scansUsed: 5 } } });
+  });
+
   it("fails closed when Stripe webhook verification is not configured", async () => {
     await expect(createWebhookResponse("{}", {}, {})).resolves.toMatchObject({
       status: 500,
@@ -572,7 +582,6 @@ describe("billing shared", () => {
     expect(table.upsert).toHaveBeenCalledWith(expect.objectContaining({
       plan_id: "plus_monthly",
       scan_allowance: 100,
-      scans_used: 4,
       status: "active",
       stripe_checkout_session_id: "cs_123",
       stripe_customer_id: "cus_123",
@@ -681,7 +690,6 @@ describe("billing shared", () => {
       provider_customer_id: "polar-customer-1",
       provider_subscription_id: null,
       scan_allowance: 25,
-      scans_used: 2,
       status: "active",
       user_id: "user-1",
     }), { onConflict: "user_id" });
@@ -752,7 +760,6 @@ describe("billing shared", () => {
     expect(table.upsert).toHaveBeenCalledWith(expect.objectContaining({
       plan_id: "scan_pack",
       scan_allowance: 25,
-      scans_used: 2,
       status: "active",
       user_id: "user-1",
     }), { onConflict: "user_id" });
@@ -891,7 +898,10 @@ function createBillingTableMock({ existingRow = null }: { existingRow?: Record<s
   const maybeSingle = vi.fn(async () => ({ data: existingRow, error: null }));
   const selectEq = vi.fn(() => ({ maybeSingle }));
   const select = vi.fn(() => ({ eq: selectEq }));
-  const upsert = vi.fn(async () => ({ error: null }));
+  const upsert = vi.fn(async (values: Record<string, unknown>) => {
+    expect(values).not.toHaveProperty("scans_used");
+    return { error: null };
+  });
   const updateEq = vi.fn(async () => ({ error: null }));
   const update = vi.fn(() => ({ eq: updateEq }));
   const from = vi.fn(() => ({

@@ -60,8 +60,15 @@ export default defineConfig(async ({ mode }) => {
             }
 
             const body = await readJsonBody(request).catch(() => null);
-            const { createIdentifyResponse } = (await server.ssrLoadModule("/server/identify.shared.ts")) as typeof import("./server/identify.shared");
+            const { createIdentifyResponse, validateIdentifyRequest } = (await server.ssrLoadModule("/server/identify.shared.ts")) as typeof import("./server/identify.shared");
             const { consumeReservedScanCredit, reserveScanCredit } = (await server.ssrLoadModule("/server/billing.shared.ts")) as typeof import("./server/billing.shared");
+            const invalid = validateIdentifyRequest(body, serverEnv);
+            if (invalid) {
+              response.statusCode = invalid.status;
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify(invalid.body));
+              return;
+            }
             const reservation = await reserveScanCredit(request.headers, serverEnv);
             if (!reservation.ok) {
               response.statusCode = reservation.error.status;
@@ -70,9 +77,7 @@ export default defineConfig(async ({ mode }) => {
               return;
             }
             const result = await createIdentifyResponse(body, serverEnv);
-            if (result.status === 200) {
-              await consumeReservedScanCredit(reservation, serverEnv);
-            }
+            await consumeReservedScanCredit(reservation, serverEnv, result.status === 200);
             response.statusCode = result.status;
             response.setHeader("Content-Type", "application/json");
             response.end(JSON.stringify(result.body));
