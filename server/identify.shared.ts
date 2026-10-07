@@ -126,7 +126,7 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
     const response = await withBackupRateLimitRetry(env, () =>
       createGroqIdentifyResponse(parsed, ocr, sourceContext, env, "primary"),
     );
-    if (response.status === 200) {
+    if (response.status === 200 || getIdentifyErrorCode(response) === "invalid_response") {
       return response;
     }
 
@@ -152,7 +152,7 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
 
     return hasOllamaFallback
       ? createOllamaIdentifyResponse(parsed, ocr, env)
-      : errorResponse(500, "not_configured", "Deep Spec AI is not configured. Add GEMINI_API_KEY on the server.");
+      : lastRetryableError ?? errorResponse(500, "not_configured", "Deep Spec AI is not configured. Add GEMINI_API_KEY on the server.");
   }
 
   const models = getIdentifyModels(env);

@@ -982,6 +982,79 @@ describe("createIdentifyResponse", () => {
     expect(fetchSpy.mock.calls[1][0]).toBe("https://router.huggingface.co/v1/chat/completions");
   });
 
+  describe.each([
+    ["without Gemini", undefined],
+    ["with Gemini", "test-key"],
+  ])("Groq model-quality failures %s", (_label, geminiKey) => {
+    it.each([
+      ["malformed JSON", "not JSON"],
+      ["empty output", ""],
+    ])("preserves invalid_response for %s without retry or fallback", async (_kind, content) => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      await expect(createIdentifyResponse({ imageBase64 }, {
+        DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK: "true",
+        GROQ_API_KEY: "groq-test",
+        GEMINI_API_KEY: geminiKey,
+        DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true",
+        HF_TOKEN: "hf-test",
+        DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK: "true",
+        DEEPSPEC_BACKUP_RETRY_BACKOFF_MS: "0",
+      })).resolves.toMatchObject({
+        status: 502,
+        body: { error: { code: "invalid_response", message: "Groq returned JSON that Deep Spec could not read." } },
+      });
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(fetchSpy.mock.calls[0][0]).toBe("https://api.groq.com/openai/v1/chat/completions");
+    });
+  });
+
+  it.each([
+    [429, "rate_limited"],
+    [503, "provider_error"],
+  ])("preserves Groq's %s error when Gemini and backups are unavailable", async (status, code) => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: "Groq unavailable" } }), {
+        status,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(createIdentifyResponse({ imageBase64 }, {
+      DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK: "true",
+      GROQ_API_KEY: "groq-test",
+      DEEPSPEC_BACKUP_RATE_LIMIT_RETRIES: "0",
+    })).resolves.toMatchObject({ status, body: { error: { code } } });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a Groq rate limit and succeeds without Gemini configuration", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "busy" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+
+    await expect(createIdentifyResponse({ imageBase64 }, {
+      DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK: "true",
+      GROQ_API_KEY: "groq-test",
+      DEEPSPEC_BACKUP_RATE_LIMIT_RETRIES: "1",
+      DEEPSPEC_BACKUP_RETRY_BACKOFF_MS: "0",
+    })).resolves.toMatchObject({ status: 200, body: { modelRun: { provider: "groq" } } });
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy.mock.calls.every(([url]) => url === "https://api.groq.com/openai/v1/chat/completions")).toBe(true);
+  });
+
   it("uses Groq before Gemini when Groq is explicitly enabled", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
