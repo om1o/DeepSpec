@@ -1,4 +1,5 @@
 node_modules/
+.claude/worktrees/
 dist/
 dev-dist/
 dist-ssr/
@@ -8,6 +9,8 @@ supabase/.temp/
 .deepspec-eval/
 .playwright-mcp/
 artifacts/qa/
+artifacts/pilot/
+artifacts/release-gates/
 datasets/raw/
 datasets/derived/
 

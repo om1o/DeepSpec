@@ -1,4 +1,5 @@
 import type { ScanQualityFailureReason } from "../types";
+import { accountStorageKey } from "../lib/accountScope";
 
 export type { ScanQualityFailureReason };
 
@@ -33,7 +34,7 @@ export function getScanQualityMetrics(): ScanQualityMetrics {
   }
 
   try {
-    const raw = localStorage.getItem(SCAN_QUALITY_METRICS_KEY);
+    const raw = localStorage.getItem(accountStorageKey(SCAN_QUALITY_METRICS_KEY));
     if (!raw) {
       return createEmptyMetrics();
     }
@@ -155,7 +156,7 @@ function updateMetrics(update: (metrics: ScanQualityMetrics) => ScanQualityMetri
       ...update(getScanQualityMetrics()),
       updatedAt: new Date().toISOString(),
     };
-    localStorage.setItem(SCAN_QUALITY_METRICS_KEY, JSON.stringify(next));
+    localStorage.setItem(accountStorageKey(SCAN_QUALITY_METRICS_KEY), JSON.stringify(next));
   } catch {
     // Metrics should never block scanning.
   }

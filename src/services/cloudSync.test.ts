@@ -3,6 +3,7 @@ import type { Lookup } from "../types";
 
 const mocks = vi.hoisted(() => ({
   createClient: vi.fn(),
+  syncDetails: vi.fn(),
 }));
 
 vi.mock("@supabase/supabase-js", () => ({
@@ -10,15 +11,377 @@ vi.mock("@supabase/supabase-js", () => ({
 }));
 
 describe("cloudSync", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    localStorage.clear();
     vi.resetModules();
+    const { setActiveAccount } = await import("../lib/accountScope");
+    setActiveAccount("user-1");
     vi.stubEnv("VITE_SUPABASE_URL", "");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "");
     mocks.createClient.mockReset();
+    mocks.syncDetails.mockReset().mockResolvedValue({ data: true, error: null });
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  it.each(["malformed", "mixed", "transient"])("does not upload an older screen snapshot when device history is %s", async (mode) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const { accountStorageKey } = await import("../lib/accountScope");
+    const { LOOKUPS_STORAGE_KEY } = await import("./storage");
+    const { syncLookupToCloud } = await import("./cloudSync");
+    const lookup = makeLookup();
+    const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    const raw = mode === "malformed" ? "{bad json" : JSON.stringify(mode === "mixed" ? [lookup, {}] : [lookup]);
+    localStorage.setItem(key, raw);
+    const originalGetItem = Storage.prototype.getItem;
+    let failed = false;
+    const read = vi.spyOn(Storage.prototype, "getItem").mockImplementation(function (this: Storage, itemKey: string) {
+      if (mode === "transient" && itemKey === key && !failed) {
+        failed = true;
+        throw new DOMException("Storage unavailable", "SecurityError");
+      }
+      return originalGetItem.call(this, itemKey);
+    });
+    try {
+      expect(await syncLookupToCloud(lookup)).toMatchObject({ ok: false, message: expect.stringContaining("Saved scans could not be read safely") });
+      expect(mocks.createClient).not.toHaveBeenCalled();
+      expect(originalGetItem.call(localStorage, key)).toBe(raw);
+    } finally { read.mockRestore(); }
+  });
+
+  it.each(["auth", "upload", "row"])("stops later writes after a timeout during %s and holds retries until the request settles", async (stage) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    let complete!: (value: unknown) => void;
+    const pending = new Promise((resolve) => { complete = resolve; });
+    const session = { data: { session: { user: { id: "user-1" } } }, error: null };
+    const getSession = vi.fn().mockResolvedValue(session);
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    const upsert = vi.fn().mockResolvedValue({ data: { revision: 1 }, error: null });
+    const insert = vi.fn().mockResolvedValue({ error: null });
+    const from = vi.fn((table) => table === "scan_lookups" ? makeScanWriteQuery(upsert) : { upsert, insert, delete: makeDeleteQuery });
+    const stalled = stage === "auth" ? getSession : stage === "upload" ? upload : upsert;
+    stalled.mockReturnValueOnce(pending);
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails, auth: { getSession }, storage: { from: vi.fn().mockReturnValue({ upload }) }, from });
+    const { syncLookupToCloud } = await import("./cloudSync");
+    const { saveExistingLookup, getLookup, updateLookup } = await import("./storage");
+    const lookup = makeLookup();
+    saveExistingLookup(lookup);
+    vi.useFakeTimers();
+    try {
+      const saving = syncLookupToCloud(lookup);
+      await vi.waitFor(() => expect(stalled).toHaveBeenCalledOnce());
+      await vi.advanceTimersByTimeAsync(20_001);
+      expect((await saving).ok).toBe(false);
+      expect(getLookup(lookup.id)?.cloudSave?.status).toBe("failed");
+      updateLookup(lookup.id, { notes: "Newer inspection context" });
+      const retry = syncLookupToCloud(lookup);
+      await vi.advanceTimersByTimeAsync(20_001);
+      expect(await retry).toMatchObject({ ok: false, message: expect.stringContaining("still finishing") });
+      expect(stalled).toHaveBeenCalledOnce();
+      complete(stage === "auth" ? session : { data: { revision: 1 }, error: null });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(upload).toHaveBeenCalledTimes(stage === "auth" ? 0 : 1);
+      expect(upsert).toHaveBeenCalledTimes(stage === "row" ? 1 : 0);
+      expect(insert).not.toHaveBeenCalled();
+      expect(getLookup(lookup.id)?.notes).toBe("Newer inspection context");
+      expect(getLookup(lookup.id)?.cloudSave).toBeUndefined();
+
+      expect((await syncLookupToCloud(lookup)).ok).toBe(true);
+      expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ notes: "Newer inspection context" }));
+      expect(getLookup(lookup.id)?.cloudSave?.status).toBe("acknowledged");
+    } finally { complete(stage === "auth" ? session : { data: { revision: 1 }, error: null }); vi.useRealTimers(); }
+  });
+
+  it("releases a timed-out save after late rejection so a new attempt can finish", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    let complete!: (value: unknown) => void;
+    let rejectPending!: (reason: Error) => void;
+    const pending = new Promise((resolve, reject) => { complete = resolve; rejectPending = reject; });
+    const session = { data: { session: { user: { id: "user-1" } } }, error: null };
+    const getSession = vi.fn().mockResolvedValue(session).mockReturnValueOnce(pending);
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    const upsert = vi.fn().mockResolvedValue({ data: { revision: 1 }, error: null });
+    const insert = vi.fn().mockResolvedValue({ error: null });
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
+      auth: { getSession }, storage: { from: vi.fn().mockReturnValue({ upload }) },
+      from: vi.fn((table) => table === "scan_lookups" ? makeScanWriteQuery(upsert) : { upsert, insert, delete: makeDeleteQuery }),
+    });
+    const { syncLookupToCloud } = await import("./cloudSync");
+    const { saveExistingLookup, getLookup } = await import("./storage");
+    const lookup = makeLookup();
+    saveExistingLookup(lookup);
+    vi.useFakeTimers();
+    const saving = syncLookupToCloud(lookup);
+    try {
+      await vi.waitFor(() => expect(getSession).toHaveBeenCalledOnce());
+      await vi.advanceTimersByTimeAsync(20_001);
+      expect((await saving).ok).toBe(false);
+      const failedReceipt = getLookup(lookup.id)?.cloudSave;
+      expect(failedReceipt?.status).toBe("failed");
+      expect(await syncLookupToCloud(lookup)).toMatchObject({ ok: false, message: expect.stringContaining("still finishing") });
+      rejectPending(new Error("Connection closed after timeout"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(upload).not.toHaveBeenCalled();
+      expect(getLookup(lookup.id)?.cloudSave).toEqual(failedReceipt);
+      expect((await syncLookupToCloud(lookup)).ok).toBe(true);
+      expect(getSession).toHaveBeenCalledTimes(2);
+      expect(upload).toHaveBeenCalledOnce();
+      expect(getLookup(lookup.id)?.cloudSave?.status).toBe("acknowledged");
+      expect(getLookup(lookup.id)?.cloudSave?.attemptId).not.toBe(failedReceipt?.attemptId);
+    } finally {
+      complete(session);
+      await saving;
+      vi.useRealTimers();
+    }
+  });
+
+  it("isolates pending saves by owner without allowing account round-trips to bypass them", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const { getAccountScope, setActiveAccount } = await import("../lib/accountScope");
+    let complete!: (value: unknown) => void;
+    const pending = new Promise((resolve) => { complete = resolve; });
+    const upload = vi.fn().mockResolvedValue({ error: null }).mockReturnValueOnce(pending);
+    const upsert = vi.fn().mockResolvedValue({ data: { revision: 1 }, error: null });
+    const insert = vi.fn().mockResolvedValue({ error: null });
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
+      auth: { getSession: vi.fn().mockImplementation(async () => ({ data: { session: { user: { id: getAccountScope().userId } } }, error: null })) },
+      storage: { from: vi.fn().mockReturnValue({ upload }) },
+      from: vi.fn((table) => table === "scan_lookups" ? makeScanWriteQuery(upsert) : { upsert, insert, delete: makeDeleteQuery }),
+    });
+    const { syncLookupToCloud } = await import("./cloudSync");
+    const { saveExistingLookup, getLookup } = await import("./storage");
+    const lookup = makeLookup();
+    saveExistingLookup({ ...lookup, notes: "Owner A notes" });
+    const saving = syncLookupToCloud(lookup);
+    try {
+      await vi.waitFor(() => expect(upload).toHaveBeenCalledOnce());
+      const originalReceipt = getLookup(lookup.id)?.cloudSave;
+      setActiveAccount("user-2");
+      saveExistingLookup({ ...lookup, notes: "Owner B notes" });
+      expect((await syncLookupToCloud(lookup)).ok).toBe(true);
+      expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ user_id: "user-2", local_id: lookup.id, notes: "Owner B notes" }));
+      const otherReceipt = getLookup(lookup.id)?.cloudSave;
+      expect(otherReceipt?.status).toBe("acknowledged");
+
+      setActiveAccount("user-1");
+      expect(await syncLookupToCloud(lookup)).toMatchObject({ ok: false, message: expect.stringContaining("still finishing") });
+      expect(upload).toHaveBeenCalledTimes(2);
+      expect(getLookup(lookup.id)?.cloudSave).toEqual(originalReceipt);
+      complete({ error: null });
+      expect((await saving).ok).toBe(false);
+      expect(upsert).not.toHaveBeenCalledWith(expect.objectContaining({ user_id: "user-1" }));
+      expect(getLookup(lookup.id)?.cloudSave).toEqual(originalReceipt);
+      expect((await syncLookupToCloud(lookup)).ok).toBe(true);
+      expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ user_id: "user-1", local_id: lookup.id, notes: "Owner A notes" }));
+      setActiveAccount("user-2");
+      expect(getLookup(lookup.id)?.cloudSave).toEqual(otherReceipt);
+    } finally {
+      complete({ error: null });
+      await saving;
+    }
+  });
+
+  it("does not overlap two active saves of the same scan", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    let complete!: (value: unknown) => void;
+    const upload = vi.fn().mockImplementation(() => new Promise((resolve) => { complete = resolve; }));
+    const from = vi.fn();
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
+      auth: { getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }) },
+      storage: { from: vi.fn().mockReturnValue({ upload }) }, from,
+    });
+    const { syncLookupToCloud } = await import("./cloudSync");
+    const { saveExistingLookup, getLookup } = await import("./storage");
+    const lookup = makeLookup();
+    saveExistingLookup(lookup);
+    const saving = syncLookupToCloud(lookup);
+    await vi.waitFor(() => expect(upload).toHaveBeenCalledOnce());
+    const attemptId = getLookup(lookup.id)?.cloudSave?.attemptId;
+    const retry = syncLookupToCloud(lookup);
+    // A duplicate save must return immediately, without starting a second upload.
+    await expect(Promise.race([retry, new Promise((resolve) => setTimeout(() => resolve("still waiting"), 100))]))
+      .resolves.toMatchObject({ ok: false, message: expect.stringContaining("still finishing") });
+    expect(upload).toHaveBeenCalledOnce();
+    expect(getLookup(lookup.id)?.cloudSave?.attemptId).toBe(attemptId);
+    complete({ error: { message: "Upload rejected" } });
+    await saving;
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  it.each(["Failed to fetch", "Request timed out"])("does not promise an automatic retry after %s", async (message) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails, auth: { getSession: vi.fn().mockRejectedValue(new Error(message)) } });
+    const { syncLookupToCloud } = await import("./cloudSync");
+    const { saveExistingLookup, getLookup } = await import("./storage");
+    saveExistingLookup(makeLookup());
+    await expect(syncLookupToCloud(makeLookup())).resolves.toEqual({
+      ok: false,
+      message: "Cloud save was not confirmed. Reconnect and retry the save.",
+    });
+    expect(getLookup("lookup-1")?.cloudSave).toMatchObject({ status: "failed", scope: "scan" });
+  });
+
+  it("stops a batch after the account changes during its first upload", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const { setActiveAccount } = await import("../lib/accountScope");
+    const upload = vi.fn().mockImplementation(async () => { setActiveAccount("user-2"); return { error: null }; });
+    const from = vi.fn();
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
+      auth: { getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }) },
+      storage: { from: vi.fn().mockReturnValue({ upload }) }, from,
+    });
+    const { syncLookupsToCloud } = await import("./cloudSync");
+    const result = await syncLookupsToCloud([makeLookup(), { ...makeLookup(), id: "lookup-2" }]);
+    expect(result.synced).toBe(0);
+    expect(result.failed).toBe(2);
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  it.each(["signed-out", "different-owner", "round-trip"])("blocks account changes before upload: %s", async (mode) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const { setActiveAccount } = await import("../lib/accountScope");
+    const upload = vi.fn();
+    const signInAnonymously = vi.fn();
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
+      auth: { getSession: vi.fn().mockImplementation(async () => {
+        if (mode === "round-trip") { setActiveAccount("other"); setActiveAccount("user-1"); }
+        return { data: { session: mode === "signed-out" ? null : { user: { id: mode === "different-owner" ? "other" : "user-1" } } }, error: null };
+      }), signInAnonymously },
+      storage: { from: vi.fn().mockReturnValue({ upload }) }, from: vi.fn(),
+    });
+    const { syncLookupToCloud } = await import("./cloudSync");
+    expect((await syncLookupToCloud(makeLookup())).ok).toBe(false);
+    expect(upload).not.toHaveBeenCalled();
+    expect(signInAnonymously).not.toHaveBeenCalled();
+  });
+
+  it.each(["updated", "missing", "migration"])("saves a cloud-only inspection without reuploading its image: %s", async (outcome) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const maybeSingle = vi.fn().mockResolvedValue({
+      data: outcome === "updated" ? { revision: 2 } : null,
+      error: outcome === "migration" ? { message: "column inspection_json does not exist" } : null,
+    });
+    const select = vi.fn().mockReturnValue({ maybeSingle });
+    const eq = vi.fn();
+    eq.mockReturnValue({ eq, select });
+    const update = vi.fn().mockReturnValue({ eq });
+    const storageFrom = vi.fn();
+    const from = vi.fn().mockReturnValue({ update });
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
+      },
+      from,
+      storage: { from: storageFrom },
+    });
+    const lookup = makeLookup();
+    lookup.cloudRevision = 1;
+    lookup.frame.imageBase64 = "https://example.supabase.co/storage/v1/object/sign/scan-images/scan.jpg?token=example";
+    lookup.inspection = {
+      confirmedPartName: "Alternator", partNumber: "ALT-42", identityEvidence: "Read stamped number",
+      visibleCondition: "no_visible_damage", visibleNotes: "Housing intact",
+      functionalStatus: "not_tested", functionalNotes: "", inspectorName: "Sam",
+      inspectedAt: "2026-09-20T12:00:00.000Z",
+    };
+    const { saveExistingLookup, getLookup } = await import("./storage");
+    saveExistingLookup(lookup);
+    const { syncLookupToCloud } = await import("./cloudSync");
+    const result = await syncLookupToCloud(lookup);
+    expect(result.ok).toBe(outcome === "updated");
+    expect(getLookup(lookup.id)?.cloudSave).toMatchObject({ scope: "inspection", status: outcome === "updated" ? "acknowledged" : "failed" });
+    if (outcome === "missing") expect(result.message).toContain("cloud scan was not overwritten");
+    if (outcome === "migration") expect(result.message).toContain("database migration");
+    expect(from).toHaveBeenCalledExactlyOnceWith("scan_lookups");
+    expect(update).toHaveBeenCalledExactlyOnceWith({ inspection_json: lookup.inspection, revision: 2 });
+    expect(eq.mock.calls).toEqual([["user_id", "user-1"], ["local_id", "lookup-1"], ["revision", 1]]);
+    expect(select).toHaveBeenCalledWith("revision");
+    expect(maybeSingle).toHaveBeenCalledOnce();
+    expect(getLookup(lookup.id)?.cloudRevision).toBe(outcome === "updated" ? 2 : 1);
+    expect(storageFrom).not.toHaveBeenCalled();
+  });
+
+  it.each(["unchanged", "edited", "account-changed", "timeout"])("records only an applicable inspection acknowledgement: %s", async (outcome) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const { saveExistingLookup, getLookup, updateLookup } = await import("./storage");
+    const { setActiveAccount } = await import("../lib/accountScope");
+    const lookup = makeLookup();
+    lookup.cloudRevision = 1;
+    lookup.frame.imageBase64 = "https://example.test/scan.jpg";
+    lookup.inspection = { confirmedPartName: "Alternator", partNumber: "ALT-42", identityEvidence: "Stamped marking", visibleCondition: "not_inspected", visibleNotes: "", functionalStatus: "not_tested", functionalNotes: "", inspectorName: "Sam", inspectedAt: "2026-09-20T12:00:00.000Z" };
+    saveExistingLookup(lookup);
+    let complete!: (value: unknown) => void;
+    const maybeSingle = vi.fn().mockImplementation(() => new Promise((resolve) => { complete = resolve; }));
+    const select = vi.fn().mockReturnValue({ maybeSingle });
+    const eq = vi.fn();
+    eq.mockReturnValue({ eq, select });
+    const update = vi.fn().mockReturnValue({ eq });
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails, auth: { getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }) }, from: vi.fn().mockReturnValue({ update }) });
+    const { syncLookupToCloud } = await import("./cloudSync");
+    if (outcome === "timeout") vi.useFakeTimers();
+    try {
+      const saving = syncLookupToCloud({ ...lookup, inspection: { ...lookup.inspection, inspectorName: "Stale name" } });
+      await vi.waitFor(() => expect(select).toHaveBeenCalled());
+      expect(update).toHaveBeenCalledWith({ inspection_json: lookup.inspection, revision: 2 });
+      expect(getLookup(lookup.id)?.cloudSave).toMatchObject({ status: "unconfirmed", scope: "inspection" });
+      if (outcome === "edited") updateLookup(lookup.id, { notes: "New local work" });
+      if (outcome === "account-changed") setActiveAccount("user-2");
+      if (outcome === "timeout") {
+        await vi.advanceTimersByTimeAsync(20_001);
+        expect((await saving).ok).toBe(false);
+      }
+      complete({ data: { revision: 2 }, error: null });
+      await saving;
+      if (outcome === "account-changed") {
+        expect(getLookup(lookup.id)).toBeNull();
+        setActiveAccount("user-1");
+      }
+      expect(getLookup(lookup.id)?.cloudSave?.status).toBe(outcome === "unchanged" ? "acknowledged" : outcome === "edited" ? undefined : outcome === "timeout" ? "failed" : "unconfirmed");
+    } finally { vi.useRealTimers(); }
+  });
+
+  it.each([false, true])("does not silently drop inspection when its column is missing (shop fallback: %s)", async (missingShop) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const upsert = vi.fn().mockResolvedValue({ error: { message: "Could not find the 'inspection_json' column in the schema cache" } });
+    if (missingShop) upsert.mockResolvedValueOnce({ error: { message: "Could not find the 'job_id' column in the schema cache" } });
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
+        signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } }, error: null }),
+      },
+      from: vi.fn().mockReturnValue(makeScanWriteQuery(upsert)),
+      storage: { from: vi.fn().mockReturnValue({ upload: vi.fn().mockResolvedValue({ error: null }) }) },
+    });
+    const lookup = makeLookup();
+    lookup.inspection = {
+      confirmedPartName: "Alternator", partNumber: "ALT-42", identityEvidence: "Read stamped number",
+      visibleCondition: "no_visible_damage", visibleNotes: "Housing intact",
+      functionalStatus: "not_tested", functionalNotes: "", inspectorName: "Sam",
+      inspectedAt: "2026-09-20T12:00:00.000Z",
+    };
+    const { syncLookupToCloud } = await import("./cloudSync");
+    await expect(syncLookupToCloud(lookup)).resolves.toEqual({
+      ok: false,
+      message: "Inspection is saved on this device. Apply the part inspection database migration before syncing it to the cloud.",
+    });
+    expect(upsert).toHaveBeenCalledTimes(missingShop ? 2 : 1);
+    for (const [row] of upsert.mock.calls) {
+      expect(row).toMatchObject({ inspection_json: lookup.inspection, training_status: "raw_unreviewed", training_label: "Alternator" });
+      expect(row.result_json).toEqual(lookup.result);
+    }
   });
 
   it("stays disabled when Supabase public config is missing", async () => {
@@ -45,28 +408,71 @@ describe("cloudSync", () => {
     expect(mocks.createClient).not.toHaveBeenCalled();
   });
 
-  it("uploads the scan image and upserts the dataset row for the current user", async () => {
+  it("keeps inference identity stable across sync/feedback and separates new runs and isolated image bytes", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
     const upload = vi.fn().mockResolvedValue({ error: null });
-    const scanLookupUpsert = vi.fn().mockResolvedValue({ error: null });
-    const correctionUpsert = vi.fn().mockResolvedValue({ error: null });
-    const candidateInsert = vi.fn().mockResolvedValue({ error: null });
-    const evidenceInsert = vi.fn().mockResolvedValue({ error: null });
+    const runUpsert = vi.fn().mockResolvedValue({ error: null });
+    const rowWrite = vi.fn().mockResolvedValue({ data: { revision: 1 }, error: null });
+    const insert = vi.fn().mockResolvedValue({ error: null });
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
+      auth: { getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }) },
+      storage: { from: vi.fn().mockReturnValue({ upload }) },
+      from: vi.fn((table: string) => table === "scan_lookups" ? makeScanWriteQuery(rowWrite) : { upsert: table === "scan_model_runs" ? runUpsert : rowWrite, insert, delete: makeDeleteQuery }),
+    });
+    const { syncLookupToCloud } = await import("./cloudSync");
+    const legacy = makeLookup();
+    expect((await syncLookupToCloud(legacy)).ok).toBe(true);
+    const legacyKey = runUpsert.mock.calls[0][0].run_key;
+    expect(legacyKey).toMatch(/^legacy:[a-f0-9]{64}$/);
+    expect(runUpsert.mock.calls[0][0].prompt_version).toBeNull();
+    expect((await syncLookupToCloud({ ...legacy, correction: "Human correction", rating: "up", notes: "New note" })).ok).toBe(true);
+    expect(runUpsert.mock.calls[1][0].run_key).toBe(legacyKey);
+    const current = { ...legacy, isolatedImageBase64: "data:image/png;base64,Y3JvcA==", focusMode: "crop" as const,
+      result: { ...legacy.result!, modelRun: { ...legacy.result!.modelRun!, runId: "attempt-1", promptVersion: "prompt-v1", pipelineVersion: "pipeline-v1" } } };
+    expect((await syncLookupToCloud(current)).ok).toBe(true);
+    expect(runUpsert.mock.calls[2][0]).toMatchObject({ run_key: "attempt-1", prompt_version: "prompt-v1", pipeline_version: "pipeline-v1" });
+    expect(runUpsert.mock.calls[2][1]).toEqual({ onConflict: "user_id,scan_local_id,run_key", ignoreDuplicates: true });
+    expect(rowWrite).toHaveBeenCalledWith(expect.objectContaining({ isolated_image_path: expect.stringMatching(/^user-1\/lookup-1\/isolated-[a-f0-9]{64}\.png$/), isolated_image_kind: "crop", isolated_image_byte_length: 4 }));
+    current.result.modelRun.runId = "attempt-2";
+    current.result.partName = "Different retry prediction";
+    expect((await syncLookupToCloud(current)).ok).toBe(true);
+    expect(runUpsert.mock.calls[3][0].run_key).toBe("attempt-2");
+    expect(runUpsert.mock.calls[2][0].metadata_json.originalPrediction).toBe(legacy.result!.partName);
+    expect(runUpsert.mock.calls[3][0].metadata_json.originalPrediction).toBe("Different retry prediction");
+    expect(runUpsert.mock.calls[2][0].metadata_json.candidatePredictions).toEqual([{ partName: "Starter motor", confidence: "low" }]);
+    const failed = { ...legacy, result: undefined, analysisAttemptId: "failed-attempt-1", errorCode: "network", errorMessage: "No connection" };
+    expect((await syncLookupToCloud(failed)).ok).toBe(true);
+    expect(runUpsert.mock.calls[4][0]).toMatchObject({ run_key: "failed-attempt-1", provider: "unknown", prompt_version: null, error_code: "network" });
+    const { syncAnalysisFailuresToCloud } = await import("./cloudSync");
+    const cloudOnly = { ...legacy, frame: { ...legacy.frame, imageBase64: "https://example.test/signed-image" }, analysisFailures: [
+      { attemptId: "retry-failure-1", errorCode: "network", errorMessage: "Offline", attemptedAt: "2026-09-27T00:00:00Z" },
+      { attemptId: "retry-failure-2", errorCode: "provider_error", errorMessage: "Unavailable", attemptedAt: "2026-09-27T00:00:01Z" },
+    ] };
+    upload.mockClear();
+    expect((await syncAnalysisFailuresToCloud(cloudOnly)).ok).toBe(true);
+    expect(upload).not.toHaveBeenCalled();
+    expect(runUpsert.mock.calls.slice(-2).map(([row]) => row.run_key)).toEqual(["retry-failure-1", "retry-failure-2"]);
+    runUpsert.mockResolvedValueOnce({ error: { message: "Connection lost" } });
+    expect((await syncAnalysisFailuresToCloud(cloudOnly)).ok).toBe(false);
+  });
+
+  it("uploads an immutable scan image and inserts the dataset row for the current user", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    const scanLookupWrite = vi.fn().mockResolvedValue({ data: { revision: 1 }, error: null });
     const modelRunInsert = vi.fn().mockResolvedValue({ error: null });
     const syncEventInsert = vi.fn().mockResolvedValue({ error: null });
     const from = vi.fn((table: string) => {
-      if (table === "scan_lookups") return { upsert: scanLookupUpsert };
-      if (table === "scan_candidates") return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert: candidateInsert };
-      if (table === "scan_evidence") return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert: evidenceInsert };
-      if (table === "scan_corrections") return { upsert: correctionUpsert };
-      if (table === "scan_model_runs") return { insert: modelRunInsert };
+      if (table === "scan_lookups") return makeScanWriteQuery(scanLookupWrite);
+      if (table === "scan_model_runs") return { insert: modelRunInsert, upsert: modelRunInsert };
       if (table === "sync_events") return { insert: syncEventInsert };
       throw new Error(`Unexpected table ${table}`);
     });
-    mocks.createClient.mockReturnValue({
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
       auth: {
-        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
         signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } }, error: null }),
       },
       from,
@@ -76,41 +482,54 @@ describe("cloudSync", () => {
     });
     const { syncLookupToCloud } = await import("./cloudSync");
 
-    const result = await syncLookupToCloud(makeLookup());
+    const lookup = makeLookup();
+    lookup.inspection = {
+      confirmedPartName: "Alternator", partNumber: "ALT-42", identityEvidence: "Read stamped number",
+      visibleCondition: "no_visible_damage", visibleNotes: "Housing intact",
+      functionalStatus: "not_tested", functionalNotes: "", inspectorName: "Sam",
+      inspectedAt: "2026-09-20T12:00:00.000Z",
+    };
+    const { saveExistingLookup, getLookup, updateLookup } = await import("./storage");
+    saveExistingLookup(lookup);
+    updateLookup(lookup.id, { notes: "Current bench notes" });
+    const result = await syncLookupToCloud(lookup);
+    expect(getLookup(lookup.id)?.cloudSave).toMatchObject({ status: "acknowledged", scope: "scan" });
 
     expect(result).toEqual({
       ok: true,
-      imagePath: "user-1/lookup-1.jpg",
+      imagePath: expect.stringMatching(/^user-1\/lookup-1\/original-[a-f0-9-]+\.jpg$/),
       message: "Scan synced to the private Deep Spec dataset.",
     });
     expect(upload).toHaveBeenCalledWith(
-      "user-1/lookup-1.jpg",
+      expect.stringMatching(/^user-1\/lookup-1\/original-[a-f0-9-]+\.jpg$/),
       expect.any(Blob),
-      expect.objectContaining({ contentType: "image/jpeg", upsert: true }),
+      expect.objectContaining({ contentType: "image/jpeg", upsert: false }),
     );
-    expect(scanLookupUpsert).toHaveBeenCalledWith(
+    expect(scanLookupWrite).toHaveBeenCalledWith(
       expect.objectContaining({
         image_byte_length: 5,
+        notes: "Current bench notes",
+        inspection_json: lookup.inspection,
         image_hash: expect.any(String),
         image_mime_type: "image/jpeg",
-        image_path: "user-1/lookup-1.jpg",
+        image_path: expect.stringMatching(/^user-1\/lookup-1\/original-[a-f0-9-]+\.jpg$/),
         local_id: "lookup-1",
         scan_category: "electrical",
         training_label: "Alternator",
         training_status: "raw_unreviewed",
         user_id: "user-1",
       }),
-      { onConflict: "user_id,local_id" },
     );
-    expect(candidateInsert).toHaveBeenCalledWith([
+    expect(mocks.syncDetails).toHaveBeenCalledExactlyOnceWith("sync_scan_details", expect.objectContaining({
+      p_scan_local_id: lookup.id, p_revision: 1, p_job_scan: null,
+    }));
+    expect(mocks.syncDetails.mock.calls[0][1].p_candidates).toEqual([
       expect.objectContaining({
         candidate_rank: 0,
         part_name: "Starter motor",
-        scan_local_id: "lookup-1",
-        user_id: "user-1",
       }),
     ]);
-    expect(evidenceInsert).toHaveBeenCalledWith(
+    expect(mocks.syncDetails.mock.calls[0][1].p_evidence).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ evidence_type: "observation", evidence_text: "Belt-driven housing is visible." }),
         expect.objectContaining({ evidence_type: "region", region_label: "center" }),
@@ -118,13 +537,10 @@ describe("cloudSync", () => {
         expect.objectContaining({ evidence_type: "source_link", source_type: "dataset" }),
       ]),
     );
-    expect(correctionUpsert).toHaveBeenCalledWith(
+    expect(mocks.syncDetails.mock.calls[0][1].p_correction).toEqual(
       expect.objectContaining({
-        scan_local_id: "lookup-1",
         training_status: "raw_unreviewed",
-        user_id: "user-1",
       }),
-      { onConflict: "user_id,scan_local_id" },
     );
     expect(modelRunInsert).toHaveBeenCalledWith(expect.objectContaining({
       latency_ms: 1234,
@@ -142,7 +558,7 @@ describe("cloudSync", () => {
       ocr_used: false,
       provider: "huggingface",
       scan_local_id: "lookup-1",
-    }));
+    }), { onConflict: "user_id,scan_local_id,run_key", ignoreDuplicates: true });
     expect(syncEventInsert).toHaveBeenCalledWith(expect.objectContaining({
       event_type: "upsert",
       metadata_json: expect.objectContaining({
@@ -154,26 +570,263 @@ describe("cloudSync", () => {
     }));
   });
 
+  it("retries core scan persistence when optional shop columns are missing from Supabase schema cache", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    const scanLookupWrite = vi.fn()
+      .mockResolvedValueOnce({
+        error: {
+          message: "Could not find the 'customer_visible_report_json' column of 'scan_lookups' in the schema cache",
+        },
+      })
+      .mockResolvedValueOnce({ data: { revision: 1 }, error: null });
+    const modelRunInsert = vi.fn().mockResolvedValue({ error: null });
+    const syncEventInsert = vi.fn().mockResolvedValue({ error: null });
+    const from = vi.fn((table: string) => {
+      if (table === "scan_lookups") return makeScanWriteQuery(scanLookupWrite);
+      if (table === "scan_model_runs") return { insert: modelRunInsert, upsert: modelRunInsert };
+      if (table === "sync_events") return { insert: syncEventInsert };
+      throw new Error(`Unexpected table ${table}`);
+    });
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
+        signInAnonymously: vi.fn(),
+      },
+      from,
+      storage: {
+        from: vi.fn().mockReturnValue({ upload }),
+      },
+    });
+    const { syncLookupToCloud } = await import("./cloudSync");
+
+    await expect(syncLookupToCloud({
+      ...makeLookup(),
+      customerVisibleReport: {
+        generatedAt: "2026-05-18T00:00:04.000Z",
+        summary: "Customer report summary.",
+        title: "Customer report",
+      },
+    })).resolves.toMatchObject({ ok: true });
+
+    expect(scanLookupWrite).toHaveBeenCalledTimes(2);
+    // A stale client without an inspection must not explicitly clear the cloud field.
+    for (const [row] of scanLookupWrite.mock.calls) expect(row).not.toHaveProperty("inspection_json");
+    expect(scanLookupWrite.mock.calls[0][0]).toEqual(expect.objectContaining({
+      customer_visible_report_json: expect.any(Object),
+    }));
+    expect(scanLookupWrite.mock.calls[1][0]).toEqual(expect.not.objectContaining({
+      customer_visible_report_json: expect.anything(),
+      job_id: expect.anything(),
+      org_id: expect.anything(),
+      review_status: expect.anything(),
+      technician_user_id: expect.anything(),
+      vehicle_context: expect.anything(),
+    }));
+    expect(scanLookupWrite.mock.calls[1][0]).toEqual(expect.objectContaining({
+      image_path: expect.stringMatching(/^user-1\/lookup-1\/original-[a-f0-9-]+\.jpg$/),
+      local_id: "lookup-1",
+      result_json: expect.any(Object),
+      user_id: "user-1",
+    }));
+  });
+
+  it.each(["local-only", "authorized", "foreign-account", "missing-job", "viewer", "missing-schema"])("syncs a %s shop scan with only authorized cloud associations", async (mode) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    const scanLookupWrite = vi.fn().mockResolvedValue({ data: { revision: 1 }, error: null });
+    const modelRunInsert = vi.fn().mockResolvedValue({ error: null });
+    const syncEventInsert = vi.fn().mockResolvedValue({ error: null });
+    const filters: Record<string, Record<string, unknown>> = {};
+    const from = vi.fn((table: string) => {
+      if (table === "organization_members" || table === "shop_jobs") {
+        filters[table] = {};
+        const query = { select: () => query, eq: (key: string, value: unknown) => { filters[table][key] = value; return query; },
+          maybeSingle: async () => ({
+            data: table === "organization_members"
+              ? ["local-only", "foreign-account", "missing-schema"].includes(mode) ? null : { role: mode === "viewer" ? "viewer" : "technician" }
+              : mode === "missing-job" ? null : { id: jobId },
+            error: mode === "missing-schema" ? { message: "table missing from schema cache" } : null,
+          }),
+        };
+        return query;
+      }
+      if (table === "scan_lookups") return makeScanWriteQuery(scanLookupWrite);
+      if (table === "scan_model_runs") return { insert: modelRunInsert, upsert: modelRunInsert };
+      if (table === "sync_events") return { insert: syncEventInsert };
+      throw new Error(`Unexpected table ${table}`);
+    });
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
+        signInAnonymously: vi.fn(),
+      },
+      from,
+      storage: {
+        from: vi.fn().mockReturnValue({ upload }),
+      },
+    });
+    const { syncLookupToCloud } = await import("./cloudSync");
+    const { createShopJob, attachScanToJob, getShopJobScans } = await import("./shop");
+    const localJob = mode === "local-only" ? createShopJob({
+      title: "Battery warning", year: "2012", make: "Toyota", model: "Camry",
+      symptom: "Battery warning light", technicianName: "Alex",
+    }).value! : null;
+    const orgId = localJob?.orgId ?? "00000000-0000-4000-8000-000000000001";
+    const jobId = localJob?.id ?? "00000000-0000-4000-8000-000000000101";
+    const customerVisibleReport = {
+      generatedAt: "2026-05-18T00:00:04.000Z",
+      summary: "Alternator result ready for customer report.",
+      title: "Customer report",
+    };
+
+    const lookup: Lookup = {
+      ...makeLookup(),
+      customerVisibleReport,
+      jobId,
+      orgId,
+      reviewStatus: "confirmed",
+      technicianUserId: "00000000-0000-4000-8000-000000000201",
+      vehicleContext: {
+        make: "Toyota",
+        model: "Camry",
+        symptom: "Battery warning light",
+        technicianName: "Alex",
+        year: "2012",
+      },
+    };
+    const { saveExistingLookup, getLookup } = await import("./storage");
+    saveExistingLookup(lookup);
+    if (localJob) attachScanToJob(localJob.id, lookup.id);
+    const result = await syncLookupToCloud(lookup);
+    if (localJob) expect(getShopJobScans(localJob)).toEqual([expect.objectContaining({ id: lookup.id, jobId, orgId })]);
+    expect(result).toMatchObject({ ok: true, shopAssociation: mode === "authorized" ? "cloud" : "private" });
+    expect(filters.organization_members).toEqual({ org_id: orgId, user_id: "user-1" });
+    expect(getLookup(lookup.id)).toMatchObject({ orgId, jobId, cloudSave: { status: "acknowledged", shopAssociation: mode === "authorized" ? "cloud" : "private" } });
+    if (mode !== "authorized") {
+      expect(scanLookupWrite.mock.calls[0][0]).not.toHaveProperty("org_id");
+      expect(scanLookupWrite.mock.calls[0][0]).not.toHaveProperty("job_id");
+      expect(scanLookupWrite.mock.calls[0][0]).not.toHaveProperty("technician_user_id");
+      expect(mocks.syncDetails.mock.calls[0][1].p_job_scan).toBeNull();
+      expect(result.message).toMatch(/saved privately.*device/i);
+      return;
+    }
+    expect(filters.shop_jobs).toEqual({ id: jobId, org_id: orgId });
+
+    expect(scanLookupWrite).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customer_visible_report_json: customerVisibleReport,
+        job_id: jobId,
+        org_id: orgId,
+        review_status: "confirmed",
+        technician_user_id: "00000000-0000-4000-8000-000000000201",
+        vehicle_context: expect.objectContaining({
+          make: "Toyota",
+          model: "Camry",
+        }),
+      }),
+    );
+    expect(mocks.syncDetails.mock.calls[0][1].p_job_scan).toEqual(
+      {
+        customer_visible_report_json: customerVisibleReport,
+        job_id: jobId,
+        org_id: orgId,
+        review_status: "confirmed",
+      },
+    );
+  });
+
+  it.each(["private", "linked"])("handles an existing %s cloud shop scan without falsely claiming private saving", async (mode) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const { saveExistingLookup, getLookup } = await import("./storage");
+    const lookup = { ...makeLookup(), cloudRevision: 1, orgId: "00000000-0000-4000-8000-000000000001",
+      jobId: "00000000-0000-4000-8000-000000000101" };
+    saveExistingLookup(lookup);
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    const write = vi.fn().mockResolvedValue({ data: { revision: 2 }, error: null });
+    const filters: Record<string, unknown> = {};
+    const from = vi.fn((table: string) => {
+      if (table === "organization_members") {
+        const query = { select: () => query, eq: () => query, maybeSingle: async () => ({ data: null, error: null }) };
+        return query;
+      }
+      if (table === "scan_lookups") {
+        const query = { ...makeScanWriteQuery(write), select: (fields: string) => fields === "*" ? read : query };
+        const read = { eq: (key: string, value: unknown) => { filters[key] = value; return read; },
+          maybeSingle: async () => ({ data: mode === "linked" ? { org_id: lookup.orgId, job_id: lookup.jobId } : { org_id: null, job_id: null }, error: null }) };
+        return query;
+      }
+      return { insert: async () => ({ error: null }), upsert: async () => ({ error: null }) };
+    });
+    mocks.createClient.mockReturnValue({ from, rpc: mocks.syncDetails,
+      auth: { getSession: async () => ({ data: { session: { user: { id: "user-1" } } }, error: null }) },
+      storage: { from: () => ({ upload }) },
+    });
+    const { syncLookupToCloud } = await import("./cloudSync");
+    const result = await syncLookupToCloud(lookup);
+    expect(filters).toEqual({ user_id: "user-1", local_id: lookup.id, revision: 1 });
+    if (mode === "linked") {
+      expect(result).toMatchObject({ ok: false, message: expect.stringContaining("existing cloud shop association could not be verified") });
+      expect(upload).not.toHaveBeenCalled();
+      expect(write).not.toHaveBeenCalled();
+      expect(mocks.syncDetails).not.toHaveBeenCalled();
+      expect(getLookup(lookup.id)?.cloudSave?.status).toBe("failed");
+    } else {
+      expect(result).toMatchObject({ ok: true, shopAssociation: "private" });
+      expect(write).toHaveBeenCalledWith(expect.objectContaining({ revision: 2, user_id: "user-1" }));
+      expect(mocks.syncDetails.mock.calls[0][1].p_job_scan).toBeNull();
+      expect(getLookup(lookup.id)?.cloudSave).toMatchObject({ status: "acknowledged", shopAssociation: "private" });
+    }
+    expect(getLookup(lookup.id)).toMatchObject({ orgId: lookup.orgId, jobId: lookup.jobId });
+  });
+
+  it.each(["membership", "job"])("stops a shop save when the account changes during the %s check", async (step) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const { setActiveAccount } = await import("../lib/accountScope");
+    const { saveExistingLookup, getLookup } = await import("./storage");
+    const lookup = { ...makeLookup(), orgId: "00000000-0000-4000-8000-000000000001",
+      jobId: "00000000-0000-4000-8000-000000000101" };
+    saveExistingLookup(lookup);
+    const upload = vi.fn();
+    const from = vi.fn((table: string) => {
+      const query = { select: () => query, eq: () => query, maybeSingle: async () => {
+        if (table === (step === "membership" ? "organization_members" : "shop_jobs")) setActiveAccount("user-2");
+        return { data: table === "organization_members" ? { role: "owner" } : { id: lookup.jobId }, error: null };
+      } };
+      return query;
+    });
+    mocks.createClient.mockReturnValue({ from, rpc: mocks.syncDetails,
+      auth: { getSession: async () => ({ data: { session: { user: { id: "user-1" } } }, error: null }) },
+      storage: { from: () => ({ upload }) },
+    });
+    const { syncLookupToCloud } = await import("./cloudSync");
+    expect(await syncLookupToCloud(lookup)).toMatchObject({ ok: false, message: expect.stringContaining("Account changed") });
+    expect(upload).not.toHaveBeenCalled();
+    expect(from).not.toHaveBeenCalledWith("scan_lookups");
+    expect(mocks.syncDetails).not.toHaveBeenCalled();
+    expect(getLookup(lookup.id)).toBeNull();
+    setActiveAccount("user-1");
+    expect(getLookup(lookup.id)).toMatchObject({ orgId: lookup.orgId, jobId: lookup.jobId, cloudSave: { status: "unconfirmed" } });
+  });
+
   it("syncs multiple saved scans as separate cloud rows and images", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
     const upload = vi.fn().mockResolvedValue({ error: null });
-    const scanLookupUpsert = vi.fn().mockResolvedValue({ error: null });
-    const correctionUpsert = vi.fn().mockResolvedValue({ error: null });
-    const candidateInsert = vi.fn().mockResolvedValue({ error: null });
-    const evidenceInsert = vi.fn().mockResolvedValue({ error: null });
+    const scanLookupWrite = vi.fn().mockResolvedValue({ data: { revision: 1 }, error: null });
     const modelRunInsert = vi.fn().mockResolvedValue({ error: null });
     const syncEventInsert = vi.fn().mockResolvedValue({ error: null });
     const from = vi.fn((table: string) => {
-      if (table === "scan_lookups") return { upsert: scanLookupUpsert };
-      if (table === "scan_candidates") return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert: candidateInsert };
-      if (table === "scan_evidence") return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert: evidenceInsert };
-      if (table === "scan_corrections") return { upsert: correctionUpsert };
-      if (table === "scan_model_runs") return { insert: modelRunInsert };
+      if (table === "scan_lookups") return makeScanWriteQuery(scanLookupWrite);
+      if (table === "scan_model_runs") return { insert: modelRunInsert, upsert: modelRunInsert };
       if (table === "sync_events") return { insert: syncEventInsert };
       throw new Error(`Unexpected table ${table}`);
     });
-    mocks.createClient.mockReturnValue({
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
       auth: {
         getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
         signInAnonymously: vi.fn(),
@@ -199,24 +852,22 @@ describe("cloudSync", () => {
     });
 
     expect(upload).toHaveBeenCalledWith(
-      "user-1/lookup-1.jpg",
+      expect.stringMatching(/^user-1\/lookup-1\/original-[a-f0-9-]+\.jpg$/),
       expect.any(Blob),
-      expect.objectContaining({ contentType: "image/jpeg", upsert: true }),
+      expect.objectContaining({ contentType: "image/jpeg", upsert: false }),
     );
     expect(upload).toHaveBeenCalledWith(
-      "user-1/lookup-2.jpg",
+      expect.stringMatching(/^user-1\/lookup-2\/original-[a-f0-9-]+\.jpg$/),
       expect.any(Blob),
-      expect.objectContaining({ contentType: "image/jpeg", upsert: true }),
+      expect.objectContaining({ contentType: "image/jpeg", upsert: false }),
     );
-    expect(scanLookupUpsert).toHaveBeenNthCalledWith(
+    expect(scanLookupWrite).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({ local_id: "lookup-1", user_id: "user-1" }),
-      { onConflict: "user_id,local_id" },
     );
-    expect(scanLookupUpsert).toHaveBeenNthCalledWith(
+    expect(scanLookupWrite).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({ local_id: "lookup-2", training_label: "Starter", user_id: "user-1" }),
-      { onConflict: "user_id,local_id" },
     );
   });
 
@@ -231,10 +882,10 @@ describe("cloudSync", () => {
     });
   });
 
-  it("returns a plain-language error when anonymous sign-in is not enabled", async () => {
+  it("refuses signed-out sync without creating an anonymous account", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
-    mocks.createClient.mockReturnValue({
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
       auth: {
         getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
         signInAnonymously: vi.fn().mockResolvedValue({ data: { user: null }, error: { message: "Anonymous sign-ins are disabled" } }),
@@ -248,8 +899,9 @@ describe("cloudSync", () => {
 
     await expect(syncLookupToCloud(makeLookup())).resolves.toEqual({
       ok: false,
-      message: "Cloud sync needs Supabase anonymous sign-ins enabled before scans can upload.",
+      message: "Sign in to the account that owns this scan before syncing.",
     });
+    expect(mocks.createClient.mock.results.at(-1)?.value.auth.signInAnonymously).not.toHaveBeenCalled();
   });
 
   it("resets clientPromise so the next call can retry after an import failure", async () => {
@@ -264,11 +916,11 @@ describe("cloudSync", () => {
 
     // Second call — createClient now succeeds
     const upload = vi.fn().mockResolvedValue({ error: null });
-    const upsert = vi.fn().mockResolvedValue({ error: null });
+    const upsert = vi.fn().mockResolvedValue({ data: { revision: 1 }, error: null });
     const insert = vi.fn().mockResolvedValue({ error: null });
-    mocks.createClient.mockReturnValue({
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
       auth: {
-        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
         signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "user-retry" } }, error: null }),
       },
       from: vi.fn((table: string) => {
@@ -276,8 +928,9 @@ describe("cloudSync", () => {
           return { delete: vi.fn().mockReturnValue(makeDeleteQuery()), insert };
         }
         if (table === "scan_model_runs" || table === "sync_events") {
-          return { insert };
+          return { insert, upsert };
         }
+        if (table === "scan_lookups") return makeScanWriteQuery(upsert);
         return { upsert };
       }),
       storage: { from: vi.fn().mockReturnValue({ upload }) },
@@ -290,12 +943,14 @@ describe("cloudSync", () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
     const insert = vi.fn().mockResolvedValue({ error: null });
-    mocks.createClient.mockReturnValue({
+    const scanQuery = { select: vi.fn(), eq: vi.fn(), abortSignal: vi.fn(), maybeSingle: vi.fn().mockResolvedValue({ data: { local_id: "scan-1" }, error: null }) };
+    for (const method of [scanQuery.select, scanQuery.eq, scanQuery.abortSignal]) method.mockReturnValue(scanQuery);
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
       auth: {
         getSession: vi.fn(),
         signInAnonymously: vi.fn(),
       },
-      from: vi.fn().mockReturnValue({ insert }),
+      from: vi.fn((table) => table === "scan_lookups" ? scanQuery : { insert }),
       storage: {
         from: vi.fn(),
       },
@@ -320,18 +975,110 @@ describe("cloudSync", () => {
         message: "The scanner should explain what to photograph.",
       }),
     ).resolves.toEqual({ ok: true, message: "Feedback synced." });
-    expect(insert).toHaveBeenCalledTimes(2);
+    await syncFeedbackToCloud({
+      category: "ai_result",
+      contactEmail: "",
+      createdAt: "2026-09-26T00:00:00.000Z",
+      id: "feedback-structured",
+      issue: "wrong_part",
+      context: { scanId: "scan-1", predictedPart: "Alternator" },
+      message: "It is a starter.",
+    });
+    expect(insert).toHaveBeenLastCalledWith({
+      user_id: "user-1",
+      category: "ai_result",
+      issue_code: "wrong_part",
+      scan_local_id: "scan-1",
+      reported_prediction: "Alternator",
+      contact_email: null,
+      message: "DeepSpec report v1\nIssue: wrong_part\nScan: scan-1\nPrediction: Alternator\n\nIt is a starter.",
+      source: "pwa",
+    });
+    expect(insert).toHaveBeenCalledTimes(3);
+    expect(scanQuery.eq).toHaveBeenCalledWith("user_id", "user-1");
+    expect(scanQuery.eq).toHaveBeenCalledWith("local_id", "scan-1");
   });
 
-  it("checks runtime cloud health across auth, storage, row write, durable details, and RLS isolation", async () => {
+  it.each(["no-context", "local-only", "read-error", "account-switch"])("sends only permitted structured report fields: %s", async (mode) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const insert = vi.fn().mockResolvedValue({ error: null });
+    const { setActiveAccount } = await import("../lib/accountScope");
+    const query = { select: vi.fn(), eq: vi.fn(), abortSignal: vi.fn(), maybeSingle: vi.fn(async () => {
+      if (mode === "account-switch") { setActiveAccount("user-2"); setActiveAccount("user-1"); }
+      return { data: null, error: mode === "read-error" ? { message: "Offline" } : null };
+    }) };
+    for (const method of [query.select, query.eq, query.abortSignal]) method.mockReturnValue(query);
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails, from: vi.fn((table) => table === "scan_lookups" ? query : { insert }) });
+    const { syncFeedbackToCloud } = await import("./cloudSync");
+    const result = await syncFeedbackToCloud({ id: "report-1", createdAt: "2026-09-27T00:00:00Z", category: "ai_result", contactEmail: "", issue: "wrong_part", message: "Starter, not alternator.",
+      ...(mode === "no-context" ? {} : { context: { scanId: "local-scan", predictedPart: "Alternator", imageBase64: "private-photo", chat: "private-chat", session: "private-token" } }),
+    });
+    if (mode === "read-error" || mode === "account-switch") {
+      expect(result.ok).toBe(false);
+      expect(insert).not.toHaveBeenCalled();
+      return;
+    }
+    expect(result.ok).toBe(true);
+    expect(insert).toHaveBeenCalledWith({ user_id: "user-1", category: "ai_result", contact_email: null, source: "pwa", issue_code: "wrong_part", scan_local_id: null, reported_prediction: null,
+      message: mode === "no-context" ? "DeepSpec report v1\nIssue: wrong_part\n\nStarter, not alternator." : "DeepSpec report v1\nIssue: wrong_part\nScan: local-scan\nPrediction: Alternator\n\nStarter, not alternator.",
+    });
+    if (mode === "no-context") expect(query.select).not.toHaveBeenCalled();
+    else expect(result.message).toContain("not linked to a cloud record");
+  });
+
+  describe("waitlist signup failures", () => {
+    const signup = {
+      createdAt: "2026-05-18T00:00:00.000Z",
+      email: "user@example.com",
+      id: "waitlist-1",
+      mainProblem: "I want help identifying leaks.",
+      userType: "car_owner" as const,
+    };
+
+    async function syncWithInsertError(error: { code?: string; message: string }) {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+      mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
+        auth: { getSession: vi.fn(), signInAnonymously: vi.fn() },
+        from: vi.fn().mockReturnValue({ insert: vi.fn().mockResolvedValue({ error }) }),
+        storage: { from: vi.fn() },
+      });
+      const { syncWaitlistSignupToCloud } = await import("./cloudSync");
+      return syncWaitlistSignupToCloud(signup);
+    }
+
+    it("treats an email that is already on the waitlist as joined, not as a failure", async () => {
+      await expect(syncWithInsertError({
+        code: "23505",
+        message: 'duplicate key value violates unique constraint "waitlist_signups_email_lower_idx"',
+      })).resolves.toEqual({ ok: true, message: "Already on the waitlist." });
+    });
+
+    it("does not blame anonymous sign-ins just because the table name contains 'signup'", async () => {
+      const result = await syncWithInsertError({
+        code: "42501",
+        message: 'new row violates row-level security policy for table "waitlist_signups"',
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.message).toMatch(/security check/i);
+      expect(result.message).not.toMatch(/anonymous/i);
+    });
+
+    it("still explains a genuinely disabled anonymous sign-in", async () => {
+      const result = await syncWithInsertError({ message: "Anonymous sign-ins are disabled" });
+
+      expect(result.message).toMatch(/anonymous sign-ins enabled/i);
+    });
+  });
+
+  it.each(["ready", "missing-rpc"])("checks runtime cloud health using the required detail transaction: %s", async (outcome) => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
     const upload = vi.fn().mockResolvedValue({ error: null });
     const remove = vi.fn().mockResolvedValue({ error: null });
     const upsert = vi.fn().mockResolvedValue({ error: null });
-    const candidateInsert = vi.fn().mockResolvedValue({ error: null });
-    const evidenceInsert = vi.fn().mockResolvedValue({ error: null });
-    const correctionUpsert = vi.fn().mockResolvedValue({ error: null });
     const modelRunInsert = vi.fn().mockResolvedValue({ error: null });
     const syncEventInsert = vi.fn().mockResolvedValue({ error: null });
     const ownerDeleteQuery = makeDeleteQuery();
@@ -341,6 +1088,7 @@ describe("cloudSync", () => {
     });
     mocks.createClient
       .mockReturnValueOnce({
+        rpc: mocks.syncDetails,
         auth: {
           signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "owner-1" } }, error: null }),
         },
@@ -351,10 +1099,7 @@ describe("cloudSync", () => {
               upsert,
             };
           }
-          if (table === "scan_candidates") return { insert: candidateInsert };
-          if (table === "scan_evidence") return { insert: evidenceInsert };
-          if (table === "scan_corrections") return { upsert: correctionUpsert };
-          if (table === "scan_model_runs") return { insert: modelRunInsert };
+          if (table === "scan_model_runs") return { insert: modelRunInsert, upsert: modelRunInsert };
           if (table === "sync_events") {
             return {
               delete: vi.fn().mockReturnValue(ownerDeleteQuery),
@@ -368,6 +1113,7 @@ describe("cloudSync", () => {
         },
       })
       .mockReturnValueOnce({
+        rpc: mocks.syncDetails,
         auth: {
           signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "other-1" } }, error: null }),
         },
@@ -378,7 +1124,19 @@ describe("cloudSync", () => {
       });
     const { getCloudHealthSnapshot, verifyCloudHealth } = await import("./cloudSync");
 
+    if (outcome === "missing-rpc") mocks.syncDetails.mockResolvedValueOnce({
+      data: null, error: { code: "PGRST202", message: "Could not find public.sync_scan_details in the schema cache" },
+    });
     const report = await verifyCloudHealth();
+    if (outcome === "missing-rpc") {
+      expect(report.overall).toBe("blocked");
+      expect(report.checks.datasetDetails.status).toBe("fail");
+      expect(report.checks.datasetDetails.message).toMatch(/child revision database migration/);
+      expect(report.lastVerifiedAt).toBeNull();
+      expect(modelRunInsert).not.toHaveBeenCalled();
+      expect(remove).toHaveBeenCalled();
+      return;
+    }
 
     expect(report.overall).toBe("ready");
     expect(report.lastVerifiedAt).toBe(report.checkedAt);
@@ -411,11 +1169,12 @@ describe("cloudSync", () => {
     expect(crossReadFrom).toHaveBeenCalledWith("sync_events");
     expect(crossReadEq).toHaveBeenCalledWith("local_id", expect.stringMatching(/^health-/));
     expect(crossReadEq).toHaveBeenCalledWith("scan_local_id", expect.stringMatching(/^health-/));
-    expect(candidateInsert).toHaveBeenCalledWith(expect.objectContaining({ scan_local_id: expect.stringMatching(/^health-/) }));
-    expect(evidenceInsert).toHaveBeenCalledWith(expect.objectContaining({ evidence_type: "observation" }));
-    expect(correctionUpsert).toHaveBeenCalledWith(expect.objectContaining({ scan_local_id: expect.stringMatching(/^health-/) }), {
-      onConflict: "user_id,scan_local_id",
-    });
+    expect(mocks.syncDetails).toHaveBeenCalledExactlyOnceWith("sync_scan_details", expect.objectContaining({
+      p_scan_local_id: expect.stringMatching(/^health-/), p_revision: 1, p_job_scan: null,
+      p_candidates: [expect.objectContaining({ candidate_rank: 0 })],
+      p_evidence: [expect.objectContaining({ evidence_type: "observation" })],
+      p_correction: expect.objectContaining({ training_status: "raw_unreviewed" }),
+    }));
     expect(modelRunInsert).toHaveBeenCalledWith(expect.objectContaining({ provider: "runtime-health" }));
     expect(syncEventInsert).toHaveBeenCalledWith(expect.objectContaining({ event_type: "verify", status: "success" }));
     expect(remove).toHaveBeenCalledWith([expect.stringMatching(/^owner-1\/health-.+\.jpg$/)]);
@@ -426,7 +1185,7 @@ describe("cloudSync", () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
     const upload = vi.fn();
-    mocks.createClient.mockReturnValue({
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
       auth: {
         signInAnonymously: vi.fn().mockResolvedValue({ data: { user: null }, error: { message: "Database error creating anonymous user" } }),
       },
@@ -452,10 +1211,10 @@ describe("cloudSync", () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
     const insert = vi.fn().mockResolvedValue({ error: null });
-    mocks.createClient.mockReturnValue({
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
       auth: {
         getUser: vi.fn().mockResolvedValue({ data: { user: { id: "shared-user" } }, error: null }),
-        getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
         signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "shared-user" } }, error: null }),
         onAuthStateChange: vi.fn().mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } }),
       },
@@ -480,6 +1239,19 @@ describe("cloudSync", () => {
     expect(mocks.createClient).toHaveBeenCalledTimes(1);
   });
 });
+
+// Build the selected single-row response used by scan insert/CAS update requests.
+// Other tables retain their original mocks and response shapes.
+function makeScanWriteQuery(write: ReturnType<typeof vi.fn>) {
+  const mutate = (row: unknown) => {
+    const response = write(row);
+    const query = { eq: vi.fn(), select: vi.fn(), maybeSingle: vi.fn(() => response) };
+    query.eq.mockReturnValue(query);
+    query.select.mockReturnValue(query);
+    return query;
+  };
+  return { insert: vi.fn(mutate), update: vi.fn(mutate) };
+}
 
 function makeDeleteQuery() {
   const secondEq = vi.fn().mockResolvedValue({ error: null });

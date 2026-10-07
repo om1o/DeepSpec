@@ -1,0 +1,60 @@
+import { act, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { setActiveAccount } from "../../lib/accountScope";
+import { loadTrainingConsent, saveTrainingConsent, type TrainingConsent } from "../../services/trainingConsent";
+import { TrainingConsentPanel } from "./TrainingConsentPanel";
+
+vi.mock("../../services/trainingConsent", () => ({ loadTrainingConsent: vi.fn(), saveTrainingConsent: vi.fn() }));
+const off: TrainingConsent = { enabled: false, revision: null, updatedAt: null };
+const on: TrainingConsent = { enabled: true, revision: 1, updatedAt: "2026-09-27T00:00:00Z" };
+beforeEach(() => vi.mocked(loadTrainingConsent).mockResolvedValue(off));
+afterEach(() => vi.resetAllMocks());
+it("defaults off and requires an explicit choice before saving", async () => {
+  const user = userEvent.setup();
+  vi.mocked(saveTrainingConsent).mockResolvedValue(on);
+  render(<TrainingConsentPanel scanId="scan-1" />);
+  await screen.findByText("Cloud consent is off.");
+  expect(screen.getByRole("checkbox")).not.toBeChecked();
+  expect(screen.getByRole("button", { name: "Save consent choice" })).toBeDisabled();
+  await user.click(screen.getByRole("checkbox"));
+  expect(saveTrainingConsent).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Save consent choice" }));
+  expect(saveTrainingConsent).toHaveBeenCalledWith("scan-1", true, null, expect.objectContaining({ userId: "test-user" }));
+  expect(screen.getByRole("status")).toHaveTextContent("Consent saved to the cloud");
+});
+it("allows retry after load failure without enabling an unknown consent choice", async () => {
+  const user = userEvent.setup();
+  vi.mocked(loadTrainingConsent).mockRejectedValueOnce(new Error("Offline. Retry."));
+  render(<TrainingConsentPanel scanId="scan-1" />);
+  await screen.findByText("Offline. Retry.");
+  expect(screen.getByRole("checkbox")).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Reload consent status" }));
+  await screen.findByText("Cloud consent is off.");
+  expect(screen.getByRole("checkbox")).toBeEnabled();
+});
+it("disables concurrent changes while pending and does not claim a failed withdrawal", async () => {
+  const user = userEvent.setup();
+  vi.mocked(loadTrainingConsent).mockResolvedValue(on);
+  let reject!: (error: Error) => void;
+  vi.mocked(saveTrainingConsent).mockReturnValue(new Promise((_, fail) => { reject = fail; }));
+  render(<TrainingConsentPanel scanId="scan-1" />);
+  await screen.findByText("Cloud consent is on.");
+  await user.click(screen.getByRole("checkbox"));
+  await user.click(screen.getByRole("button", { name: "Save consent choice" }));
+  expect(screen.getByRole("checkbox")).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Reload consent status" })).toBeDisabled();
+  await act(async () => reject(new Error("Consent change was not confirmed.")));
+  expect(screen.getByRole("checkbox")).toBeChecked();
+  expect(screen.getByRole("checkbox")).toBeDisabled();
+  expect(screen.getByRole("status")).toHaveTextContent("not confirmed");
+  expect(screen.queryByText(/Consent withdrawn/)).not.toBeInTheDocument();
+});
+it("ignores a previous account's delayed consent", async () => {
+  let resolve!: (value: TrainingConsent) => void;
+  vi.mocked(loadTrainingConsent).mockReturnValue(new Promise((done) => { resolve = done; }));
+  render(<TrainingConsentPanel scanId="scan-1" />);
+  setActiveAccount("other-user"); setActiveAccount("test-user");
+  await act(async () => resolve(on));
+  expect(screen.getByRole("checkbox")).not.toBeChecked();
+  expect(screen.queryByText("Cloud consent is on.")).not.toBeInTheDocument();
+});

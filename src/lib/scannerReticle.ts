@@ -5,16 +5,17 @@ export type RectLike = {
   width: number;
 };
 
-export const SCANNER_RETICLE_WIDTH_RATIO = 0.64;
-export const SCANNER_RETICLE_MAX_WIDTH_PX = 330;
-export const SCANNER_RETICLE_CENTER_Y_RATIO = 0.45;
-export const SCANNER_RETICLE_ASPECT_RATIO = 3 / 4;
+export const SCANNER_RETICLE_WIDTH_RATIO = 0.72;
+export const SCANNER_RETICLE_HEIGHT_RATIO = 0.52;
+export const SCANNER_RETICLE_MAX_WIDTH_PX = 320;
+export const SCANNER_RETICLE_MAX_HEIGHT_PX = 240;
+export const SCANNER_RETICLE_CENTER_Y_RATIO = 0.5;
 
 const MIN_TARGET_OVERLAP_RATIO = 0.55;
 
 export function getScannerReticleBounds(viewportWidth: number, viewportHeight: number): RectLike {
   const width = Math.min(viewportWidth * SCANNER_RETICLE_WIDTH_RATIO, SCANNER_RETICLE_MAX_WIDTH_PX);
-  const height = width / SCANNER_RETICLE_ASPECT_RATIO;
+  const height = Math.min(viewportWidth * SCANNER_RETICLE_HEIGHT_RATIO, SCANNER_RETICLE_MAX_HEIGHT_PX);
 
   return {
     height,

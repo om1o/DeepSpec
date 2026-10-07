@@ -11,6 +11,6 @@
     "strict": true,
     "noEmit": true
   },
-  "include": ["vite.config.ts", "eslint.config.js", "api/**/*.ts"],
-  "exclude": ["api/**/*.test.ts"]
+  "include": ["vite.config.ts", "eslint.config.js", "api/**/*.ts", "server/**/*.ts"],
+  "exclude": ["api/**/*.test.ts", "server/**/*.test.ts"]
 }

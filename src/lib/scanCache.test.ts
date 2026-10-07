@@ -1,3 +1,4 @@
+import { accountStorageKey } from "./accountScope";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   SCAN_CACHE_KEY,
@@ -58,7 +59,7 @@ describe("setCachedScanResult / getCachedScanResult", () => {
     setCachedScanResult("hash1", makeResult("Old Part"));
     setCachedScanResult("hash1", makeResult("New Part"));
     expect(getCachedScanResult("hash1")?.partName).toBe("New Part");
-    const raw = JSON.parse(localStorage.getItem(SCAN_CACHE_KEY)!);
+    const raw = JSON.parse(localStorage.getItem(accountStorageKey(SCAN_CACHE_KEY))!);
     expect(raw).toHaveLength(1);
   });
 
@@ -68,6 +69,43 @@ describe("setCachedScanResult / getCachedScanResult", () => {
     });
 
     expect(() => setCachedScanResult("hash1", makeResult("Brake Caliper"))).not.toThrow();
+  });
+});
+
+describe("on-device estimates", () => {
+  const withProvider = (partName: string, provider: "on-device" | "gemini"): IdentificationResult => ({
+    ...makeResult(partName),
+    modelRun: { provider, model: "test-model", latencyMs: 10, ocrUsed: false },
+  });
+
+  it("does not cache an offline estimate, so a rescan gets a real analysis once back online", () => {
+    setCachedScanResult("hash1", withProvider("Rough guess", "on-device"));
+
+    expect(getCachedScanResult("hash1")).toBeNull();
+    expect(localStorage.getItem(accountStorageKey(SCAN_CACHE_KEY))).toBeNull();
+  });
+
+  it("ignores an estimate that an older build already cached", () => {
+    localStorage.setItem(
+      accountStorageKey(SCAN_CACHE_KEY),
+      JSON.stringify([{ hash: "hash1", result: withProvider("Rough guess", "on-device"), cachedAt: "2026-01-01T00:00:00.000Z" }]),
+    );
+
+    expect(getCachedScanResult("hash1")).toBeNull();
+  });
+
+  it("still caches a full cloud result", () => {
+    const result = withProvider("Brake Caliper", "gemini");
+    setCachedScanResult("hash1", result);
+
+    expect(getCachedScanResult("hash1")).toEqual(result);
+  });
+
+  it("keeps an earlier full result when a later offline estimate arrives for the same photo", () => {
+    setCachedScanResult("hash1", withProvider("Brake Caliper", "gemini"));
+    setCachedScanResult("hash1", withProvider("Rough guess", "on-device"));
+
+    expect(getCachedScanResult("hash1")?.partName).toBe("Brake Caliper");
   });
 });
 
@@ -81,7 +119,7 @@ describe("capacity eviction", () => {
     expect(getCachedScanResult("hash0")).toBeNull();
     expect(getCachedScanResult("hashNew")).not.toBeNull();
 
-    const raw = JSON.parse(localStorage.getItem(SCAN_CACHE_KEY)!);
+    const raw = JSON.parse(localStorage.getItem(accountStorageKey(SCAN_CACHE_KEY))!);
     expect(raw).toHaveLength(SCAN_CACHE_MAX);
   });
 });
@@ -91,19 +129,19 @@ describe("clearScanCache", () => {
     setCachedScanResult("hash1", makeResult("Brake Caliper"));
     setCachedScanResult("hash2", makeResult("Rotor"));
     clearScanCache();
-    expect(localStorage.getItem(SCAN_CACHE_KEY)).toBeNull();
+    expect(localStorage.getItem(accountStorageKey(SCAN_CACHE_KEY))).toBeNull();
     expect(getCachedScanResult("hash1")).toBeNull();
   });
 });
 
 describe("corrupt localStorage data", () => {
   it("returns null gracefully on parse errors", () => {
-    localStorage.setItem(SCAN_CACHE_KEY, "not valid json {{{");
+    localStorage.setItem(accountStorageKey(SCAN_CACHE_KEY), "not valid json {{{");
     expect(getCachedScanResult("hash1")).toBeNull();
   });
 
   it("returns null gracefully when stored value is not an array", () => {
-    localStorage.setItem(SCAN_CACHE_KEY, JSON.stringify({ hash: "hash1" }));
+    localStorage.setItem(accountStorageKey(SCAN_CACHE_KEY), JSON.stringify({ hash: "hash1" }));
     expect(getCachedScanResult("hash1")).toBeNull();
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { createIdentifyResponse } from "../server/identify.shared.ts";
 import {
   DATASET_FETCH_TIMEOUT_MS,
   PUBLIC_SAMPLE_SIZE,
@@ -49,6 +50,40 @@ const result = {
 };
 
 describe("identify eval scoring", () => {
+  it.each([
+    ["empty", { candidates: [] }],
+    ["malformed", { candidates: [{ content: { parts: [{ text: "not JSON" }] } }] }],
+  ])("keeps %s Gemini output as a reviewable evaluation failure", async (_label, payload) => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      new Response(JSON.stringify(String(input).includes("generativelanguage.googleapis.com")
+        ? payload
+        : { choices: [{ message: { content: JSON.stringify(result) } }] }), { status: 200 }),
+    );
+    try {
+      const response = await createIdentifyResponseWithRetry({ createIdentifyResponse },
+        "data:image/png;base64,aGVsbG8=", {
+          GEMINI_API_KEY: "test-key",
+          DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true",
+          HF_TOKEN: "hf-test",
+        });
+      expect(response).toMatchObject({ status: 502, body: { error: { code: "invalid_response" } } });
+      expect(isReviewableEvalFailure(response.body.error)).toBe(true);
+      const lookup = buildReviewLookup({
+        analyzedAt: "2026-05-20T12:00:00.000Z",
+        dataUrl: "data:image/png;base64,aGVsbG8=",
+        error: response.body.error,
+        expectedLabels: ["Back-bumper"],
+        imagePath: "Car damages dataset/File1/img/Car damages 100.png",
+        result: null,
+        score: { ok: false, matchedLabels: [], failureReasons: ["pipeline_error"] },
+      });
+      expect(lookup).toMatchObject({ rating: "down", trainingLabel: "Back-bumper" });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it("uses a fixed 50-case release sample set split across damage and parts", () => {
     expect(RELEASE_SAMPLE_IMAGES).toHaveLength(50);
     expect(new Set(RELEASE_SAMPLE_IMAGES).size).toBe(50);
@@ -189,6 +224,54 @@ describe("identify eval scoring", () => {
     });
   });
 
+  it("scores mechanic-grade candidate parts and damage observations without accepting negated damage", () => {
+    expect(
+      scoreIdentificationResult(
+        {
+          ...result,
+          partName: "Front bumper",
+          primaryPart: {
+            partName: "Front bumper",
+            confidence: "high",
+            scanCategory: "body",
+            evidence: ["The bumper cover is detached and hanging near the mounting point."],
+          },
+          candidateParts: [
+            {
+              partName: "Front bumper cover",
+              confidence: "medium",
+              scanCategory: "body",
+              evidence: ["Returned as an alternate visible candidate."],
+            },
+          ],
+          visibleObservations: ["The front fender has damage near the wheel opening."],
+          requiredNextEvidence: ["Second angle showing connectors or mounting tabs."],
+        },
+        ["Broken part", "Missing part"],
+      ),
+    ).toMatchObject({
+      ok: true,
+      matchedLabels: ["Broken part", "Missing part"],
+      failureReasons: [],
+    });
+
+    expect(
+      scoreIdentificationResult(
+        {
+          ...result,
+          partName: "Front bumper",
+          visibleObservations: ["Bumper appears intact with no visible damage."],
+          evidence: ["Local dataset match: Front-bumper (damage, 693 labeled samples)."],
+        },
+        ["Broken part"],
+      ),
+    ).toMatchObject({
+      ok: false,
+      matchedLabels: [],
+      failureReasons: ["wrong_result"],
+    });
+  });
+
   it("keeps provider availability failures out of training review rows", () => {
     expect(isReviewableEvalFailure({ code: "rate_limited" })).toBe(false);
     expect(isReviewableEvalFailure({ code: "network" })).toBe(false);
@@ -275,6 +358,17 @@ describe("identify eval scoring", () => {
   it("marks safety false positives only when the expected label is not safety-critical", () => {
     expect(isSafetyFalsePositive({ ...result, isSafetyCritical: true, safetyTriage: "needs_professional" }, ["Back-bumper"])).toBe(true);
     expect(isSafetyFalsePositive({ ...result, isSafetyCritical: true, safetyTriage: "needs_professional" }, ["Brake caliper"])).toBe(false);
+    expect(
+      isSafetyFalsePositive(
+        {
+          ...result,
+          isSafetyCritical: true,
+          safetyTriage: "needs_professional",
+          visibleObservations: ["Rear bumper is damaged and detached from the mount."],
+        },
+        ["Broken part"],
+      ),
+    ).toBe(false);
     expect(scoreIdentificationResult({ ...result, isSafetyCritical: true, safetyTriage: "needs_professional" }, ["Back-bumper"])).toMatchObject({
       ok: false,
       failureReasons: ["safety_false_positive"],
@@ -287,6 +381,7 @@ describe("identify eval scoring", () => {
         [
           {
             status: 200,
+            expectedLabels: ["alternator"],
             failureReasons: [],
             providerMs: 100,
             totalMs: 140,
@@ -295,6 +390,7 @@ describe("identify eval scoring", () => {
           },
           {
             status: 502,
+            expectedLabels: ["alternator"],
             failureReasons: ["invalid_response"],
             providerMs: 300,
             totalMs: 350,
@@ -303,6 +399,7 @@ describe("identify eval scoring", () => {
           },
           {
             status: 500,
+            expectedLabels: ["brake caliper"],
             failureReasons: ["not_configured"],
             providerMs: 20,
             totalMs: 25,
@@ -322,6 +419,24 @@ describe("identify eval scoring", () => {
       invalidResponseRate: 0.3333,
       safetyFalsePositiveCount: 1,
       safetyFalsePositiveRate: 0.3333,
+      failureModes: {
+        invalid_response: 1,
+        not_configured: 1,
+      },
+      labelBuckets: {
+        alternator: {
+          attemptedCount: 2,
+          failureCount: 1,
+          passCount: 1,
+          passRate: 0.5,
+        },
+        "brake caliper": {
+          attemptedCount: 1,
+          failureCount: 1,
+          passCount: 0,
+          passRate: 0,
+        },
+      },
       latencyMs: {
         provider: {
           average: 140,

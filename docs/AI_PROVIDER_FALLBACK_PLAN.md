@@ -4,7 +4,7 @@ Deep Spec needs a real backup path for `/api/identify` when Gemini returns `429`
 
 ## Current State
 
-- Primary identify provider: Gemini through `api/identify.shared.ts`.
+- Primary identify provider: Gemini through `server/identify.shared.ts`.
 - Existing fallback: another Gemini model from `GEMINI_FALLBACK_MODELS`.
 - Optional local fallback: Ollama, disabled by default and not a release guarantee.
 - Current blocker: provider health smoke reports both configured Gemini models returning `429 rate_limited`.
@@ -44,7 +44,7 @@ Hugging Face `InferenceClient` supports image-plus-text chat completion with a b
    - `HF_IDENTIFY_PROVIDER`, defaulting to Hugging Face auto routing
    - `HF_IDENTIFY_ENDPOINT_URL` for a dedicated endpoint override
 
-2. Add a provider adapter in `api/identify.shared.ts`:
+2. Add a provider adapter in `server/identify.shared.ts`:
    - Reuse the same system prompt and JSON shape.
    - Send image input as an image URL data URI plus text instructions.
    - Normalize the response through the existing `normalizeIdentificationResult`.

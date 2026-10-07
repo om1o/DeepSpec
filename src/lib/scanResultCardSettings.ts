@@ -1,3 +1,5 @@
+import { accountStorageKey } from "./accountScope";
+
 const SCAN_CARD_PREFERENCES_KEY = "deep-spec:scan-card-preferences";
 
 export type ScanPrecisionMode = "fast" | "accurate";
@@ -52,7 +54,7 @@ export function updateScanCardPreferences(
         [sceneId]: next,
       },
     };
-    localStorage.setItem(SCAN_CARD_PREFERENCES_KEY, JSON.stringify(nextEnvelope));
+    localStorage.setItem(accountStorageKey(SCAN_CARD_PREFERENCES_KEY), JSON.stringify(nextEnvelope));
   } catch {
     // Intentionally ignore storage failures so a safe fallback preference is still returned.
   }
@@ -66,7 +68,7 @@ function readPreferenceEnvelope(): PreferenceEnvelope {
   }
 
   try {
-    const raw = localStorage.getItem(SCAN_CARD_PREFERENCES_KEY);
+    const raw = localStorage.getItem(accountStorageKey(SCAN_CARD_PREFERENCES_KEY));
     if (!raw) {
       return { scenes: {} };
     }

@@ -1,3 +1,4 @@
+import { accountStorageKey } from "../lib/accountScope";
 import {
   ENGAGEMENT_STORAGE_KEY,
   getEngagementData,
@@ -60,7 +61,7 @@ describe("engagement", () => {
   });
 
   it("ignores corrupt engagement storage", () => {
-    localStorage.setItem(ENGAGEMENT_STORAGE_KEY, "{bad json");
+    localStorage.setItem(accountStorageKey(ENGAGEMENT_STORAGE_KEY), "{bad json");
 
     expect(getEngagementData()).toEqual({ waitlist: [], feedback: [] });
   });
