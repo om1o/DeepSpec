@@ -1,5 +1,7 @@
 import { accountStorageKey, setActiveAccount } from "../lib/accountScope";
 import {
+  detectLegacyScans,
+  importLegacyScans,
   appendChatMessages,
   createChatMessage,
   createLookup,
@@ -586,5 +588,115 @@ describe("storage", () => {
     expect(result.ok).toBe(false);
     expect(result.message).toContain("storage is full");
     expect(result.value.result?.partName).toBe("Alternator");
+  });
+});
+
+
+describe("owner-confirmed legacy scan recovery", () => {
+  beforeEach(() => { vi.restoreAllMocks(); localStorage.clear(); setActiveAccount("legacy-owner"); });
+  afterEach(() => vi.restoreAllMocks());
+
+  function seedLegacy() {
+    const record = createLookup(scanState).value;
+    localStorage.removeItem(accountStorageKey(LOOKUPS_STORAGE_KEY));
+    const raw = JSON.stringify([{ ...record, cloudRevision: 8, jobId: "old-job", orgId: "old-org" }]);
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, raw);
+    return { record, raw };
+  }
+
+  it("detects legacy scans without reading them into any account history", () => {
+    const { raw } = seedLegacy();
+    expect(detectLegacyScans()).toMatchObject({ ok: true, value: { count: 1, importable: true } });
+    expect(getLookups()).toEqual([]);
+    setActiveAccount("other-owner");
+    expect(getLookups()).toEqual([]);
+    expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBe(raw);
+  });
+
+  it("cancellation preserves both histories", () => {
+    const { raw } = seedLegacy();
+    const recovery = detectLegacyScans().value!;
+    expect(importLegacyScans(recovery, false).ok).toBe(false);
+    expect(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY))).toBeNull();
+    expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBe(raw);
+  });
+
+  it("imports human work and separate chat, preserves existing scans and legacy bytes, and never syncs account associations", () => {
+    const { record, raw } = seedLegacy();
+    const chat = JSON.stringify([createChatMessage("user", "My old question")]);
+    localStorage.setItem(`deep-spec:chat:${record.id}`, chat);
+    const existing = createLookup(scanState).value;
+    const recovery = detectLegacyScans().value!;
+    expect(importLegacyScans(recovery, true)).toMatchObject({ ok: true, value: [{
+      id: `recovered-legacy:${record.id}`, cloudRevision: undefined, cloudSave: undefined,
+      jobId: undefined, orgId: undefined, chatHistory: [{ content: "My old question" }],
+    }] });
+    expect(getLookups()).toHaveLength(2);
+    expect(getLookup(existing.id)).not.toBeNull();
+    expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBe(raw);
+    expect(localStorage.getItem(`deep-spec:chat:${record.id}`)).toBe(chat);
+    expect(importLegacyScans(recovery, true).ok).toBe(false);
+    expect(getLookups()).toHaveLength(2);
+    setActiveAccount("another-owner");
+    expect(getLookups()).toEqual([]);
+  });
+
+  it.each(['{unfinished', '{}', '[null]', '[{"id":"bad"}]'])("retains corrupt legacy data %s", (raw) => {
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, raw);
+    const recovery = detectLegacyScans().value!;
+    expect(recovery.importable).toBe(false);
+    expect(recovery.raw).toBe(raw);
+    expect(importLegacyScans(recovery, true).ok).toBe(false);
+    expect(getLookups()).toEqual([]);
+    expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBe(raw);
+  });
+
+  it("rejects corrupt separate chat without a partial import", () => {
+    const { record } = seedLegacy();
+    localStorage.setItem(`deep-spec:chat:${record.id}`, '{broken');
+    const recovery = detectLegacyScans().value!;
+    expect(recovery.chats[record.id]).toBe('{broken');
+    expect(importLegacyScans(recovery, true).ok).toBe(false);
+    expect(getLookups()).toEqual([]);
+  });
+
+  it("rejects ownership confirmation captured before switching accounts, even after switching back", () => {
+    seedLegacy();
+    const recovery = detectLegacyScans().value!;
+    setActiveAccount("another-owner");
+    expect(importLegacyScans(recovery, true).ok).toBe(false);
+    setActiveAccount("legacy-owner");
+    expect(importLegacyScans(recovery, true).ok).toBe(false);
+    expect(getLookups()).toEqual([]);
+  });
+
+  it("requires renewed confirmation if legacy bytes change", () => {
+    const { raw } = seedLegacy();
+    const recovery = detectLegacyScans().value!;
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, raw + ' ');
+    expect(importLegacyScans(recovery, true).ok).toBe(false);
+    expect(getLookups()).toEqual([]);
+  });
+
+  it("keeps all source bytes when the destination write fails", () => {
+    const { raw } = seedLegacy();
+    const recovery = detectLegacyScans().value!;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("Full", "QuotaExceededError"); });
+    expect(importLegacyScans(recovery, true).ok).toBe(false);
+    expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBe(raw);
+    expect(getLookups()).toEqual([]);
+  });
+
+  it("does not overwrite an unreadable destination or evict scans at the device cap", () => {
+    const { raw } = seedLegacy();
+    const recovery = detectLegacyScans().value!;
+    const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    localStorage.setItem(key, '{broken');
+    expect(importLegacyScans(recovery, true).ok).toBe(false);
+    expect(localStorage.getItem(key)).toBe('{broken');
+    localStorage.setItem(key, JSON.stringify(Array.from({ length: MAX_SAVED_LOOKUPS }, (_, i) => ({ ...JSON.parse(raw)[0], id: `existing-${i}` }))));
+    expect(importLegacyScans(recovery, true).ok).toBe(false);
+    expect(getLookups()).toHaveLength(MAX_SAVED_LOOKUPS);
+    expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBe(raw);
   });
 });

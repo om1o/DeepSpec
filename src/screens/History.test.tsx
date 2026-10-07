@@ -78,6 +78,54 @@ describe("History", () => {
 
   afterEach(() => vi.restoreAllMocks());
 
+  it("requires ownership confirmation, supports cancellation, and imports only on explicit request", async () => {
+    const raw = JSON.stringify([lookup]);
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, raw);
+    renderHistory();
+    const importButton = screen.getByRole("button", { name: "Import older scans" });
+    expect(importButton).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Download older scans backup" })).toBeDisabled();
+    expect(screen.queryByRole("link", { name: /Alternator/ })).not.toBeInTheDocument();
+    const owner = screen.getByRole("checkbox", { name: /I own all these older scans/ });
+    fireEvent.click(owner);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel recovery" }));
+    expect(owner).not.toBeChecked();
+    expect(getLookups()).toEqual([]);
+    expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBe(raw);
+    fireEvent.click(owner);
+    fireEvent.click(importButton);
+    expect(await screen.findByRole("link", { name: /Alternator/ })).toBeInTheDocument();
+    expect(screen.getByText(/Recovered 1 scans/)).toBeInTheDocument();
+    expect(vi.mocked(syncLookupToCloud)).not.toHaveBeenCalled();
+    expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBe(raw);
+  });
+
+  it("offers owner-confirmed lossless backup for corrupt legacy data", async () => {
+    const raw = '{unfinished';
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, raw);
+    const createUrl = vi.fn((blob: Blob) => { expect(blob.type).toBe("application/json"); return "blob:legacy"; });
+    vi.stubGlobal("URL", class extends URL { static createObjectURL = createUrl; static revokeObjectURL = vi.fn(); });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    try {
+      renderHistory();
+      expect(screen.getByText(/older records are damaged/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("checkbox", { name: /I own all these older scans/ }));
+      expect(screen.getByRole("button", { name: "Import older scans" })).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Download older scans backup" }));
+      expect(createUrl).toHaveBeenCalledWith(expect.any(Blob));
+      expect(click).toHaveBeenCalledOnce();
+      const backup = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = reject;
+        reader.readAsText(createUrl.mock.calls[0][0]);
+      });
+      expect(JSON.parse(backup)).toEqual({ format: "deepspec-legacy-backup-v1", lookupsRaw: raw, chatsRaw: {} });
+      expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBe(raw);
+      expect(getLookups()).toEqual([]);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it("distinguishes unreadable device records from an empty library and leaves their bytes intact", async () => {
     const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
     const raw = '{"unfinished":';

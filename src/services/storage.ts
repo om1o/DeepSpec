@@ -2,7 +2,7 @@ import type { CandidateMatch, CandidatePart, ChatMessage, Confidence, CustomerVi
 
 import type { PartInspectionDraft } from "../types";
 import { normalizePartInspection, withLatestInspection } from "../lib/partInspection";
-import { accountStorageKey } from "../lib/accountScope";
+import { accountStorageKey, getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import { inspectionDraftKey } from "./inspectionDraft";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
@@ -146,6 +146,83 @@ export function readLookups(): StorageResult<Lookup[]> {
   } catch {
     return unreadable;
   }
+}
+
+// Detection never exposes records in the account history or claims ownership.
+export type LegacyScanRecovery = {
+  scope: AccountScope;
+  raw: string;
+  chats: Record<string, string>;
+  count: number;
+  importable: boolean;
+};
+
+export function detectLegacyScans(): StorageResult<LegacyScanRecovery | null> {
+  try {
+    const raw = localStorage.getItem(LOOKUPS_STORAGE_KEY);
+    if (raw === null) return { ok: true, value: null };
+    const recovery: LegacyScanRecovery = { scope: getAccountScope(), raw, chats: Object.create(null) as Record<string, string>, count: 0, importable: false };
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return { ok: true, value: recovery };
+      // Include separate old chat records in recovery and the lossless backup.
+      for (const entry of parsed) {
+        if (isRecord(entry) && typeof entry.id === "string") {
+          const chat = localStorage.getItem(CHAT_KEY(entry.id));
+          if (chat !== null) recovery.chats[entry.id] = chat;
+        }
+      }
+      const records = parsed.map(normalizeLookup);
+      recovery.count = records.length;
+      recovery.importable = records.length > 0 && records.every((record, index) =>
+        record !== null && (!parsed[index].result || record.result !== undefined))
+        && new Set(records.map((record) => record?.id)).size === records.length
+        && Object.values(recovery.chats).every((chat) => {
+          const messages: unknown = JSON.parse(chat);
+          return Array.isArray(messages) && messages.every((message) => normalizeChatMessage(message) !== null);
+        });
+    } catch {
+      // Malformed data can still be downloaded byte-for-byte for recovery.
+    }
+    return { ok: true, value: recovery };
+  } catch {
+    return { ok: false, value: null, message: "Older device scans could not be read. Keep this browser data and try again." };
+  }
+}
+
+export function importLegacyScans(recovery: LegacyScanRecovery, ownerConfirmed: boolean): StorageResult<Lookup[]> {
+  const failed = (message: string): StorageResult<Lookup[]> => ({ ok: false, value: [], message });
+  if (!ownerConfirmed || !isAccountScopeCurrent(recovery.scope)) {
+    return failed("Confirm ownership in the same signed-in account before importing older scans.");
+  }
+  const fresh = detectLegacyScans();
+  if (!fresh.ok || !fresh.value || fresh.value.raw !== recovery.raw
+    || JSON.stringify(fresh.value.chats) !== JSON.stringify(recovery.chats)) {
+    return failed("Older device records changed or could not be read. Review recovery again; nothing was imported.");
+  }
+  if (!fresh.value.importable) return failed("Older device records are damaged or unsupported. Download a backup for recovery; the originals are preserved.");
+  const current = readLookups();
+  if (!current.ok) return current;
+  const imported = (JSON.parse(recovery.raw) as unknown[]).map((entry) => {
+    const record = normalizeLookup(entry)!;
+    // Separate identity prevents a legacy row from overwriting an existing cloud
+    // or device scan. Old account/shop associations and receipts are not trusted.
+    return {
+      ...record,
+      id: `recovered-legacy:${record.id}`,
+      chatHistory: recovery.chats[record.id] ? normalizeChatHistory(JSON.parse(recovery.chats[record.id])) : record.chatHistory,
+      cloudRevision: undefined, cloudSave: undefined,
+      jobId: undefined, orgId: undefined, technicianUserId: undefined, reviewStatus: undefined,
+    };
+  });
+  if (imported.some((record) => current.value.some((existing) => existing.id === record.id))) {
+    return failed("These older scans were already imported or their recovery IDs are in use. Existing scans were left unchanged; download a backup if needed.");
+  }
+  if (!isAccountScopeCurrent(recovery.scope)) return failed("Account changed. Review recovery again.");
+  const written = writeLookups([...imported, ...current.value]);
+  if (!written.ok) return failed(written.message);
+  // Retain the legacy source even after success so it remains a recovery backup.
+  return { ok: true, value: imported };
 }
 
 export function getLookup(id: string, lookups: Lookup[] = getLookups()): Lookup | null {

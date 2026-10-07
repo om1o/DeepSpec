@@ -6,19 +6,21 @@ import { signOut } from "../services/auth";
 import { readCloudLookups } from "../services/cloudHistory";
 import { syncLookupToCloud } from "../services/cloudSync";
 import { getScanQualityMetrics, type ScanQualityFailureReason, type ScanQualityMetrics } from "../services/scanQualityMetrics";
-import { DEVICE_SCAN_LIMIT_MESSAGE, MAX_SAVED_LOOKUPS, deleteLookup, getLookup, readLookups, saveExistingLookup, scanStateFromLookup, subscribeToLookupChanges } from "../services/storage";
+import { DEVICE_SCAN_LIMIT_MESSAGE, MAX_SAVED_LOOKUPS, detectLegacyScans, importLegacyScans, deleteLookup, getLookup, readLookups, saveExistingLookup, scanStateFromLookup, subscribeToLookupChanges } from "../services/storage";
 import { getTrainingReadiness } from "../services/trainingReadiness";
 import { getLocalDateStamp } from "../lib/utils";
 import { withLatestInspection } from "../lib/partInspection";
 import { mergeCloudLookup } from "../lib/lookupMerge";
 import { getIntakeReview } from "../lib/intakeReview";
-import { getAccountScope, isAccountScopeCurrent, hasUnassignedDeviceRecords, withAccountRouteState } from "../lib/accountScope";
+import { getAccountScope, isAccountScopeCurrent, withAccountRouteState } from "../lib/accountScope";
 import { SCAN_CATEGORIES, type Lookup, type Rating, type ScanCategory, type TrainingStatus } from "../types";
 
 export default function History() {
   const navigate = useNavigate();
   const [mountedScope] = useState(getAccountScope);
   // The on-device cap counts what this device stores, not the merged list that also holds cloud scans.
+  const [legacyRead, setLegacyRead] = useState(detectLegacyScans);
+  const [legacyOwnerConfirmed, setLegacyOwnerConfirmed] = useState(false);
   const [deviceRead, setDeviceRead] = useState(readLookups);
   const deviceLookups = deviceRead.value;
   const [cloudLookups, setCloudLookups] = useState<Lookup[]>([]);
@@ -177,7 +179,44 @@ export default function History() {
             }}>Retry reading saved scans</button>
           </section>
         ) : null}
-        {hasUnassignedDeviceRecords() ? <p role="status" className="mt-4 rounded-2xl bg-[var(--ds-elevated)] p-4 text-sm text-[var(--ds-fg-2)]">Older device records are preserved separately. Their account owner is unknown, so they are not shown or uploaded automatically. Owner-confirmed recovery is required.</p> : null}
+        {!legacyRead.ok ? <p role="alert">{legacyRead.message}</p> : legacyRead.value ? (
+          <section aria-label="Older device scan recovery" className="mt-4 rounded-2xl bg-[var(--ds-elevated)] p-4 text-sm text-[var(--ds-fg-2)]">
+            <h2 className="font-bold">Recover older device scans</h2>
+            <p className="mt-2">These records were saved before accounts were separated. Their owner is unknown. Import only if every scan belongs to you. Recovery stays on this device; the originals remain as a backup.</p>
+            {!legacyRead.value.importable ? <p className="mt-2">The older records are damaged, empty, or unsupported. Download a backup to get help recovering them.</p> : null}
+            <label className="mt-3 flex gap-2">
+              <input type="checkbox" checked={legacyOwnerConfirmed} onChange={(event) => setLegacyOwnerConfirmed(event.target.checked)} />
+              I own all these older scans and want to recover them for this signed-in account.
+            </label>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button type="button" className="rounded-full px-3 py-2 font-bold underline" disabled={!legacyOwnerConfirmed || !legacyRead.value.importable} onClick={() => {
+                if (!legacyRead.value) return;
+                const imported = importLegacyScans(legacyRead.value, legacyOwnerConfirmed);
+                setStorageMessage(imported.ok ? `Recovered ${imported.value.length} scans on this device. Originals preserved; cloud save requires a separate action.` : imported.message);
+                if (isAccountScopeCurrent(mountedScope)) setDeviceRead(readLookups());
+                setLegacyOwnerConfirmed(false);
+                setLegacyRead(detectLegacyScans());
+              }}>Import older scans</button>
+              <button type="button" className="rounded-full px-3 py-2 font-bold underline" disabled={!legacyOwnerConfirmed} onClick={() => {
+                if (!legacyRead.value || !isAccountScopeCurrent(mountedScope)) return;
+                const fresh = detectLegacyScans();
+                if (!fresh.ok || !fresh.value) { setStorageMessage("Older scans could not be read. Originals preserved."); return; }
+                const blob = new Blob([JSON.stringify({ format: "deepspec-legacy-backup-v1", lookupsRaw: fresh.value.raw, chatsRaw: fresh.value.chats }, null, 2)], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const anchor = document.createElement("a");
+                anchor.href = url;
+                anchor.download = `deepspec-older-scans-${getLocalDateStamp()}.json`;
+                anchor.click();
+                URL.revokeObjectURL(url);
+                setStorageMessage("Backup download requested. Check the downloaded file; originals are still preserved on this device.");
+              }}>Download older scans backup</button>
+              <button type="button" className="rounded-full px-3 py-2 font-bold underline" onClick={() => {
+                setLegacyOwnerConfirmed(false);
+                setStorageMessage("Recovery cancelled. Older device scans are unchanged.");
+              }}>Cancel recovery</button>
+            </div>
+          </section>
+        ) : null}
 
         {lookups.length > 0 ? (
           <section className="mt-5 rounded-[24px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 shadow-sm">
