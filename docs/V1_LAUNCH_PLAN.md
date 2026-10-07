@@ -6,7 +6,7 @@ Current direction: September 26, 2026. Target: **October 26, 2026**, conditional
 
 Photo of a car part → useful identification and explanation → inspect the evidence → report or correct problems. Preserve original AI results and distinguish visible appearance from tested function. Do not promise exact fitment, hidden-fault detection, calibrated confidence, or functioning 3D reconstruction from a photograph.
 
-V1 includes reliable saving, useful camera highlighting with a photo fallback, reporting, explicit data-use choices and enough review/monitoring to learn from real use. Firecrawl, custom model training, broad catalog integrations and advanced 3D are V2 candidates. Shop jobs remain an optional local prototype, not a prerequisite for a useful scan.
+V1 includes reliable saving, useful camera highlighting with a photo fallback, reporting, explicit data-use choices and enough review/monitoring to learn from real use. Firecrawl, custom model training, broad catalog integrations and advanced 3D are V2 candidates. Shop jobs remain an optional local prototype, not a prerequisite for a useful scan. Shop scans save privately to the signed-in account unless cloud reads confirm a writable organization membership and a job in that organization. Local job links remain on the device; saved history distinguishes private backup from a cloud shop association. No local organization or membership is automatically provisioned in Supabase. If a scan already has a cloud shop association that cannot be verified, saving pauses with an access message instead of claiming a private backup or silently detaching the job.
 
 ## Current audit
 

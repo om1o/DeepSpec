@@ -369,6 +369,7 @@ export type Lookup = {
     attemptedAt: string;
     status: "unconfirmed" | "acknowledged" | "failed";
     scope: "scan" | "inspection";
+    shopAssociation?: "private" | "cloud";
   };
   inspection?: PartInspection;
   id: string;

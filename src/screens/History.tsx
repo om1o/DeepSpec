@@ -282,6 +282,11 @@ function cloudSaveLabel(local?: Lookup): string {
   if (!local) return "Loaded from cloud";
   if (!local.cloudSave) return "Device copy · Cloud save not confirmed for these changes";
   if (local.cloudSave.status === "acknowledged") {
+    if (local.cloudSave.scope === "scan" && local.cloudSave.shopAssociation) {
+      return local.cloudSave.shopAssociation === "private"
+        ? "Saved privately to your account · Shop job link is device-only"
+        : "Cloud save acknowledged · Linked to cloud shop job";
+    }
     return local.cloudSave.scope === "inspection"
       ? "Last inspection save acknowledged · Other changes not confirmed"
       : "Last cloud save acknowledged";

@@ -44,6 +44,12 @@ function cloud() {
       return { data: true, error: null };
     }),
     from: (table: string) => {
+      if (table === "organization_members" || table === "shop_jobs") {
+        const query = { select: () => query, eq: () => query, maybeSingle: async () => ({
+          data: table === "organization_members" ? { role: "technician" } : { id: "00000000-0000-4000-8000-000000000101" }, error: null,
+        }) };
+        return query;
+      }
       let operation = "";
       let payload: Record<string, unknown> = {};
       const filters: Record<string, unknown> = {};

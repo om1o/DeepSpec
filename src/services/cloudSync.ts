@@ -58,6 +58,7 @@ export type CloudSyncResult =
   | {
       ok: true;
       imagePath?: string;
+      shopAssociation?: "private" | "cloud";
       message: string;
     }
   | {
@@ -248,6 +249,7 @@ async function syncLookupForAccount(lookup: Lookup, scope: AccountScope): Promis
     const operation = performLookupSync(lookup, scope, guard)
       .finally(() => pendingLookupSyncs.delete(pendingKey));
     const result = await withCloudTimeout(operation, CLOUD_SYNC_TIMEOUT_MS, () => { timedOut = true; });
+    if (receipt && result.ok && result.shopAssociation) receipt = { ...receipt, shopAssociation: result.shopAssociation };
     finish(result.ok ? "acknowledged" : "failed");
     return result;
   } catch (error) {
@@ -283,6 +285,23 @@ async function performLookupSync(lookup: Lookup, scope: AccountScope, guard: () 
     await syncAnalysisFailureRows(supabase, user.id, lookup, guard);
     return { ok: true, message: "Inspection synced to your saved scan." };
   }
+  const association = await resolveCloudShopAssociation(supabase, user.id, lookup, guard);
+  guard();
+  if (!association && (lookup.orgId || lookup.jobId) && lookup.cloudRevision !== undefined) {
+    // Omitting columns on UPDATE retains a previous shop association. Never
+    // label such a save private or silently detach a shared cloud job/bridge.
+    const existing = await supabase.from("scan_lookups").select("*")
+      .eq("user_id", user.id).eq("local_id", lookup.id).eq("revision", lookup.cloudRevision).maybeSingle();
+    guard();
+    if (existing.error) throw new Error(existing.error.message);
+    if (!existing.data) throw new Error(CLOUD_CONFLICT_MESSAGE);
+    if (existing.data.org_id || existing.data.job_id) {
+      throw new Error("The existing cloud shop association could not be verified. Cloud save stopped; your scan and job link remain on this device. Restore shop access before retrying.");
+    }
+  }
+  // Keep the device record untouched; only authorized cloud identifiers travel.
+  const cloudLookup = { ...lookup, orgId: association?.orgId, jobId: association?.jobId,
+    technicianUserId: association ? lookup.technicianUserId : undefined };
   const image = dataUrlToBlob(lookup.frame.imageBase64);
   const imageHash = await hashBytes(image.bytes);
   guard();
@@ -324,7 +343,7 @@ async function performLookupSync(lookup: Lookup, scope: AccountScope, guard: () 
     training_status: lookup.trainingStatus,
     user_id: user.id,
     ...(lookup.inspection ? { inspection_json: lookup.inspection } : {}),
-    ...getOptionalScanLookupFields(lookup),
+    ...getOptionalScanLookupFields(cloudLookup),
   }, lookup.cloudRevision, guard);
 
   if (saved.error) {
@@ -338,13 +357,16 @@ async function performLookupSync(lookup: Lookup, scope: AccountScope, guard: () 
   recordCloudRevision(lookup.id, lookup.cloudRevision, saved.data.revision);
   guard();
 
-  await syncDatasetDetailTables(supabase, user.id, lookup, saved.data.revision, guard);
+  await syncDatasetDetailTables(supabase, user.id, cloudLookup, saved.data.revision, guard);
   guard();
 
   return {
     ok: true,
     imagePath,
-    message: "Scan synced to the private Deep Spec dataset.",
+    ...(lookup.orgId || lookup.jobId ? { shopAssociation: association ? "cloud" as const : "private" as const } : {}),
+    message: lookup.orgId || lookup.jobId
+      ? association ? "Scan synced to your cloud shop job." : "Scan saved privately to your account. The shop job link stays on this device."
+      : "Scan synced to the private Deep Spec dataset.",
   };
 }
 
@@ -395,6 +417,23 @@ export async function syncLookupsToCloud(lookups: Lookup[]): Promise<CloudBatchS
     ok: failures.length === 0,
     synced,
   };
+}
+
+// Local shop records are a prototype, not proof of cloud membership. Read with
+// the signed-in client (RLS still applies), never provision or trust local roles.
+async function resolveCloudShopAssociation(supabase: SupabaseClient, userId: string, lookup: Lookup, guard: () => void) {
+  const orgId = asUuid(lookup.orgId);
+  const jobId = asUuid(lookup.jobId);
+  if (!orgId || !jobId) return null;
+  const member = await supabase.from("organization_members").select("role")
+    .eq("org_id", orgId).eq("user_id", userId).maybeSingle();
+  guard();
+  if (member.error || !["owner", "admin", "technician"].includes(member.data?.role)) return null;
+  const job = await supabase.from("shop_jobs").select("id")
+    .eq("id", jobId).eq("org_id", orgId).maybeSingle();
+  guard();
+  if (job.error || job.data?.id !== jobId) return null;
+  return { orgId, jobId };
 }
 
 function getOptionalScanLookupFields(lookup: Lookup) {
@@ -956,7 +995,7 @@ function getImageExtension(contentType: string) {
 
 function getFriendlySyncError(error: unknown) {
   const message = error instanceof Error ? error.message : "Unknown cloud sync error.";
-  if (message === "Sign in to the account that owns this scan before syncing.") return message;
+  if (message === "Sign in to the account that owns this scan before syncing." || message.startsWith("Account changed.")) return message;
   if (message === CLOUD_CONFLICT_MESSAGE || message.includes("scan_lookup_revision_conflict")) return CLOUD_CONFLICT_MESSAGE;
   if (/sync_scan_details/i.test(message) && /does not exist|schema cache|could not find/i.test(message)) {
     return "Cloud save requires the scan child revision database migration. Your scan is still saved on this device.";

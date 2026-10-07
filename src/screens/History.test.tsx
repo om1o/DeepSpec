@@ -183,6 +183,8 @@ describe("History", () => {
 
   it.each([
     [undefined, "Cloud save not confirmed for these changes"],
+    [{ attemptId: "one", attemptedAt: "2026-09-20T12:00:00Z", status: "acknowledged", scope: "scan", shopAssociation: "private" }, "Shop job link is device-only"],
+    [{ attemptId: "one", attemptedAt: "2026-09-20T12:00:00Z", status: "acknowledged", scope: "scan", shopAssociation: "cloud" }, "Linked to cloud shop job"],
     [{ attemptId: "one", attemptedAt: "2026-09-20T12:00:00Z", status: "unconfirmed", scope: "scan" }, "Cloud confirmation unavailable"],
     [{ attemptId: "one", attemptedAt: "2026-09-20T12:00:00Z", status: "failed", scope: "scan" }, "retry required"],
     [{ attemptId: "one", attemptedAt: "2026-09-20T12:00:00Z", status: "acknowledged", scope: "scan" }, "Last cloud save acknowledged"],

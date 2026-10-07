@@ -502,7 +502,8 @@ function normalizeCloudSave(value: unknown): Lookup["cloudSave"] {
     || typeof value.attemptedAt !== "string" || !Number.isFinite(Date.parse(value.attemptedAt))
     || !["unconfirmed", "acknowledged", "failed"].includes(value.status as string)
     || !["scan", "inspection"].includes(value.scope as string)) return undefined;
-  return { attemptId: value.attemptId, attemptedAt: value.attemptedAt, status: value.status, scope: value.scope } as NonNullable<Lookup["cloudSave"]>;
+  return { attemptId: value.attemptId, attemptedAt: value.attemptedAt, status: value.status, scope: value.scope,
+    ...(value.shopAssociation === "private" || value.shopAssociation === "cloud" ? { shopAssociation: value.shopAssociation } : {}) } as NonNullable<Lookup["cloudSave"]>;
 }
 
 function normalizeScanProvenance(value: unknown, fallbackSavedAt: string): ScanProvenance {
