@@ -694,6 +694,11 @@ describe("Result", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
     expect(screen.getByText(/device storage is full/i)).toBeInTheDocument();
     write.mockRestore();
+
+    await userEvent.click(screen.getByRole("button", { name: "Retry saving scan result" }));
+    expect(getLookup(failedLookup.id)?.result?.partName).toBe("Alternator");
+    expect(getLookup(failedLookup.id)?.errorMessage).toBeUndefined();
+    expect(screen.queryByRole("button", { name: "Retry saving scan result" })).not.toBeInTheDocument();
   });
 
   it.each([

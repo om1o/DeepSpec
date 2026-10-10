@@ -44,6 +44,7 @@ export default function Result() {
     : lookup;
   const inspectionLookup = inspectionBase ? withRetriedLookupResult(inspectionBase, liveScanState) : null;
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [retrySaveLabel, setRetrySaveLabel] = useState("Retry saving feedback");
   const scanState = lookup ? scanStateFromLookup(inspectionBase ?? lookup) : liveScanState ?? getScanState(routeState);
   const frame = scanState?.frame ?? readLatestCapturedFrame();
   const capturedAt = frame?.capturedAt ? new Date(frame.capturedAt).toLocaleString() : null;
@@ -55,6 +56,7 @@ export default function Result() {
   const manualCorrectionTrackedRef = useRef(false);
   const pendingRatingRef = useRef<Rating | undefined>(undefined);
   const pendingCorrectionRef = useRef<string | null | undefined>(undefined);
+  const pendingRetryLookupRef = useRef<Lookup | null>(null);
 
   function trackManualCorrectionOnce() {
     if (manualCorrectionTrackedRef.current) {
@@ -101,6 +103,18 @@ export default function Result() {
 
   function retryFeedbackSave() {
     if (!lookup || !isAccountScopeCurrent(mountedScope)) return;
+    const pendingRetry = pendingRetryLookupRef.current;
+    if (pendingRetry?.result) {
+      const result = updateLookupResult(
+        pendingRetry.id,
+        pendingRetry.result,
+        pendingRetry.provenance,
+        pendingRetry.frame,
+      );
+      if (result.ok) pendingRetryLookupRef.current = null;
+      handleLookupUpdate(result, "result");
+      return;
+    }
     handleLookupUpdate(updateLookup(lookup.id, {
       ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
       correction: lookup.correction,
@@ -156,16 +170,18 @@ export default function Result() {
     navigate(`/result/${saved.id}/chat${query}`);
   }
 
-  function handleLookupUpdate(result: ReturnType<typeof updateLookup>) {
+  function handleLookupUpdate(result: ReturnType<typeof updateLookup>, failureKind: "feedback" | "result" = "feedback") {
     if (result.ok) {
       pendingRatingRef.current = undefined;
       pendingCorrectionRef.current = undefined;
       setLookup(result.value);
       setSaveError(null);
+      setRetrySaveLabel("Retry saving feedback");
       return;
     }
 
     setSaveError(result.message);
+    setRetrySaveLabel(failureKind === "result" ? "Retry saving scan result" : "Retry saving feedback");
     if (result.value) {
       pendingCorrectionRef.current = result.value.correction;
       setLookup(result.value);
@@ -247,8 +263,10 @@ export default function Result() {
               lookup={lookup}
               vehicleContext={lookup?.vehicleContext ?? scanState.vehicleContext}
               onLookupRetrySuccess={(updatedLookup, warning) => {
+                pendingRetryLookupRef.current = warning ? updatedLookup : null;
                 setLookup(updatedLookup);
                 setSaveError(warning ?? null);
+                setRetrySaveLabel(warning ? "Retry saving scan result" : "Retry saving feedback");
               }}
               onScanRetrySuccess={(nextScanState) => {
                 setLiveScanState(nextScanState);
@@ -264,6 +282,7 @@ export default function Result() {
               onCorrectionChange={handleCorrection}
               onRating={handleRating}
               saveFailed={Boolean(saveError)}
+              retrySaveLabel={retrySaveLabel}
               onRetrySave={retryFeedbackSave}
             />
           ) : null}
@@ -326,12 +345,14 @@ function TrustControl({
   onCorrectionChange,
   onRating,
   saveFailed,
+  retrySaveLabel,
   onRetrySave,
 }: {
   lookup: Lookup;
   onCorrectionChange: (correction: string) => void;
   onRating: (rating: Rating) => void;
   saveFailed: boolean;
+  retrySaveLabel: string;
   onRetrySave: () => void;
 }) {
   const [showWhy, setShowWhy] = useState(false);
@@ -373,7 +394,7 @@ function TrustControl({
       <p className="mt-3 text-xs font-semibold leading-5 text-[var(--ds-fg-3)]">
         {saveFailed ? "Feedback is not saved. Keep this page open or copy your text before leaving." : "Feedback is saved with this scan."} Using it for model training requires separate permission.
       </p>
-      {saveFailed ? <button type="button" onClick={onRetrySave} className="mt-3 rounded-full border border-[var(--ds-border)] px-4 py-2 text-sm font-bold">Retry saving feedback</button> : null}
+      {saveFailed ? <button type="button" onClick={onRetrySave} className="mt-3 rounded-full border border-[var(--ds-border)] px-4 py-2 text-sm font-bold">{retrySaveLabel}</button> : null}
     </section>
   );
 }
