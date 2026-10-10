@@ -269,7 +269,7 @@ function readRequiredEnv(options) {
 
   const supabaseUrl = String(process.env.VITE_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "").trim();
   const publishableKey = String(process.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "").trim();
-  const serviceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
+  const serviceRoleKey = String(process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
   const polarWebhookSecret = String(process.env.POLAR_WEBHOOK_SECRET ?? "").trim();
   const stripeSecretKey = String(process.env.STRIPE_SECRET_KEY ?? "").trim();
   const stripeWebhookSecret = String(process.env.STRIPE_WEBHOOK_SECRET ?? "").trim();
@@ -277,7 +277,7 @@ function readRequiredEnv(options) {
   const missing = [
     ["VITE_SUPABASE_URL or SUPABASE_URL", supabaseUrl],
     ["VITE_SUPABASE_PUBLISHABLE_KEY", publishableKey],
-    ["SUPABASE_SERVICE_ROLE_KEY", serviceRoleKey],
+    ["SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY", serviceRoleKey],
     ...(billingProvider === "polar"
       ? [["POLAR_WEBHOOK_SECRET", polarWebhookSecret]]
       : [

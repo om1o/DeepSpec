@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { getSupabaseAdminKey } from "./supabaseAdmin.shared";
 
 // Optional auth gate for the paid AI endpoints. Off by default. When on, it requires a
 // valid Supabase session on /api/identify and /api/chat. This is an auth gate, not a
@@ -31,7 +32,7 @@ export async function requireSession(
   }
 
   const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
-  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const serviceRoleKey = getSupabaseAdminKey(env);
   if (!supabaseUrl || !serviceRoleKey) {
     return {
       ok: false,

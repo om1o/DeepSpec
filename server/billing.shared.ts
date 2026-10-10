@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { REVENUE_PLANS, getRevenuePlan, type PlanId, type ServerEntitlement } from "../src/services/revenue";
+import { getSupabaseAdminKey } from "./supabaseAdmin.shared";
 
 type BillingErrorResponse = {
   status: number;
@@ -334,7 +335,7 @@ export async function createWebhookResponse(
   }
 
   const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
-  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const serviceRoleKey = getSupabaseAdminKey(env);
   if (!supabaseUrl || !serviceRoleKey) {
     return errorResponse(500, "not_configured", "Server entitlement writes are not configured.");
   }
@@ -380,7 +381,7 @@ async function createPolarWebhookResponse(
   }
 
   const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
-  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const serviceRoleKey = getSupabaseAdminKey(env);
   if (!supabaseUrl || !serviceRoleKey) {
     return errorResponse(500, "not_configured", "Server entitlement writes are not configured.");
   }
@@ -416,7 +417,7 @@ export async function createAccountEntitlementResponse(
   env: BillingEnv,
 ): Promise<EntitlementResponse> {
   const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
-  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const serviceRoleKey = getSupabaseAdminKey(env);
   if (!supabaseUrl || !serviceRoleKey) {
     return entitlementErrorResponse(500, "not_configured", "Server entitlement verification is not configured.");
   }
@@ -490,7 +491,7 @@ export async function reserveScanCredit(
   }
 
   const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
-  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const serviceRoleKey = getSupabaseAdminKey(env);
   if (!supabaseUrl || !serviceRoleKey) {
     return { ok: false, error: errorResponse(500, "not_configured", "Server-side scan credit enforcement is not configured.") };
   }
@@ -535,7 +536,7 @@ export async function reserveScanCredit(
 export async function consumeReservedScanCredit(reservation: ScanCreditReservation, env: BillingEnv, succeeded = true) {
   if (!reservation.ok || !reservation.enforced || !reservation.reservationId) return;
   const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
-  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const serviceRoleKey = getSupabaseAdminKey(env);
   if (!supabaseUrl || !serviceRoleKey) return;
   const supabase = createBillingClient(supabaseUrl, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
@@ -1071,7 +1072,7 @@ async function verifyBillingUser(
   env: BillingEnv,
 ): Promise<{ userId: string } | { error: BillingErrorResponse }> {
   const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
-  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const serviceRoleKey = getSupabaseAdminKey(env);
   if (!supabaseUrl || !serviceRoleKey) {
     return {
       error: errorResponse(500, "not_configured", "Server billing user verification is not configured."),
@@ -1108,7 +1109,7 @@ async function readVerifiedBillingEntitlement(
   env: BillingEnv,
 ): Promise<{ row: SupabaseRow | null; userId: string } | { error: BillingErrorResponse }> {
   const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
-  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const serviceRoleKey = getSupabaseAdminKey(env);
   if (!supabaseUrl || !serviceRoleKey) {
     return {
       error: errorResponse(500, "not_configured", "Server entitlement verification is not configured."),

@@ -114,13 +114,13 @@ export async function exportReviewedDataset({ version, outputDir, client }) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const [version, outputDir, ...extra] = process.argv.slice(2);
-  const usage = "Usage: node scripts/export-reviewed-dataset.mjs DATASET_VERSION NEW_OUTPUT_DIRECTORY\nRequires server-only SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY. Maximum 200 eligible memberships, 2 MiB per image.\nPoint-in-time export: later consent withdrawal or deletion requires purge and re-export; completed training is not unlearned.";
+  const usage = "Usage: node scripts/export-reviewed-dataset.mjs DATASET_VERSION NEW_OUTPUT_DIRECTORY\nRequires server-only SUPABASE_URL and SUPABASE_SECRET_KEY (legacy SUPABASE_SERVICE_ROLE_KEY is a rotation fallback). Maximum 200 eligible memberships, 2 MiB per image.\nPoint-in-time export: later consent withdrawal or deletion requires purge and re-export; completed training is not unlearned.";
   if (version === "--help" && !outputDir) {
     console.log(usage);
   } else {
   try {
     if (extra.length || !version || !outputDir) throw new Error(usage);
-    const client = createExportClient({ url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SERVICE_ROLE_KEY });
+    const client = createExportClient({ url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY });
     console.log(JSON.stringify(await exportReviewedDataset({ version, outputDir, client })));
   } catch (error) { console.error(error instanceof Error ? error.message : "Export failed."); process.exitCode = 1; }
   }
