@@ -279,8 +279,8 @@ describe("createIdentifyResponse", () => {
     if (first.status !== 200 || !("modelRun" in first.body) || second.status !== 200 || !("modelRun" in second.body)) throw new Error("Expected model result");
     expect(first.body.modelRun.runId).toMatch(/^[a-f0-9-]{36}$/);
     expect(first.body.modelRun.runId).not.toBe(second.body.modelRun.runId);
-    expect(first.body.modelRun.promptVersion).toBe("identify-2026-09-27-v1");
-    expect(first.body.modelRun.pipelineVersion).toBe("identify-pipeline-2026-09-27-v1");
+    expect(first.body.modelRun.promptVersion).toBe("identify-2026-10-10-v2");
+    expect(first.body.modelRun.pipelineVersion).toBe("identify-pipeline-2026-10-10-v2");
     expect(first.body.result.modelRun).toEqual(first.body.modelRun);
   });
 
