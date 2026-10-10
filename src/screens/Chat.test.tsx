@@ -132,6 +132,9 @@ describe("Chat", () => {
     expect(await screen.findByText("Follow-up chat is unavailable")).toBeInTheDocument();
     expect(screen.getByText("Follow-up chat is unavailable in this beta.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Retry last question" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Ask a follow-up question")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    expect(sendFollowUpMock).toHaveBeenCalledTimes(1);
   });
 
   it("retries the last unanswered question without duplicating the saved user message", async () => {
