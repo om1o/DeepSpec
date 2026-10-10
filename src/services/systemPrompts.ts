@@ -1,6 +1,6 @@
 // Bump when identification instructions or routing/normalization change.
-export const IDENTIFY_PROMPT_VERSION = "identify-2026-09-27-v1";
-export const IDENTIFY_PIPELINE_VERSION = "identify-pipeline-2026-09-27-v1";
+export const IDENTIFY_PROMPT_VERSION = "identify-2026-10-10-v2";
+export const IDENTIFY_PIPELINE_VERSION = "identify-pipeline-2026-10-10-v2";
 
 export const IDENTIFY_PROMPT = `
 You are Deep Spec Vision - the AI core of a mobile app that helps people identify and understand vehicle parts from photos.
