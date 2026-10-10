@@ -343,7 +343,7 @@ export default function Auth() {
 
         <section className="ds-auth-card mx-auto flex w-full max-w-[540px] flex-col p-5 sm:p-8">
           <div className="flex items-center justify-between gap-4">
-            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-14 w-44 rounded-[8px] bg-white object-contain p-1 shadow-sm ring-1 ring-white/20" />
+            <img src="/brand/deepspec-site-logo-v2.webp" alt="Deep Spec" className="h-14 w-44 object-contain" />
             <span className={supabaseConfigured ? "rounded-[8px] border border-[var(--ds-ok-line)] bg-[var(--ds-ok-soft)] px-3 py-1.5 text-xs font-black text-sky-100" : "rounded-[8px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-3 py-1.5 text-xs font-black text-amber-100"}>
               {supabaseConfigured ? "Your workspace" : "Sign-in unavailable"}
             </span>

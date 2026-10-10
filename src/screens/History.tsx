@@ -139,7 +139,7 @@ export default function History() {
       <div className="mx-auto w-full max-w-2xl">
         <header className="ds-history-header">
           <div className="min-w-0">
-            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-12 w-36 rounded-xl bg-[var(--ds-elevated)] object-contain p-1 shadow-sm ring-1 ring-[var(--ds-accent-line)]" />
+            <img src="/brand/deepspec-site-logo-v2.webp" alt="Deep Spec" className="h-12 w-36 object-contain" />
             <p className="ds-eyebrow mt-7">YOUR PARTS LIBRARY</p>
             <h1 className="mt-2 text-3xl font-bold tracking-tight text-[var(--ds-fg-1)]">Saved scans</h1>
             <p className="mt-2 text-sm leading-6 text-[var(--ds-fg-3)]">A place for every capture, correction, and inspection.</p>

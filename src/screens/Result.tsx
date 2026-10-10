@@ -200,7 +200,7 @@ export default function Result() {
           )}
           <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(2,6,23,0.58),rgba(2,6,23,0.02)_38%,rgba(2,6,23,0.76))]" />
           <header className="absolute left-0 right-0 top-0 z-10 lg:right-10 flex items-center justify-between px-4 pt-[max(18px,env(safe-area-inset-top))]">
-            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-11 w-32 rounded-xl bg-[var(--ds-elevated)] object-contain p-1 shadow-sm ring-1 ring-white/30" />
+            <img src="/brand/deepspec-site-logo-v2.webp" alt="Deep Spec" className="h-11 w-32 object-contain" />
             <nav className="flex gap-2" aria-label="Scan navigation">
               <Link to="/history" aria-label="Open saved scan history" className="ds-workbench-back">Saved scans</Link>
               <Link to="/scan" className="ds-workbench-back">
