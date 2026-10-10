@@ -246,7 +246,10 @@ export default function Result() {
               frame={frame}
               lookup={lookup}
               vehicleContext={lookup?.vehicleContext ?? scanState.vehicleContext}
-              onLookupRetrySuccess={setLookup}
+              onLookupRetrySuccess={(updatedLookup, warning) => {
+                setLookup(updatedLookup);
+                setSaveError(warning ?? null);
+              }}
               onScanRetrySuccess={(nextScanState) => {
                 setLiveScanState(nextScanState);
                 saveLatestScanState(nextScanState);
@@ -576,7 +579,7 @@ function AnalysisError({
   lookup: Lookup | null;
   vehicleContext?: Lookup["vehicleContext"];
   message: string;
-  onLookupRetrySuccess: (updatedLookup: Lookup) => void;
+  onLookupRetrySuccess: (updatedLookup: Lookup, warning?: string) => void;
   onScanRetrySuccess: (scanState: ScanAnalysisState) => void;
 }) {
   const [isOnline, setIsOnline] = useState(() => typeof navigator !== "undefined" ? navigator.onLine : true);
@@ -617,14 +620,10 @@ function AnalysisError({
           analysisSource: "manual_retry",
           savedAt: new Date().toISOString(),
         }, identificationFrame);
-        if (updateResult.ok) {
-          if (updateResult.value) {
-            onLookupRetrySuccess(updateResult.value);
-          } else {
-            setRetryError("This saved scan was not found.");
-          }
+        if (updateResult.value) {
+          onLookupRetrySuccess(updateResult.value, updateResult.ok ? undefined : updateResult.message);
         } else {
-          setRetryError(updateResult.message);
+          setRetryError(updateResult.ok ? "This saved scan was not found." : updateResult.message);
         }
       } else {
         onScanRetrySuccess({

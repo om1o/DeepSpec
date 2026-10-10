@@ -1,7 +1,13 @@
 import type { CapturedFrame } from "../types";
+import { compressImageDataUrl } from "./utils";
+
+const MAX_RECOVERED_DATA_URL_LENGTH = 750_000;
 
 // Signed cloud-history images must be materialized before the data-URL-only API call.
-export async function prepareRetryFrame(frame: CapturedFrame): Promise<CapturedFrame> {
+export async function prepareRetryFrame(
+  frame: CapturedFrame,
+  compressImage = compressImageDataUrl,
+): Promise<CapturedFrame> {
   if (frame.imageBase64.startsWith("data:")) return frame;
   const unavailable = "The saved photo could not be loaded. Reopen it from saved scans to refresh its link, or take a new photo.";
   if (!frame.imageBase64.startsWith("https://")) throw new Error(unavailable);
@@ -26,7 +32,10 @@ export async function prepareRetryFrame(frame: CapturedFrame): Promise<CapturedF
       : match?.[1] === "png" ? bytes.startsWith("\x89PNG\r\n\x1a\n")
         : match?.[1] === "webp" && bytes.startsWith("RIFF") && bytes.slice(8, 12) === "WEBP";
     if (!valid) throw new Error("The saved photo is not a valid JPEG, PNG, or WebP image.");
-    return { ...frame, imageBase64 };
+    const boundedImage = imageBase64.length > MAX_RECOVERED_DATA_URL_LENGTH
+      ? await compressImage(imageBase64, 1024, 0.76)
+      : imageBase64;
+    return { ...frame, imageBase64: boundedImage };
   } catch (error) {
     if (error instanceof TypeError || controller.signal.aborted) throw new Error(unavailable, { cause: error });
     throw error;

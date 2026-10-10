@@ -676,6 +676,26 @@ describe("Result", () => {
     });
   });
 
+  it("shows a successful retry with a persistence warning when the durable write is full", async () => {
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    vi.spyOn(aiService, "identifyCapturedFrame").mockResolvedValue(successfulScan.result!);
+    const failedLookup = makeLookup({ result: undefined, errorCode: "network", errorMessage: "Network error" });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([failedLookup]));
+    const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    const originalSetItem = Storage.prototype.setItem;
+    const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, name, value) {
+      if (name === key) throw new DOMException("Full", "QuotaExceededError");
+      originalSetItem.call(this, name, value);
+    });
+
+    renderResult(null, `/result/${failedLookup.id}`);
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
+    expect(screen.getByText(/device storage is full/i)).toBeInTheDocument();
+    write.mockRestore();
+  });
+
   it.each([
     [false, "image/png", "photo"],
     [true, "text/html", "<html>expired link</html>"],
