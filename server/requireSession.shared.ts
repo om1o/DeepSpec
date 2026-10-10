@@ -1,10 +1,9 @@
 import { createClient } from "@supabase/supabase-js";
 
 // Optional auth gate for the paid AI endpoints. Off by default. When on, it requires a
-// valid Supabase session on /api/identify and /api/chat. Anonymous sessions
-// (signInAnonymously) count, so the "no email" flow keeps working — but a determined
-// bot can still mint anonymous tokens, so this only blocks trivial no-token callers.
-// IP rate limiting (rateLimit.shared.ts) is what actually caps API cost.
+// valid Supabase session on /api/identify and /api/chat. This is an auth gate, not a
+// complete cost-control layer; IP rate limiting (rateLimit.shared.ts) and scan credits
+// cap API cost.
 
 type SessionEnv = Record<string, string | undefined>;
 
@@ -25,8 +24,8 @@ export async function requireSession(
   env: SessionEnv,
 ): Promise<SessionDecision> {
   // Default OFF. Turn on DEEPSPEC_REQUIRE_SESSION=true only after confirming Supabase
-  // anonymous auth is enabled and established before the first scan — otherwise
-  // legitimate users who reach identify/chat without a session get a 401.
+  // email auth is enabled and established before the first scan — otherwise legitimate
+  // users who reach identify/chat without a session get a 401.
   if (env.DEEPSPEC_REQUIRE_SESSION !== "true") {
     return { ok: true };
   }
