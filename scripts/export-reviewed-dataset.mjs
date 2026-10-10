@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { readSupabaseAdminKey } from "./supabase-admin-env.mjs";
 
 const MAX_ROWS = 200;
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
@@ -120,7 +121,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   } else {
   try {
     if (extra.length || !version || !outputDir) throw new Error(usage);
-    const client = createExportClient({ url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY });
+    const client = createExportClient({ url: process.env.SUPABASE_URL, key: readSupabaseAdminKey() });
     console.log(JSON.stringify(await exportReviewedDataset({ version, outputDir, client })));
   } catch (error) { console.error(error instanceof Error ? error.message : "Export failed."); process.exitCode = 1; }
   }

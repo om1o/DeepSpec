@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
+import { readSupabaseAdminKey } from "./supabase-admin-env.mjs";
 import { getPolarWebhookSigningKey } from "./polar-webhook-signing.mjs";
 
 const PLAN_ALLOWANCE = {
@@ -269,7 +270,7 @@ function readRequiredEnv(options) {
 
   const supabaseUrl = String(process.env.VITE_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "").trim();
   const publishableKey = String(process.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "").trim();
-  const serviceRoleKey = String(process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
+  const serviceRoleKey = readSupabaseAdminKey();
   const polarWebhookSecret = String(process.env.POLAR_WEBHOOK_SECRET ?? "").trim();
   const stripeSecretKey = String(process.env.STRIPE_SECRET_KEY ?? "").trim();
   const stripeWebhookSecret = String(process.env.STRIPE_WEBHOOK_SECRET ?? "").trim();
