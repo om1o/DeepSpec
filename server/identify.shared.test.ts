@@ -143,6 +143,88 @@ describe("createIdentifyResponse", () => {
     });
   });
 
+  it("drops unsupported visual measurements without scale evidence", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        candidates: [{
+          content: {
+            parts: [{
+              text: JSON.stringify({
+                ...result,
+                measurements: [
+                  {
+                    caveat: "Estimated from appearance.",
+                    confidence: "medium",
+                    label: "Wrench size",
+                    method: "estimated",
+                    valueMm: 13,
+                  },
+                  {
+                    caveat: "Compared with an assumed coin.",
+                    confidence: "medium",
+                    label: "Bolt width",
+                    method: "reference_object",
+                    valueMm: 18,
+                  },
+                ],
+              }),
+            }],
+          },
+        }],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 200,
+      body: { result: { measurements: [] } },
+    });
+  });
+
+  it("keeps approximate measurements backed by a supplied same-plane reference", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        candidates: [{
+          content: {
+            parts: [{
+              text: JSON.stringify({
+                ...result,
+                measurements: [{
+                  caveat: "Approximate; verify with a caliper.",
+                  confidence: "medium",
+                  label: "Bolt width",
+                  method: "reference_object",
+                  valueMm: 18,
+                }],
+              }),
+            }],
+          },
+        }],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(createIdentifyResponse({
+      imageBase64,
+      measurementContext: {
+        referenceLabel: "US quarter",
+        referenceMm: 24.26,
+        referenceType: "us_quarter",
+      },
+    }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+      status: 200,
+      body: {
+        result: {
+          measurements: [{ label: "Bolt width", method: "reference_object", valueMm: 18 }],
+        },
+      },
+    });
+  });
+
   it("returns validated Gemini JSON", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
