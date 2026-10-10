@@ -441,7 +441,7 @@ describe("billing shared", () => {
     supabaseMock.createClient.mockReturnValue({
       auth: {
         getUser: vi.fn(async () => ({
-          data: { user: { id: "user-1" } },
+          data: { user: { id: "user-1", email_confirmed_at: "2026-07-01T00:00:00.000Z" } },
           error: null,
         })),
       },
@@ -483,9 +483,34 @@ describe("billing shared", () => {
     });
   });
 
+  it("requires a permanent confirmed identity before reporting account access", async () => {
+    for (const user of [
+      { id: "anonymous-user", is_anonymous: true },
+      { id: "unconfirmed-user", is_anonymous: false },
+    ]) {
+      const from = vi.fn();
+      supabaseMock.createClient.mockReturnValue({
+        auth: { getUser: vi.fn(async () => ({ data: { user }, error: null })) },
+        from,
+      });
+
+      await expect(createAccountEntitlementResponse(
+        { authorization: "Bearer unverified-token" },
+        {
+          SUPABASE_URL: "https://deep-spec.supabase.co",
+          SUPABASE_SERVICE_ROLE_KEY: "service-role",
+        },
+      )).resolves.toMatchObject({
+        status: 200,
+        body: { entitlement: { status: "verification_required" } },
+      });
+      expect(from).not.toHaveBeenCalled();
+    }
+  });
+
   it("reports lifetime free usage from the server for a second device", async () => {
     supabaseMock.createClient.mockReturnValue({
-      auth: { getUser: vi.fn(async () => ({ data: { user: { id: "user-1" } }, error: null })) },
+      auth: { getUser: vi.fn(async () => ({ data: { user: { id: "user-1", email_confirmed_at: "2026-07-01T00:00:00.000Z" } }, error: null })) },
       from: vi.fn((table: string) => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: table === "free_scan_usage" ? { scans_used: 5 } : null, error: null }) }) }) })),
     });
     await expect(createAccountEntitlementResponse({ authorization: "Bearer token" }, {

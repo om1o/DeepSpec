@@ -438,6 +438,21 @@ export async function createAccountEntitlementResponse(
     return entitlementErrorResponse(401, "invalid_session", "DeepSpec could not verify this account session.");
   }
 
+  if (
+    userData.user.is_anonymous === true ||
+    (!userData.user.email_confirmed_at && !userData.user.phone_confirmed_at)
+  ) {
+    return {
+      status: 200,
+      body: {
+        entitlement: {
+          status: "verification_required",
+          verifiedAt: new Date().toISOString(),
+        },
+      },
+    };
+  }
+
   const { data, error } = await supabase
     .from("billing_entitlements")
     .select("billing_provider,plan_id,status,scan_allowance,scans_used,current_period_end")
