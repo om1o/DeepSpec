@@ -20,6 +20,7 @@ import {
 } from "../types";
 
 type AIErrorCode =
+  | "feature_disabled"
   | "image_too_large"
   | "invalid_input"
   | "invalid_response"
@@ -279,6 +280,13 @@ export function getAIErrorMessage(error: unknown) {
 
 export function getAIErrorDetails(code: string | undefined | null): AIErrorDetails {
   switch (code) {
+    case "feature_disabled":
+      return {
+        category: "setup",
+        description: "This beta has follow-up chat disabled at the server, so retrying will not send a provider request.",
+        retryLabel: "Unavailable",
+        title: "Follow-up chat is unavailable",
+      };
     case "rate_limited":
       return {
         category: "provider_unavailable",
