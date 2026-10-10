@@ -1,6 +1,9 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { chromium } from "playwright";
+import { loadQaEnv, signInWithQaPassword } from "./qa-utils.mjs";
+
+loadQaEnv();
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:5175";
 const COMMONS_API = "https://commons.wikimedia.org/w/api.php";
@@ -286,7 +289,7 @@ async function runCase(browserInstance, testCase) {
   });
 
   try {
-    await enterNoEmailSession(page);
+    await signInWithQaPassword(page, baseUrl);
     await page.getByLabel("Upload photo").setInputFiles(testCase.localImage);
     await waitForScanResultOrIssue(page);
     if (await hasScanIssue(page)) {
@@ -374,13 +377,6 @@ async function waitForScanResultOrIssue(page) {
 async function hasScanIssue(page) {
   const text = await page.locator("body").innerText({ timeout: 500 }).catch(() => "");
   return /SCAN ISSUE|Too many AI lookups|Could not reach the Deep Spec AI service/i.test(text);
-}
-
-async function enterNoEmailSession(page) {
-  await page.goto(`${baseUrl}/auth`, { timeout: 45_000, waitUntil: "domcontentloaded" });
-  await page.getByText("No email", { exact: true }).click({ timeout: 45_000 });
-  await page.getByRole("button", { name: /continue without email/i }).click({ timeout: 45_000 });
-  await page.waitForSelector("input[type=\"file\"]", { timeout: 45_000 });
 }
 
 function isSpecificOverlay(partBox, contextBox) {

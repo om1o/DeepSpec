@@ -34,6 +34,25 @@ export function loadQaEnv() {
   loadEnvFile(".env.local");
 }
 
+export function getQaPasswordCredentials(env = process.env) {
+  const email = String(env.DEEPSPEC_AUTH_TEST_EMAIL ?? "").trim();
+  const password = String(env.DEEPSPEC_AUTH_TEST_PASSWORD ?? "").trim();
+  return email && password ? { email, password } : null;
+}
+
+export async function signInWithQaPassword(page, baseUrl, credentials = getQaPasswordCredentials()) {
+  if (!credentials) {
+    throw new Error("Set DEEPSPEC_AUTH_TEST_EMAIL and DEEPSPEC_AUTH_TEST_PASSWORD for password-authenticated QA.");
+  }
+
+  await page.goto(`${baseUrl.replace(/\/$/, "")}/auth?next=/scan`, { timeout: 45_000, waitUntil: "domcontentloaded" });
+  await page.getByRole("tab", { name: /^Account$/i }).click({ timeout: 45_000 });
+  await page.locator('input[name="email"]').fill(credentials.email);
+  await page.locator('input[name="password"]').fill(credentials.password);
+  await page.getByRole("button", { name: /^Sign in to scanner$/i }).click({ timeout: 45_000 });
+  await page.waitForURL((url) => url.pathname === "/scan", { timeout: 45_000 });
+}
+
 export function parseQaArgs(argv) {
   const parsed = {
     headed: false,
