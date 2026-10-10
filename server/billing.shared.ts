@@ -1114,6 +1114,12 @@ async function verifyBillingUser(
     };
   }
 
+  if (data.user.is_anonymous === true || (!data.user.email_confirmed_at && !data.user.phone_confirmed_at)) {
+    return {
+      error: errorResponse(403, "verification_required", "Verify your DeepSpec account before starting checkout."),
+    };
+  }
+
   return {
     userId: data.user.id,
   };
