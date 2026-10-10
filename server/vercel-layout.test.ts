@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import accountEntitlement from "../api/account-entitlement";
@@ -18,6 +18,14 @@ const endpoints = [
 ];
 
 describe("Vercel Hobby deployment layout", () => {
+  it("routes client-side paths to the SPA without intercepting API functions", () => {
+    const config = JSON.parse(readFileSync(resolve(process.cwd(), "vercel.json"), "utf8"));
+
+    expect(config.rewrites).toEqual([
+      { source: "/((?!api/).*)", destination: "/index.html" },
+    ]);
+  });
+
   it("keeps only HTTP entry points in api, within the 12-function limit", () => {
     // Vercel discovers files in api as functions, including helpers and tests.
     const files = readdirSync(resolve(process.cwd(), "api"), { recursive: true });
