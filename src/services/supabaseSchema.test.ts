@@ -6,6 +6,7 @@ const migrationsDir = join(process.cwd(), "supabase", "migrations");
 const foundationMigrationPath = join(migrationsDir, "20260518000100_deepspec_secure_foundation.sql");
 const durableDatasetMigrationPath = join(migrationsDir, "20260528000309_durable_dataset_tables.sql");
 const mechanicShopMigrationPath = join(migrationsDir, "20260618000100_mechanic_shop_mode.sql");
+const membershipHardeningMigrationPath = join(migrationsDir, "20261010171030_harden_organization_member_identity.sql");
 const srcPath = join(process.cwd(), "src");
 
 describe("Supabase secure foundation migration", () => {
@@ -82,12 +83,28 @@ describe("Supabase mechanic shop migration", () => {
     expect(sql).toContain("scan_lookups_select_own");
   });
 
+  it("does not let clients rewrite membership identity or role", () => {
+    expect(sql).toContain("grant select, insert, delete on public.organization_members to authenticated");
+    expect(sql).not.toContain("grant select, insert, update, delete on public.organization_members to authenticated");
+    expect(sql).not.toContain("create policy organization_members_update_self");
+  });
+
   it("adds provider-neutral billing fields while retaining legacy adapter columns", () => {
     expect(sql).toContain("add column if not exists billing_provider text not null default 'stripe'");
     expect(sql).toContain("add column if not exists provider_customer_id text");
     expect(sql).toContain("provider_customer_id = coalesce(provider_customer_id, stripe_customer_id)");
     expect(sql).toContain("alter column stripe_customer_id drop not null");
     expect(sql).toContain("billing_entitlements_provider_subscription_key");
+  });
+});
+
+describe("Supabase organization membership hardening migration", () => {
+  const sql = readFileSync(membershipHardeningMigrationPath, "utf8");
+
+  it("removes update privileges and the unsafe self-update policy", () => {
+    expect(sql).toContain("revoke update on public.organization_members from authenticated");
+    expect(sql).toContain("drop policy if exists organization_members_update_self on public.organization_members");
+    expect(sql).not.toContain("create policy organization_members_update_self");
   });
 });
 
