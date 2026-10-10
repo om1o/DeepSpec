@@ -48,7 +48,9 @@ function validateRows(rows, version) {
 export function createExportClient({ url, key, fetchImpl = fetch }) {
   const origin = new URL(url);
   if (origin.protocol !== "https:" || origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash || !key) throw new Error("A bare HTTPS Supabase URL and server-only service key are required.");
-  const headers = { apikey: key, Authorization: `Bearer ${key}` };
+  const headers = key.startsWith("sb_secret_")
+    ? { apikey: key }
+    : { apikey: key, Authorization: `Bearer ${key}` };
   async function request(path, extra = {}) {
     const response = await fetchImpl(new URL(path, origin), { headers: { ...headers, ...extra }, redirect: "error", signal: AbortSignal.timeout(30000) });
     if (!response.ok) throw new Error(`Dataset request failed (HTTP ${response.status}); no export accepted.`);
