@@ -669,7 +669,11 @@ describe("Result", () => {
     expect(identifySpy).toHaveBeenCalledWith({ ...cloudFrame, imageBase64: `data:image/png;base64,${png}` }, undefined, undefined, { vehicleContext });
     await userEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
     expect(getLookups()).toHaveLength(1);
-    expect(getLookup(failedLookup.id)).toMatchObject({ frame: cloudFrame, vehicleContext, result: { fitmentConfidence: "needs_vehicle_context" } });
+    expect(getLookup(failedLookup.id)).toMatchObject({
+      frame: { ...cloudFrame, imageBase64: `data:image/png;base64,${png}` },
+      vehicleContext,
+      result: { fitmentConfidence: "needs_vehicle_context" },
+    });
   });
 
   it.each([

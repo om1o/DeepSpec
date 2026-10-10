@@ -1,4 +1,4 @@
-import type { CandidateMatch, CandidatePart, ChatMessage, Confidence, CustomerVisibleReport, EvidenceRegion, FitmentConfidence, IdentificationResult, IdentifyModelRun, IdentifyProvider, Lookup, PartMeasurement, PossibleVehicleContext, Rating, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanCategory, SceneObject, ScanProvenance, ScanQualityFailureReason, ScanQualitySnapshot, ShopReviewStatus, ShopVehicleContext, SourceLink, TrainingStatus, VisualFocusBox, VisualFocusMode } from "../types";
+import type { CandidateMatch, CandidatePart, CapturedFrame, ChatMessage, Confidence, CustomerVisibleReport, EvidenceRegion, FitmentConfidence, IdentificationResult, IdentifyModelRun, IdentifyProvider, Lookup, PartMeasurement, PossibleVehicleContext, Rating, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanCategory, SceneObject, ScanProvenance, ScanQualityFailureReason, ScanQualitySnapshot, ShopReviewStatus, ShopVehicleContext, SourceLink, TrainingStatus, VisualFocusBox, VisualFocusMode } from "../types";
 
 import type { PartInspectionDraft } from "../types";
 import { normalizePartInspection, withLatestInspection } from "../lib/partInspection";
@@ -96,6 +96,7 @@ export function withRetriedLookupResult(existing: Lookup, retryState?: ScanAnaly
   // record's identity and human work while replacing the failed AI attempt.
   return retryState?.result ? {
     ...existing,
+    frame: retryState.frame ?? existing.frame,
     result: retryState.result,
     analysisAttemptId: retryState.analysisAttemptId,
     analyzedAt: retryState.analyzedAt ?? new Date().toISOString(),
@@ -288,6 +289,7 @@ export function updateLookupResult(
   id: string,
   result: IdentificationResult,
   provenance?: Partial<ScanProvenance>,
+  frame?: CapturedFrame,
 ): StorageResult<Lookup | null> {
   const read = readLookups();
   if (!read.ok) return { ok: false, message: read.message, value: null };
@@ -301,6 +303,7 @@ export function updateLookupResult(
   const existing = lookups[index];
   const updatedLookup: Lookup = {
     ...existing,
+    frame: frame ?? existing.frame,
     cloudSave: undefined,
     result,
     analysisAttemptId: result.modelRun?.runId,

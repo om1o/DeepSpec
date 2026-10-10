@@ -616,7 +616,7 @@ function AnalysisError({
         const updateResult = updateLookupResult(lookup.id, result, {
           analysisSource: "manual_retry",
           savedAt: new Date().toISOString(),
-        });
+        }, identificationFrame);
         if (updateResult.ok) {
           if (updateResult.value) {
             onLookupRetrySuccess(updateResult.value);
@@ -628,7 +628,7 @@ function AnalysisError({
         }
       } else {
         onScanRetrySuccess({
-          frame: retryFrame,
+          frame: identificationFrame,
           result,
           analysisAttemptId: attemptId,
           vehicleContext,
