@@ -2,7 +2,7 @@
 
 Date: 2026-10-11 (America/New_York)
 
-Current verified local candidate: `aef05dc3`. The deployed branch preview still runs `f9532ab0`; its API functions fail during ESM module loading. The three newer repair commits are local only and have not triggered CI or a deployment.
+Current deployed candidate: `360d140e`. Vercel deployment `dpl_AbAgT2wpQUpRFNEh5XskkufXfSHB` is Ready and aliased to the branch preview. Its API functions load successfully, but Preview has no server-only Supabase key, so `/api/identify` currently fails closed with `503 rate_limit_unavailable` before session verification.
 
 Pull request: https://github.com/om1o/DeepSpec/pull/119
 
@@ -10,26 +10,27 @@ PR #119 is the selected V1 integration path. PR #120 was closed without merge or
 
 ## Executive Verdict
 
-DeepSpec is not yet approved for V1 preview promotion. The local release code is substantially healthier and the accessible local gate is green, but five launch blockers remain:
+DeepSpec is not yet approved for V1 preview promotion. The release code and Vercel packaging are substantially healthier, but four launch blockers remain:
 
 1. Replace the exposed legacy Supabase `service_role` credential with a new server-only secret key, verify every consumer, then deactivate the legacy key.
-2. Configure dedicated confirmed QA credentials (including the second isolation account), disable anonymous sign-ins, and rerun the live verifiers. Enable leaked-password protection where the Supabase plan supports it.
+2. Configure dedicated confirmed QA credentials, including the second isolation account, and rerun the live verifiers. Enable leaked-password protection where the Supabase plan supports it.
 3. Prove one AI provider completes an ordinary scan on the candidate environment without violating the no-spending rule.
 4. Pass the real verified-account journey: sign in, restore session, scan, save, history, refresh/reopen, logout/login, and reopen again.
-5. Push the verified Vercel ESM repair and prove the exact deployed preview returns controlled auth errors instead of `FUNCTION_INVOCATION_FAILED`.
 
 No merge, production deployment, or manual promotion was performed. Vercel automatically built the branch preview linked below.
 
-## Current Local Candidate Verification — 2026-10-11
+## Current Candidate Verification — 2026-10-11
 
-Candidate: `aef05dc3` on `codex/v1-preview-20261010`, three commits ahead of the deployed/remote branch head `f9532ab0`.
+Candidate: `360d140e` on `codex/v1-preview-20261010`, deployed to Vercel Preview.
 
 - `0dac56e9` routes the billing webhook replay verifier through the shared opaque-key-safe Supabase admin client. Its 41 focused tests, syntax checks, ESLint, production build, and public-asset verification passed.
 - `f8b4c990` stops `verify:auth` after an actionable missing-public-config error instead of continuing into an undefined `.replace` crash. The regression failed before the fix and all 12 verifier tests pass after it.
 - `aef05dc3` fixes Node ESM resolution for all six Vercel API functions, uses compiler-stable discriminant checks, removes the incompatible `Array.at()` call, and excludes generated `.vercel` output from source linting.
-- Live Vercel logs for deployed `f9532ab0` reproduce `ERR_MODULE_NOT_FOUND` for `/var/task/server/identify.shared`; unauthenticated `/api/identify` requests therefore return platform HTTP 500 before the handler runs.
+- Historical Vercel logs for `f9532ab0` reproduced `ERR_MODULE_NOT_FOUND` for `/var/task/server/identify.shared`; `aef05dc3` fixed that packaging defect.
 - Local verification for `aef05dc3`: 155 focused server/API tests passed; the full suite passed 95 files / 1,297 tests; ESLint passed; production build and public-asset verification passed; `vercel build --target preview` completed with zero TypeScript diagnostics; direct import of the emitted function returned `401 missing_session` without a Supabase or provider request.
-- The repairs are intentionally unpushed. Rerunning CI before anonymous sign-ins are verified off would only repeat the known live-auth failure.
+- Post-push verification for `360d140e`: both GitHub Quality jobs again passed 95 files / 1,297 tests, lint, TypeScript, build, and public-asset verification. They failed only at the intentional live Auth preflight because anonymous sign-ins remain enabled.
+- Vercel deployment `dpl_AbAgT2wpQUpRFNEh5XskkufXfSHB` is Ready. A live no-auth POST to `/api/identify` returns `503 rate_limit_unavailable`, proving the function loads but cannot initialize its server-side rate-limit/auth path. Read-only Preview environment inventory shows the public Supabase URL and publishable key only; no `SUPABASE_SECRET_KEY` or legacy service-role variable is present. This is a configuration blocker, not evidence of an RPC or schema defect.
+- With explicit user confirmation, production project `tvmomaxmiecguqikpckb` was changed only to disable anonymous sign-ins. The dashboard retained new-user signup and email authentication. A fresh public Auth settings request independently verified `anonymous_users=false`, `disable_signup=false`, and email enabled. No password, key, or session value was displayed.
 
 - `b33a2f40` preserves exact QA password bytes while still rejecting blank-only values, and preserves pending rating/correction through repeated local-storage quota failures. The two matching PR #119 review threads are resolved.
 - Full local suite on the runtime fix: 94 files and 1,291 tests passed. Node syntax checks, full ESLint, TypeScript, and the production build passed.
@@ -70,7 +71,7 @@ Earlier anonymous-auth verification in this checkout (Node 24.19.0):
 
 An intermediate full run caught one stale CI-text test assertion (1,276 passed, one failed); it was corrected before the final green gate above. The build retains the existing >500 kB chunk warning (550.87 kB Transformers chunk and 23.6 MB WASM asset).
 
-**Not verified here:** live Supabase auth settings, deployed login, live cloud round-trip/RLS, provider completion, billing sandbox endpoints, physical phones, key rotation, or deployment/promotion. No live account was provisioned, auth email sent, payment made, customer data deleted, or Supabase configuration changed during this follow-up. All new identity/cleanup integration tests used mocks. Configure the dedicated accounts described in `docs/CI_SETUP.md`, install this candidate, disable anonymous sign-ins, and run the live verifiers before promotion. Previous deployment/advisor/browser results below remain historical evidence only.
+**Not verified here:** deployed login, live cloud round-trip/RLS, provider completion, billing sandbox endpoints, physical phones, key rotation, or deployment/promotion. No live account was provisioned, auth email sent, payment made, customer data deleted, or credential displayed. The only production configuration change in this pass disabled anonymous sign-ins with user confirmation. Configure the dedicated accounts described in `docs/CI_SETUP.md` and run the live verifiers before promotion. Previous deployment/advisor/browser results below remain historical evidence only.
 
 ## Earlier Candidate Evidence (`bdd941b9`; not a live recheck)
 
@@ -137,7 +138,7 @@ The current Security Advisor reports seven INFO findings for RLS-enabled tables 
 
 These are intentional server-only tables. Adding broad client policies would weaken the intended access model.
 
-Anonymous-access WARN findings remain on user-owned scan/storage/sync rows and public intake flows. Their policies are ownership-scoped or content-validated, but the warning matters while anonymous sign-ins remain enabled. Disable anonymous sign-ins rather than broadening or deleting ownership checks.
+Anonymous-access WARN findings remain on user-owned scan/storage/sync rows and public intake flows. Their policies are ownership-scoped or content-validated. Anonymous Auth is now disabled; do not broaden or delete those ownership checks merely to silence advisor warnings.
 
 Leaked-password protection remains disabled and is a real dashboard hardening item. Supabase documents that it rejects passwords known through the Pwned Passwords service and is available on Pro and above:
 
@@ -189,11 +190,11 @@ Expected: at least one configured provider completes an ordinary scan on the can
 
 Actual: unit and fallback tests pass, but no live provider call was made under the no-spending rule. Historical production probes included provider rejection, server failure, or rate limiting and are not launch evidence.
 
-### P1: Supabase Auth hardening remains open and is CI-reproduced
+### P1: Supabase password hardening remains open
 
 Expected: anonymous sign-ins disabled; leaked-password protection enabled when available.
 
-Actual: advisor warnings remain, and both Linux Quality gate runs reached the live auth preflight and failed on `Disable anonymous sign-ins before preview promotion.`
+Actual: anonymous sign-ins are now disabled and independently verified, while leaked-password protection remains disabled. The failed Linux jobs are being rerun through the evidence-only branch update.
 
 ### P2: Client payload weight
 
@@ -207,6 +208,7 @@ The build succeeds but includes a 550.87 kB minified Transformers.js chunk and a
 - No auth email was sent.
 - No payment or paid provider call was made.
 - No production deployment, merge, or manual promotion was performed. Vercel's GitHub integration automatically refreshed the branch preview.
+- Production anonymous sign-ins were disabled with explicit user confirmation; signup and email authentication remained enabled.
 
 ## Shortest Remaining Launch Plan
 
