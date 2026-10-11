@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { classifyIdentifyApiIssue, classifyQaTransportError, getAuthDependencyBlocker, getQaPasswordCredentials } from "./qa-utils.mjs";
+import { classifyIdentifyApiIssue, classifyQaTransportError, getAuthDependencyBlocker, getQaPasswordCredentials, signInWithQaPassword } from "./qa-utils.mjs";
 
 describe("QA transport and auth dependency classification", () => {
   it.each([
@@ -70,5 +70,36 @@ describe("password QA account configuration", () => {
       email: "other@example.test",
       password: " other pass ",
     });
+  });
+
+  it.each([undefined, "", " \t "])("rejects missing or blank secondary passwords: %j", (password) => {
+    expect(getQaPasswordCredentials({
+      DEEPSPEC_AUTH_TEST_OTHER_EMAIL: "other@example.test",
+      DEEPSPEC_AUTH_TEST_OTHER_PASSWORD: password,
+      DEEPSPEC_AUTH_TEST_EMAIL: "primary@example.test",
+      DEEPSPEC_AUTH_TEST_PASSWORD: "primary password",
+    }, "DEEPSPEC_AUTH_TEST_OTHER")).toBeNull();
+  });
+
+  it("passes significant secondary password bytes all the way to the login form", async () => {
+    const credentials = getQaPasswordCredentials({
+      DEEPSPEC_AUTH_TEST_OTHER_EMAIL: " other@example.test ",
+      DEEPSPEC_AUTH_TEST_OTHER_PASSWORD: " \tSëcond Pass!\t ",
+      DEEPSPEC_AUTH_TEST_PASSWORD: "primary password",
+      DEEPSPEC_AUTH_TEST_PASSWORD_SECONDARY: "obsolete password",
+    }, "DEEPSPEC_AUTH_TEST_OTHER");
+    const email = { fill: vi.fn() };
+    const password = { fill: vi.fn() };
+    const page = {
+      goto: vi.fn(),
+      getByRole: vi.fn(() => ({ click: vi.fn() })),
+      locator: vi.fn((selector) => selector === 'input[name="email"]' ? email : password),
+      waitForURL: vi.fn(),
+    };
+    await signInWithQaPassword(page, "https://app.example.test/", credentials);
+    expect(email.fill).toHaveBeenCalledWith("other@example.test");
+    expect(password.fill).toHaveBeenCalledWith(" \tSëcond Pass!\t ");
+    expect(page.waitForURL.mock.calls[0][0](new URL("https://app.example.test/scan"))).toBe(true);
+    expect(page.waitForURL.mock.calls[0][0](new URL("https://app.example.test/auth"))).toBe(false);
   });
 });

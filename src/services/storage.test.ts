@@ -144,6 +144,33 @@ describe("storage", () => {
     expect(listener).toHaveBeenCalledTimes(2);
   });
 
+  it("rejects writes using another account's scan ID and retains both accounts' records", () => {
+    setActiveAccount("owner-a");
+    const first = createLookup(scanState).value;
+    appendChatMessages(first.id, [createChatMessage("user", "Owner A private chat")]);
+    const firstKey = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    const firstBytes = localStorage.getItem(firstKey);
+    setActiveAccount("owner-b");
+    const second = createLookup(scanState).value;
+    const secondKey = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    const secondBytes = localStorage.getItem(secondKey);
+
+    expect(updateLookup(first.id, { notes: "Other account overwrite" }).ok).toBe(false);
+    expect(updateLookupResult(first.id, scanState.result!).ok).toBe(false);
+    expect(appendChatMessages(first.id, [createChatMessage("user", "Other account message")]).ok).toBe(false);
+    expect(deleteLookup(first.id).ok).toBe(false);
+    expect(localStorage.getItem(firstKey)).toBe(firstBytes);
+    expect(localStorage.getItem(secondKey)).toBe(secondBytes);
+    expect(getLookups().map(({ id }) => id)).toEqual([second.id]);
+
+    setActiveAccount(null);
+    expect(getLookup(first.id)).toBeNull();
+    expect(getLookup(second.id)).toBeNull();
+    setActiveAccount("owner-a");
+    expect(getLookup(first.id)?.chatHistory[0]?.content).toBe("Owner A private chat");
+    expect(getLookup(second.id)).toBeNull();
+  });
+
   it("retains cloud receipts after reading storage and rejects obsolete completions", () => {
     const saved = createLookup(scanState).value;
     const receipt = { attemptId: "attempt-1", attemptedAt: new Date().toISOString(), status: "unconfirmed" as const, scope: "scan" as const };

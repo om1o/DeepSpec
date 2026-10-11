@@ -19,6 +19,31 @@ DeepSpec is not yet approved for V1 preview promotion. The release code and Verc
 
 No merge, production deployment, or manual promotion was performed. Vercel automatically built the branch preview linked below.
 
+## Opaque-key and secondary-account review revalidation — 2026-10-11
+
+The requested findings were already fixed when this task resumed: `7c343262` repaired production admin transport and the documented secondary-account variables; `0dac56e9` also repaired the webhook replay admin transport. Both original review threads were resolved. This follow-up preserves those implementations and adds 19 permanent regressions, based on `ef02d0dc` (including the concurrent branding change).
+
+- The installed `@supabase/supabase-js` remains 2.105.4. Real SDK requests from both server and trusted-script factories are intercepted locally to verify opaque secrets travel in `apikey` without the generated bearer fallback. Legacy JWT keys retain their bearer header. Explicit user JWTs, including rejected tokens, are preserved rather than silently promoted to admin access.
+- Coverage now includes administrative RPCs, entitlement writes, Auth user creation/deletion, Storage downloads, request bodies/methods, and custom headers. Production entitlement, scan-credit reservation/finalization, and rate-limit functions are exercised through the real SDK rather than mocking `createClient`. Two caller identities keep distinct user filters and credit parameters; rejected identity/key responses remain fail-closed.
+- QA regressions verify the documented `DEEPSPEC_AUTH_TEST_OTHER_*` credentials, missing/blank secondary passwords, and exact significant password bytes reaching the login form. Device-storage regressions reject another account's scan update, result update, chat append, and deletion while retaining both accounts' records.
+- Controlled local fault probes confirmed the regressions fail if either factory retains the opaque bearer fallback (2 failures) or the credential reader trims the returned password (3 failures). The fault probes were reverted before final verification.
+- Independent code review found no blocking issue in the fixes or new regressions. Source inspection confirms server-only RPC grants still exclude `public`, `anon`, and `authenticated`; no authorization code, SQL policy, grant, dependency, or production setting was changed in this follow-up.
+
+Validation (Node 24.19.0):
+
+| Check | Result |
+| --- | --- |
+| Affected tests | PASS — 13 files / 268 tests |
+| Full `npm run check` | PASS — full ESLint, 97 files / 1,317 tests, TypeScript (`tsc -b`), production build, public-asset gate |
+| QA runner and webhook verifier syntax | PASS |
+| `git diff --check` | PASS |
+
+The build retains its existing >500 kB chunk warning (550.87 kB Transformers chunk and 23.6 MB ONNX WASM asset).
+
+**Evidence boundary:** these are local automated tests with synthetic credentials and intercepted network requests. They prove SDK header construction and application request scoping, not live Supabase acceptance or deployed RLS. Password form-fill and local storage checks are not a completed live shared-device journey. No credential rotation, live account provisioning, payment, provider call, merge, or release promotion was performed by this pass. No deployment was requested or verified; the GitHub integration may automatically rebuild the branch preview after the evidence commit is pushed. Live rotation and the complete authorized-account journey remain separate release gates; unrelated review threads remain outside this task.
+
+References: [Supabase API key guidance](https://supabase.com/docs/guides/api/api-keys) and the installed SDK's `src/lib/fetch.ts` at 2.105.4. The existing narrow transport fix is retained without copying upstream code or upgrading dependencies.
+
 ## Current Candidate Verification — 2026-10-11
 
 Candidate: `360d140e` on `codex/v1-preview-20261010`, deployed to Vercel Preview.
