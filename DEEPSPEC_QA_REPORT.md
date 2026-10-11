@@ -6,6 +6,8 @@ Candidate: `codex/v1-preview-20261010` at `99a02756`
 
 Pull request: https://github.com/om1o/DeepSpec/pull/119
 
+PR #119 is the selected V1 integration path. PR #120 was closed without merge or deployment after its `vercel.json` blob was verified byte-identical to the copy already in PR #119.
+
 ## Executive Verdict
 
 DeepSpec is not yet approved for V1 preview promotion. The release code is substantially healthier and the accessible local gate is green, but four external launch blockers remain:

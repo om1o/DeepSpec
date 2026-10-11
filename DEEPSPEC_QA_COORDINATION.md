@@ -9,7 +9,7 @@ The current orchestrator lane ID is unknown. This board records ownership but is
 | ID | Owner lane | Scope / files | Dependencies | Status | Evidence | Blocker | Next action |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | QA-001 | Lane unknown | V1 integration branch and PR #119 | PR #114 base | Complete | 19 scoped commits pushed; PR #119; all review threads resolved | None | Keep branch isolated until all launch gates pass |
-| QA-002 | GitHub integration lane | Narrow Vercel SPA fallback, PR #120 | PR #114 base | Complete, overlapping | CI rerun green; mergeable and clean; no merge/deploy | Overlaps `vercel.json` already present in PR #119 | Choose one integration path; do not merge both blindly |
+| QA-002 | GitHub integration lane | Narrow Vercel SPA fallback, PR #120 | PR #114 base | Superseded and closed | CI rerun green; its `vercel.json` blob matched PR #119 exactly; branch and commit remain preserved | None | Use PR #119 as the single V1 integration path |
 | QA-003 | Lane unknown | Full code verification | QA-001 | Complete | 91 test files / 1,256 tests; `npm run lint`; `npm run build` | 550.87 kB model chunk and 23.6 MB WASM are performance debt | Track bundle optimization after launch gate |
 | QA-004 | Lane unknown | Vercel route and packaging | QA-001 | Complete locally | SPA rewrite tests and production build pass; Vercel commit status succeeds | Public preview URL was not exposed by the connected status API | Do not promote while QA-006 through QA-009 are open |
 | QA-005 | Lane unknown | Production billing/free-credit schema | Supabase access | Complete for preview scope | Migrations `20261010170625` and `20261010170648` present; transactional entitlement tests previously passed and rolled back | Mechanic-shop migration is intentionally outside preview scope | Recheck migration list before promotion |
@@ -23,6 +23,6 @@ The current orchestrator lane ID is unknown. This board records ownership but is
 
 ## Collision Notes
 
-- PR #119 and PR #120 both contain the same SPA rewrite. Integrators must select one source of that change.
+- PR #119 is the selected V1 integration path. PR #120 was closed as an exact SPA-rewrite duplicate; its branch and commit remain preserved.
 - The original dirty checkout remains untouched. All release work was performed in the isolated `v1-preview-release` worktree.
 - No production deploy, merge, payment, account creation, password reset, or auth email was performed by this lane.
