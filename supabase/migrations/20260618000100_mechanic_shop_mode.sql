@@ -118,7 +118,7 @@ revoke all on public.shop_jobs from anon;
 revoke all on public.job_scans from anon;
 
 grant select, insert, update, delete on public.organizations to authenticated;
-grant select, insert, update, delete on public.organization_members to authenticated;
+grant select, insert, delete on public.organization_members to authenticated;
 grant select, insert, update on public.shop_feedback_permissions to authenticated;
 grant select, insert, update, delete on public.shop_jobs to authenticated;
 grant select, insert, update, delete on public.job_scans to authenticated;
@@ -181,14 +181,6 @@ create policy organization_members_insert_owner
         and organizations.owner_user_id = (select auth.uid())
     )
   );
-
-drop policy if exists organization_members_update_self on public.organization_members;
-create policy organization_members_update_self
-  on public.organization_members
-  for update
-  to authenticated
-  using (user_id = (select auth.uid()))
-  with check (user_id = (select auth.uid()));
 
 drop policy if exists organization_members_delete_self on public.organization_members;
 create policy organization_members_delete_self

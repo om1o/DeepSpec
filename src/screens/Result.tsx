@@ -44,6 +44,7 @@ export default function Result() {
     : lookup;
   const inspectionLookup = inspectionBase ? withRetriedLookupResult(inspectionBase, liveScanState) : null;
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [retrySaveLabel, setRetrySaveLabel] = useState("Retry saving feedback");
   const scanState = lookup ? scanStateFromLookup(inspectionBase ?? lookup) : liveScanState ?? getScanState(routeState);
   const frame = scanState?.frame ?? readLatestCapturedFrame();
   const capturedAt = frame?.capturedAt ? new Date(frame.capturedAt).toLocaleString() : null;
@@ -55,6 +56,7 @@ export default function Result() {
   const manualCorrectionTrackedRef = useRef(false);
   const pendingRatingRef = useRef<Rating | undefined>(undefined);
   const pendingCorrectionRef = useRef<string | null | undefined>(undefined);
+  const pendingRetryLookupRef = useRef<Lookup | null>(null);
 
   function trackManualCorrectionOnce() {
     if (manualCorrectionTrackedRef.current) {
@@ -75,6 +77,15 @@ export default function Result() {
       trackManualCorrectionOnce();
     }
 
+    if (pendingRetryLookupRef.current) {
+      const correction = rating === "down" ? lookup.correction : null;
+      pendingRatingRef.current = rating;
+      pendingCorrectionRef.current = correction;
+      pendingRetryLookupRef.current = { ...pendingRetryLookupRef.current, rating, correction };
+      setLookup({ ...lookup, rating, correction });
+      return;
+    }
+
     const result = updateLookup(lookup.id, {
       rating,
       correction: rating === "down" ? lookup.correction : null,
@@ -93,6 +104,13 @@ export default function Result() {
       trackManualCorrectionOnce();
     }
 
+    if (pendingRetryLookupRef.current) {
+      pendingCorrectionRef.current = correction;
+      pendingRetryLookupRef.current = { ...pendingRetryLookupRef.current, correction };
+      setLookup({ ...lookup, correction });
+      return;
+    }
+
     handleLookupUpdate(updateLookup(lookup.id, {
       ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
       correction,
@@ -101,6 +119,30 @@ export default function Result() {
 
   function retryFeedbackSave() {
     if (!lookup || !isAccountScopeCurrent(mountedScope)) return;
+    const pendingRetry = pendingRetryLookupRef.current;
+    if (pendingRetry?.result) {
+      const resultWrite = updateLookupResult(
+        pendingRetry.id,
+        pendingRetry.result,
+        pendingRetry.provenance,
+        pendingRetry.frame,
+      );
+      if (!resultWrite.ok) {
+        handleLookupUpdate(resultWrite, "result");
+        return;
+      }
+
+      pendingRetryLookupRef.current = null;
+      if (pendingRatingRef.current !== undefined || pendingCorrectionRef.current !== undefined) {
+        handleLookupUpdate(updateLookup(pendingRetry.id, {
+          ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
+          ...(pendingCorrectionRef.current !== undefined ? { correction: pendingCorrectionRef.current } : {}),
+        }));
+      } else {
+        handleLookupUpdate(resultWrite);
+      }
+      return;
+    }
     handleLookupUpdate(updateLookup(lookup.id, {
       ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
       correction: lookup.correction,
@@ -156,16 +198,18 @@ export default function Result() {
     navigate(`/result/${saved.id}/chat${query}`);
   }
 
-  function handleLookupUpdate(result: ReturnType<typeof updateLookup>) {
+  function handleLookupUpdate(result: ReturnType<typeof updateLookup>, failureKind: "feedback" | "result" = "feedback") {
     if (result.ok) {
       pendingRatingRef.current = undefined;
       pendingCorrectionRef.current = undefined;
       setLookup(result.value);
       setSaveError(null);
+      setRetrySaveLabel("Retry saving feedback");
       return;
     }
 
     setSaveError(result.message);
+    setRetrySaveLabel(failureKind === "result" ? "Retry saving scan result" : "Retry saving feedback");
     if (result.value) {
       pendingCorrectionRef.current = result.value.correction;
       setLookup(result.value);
@@ -200,7 +244,7 @@ export default function Result() {
           )}
           <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(2,6,23,0.58),rgba(2,6,23,0.02)_38%,rgba(2,6,23,0.76))]" />
           <header className="absolute left-0 right-0 top-0 z-10 lg:right-10 flex items-center justify-between px-4 pt-[max(18px,env(safe-area-inset-top))]">
-            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-11 w-32 rounded-xl bg-[var(--ds-elevated)] object-contain p-1 shadow-sm ring-1 ring-white/30" />
+            <img src="/brand/deepspec-site-logo-v2.webp" alt="Deep Spec" className="h-11 w-32 object-contain" />
             <nav className="flex gap-2" aria-label="Scan navigation">
               <Link to="/history" aria-label="Open saved scan history" className="ds-workbench-back">Saved scans</Link>
               <Link to="/scan" className="ds-workbench-back">
@@ -246,7 +290,12 @@ export default function Result() {
               frame={frame}
               lookup={lookup}
               vehicleContext={lookup?.vehicleContext ?? scanState.vehicleContext}
-              onLookupRetrySuccess={setLookup}
+              onLookupRetrySuccess={(updatedLookup, warning) => {
+                pendingRetryLookupRef.current = warning ? updatedLookup : null;
+                setLookup(updatedLookup);
+                setSaveError(warning ?? null);
+                setRetrySaveLabel(warning ? "Retry saving scan result" : "Retry saving feedback");
+              }}
               onScanRetrySuccess={(nextScanState) => {
                 setLiveScanState(nextScanState);
                 saveLatestScanState(nextScanState);
@@ -261,6 +310,7 @@ export default function Result() {
               onCorrectionChange={handleCorrection}
               onRating={handleRating}
               saveFailed={Boolean(saveError)}
+              retrySaveLabel={retrySaveLabel}
               onRetrySave={retryFeedbackSave}
             />
           ) : null}
@@ -323,12 +373,14 @@ function TrustControl({
   onCorrectionChange,
   onRating,
   saveFailed,
+  retrySaveLabel,
   onRetrySave,
 }: {
   lookup: Lookup;
   onCorrectionChange: (correction: string) => void;
   onRating: (rating: Rating) => void;
   saveFailed: boolean;
+  retrySaveLabel: string;
   onRetrySave: () => void;
 }) {
   const [showWhy, setShowWhy] = useState(false);
@@ -370,7 +422,7 @@ function TrustControl({
       <p className="mt-3 text-xs font-semibold leading-5 text-[var(--ds-fg-3)]">
         {saveFailed ? "Feedback is not saved. Keep this page open or copy your text before leaving." : "Feedback is saved with this scan."} Using it for model training requires separate permission.
       </p>
-      {saveFailed ? <button type="button" onClick={onRetrySave} className="mt-3 rounded-full border border-[var(--ds-border)] px-4 py-2 text-sm font-bold">Retry saving feedback</button> : null}
+      {saveFailed ? <button type="button" onClick={onRetrySave} className="mt-3 rounded-full border border-[var(--ds-border)] px-4 py-2 text-sm font-bold">{retrySaveLabel}</button> : null}
     </section>
   );
 }
@@ -576,7 +628,7 @@ function AnalysisError({
   lookup: Lookup | null;
   vehicleContext?: Lookup["vehicleContext"];
   message: string;
-  onLookupRetrySuccess: (updatedLookup: Lookup) => void;
+  onLookupRetrySuccess: (updatedLookup: Lookup, warning?: string) => void;
   onScanRetrySuccess: (scanState: ScanAnalysisState) => void;
 }) {
   const [isOnline, setIsOnline] = useState(() => typeof navigator !== "undefined" ? navigator.onLine : true);
@@ -616,19 +668,15 @@ function AnalysisError({
         const updateResult = updateLookupResult(lookup.id, result, {
           analysisSource: "manual_retry",
           savedAt: new Date().toISOString(),
-        });
-        if (updateResult.ok) {
-          if (updateResult.value) {
-            onLookupRetrySuccess(updateResult.value);
-          } else {
-            setRetryError("This saved scan was not found.");
-          }
+        }, identificationFrame);
+        if (updateResult.value) {
+          onLookupRetrySuccess(updateResult.value, updateResult.ok ? undefined : updateResult.message);
         } else {
-          setRetryError(updateResult.message);
+          setRetryError(updateResult.ok ? "This saved scan was not found." : updateResult.message);
         }
       } else {
         onScanRetrySuccess({
-          frame: retryFrame,
+          frame: identificationFrame,
           result,
           analysisAttemptId: attemptId,
           vehicleContext,

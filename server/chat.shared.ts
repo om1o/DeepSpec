@@ -24,6 +24,10 @@ const DEFAULT_FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
 const RETRYABLE_PROVIDER_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 
 export async function createChatResponse(body: unknown, env: Record<string, string | undefined>): Promise<ChatResponse> {
+  if (!isChatEnabled(env)) {
+    return errorResponse(503, "feature_disabled", "Follow-up chat is unavailable in this beta.");
+  }
+
   const apiKey = env.GEMINI_API_KEY;
   if (!apiKey) {
     return errorResponse(500, "not_configured", "Deep Spec chat is not configured. Add GEMINI_API_KEY on the server.");
@@ -101,6 +105,13 @@ export async function createChatResponse(body: unknown, env: Record<string, stri
   return rateLimited
     ? errorResponse(429, "rate_limited", "Too many AI chat requests right now. Try again in a few minutes.")
     : lastRetryableError ?? errorResponse(502, "provider_error", "The AI provider rejected this request.");
+}
+
+function isChatEnabled(env: Record<string, string | undefined>) {
+  const configured = env.DEEPSPEC_ENABLE_CHAT?.trim().toLowerCase();
+  if (configured === "true") return true;
+  if (configured === "false") return false;
+  return env.NODE_ENV !== "production" && env.VERCEL_ENV !== "production";
 }
 
 function getChatModels(env: Record<string, string | undefined>) {

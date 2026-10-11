@@ -17,6 +17,7 @@ export default function Chat() {
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const isChatDisabled = errorCode === "feature_disabled";
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView?.({ behavior: "smooth", block: "end" });
@@ -24,7 +25,7 @@ export default function Chat() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!isAccountScopeCurrent(accountScopeRef.current) || !lookup || !lookup.result || isSending) {
+    if (!isAccountScopeCurrent(accountScopeRef.current) || !lookup || !lookup.result || isSending || isChatDisabled) {
       return;
     }
 
@@ -48,7 +49,7 @@ export default function Chat() {
   }
 
   async function sendQuestion(trimmedQuestion: string, shouldSaveUserMessage: boolean) {
-    if (!isAccountScopeCurrent(accountScopeRef.current) || !lookup || !lookup.result || isSending) {
+    if (!isAccountScopeCurrent(accountScopeRef.current) || !lookup || !lookup.result || isSending || isChatDisabled) {
       return;
     }
 
@@ -127,14 +128,14 @@ export default function Chat() {
   const errorDetails = error ? getAIErrorDetails(errorCode) : null;
   const showSafetyWarning = lookup.result?.isSafetyCritical || lookup.result?.safetyTriage === "needs_professional";
   const lastUnansweredUserMessage = getLastUnansweredUserMessage(lookup);
-  const canRetryLastQuestion = Boolean(error && lastUnansweredUserMessage && canChat && !isSending);
+  const canRetryLastQuestion = Boolean(error && errorCode !== "feature_disabled" && lastUnansweredUserMessage && canChat && !isSending);
 
   return (
     <main className="ds-chat-page ds-workbench min-h-dvh px-4 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-[var(--ds-fg-1)]">
       <div className="mx-auto flex min-h-[calc(100dvh-36px)] w-full max-w-2xl flex-col">
         <header className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-12 w-36 rounded-xl bg-[var(--ds-elevated)] object-contain p-1 shadow-sm ring-1 ring-[var(--ds-accent-line)]" />
+            <img src="/brand/deepspec-site-logo-v2.webp" alt="Deep Spec" className="h-12 w-36 object-contain" />
             <p className="ds-eyebrow mt-6">FOLLOW THE EVIDENCE</p>
             <h1 className="mt-2 text-2xl font-bold tracking-tight">Ask about this scan</h1>
           </div>
@@ -214,7 +215,7 @@ export default function Chat() {
               <span className="sr-only">Ask a follow-up question</span>
               <textarea
                 className="min-h-20 w-full resize-none rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-3 text-sm leading-6 text-[var(--ds-fg-1)] outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
-                disabled={!canChat || isSending}
+                disabled={!canChat || isSending || isChatDisabled}
                 maxLength={500}
                 onChange={(event) => setQuestion(event.target.value)}
                 placeholder="What markings should I photograph next?"
@@ -223,7 +224,7 @@ export default function Chat() {
             </label>
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs font-semibold text-[var(--ds-fg-3)]">{question.length}/500</p>
-              <Button disabled={!canChat || isSending || !question.trim()} type="submit">
+              <Button disabled={!canChat || isSending || isChatDisabled || !question.trim()} type="submit">
                 Send
               </Button>
             </div>

@@ -368,6 +368,10 @@ describe("storage", () => {
   });
 
   it("updates AI result on successful retry", () => {
+    const durableRetryFrame = {
+      imageBase64: "data:image/jpeg;base64,recovered-durable-frame",
+      capturedAt: "2026-05-16T00:00:07.000Z",
+    };
     const failedScanState: ScanAnalysisState = {
       frame: {
         imageBase64: "data:image/jpeg;base64,test",
@@ -384,7 +388,7 @@ describe("storage", () => {
     const result = updateLookupResult(lookup.id, scanState.result!, {
       analysisSource: "manual_retry",
       savedAt: "2026-05-16T00:00:06.000Z",
-    });
+    }, durableRetryFrame);
 
     expect(result.ok).toBe(true);
     const updated = getLookup(lookup.id);
@@ -400,6 +404,7 @@ describe("storage", () => {
       trainingLabel: "Alternator",
     });
     expect(updated?.result?.partName).toBe("Alternator");
+    expect(updated?.frame).toEqual(durableRetryFrame);
   });
 
 

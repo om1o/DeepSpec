@@ -27,7 +27,7 @@ import type {
 const SCAN_BUCKET = "scan-images";
 const SIGNED_URL_TTL_SECONDS = 60 * 60;
 const DEFAULT_HISTORY_LIMIT = 200;
-const FALLBACK_IMAGE = "/brand/deepspec-logo.webp";
+const FALLBACK_IMAGE = "/brand/deepspec-site-logo-v2.webp";
 const CLOUD_HISTORY_CORE_SELECT = "local_id,created_at,captured_at,analyzed_at,error_code,error_message,rating,correction,notes,scan_category,training_label,training_status,chat_history,result_json,image_path,revision";
 // Shop-mode columns (mechanic_shop_mode migration). Not every deployed database has them, so the
 // read asks for them and falls back to the core columns only when PostgREST reports one missing —

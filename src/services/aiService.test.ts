@@ -285,6 +285,10 @@ describe("aiService", () => {
       category: "model_response",
       title: "AI response was unreadable",
     });
+    expect(getAIErrorDetails("feature_disabled")).toMatchObject({
+      category: "setup",
+      title: "Follow-up chat is unavailable",
+    });
   });
 
   it("routes text calls through the chat API", async () => {

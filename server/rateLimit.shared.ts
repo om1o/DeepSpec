@@ -1,8 +1,9 @@
 import { createClient } from "@supabase/supabase-js";
+import { getSupabaseAdminKey } from "./supabaseAdmin.shared";
 
 // Server-side rate limiting for the paid AI endpoints. Keyed by client IP only:
-// anonymous sign-in is unlimited, so keying by user id would let an attacker reset the
-// counter by minting fresh anonymous tokens. Backed by the rate_limit_hits table +
+// IP-based limits remain independent of account identity and complement scan credits.
+// Backed by the rate_limit_hits table +
 // check_rate_limit() RPC (see supabase/migrations), so it works across serverless
 // instances where in-memory counters would not.
 
@@ -42,7 +43,7 @@ export async function enforceRateLimit(
   env: RateLimitEnv,
 ): Promise<RateLimitDecision> {
   const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
-  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const serviceRoleKey = getSupabaseAdminKey(env);
   const clientIp = getClientIp(headers);
 
   // Local development remains usable without a backing store. Production must

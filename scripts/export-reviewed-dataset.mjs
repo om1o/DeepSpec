@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { readSupabaseAdminKey } from "./supabase-admin-env.mjs";
 
 const MAX_ROWS = 200;
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
@@ -47,7 +48,9 @@ function validateRows(rows, version) {
 export function createExportClient({ url, key, fetchImpl = fetch }) {
   const origin = new URL(url);
   if (origin.protocol !== "https:" || origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash || !key) throw new Error("A bare HTTPS Supabase URL and server-only service key are required.");
-  const headers = { apikey: key, Authorization: `Bearer ${key}` };
+  const headers = key.startsWith("sb_secret_")
+    ? { apikey: key }
+    : { apikey: key, Authorization: `Bearer ${key}` };
   async function request(path, extra = {}) {
     const response = await fetchImpl(new URL(path, origin), { headers: { ...headers, ...extra }, redirect: "error", signal: AbortSignal.timeout(30000) });
     if (!response.ok) throw new Error(`Dataset request failed (HTTP ${response.status}); no export accepted.`);
@@ -114,13 +117,13 @@ export async function exportReviewedDataset({ version, outputDir, client }) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const [version, outputDir, ...extra] = process.argv.slice(2);
-  const usage = "Usage: node scripts/export-reviewed-dataset.mjs DATASET_VERSION NEW_OUTPUT_DIRECTORY\nRequires server-only SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY. Maximum 200 eligible memberships, 2 MiB per image.\nPoint-in-time export: later consent withdrawal or deletion requires purge and re-export; completed training is not unlearned.";
+  const usage = "Usage: node scripts/export-reviewed-dataset.mjs DATASET_VERSION NEW_OUTPUT_DIRECTORY\nRequires server-only SUPABASE_URL and SUPABASE_SECRET_KEY (legacy SUPABASE_SERVICE_ROLE_KEY is a rotation fallback). Maximum 200 eligible memberships, 2 MiB per image.\nPoint-in-time export: later consent withdrawal or deletion requires purge and re-export; completed training is not unlearned.";
   if (version === "--help" && !outputDir) {
     console.log(usage);
   } else {
   try {
     if (extra.length || !version || !outputDir) throw new Error(usage);
-    const client = createExportClient({ url: process.env.SUPABASE_URL, key: process.env.SUPABASE_SERVICE_ROLE_KEY });
+    const client = createExportClient({ url: process.env.SUPABASE_URL, key: readSupabaseAdminKey() });
     console.log(JSON.stringify(await exportReviewedDataset({ version, outputDir, client })));
   } catch (error) { console.error(error instanceof Error ? error.message : "Export failed."); process.exitCode = 1; }
   }

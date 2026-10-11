@@ -39,7 +39,7 @@ Membership and version records reject updates. Revise a decision by creating ano
 
 ## Export and withdrawal
 
-The administrator exporter is `scripts/export-reviewed-dataset.mjs`. Supply `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` only in the trusted shell, and follow its `--help`. Use a fresh output directory outside any public hosting folder. No export or model training runs automatically.
+The administrator exporter is `scripts/export-reviewed-dataset.mjs`. Supply `SUPABASE_URL` and `SUPABASE_SECRET_KEY` only in the trusted shell, and follow its `--help`. The legacy `SUPABASE_SERVICE_ROLE_KEY` remains a temporary rotation fallback. Use a fresh output directory outside any public hosting folder. No export or model training runs automatically.
 
 `dataset_export_queue` calculates current eligibility from explicit consent, matching revision/policy, approved human review, unchanged scan and model-run fingerprints, and complete owned image references. Missing consent, revoked consent, changed data and deleted sources cannot qualify. Re-opting in does not resurrect membership based on an older revision.
 

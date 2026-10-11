@@ -669,7 +669,43 @@ describe("Result", () => {
     expect(identifySpy).toHaveBeenCalledWith({ ...cloudFrame, imageBase64: `data:image/png;base64,${png}` }, undefined, undefined, { vehicleContext });
     await userEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
     expect(getLookups()).toHaveLength(1);
-    expect(getLookup(failedLookup.id)).toMatchObject({ frame: cloudFrame, vehicleContext, result: { fitmentConfidence: "needs_vehicle_context" } });
+    expect(getLookup(failedLookup.id)).toMatchObject({
+      frame: { ...cloudFrame, imageBase64: `data:image/png;base64,${png}` },
+      vehicleContext,
+      result: { fitmentConfidence: "needs_vehicle_context" },
+    });
+  });
+
+  it("shows a successful retry with a persistence warning when the durable write is full", async () => {
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    vi.spyOn(aiService, "identifyCapturedFrame").mockResolvedValue(successfulScan.result!);
+    const failedLookup = makeLookup({ result: undefined, errorCode: "network", errorMessage: "Network error" });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([failedLookup]));
+    const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    const originalSetItem = Storage.prototype.setItem;
+    const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, name, value) {
+      if (name === key) throw new DOMException("Full", "QuotaExceededError");
+      originalSetItem.call(this, name, value);
+    });
+
+    renderResult(null, `/result/${failedLookup.id}`);
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
+    expect(screen.getByText(/device storage is full/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Why or why not" }));
+    fireEvent.change(screen.getByLabelText("Why or why not"), { target: { value: "Starter label is visible" } });
+    expect(screen.getByLabelText("Why or why not")).toHaveValue("Starter label is visible");
+    write.mockRestore();
+
+    await userEvent.click(screen.getByRole("button", { name: "Retry saving scan result" }));
+    expect(getLookup(failedLookup.id)).toMatchObject({
+      result: { partName: "Alternator" },
+      rating: "down",
+      correction: "Starter label is visible",
+    });
+    expect(getLookup(failedLookup.id)?.errorMessage).toBeUndefined();
+    expect(screen.queryByRole("button", { name: "Retry saving scan result" })).not.toBeInTheDocument();
   });
 
   it.each([

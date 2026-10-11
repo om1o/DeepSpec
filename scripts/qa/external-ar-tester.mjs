@@ -1,6 +1,9 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { chromium } from "playwright";
+import { loadQaEnv, signInWithQaPassword } from "./qa-utils.mjs";
+
+loadQaEnv();
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:5175";
 const EXTERNAL_IMAGE_DIR = path.resolve("artifacts", "qa", "external-images-20260616");
@@ -103,7 +106,7 @@ async function runCase(browserInstance, testCase) {
   });
 
   try {
-    await enterNoEmailSession(page);
+    await signInWithQaPassword(page, baseUrl);
     await page.getByLabel("Upload photo").setInputFiles(testCase.localImage);
     await page.waitForSelector("[data-testid=\"focused-part-label\"]", { timeout: 60_000 });
     await page.waitForSelector("[data-testid=\"focused-part-window\"]", { timeout: 10_000 });
@@ -174,13 +177,6 @@ async function getPartialState(page) {
     contextBox,
     overlayIsSpecific: isSpecificOverlay(partBox, contextBox),
   };
-}
-
-async function enterNoEmailSession(page) {
-  await page.goto(`${baseUrl}/auth`, { timeout: 45_000, waitUntil: "domcontentloaded" });
-  await page.getByText("No email", { exact: true }).click({ timeout: 45_000 });
-  await page.getByRole("button", { name: /continue without email/i }).click({ timeout: 45_000 });
-  await page.waitForSelector("input[type=\"file\"]", { timeout: 45_000 });
 }
 
 function isSpecificOverlay(partBox, contextBox) {

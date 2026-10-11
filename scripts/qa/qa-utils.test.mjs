@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyIdentifyApiIssue, classifyQaTransportError, getAuthDependencyBlocker } from "./qa-utils.mjs";
+import { classifyIdentifyApiIssue, classifyQaTransportError, getAuthDependencyBlocker, getQaPasswordCredentials } from "./qa-utils.mjs";
 
 describe("QA transport and auth dependency classification", () => {
   it.each([
@@ -50,5 +50,15 @@ describe("classifyIdentifyApiIssue", () => {
 
   it("does not hide a generic server failure as provider availability", () => {
     expect(classifyIdentifyApiIssue({ status: 500, text: "Internal Server Error" })).toBeNull();
+  });
+});
+
+describe("password QA account configuration", () => {
+  it("requires both account fields without exposing them in status output", () => {
+    expect(getQaPasswordCredentials({ DEEPSPEC_AUTH_TEST_EMAIL: "qa@example.test" })).toBeNull();
+    expect(getQaPasswordCredentials({
+      DEEPSPEC_AUTH_TEST_EMAIL: " qa@example.test ",
+      DEEPSPEC_AUTH_TEST_PASSWORD: " test-password ",
+    })).toEqual({ email: "qa@example.test", password: "test-password" });
   });
 });

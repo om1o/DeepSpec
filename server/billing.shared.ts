@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { REVENUE_PLANS, getRevenuePlan, type PlanId, type ServerEntitlement } from "../src/services/revenue";
+import { getSupabaseAdminKey } from "./supabaseAdmin.shared";
 
 type BillingErrorResponse = {
   status: number;
@@ -334,7 +335,7 @@ export async function createWebhookResponse(
   }
 
   const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
-  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const serviceRoleKey = getSupabaseAdminKey(env);
   if (!supabaseUrl || !serviceRoleKey) {
     return errorResponse(500, "not_configured", "Server entitlement writes are not configured.");
   }
@@ -380,7 +381,7 @@ async function createPolarWebhookResponse(
   }
 
   const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
-  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const serviceRoleKey = getSupabaseAdminKey(env);
   if (!supabaseUrl || !serviceRoleKey) {
     return errorResponse(500, "not_configured", "Server entitlement writes are not configured.");
   }
@@ -416,7 +417,7 @@ export async function createAccountEntitlementResponse(
   env: BillingEnv,
 ): Promise<EntitlementResponse> {
   const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
-  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const serviceRoleKey = getSupabaseAdminKey(env);
   if (!supabaseUrl || !serviceRoleKey) {
     return entitlementErrorResponse(500, "not_configured", "Server entitlement verification is not configured.");
   }
@@ -435,6 +436,21 @@ export async function createAccountEntitlementResponse(
   const { data: userData, error: userError } = await supabase.auth.getUser(token);
   if (userError || !userData.user) {
     return entitlementErrorResponse(401, "invalid_session", "DeepSpec could not verify this account session.");
+  }
+
+  if (
+    userData.user.is_anonymous === true ||
+    (!userData.user.email_confirmed_at && !userData.user.phone_confirmed_at)
+  ) {
+    return {
+      status: 200,
+      body: {
+        entitlement: {
+          status: "verification_required",
+          verifiedAt: new Date().toISOString(),
+        },
+      },
+    };
   }
 
   const { data, error } = await supabase
@@ -490,7 +506,7 @@ export async function reserveScanCredit(
   }
 
   const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
-  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const serviceRoleKey = getSupabaseAdminKey(env);
   if (!supabaseUrl || !serviceRoleKey) {
     return { ok: false, error: errorResponse(500, "not_configured", "Server-side scan credit enforcement is not configured.") };
   }
@@ -535,7 +551,7 @@ export async function reserveScanCredit(
 export async function consumeReservedScanCredit(reservation: ScanCreditReservation, env: BillingEnv, succeeded = true) {
   if (!reservation.ok || !reservation.enforced || !reservation.reservationId) return;
   const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
-  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const serviceRoleKey = getSupabaseAdminKey(env);
   if (!supabaseUrl || !serviceRoleKey) return;
   const supabase = createBillingClient(supabaseUrl, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
@@ -1071,7 +1087,7 @@ async function verifyBillingUser(
   env: BillingEnv,
 ): Promise<{ userId: string } | { error: BillingErrorResponse }> {
   const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
-  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const serviceRoleKey = getSupabaseAdminKey(env);
   if (!supabaseUrl || !serviceRoleKey) {
     return {
       error: errorResponse(500, "not_configured", "Server billing user verification is not configured."),
@@ -1098,6 +1114,12 @@ async function verifyBillingUser(
     };
   }
 
+  if (data.user.is_anonymous === true || (!data.user.email_confirmed_at && !data.user.phone_confirmed_at)) {
+    return {
+      error: errorResponse(403, "verification_required", "Verify your DeepSpec account before starting checkout."),
+    };
+  }
+
   return {
     userId: data.user.id,
   };
@@ -1108,7 +1130,7 @@ async function readVerifiedBillingEntitlement(
   env: BillingEnv,
 ): Promise<{ row: SupabaseRow | null; userId: string } | { error: BillingErrorResponse }> {
   const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
-  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const serviceRoleKey = getSupabaseAdminKey(env);
   if (!supabaseUrl || !serviceRoleKey) {
     return {
       error: errorResponse(500, "not_configured", "Server entitlement verification is not configured."),
