@@ -2,7 +2,7 @@
 
 Date: 2026-10-10 (America/New_York)
 
-Candidate: `codex/v1-preview-20261010` at `99a02756`
+Verified code candidate: `codex/v1-preview-20261010` at `bdd941b9`
 
 Pull request: https://github.com/om1o/DeepSpec/pull/119
 
@@ -21,7 +21,7 @@ No merge or manual deployment was performed.
 
 ## Verified Passes
 
-- Full automated suite: 91 test files and 1,256 tests passed on `99a02756`.
+- Full automated suite: 91 test files and 1,256 tests passed on `bdd941b9`.
 - Repository lint: `npm run lint` passed.
 - Production build: `npm run build` passed.
 - Vercel packaging: SPA fallback preserves `/api/*` and supports direct client routes; current Vercel commit status is successful.
@@ -30,6 +30,7 @@ No merge or manual deployment was performed.
 - Billing access: anonymous or unconfirmed identities fail closed before checkout, entitlement lookup, and scan allowance.
 - No-spend chat: production chat is disabled unless explicitly enabled; after a disabled response the composer cannot accumulate unanswered messages.
 - Retry durability: recovered cloud images are bounded; a successful identification remains visible after a local storage failure; retry persists the complete result, frame, provenance, and pending feedback.
+- Cross-platform retry recovery: downloaded images are converted from bytes instead of passing a foreign-realm Blob to FileReader; focused Windows tests and both Linux GitHub Quality gates pass.
 - Inference truthfulness: unsupported measurements fail closed and changed prompt/pipeline behavior has explicit version lineage.
 - Shop authorization: user-controlled membership role escalation is blocked in release code.
 - Branding: the blue-slate DeepSpec logo renders on the current local auth screen at the phone viewport.

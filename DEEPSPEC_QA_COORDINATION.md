@@ -2,7 +2,7 @@
 
 Updated: 2026-10-10 (America/New_York)
 
-Release candidate: `codex/v1-preview-20261010` at `99a02756`
+Verified code candidate: `codex/v1-preview-20261010` at `bdd941b9`
 
 The current orchestrator lane ID is unknown. This board records ownership but is not an atomic lock. Workers must still claim overlapping files through the active coordination channel or use isolated worktrees.
 
@@ -20,6 +20,7 @@ The current orchestrator lane ID is unknown. This board records ownership but is
 | QA-010 | Lane unknown | Security advisor classification | QA-005 | Complete | Seven RLS/no-policy tables grant only `service_role`; ownership policies remain scoped | Leaked-password protection and anonymous sign-ins remain open | Do not add broad client policies to server-only tables |
 | QA-011 | Lane unknown | Logo and responsive auth rendering | QA-001 | Complete | Blue-slate logo rendered in local browser doctor screenshot; auth selectors and console/network checks pass | Authenticated screens not independently revisited on current head | Cover during QA-008 |
 | QA-012 | Orchestrator | Preview promotion decision | QA-006, QA-007, QA-008, QA-009 | Blocked | Vercel and CodeRabbit statuses succeed, but those are not the customer gate | Four launch blockers remain | Promote only after all four close with revision-linked evidence |
+| QA-013 | Lane unknown | Cross-realm retry image conversion | Linux CI | Complete | Focused 2/2 tests; full 1,256-test local suite; both GitHub Quality gates; lint/build | None | Keep byte-based conversion covered on browser and Node/jsdom |
 
 ## Collision Notes
 
