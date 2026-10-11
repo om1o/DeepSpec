@@ -1,16 +1,16 @@
 @import "tailwindcss";
 
 /* ============================================================================
-   Deep Spec – Design Tokens v2
+   DeepSpec – Design Tokens v3
    Reference: DeepSpec Scanner.html design system
-   Ink-dark palette + electric-cyan scan color + Space Grotesk typography
+   Graphite surfaces + restrained cyan accents + native system typography
    ========================================================================= */
 
 :root {
   /* ── Ink (dark backgrounds) ─────────────────────────────────────── */
-  --ink-950: #04070E;
-  --ink-900: #07101E;
-  --ink-800: #0B1729;
+  --ink-950: #080B10;
+  --ink-900: #10151D;
+  --ink-800: #171E28;
   --ink-700: #101F32;
   --ink-600: #182B42;
   --ink-500: #213A55;
@@ -79,7 +79,7 @@
   --ds-accent-glow:   rgba(78, 110, 146, 0.40);
 
   /* ── Typography ──────────────────────────────────────────────────── */
-  --font-ui:   'Space Grotesk', 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-ui:   -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', ui-sans-serif, system-ui, sans-serif;
   --font-data: 'JetBrains Mono', 'Courier New', ui-monospace, monospace;
 
   /* ── Radius ──────────────────────────────────────────────────────── */
@@ -184,9 +184,13 @@ button, a {
   touch-action: manipulation;
 }
 
+/* Shared brand header wraps instead of crowding navigation on small screens. */
+.ds-app-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; padding-bottom: 20px; border-bottom: 1px solid var(--ds-border); }
+.ds-app-header nav { margin-left: auto; }
+
 /* Workbench entry screens. Keep camera and result presentation independent. */
 .ds-auth-page {
-  background: radial-gradient(ellipse at 75% 20%, #14283b 0, transparent 52%), #060d17;
+  background: radial-gradient(ellipse at 75% 0, #15222d 0, transparent 58%), var(--ds-bg);
 }
 .ds-auth-story {
   display: none;
@@ -208,15 +212,15 @@ button, a {
 .ds-workflow { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid #ffffff26; padding-top: 20px; }
 .ds-workflow-number { color: #8daaba; font-family: var(--font-data); font-size: 10px; margin-right: 10px; }
 .ds-workflow-label { font-size: 13px; font-weight: 600; }
-.ds-auth-card { border: 1px solid #ffffff1c; border-radius: 24px; background: #101e2be6; box-shadow: 0 24px 80px #00000030; }
-.ds-auth-card input { border-radius: 12px; background-color: #07121d; }
-.ds-auth-card button { border-radius: 12px; }
-.ds-auth-card button[type="submit"] { background: #9fcad4; color: #071520; box-shadow: 0 8px 24px #00000020; }
-.ds-auth-card button[type="submit"]:hover:not(:disabled) { background: #b9dce3; }
+.ds-auth-card { border: 1px solid #ffffff1c; border-radius: 28px; background: #111923f2; box-shadow: 0 24px 80px #00000024; }
+.ds-auth-card input { border-radius: 14px; background-color: #0a1119; }
+.ds-auth-card button { border-radius: 14px; }
+.ds-auth-card button[type="submit"] { background: #bfdce7; color: #0a1820; font-weight: 600; box-shadow: none; }
+.ds-auth-card button[type="submit"]:hover:not(:disabled) { background: #d4e8ef; }
 .ds-auth-card :is(button, a, input):focus-visible,
 .ds-history-page :is(button, a, input, select):focus-visible { outline: 2px solid #9fcad4; outline-offset: 4px; }
 .ds-auth-footnote { margin-top: 20px; padding-top: 16px; border-top: 1px solid #ffffff14; font-size: 11px; line-height: 1.7; color: #a4b7c8; }
-.ds-history-page { background: radial-gradient(ellipse at 0 0, #172c3e, transparent 650px), var(--ds-bg); }
+.ds-history-page { background: linear-gradient(#111b26, var(--ds-bg) 480px); }
 .ds-history-header { padding: 12px 0 28px; border-bottom: 1px solid var(--ds-border); }
 .ds-history-nav { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
 .ds-history-nav > :is(a, button) { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 10px 16px; border: 1px solid var(--ds-border); border-radius: 12px; color: #c5d5e2; font-size: 13px; font-weight: 600; background: #0c1b2b; }
@@ -230,7 +234,7 @@ button, a {
 .ds-empty-symbol { display: grid; place-items: center; width: 68px; height: 68px; margin: 0 auto 24px; border: 1px solid #8ab6c04d; border-radius: 20px; background: #9fcad40a; color: #9fcad4; }
 .ds-history-empty > p { color: #b2c5d5; }
 .ds-history-empty > a { display: inline-flex; justify-content: center; align-items: center; margin-top: 24px; min-height: 48px; padding: 12px 24px; border-radius: 12px; background: #9fcad4; color: #071520; font-weight: 700; font-size: 14px; }
-.ds-chat-page { background: radial-gradient(ellipse at 10% 0, #172c3e, transparent 640px), var(--ds-bg); }
+.ds-chat-page { background: linear-gradient(#111b26, var(--ds-bg) 480px); }
 .ds-workbench { --ds-accent: #466b8a; --ds-warn-ink: #e0b376; }
 .ds-workbench :is(button, a, input, textarea, select, summary):focus-visible { outline: 2px solid #9fcad4; outline-offset: 4px; }
 .ds-workbench-back { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 10px 14px; border: 1px solid #91adc340; border-radius: 12px; background: #0a172bea; color: #d4e4f0; font-size: 13px; font-weight: 600; }

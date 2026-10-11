@@ -1,3 +1,4 @@
+import { BrandLockup } from "../components/BrandLockup";
 import { createAnalysisAttemptId } from "../lib/analysisAttempt";
 import { applyShopFitmentContext } from "../lib/shopFitmentContext";
 import { getAccountScope, isAccountScopeCurrent, withAccountRouteState } from "../lib/accountScope";
@@ -898,12 +899,7 @@ export default function Scanner() {
           </svg>
         </Link>
         <div className="flex flex-col items-center">
-          <span
-            className="text-[15px] font-black tracking-[-0.02em] text-white"
-            style={{ textShadow: "0 1px 8px rgba(0,0,0,0.5)" }}
-          >
-            Deep Spec
-          </span>
+          <BrandLockup size="sm" />
         </div>
         <div className="size-10" aria-hidden="true" />
       </header>

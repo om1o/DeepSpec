@@ -345,7 +345,7 @@ export default function Auth() {
         <section className="ds-auth-card mx-auto flex w-full max-w-[540px] flex-col p-5 sm:p-8">
           <div className="flex items-center justify-between gap-4">
             <BrandLockup size="lg" />
-            <span className={supabaseConfigured ? "rounded-[8px] border border-[var(--ds-ok-line)] bg-[var(--ds-ok-soft)] px-3 py-1.5 text-xs font-black text-sky-100" : "rounded-[8px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-3 py-1.5 text-xs font-black text-amber-100"}>
+            <span className={supabaseConfigured ? "rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-medium text-[var(--slate-200)]" : "rounded-[8px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-3 py-1.5 text-xs font-black text-amber-100"}>
               {supabaseConfigured ? "Your workspace" : "Sign-in unavailable"}
             </span>
           </div>
@@ -353,7 +353,7 @@ export default function Auth() {
           <div className="mt-9">
             <p className="ds-eyebrow">YOUR PARTS. YOUR WORKBENCH.</p>
             <h1 className="mt-3 text-4xl font-bold tracking-tight text-white">Sign in</h1>
-            <p className="mt-3 text-base font-semibold leading-7 text-white/68">
+            <p className="mt-3 text-base font-normal leading-7 text-white/68">
               Pick up where you left off, or capture your first part.
             </p>
           </div>

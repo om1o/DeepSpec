@@ -1,3 +1,4 @@
+import { BrandLockup } from "../components/BrandLockup";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { getAuthClient } from "../services/auth";
@@ -69,13 +70,16 @@ export default function Pricing() {
   return (
     <main className="min-h-dvh bg-[var(--ds-page)] px-4 pb-10 pt-[max(18px,env(safe-area-inset-top))] text-white">
       <div className="mx-auto w-full max-w-6xl">
-        <header className="flex items-center justify-between gap-3">
-          <Link to="/scan" className="inline-flex items-center gap-2 text-sm font-bold text-[var(--electric-300)]">
-            Scan
-          </Link>
-          <Link to="/account" className="rounded-full border border-white/[0.12] bg-white/[0.08] px-4 py-2 text-sm font-bold text-white">
-            Account
-          </Link>
+        <header className="ds-app-header">
+          <BrandLockup size="sm" />
+          <nav className="flex items-center gap-4" aria-label="Pricing navigation">
+            <Link to="/scan" className="inline-flex items-center gap-2 text-sm font-bold text-[var(--electric-300)]">
+              Scan
+            </Link>
+            <Link to="/account" className="rounded-full border border-white/[0.12] bg-white/[0.08] px-4 py-2 text-sm font-bold text-white">
+              Account
+            </Link>
+          </nav>
         </header>
 
         <section className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)] lg:items-end">

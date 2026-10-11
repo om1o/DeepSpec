@@ -8,7 +8,7 @@ describe("SEO assets", () => {
   it("adds search and social metadata to the app shell", () => {
     const html = read("index.html");
 
-    expect(html).toContain("Deep Spec - AI Car Part Finding Helper");
+    expect(html).toContain("DeepSpec - AI Car Part Finding Helper");
     expect(html).toContain("AI car part finding");
     expect(html).toContain("AI car parts scanner");
     expect(html).toContain("identify car parts with camera");
@@ -40,8 +40,8 @@ describe("SEO assets", () => {
 
     expect(viteConfig).toContain('display: "standalone"');
     expect(viteConfig).toContain('orientation: "portrait"');
-    expect(viteConfig).toContain('theme_color: "#04070E"');
-    expect(viteConfig).toContain('background_color: "#04070E"');
+    expect(viteConfig).toContain('theme_color: "#080b10"');
+    expect(viteConfig).toContain('background_color: "#080b10"');
     expect(viteConfig).toContain('purpose: "any maskable"');
     expect(viteConfig).toContain("enabled: false");
   });
