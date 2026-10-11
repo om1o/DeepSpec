@@ -1,4 +1,4 @@
-import { createSupabaseAdminClient, getSupabaseAdminKey } from "./supabaseAdmin.shared";
+import { createSupabaseAdminClient, getSupabaseAdminKey } from "./supabaseAdmin.shared.js";
 
 // Optional auth gate for the paid AI endpoints. Off by default. When on, it requires a
 // valid Supabase session on /api/identify and /api/chat. This is an auth gate, not a

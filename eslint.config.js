@@ -10,6 +10,7 @@ export default tseslint.config(
       ".claude/worktrees/**",
       ".codex-gitdir-*",
       ".ditto-site",
+      ".vercel/**",
       "artifacts",
       "datasets",
       "dev-dist",

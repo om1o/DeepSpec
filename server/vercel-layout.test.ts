@@ -33,6 +33,22 @@ describe("Vercel Hobby deployment layout", () => {
     expect(files.length).toBeLessThanOrEqual(12);
   });
 
+  it("uses Node ESM-resolvable extensions in every runtime-relative import", () => {
+    const runtimeFiles = ["api", "server"].flatMap((directory) =>
+      readdirSync(resolve(process.cwd(), directory), { recursive: true })
+        .filter((file) => typeof file === "string" && file.endsWith(".ts") && !file.endsWith(".test.ts"))
+        .map((file) => resolve(process.cwd(), directory, file)),
+    );
+
+    for (const file of runtimeFiles) {
+      const source = readFileSync(file, "utf8");
+      const relativeImports = source.matchAll(/from\s+["'](\.{1,2}\/[^"']+)["']/g);
+      for (const [, specifier] of relativeImports) {
+        expect(specifier, `${file} must emit a resolvable Node ESM import`).toMatch(/\.js$/);
+      }
+    }
+  });
+
   it.each(endpoints)("loads /api/$name and preserves its method guard", async ({ handler }) => {
     const response = {
       status: vi.fn().mockReturnThis(),

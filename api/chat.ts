@@ -1,6 +1,8 @@
-import { createChatResponse } from "../server/chat.shared";
-import { enforceRateLimit } from "../server/rateLimit.shared";
-import { requireSession } from "../server/requireSession.shared";
+/// <reference types="node" />
+
+import { createChatResponse } from "../server/chat.shared.js";
+import { enforceRateLimit } from "../server/rateLimit.shared.js";
+import { requireSession } from "../server/requireSession.shared.js";
 
 type VercelRequest = {
   headers?: Record<string, string | string[] | undefined>;
@@ -30,14 +32,14 @@ export default async function handler(request: VercelRequest, response: VercelRe
   const headers = request.headers ?? {};
 
   const rateLimit = await enforceRateLimit("chat", headers, process.env);
-  if (!rateLimit.ok) {
+  if (rateLimit.ok === false) {
     response.setHeader("Retry-After", String(rateLimit.retryAfterSeconds));
     response.status(rateLimit.status).json(rateLimit.body);
     return;
   }
 
   const session = await requireSession(headers, process.env);
-  if (!session.ok) {
+  if (session.ok === false) {
     response.status(session.status).json(session.body);
     return;
   }
