@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
-import { readSupabaseAdminKey } from "./supabase-admin-env.mjs";
+import { createSupabaseAdminClient, readSupabaseAdminKey } from "./supabase-admin-env.mjs";
 import { getPolarWebhookSigningKey } from "./polar-webhook-signing.mjs";
 
 import { createConfirmedReplaySession } from "./qa/confirmed-session.mjs";
@@ -150,7 +150,7 @@ export async function main(args = process.argv.slice(2)) {
       persistSession: false,
     },
   });
-  const adminClient = createClient(env.supabaseUrl, env.serviceRoleKey, {
+  const adminClient = createSupabaseAdminClient(env.supabaseUrl, env.serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
