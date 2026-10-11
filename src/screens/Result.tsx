@@ -128,7 +128,13 @@ export default function Result() {
         pendingRetry.frame,
       );
       if (!resultWrite.ok) {
-        handleLookupUpdate(resultWrite, "result");
+        const retryLookup = {
+          ...(resultWrite.value ?? pendingRetry),
+          ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
+          ...(pendingCorrectionRef.current !== undefined ? { correction: pendingCorrectionRef.current } : {}),
+        };
+        pendingRetryLookupRef.current = retryLookup;
+        handleLookupUpdate({ ...resultWrite, value: retryLookup }, "result");
         return;
       }
 

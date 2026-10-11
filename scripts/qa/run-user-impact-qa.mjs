@@ -14,6 +14,7 @@ import {
   writeTextFile,
 } from "./qa-shared.mjs";
 import { runDoctor } from "./qa-doctor.mjs";
+import { getQaPasswordCredentials } from "./qa-utils.mjs";
 
 const OUTPUT_MD = join(QA_ARTIFACT_DIR, "run-report.md");
 const OUTPUT_JSON = join(QA_ARTIFACT_DIR, "run-report.json");
@@ -286,9 +287,8 @@ async function runScenario(browser, baseUrl, runId, scenario, doctor) {
 }
 
 async function signInIfConfigured(page, baseUrl, stepsExecuted) {
-  const email = process.env.DEEPSPEC_AUTH_TEST_EMAIL?.trim();
-  const password = process.env.DEEPSPEC_AUTH_TEST_PASSWORD?.trim();
-  if (!email || !password) {
+  const credentials = getQaPasswordCredentials();
+  if (!credentials) {
     return;
   }
 
@@ -298,8 +298,8 @@ async function signInIfConfigured(page, baseUrl, stepsExecuted) {
 
   stepsExecuted.push("Sign in with the configured QA password account.");
   await page.getByRole("tab", { name: /^Account$/i }).click({ timeout: 8_000 });
-  await page.getByLabel(/email address/i).fill(email);
-  await page.getByLabel(/^password$/i).fill(password);
+  await page.getByLabel(/email address/i).fill(credentials.email);
+  await page.getByLabel(/^password$/i).fill(credentials.password);
   await page.getByRole("button", { name: /sign in to scanner/i }).click();
 
   await page.waitForURL(/\/scan(?:\?|$)/, { timeout: 15_000 }).catch(() => undefined);

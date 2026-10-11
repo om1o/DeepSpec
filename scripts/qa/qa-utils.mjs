@@ -36,8 +36,8 @@ export function loadQaEnv() {
 
 export function getQaPasswordCredentials(env = process.env) {
   const email = String(env.DEEPSPEC_AUTH_TEST_EMAIL ?? "").trim();
-  const password = String(env.DEEPSPEC_AUTH_TEST_PASSWORD ?? "").trim();
-  return email && password ? { email, password } : null;
+  const password = String(env.DEEPSPEC_AUTH_TEST_PASSWORD ?? "");
+  return email && password.trim() ? { email, password } : null;
 }
 
 export async function signInWithQaPassword(page, baseUrl, credentials = getQaPasswordCredentials()) {

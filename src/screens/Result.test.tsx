@@ -696,6 +696,11 @@ describe("Result", () => {
     fireEvent.click(screen.getByRole("button", { name: "Why or why not" }));
     fireEvent.change(screen.getByLabelText("Why or why not"), { target: { value: "Starter label is visible" } });
     expect(screen.getByLabelText("Why or why not")).toHaveValue("Starter label is visible");
+
+    await userEvent.click(screen.getByRole("button", { name: "Retry saving scan result" }));
+    expect(screen.getByLabelText("Why or why not")).toHaveValue("Starter label is visible");
+    expect(screen.getByRole("button", { name: "Retry saving scan result" })).toBeInTheDocument();
+
     write.mockRestore();
 
     await userEvent.click(screen.getByRole("button", { name: "Retry saving scan result" }));

@@ -59,6 +59,6 @@ describe("password QA account configuration", () => {
     expect(getQaPasswordCredentials({
       DEEPSPEC_AUTH_TEST_EMAIL: " qa@example.test ",
       DEEPSPEC_AUTH_TEST_PASSWORD: " test-password ",
-    })).toEqual({ email: "qa@example.test", password: "test-password" });
+    })).toEqual({ email: "qa@example.test", password: " test-password " });
   });
 });

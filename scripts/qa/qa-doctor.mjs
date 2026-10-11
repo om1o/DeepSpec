@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
+import { getQaPasswordCredentials } from "./qa-utils.mjs";
 import {
   QA_ARTIFACT_DIR,
   bulletList,
@@ -177,7 +178,7 @@ async function checkDatabaseReachable(config) {
 }
 
 function checkTestAccountConfigured() {
-  const hasPasswordAccount = Boolean(process.env.DEEPSPEC_AUTH_TEST_EMAIL?.trim() && process.env.DEEPSPEC_AUTH_TEST_PASSWORD?.trim());
+  const hasPasswordAccount = Boolean(getQaPasswordCredentials());
 
   return checkResult(
     "test account exists or is configured",
@@ -208,12 +209,11 @@ async function checkAuthSession(config) {
     },
   });
 
-  const email = process.env.DEEPSPEC_AUTH_TEST_EMAIL?.trim();
-  const password = process.env.DEEPSPEC_AUTH_TEST_PASSWORD?.trim();
+  const credentials = getQaPasswordCredentials();
 
   try {
-    const result = email && password
-      ? await client.auth.signInWithPassword({ email, password })
+    const result = credentials
+      ? await client.auth.signInWithPassword(credentials)
       : { error: new Error("No QA password credentials configured."), data: null };
 
     if (result.error || !result.data?.user || !result.data?.session) {
