@@ -2,7 +2,7 @@
 
 Date: 2026-10-11 (America/New_York)
 
-Earlier verified candidate: `bdd941b9`. Anonymous-auth follow-up starts from PR #119 head `0bc7f4d7`; current verification results are recorded in the follow-up section below.
+Current candidate: `fb331d6f`. Runtime fixes are in `b33a2f40`; the public-asset build gate is in `fb331d6f`.
 
 Pull request: https://github.com/om1o/DeepSpec/pull/119
 
@@ -13,11 +13,23 @@ PR #119 is the selected V1 integration path. PR #120 was closed without merge or
 DeepSpec is not yet approved for V1 preview promotion. The release code is substantially healthier and the accessible local gate is green, but four external launch blockers remain:
 
 1. Replace the exposed legacy Supabase `service_role` credential with a new server-only secret key, verify every consumer, then deactivate the legacy key.
-2. Install the confirmed-identity verifier changes, configure dedicated confirmed QA credentials (including the second isolation account), disable anonymous sign-ins, and rerun the live verifiers. Enable leaked-password protection where the Supabase plan supports it.
+2. Configure dedicated confirmed QA credentials (including the second isolation account), disable anonymous sign-ins, and rerun the live verifiers. Enable leaked-password protection where the Supabase plan supports it.
 3. Prove one AI provider completes an ordinary scan on the candidate environment without violating the no-spending rule.
 4. Pass the real verified-account journey: sign in, restore session, scan, save, history, refresh/reopen, logout/login, and reopen again.
 
-No merge or manual deployment was performed.
+No merge, production deployment, or manual promotion was performed. Vercel automatically built the branch preview linked below.
+
+## Current Candidate Verification — 2026-10-11
+
+Candidate: `fb331d6f` on `codex/v1-preview-20261010`.
+
+- `b33a2f40` preserves exact QA password bytes while still rejecting blank-only values, and preserves pending rating/correction through repeated local-storage quota failures. The two matching PR #119 review threads are resolved.
+- Full local suite on the runtime fix: 94 files and 1,291 tests passed. Node syntax checks, full ESLint, TypeScript, and the production build passed.
+- `fb331d6f` integrates the public-asset integrity gate from the now-closed duplicate PR #121. Its focused test, full ESLint, and the combined production build passed; the post-build asset check found no missing internal target.
+- Vercel preview: https://deepspec-git-codex-v1-preview-20261010-deep-spec-team.vercel.app
+- Preview QA doctor: `artifacts/qa/2026-10-11T14-22-45-394Z/qa-doctor.md`. The preview returned HTTP 200, rendered visible content, exposed current auth selectors, and produced no captured console or network errors.
+- Authenticated browser QA remains blocked honestly: this isolated worktree has no Supabase public settings or authorized account password. No password was searched for, displayed, reset, or sent by email.
+- Both earlier Linux Quality gate runs on `d5457fcb` passed lint, all 94 test files / 1,291 tests, and build, then intentionally failed the live auth preflight because Supabase still reported anonymous sign-ins enabled. This is a production configuration blocker, not a code-test failure.
 
 ## Anonymous-auth Review Follow-up — 2026-10-11
 
@@ -34,7 +46,7 @@ Changes:
 - CLI probes preserve password bytes, reject missing/unconfirmed/anonymous identities and same-account isolation tests before fixture writes, revoke only their own sessions, and keep fixture cleanup scoped. Billing success artifacts are emitted only after required cleanup succeeds.
 - CI and setup instructions document both confirmed QA accounts; auth preflight requires anonymous sign-ins disabled. No server authorization, RLS policy, paid-credit rule, or scan allowance was weakened.
 
-Actual verification in this checkout (Node 24.19.0):
+Earlier anonymous-auth verification in this checkout (Node 24.19.0):
 
 | Check | Result |
 | --- | --- |
@@ -166,11 +178,11 @@ Expected: at least one configured provider completes an ordinary scan on the can
 
 Actual: unit and fallback tests pass, but no live provider call was made under the no-spending rule. Historical production probes included provider rejection, server failure, or rate limiting and are not launch evidence.
 
-### P1: Supabase Auth hardening remains open
+### P1: Supabase Auth hardening remains open and is CI-reproduced
 
 Expected: anonymous sign-ins disabled; leaked-password protection enabled when available.
 
-Actual: advisor warnings remain.
+Actual: advisor warnings remain, and both Linux Quality gate runs reached the live auth preflight and failed on `Disable anonymous sign-ins before preview promotion.`
 
 ### P2: Client payload weight
 
@@ -183,11 +195,11 @@ The build succeeds but includes a 550.87 kB minified Transformers.js chunk and a
 - No password was reset.
 - No auth email was sent.
 - No payment or paid provider call was made.
-- No production deployment, merge, or manual promotion was performed.
+- No production deployment, merge, or manual promotion was performed. Vercel's GitHub integration automatically refreshed the branch preview.
 
 ## Shortest Remaining Launch Plan
 
-1. Install this follow-up and configure confirmed QA accounts as documented in `docs/CI_SETUP.md`; rotate the Supabase server key and harden Auth settings.
+1. Configure confirmed QA accounts as documented in `docs/CI_SETUP.md`; rotate the Supabase server key and harden Auth settings.
 2. Produce one approved live provider success on the candidate preview.
 3. Have the user enter the authorized account password directly into the browser, then run the full real website QA journey.
 4. Re-run Security Advisor, full tests, lint, and build against the final revision.
