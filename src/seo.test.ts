@@ -40,8 +40,8 @@ describe("SEO assets", () => {
 
     expect(viteConfig).toContain('display: "standalone"');
     expect(viteConfig).toContain('orientation: "portrait"');
-    expect(viteConfig).toContain('theme_color: "#080b10"');
-    expect(viteConfig).toContain('background_color: "#080b10"');
+    expect(viteConfig).toContain('theme_color: "#04070E"');
+    expect(viteConfig).toContain('background_color: "#04070E"');
     expect(viteConfig).toContain('purpose: "any maskable"');
     expect(viteConfig).toContain("enabled: false");
   });

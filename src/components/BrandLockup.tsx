@@ -4,9 +4,9 @@ type BrandLockupProps = {
 };
 
 const sizes = {
-  sm: { mark: "size-8", text: "text-lg" },
-  md: { mark: "size-10", text: "text-[22px]" },
-  lg: { mark: "size-13", text: "text-[28px]" },
+  sm: { mark: "size-9", text: "text-xl" },
+  md: { mark: "size-11", text: "text-2xl" },
+  lg: { mark: "size-14", text: "text-3xl" },
 } as const;
 
 export function BrandLockup({ className = "", size = "md" }: BrandLockupProps) {
@@ -15,14 +15,14 @@ export function BrandLockup({ className = "", size = "md" }: BrandLockupProps) {
   return (
     <span role="img" aria-label="DeepSpec" className={`inline-flex items-center gap-2 ${className}`}>
       <img
-        src="/brand/deepspec-symbol-v2.webp"
+        src="/brand/deepspec-symbol.png"
         alt=""
-        width="192"
-        height="192"
+        width="1254"
+        height="1254"
         className={`${classes.mark} shrink-0 object-contain`}
       />
-      <span aria-hidden="true" className={`${classes.text} whitespace-nowrap font-semibold tracking-[-0.045em] leading-none text-white`}>
-        DeepSpec
+      <span aria-hidden="true" className={`${classes.text} whitespace-nowrap font-extrabold leading-none text-white`}>
+        Deep<span className="text-[#55d9ff]">Spec</span>
       </span>
     </span>
   );

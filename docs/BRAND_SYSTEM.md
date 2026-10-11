@@ -1,22 +1,24 @@
-# DeepSpec inspection rotor
+# DeepSpec brand system
 
-The symbol represents an engineered part opened by an inspection scan. Its circular segmented body echoes a mechanical rotor; the open center and stepped joints suggest scanning and sensing. It replaces the interim letter-shaped mark at the user's request.
+The electric D is DeepSpec's primary identity. Its forward-leaning silhouette combines the initial D, a mechanical rotor opening, and a bright scan cut. It is the mark customers should remember and the only symbol used for the app icon, favicon, shared product lockup, and neutral scan-image fallback.
 
-Keep the circular silhouette, open center, three broad segments, stepped joints, and four separate rounded scan corners together. Material may change between flat graphite, inverse white, satin silver, blue glass, and solid blue; the geometry must remain recognizable. Use a flat treatment for print or very small marks, silver on dark app surfaces, and blue glass for occasional promotional artwork. Do not add gear teeth, circuit traces, gradients to the wordmark, or a surrounding badge to the in-app lockup.
+The split inspection rotor is a secondary motion and marketing device. Its two opposing mechanical crescents and open center communicate active scanning; four rounded scan corners may surround it in animated analysis states. Blue glass is reserved for loading motion and occasional promotional artwork. Solid blue is the flat marketing/print fallback. Never substitute the rotor for the primary electric D on app-install or product identity surfaces.
 
 ## Application assets
 
-- `public/brand/deepspec-symbol-v2.webp`: 192×192 transparent runtime mark, 11,488 bytes. Shared by `BrandLockup` and the cloud-history image fallback.
-- `public/icon-v2-192.png` and `public/icon-v2-512.png`: matching PWA/favicon assets on graphite, with padding for maskable use. Physical installation/cropping still needs device evidence.
-- `docs/brand/deepspec-core-master.png`: original generated transparent artwork, retained outside the public bundle. Runtime code must use the small WebP.
+- `public/brand/deepspec-symbol.png`: transparent electric D master used by `BrandLockup` and the cloud-history image fallback.
+- `public/icon-192.png` and `public/icon-512.png`: matching electric D PWA/favicon assets on the DeepSpec ink background, with maskable padding. Physical installation/cropping still needs device evidence.
+- `public/brand/deepspec-scan-badge-glass.png`: transparent blue-glass inspection rotor used by the analysis/loading animation and promotional artwork.
+- `public/brand/deepspec-scan-badge-solid.png`: transparent flat inspection rotor for print and marketing fallback.
+- `public/brand/deepspec-symbol-v2.webp`, `public/icon-v2-192.png`, `public/icon-v2-512.png`, and `docs/brand/deepspec-core-master.png`: retained framed-rotor exploration assets; they are not the primary runtime identity.
 
-`BrandLockup` keeps one accessible name, `DeepSpec`, with a decorative image and hidden duplicate text. It renders the mark at 32, 40, or 52 CSS pixels. The wordmark uses the native UI font stack with restrained weight and spacing. The shared lockup appears on Auth, Scanner, History, Result, Chat, EarlyAccess, Shop, Account, and Pricing; screen tests and actual deployed visual coverage are separate evidence categories.
+`BrandLockup` keeps one accessible name, `DeepSpec`, with a decorative electric D and hidden duplicate text. The wordmark uses a white `Deep` and electric-cyan `Spec` with no added letter spacing. The shared lockup appears on Auth, Scanner, History, Result, Chat, EarlyAccess, Shop, Account, and Pricing; screen tests and actual deployed visual coverage are separate evidence categories.
 
 App surfaces use graphite `#080B10`, pale silver lettering, and restrained cyan accents. Shared Account/Pricing headers wrap to keep navigation reachable at narrow widths. No authentication, billing, scan, or AI-provider behavior is changed by this refresh.
 
 ## Artwork provenance
 
-Created with the built-in image-generation tool, using the user's selected DeepSpec identity board as the visual reference. No third-party logo artwork was copied. The final board prompt retained its typography and three material studies while replacing the interim letter and hexagonal marks with a round segmented rotor, a circular opening, and stepped sensing joints, using the original rotor/circuit artwork as the shape reference; the final user refinement restores four rounded scanning corners. The production prompt extracted the same symbol in pale satin silver on genuine transparency, without text, shadow, glow, or background. The PNG was then cropped, resized, and encoded for app delivery; those exports preserve the artwork's alpha and geometry.
+Created with the built-in image-generation tool from the user's DeepSpec identity directions. No third-party logo artwork was copied. The electric D and both split-rotor treatments are original generated assets on genuine transparency. Runtime motion is implemented with CSS around the glass rotor so reduced-motion users receive a static branded state and the marketing badges remain reusable.
 
 See `DEEPSPEC_QA_REPORT.md` for revision-specific checks and remaining deployment, account, mobile, and physical-device requirements. A logo refresh does not approve a release.
 
@@ -32,6 +34,6 @@ Compared the deployed signed-out entry page with `PROJECT_GOAL.md`, `V1_LAUNCH_P
 
 The Pricing screen now explains proposed preview plans and sandbox-only availability in customer language. It no longer presents static internal release stages as a product feature. Server authorization, payment/provider gates, plan identifiers, allowances, and checkout behavior are unchanged. The release checklist remains in the QA/release documentation.
 
-The shared social card at `public/brand/deepspec-site-logo-v2-social.png` now uses the same framed rotor, wordmark, and evidence-led message (1200×600). Its existing path is retained for app/article metadata. Those metadata URLs still point to the production domain: the preview asset can be inspected directly, but production share cards and external caches are unchanged until a separately approved production release. The generated card prompt used the approved satin-silver symbol and exact line “Photograph a part. Review the evidence.”
+The shared social card at `public/brand/deepspec-site-logo-v2-social.png` uses the secondary framed rotor as a marketing badge with the evidence-led message (1200×600). Its existing path is retained for app/article metadata. Those metadata URLs still point to the production domain: the preview asset can be inspected directly, but production share cards and external caches are unchanged until a separately approved production release.
 
-Finish choices: graphite for the core identity/print, inverse white for small high-contrast placements, satin silver for the dark app, blue glass for promotional art, and solid blue for flat accent use. Real customer preference and mobile readability still need direct user/device feedback.
+Finish hierarchy: electric D for the primary brand and app icon; blue-glass rotor for loading motion and occasional promotional art; solid-blue rotor for flat marketing and print. Real customer preference and physical-device installation still need direct user/device feedback.

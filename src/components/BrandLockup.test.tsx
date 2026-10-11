@@ -6,7 +6,7 @@ describe("BrandLockup", () => {
     const { container } = render(<BrandLockup size="lg" />);
 
     expect(screen.getByRole("img", { name: "DeepSpec" })).toBeInTheDocument();
-    expect(container.querySelector("img")).toHaveAttribute("src", "/brand/deepspec-symbol-v2.webp");
+    expect(container.querySelector("img")).toHaveAttribute("src", "/brand/deepspec-symbol.png");
     expect(container.querySelector("img")).toHaveAttribute("alt", "");
   });
 });
