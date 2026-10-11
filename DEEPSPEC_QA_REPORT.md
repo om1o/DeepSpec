@@ -2,7 +2,9 @@
 
 Date: 2026-10-11 (America/New_York)
 
-Current deployed candidate: `360d140e`. Vercel deployment `dpl_AbAgT2wpQUpRFNEh5XskkufXfSHB` is Ready and aliased to the branch preview. Its API functions load successfully, but Preview has no server-only Supabase key, so `/api/identify` currently fails closed with `503 rate_limit_unavailable` before session verification.
+Candidate verified by this reconciliation: `96e34ce9ee79d1cf0137d57b218576e833d0ecc6` on `codex/v1-preview-20261010`. This supersedes the earlier `360d140e` candidate reference. Local branding tests/build and GitHub checks are revision-linked below. The public preview serves matching branding assets, but mobile and authenticated deployed visual checks remain **NOT VERIFIED**. A green build/status is not release approval.
+
+Historical deployment `dpl_AbAgT2wpQUpRFNEh5XskkufXfSHB` at `360d140e` loaded its API functions but returned `503 rate_limit_unavailable` because Preview lacked a server-only Supabase key. That configuration/API result was **not rechecked** in this branding pass and must not be attributed to the latest deployment.
 
 Pull request: https://github.com/om1o/DeepSpec/pull/119
 
@@ -10,7 +12,7 @@ PR #119 is the selected V1 integration path. PR #120 was closed without merge or
 
 ## Executive Verdict
 
-DeepSpec is not yet approved for V1 preview promotion. The release code and Vercel packaging are substantially healthier, but four launch blockers remain:
+DeepSpec is not yet approved for V1 preview promotion. The release code and Vercel packaging are substantially healthier, but four pre-existing launch gates remain, alongside the incomplete branding, mobile and physical-device/PWA checks documented below:
 
 1. Replace the exposed legacy Supabase `service_role` credential with a new server-only secret key, verify every consumer, then deactivate the legacy key.
 2. Configure dedicated confirmed QA credentials, including the second isolation account, and rerun the live verifiers. Enable leaked-password protection where the Supabase plan supports it.
@@ -18,6 +20,45 @@ DeepSpec is not yet approved for V1 preview promotion. The release code and Verc
 4. Pass the real verified-account journey: sign in, restore session, scan, save, history, refresh/reopen, logout/login, and reopen again.
 
 No merge, production deployment, or manual promotion was performed. Vercel automatically built the branch preview linked below.
+
+## Final Branding Evidence Reconciliation — 2026-10-11
+
+Review finding: [`PRRT_kwDOSd6dgM6rQBIF`](https://github.com/om1o/DeepSpec/pull/119#discussion_r4242598542). **Partially addressed; keep open** until the missing deployed checks below have evidence.
+
+### Revision and deployment provenance
+
+- The requested `ef02d0dc6344551748113c8871b3168718eaacee` head had advanced to `96e34ce9ee79d1cf0137d57b218576e833d0ecc6` before this pass. A fresh remote-ref check confirmed `96e34ce9` remained the branch head before editing this report.
+- Inspected both branding commits: `5cbffec` introduced `BrandLockup`, used it on Auth, Chat, EarlyAccess, History, Result and Shop, and updated PWA assets/configuration; `ef02d0d` replaced the symbol and icons with the final blue/cyan artwork. `BrandLockup` uses 36/44/56 CSS-pixel marks with the accessible name `DeepSpec` and an empty decorative-image alt.
+- `git diff --name-only ef02d0d..96e34ce9` contains only this report and four test files. Application source, dependencies, build configuration and public assets are unchanged between those revisions. Local checks below ran on clean tracked source at **exact head `96e34ce9`**, Node **24.19.0**, using the existing dependency installation (direct package versions were checked against the lockfile).
+- [CI run 38161501645](https://github.com/om1o/DeepSpec/actions/runs/38161501645) is successful for the earlier `ef02d0d` head. [CI run 38162100792](https://github.com/om1o/DeepSpec/actions/runs/38162100792) is successful for `96e34ce9`. Its job log explicitly checks out GitHub's PR merge ref `cabbcae131f2b5bb97a487e545e04b35d32dd094` (merging `96e34ce9` into `a28e1a19`), on Node 22. This is **integration evidence associated with the head**, distinct from the exact-head local run.
+- GitHub reports Vercel status **success** for `96e34ce9`, linked to [deployment AxbwMRKzafrdCFcXzwYUvWwnB1qd](https://vercel.com/deep-spec-team/deepspec/AxbwMRKzafrdCFcXzwYUvWwnB1qd). The Vercel bot links it to the [branch preview](https://deepspec-git-codex-v1-preview-20261010-deep-spec-team.vercel.app). The deployment inspector required sign-in, so its immutable URL/source identity was not independently inspected. The mutable alias and matching asset hashes alone do not attest every deployed source file.
+- The separately generated rotor/circuit logo concept is preview-only and is not integrated into this candidate or covered by its test results. This follow-up changes documentation and saved evidence only. Its commit is an evidence revision, not a newly tested application revision. Any subsequent runtime/asset changes require another targeted run and deployment mapping.
+
+### Check results and boundaries
+
+| Check | Revision / environment | Result and coverage |
+| --- | --- | --- |
+| Focused component and public-asset tests | Local exact `96e34ce9` | **PASS: 7 files / 125 tests** — BrandLockup, Auth, Chat, EarlyAccess, History, Result and public-asset verifier. Shop has no dedicated screen test; its import compiles in the build, but that is not a Shop render/navigation test. |
+| Scoped ESLint | Local exact `96e34ce9` | **PASS** for BrandLockup/tests, six modified screens, Auth test and Vite config. |
+| `npm run build` | Local exact `96e34ce9` | **PASS** — TypeScript, Vite production build and `verify:public`. Existing 550.87 kB Transformers chunk / 23.6 MB WASM performance warning remains. |
+| GitHub quality gate | PR merge ref for `96e34ce9` | **PASS: 97 files / 1,317 tests**, lint, TypeScript, build and public-asset integrity. |
+| CI live-auth/cloud evidence | Same CI job | Auth provider settings verified, including anonymous sign-ins disabled. **Password sign-in, code sign-in and cloud-sync verifier skipped**; logs state credentials were not supplied. A successful step is not a completed live account journey. |
+| Public deployed branding and PWA resources | Branch preview, read-only GET on 2026-10-11 | **PASS** — symbol PNG, 192/512 PNG icons and generated manifest return HTTP 200 with appropriate content types and byte-for-byte equality to the local candidate build. PNG dimensions match their declared sizes. SHA-256/size ledger: [public-assets.json](docs/qa/branding-96e34ce9/public-assets.json). Both icons were visually inspected as blue/cyan symbols on dark backgrounds. |
+| Desktop sign-in visual check | Live preview, 1363×936 CSS pixels | **PASS, signed-out scope only** — new symbol/name visible and unclipped, mark loaded at 56×56, hero image loaded, no horizontal overflow. Account tab, email/password fields and scanner sign-in control visible. [Screenshot](docs/qa/branding-96e34ce9/desktop-auth.jpg). |
+| Desktop signed-out navigation | Live preview | Root and direct `/history` navigation end at `/auth` as expected. This checks the sign-in gate only; authenticated navigation and the other five branded screens remain uninspected. |
+| Browser console | Cloud-browser desktop session | No application-origin error in captured logs. Two browser-extension metadata errors were present; this is not a complete network-error audit. |
+| `qa:doctor` / mobile 390×844 | Local runner targeting live preview | **BLOCKED**, not a product failure. Preview HTTP 200 and Playwright import pass, but Chromium executable is missing; `npx playwright install chromium` exits 1 after an invalid/truncated downloaded archive. Local public config and dedicated QA account credentials are also absent. No mobile screenshot or mobile-layout pass is claimed. |
+| Physical phones / installed PWA | Not run | **NOT VERIFIED** — home-screen icon, maskable cropping, standalone launch, Safari/Android rendering, camera and navigation still require actual device evidence. Asset dimensions and manifest validity do not prove installation behavior. |
+
+Reproduction commands and saved logs are in [the evidence directory](docs/qa/branding-96e34ce9/README.md). The existing public-asset gate verifies document/manifest targets exist; it does not prove React image rendering, responsive layout, or runtime navigation. The additional deployed hash and desktop observations above cover only their stated scopes.
+
+### Remaining evidence and findings
+
+1. Restore a supported mobile browser runner and inspect at least 390×844 plus a narrow 320 CSS-pixel viewport. Check the lockup/status layout, clipping, overflow and reachable navigation. Preserve screenshots and viewport dimensions.
+2. Use an authorized confirmed QA session to inspect Auth, History, Result, Chat, EarlyAccess and Shop at desktop/mobile sizes, including result/history/scanner back-links. No authenticated session was available in this pass; do not bypass the sign-in gate or substitute a fake session as deployment evidence.
+3. Confirm the exact immutable Vercel deployment/source SHA and rerun the missing checks against it. The linked GitHub status plus asset equality is useful but bounded evidence.
+4. The separate [mobile asset-size finding](https://github.com/om1o/DeepSpec/pull/119#discussion_r4242622753) remains open: the deployed symbol is **578,313 bytes / 1254×1254**, rendered at 36–56 CSS pixels. This pass records the confirmed cost; it does not claim mobile performance is accepted or modify the artwork.
+5. Preserve the independent credential-rotation, password/auth hardening, real-provider, verified-account durability, cost-control and physical-device gates. No production setting, credential, customer record, provider call, payment, merge or deployment promotion was performed by this pass.
 
 ## Opaque-key and secondary-account review revalidation — 2026-10-11
 
@@ -44,9 +85,9 @@ The build retains its existing >500 kB chunk warning (550.87 kB Transformers chu
 
 References: [Supabase API key guidance](https://supabase.com/docs/guides/api/api-keys) and the installed SDK's `src/lib/fetch.ts` at 2.105.4. The existing narrow transport fix is retained without copying upstream code or upgrading dependencies.
 
-## Current Candidate Verification — 2026-10-11
+## Historical Candidate Verification — 2026-10-11 (`360d140e`; not a recheck)
 
-Candidate: `360d140e` on `codex/v1-preview-20261010`, deployed to Vercel Preview.
+Earlier candidate: `360d140e` on `codex/v1-preview-20261010`, deployed to Vercel Preview. All deployment/configuration observations in this section are historical; the revision-scoped branding reconciliation above supersedes its current-candidate designation.
 
 - `0dac56e9` routes the billing webhook replay verifier through the shared opaque-key-safe Supabase admin client. Its 41 focused tests, syntax checks, ESLint, production build, and public-asset verification passed.
 - `f8b4c990` stops `verify:auth` after an actionable missing-public-config error instead of continuing into an undefined `.replace` crash. The regression failed before the fix and all 12 verifier tests pass after it.

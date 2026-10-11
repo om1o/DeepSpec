@@ -1,0 +1,3 @@
+Attempt: npx playwright install chromium
+Result: exit 1. Chrome for Testing 148.0.7778.96 (Playwright Chromium v1223) could not be installed. The downloaded archive failed extraction with: End of central directory record signature not found.
+No supported mobile viewport runner was available after this attempt.

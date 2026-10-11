@@ -1,0 +1,103 @@
+{
+  "generatedAt": "2026-10-11T20:50:26.776Z",
+  "startedAt": "2026-10-11T20:50:22.675Z",
+  "baseUrl": "https://deepspec-git-codex-v1-preview-20261010-deep-spec-team.vercel.app",
+  "baseUrlConfigured": true,
+  "requiredFailureClassifications": [
+    "real product bug",
+    "test bug",
+    "stale environment",
+    "missing env",
+    "auth/session issue",
+    "browser/VNC/screenshot failure",
+    "network/transient issue",
+    "unknown"
+  ],
+  "checks": [
+    {
+      "name": "local/staging URL is configured",
+      "status": "passed",
+      "classification": "none",
+      "details": "Using https://deepspec-git-codex-v1-preview-20261010-deep-spec-team.vercel.app."
+    },
+    {
+      "name": "app server reachable",
+      "status": "passed",
+      "classification": "none",
+      "details": "HTTP 200 from https://deepspec-git-codex-v1-preview-20261010-deep-spec-team.vercel.app."
+    },
+    {
+      "name": "required env vars exist",
+      "status": "failed",
+      "classification": "missing env",
+      "details": "Missing VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY.",
+      "missing": [
+        "VITE_SUPABASE_URL",
+        "VITE_SUPABASE_PUBLISHABLE_KEY"
+      ]
+    },
+    {
+      "name": "database reachable",
+      "status": "failed",
+      "classification": "missing env",
+      "details": "Skipped because Supabase env vars are missing."
+    },
+    {
+      "name": "test account exists or is configured",
+      "status": "failed",
+      "classification": "missing env",
+      "details": "Set DEEPSPEC_AUTH_TEST_EMAIL and DEEPSPEC_AUTH_TEST_PASSWORD for the authorized QA account.",
+      "authMode": "missing"
+    },
+    {
+      "name": "auth/session is valid",
+      "status": "failed",
+      "classification": "missing env",
+      "details": "Skipped because Supabase env vars are missing."
+    },
+    {
+      "name": "Playwright installed",
+      "status": "passed",
+      "classification": "none",
+      "details": "playwright is importable."
+    },
+    {
+      "name": "browser can launch",
+      "status": "failed",
+      "classification": "browser/VNC/screenshot failure",
+      "details": "Chromium launch failed: browserType.launch: Executable doesn't exist at /root/.cache/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell-linux64/chrome-headless-shell\n\n Looks like Playwright was just installed or updated. \n Please run the following command to download new browsers: \n \n npx playwright install \n \n <3 Playwright Team."
+    },
+    {
+      "name": "page loads successfully",
+      "status": "failed",
+      "classification": "browser/VNC/screenshot failure",
+      "details": "Skipped because no browser page is available."
+    },
+    {
+      "name": "screenshot is not blank",
+      "status": "failed",
+      "classification": "browser/VNC/screenshot failure",
+      "details": "Skipped because no browser page is available."
+    },
+    {
+      "name": "console errors are captured",
+      "status": "failed",
+      "classification": "browser/VNC/screenshot failure",
+      "details": "Skipped because no browser page is available."
+    },
+    {
+      "name": "network errors are captured",
+      "status": "failed",
+      "classification": "browser/VNC/screenshot failure",
+      "details": "Skipped because no browser page is available."
+    },
+    {
+      "name": "selectors are not stale",
+      "status": "failed",
+      "classification": "browser/VNC/screenshot failure",
+      "details": "Skipped because no browser page is available."
+    }
+  ],
+  "overall": "failed",
+  "primaryClassification": "missing env"
+}
