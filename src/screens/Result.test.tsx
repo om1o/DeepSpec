@@ -693,10 +693,17 @@ describe("Result", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
     expect(screen.getByText(/device storage is full/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Why or why not" }));
+    fireEvent.change(screen.getByLabelText("Why or why not"), { target: { value: "Starter label is visible" } });
+    expect(screen.getByLabelText("Why or why not")).toHaveValue("Starter label is visible");
     write.mockRestore();
 
     await userEvent.click(screen.getByRole("button", { name: "Retry saving scan result" }));
-    expect(getLookup(failedLookup.id)?.result?.partName).toBe("Alternator");
+    expect(getLookup(failedLookup.id)).toMatchObject({
+      result: { partName: "Alternator" },
+      rating: "down",
+      correction: "Starter label is visible",
+    });
     expect(getLookup(failedLookup.id)?.errorMessage).toBeUndefined();
     expect(screen.queryByRole("button", { name: "Retry saving scan result" })).not.toBeInTheDocument();
   });

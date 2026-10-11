@@ -77,6 +77,15 @@ export default function Result() {
       trackManualCorrectionOnce();
     }
 
+    if (pendingRetryLookupRef.current) {
+      const correction = rating === "down" ? lookup.correction : null;
+      pendingRatingRef.current = rating;
+      pendingCorrectionRef.current = correction;
+      pendingRetryLookupRef.current = { ...pendingRetryLookupRef.current, rating, correction };
+      setLookup({ ...lookup, rating, correction });
+      return;
+    }
+
     const result = updateLookup(lookup.id, {
       rating,
       correction: rating === "down" ? lookup.correction : null,
@@ -95,6 +104,13 @@ export default function Result() {
       trackManualCorrectionOnce();
     }
 
+    if (pendingRetryLookupRef.current) {
+      pendingCorrectionRef.current = correction;
+      pendingRetryLookupRef.current = { ...pendingRetryLookupRef.current, correction };
+      setLookup({ ...lookup, correction });
+      return;
+    }
+
     handleLookupUpdate(updateLookup(lookup.id, {
       ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
       correction,
@@ -105,14 +121,26 @@ export default function Result() {
     if (!lookup || !isAccountScopeCurrent(mountedScope)) return;
     const pendingRetry = pendingRetryLookupRef.current;
     if (pendingRetry?.result) {
-      const result = updateLookupResult(
+      const resultWrite = updateLookupResult(
         pendingRetry.id,
         pendingRetry.result,
         pendingRetry.provenance,
         pendingRetry.frame,
       );
-      if (result.ok) pendingRetryLookupRef.current = null;
-      handleLookupUpdate(result, "result");
+      if (!resultWrite.ok) {
+        handleLookupUpdate(resultWrite, "result");
+        return;
+      }
+
+      pendingRetryLookupRef.current = null;
+      if (pendingRatingRef.current !== undefined || pendingCorrectionRef.current !== undefined) {
+        handleLookupUpdate(updateLookup(pendingRetry.id, {
+          ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
+          ...(pendingCorrectionRef.current !== undefined ? { correction: pendingCorrectionRef.current } : {}),
+        }));
+      } else {
+        handleLookupUpdate(resultWrite);
+      }
       return;
     }
     handleLookupUpdate(updateLookup(lookup.id, {
