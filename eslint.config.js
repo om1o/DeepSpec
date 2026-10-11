@@ -5,7 +5,7 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist", "dev-dist", "datasets"] },
+  { ignores: ["dist", "dev-dist", "datasets", ".ditto-site", "artifacts"] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

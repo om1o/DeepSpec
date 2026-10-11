@@ -681,7 +681,7 @@ describe("Scanner", () => {
     );
 
     expect(screen.getAllByText("Opening camera")).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Upload photo" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Open gallery" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Scan now" })).toBeDisabled();
   });
 

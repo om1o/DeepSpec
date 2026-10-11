@@ -7,7 +7,8 @@ dist-ssr/
 supabase/.temp/
 .deepspec-eval/
 .playwright-mcp/
-artifacts/qa/
+.ditto-site/
+artifacts/
 datasets/raw/
 datasets/derived/
 
