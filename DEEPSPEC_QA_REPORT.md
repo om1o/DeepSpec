@@ -2,7 +2,7 @@
 
 Date: 2026-10-11 (America/New_York)
 
-Current candidate: `fb331d6f`. Runtime fixes are in `b33a2f40`; the public-asset build gate is in `fb331d6f`.
+Current code candidate: `7c343262`. Branch head `9abd9be7` is an empty, authorized preview-rebuild trigger.
 
 Pull request: https://github.com/om1o/DeepSpec/pull/119
 
@@ -21,14 +21,17 @@ No merge, production deployment, or manual promotion was performed. Vercel autom
 
 ## Current Candidate Verification — 2026-10-11
 
-Candidate: `fb331d6f` on `codex/v1-preview-20261010`.
+Candidate: `7c343262` on `codex/v1-preview-20261010`; branch head `9abd9be7` changes no files.
 
 - `b33a2f40` preserves exact QA password bytes while still rejecting blank-only values, and preserves pending rating/correction through repeated local-storage quota failures. The two matching PR #119 review threads are resolved.
 - Full local suite on the runtime fix: 94 files and 1,291 tests passed. Node syntax checks, full ESLint, TypeScript, and the production build passed.
 - `fb331d6f` integrates the public-asset integrity gate from the now-closed duplicate PR #121. Its focused test, full ESLint, and the combined production build passed; the post-build asset check found no missing internal target.
+- `7c343262` prevents opaque `sb_secret_...` admin keys from being copied into the bearer header while preserving explicit user JWTs, and makes shared-device QA consume the documented `DEEPSPEC_AUTH_TEST_OTHER_*` account variables without trimming password bytes. Both new PR review threads are resolved.
+- Verification for `7c343262`: 78 focused tests passed; TypeScript and QA script syntax checks passed; full ESLint passed; production build and public-asset verification passed. The Windows full suite passed 92 files / 1,228 tests but reported five Scanner timeouts plus two worker-start failures after resource exhaustion. Fresh isolated reruns of Scanner, Auth, and History passed 3 files / 111 tests, including every timed-out case.
 - Vercel preview: https://deepspec-git-codex-v1-preview-20261010-deep-spec-team.vercel.app
-- Preview QA doctor: `artifacts/qa/2026-10-11T14-22-45-394Z/qa-doctor.md`. The preview returned HTTP 200, rendered visible content, exposed current auth selectors, and produced no captured console or network errors.
-- Authenticated browser QA remains blocked honestly: this isolated worktree has no Supabase public settings or authorized account password. No password was searched for, displayed, reset, or sent by email.
+- Vercel Preview now has the public Supabase URL and publishable-key variables. The authorized rebuild for `9abd9be7` succeeded. Preview QA doctor `artifacts/qa/2026-10-11T15-12-04-588Z/qa-doctor.md` returned HTTP 200, found the current auth selectors, and captured no console or network errors.
+- Direct phone-viewport evidence `artifacts/qa/2026-10-11T15-12-04-588Z/screenshots/auth-visible.png` confirms the Account form is visible and the earlier “Sign-in unavailable” state is absent. The doctor still reports missing local env because this isolated checkout intentionally has no copied Supabase values or authorized account password.
+- Authenticated browser QA remains blocked honestly: no authorized password or reusable signed-in browser session is available to this lane. No password was searched for, displayed, reset, or sent by email.
 - Both earlier Linux Quality gate runs on `d5457fcb` passed lint, all 94 test files / 1,291 tests, and build, then intentionally failed the live auth preflight because Supabase still reported anonymous sign-ins enabled. This is a production configuration blocker, not a code-test failure.
 
 ## Anonymous-auth Review Follow-up — 2026-10-11
