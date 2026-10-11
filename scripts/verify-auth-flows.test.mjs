@@ -24,7 +24,7 @@ beforeEach(() => {
   output = vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
   mocks.readFileSync.mockImplementation(() => { throw new Error("No local file"); });
-  const session = { data: { user: { id: "test-user" }, session: { access_token: "fictional-token" } }, error: null };
+  const session = { data: { user: { id: "test-user", email_confirmed_at: "2026-10-11T00:00:00Z" }, session: { access_token: "fictional-token" } }, error: null };
   auth = {
     signInWithPassword: vi.fn().mockResolvedValue(session),
     verifyOtp: vi.fn().mockResolvedValue(session),
@@ -33,7 +33,7 @@ beforeEach(() => {
   };
   mocks.createClient.mockReturnValue({ auth });
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-    ok: true, json: async () => ({ external: { anonymous_users: true } }),
+    ok: true, json: async () => ({ external: { anonymous_users: false } }),
   }));
 });
 
@@ -100,5 +100,28 @@ describe("auth verifier credential fidelity and coverage", () => {
     await run();
     expect(process.exitCode).toBe(1);
     expect(log()).not.toContain("Auth verification coverage:");
+  });
+});
+
+describe("preview auth settings and identity requirements", () => {
+  it("accepts disabled anonymous auth without requesting an anonymous session", async () => {
+    await run();
+    expect(process.exitCode).not.toBe(1);
+    expect(log()).toContain("Anonymous sign-ins are disabled");
+  });
+  it("blocks promotion when anonymous auth remains enabled", async () => {
+    fetch.mockResolvedValue({ ok: true, json: async () => ({ external: { anonymous_users: true } }) });
+    await run();
+    expect(process.exitCode).toBe(1);
+    expect(auth.signInWithPassword).not.toHaveBeenCalled();
+  });
+  it("rejects an unconfirmed password identity and revokes only the local session", async () => {
+    vi.stubEnv("DEEPSPEC_AUTH_TEST_EMAIL", "qa@example.test");
+    vi.stubEnv("DEEPSPEC_AUTH_TEST_PASSWORD", "secret");
+    auth.signInWithPassword.mockResolvedValue({ data: { user: { id: "unconfirmed" }, session: { access_token: "token" } } });
+    await run();
+    expect(process.exitCode).toBe(1);
+    expect(auth.signOut).toHaveBeenCalledWith({ scope: "local" });
+    expect(log()).not.toContain("Password sign-in: verified");
   });
 });

@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 
+import { assertConfirmedSession } from "./qa/confirmed-session.mjs";
+
 loadLocalEnv(".env.local");
 loadLocalEnv(".env");
 
@@ -36,8 +38,8 @@ try {
   const settings = await fetchAuthSettings(config);
   assert(settings.disable_signup !== true, "Supabase signup is disabled.");
   console.log("      Signup is enabled.");
-  assert(settings.external?.anonymous_users === true, "Supabase anonymous sign-ins are disabled. Enable Anonymous sign-ins so new users can start without email confirmation.");
-  console.log("      Anonymous sign-ins are enabled for no-email access.");
+  assert(settings.external?.anonymous_users === false, "Disable anonymous sign-ins before preview promotion.");
+  console.log("      Anonymous sign-ins are disabled; confirmed accounts are required.");
 
   console.log("[1/6] Checking configured OAuth providers...");
   if (enabledOAuthProviders.length > 0) {
@@ -141,7 +143,8 @@ async function assertPasswordSignIn(supabase, email, password) {
 
   assert(Boolean(data.user?.id), "Password sign-in did not return a user.");
   assert(Boolean(data.session?.access_token), "Password sign-in did not return a session token.");
-  await supabase.auth.signOut();
+  try { assertConfirmedSession(data); }
+  finally { await supabase.auth.signOut({ scope: "local" }); }
 }
 
 async function assertOtpRequest(supabase, email) {
@@ -171,7 +174,8 @@ async function assertOtpVerification(supabase, email, token) {
 
   assert(Boolean(data.user?.id), "Verification code did not return a user.");
   assert(Boolean(data.session?.access_token), "Verification code did not return a session token.");
-  await supabase.auth.signOut();
+  try { assertConfirmedSession(data); }
+  finally { await supabase.auth.signOut({ scope: "local" }); }
 }
 
 function assert(condition, message) {
