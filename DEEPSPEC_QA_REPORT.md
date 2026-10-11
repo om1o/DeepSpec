@@ -2,7 +2,7 @@
 
 Date: 2026-10-11 (America/New_York)
 
-Current runtime candidate: `7c343262`. Verified preview revision `9abd9be7` changes no files; later report/rebuild commits do not change runtime code.
+Current verified local candidate: `aef05dc3`. The deployed branch preview still runs `f9532ab0`; its API functions fail during ESM module loading. The three newer repair commits are local only and have not triggered CI or a deployment.
 
 Pull request: https://github.com/om1o/DeepSpec/pull/119
 
@@ -10,18 +10,26 @@ PR #119 is the selected V1 integration path. PR #120 was closed without merge or
 
 ## Executive Verdict
 
-DeepSpec is not yet approved for V1 preview promotion. The release code is substantially healthier and the accessible local gate is green, but four external launch blockers remain:
+DeepSpec is not yet approved for V1 preview promotion. The local release code is substantially healthier and the accessible local gate is green, but five launch blockers remain:
 
 1. Replace the exposed legacy Supabase `service_role` credential with a new server-only secret key, verify every consumer, then deactivate the legacy key.
 2. Configure dedicated confirmed QA credentials (including the second isolation account), disable anonymous sign-ins, and rerun the live verifiers. Enable leaked-password protection where the Supabase plan supports it.
 3. Prove one AI provider completes an ordinary scan on the candidate environment without violating the no-spending rule.
 4. Pass the real verified-account journey: sign in, restore session, scan, save, history, refresh/reopen, logout/login, and reopen again.
+5. Push the verified Vercel ESM repair and prove the exact deployed preview returns controlled auth errors instead of `FUNCTION_INVOCATION_FAILED`.
 
 No merge, production deployment, or manual promotion was performed. Vercel automatically built the branch preview linked below.
 
-## Current Candidate Verification — 2026-10-11
+## Current Local Candidate Verification — 2026-10-11
 
-Candidate: `7c343262` on `codex/v1-preview-20261010`; verified preview revision `9abd9be7` changes no files.
+Candidate: `aef05dc3` on `codex/v1-preview-20261010`, three commits ahead of the deployed/remote branch head `f9532ab0`.
+
+- `0dac56e9` routes the billing webhook replay verifier through the shared opaque-key-safe Supabase admin client. Its 41 focused tests, syntax checks, ESLint, production build, and public-asset verification passed.
+- `f8b4c990` stops `verify:auth` after an actionable missing-public-config error instead of continuing into an undefined `.replace` crash. The regression failed before the fix and all 12 verifier tests pass after it.
+- `aef05dc3` fixes Node ESM resolution for all six Vercel API functions, uses compiler-stable discriminant checks, removes the incompatible `Array.at()` call, and excludes generated `.vercel` output from source linting.
+- Live Vercel logs for deployed `f9532ab0` reproduce `ERR_MODULE_NOT_FOUND` for `/var/task/server/identify.shared`; unauthenticated `/api/identify` requests therefore return platform HTTP 500 before the handler runs.
+- Local verification for `aef05dc3`: 155 focused server/API tests passed; the full suite passed 95 files / 1,297 tests; ESLint passed; production build and public-asset verification passed; `vercel build --target preview` completed with zero TypeScript diagnostics; direct import of the emitted function returned `401 missing_session` without a Supabase or provider request.
+- The repairs are intentionally unpushed. Rerunning CI before anonymous sign-ins are verified off would only repeat the known live-auth failure.
 
 - `b33a2f40` preserves exact QA password bytes while still rejecting blank-only values, and preserves pending rating/correction through repeated local-storage quota failures. The two matching PR #119 review threads are resolved.
 - Full local suite on the runtime fix: 94 files and 1,291 tests passed. Node syntax checks, full ESLint, TypeScript, and the production build passed.
