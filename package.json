@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --configLoader native",
-    "build": "tsc -b && vite build --configLoader native",
+    "build": "tsc -b && vite build --configLoader native && npm run verify:public",
     "check": "npm run lint && npm test && npm run build",
     "dataset:sort": "node scripts/sort-drbimmer-dataset.mjs",
     "dataset:hf-auto-sources": "node scripts/build-hf-automotive-sources.mjs",
@@ -30,6 +30,7 @@
     "supabase:print-migration": "node scripts/print-supabase-migration.mjs",
     "supabase:print-auth-diagnostics": "node scripts/print-supabase-auth-diagnostics.mjs",
     "verify:identify-eval": "node scripts/verify-identify-eval-summary.mjs",
+    "verify:public": "node scripts/verify-public-assets.mjs",
     "verify:auth": "node scripts/verify-auth-flows.mjs",
     "verify:billing-provider": "node scripts/verify-billing-provider.mjs",
     "verify:polar-testing-only": "node scripts/verify-polar-testing-only.mjs",
