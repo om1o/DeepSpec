@@ -11,6 +11,7 @@ const keys = [
   "DEEPSPEC_AUTH_REQUIRE_CREDENTIALS", "VITE_ENABLE_GOOGLE_AUTH", "VITE_ENABLE_GITHUB_AUTH",
 ];
 let auth;
+let errors;
 let output;
 let previousExitCode;
 
@@ -22,7 +23,7 @@ beforeEach(() => {
   previousExitCode = process.exitCode;
   process.exitCode = undefined;
   output = vi.spyOn(console, "log").mockImplementation(() => {});
-  vi.spyOn(console, "error").mockImplementation(() => {});
+  errors = vi.spyOn(console, "error").mockImplementation(() => {});
   mocks.readFileSync.mockImplementation(() => { throw new Error("No local file"); });
   const session = { data: { user: { id: "test-user", email_confirmed_at: "2026-10-11T00:00:00Z" }, session: { access_token: "fictional-token" } }, error: null };
   auth = {
@@ -46,8 +47,22 @@ afterEach(() => {
 
 const run = () => import("./verify-auth-flows.mjs");
 const log = () => output.mock.calls.flat().join("\n");
+const errorLog = () => errors.mock.calls.flat().join("\n");
 
 describe("auth verifier credential fidelity and coverage", () => {
+  it("stops after reporting missing public Supabase configuration", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", undefined);
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", undefined);
+
+    await run();
+
+    expect(process.exitCode).toBe(1);
+    expect(errorLog()).toContain("Missing VITE_SUPABASE_URL or VITE_SUPABASE_PUBLISHABLE_KEY");
+    expect(errorLog()).not.toContain("Cannot read properties");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(mocks.createClient).not.toHaveBeenCalled();
+  });
+
   it("passes shell password whitespace unchanged without printing credentials", async () => {
     vi.stubEnv("DEEPSPEC_AUTH_TEST_EMAIL", "tester@example.test");
     vi.stubEnv("DEEPSPEC_AUTH_TEST_PASSWORD", "  fictional secret  ");

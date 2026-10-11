@@ -33,6 +33,11 @@ if (!config.url || !config.key) {
   );
 }
 
+if (config.url && config.key) {
+  await verifyAuth();
+}
+
+async function verifyAuth() {
 try {
   console.log("[0/6] Checking Supabase Auth settings endpoint...");
   const settings = await fetchAuthSettings(config);
@@ -104,6 +109,7 @@ try {
   console.log("      OAuth browser sign-in: not tested by this verifier.");
 } catch (error) {
   fail(error instanceof Error ? error.message : "Unknown auth verification failure.");
+}
 }
 
 async function fetchAuthSettings({ key, url }) {
