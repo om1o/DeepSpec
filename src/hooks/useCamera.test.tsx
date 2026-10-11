@@ -74,6 +74,97 @@ describe("useCamera", () => {
     expect(screen.getByTestId("error")).toHaveTextContent("none");
   });
 
+  it("bounds a retry when the camera permission prompt stays pending", () => {
+    getUserMedia.mockReturnValueOnce(new Promise(() => undefined));
+    render(<CameraProbe />);
+
+    act(() => {
+      vi.advanceTimersByTime(CAMERA_START_TIMEOUT_MS);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(screen.getByTestId("state")).toHaveTextContent("blocked");
+    expect(screen.getByTestId("error")).toHaveTextContent("Camera permission requested");
+
+    act(() => {
+      vi.advanceTimersByTime(CAMERA_START_TIMEOUT_MS);
+    });
+
+    expect(screen.getByTestId("state")).toHaveTextContent("blocked");
+    expect(screen.getByTestId("error")).toHaveTextContent("Camera permission is still waiting");
+  });
+
+  it("ignores a permission response that arrives after the retry timeout", async () => {
+    let resolveCameraAccess!: (stream: MediaStream) => void;
+    getUserMedia.mockReturnValueOnce(new Promise<MediaStream>((resolve) => {
+      resolveCameraAccess = resolve;
+    }));
+    render(<CameraProbe />);
+
+    act(() => {
+      vi.advanceTimersByTime(CAMERA_START_TIMEOUT_MS);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    act(() => {
+      vi.advanceTimersByTime(CAMERA_START_TIMEOUT_MS);
+    });
+
+    await act(async () => {
+      resolveCameraAccess({
+        getTracks: () => [{ stop: stopCameraTrack }],
+      } as unknown as MediaStream);
+      await Promise.resolve();
+    });
+
+    expect(stopCameraTrack).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("state")).toHaveTextContent("blocked");
+    expect(screen.getByTestId("error")).toHaveTextContent("Camera permission is still waiting");
+  });
+
+  it("ignores a permission response from a superseded retry", async () => {
+    let resolveFirstRetry!: (stream: MediaStream) => void;
+    getUserMedia.mockReturnValueOnce(new Promise<MediaStream>((resolve) => {
+      resolveFirstRetry = resolve;
+    }));
+    render(<CameraProbe />);
+
+    act(() => {
+      vi.advanceTimersByTime(CAMERA_START_TIMEOUT_MS);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("request-id")).toHaveTextContent("1");
+
+    await act(async () => {
+      resolveFirstRetry({
+        getTracks: () => [{ stop: stopCameraTrack }],
+      } as unknown as MediaStream);
+      await Promise.resolve();
+    });
+
+    expect(stopCameraTrack).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("request-id")).toHaveTextContent("1");
+  });
+
+  it("cancels a pending retry timeout when the hook unmounts", () => {
+    getUserMedia.mockReturnValueOnce(new Promise(() => undefined));
+    const { unmount } = render(<CameraProbe />);
+
+    act(() => {
+      vi.advanceTimersByTime(CAMERA_START_TIMEOUT_MS);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(vi.getTimerCount()).toBe(1);
+
+    unmount();
+
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("shows the browser camera error when retry permission fails", async () => {
     getUserMedia.mockRejectedValueOnce(new DOMException("Permission denied"));
     render(<CameraProbe />);
@@ -110,10 +201,11 @@ describe("useCamera", () => {
 });
 
 function CameraProbe() {
-  const { cameraError, cameraState, markReady, retryCamera } = useCamera();
+  const { cameraError, cameraRequestId, cameraState, markReady, retryCamera } = useCamera();
 
   return (
     <div>
+      <p data-testid="request-id">{cameraRequestId}</p>
       <p data-testid="state">{cameraState}</p>
       <p data-testid="error">{cameraError ?? "none"}</p>
       <button type="button" onClick={markReady}>

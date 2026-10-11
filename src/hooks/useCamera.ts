@@ -11,11 +11,15 @@ export type CameraDevice = {
 const CAMERA_START_TIMEOUT_MS = 15000;
 const CAMERA_PERMISSION_WAITING_MESSAGE =
   "Camera permission is still waiting. Approve the browser camera prompt, then try again.";
+const CAMERA_PERMISSION_REQUESTED_MESSAGE =
+  "Camera permission requested. Approve the browser camera prompt, or upload a photo instead.";
 const CAMERA_DEVICE_IN_USE_MESSAGE =
   "Camera is already open in another tab or app. Close the other camera, choose another camera if available, then try again.";
 
 export function useCamera() {
   const webcamRef = useRef<Webcam>(null);
+  const retryAttemptRef = useRef(0);
+  const retryTimeoutRef = useRef<number | null>(null);
   const cameraCaptureSupported = hasCameraCapture();
   const [cameraRequestId, setCameraRequestId] = useState(0);
   const [cameraState, setCameraState] = useState<CameraState>(() => (cameraCaptureSupported ? "loading" : "blocked"));
@@ -24,6 +28,14 @@ export function useCamera() {
   const [cameraError, setCameraError] = useState<string | null>(() =>
     cameraCaptureSupported ? null : "This browser does not support camera capture. Use Safari or Chrome over HTTPS.",
   );
+
+  const cancelPendingRetry = useCallback(() => {
+    retryAttemptRef.current += 1;
+    if (retryTimeoutRef.current !== null) {
+      window.clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
+    }
+  }, []);
 
   const refreshCameraDevices = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) {
@@ -63,21 +75,54 @@ export function useCamera() {
       return;
     }
 
-    setCameraError(null);
+    cancelPendingRetry();
+    const retryAttempt = retryAttemptRef.current;
+    setCameraState("blocked");
+    setCameraError(CAMERA_PERMISSION_REQUESTED_MESSAGE);
+    retryTimeoutRef.current = window.setTimeout(() => {
+      if (retryAttemptRef.current !== retryAttempt) {
+        return;
+      }
+
+      retryAttemptRef.current += 1;
+      retryTimeoutRef.current = null;
+      setCameraState("blocked");
+      setCameraError(CAMERA_PERMISSION_WAITING_MESSAGE);
+    }, CAMERA_START_TIMEOUT_MS);
+
     void requestCameraAccess(selectedCameraId)
       .then(() => {
+        if (retryAttemptRef.current !== retryAttempt) {
+          return;
+        }
+
+        if (retryTimeoutRef.current !== null) {
+          window.clearTimeout(retryTimeoutRef.current);
+          retryTimeoutRef.current = null;
+        }
         setCameraState("loading");
+        setCameraError(null);
         setCameraRequestId((current) => current + 1);
       })
-      .catch(markError);
-  }, [cameraCaptureSupported, markError, selectedCameraId]);
+      .catch((error: DOMException) => {
+        if (retryAttemptRef.current !== retryAttempt) {
+          return;
+        }
+
+        cancelPendingRetry();
+        markError(error);
+      });
+  }, [cameraCaptureSupported, cancelPendingRetry, markError, selectedCameraId]);
 
   const selectCamera = useCallback((deviceId: string) => {
+    cancelPendingRetry();
     setSelectedCameraId(deviceId);
     setCameraState("loading");
     setCameraError(null);
     setCameraRequestId((current) => current + 1);
-  }, []);
+  }, [cancelPendingRetry]);
+
+  useEffect(() => cancelPendingRetry, [cancelPendingRetry]);
 
   useEffect(() => {
     if (cameraState !== "loading") {
