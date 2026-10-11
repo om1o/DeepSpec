@@ -72,7 +72,8 @@ describe("Auth", () => {
     await renderAuth();
 
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
-    expect(screen.getByAltText("Deep Spec")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "DeepSpec" })).toBeInTheDocument();
+    expect(document.querySelector('img[src="/brand/deepspec-symbol.png"]')).toHaveAttribute("alt", "");
     expect(screen.queryByRole("button", { name: "Continue with Google" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Continue with GitHub" })).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText("you@shop.com")).toBeInTheDocument();

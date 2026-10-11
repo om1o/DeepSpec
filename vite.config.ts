@@ -198,7 +198,7 @@ export default defineConfig(async ({ mode }) => {
         // silently shadow the app again. Trade-off: this disables PWA offline precaching in
         // production. Flip back to false (and bump the SW) once you actually want offline support.
         selfDestroying: true,
-        includeAssets: ["icon-192.png", "icon-512.png", "brand/deepspec-logo.webp"],
+        includeAssets: ["icon-192.png", "icon-512.png", "brand/deepspec-symbol.png"],
         manifest: {
           name: "Deep Spec",
           short_name: "Deep Spec",

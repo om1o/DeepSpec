@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { BrandLockup } from "../components/BrandLockup";
 import CloudHealthCard from "../components/CloudHealthCard";
 import Button from "../components/ui/Button";
 import { getCloudSyncStatus, syncFeedbackToCloud, syncWaitlistSignupToCloud } from "../services/cloudSync";
@@ -120,7 +121,7 @@ export default function EarlyAccess() {
       <div className="mx-auto w-full max-w-md">
         <header className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <img src="/brand/deepspec-site-logo-v2.webp" alt="Deep Spec" className="h-12 w-36 object-contain" />
+            <BrandLockup />
             <h1 className="mt-2 text-2xl font-extrabold tracking-tight">Early access</h1>
           </div>
           <Link to="/scan" className="rounded-full bg-[var(--ds-accent)] px-4 py-2 text-sm font-bold text-white shadow-sm">

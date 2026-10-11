@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { BrandLockup } from "../components/BrandLockup";
 import Button from "../components/ui/Button";
 import ScanThumb from "../components/ui/ScanThumb";
 import { signOut } from "../services/auth";
@@ -139,7 +140,7 @@ export default function History() {
       <div className="mx-auto w-full max-w-2xl">
         <header className="ds-history-header">
           <div className="min-w-0">
-            <img src="/brand/deepspec-site-logo-v2.webp" alt="Deep Spec" className="h-12 w-36 object-contain" />
+            <BrandLockup />
             <p className="ds-eyebrow mt-7">YOUR PARTS LIBRARY</p>
             <h1 className="mt-2 text-3xl font-bold tracking-tight text-[var(--ds-fg-1)]">Saved scans</h1>
             <p className="mt-2 text-sm leading-6 text-[var(--ds-fg-3)]">A place for every capture, correction, and inspection.</p>
