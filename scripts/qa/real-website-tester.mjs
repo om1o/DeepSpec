@@ -8,6 +8,7 @@ import {
   ensureDir,
   fetchWithTimeout,
   formatError,
+  getQaPasswordCredentials,
   loadQaEnv,
   parseQaArgs,
   resolveQaArtifactDir,
@@ -328,12 +329,11 @@ async function runAuthLogin() {
 }
 
 async function runSharedDeviceAccountSwitch() {
-  const secondaryEmail = process.env.DEEPSPEC_AUTH_TEST_EMAIL_SECONDARY?.trim();
-  const secondaryPassword = process.env.DEEPSPEC_AUTH_TEST_PASSWORD_SECONDARY?.trim();
-  if (!secondaryEmail || !secondaryPassword) {
+  const secondaryCredentials = getQaPasswordCredentials(process.env, "DEEPSPEC_AUTH_TEST_OTHER");
+  if (!secondaryCredentials) {
     throw new QaIssue("missing_env", "Shared-device isolation needs a separately authorized secondary QA account; none is configured.", {
       likelyFiles: [],
-      suggestedFix: "Configure DEEPSPEC_AUTH_TEST_EMAIL_SECONDARY and DEEPSPEC_AUTH_TEST_PASSWORD_SECONDARY only for an existing authorized test account.",
+      suggestedFix: "Configure DEEPSPEC_AUTH_TEST_OTHER_EMAIL and DEEPSPEC_AUTH_TEST_OTHER_PASSWORD only for an existing authorized test account.",
     });
   }
   await requireAuthForProtectedRoute("shared-device-account-switch");
@@ -351,7 +351,7 @@ async function runSharedDeviceAccountSwitch() {
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await page.waitForURL((url) => url.pathname === "/auth");
   authEstablished = false;
-  await signInWithQaPassword(page, baseUrl, { email: secondaryEmail, password: secondaryPassword });
+  await signInWithQaPassword(page, baseUrl, secondaryCredentials);
   const secondUser = await readUserId();
   if (!firstUser || !secondUser || firstUser === secondUser) throw new QaIssue("auth/session", "Could not establish distinct QA accounts for shared-device isolation.");
   authEstablished = true;

@@ -61,4 +61,14 @@ describe("password QA account configuration", () => {
       DEEPSPEC_AUTH_TEST_PASSWORD: " test-password ",
     })).toEqual({ email: "qa@example.test", password: " test-password " });
   });
+
+  it("reads the documented secondary QA credential prefix", () => {
+    expect(getQaPasswordCredentials({
+      DEEPSPEC_AUTH_TEST_OTHER_EMAIL: " other@example.test ",
+      DEEPSPEC_AUTH_TEST_OTHER_PASSWORD: " other pass ",
+    }, "DEEPSPEC_AUTH_TEST_OTHER")).toEqual({
+      email: "other@example.test",
+      password: " other pass ",
+    });
+  });
 });

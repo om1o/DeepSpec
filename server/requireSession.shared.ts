@@ -1,5 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
-import { getSupabaseAdminKey } from "./supabaseAdmin.shared";
+import { createSupabaseAdminClient, getSupabaseAdminKey } from "./supabaseAdmin.shared";
 
 // Optional auth gate for the paid AI endpoints. Off by default. When on, it requires a
 // valid Supabase session on /api/identify and /api/chat. This is an auth gate, not a
@@ -12,7 +11,7 @@ export type SessionDecision =
   | { ok: true; userId?: string }
   | { ok: false; status: number; body: { error: { code: string; message: string } } };
 
-const createSessionClient = createClient as unknown as (
+const createSessionClient = createSupabaseAdminClient as unknown as (
   url: string,
   key: string,
   options?: unknown,

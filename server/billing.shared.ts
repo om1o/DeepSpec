@@ -1,7 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { createClient } from "@supabase/supabase-js";
 import { REVENUE_PLANS, getRevenuePlan, type PlanId, type ServerEntitlement } from "../src/services/revenue";
-import { getSupabaseAdminKey } from "./supabaseAdmin.shared";
+import { createSupabaseAdminClient, getSupabaseAdminKey } from "./supabaseAdmin.shared";
 
 type BillingErrorResponse = {
   status: number;
@@ -103,7 +102,7 @@ type BillingSupabaseTable = {
     error: unknown;
   }>;
 };
-const createBillingClient = createClient as unknown as (
+const createBillingClient = createSupabaseAdminClient as unknown as (
   supabaseUrl: string,
   serviceRoleKey: string,
   options: BillingSupabaseOptions,

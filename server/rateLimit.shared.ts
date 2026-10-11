@@ -1,5 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
-import { getSupabaseAdminKey } from "./supabaseAdmin.shared";
+import { createSupabaseAdminClient, getSupabaseAdminKey } from "./supabaseAdmin.shared";
 
 // Server-side rate limiting for the paid AI endpoints. Keyed by client IP only:
 // IP-based limits remain independent of account identity and complement scan credits.
@@ -29,7 +28,7 @@ const RULES: Record<RateLimitScope, RateLimitRule[]> = {
   ],
 };
 
-const createRateLimitClient = createClient as unknown as (
+const createRateLimitClient = createSupabaseAdminClient as unknown as (
   url: string,
   key: string,
   options?: unknown,

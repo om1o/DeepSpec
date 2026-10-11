@@ -34,9 +34,9 @@ export function loadQaEnv() {
   loadEnvFile(".env.local");
 }
 
-export function getQaPasswordCredentials(env = process.env) {
-  const email = String(env.DEEPSPEC_AUTH_TEST_EMAIL ?? "").trim();
-  const password = String(env.DEEPSPEC_AUTH_TEST_PASSWORD ?? "");
+export function getQaPasswordCredentials(env = process.env, prefix = "DEEPSPEC_AUTH_TEST") {
+  const email = String(env[`${prefix}_EMAIL`] ?? "").trim();
+  const password = String(env[`${prefix}_PASSWORD`] ?? "");
   return email && password.trim() ? { email, password } : null;
 }
 
