@@ -180,9 +180,14 @@ export default function Auth() {
 
     try {
       const normalizedEmail = email.trim().toLowerCase();
-      await sendEmailSignInLink(normalizedEmail, postAuthPath);
-      setStep("sent");
-      setNotice(`Sign-in link sent to ${normalizedEmail}. Open it from your email to finish login.`);
+      const delivery = await sendEmailSignInLink(normalizedEmail, postAuthPath);
+      if (delivery.delivery === "code") {
+        setStep("code");
+        setNotice(`Code sent to ${normalizedEmail}. Enter the 6-digit code from your email.`);
+      } else {
+        setStep("sent");
+        setNotice(`Sign-in link sent to ${normalizedEmail}. Open it from your email to finish login.`);
+      }
       setResendCooldown(RESEND_COOLDOWN_SECONDS);
     } catch (authError) {
       setError(formatAuthError(authError));
@@ -225,8 +230,14 @@ export default function Auth() {
 
     try {
       const normalizedEmail = email.trim().toLowerCase();
-      await sendEmailSignInLink(normalizedEmail, postAuthPath);
-      setNotice(`New sign-in link sent to ${normalizedEmail}.`);
+      const delivery = await sendEmailSignInLink(normalizedEmail, postAuthPath);
+      if (delivery.delivery === "code") {
+        setStep("code");
+        setNotice(`New code sent to ${normalizedEmail}.`);
+      } else {
+        setStep("sent");
+        setNotice(`New sign-in link sent to ${normalizedEmail}.`);
+      }
       setResendCooldown(RESEND_COOLDOWN_SECONDS);
       autoSubmittedCodeRef.current = null;
     } catch (authError) {
@@ -306,7 +317,7 @@ export default function Auth() {
             </div>
             <div className="grid grid-cols-3 gap-3">
               <StatusCell label="Auth" value="Password first" />
-              <StatusCell label="Email" value="Optional" />
+              <StatusCell label="Email" value="Link/code" />
               <StatusCell label="Session" value="Verified" />
             </div>
           </div>
@@ -324,7 +335,7 @@ export default function Auth() {
             <p className="text-sm font-black uppercase tracking-[0.14em] text-[var(--ds-accent)]">Deep Spec account</p>
             <h1 className="mt-3 text-4xl font-black tracking-normal text-white">Sign in</h1>
             <p className="mt-3 text-base font-semibold leading-7 text-white/68">
-              Use an existing password account or start a private Supabase session without email.
+              Use an existing password account, a secure email code, or start a private Supabase session without email.
             </p>
           </div>
 

@@ -12,6 +12,9 @@ export const DEEPSPEC_QA_SCENARIOS = [
   "result-chat",
   "early-access",
   "api-cloud-health",
+  "pricing",
+  "checkout",
+  "account-entitlements",
 ];
 
 const originalEnvKeys = new Set(Object.keys(process.env));

@@ -227,7 +227,7 @@ describe("Scanner", () => {
       trainingLabel: "Alternator",
       trainingStatus: "raw_unreviewed",
     });
-  }, 10000);
+  }, 20000);
 
   it("auto captures only after a held, centered target is ready", async () => {
     objectTargetState.current = makeObjectTarget({

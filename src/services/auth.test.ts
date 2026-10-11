@@ -79,12 +79,48 @@ describe("auth service", () => {
   it("sends email sign-in links with the current scan redirect", async () => {
     const { sendEmailSignInLink } = await import("./auth");
 
-    await expect(sendEmailSignInLink("user@example.com")).resolves.toBeUndefined();
+    await expect(sendEmailSignInLink("user@example.com")).resolves.toEqual({
+      delivery: "link",
+      emailRedirectTo: "http://localhost:3000/auth?next=%2Fscan",
+    });
 
     expect(supabaseMock.auth.signInWithOtp).toHaveBeenCalledWith({
       email: "user@example.com",
       options: {
         emailRedirectTo: "http://localhost:3000/auth?next=%2Fscan",
+        shouldCreateUser: true,
+      },
+    });
+  });
+
+  it("falls back to a code-only email OTP when Supabase rejects the public redirect URL", async () => {
+    const { sendEmailSignInLink } = await import("./auth");
+    supabaseMock.auth.signInWithOtp
+      .mockResolvedValueOnce({
+        data: {},
+        error: {
+          message: "Redirect URL is not allowed",
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {},
+        error: null,
+      });
+
+    await expect(sendEmailSignInLink("user@example.com")).resolves.toEqual({
+      delivery: "code",
+    });
+
+    expect(supabaseMock.auth.signInWithOtp).toHaveBeenNthCalledWith(1, {
+      email: "user@example.com",
+      options: {
+        emailRedirectTo: "http://localhost:3000/auth?next=%2Fscan",
+        shouldCreateUser: true,
+      },
+    });
+    expect(supabaseMock.auth.signInWithOtp).toHaveBeenNthCalledWith(2, {
+      email: "user@example.com",
+      options: {
         shouldCreateUser: true,
       },
     });
@@ -164,6 +200,45 @@ describe("auth service", () => {
     await vi.advanceTimersByTimeAsync(8_000);
 
     await expect(userPromise).resolves.toBeNull();
+  });
+
+  it("reuses a recently verified Supabase user without a second network verification", async () => {
+    const { getVerifiedAuthUser } = await import("./auth");
+    supabaseMock.auth.getUser.mockResolvedValue({
+      data: {
+        user: makeAuthUser("verified-user"),
+      },
+      error: null,
+    });
+
+    await expect(getVerifiedAuthUser()).resolves.toEqual(expect.objectContaining({ id: "verified-user" }));
+    await expect(getVerifiedAuthUser()).resolves.toEqual(expect.objectContaining({ id: "verified-user" }));
+
+    expect(supabaseMock.auth.getUser).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the verified user cache after Supabase sign-out succeeds", async () => {
+    const { getVerifiedAuthUser, signOut } = await import("./auth");
+    supabaseMock.auth.getUser
+      .mockResolvedValueOnce({
+        data: {
+          user: makeAuthUser("verified-user"),
+        },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: {
+          user: null,
+        },
+        error: null,
+      });
+    supabaseMock.auth.signOut.mockResolvedValue({ error: null });
+
+    await expect(getVerifiedAuthUser()).resolves.toEqual(expect.objectContaining({ id: "verified-user" }));
+    await expect(signOut()).resolves.toBeUndefined();
+    await expect(getVerifiedAuthUser()).resolves.toBeNull();
+
+    expect(supabaseMock.auth.getUser).toHaveBeenCalledTimes(2);
   });
 
   it("exchanges an OAuth callback code before returning the verified user", async () => {
@@ -306,3 +381,13 @@ describe("auth service", () => {
     await expect(signOut()).rejects.toThrow("Sign-out failed");
   });
 });
+
+function makeAuthUser(id: string) {
+  return {
+    app_metadata: {},
+    aud: "authenticated",
+    created_at: new Date(0).toISOString(),
+    id,
+    user_metadata: {},
+  };
+}
