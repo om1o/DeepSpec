@@ -328,9 +328,9 @@ export default function Auth() {
         <div className="ds-auth-story">
           <img src="/brand/alternator-workbench.webp" alt="" width="1086" height="1448" className="ds-auth-art" />
           <div className="ds-auth-story-top">
-            <span className="ds-eyebrow">FROM THE BENCH TO THE RECORD</span>
-            <h2>A clearer picture.<br /><span>A better part record.</span></h2>
-            <p>Capture a part. Review the evidence.<br />Keep the details that matter.</p>
+            <span className="ds-eyebrow">CAR PARTS, MADE CLEARER</span>
+            <h2>Start with a photo.<br /><span>Keep the evidence.</span></h2>
+            <p>Review an AI identification suggestion.<br />Save your inspection and the details that matter.</p>
           </div>
           <div className="ds-auth-story-bottom">
             <span className="ds-art-caption">Illustrative render · Not a scan result</span>
@@ -354,7 +354,7 @@ export default function Auth() {
             <p className="ds-eyebrow">YOUR PARTS. YOUR WORKBENCH.</p>
             <h1 className="mt-3 text-4xl font-bold tracking-tight text-white">Sign in</h1>
             <p className="mt-3 text-base font-normal leading-7 text-white/68">
-              Pick up where you left off, or capture your first part.
+              Photograph a car part. Review an AI suggestion. Save your inspection.
             </p>
           </div>
 
@@ -430,7 +430,7 @@ export default function Auth() {
                   inputMode="email"
                   name="email"
                   onChange={(event) => setEmail(event.target.value)}
-                  placeholder="you@shop.com"
+                  placeholder="you@example.com"
                   required={supabaseConfigured}
                   spellCheck={false}
                   type="email"

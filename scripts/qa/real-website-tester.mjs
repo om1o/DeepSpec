@@ -1083,11 +1083,11 @@ async function runEarlyAccess() {
 async function runPricing() {
   await requireAuthForProtectedRoute("pricing");
   await gotoPath("/pricing");
-  await expectText(/DeepSpec Auto paid beta/i, "pricing heading", "frontend", ["src/screens/Pricing.tsx"]);
+  await expectText(/DeepSpec preview plans/i, "pricing heading", "frontend", ["src/screens/Pricing.tsx"]);
   await expectText(/DeepSpec Plus/i, "plus plan", "frontend", ["src/screens/Pricing.tsx", "src/services/revenue.ts"]);
   await expectText(/\$9\.99/i, "monthly price", "frontend", ["src/screens/Pricing.tsx", "src/services/revenue.ts"]);
   await expectText(/Scan Pack/i, "scan pack", "frontend", ["src/screens/Pricing.tsx", "src/services/revenue.ts"]);
-  await expectText(/fake certainty/i, "uncertainty copy", "frontend", ["src/screens/Pricing.tsx"]);
+  await expectText(/A photo cannot confirm that a part fits or works/i, "uncertainty copy", "frontend", ["src/screens/Pricing.tsx"]);
   await expectText(/Polar sandbox/i, "polar sandbox path", "frontend", ["src/screens/Pricing.tsx"]);
 
   return {

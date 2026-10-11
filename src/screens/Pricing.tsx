@@ -8,18 +8,11 @@ type CheckoutResponse =
   | { url: string }
   | { error: { code: string; message: string } };
 
-const RELEASE_CHECKS = [
-  "Polar sandbox only",
-  "Webhook-entitlement proof",
-  "Visual Evidence AR",
-  "AI release gate required",
-];
-
-const EVIDENCE_STEPS = [
-  "Checkout",
-  "Webhook",
-  "Entitlement",
-  "Portal",
+const PREVIEW_LIMITS = [
+  "Review AI suggestions",
+  "Confirm fitment independently",
+  "No functional diagnosis from a photo",
+  "Paid plans are not available yet",
 ];
 
 export default function Pricing() {
@@ -84,32 +77,25 @@ export default function Pricing() {
 
         <section className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)] lg:items-end">
           <div>
-            <p className="font-mono text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--electric-300)]">DeepSpec Auto paid beta</p>
+            <p className="font-mono text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--electric-300)]">DeepSpec preview plans</p>
             <h1 className="mt-3 max-w-4xl text-4xl font-black tracking-tight sm:text-6xl">
-              Engineer-grade scan evidence, not fake certainty.
+              From a part photo to a useful inspection record.
             </h1>
             <p className="mt-5 max-w-2xl text-base leading-7 text-[var(--slate-200)]">
-              DeepSpec Auto ranks likely part names, preserves visible evidence, and asks for VIN, labels, second angles, or same-plane references when the scan is not ready.
-              Paid access stays locked until Polar sandbox checkout, webhook, entitlement, and portal proof all pass.
+              Review likely part names, visible details, and the evidence behind each suggestion. Keep your inspection together so you can return to it later.
+              These plans are being evaluated during the preview; pricing and allowances are not a live offer.
             </p>
           </div>
 
           <div className="rounded-[14px] border border-white/[0.12] bg-white/[0.07] p-4 shadow-[0_18px_60px_rgba(0,0,0,0.35)]">
             <div className="flex items-center justify-between gap-3">
-              <p className="font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--slate-200)]">Release rail</p>
+              <p className="font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--slate-200)]">Preview availability</p>
               <span className="rounded-full border border-amber-300/[0.30] bg-amber-300/[0.10] px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-amber-100">
                 Sandbox only
               </span>
             </div>
-            <div className="mt-4 grid grid-cols-4 gap-2">
-              {EVIDENCE_STEPS.map((step) => (
-                <div key={step} className="rounded-[8px] border border-white/[0.10] bg-black/[0.24] px-2 py-3 text-center">
-                  <p className="font-mono text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--electric-300)]">{step}</p>
-                </div>
-              ))}
-            </div>
             <p className="mt-4 text-sm leading-6 text-[var(--slate-200)]">
-              The provider path is Polar testing only. No live payments, no Stripe setup, and no paid-beta claim until the gates prove it.
+              Paid plans are not available yet. Checkout is a Polar sandbox test, not a live payment. Your account will show verified access and remaining scans when available.
             </p>
           </div>
         </section>
@@ -149,16 +135,16 @@ export default function Pricing() {
 
         <section className="mt-6 grid gap-3 lg:grid-cols-[0.9fr_1.1fr]">
           <div className="rounded-[8px] border border-white/[0.10] bg-white/[0.055] p-5 text-sm leading-6 text-[var(--slate-200)]">
-            <h2 className="text-lg font-black tracking-tight text-white">Paid beta rules</h2>
+            <h2 className="text-lg font-black tracking-tight text-white">Before you rely on a result</h2>
             <p className="mt-2">
-              A paid scan should never be consumed when the AI provider fails, billing is not configured, or the result cannot be parsed.
-              The app must show uncertainty, required next evidence, and measurement caveats before asking users to pay.
+              AI suggestions are a starting point for your inspection. Check labels, vehicle details, and other evidence before choosing a replacement.
+              A photo cannot confirm that a part fits or works, or reveal every hidden fault.
             </p>
           </div>
           <div className="rounded-[8px] border border-white/[0.10] bg-white/[0.055] p-5">
-            <h2 className="text-lg font-black tracking-tight text-white">Readiness checklist</h2>
+            <h2 className="text-lg font-black tracking-tight text-white">Preview limits</h2>
             <div className="mt-4 grid gap-2 sm:grid-cols-2">
-              {RELEASE_CHECKS.map((check) => (
+              {PREVIEW_LIMITS.map((check) => (
                 <div key={check} className="rounded-[8px] border border-white/[0.10] bg-black/[0.20] px-3 py-2 text-sm font-bold text-[var(--slate-100)]">
                   {check}
                 </div>

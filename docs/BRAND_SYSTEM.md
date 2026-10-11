@@ -19,3 +19,19 @@ App surfaces use graphite `#080B10`, pale silver lettering, and restrained cyan 
 Created with the built-in image-generation tool, using the user's selected DeepSpec identity board as the visual reference. No third-party logo artwork was copied. The final board prompt retained its typography and three material studies while replacing the interim letter and hexagonal marks with a round segmented rotor, a circular opening, and stepped sensing joints, using the original rotor/circuit artwork as the shape reference; the final user refinement restores four rounded scanning corners. The production prompt extracted the same symbol in pale satin silver on genuine transparency, without text, shadow, glow, or background. The PNG was then cropped, resized, and encoded for app delivery; those exports preserve the artwork's alpha and geometry.
 
 See `DEEPSPEC_QA_REPORT.md` for revision-specific checks and remaining deployment, account, mobile, and physical-device requirements. A logo refresh does not approve a release.
+
+## Customer and product fit review
+
+Compared the deployed signed-out entry page with `PROJECT_GOAL.md`, `V1_LAUNCH_PLAN.md`, and the unfilled `PILOT_RUNBOOK.md`. This is a design/content assessment, not a completed customer study or proof of commercial appeal.
+
+| Audience | What the presentation needs to explain | Decision |
+| --- | --- | --- |
+| Car owners | What a photo can help identify and what to do next | State the photo → AI suggestion → saved inspection workflow on the sign-in card, including the mobile-visible copy. Use a general email example rather than suggesting a shop account is required. |
+| Mechanics and parts teams | Evidence, labels, records, and uncertainty | Keep the mechanical rotor/scan symbol, alternator artwork, Capture/Review/Save sequence, and the warning that a photo does not prove function. |
+| Engineers and companies | Precision, traceability, and honest limits | Use graphite/silver restrained styling. Describe suggestions and evidence; do not claim certified accuracy, fitment guarantees, hidden-fault detection, or enterprise readiness. |
+
+The Pricing screen now explains proposed preview plans and sandbox-only availability in customer language. It no longer presents static internal release stages as a product feature. Server authorization, payment/provider gates, plan identifiers, allowances, and checkout behavior are unchanged. The release checklist remains in the QA/release documentation.
+
+The shared social card at `public/brand/deepspec-site-logo-v2-social.png` now uses the same framed rotor, wordmark, and evidence-led message (1200×600). Its existing path is retained for app/article metadata. Those metadata URLs still point to the production domain: the preview asset can be inspected directly, but production share cards and external caches are unchanged until a separately approved production release. The generated card prompt used the approved satin-silver symbol and exact line “Photograph a part. Review the evidence.”
+
+Finish choices: graphite for the core identity/print, inverse white for small high-contrast placements, satin silver for the dark app, blue glass for promotional art, and solid blue for flat accent use. Real customer preference and mobile readability still need direct user/device feedback.
