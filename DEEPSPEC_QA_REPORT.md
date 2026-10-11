@@ -1,8 +1,8 @@
 # DeepSpec V1 Preview QA Report
 
-Date: 2026-10-10 (America/New_York)
+Date: 2026-10-11 (America/New_York)
 
-Verified code candidate: `codex/v1-preview-20261010` at `bdd941b9`
+Earlier verified candidate: `bdd941b9`. Anonymous-auth follow-up starts from PR #119 head `0bc7f4d7`; current verification results are recorded in the follow-up section below.
 
 Pull request: https://github.com/om1o/DeepSpec/pull/119
 
@@ -13,19 +13,49 @@ PR #119 is the selected V1 integration path. PR #120 was closed without merge or
 DeepSpec is not yet approved for V1 preview promotion. The release code is substantially healthier and the accessible local gate is green, but four external launch blockers remain:
 
 1. Replace the exposed legacy Supabase `service_role` credential with a new server-only secret key, verify every consumer, then deactivate the legacy key.
-2. Disable anonymous sign-ins and enable leaked-password protection where the Supabase plan supports it.
+2. Install the confirmed-identity verifier changes, configure dedicated confirmed QA credentials (including the second isolation account), disable anonymous sign-ins, and rerun the live verifiers. Enable leaked-password protection where the Supabase plan supports it.
 3. Prove one AI provider completes an ordinary scan on the candidate environment without violating the no-spending rule.
 4. Pass the real verified-account journey: sign in, restore session, scan, save, history, refresh/reopen, logout/login, and reopen again.
 
 No merge or manual deployment was performed.
 
-## Verified Passes
+## Anonymous-auth Review Follow-up — 2026-10-11
+
+Verified code candidate: `bc43282f` on `codex/v1-preview-20261010`, based on inspected PR head `0bc7f4d7`. The evidence-only commit containing this section does not change runtime code.
+
+Both open review findings were reproduced in source before changes:
+- `PRRT_kwDOSd6dgM6rJmMZ`: app cloud health and auth/cloud CLI verifiers depended on anonymous sign-ins.
+- `PRRT_kwDOSd6dgM6rJmMa`: checkout and webhook replay used identities rejected by protected billing/account APIs.
+
+Changes:
+- App cloud health server-verifies the active confirmed user and pins its probe/cleanup client to that user's token. Account switches cannot write the old report into a new account. Normal cloud sync rejects anonymous and unconfirmed sessions. Old anonymous-health cache entries are discarded.
+- App privacy probes check signed-out access, accepting explicit PostgreSQL permission denial but rejecting leaks and inconclusive network failures. These probes do **not** establish cross-account isolation; the CLI uses two distinct confirmed QA accounts for that check.
+- Checkout uses configured confirmed QA credentials. Webhook replay creates a unique disposable confirmed identity using the trusted admin client, then uses its normal public-client session for entitlement and portal APIs. Synthetic grants never target a pre-existing customer account.
+- CLI probes preserve password bytes, reject missing/unconfirmed/anonymous identities and same-account isolation tests before fixture writes, revoke only their own sessions, and keep fixture cleanup scoped. Billing success artifacts are emitted only after required cleanup succeeds.
+- CI and setup instructions document both confirmed QA accounts; auth preflight requires anonymous sign-ins disabled. No server authorization, RLS policy, paid-credit rule, or scan allowance was weakened.
+
+Actual verification in this checkout (Node 24.19.0):
+
+| Check | Result |
+| --- | --- |
+| `npm run check` | PASS, exit 0; includes full lint, tests, TypeScript and production build |
+| Full automated suite | 94 files, 1,291 tests passed; 88.89 seconds |
+| Focused app cloud-sync regressions | 90 tests passed |
+| Focused CLI/session regressions | 58 tests across 7 files passed |
+| `git diff --check` | PASS |
+| Final independent cleanup review | No material remaining issue found in checkout/replay paths |
+
+An intermediate full run caught one stale CI-text test assertion (1,276 passed, one failed); it was corrected before the final green gate above. The build retains the existing >500 kB chunk warning (550.87 kB Transformers chunk and 23.6 MB WASM asset).
+
+**Not verified here:** live Supabase auth settings, deployed login, live cloud round-trip/RLS, provider completion, billing sandbox endpoints, physical phones, key rotation, or deployment/promotion. No live account was provisioned, auth email sent, payment made, customer data deleted, or Supabase configuration changed during this follow-up. All new identity/cleanup integration tests used mocks. Configure the dedicated accounts described in `docs/CI_SETUP.md`, install this candidate, disable anonymous sign-ins, and run the live verifiers before promotion. Previous deployment/advisor/browser results below remain historical evidence only.
+
+## Earlier Candidate Evidence (`bdd941b9`; not a live recheck)
 
 - Full automated suite: 91 test files and 1,256 tests passed on `bdd941b9`.
 - Repository lint: `npm run lint` passed.
 - Production build: `npm run build` passed.
 - Vercel packaging: SPA fallback preserves `/api/*` and supports direct client routes; current Vercel commit status is successful.
-- GitHub review: all PR #119 review threads were fixed, independently re-reviewed by the connector, and resolved.
+- GitHub review: earlier findings were resolved. Two subsequent anonymous-auth review threads were open at `0bc7f4d7`; this follow-up addresses their code paths.
 - Auth UI: anonymous/no-email customer entry was removed; the QA harness now requires configured password credentials and will not create an account or send an email.
 - Billing access: anonymous or unconfirmed identities fail closed before checkout, entitlement lookup, and scan allowance.
 - No-spend chat: production chat is disabled unless explicitly enabled; after a disabled response the composer cannot accumulate unanswered messages.
@@ -35,7 +65,7 @@ No merge or manual deployment was performed.
 - Shop authorization: user-controlled membership role escalation is blocked in release code.
 - Branding: the blue-slate DeepSpec logo renders on the current local auth screen at the phone viewport.
 
-## Browser And Environment Evidence
+## Earlier Browser And Environment Evidence (not rerun in this follow-up)
 
 QA doctor report:
 
@@ -61,7 +91,7 @@ Blocked:
 - No reusable verified session was available.
 - Therefore the authenticated customer journey was not claimed as tested.
 
-## Production Supabase Evidence
+## Earlier Production Supabase Evidence (not revalidated in this follow-up)
 
 Project `deepspec` is `ACTIVE_HEALTHY` on Postgres 17.
 
@@ -157,7 +187,7 @@ The build succeeds but includes a 550.87 kB minified Transformers.js chunk and a
 
 ## Shortest Remaining Launch Plan
 
-1. Rotate the Supabase server key and harden Auth settings.
+1. Install this follow-up and configure confirmed QA accounts as documented in `docs/CI_SETUP.md`; rotate the Supabase server key and harden Auth settings.
 2. Produce one approved live provider success on the candidate preview.
 3. Have the user enter the authorized account password directly into the browser, then run the full real website QA journey.
 4. Re-run Security Advisor, full tests, lint, and build against the final revision.
