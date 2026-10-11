@@ -21,8 +21,8 @@ export function BrandLockup({ className = "", size = "md" }: BrandLockupProps) {
         height="1254"
         className={`${classes.mark} shrink-0 object-contain`}
       />
-      <span aria-hidden="true" className={`${classes.text} whitespace-nowrap font-bold leading-none text-[var(--slate-100)]`}>
-        Deep<span className="text-[var(--electric-300)]">Spec</span>
+      <span aria-hidden="true" className={`${classes.text} whitespace-nowrap font-extrabold leading-none text-white`}>
+        Deep<span className="text-[#55d9ff]">Spec</span>
       </span>
     </span>
   );
