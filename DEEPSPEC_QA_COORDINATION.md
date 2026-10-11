@@ -2,7 +2,7 @@
 
 Updated: 2026-10-11 (America/New_York)
 
-Current code candidate: `7c343262`; branch head `9abd9be7` is an empty authorized preview-rebuild trigger. See `DEEPSPEC_QA_REPORT.md` for revision-linked evidence and external blockers.
+Current runtime candidate: `7c343262`; verified preview revision `9abd9be7` is an empty authorized rebuild trigger. Later report/rebuild commits do not change runtime code. See `DEEPSPEC_QA_REPORT.md` for revision-linked evidence and external blockers.
 
 The current orchestrator lane ID is unknown. This board records ownership but is not an atomic lock. Workers must still claim overlapping files through the active coordination channel or use isolated worktrees.
 

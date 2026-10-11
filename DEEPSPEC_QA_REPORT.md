@@ -2,7 +2,7 @@
 
 Date: 2026-10-11 (America/New_York)
 
-Current code candidate: `7c343262`. Branch head `9abd9be7` is an empty, authorized preview-rebuild trigger.
+Current runtime candidate: `7c343262`. Verified preview revision `9abd9be7` changes no files; later report/rebuild commits do not change runtime code.
 
 Pull request: https://github.com/om1o/DeepSpec/pull/119
 
@@ -21,7 +21,7 @@ No merge, production deployment, or manual promotion was performed. Vercel autom
 
 ## Current Candidate Verification — 2026-10-11
 
-Candidate: `7c343262` on `codex/v1-preview-20261010`; branch head `9abd9be7` changes no files.
+Candidate: `7c343262` on `codex/v1-preview-20261010`; verified preview revision `9abd9be7` changes no files.
 
 - `b33a2f40` preserves exact QA password bytes while still rejecting blank-only values, and preserves pending rating/correction through repeated local-storage quota failures. The two matching PR #119 review threads are resolved.
 - Full local suite on the runtime fix: 94 files and 1,291 tests passed. Node syntax checks, full ESLint, TypeScript, and the production build passed.
