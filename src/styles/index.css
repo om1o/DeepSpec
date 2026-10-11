@@ -305,11 +305,57 @@ button, a {
   pointer-events: none;
 }
 
-/* ── Analysis sweep ────────────────────────────────────────────────── */
-.scanner-analysis-sweep {
-  animation: ds-analysis-sweep 1.15s var(--ds-ease) infinite;
-  box-shadow: 0 0 20px rgba(94,147,166,0.72);
+/* ── Premium scan-brand loading state ─────────────────────────────── */
+.ds-scan-brand-animation {
+  position: relative;
+  isolation: isolate;
+  width: 120px;
+  height: 120px;
 }
+
+.ds-scan-brand-animation::before {
+  content: "";
+  position: absolute;
+  inset: 10px;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(20, 155, 255, 0.34), rgba(18, 107, 255, 0.02) 68%, transparent 72%);
+  filter: blur(8px);
+  animation: ds-scan-glass-halo 2.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.ds-scan-brand-animation::after {
+  content: "";
+  position: absolute;
+  inset: 13px;
+  border: 1px solid rgba(55, 217, 255, 0.18);
+  border-radius: 50%;
+  animation: ds-scan-glass-ring 2.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.ds-scan-glass-badge {
+  position: absolute;
+  inset: 8px;
+  width: 104px;
+  height: 104px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 10px rgba(55, 217, 255, 0.40));
+  animation: ds-scan-glass-float 2.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.ds-scan-lock-corner {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border-color: #37d9ff;
+  filter: drop-shadow(0 0 7px rgba(55, 217, 255, 0.72));
+  animation: ds-scan-glass-lock 2.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.ds-scan-lock-corner-tl { top: 0; left: 0; border-top-width: 3px; border-left-width: 3px; border-top-left-radius: 7px; }
+.ds-scan-lock-corner-tr { top: 0; right: 0; border-top-width: 3px; border-right-width: 3px; border-top-right-radius: 7px; animation-delay: 70ms; }
+.ds-scan-lock-corner-bl { bottom: 0; left: 0; border-bottom-width: 3px; border-left-width: 3px; border-bottom-left-radius: 7px; animation-delay: 140ms; }
+.ds-scan-lock-corner-br { right: 0; bottom: 0; border-right-width: 3px; border-bottom-width: 3px; border-bottom-right-radius: 7px; animation-delay: 210ms; }
 
 /* ── HUD overlay text ──────────────────────────────────────────────── */
 .scanner-hud {
@@ -486,9 +532,24 @@ button, a {
   .lens-pulse-primary { animation: none; }
 }
 
-@keyframes ds-analysis-sweep {
-  0%, 100% { transform: translateY(-18px) scaleX(0.72); opacity: 0.32; }
-  50%       { transform: translateY(18px)  scaleX(1);    opacity: 1; }
+@keyframes ds-scan-glass-float {
+  0%, 100% { transform: rotate(-7deg) scale(0.96); filter: drop-shadow(0 0 8px rgba(55, 217, 255, 0.32)); }
+  50%      { transform: rotate(7deg) scale(1.035); filter: drop-shadow(0 0 16px rgba(55, 217, 255, 0.58)); }
+}
+
+@keyframes ds-scan-glass-lock {
+  0%, 100% { transform: scale(0.84); opacity: 0.52; }
+  46%      { transform: scale(1); opacity: 1; }
+}
+
+@keyframes ds-scan-glass-halo {
+  0%, 100% { transform: scale(0.86); opacity: 0.34; }
+  50%      { transform: scale(1.08); opacity: 0.86; }
+}
+
+@keyframes ds-scan-glass-ring {
+  0%, 100% { transform: scale(0.94); opacity: 0.30; }
+  50%      { transform: scale(1.04); opacity: 0.72; }
 }
 
 @keyframes ds-ping {
@@ -612,7 +673,11 @@ button, a {
   .scanner-bracket-pulse .scanner-corner,
   .scanner-sweep-line,
   .scanner-cta-btn,
-  .scanner-hud-dot {
+  .scanner-hud-dot,
+  .ds-scan-glass-badge,
+  .ds-scan-lock-corner,
+  .ds-scan-brand-animation::before,
+  .ds-scan-brand-animation::after {
     animation: none;
     transition: none;
   }

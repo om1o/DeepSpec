@@ -1245,20 +1245,20 @@ export function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; ste
   return (
     <div className="fixed inset-0 z-40 grid place-items-center px-6 text-center" style={{ background: "rgba(4,7,14,0.82)", backdropFilter: "blur(16px)" }}>
       <div className="w-full max-w-xs overflow-hidden rounded-[24px] p-6 shadow-2xl" style={{ background: "rgba(7,16,30,0.96)", border: "1px solid rgba(94,147,166,0.18)" }}>
-        <div className="relative mx-auto grid size-24 place-items-center">
-          <div className="absolute inset-0 rounded-full" style={{ border: "1px solid rgba(94,147,166,0.12)" }} />
-          <div
-            className="absolute inset-2 animate-spin rounded-full border-2"
-            style={{ borderColor: "rgba(94,147,166,0.10)", borderTopColor: "rgba(94,147,166,0.82)" }}
-          />
-          <div className="absolute inset-7 rounded-full" style={{ background: "rgba(94,147,166,0.12)", boxShadow: "0 0 28px rgba(94,147,166,0.40)" }} />
-          <div className="scanner-analysis-sweep absolute inset-x-3 top-1/2 h-0.5 rounded-full" style={{ background: "var(--electric-500)" }} />
+        <div data-testid="scan-brand-animation" className="ds-scan-brand-animation mx-auto" aria-hidden="true">
+          <img className="ds-scan-glass-badge" src="/brand/deepspec-scan-badge-glass.png" alt="" width="1254" height="1254" />
+          <span className="ds-scan-lock-corner ds-scan-lock-corner-tl" />
+          <span className="ds-scan-lock-corner ds-scan-lock-corner-tr" />
+          <span className="ds-scan-lock-corner ds-scan-lock-corner-bl" />
+          <span className="ds-scan-lock-corner ds-scan-lock-corner-br" />
         </div>
-        <p className="mt-5 text-lg font-extrabold tracking-tight text-white">Reading photo</p>
-        <p className="mt-2 text-sm leading-6" style={{ color: "var(--slate-300)" }}>
-          {message}
-        </p>
-        <p className="mt-2 text-xs font-semibold tabular-nums" style={{ fontFamily: "var(--font-data)", color: "var(--slate-500)" }}>{elapsedSeconds}s elapsed</p>
+        <div role="status" aria-live="polite">
+          <p className="mt-5 text-lg font-extrabold tracking-tight text-white">Reading photo</p>
+          <p className="mt-2 text-sm leading-6" style={{ color: "var(--slate-300)" }}>
+            {message}
+          </p>
+          <p className="mt-2 text-xs font-semibold tabular-nums" style={{ fontFamily: "var(--font-data)", color: "var(--slate-500)" }}>{elapsedSeconds}s elapsed</p>
+        </div>
         <Button className="mt-5 w-full" variant="ghost" onClick={onCancel}>
           Cancel scan
         </Button>

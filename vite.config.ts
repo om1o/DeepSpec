@@ -198,26 +198,32 @@ export default defineConfig(async ({ mode }) => {
         // silently shadow the app again. Trade-off: this disables PWA offline precaching in
         // production. Flip back to false (and bump the SW) once you actually want offline support.
         selfDestroying: true,
-        includeAssets: ["icon-v2-192.png", "icon-v2-512.png", "brand/deepspec-symbol-v2.webp"],
+        includeAssets: [
+          "icon-192.png",
+          "icon-512.png",
+          "brand/deepspec-symbol.png",
+          "brand/deepspec-scan-badge-glass.png",
+          "brand/deepspec-scan-badge-solid.png",
+        ],
         manifest: {
           name: "DeepSpec",
           short_name: "DeepSpec",
           description: "Know what you're looking at.",
-          theme_color: "#080b10",
-          background_color: "#080b10",
+          theme_color: "#04070E",
+          background_color: "#04070E",
           display: "standalone",
           orientation: "portrait",
           start_url: "/",
           scope: "/",
           icons: [
             {
-              src: "/icon-v2-192.png",
+              src: "/icon-192.png",
               sizes: "192x192",
               type: "image/png",
               purpose: "any maskable",
             },
             {
-              src: "/icon-v2-512.png",
+              src: "/icon-512.png",
               sizes: "512x512",
               type: "image/png",
               purpose: "any maskable",
