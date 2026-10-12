@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { assertQaScanAccess } from "./scan-access.mjs";
 import {
   DEEPSPEC_QA_SCENARIOS,
   classifyIdentifyApiIssue,
@@ -598,6 +599,13 @@ async function runScannerQualityRetake() {
 
 async function runScannerAiEngine() {
   await requireAuthForProtectedRoute("scanner-ai-engine");
+  try {
+    await assertQaScanAccess(page);
+  } catch (error) {
+    throw new QaIssue("missing_env", error.message, {
+      suggestedFix: "Configure scoped non-production scan access using docs/REPEATABLE_WEBSITE_QA.md, then rerun QA.",
+    });
+  }
   const routeStartedAtMs = Date.now();
   await gotoPath("/scan");
   await getUploadPhotoButton().waitFor({ state: "visible", timeout: 7_000 });

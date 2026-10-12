@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { consumeReservedScanCredit, reserveScanCredit } from "./billing.shared";
+import { consumeReservedScanCredit, createAccountEntitlementResponse, reserveScanCredit } from "./billing.shared";
 
 const supabaseMock = vi.hoisted(() => ({ createClient: vi.fn() }));
 vi.mock("@supabase/supabase-js", () => supabaseMock);
@@ -50,9 +50,67 @@ describe("server scan credit gate", () => {
     expect(rpc).toHaveBeenCalledTimes(1);
   });
 
-  it("bypasses enforcement only when explicitly disabled in development", async () => {
-    await expect(reserveScanCredit({}, { DEEPSPEC_ENFORCE_SCAN_CREDITS: "false", NODE_ENV: "development" })).resolves.toEqual({ enforced: false, ok: true });
-    expect(supabaseMock.createClient).not.toHaveBeenCalled();
+  const qaEnv = () => ({ ...ENV, NODE_ENV: "production", VERCEL_ENV: "preview", DEEPSPEC_ENFORCE_SCAN_CREDITS: "false", DEEPSPEC_QA_SCAN_USER_ID: "user-1", DEEPSPEC_QA_SCAN_EXPIRES_AT: new Date(Date.now() + 3_600_000).toISOString() });
+  const qaUser = { id: "user-1", email_confirmed_at: "2026-10-01", app_metadata: { deepspec_scan_qa: true } };
+
+  it("allows two eight-case runs and failed attempts without changing free or paid counters", async () => {
+    const { getUser, rpc } = setup({ ok: false }); // The same user's normal credits are exhausted.
+    getUser.mockResolvedValue({ data: { user: qaUser }, error: null });
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const reservation = await reserveScanCredit(HEADERS, qaEnv());
+      expect(reservation).toEqual({ ok: true, enforced: false });
+      await consumeReservedScanCredit(reservation, qaEnv(), attempt % 2 === 0);
+    }
+    expect(getUser).toHaveBeenCalledTimes(20);
+    expect(getUser).toHaveBeenCalledWith("token-1");
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("keeps the free limit for ordinary customers even with the QA switch configured", async () => {
+    const { rpc } = setup({ ok: false });
+    await expect(reserveScanCredit({ ...HEADERS, "x-deepspec-qa": "true" }, qaEnv())).resolves.toMatchObject({ ok: false, error: { status: 402 } });
+    expect(rpc).toHaveBeenCalledWith("reserve_scan_credit", { p_user_id: "user-1", p_free_eligible: true });
+  });
+
+  it("keeps paid holds and finalization for ordinary customers on a QA preview", async () => {
+    const { rpc } = setup({ ok: true, reservation_id: "paid-hold" });
+    const reservation = await reserveScanCredit(HEADERS, qaEnv());
+    await consumeReservedScanCredit(reservation, qaEnv(), true);
+    expect(rpc).toHaveBeenLastCalledWith("finalize_scan_credit", { p_user_id: "user-1", p_reservation_id: "paid-hold", p_succeeded: true });
+  });
+
+  it("reinstates accounting in production, after expiry, and after admin revocation", async () => {
+    const { getUser, rpc } = setup({ ok: false });
+    getUser.mockResolvedValue({ data: { user: qaUser }, error: null });
+    for (const override of [
+      { VERCEL_ENV: "production" },
+      { VERCEL_ENV: undefined },
+      { DEEPSPEC_QA_SCAN_EXPIRES_AT: new Date(Date.now() - 1).toISOString() },
+    ]) {
+      await expect(reserveScanCredit(HEADERS, { ...qaEnv(), ...override })).resolves.toMatchObject({ ok: false, error: { status: 402 } });
+    }
+    getUser.mockResolvedValue({ data: { user: { ...qaUser, app_metadata: {} } }, error: null });
+    await expect(reserveScanCredit(HEADERS, qaEnv())).resolves.toMatchObject({ ok: false, error: { status: 402 } });
+    expect(rpc).toHaveBeenCalledTimes(4);
+  });
+
+  it("requires a valid authenticated session even when all QA flags are set", async () => {
+    const { rpc, getUser } = setup();
+    await expect(reserveScanCredit({}, qaEnv())).resolves.toMatchObject({ ok: false, error: { status: 401 } });
+    getUser.mockResolvedValue({ data: { user: null }, error: null });
+    await expect(reserveScanCredit(HEADERS, qaEnv())).resolves.toMatchObject({ ok: false, error: { status: 401 } });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("advertises QA access separately without inventing a paid entitlement or altering counts", async () => {
+    const { getUser } = setup();
+    getUser.mockResolvedValue({ data: { user: qaUser }, error: null });
+    const from = vi.fn((table: string) => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: table === "free_scan_usage" ? { scans_used: 5 } : null, error: null }) }) }) }));
+    supabaseMock.createClient.mockReturnValue({ auth: { getUser }, from });
+    const result = await createAccountEntitlementResponse(HEADERS, qaEnv());
+    expect(result).toMatchObject({ status: 200, body: { qaScanAccess: { mode: "non-production", userId: "user-1" }, entitlement: { status: "free", scanAllowance: 5, scansUsed: 5 } } });
+    const production = await createAccountEntitlementResponse(HEADERS, { ...qaEnv(), VERCEL_ENV: "production" });
+    expect(production.body).not.toHaveProperty("qaScanAccess", expect.anything());
   });
 
   it.each([{ NODE_ENV: "production" }, { VERCEL_ENV: "production" }, {}])("defaults to enforcement and fails closed without configuration: %j", async (production) => {

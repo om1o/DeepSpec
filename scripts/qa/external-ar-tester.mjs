@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { chromium } from "playwright";
 import { loadQaEnv, signInWithQaPassword } from "./qa-utils.mjs";
+import { assertQaScanAccess } from "./scan-access.mjs";
 
 loadQaEnv();
 
@@ -107,6 +108,7 @@ async function runCase(browserInstance, testCase) {
 
   try {
     await signInWithQaPassword(page, baseUrl);
+    await assertQaScanAccess(page);
     await page.getByLabel("Upload photo").setInputFiles(testCase.localImage);
     await page.waitForSelector("[data-testid=\"focused-part-label\"]", { timeout: 60_000 });
     await page.waitForSelector("[data-testid=\"focused-part-window\"]", { timeout: 10_000 });

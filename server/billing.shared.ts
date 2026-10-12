@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { REVENUE_PLANS, getRevenuePlan, type PlanId, type ServerEntitlement } from "../src/services/revenue.js";
 import { createSupabaseAdminClient, getSupabaseAdminKey } from "./supabaseAdmin.shared.js";
+import { getQaScanAccess, type QaScanAccess } from "./qaScanAccess.shared.js";
 
 type BillingErrorResponse = {
   status: number;
@@ -26,6 +27,7 @@ type EntitlementResponse =
       status: 200;
       body: {
         entitlement: ServerEntitlement;
+        qaScanAccess?: QaScanAccess;
       };
     }
   | BillingErrorResponse;
@@ -69,6 +71,7 @@ type BillingSupabaseClient = {
           is_anonymous?: boolean;
           email_confirmed_at?: string;
           phone_confirmed_at?: string;
+          app_metadata?: Record<string, unknown>;
         } | null;
       };
       error: unknown;
@@ -468,7 +471,7 @@ export async function createAccountEntitlementResponse(
     if (freeError) return entitlementErrorResponse(503, "entitlement_unavailable", "DeepSpec could not read free scan usage.");
     return {
       status: 200,
-      body: { entitlement: {
+      body: { qaScanAccess: getQaScanAccess(userData.user, env), entitlement: {
         status: "free",
         scanAllowance: 5,
         scansUsed: isRecord(freeUsage) ? Number(freeUsage.scans_used ?? 0) : 0,
@@ -482,6 +485,7 @@ export async function createAccountEntitlementResponse(
   return {
     status: 200,
     body: {
+      qaScanAccess: getQaScanAccess(userData.user, env),
       entitlement: {
         currentPeriodEnd: typeof data.current_period_end === "string" ? data.current_period_end : undefined,
         billingProvider: typeof data.billing_provider === "string" ? data.billing_provider : undefined,
@@ -500,10 +504,6 @@ export async function reserveScanCredit(
   headers: Record<string, string | string[] | undefined>,
   env: BillingEnv,
 ): Promise<ScanCreditReservation> {
-  if (env.DEEPSPEC_ENFORCE_SCAN_CREDITS === "false" && env.NODE_ENV !== "production" && env.VERCEL_ENV !== "production") {
-    return { enforced: false, ok: true };
-  }
-
   const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
   const serviceRoleKey = getSupabaseAdminKey(env);
   if (!supabaseUrl || !serviceRoleKey) {
@@ -527,6 +527,7 @@ export async function reserveScanCredit(
   }
 
   const user = userData.user;
+  if (getQaScanAccess(user, env)) return { enforced: false, ok: true };
   const { data, error } = await supabase.rpc("reserve_scan_credit", {
     p_user_id: user.id,
     p_free_eligible: user.is_anonymous !== true && Boolean(user.email_confirmed_at || user.phone_confirmed_at),

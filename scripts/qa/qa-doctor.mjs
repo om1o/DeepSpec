@@ -225,7 +225,7 @@ async function checkAuthSession(config) {
       );
     }
 
-    await client.auth.signOut();
+    await client.auth.signOut({ scope: "local" });
     return checkResult("auth/session is valid", true, "Verified password-authenticated Supabase session.", "auth/session issue");
   } catch (error) {
     return checkResult(
