@@ -15,10 +15,10 @@ export function BrandLockup({ className = "", size = "md" }: BrandLockupProps) {
   return (
     <span role="img" aria-label="DeepSpec" className={`inline-flex items-center gap-2 ${className}`}>
       <img
-        src="/brand/deepspec-symbol.png"
+        src="/brand/deepspec-symbol.webp"
         alt=""
-        width="1254"
-        height="1254"
+        width="168"
+        height="168"
         className={`${classes.mark} shrink-0 object-contain`}
       />
       <span aria-hidden="true" className={`${classes.text} whitespace-nowrap font-extrabold leading-none text-white`}>

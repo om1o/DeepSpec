@@ -209,8 +209,8 @@ export default defineConfig(async ({ mode }) => {
         includeAssets: [
           "icon-192.png",
           "icon-512.png",
-          "brand/deepspec-symbol.png",
-          "brand/deepspec-scan-badge-glass.png",
+          "brand/deepspec-symbol.webp",
+          "brand/deepspec-scan-badge-glass.webp",
           "brand/deepspec-scan-badge-solid.png",
         ],
         manifest: {
@@ -245,7 +245,7 @@ export default defineConfig(async ({ mode }) => {
           // install-time precache; it loads on demand when the feature runs.
           // The logo PNG stays only for social-share/og:image tags; the app
           // itself uses the precached WebP.
-          globIgnores: ["**/transformers.web-*.js", "**/brand/deepspec-logo.png"],
+          globIgnores: ["**/transformers.web-*.js", "**/brand/deepspec-logo.png", "**/brand/deepspec-symbol.png", "**/brand/deepspec-scan-badge-*.png"],
         },
         devOptions: {
           enabled: false,

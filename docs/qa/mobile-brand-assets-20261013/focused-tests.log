@@ -1,0 +1,9 @@
+
+ RUN  v4.1.6 /workspace/scratch/c17e31fd15f8/DeepSpec
+
+
+ Test Files  4 passed (4)
+      Tests  29 passed (29)
+   Start at  02:47:34
+   Duration  9.66s (transform 999ms, setup 327ms, import 1.19s, tests 4.02s, environment 3.17s)
+

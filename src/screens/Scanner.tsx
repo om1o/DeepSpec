@@ -1246,7 +1246,7 @@ export function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; ste
     <div className="fixed inset-0 z-40 grid place-items-center px-6 text-center" style={{ background: "rgba(4,7,14,0.82)", backdropFilter: "blur(16px)" }}>
       <div className="w-full max-w-xs overflow-hidden rounded-[24px] p-6 shadow-2xl" style={{ background: "rgba(7,16,30,0.96)", border: "1px solid rgba(94,147,166,0.18)" }}>
         <div data-testid="scan-brand-animation" className="ds-scan-brand-animation mx-auto" aria-hidden="true">
-          <img className="ds-scan-glass-badge" src="/brand/deepspec-scan-badge-glass.png" alt="" width="1254" height="1254" />
+          <img className="ds-scan-glass-badge" src="/brand/deepspec-scan-badge-glass.webp" alt="" width="336" height="336" />
           <span className="ds-scan-lock-corner ds-scan-lock-corner-tl" />
           <span className="ds-scan-lock-corner ds-scan-lock-corner-tr" />
           <span className="ds-scan-lock-corner ds-scan-lock-corner-bl" />

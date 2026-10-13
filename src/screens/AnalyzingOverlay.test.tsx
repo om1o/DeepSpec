@@ -16,7 +16,7 @@ describe("AnalyzingOverlay", () => {
 
     expect(screen.getByTestId("scan-brand-animation")).toHaveAttribute("aria-hidden", "true");
     expect(screen.getByRole("status")).toHaveTextContent("Reading photo");
-    expect(document.querySelector('img[src="/brand/deepspec-scan-badge-glass.png"]')).toHaveAttribute("alt", "");
+    expect(document.querySelector('img[src="/brand/deepspec-scan-badge-glass.webp"]')).toHaveAttribute("alt", "");
     expect(screen.getByText("0s elapsed")).toBeInTheDocument();
     expect(screen.getAllByText("Reading photo")).toHaveLength(2);
 
