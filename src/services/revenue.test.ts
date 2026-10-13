@@ -6,28 +6,34 @@ describe("revenue", () => {
     localStorage.clear();
   });
 
-  it("defaults to a limited free preview without local paid bypass", () => {
-    const entitlement = getEntitlementState(2);
+  it("does not invent free usage while server verification is unavailable", () => {
+    const entitlement = getEntitlementState();
 
     expect(entitlement).toEqual({
-      planName: "Free preview",
-      scanAllowance: 5,
-      scansUsed: 2,
-      status: "free",
+      planName: "Access unavailable",
+      scanAllowance: null,
+      scansUsed: null,
+      status: "unknown",
     });
-    expect(getRemainingScans(entitlement)).toBe(3);
-    expect(hasScanEntitlement(entitlement)).toBe(true);
+    expect(getRemainingScans(entitlement)).toBeNull();
+    expect(hasScanEntitlement(entitlement)).toBe(false);
   });
 
-  it("blocks scans once the free preview limit is reached", () => {
-    const entitlement = getEntitlementState(5);
+  it("shows verification-required without an allowance", () => {
+    const entitlement = getEntitlementState(null, "verification_required");
 
-    expect(getRemainingScans(entitlement)).toBe(0);
+    expect(entitlement).toMatchObject({
+      planName: "Verification required",
+      scanAllowance: null,
+      scansUsed: null,
+      status: "verification_required",
+    });
+    expect(getRemainingScans(entitlement)).toBeNull();
     expect(hasScanEntitlement(entitlement)).toBe(false);
   });
 
   it("uses active server entitlement for paid access", () => {
-    const entitlement = getEntitlementState(5, {
+    const entitlement = getEntitlementState({
       planId: "plus_monthly",
       planName: "DeepSpec Plus",
       scanAllowance: 100,
@@ -52,15 +58,15 @@ describe("revenue", () => {
       scanAllowance: 100,
     }));
 
-    const entitlement = getEntitlementState(5);
+    const entitlement = getEntitlementState();
 
-    expect(entitlement.status).toBe("free");
-    expect(entitlement.scanAllowance).toBe(5);
+    expect(entitlement.status).toBe("unknown");
+    expect(entitlement.scanAllowance).toBeNull();
     expect(hasScanEntitlement(entitlement)).toBe(false);
   });
 
   it("uses server free usage rather than another device's local count", () => {
-    const entitlement = getEntitlementState(0, { status: "free", scanAllowance: 5, scansUsed: 5, verifiedAt: "2026-10-07" });
+    const entitlement = getEntitlementState({ status: "free", scanAllowance: 5, scansUsed: 5, verifiedAt: "2026-10-07" });
     expect(hasScanEntitlement(entitlement)).toBe(false);
     expect(entitlement.scansUsed).toBe(5);
   });

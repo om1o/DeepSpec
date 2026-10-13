@@ -1,5 +1,8 @@
 # Browser QA Matrix
 
+Live engine, web-AR, and external-AR uploads require the [scoped non-production QA account setup](REPEATABLE_WEBSITE_QA.md). A shared account's five lifetime free attempts are not a repeatable test budget. The runners preflight access before submitting images; production billing/credit checks remain a separate, budgeted workflow.
+
+
 Last updated: May 27, 2026
 
 Use this matrix before release PRs and after scanner, result, auth, history, chat, or early-access changes. It is a production browser QA checklist, not a replacement for `npm run check`, `npm run eval:identify:release`, or `npm run verify:supabase`.

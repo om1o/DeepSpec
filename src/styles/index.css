@@ -1,16 +1,16 @@
 @import "tailwindcss";
 
 /* ============================================================================
-   Deep Spec – Design Tokens v2
+   DeepSpec – Design Tokens v3
    Reference: DeepSpec Scanner.html design system
-   Ink-dark palette + electric-cyan scan color + Space Grotesk typography
+   Graphite surfaces + restrained cyan accents + native system typography
    ========================================================================= */
 
 :root {
   /* ── Ink (dark backgrounds) ─────────────────────────────────────── */
-  --ink-950: #04070E;
-  --ink-900: #07101E;
-  --ink-800: #0B1729;
+  --ink-950: #080B10;
+  --ink-900: #10151D;
+  --ink-800: #171E28;
   --ink-700: #101F32;
   --ink-600: #182B42;
   --ink-500: #213A55;
@@ -79,7 +79,7 @@
   --ds-accent-glow:   rgba(78, 110, 146, 0.40);
 
   /* ── Typography ──────────────────────────────────────────────────── */
-  --font-ui:   'Space Grotesk', 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-ui:   -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', ui-sans-serif, system-ui, sans-serif;
   --font-data: 'JetBrains Mono', 'Courier New', ui-monospace, monospace;
 
   /* ── Radius ──────────────────────────────────────────────────────── */
@@ -184,9 +184,13 @@ button, a {
   touch-action: manipulation;
 }
 
+/* Shared brand header wraps instead of crowding navigation on small screens. */
+.ds-app-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; padding-bottom: 20px; border-bottom: 1px solid var(--ds-border); }
+.ds-app-header nav { margin-left: auto; }
+
 /* Workbench entry screens. Keep camera and result presentation independent. */
 .ds-auth-page {
-  background: radial-gradient(ellipse at 75% 20%, #14283b 0, transparent 52%), #060d17;
+  background: radial-gradient(ellipse at 75% 0, #15222d 0, transparent 58%), var(--ds-bg);
 }
 .ds-auth-story {
   display: none;
@@ -208,15 +212,15 @@ button, a {
 .ds-workflow { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid #ffffff26; padding-top: 20px; }
 .ds-workflow-number { color: #8daaba; font-family: var(--font-data); font-size: 10px; margin-right: 10px; }
 .ds-workflow-label { font-size: 13px; font-weight: 600; }
-.ds-auth-card { border: 1px solid #ffffff1c; border-radius: 24px; background: #101e2be6; box-shadow: 0 24px 80px #00000030; }
-.ds-auth-card input { border-radius: 12px; background-color: #07121d; }
-.ds-auth-card button { border-radius: 12px; }
-.ds-auth-card button[type="submit"] { background: #9fcad4; color: #071520; box-shadow: 0 8px 24px #00000020; }
-.ds-auth-card button[type="submit"]:hover:not(:disabled) { background: #b9dce3; }
+.ds-auth-card { border: 1px solid #ffffff1c; border-radius: 28px; background: #111923f2; box-shadow: 0 24px 80px #00000024; }
+.ds-auth-card input { border-radius: 14px; background-color: #0a1119; }
+.ds-auth-card button { border-radius: 14px; }
+.ds-auth-card button[type="submit"] { background: #bfdce7; color: #0a1820; font-weight: 600; box-shadow: none; }
+.ds-auth-card button[type="submit"]:hover:not(:disabled) { background: #d4e8ef; }
 .ds-auth-card :is(button, a, input):focus-visible,
 .ds-history-page :is(button, a, input, select):focus-visible { outline: 2px solid #9fcad4; outline-offset: 4px; }
 .ds-auth-footnote { margin-top: 20px; padding-top: 16px; border-top: 1px solid #ffffff14; font-size: 11px; line-height: 1.7; color: #a4b7c8; }
-.ds-history-page { background: radial-gradient(ellipse at 0 0, #172c3e, transparent 650px), var(--ds-bg); }
+.ds-history-page { background: linear-gradient(#111b26, var(--ds-bg) 480px); }
 .ds-history-header { padding: 12px 0 28px; border-bottom: 1px solid var(--ds-border); }
 .ds-history-nav { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
 .ds-history-nav > :is(a, button) { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 10px 16px; border: 1px solid var(--ds-border); border-radius: 12px; color: #c5d5e2; font-size: 13px; font-weight: 600; background: #0c1b2b; }
@@ -230,7 +234,7 @@ button, a {
 .ds-empty-symbol { display: grid; place-items: center; width: 68px; height: 68px; margin: 0 auto 24px; border: 1px solid #8ab6c04d; border-radius: 20px; background: #9fcad40a; color: #9fcad4; }
 .ds-history-empty > p { color: #b2c5d5; }
 .ds-history-empty > a { display: inline-flex; justify-content: center; align-items: center; margin-top: 24px; min-height: 48px; padding: 12px 24px; border-radius: 12px; background: #9fcad4; color: #071520; font-weight: 700; font-size: 14px; }
-.ds-chat-page { background: radial-gradient(ellipse at 10% 0, #172c3e, transparent 640px), var(--ds-bg); }
+.ds-chat-page { background: linear-gradient(#111b26, var(--ds-bg) 480px); }
 .ds-workbench { --ds-accent: #466b8a; --ds-warn-ink: #e0b376; }
 .ds-workbench :is(button, a, input, textarea, select, summary):focus-visible { outline: 2px solid #9fcad4; outline-offset: 4px; }
 .ds-workbench-back { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 10px 14px; border: 1px solid #91adc340; border-radius: 12px; background: #0a172bea; color: #d4e4f0; font-size: 13px; font-weight: 600; }
@@ -301,11 +305,57 @@ button, a {
   pointer-events: none;
 }
 
-/* ── Analysis sweep ────────────────────────────────────────────────── */
-.scanner-analysis-sweep {
-  animation: ds-analysis-sweep 1.15s var(--ds-ease) infinite;
-  box-shadow: 0 0 20px rgba(94,147,166,0.72);
+/* ── Premium scan-brand loading state ─────────────────────────────── */
+.ds-scan-brand-animation {
+  position: relative;
+  isolation: isolate;
+  width: 120px;
+  height: 120px;
 }
+
+.ds-scan-brand-animation::before {
+  content: "";
+  position: absolute;
+  inset: 10px;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(20, 155, 255, 0.34), rgba(18, 107, 255, 0.02) 68%, transparent 72%);
+  filter: blur(8px);
+  animation: ds-scan-glass-halo 2.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.ds-scan-brand-animation::after {
+  content: "";
+  position: absolute;
+  inset: 13px;
+  border: 1px solid rgba(55, 217, 255, 0.18);
+  border-radius: 50%;
+  animation: ds-scan-glass-ring 2.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.ds-scan-glass-badge {
+  position: absolute;
+  inset: 8px;
+  width: 104px;
+  height: 104px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 10px rgba(55, 217, 255, 0.40));
+  animation: ds-scan-glass-float 2.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.ds-scan-lock-corner {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border-color: #37d9ff;
+  filter: drop-shadow(0 0 7px rgba(55, 217, 255, 0.72));
+  animation: ds-scan-glass-lock 2.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.ds-scan-lock-corner-tl { top: 0; left: 0; border-top-width: 3px; border-left-width: 3px; border-top-left-radius: 7px; }
+.ds-scan-lock-corner-tr { top: 0; right: 0; border-top-width: 3px; border-right-width: 3px; border-top-right-radius: 7px; animation-delay: 70ms; }
+.ds-scan-lock-corner-bl { bottom: 0; left: 0; border-bottom-width: 3px; border-left-width: 3px; border-bottom-left-radius: 7px; animation-delay: 140ms; }
+.ds-scan-lock-corner-br { right: 0; bottom: 0; border-right-width: 3px; border-bottom-width: 3px; border-bottom-right-radius: 7px; animation-delay: 210ms; }
 
 /* ── HUD overlay text ──────────────────────────────────────────────── */
 .scanner-hud {
@@ -482,9 +532,24 @@ button, a {
   .lens-pulse-primary { animation: none; }
 }
 
-@keyframes ds-analysis-sweep {
-  0%, 100% { transform: translateY(-18px) scaleX(0.72); opacity: 0.32; }
-  50%       { transform: translateY(18px)  scaleX(1);    opacity: 1; }
+@keyframes ds-scan-glass-float {
+  0%, 100% { transform: rotate(-7deg) scale(0.96); filter: drop-shadow(0 0 8px rgba(55, 217, 255, 0.32)); }
+  50%      { transform: rotate(7deg) scale(1.035); filter: drop-shadow(0 0 16px rgba(55, 217, 255, 0.58)); }
+}
+
+@keyframes ds-scan-glass-lock {
+  0%, 100% { transform: scale(0.84); opacity: 0.52; }
+  46%      { transform: scale(1); opacity: 1; }
+}
+
+@keyframes ds-scan-glass-halo {
+  0%, 100% { transform: scale(0.86); opacity: 0.34; }
+  50%      { transform: scale(1.08); opacity: 0.86; }
+}
+
+@keyframes ds-scan-glass-ring {
+  0%, 100% { transform: scale(0.94); opacity: 0.30; }
+  50%      { transform: scale(1.04); opacity: 0.72; }
 }
 
 @keyframes ds-ping {
@@ -608,7 +673,11 @@ button, a {
   .scanner-bracket-pulse .scanner-corner,
   .scanner-sweep-line,
   .scanner-cta-btn,
-  .scanner-hud-dot {
+  .scanner-hud-dot,
+  .ds-scan-glass-badge,
+  .ds-scan-lock-corner,
+  .ds-scan-brand-animation::before,
+  .ds-scan-brand-animation::after {
     animation: none;
     transition: none;
   }

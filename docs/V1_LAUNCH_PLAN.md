@@ -64,7 +64,7 @@ The target is a useful and trustworthy V1, with evidence determining V2.
 
 ## Server scan allowance
 
-The server credit gate defaults to enforcement, including when the flag is absent. `DEEPSPEC_ENFORCE_SCAN_CREDITS=false` bypasses it only outside production. Apply `20261007185329_free_scan_usage.sql` after the billing entitlement migrations and before deploying this gate; a missing RPC fails closed with retryable 503 before identification.
+The server credit gate defaults to enforcement, including when the flag is absent. `DEEPSPEC_ENFORCE_SCAN_CREDITS=false` now exempts only a confirmed, administrator-marked dedicated QA identity on explicit development/test or Vercel Preview, with server-configured UUID and an expiry at most 24 hours away. Ordinary accounts and production retain enforcement. See [repeatable website QA](REPEATABLE_WEBSITE_QA.md) for configuration, preflight, revocation, cost limits, and live acceptance requirements. Apply `20261007185329_free_scan_usage.sql` after the billing entitlement migrations and before deploying this gate; a missing RPC fails closed with retryable 503 before identification.
 
 Registered accounts with a confirmed email or phone receive five lifetime free identification attempts, tracked separately from billing. Anonymous/unconfirmed accounts do not receive free credits. Valid input and provider configuration are checked before reservation. Once reserved, a free attempt remains consumed even if the provider fails; this bounds repeated failed-provider spend. Clearing browser storage, switching devices, and paid billing updates cannot reset this counter.
 

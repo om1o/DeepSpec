@@ -57,7 +57,7 @@ describe("cloudSync", () => {
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
     let complete!: (value: unknown) => void;
     const pending = new Promise((resolve) => { complete = resolve; });
-    const session = { data: { session: { user: { id: "user-1" } } }, error: null };
+    const session = { data: { session: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "user-1" } } }, error: null };
     const getSession = vi.fn().mockResolvedValue(session);
     const upload = vi.fn().mockResolvedValue({ error: null });
     const upsert = vi.fn().mockResolvedValue({ data: { revision: 1 }, error: null });
@@ -102,7 +102,7 @@ describe("cloudSync", () => {
     let complete!: (value: unknown) => void;
     let rejectPending!: (reason: Error) => void;
     const pending = new Promise((resolve, reject) => { complete = resolve; rejectPending = reject; });
-    const session = { data: { session: { user: { id: "user-1" } } }, error: null };
+    const session = { data: { session: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "user-1" } } }, error: null };
     const getSession = vi.fn().mockResolvedValue(session).mockReturnValueOnce(pending);
     const upload = vi.fn().mockResolvedValue({ error: null });
     const upsert = vi.fn().mockResolvedValue({ data: { revision: 1 }, error: null });
@@ -150,7 +150,7 @@ describe("cloudSync", () => {
     const upsert = vi.fn().mockResolvedValue({ data: { revision: 1 }, error: null });
     const insert = vi.fn().mockResolvedValue({ error: null });
     mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
-      auth: { getSession: vi.fn().mockImplementation(async () => ({ data: { session: { user: { id: getAccountScope().userId } } }, error: null })) },
+      auth: { getSession: vi.fn().mockImplementation(async () => ({ data: { session: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: getAccountScope().userId } } }, error: null })) },
       storage: { from: vi.fn().mockReturnValue({ upload }) },
       from: vi.fn((table) => table === "scan_lookups" ? makeScanWriteQuery(upsert) : { upsert, insert, delete: makeDeleteQuery }),
     });
@@ -194,7 +194,7 @@ describe("cloudSync", () => {
     const upload = vi.fn().mockImplementation(() => new Promise((resolve) => { complete = resolve; }));
     const from = vi.fn();
     mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
-      auth: { getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }) },
+      auth: { getSession: vi.fn().mockResolvedValue({ data: { session: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "user-1" } } }, error: null }) },
       storage: { from: vi.fn().mockReturnValue({ upload }) }, from,
     });
     const { syncLookupToCloud } = await import("./cloudSync");
@@ -236,7 +236,7 @@ describe("cloudSync", () => {
     const upload = vi.fn().mockImplementation(async () => { setActiveAccount("user-2"); return { error: null }; });
     const from = vi.fn();
     mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
-      auth: { getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }) },
+      auth: { getSession: vi.fn().mockResolvedValue({ data: { session: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "user-1" } } }, error: null }) },
       storage: { from: vi.fn().mockReturnValue({ upload }) }, from,
     });
     const { syncLookupsToCloud } = await import("./cloudSync");
@@ -256,7 +256,7 @@ describe("cloudSync", () => {
     mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
       auth: { getSession: vi.fn().mockImplementation(async () => {
         if (mode === "round-trip") { setActiveAccount("other"); setActiveAccount("user-1"); }
-        return { data: { session: mode === "signed-out" ? null : { user: { id: mode === "different-owner" ? "other" : "user-1" } } }, error: null };
+        return { data: { session: mode === "signed-out" ? null : { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: mode === "different-owner" ? "other" : "user-1" } } }, error: null };
       }), signInAnonymously },
       storage: { from: vi.fn().mockReturnValue({ upload }) }, from: vi.fn(),
     });
@@ -281,7 +281,7 @@ describe("cloudSync", () => {
     const from = vi.fn().mockReturnValue({ update });
     mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
       auth: {
-        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "user-1" } } }, error: null }),
       },
       from,
       storage: { from: storageFrom },
@@ -328,7 +328,7 @@ describe("cloudSync", () => {
     const eq = vi.fn();
     eq.mockReturnValue({ eq, select });
     const update = vi.fn().mockReturnValue({ eq });
-    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails, auth: { getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }) }, from: vi.fn().mockReturnValue({ update }) });
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails, auth: { getSession: vi.fn().mockResolvedValue({ data: { session: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "user-1" } } }, error: null }) }, from: vi.fn().mockReturnValue({ update }) });
     const { syncLookupToCloud } = await import("./cloudSync");
     if (outcome === "timeout") vi.useFakeTimers();
     try {
@@ -359,8 +359,8 @@ describe("cloudSync", () => {
     if (missingShop) upsert.mockResolvedValueOnce({ error: { message: "Could not find the 'job_id' column in the schema cache" } });
     mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
       auth: {
-        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
-        signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } }, error: null }),
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "user-1" } } }, error: null }),
+        signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "user-1" } }, error: null }),
       },
       from: vi.fn().mockReturnValue(makeScanWriteQuery(upsert)),
       storage: { from: vi.fn().mockReturnValue({ upload: vi.fn().mockResolvedValue({ error: null }) }) },
@@ -416,7 +416,7 @@ describe("cloudSync", () => {
     const rowWrite = vi.fn().mockResolvedValue({ data: { revision: 1 }, error: null });
     const insert = vi.fn().mockResolvedValue({ error: null });
     mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
-      auth: { getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }) },
+      auth: { getSession: vi.fn().mockResolvedValue({ data: { session: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "user-1" } } }, error: null }) },
       storage: { from: vi.fn().mockReturnValue({ upload }) },
       from: vi.fn((table: string) => table === "scan_lookups" ? makeScanWriteQuery(rowWrite) : { upsert: table === "scan_model_runs" ? runUpsert : rowWrite, insert, delete: makeDeleteQuery }),
     });
@@ -472,8 +472,8 @@ describe("cloudSync", () => {
     });
     mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
       auth: {
-        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
-        signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } }, error: null }),
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "user-1" } } }, error: null }),
+        signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "user-1" } }, error: null }),
       },
       from,
       storage: {
@@ -591,7 +591,7 @@ describe("cloudSync", () => {
     });
     mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
       auth: {
-        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "user-1" } } }, error: null }),
         signInAnonymously: vi.fn(),
       },
       from,
@@ -660,7 +660,7 @@ describe("cloudSync", () => {
     });
     mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
       auth: {
-        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "user-1" } } }, error: null }),
         signInAnonymously: vi.fn(),
       },
       from,
@@ -762,7 +762,7 @@ describe("cloudSync", () => {
       return { insert: async () => ({ error: null }), upsert: async () => ({ error: null }) };
     });
     mocks.createClient.mockReturnValue({ from, rpc: mocks.syncDetails,
-      auth: { getSession: async () => ({ data: { session: { user: { id: "user-1" } } }, error: null }) },
+      auth: { getSession: async () => ({ data: { session: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "user-1" } } }, error: null }) },
       storage: { from: () => ({ upload }) },
     });
     const { syncLookupToCloud } = await import("./cloudSync");
@@ -800,7 +800,7 @@ describe("cloudSync", () => {
       return query;
     });
     mocks.createClient.mockReturnValue({ from, rpc: mocks.syncDetails,
-      auth: { getSession: async () => ({ data: { session: { user: { id: "user-1" } } }, error: null }) },
+      auth: { getSession: async () => ({ data: { session: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "user-1" } } }, error: null }) },
       storage: { from: () => ({ upload }) },
     });
     const { syncLookupToCloud } = await import("./cloudSync");
@@ -828,7 +828,7 @@ describe("cloudSync", () => {
     });
     mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
       auth: {
-        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "user-1" } } }, error: null }),
         signInAnonymously: vi.fn(),
       },
       from,
@@ -920,8 +920,8 @@ describe("cloudSync", () => {
     const insert = vi.fn().mockResolvedValue({ error: null });
     mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
       auth: {
-        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
-        signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "user-retry" } }, error: null }),
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "user-1" } } }, error: null }),
+        signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "user-retry" } }, error: null }),
       },
       from: vi.fn((table: string) => {
         if (table === "scan_candidates" || table === "scan_evidence") {
@@ -1066,14 +1066,15 @@ describe("cloudSync", () => {
       expect(result.message).not.toMatch(/anonymous/i);
     });
 
-    it("still explains a genuinely disabled anonymous sign-in", async () => {
+    it("directs obsolete anonymous sign-in failures to verified accounts", async () => {
       const result = await syncWithInsertError({ message: "Anonymous sign-ins are disabled" });
 
-      expect(result.message).toMatch(/anonymous sign-ins enabled/i);
+      expect(result.message).toMatch(/verified account/i);
+      expect(result.message).not.toMatch(/anonymous sign-ins enabled/i);
     });
   });
 
-  it.each(["ready", "missing-rpc"])("checks runtime cloud health using the required detail transaction: %s", async (outcome) => {
+  it.each(["ready", "missing-rpc", "signed-out-denied", "signed-out-leak", "signed-out-network-error", "switch-during-upload"])("checks runtime cloud health using the required detail transaction: %s", async (outcome) => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
     const upload = vi.fn().mockResolvedValue({ error: null });
@@ -1082,16 +1083,21 @@ describe("cloudSync", () => {
     const modelRunInsert = vi.fn().mockResolvedValue({ error: null });
     const syncEventInsert = vi.fn().mockResolvedValue({ error: null });
     const ownerDeleteQuery = makeDeleteQuery();
-    const crossReadEq = vi.fn().mockResolvedValue({ data: [], error: null });
+    const crossReadEq = vi.fn().mockResolvedValue({ data: outcome === "signed-out-leak" ? [{ local_id: "exposed" }] : [], error: outcome === "signed-out-denied" ? { code: "42501", message: "permission denied" } : outcome === "signed-out-network-error" ? { message: "Failed to fetch" } : null });
     const crossReadFrom = vi.fn().mockReturnValue({
       select: vi.fn().mockReturnValue({ eq: crossReadEq }),
     });
+    const { setActiveAccount } = await import("../lib/accountScope");
+    setActiveAccount("owner-1");
+    if (outcome === "switch-during-upload") upload.mockImplementation(async () => { setActiveAccount("other-user"); return { error: null }; });
+    const authClient = { auth: {
+      getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: "owner-token" } }, error: null }),
+      getUser: vi.fn().mockResolvedValue({ data: { user: { id: "owner-1", email_confirmed_at: "2026-10-11T00:00:00Z" } }, error: null }),
+    } };
     mocks.createClient
+      .mockReturnValueOnce(authClient)
       .mockReturnValueOnce({
         rpc: mocks.syncDetails,
-        auth: {
-          signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "owner-1" } }, error: null }),
-        },
         from: vi.fn((table: string) => {
           if (table === "scan_lookups") {
             return {
@@ -1114,9 +1120,7 @@ describe("cloudSync", () => {
       })
       .mockReturnValueOnce({
         rpc: mocks.syncDetails,
-        auth: {
-          signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "other-1" } }, error: null }),
-        },
+
         from: crossReadFrom,
         storage: {
           from: vi.fn(),
@@ -1128,6 +1132,20 @@ describe("cloudSync", () => {
       data: null, error: { code: "PGRST202", message: "Could not find public.sync_scan_details in the schema cache" },
     });
     const report = await verifyCloudHealth();
+    if (outcome === "switch-during-upload") {
+      expect(report.overall).toBe("blocked");
+      expect(upsert).not.toHaveBeenCalled();
+      expect(remove).toHaveBeenCalled();
+      expect(localStorage.length).toBe(0);
+      return;
+    }
+    if (outcome === "signed-out-leak" || outcome === "signed-out-network-error") {
+      expect(report.overall).toBe("blocked");
+      expect(report.checks.rlsIsolation.status).toBe("fail");
+      expect(report.lastVerifiedAt).toBeNull();
+      expect(remove).toHaveBeenCalled();
+      return;
+    }
     if (outcome === "missing-rpc") {
       expect(report.overall).toBe("blocked");
       expect(report.checks.datasetDetails.status).toBe("fail");
@@ -1138,10 +1156,15 @@ describe("cloudSync", () => {
       return;
     }
 
+    expect(authClient.auth.getUser).toHaveBeenCalledWith("owner-token");
+    const ownerOptions = mocks.createClient.mock.calls[1][2];
+    expect(await ownerOptions.accessToken()).toBe("owner-token");
+    expect(mocks.createClient.mock.calls[2][2].accessToken).toBeUndefined();
+    expect(report.checks.rlsIsolation.message).toBe("Signed-out visitors could not read the test scans.");
     expect(report.overall).toBe("ready");
     expect(report.lastVerifiedAt).toBe(report.checkedAt);
     expect(report.checks.configured.status).toBe("pass");
-    expect(report.checks.anonymousAuth.status).toBe("pass");
+    expect(report.checks.verifiedAuth.status).toBe("pass");
     expect(report.checks.storageUpload.status).toBe("pass");
     expect(report.checks.rowUpsert.status).toBe("pass");
     expect(report.checks.datasetDetails.status).toBe("pass");
@@ -1181,30 +1204,48 @@ describe("cloudSync", () => {
     expect(getCloudHealthSnapshot().overall).toBe("ready");
   });
 
-  it("reports the anonymous auth step as blocked before storage checks run", async () => {
+  it.each(["signed-out", "anonymous", "unconfirmed", "different-owner", "account-switch", "server-error"])("blocks health checks before writes for %s", async (mode) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const { setActiveAccount } = await import("../lib/accountScope");
+    const upload = vi.fn();
+    const getUser = vi.fn().mockImplementation(async () => {
+      if (mode === "account-switch") setActiveAccount("other-user");
+      return { data: { user: { id: mode === "different-owner" ? "other-user" : "user-1", is_anonymous: mode === "anonymous", email_confirmed_at: mode === "unconfirmed" ? null : "2026-10-11T00:00:00Z" } }, error: mode === "server-error" ? { message: "Invalid token" } : null };
+    });
+    mocks.createClient.mockReturnValue({ auth: {
+      getSession: vi.fn().mockResolvedValue({ data: { session: mode === "signed-out" ? null : { access_token: "token" } }, error: null }), getUser,
+    }, storage: { from: vi.fn().mockReturnValue({ upload }) } });
+    const { verifyCloudHealth } = await import("./cloudSync");
+    const report = await verifyCloudHealth();
+    expect(report.overall).toBe("blocked");
+    expect(report.checks.verifiedAuth.status).toBe("fail");
+    expect(report.checks.storageUpload.status).toBe("unknown");
+    expect(report.lastVerifiedAt).toBeNull();
+    expect(upload).not.toHaveBeenCalled();
+    expect(mocks.createClient).toHaveBeenCalledOnce();
+    if (mode === "account-switch") expect(localStorage.length).toBe(0);
+  });
+
+  it.each(["anonymous", "unconfirmed"])("refuses normal cloud sync for a legacy %s session", async (mode) => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
     const upload = vi.fn();
-    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
-      auth: {
-        signInAnonymously: vi.fn().mockResolvedValue({ data: { user: null }, error: { message: "Database error creating anonymous user" } }),
-      },
-      from: vi.fn(),
-      storage: {
-        from: vi.fn().mockReturnValue({ upload }),
-      },
-    });
-    const { verifyCloudHealth } = await import("./cloudSync");
-
-    const report = await verifyCloudHealth();
-
-    expect(report.overall).toBe("blocked");
-    expect(report.checks.configured.status).toBe("pass");
-    expect(report.checks.anonymousAuth.status).toBe("fail");
-    expect(report.checks.storageUpload.status).toBe("unknown");
-    expect(report.checks.datasetDetails.status).toBe("unknown");
-    expect(report.lastVerifiedAt).toBeNull();
+    mocks.createClient.mockReturnValue({ auth: { getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1", is_anonymous: mode === "anonymous", email_confirmed_at: mode === "unconfirmed" ? null : "2026-10-11T00:00:00Z" } } }, error: null }) }, storage: { from: vi.fn().mockReturnValue({ upload }) } });
+    const { LOOKUPS_STORAGE_KEY } = await import("./storage");
+    const { accountStorageKey } = await import("../lib/accountScope");
+    const { syncLookupToCloud } = await import("./cloudSync");
+    const lookup = makeLookup();
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    expect(await syncLookupToCloud(lookup)).toMatchObject({ ok: false, message: expect.stringMatching(/verified account/) });
     expect(upload).not.toHaveBeenCalled();
+  });
+
+  it("discards cached anonymous-auth health reports", async () => {
+    const { accountStorageKey } = await import("../lib/accountScope");
+    localStorage.setItem(accountStorageKey("deep-spec:cloud-health"), JSON.stringify({ projectUrl: null, overall: "ready", checks: { anonymousAuth: { status: "pass" } } }));
+    const { getCloudHealthSnapshot } = await import("./cloudSync");
+    expect(getCloudHealthSnapshot().checks.verifiedAuth.status).toBe("unknown");
   });
 
   it("shares one Supabase client with the auth service instead of creating a second GoTrueClient", async () => {
@@ -1213,9 +1254,9 @@ describe("cloudSync", () => {
     const insert = vi.fn().mockResolvedValue({ error: null });
     mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
       auth: {
-        getUser: vi.fn().mockResolvedValue({ data: { user: { id: "shared-user" } }, error: null }),
-        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" } } }, error: null }),
-        signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { id: "shared-user" } }, error: null }),
+        getUser: vi.fn().mockResolvedValue({ data: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "shared-user" } }, error: null }),
+        getSession: vi.fn().mockResolvedValue({ data: { session: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "user-1" } } }, error: null }),
+        signInAnonymously: vi.fn().mockResolvedValue({ data: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "shared-user" } }, error: null }),
         onAuthStateChange: vi.fn().mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } }),
       },
       from: vi.fn().mockReturnValue({ insert }),

@@ -95,7 +95,38 @@ describe("Chat", () => {
     await act(async () => { resolveAnswer("Private answer from old session"); });
     expect(screen.queryByText("Private answer from old session")).not.toBeInTheDocument();
     setActiveAccount("test-user");
-    expect(getLookup(saved.value!.id)?.chatHistory.map((message) => message.role)).toEqual(["user"]);
+    expect(getLookup(saved.value!.id)?.chatHistory.map((message) => message.role)).toEqual([]);
+  });
+
+  it("does not persist a question while the request is pending or after infrastructure failure", async () => {
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    let rejectAnswer!: (error: Error) => void;
+    sendFollowUpMock.mockReturnValueOnce(new Promise((_, reject) => { rejectAnswer = reject; }));
+    const view = renderChat(`/result/${lookup.id}/chat`);
+    await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "What is this?");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(getLookup(lookup.id)?.chatHistory).toEqual([]);
+    await act(async () => { rejectAnswer(new AIServiceError("rate_limit_unavailable", "Limiter unavailable.")); });
+    expect(getLookup(lookup.id)?.chatHistory).toEqual([]);
+    expect(screen.getByRole("button", { name: "Retry last question" })).toBeInTheDocument();
+    view.unmount();
+    renderChat(`/result/${lookup.id}/chat`);
+    expect(screen.getByText("No questions yet")).toBeInTheDocument();
+  });
+
+  it("does not leave half a conversation when persistence fails", async () => {
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    sendFollowUpMock.mockResolvedValue("Check the marking.");
+    renderChat(`/result/${lookup.id}/chat`);
+    await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "What is this?");
+    const writeSpy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("Full", "QuotaExceededError"); });
+    try {
+      await userEvent.click(screen.getByRole("button", { name: "Send" }));
+      expect(getLookup(lookup.id)?.chatHistory).toEqual([]);
+      expect(screen.getByRole("button", { name: "Retry last question" })).toBeInTheDocument();
+    } finally {
+      writeSpy.mockRestore();
+    }
   });
 
   it("prefills a suggested question from the result screen", () => {
@@ -120,6 +151,45 @@ describe("Chat", () => {
     expect(screen.getByText(/not proof the model identified the part incorrectly/i)).toBeInTheDocument();
   });
 
+  it("explains when beta chat is disabled without offering a retry", async () => {
+    sendFollowUpMock.mockRejectedValue(new AIServiceError("feature_disabled", "Follow-up chat is unavailable in this beta."));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+
+    const view = renderChat(`/result/${lookup.id}/chat`);
+
+    await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "What should I check next?");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("Follow-up chat is unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Follow-up chat is unavailable in this beta.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry last question" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Ask a follow-up question")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    expect(sendFollowUpMock).toHaveBeenCalledTimes(1);
+    expect(getLookup(lookup.id)?.chatHistory).toEqual([]);
+    view.unmount();
+    renderChat(`/result/${lookup.id}/chat`);
+    await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "Another question after reload?");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("Follow-up chat is unavailable")).toBeInTheDocument();
+    expect(getLookup(lookup.id)?.chatHistory).toEqual([]);
+    expect(localStorage.getItem(accountStorageKey(`deep-spec:chat:${lookup.id}`))).toBeNull();
+  });
+
+  it("preserves earlier conversation history on disabled chat", async () => {
+    const messages: ChatMessage[] = [
+      { id: "old-user", role: "user", content: "Earlier question", timestamp: lookup.createdAt },
+      { id: "old-answer", role: "assistant", content: "Earlier answer", timestamp: lookup.createdAt },
+    ];
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([{ ...lookup, chatHistory: messages }]));
+    sendFollowUpMock.mockRejectedValue(new AIServiceError("feature_disabled", "Follow-up chat is unavailable in this beta."));
+    renderChat(`/result/${lookup.id}/chat`);
+    await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "New question");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("Follow-up chat is unavailable")).toBeInTheDocument();
+    expect(getLookup(lookup.id)?.chatHistory).toEqual(messages);
+  });
+
   it("retries the last unanswered question without duplicating the saved user message", async () => {
     sendFollowUpMock
       .mockRejectedValueOnce(new AIServiceError("provider_error", "The AI provider rejected this request."))
@@ -142,7 +212,7 @@ describe("Chat", () => {
 });
 
 function renderChat(path: string) {
-  render(
+  return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/result/:id/chat" element={<Chat />} />

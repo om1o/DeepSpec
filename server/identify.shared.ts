@@ -1,6 +1,6 @@
-import { IDENTIFY_PROMPT, IDENTIFY_PROMPT_VERSION, IDENTIFY_PIPELINE_VERSION } from "../src/services/systemPrompts";
+import { IDENTIFY_PROMPT, IDENTIFY_PROMPT_VERSION, IDENTIFY_PIPELINE_VERSION } from "../src/services/systemPrompts.js";
 import { randomUUID } from "node:crypto";
-import { observeIdentification } from "./identifyDiagnostics.shared";
+import { observeIdentification } from "./identifyDiagnostics.shared.js";
 import {
   SCAN_CATEGORIES,
   type CandidatePart,
@@ -18,7 +18,7 @@ import {
   type ScanCategory,
   type SourceLink,
   type VehicleContext,
-} from "../src/types";
+} from "../src/types/index.js";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -332,7 +332,7 @@ async function createGeminiIdentifyResponse({
   const lastRetryableError = [...attempts]
     .reverse()
     .find((attempt) => isRetryableIdentifyResponse(attempt.response))?.response
-    ?? attempts.at(-1)?.response
+    ?? attempts[attempts.length - 1]?.response
     ?? errorResponse(502, "provider_error", "The AI provider rejected this request.");
 
   return {
@@ -393,7 +393,7 @@ async function createGeminiIdentifyAttempt(
     return { model, response: invalidResponse, rateLimited: false };
   }
 
-  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env);
+  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env, parsed.measurementContext);
   const latencyMs = Date.now() - startedAt;
 
   console.info("[DeepSpec AI]", {
@@ -466,7 +466,7 @@ async function createGeminiRescueIdentifyResponse(
     return invalidResponse;
   }
 
-  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env);
+  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env, parsed.measurementContext);
   const latencyMs = Date.now() - startedAt;
 
   console.info("[DeepSpec AI]", {
@@ -675,7 +675,7 @@ async function createBackendIdentifyResponse(
     return invalidResponse;
   }
 
-  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env);
+  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env, parsed.measurementContext);
   const latencyMs = Date.now() - startedAt;
 
   console.info("[DeepSpec AI]", {
@@ -920,7 +920,7 @@ async function createOllamaIdentifyResponse(
     return invalidResponse;
   }
 
-  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env);
+  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env, parsed.measurementContext);
   const latencyMs = Date.now() - startedAt;
 
   console.info("[DeepSpec AI]", {
@@ -2012,6 +2012,7 @@ function normalizeIdentificationResult(
   result: IdentificationResult,
   ocrText: string | null = null,
   env: Record<string, string | undefined> = {},
+  measurementContext: MeasurementContext | null = null,
 ): IdentificationResult {
   const datasetMatches = findDatasetMatches(result, env);
   const cleanEvidence = appendDatasetEvidence(appendOcrEvidence(cleanList(result.evidence), ocrText), datasetMatches);
@@ -2040,7 +2041,7 @@ function normalizeIdentificationResult(
     ...(confirmationNeed === undefined ? {} : { confirmationNeed }),
     candidateParts: normalizeCandidateParts(result.candidateParts, candidateMatches, partName, confidence, resolvedScanCategory),
     possibleVehicleContexts: normalizePossibleVehicleContexts(result.possibleVehicleContexts),
-    measurements: normalizeMeasurements(result.measurements),
+    measurements: normalizeMeasurements(result.measurements, measurementContext),
     requiredNextEvidence: normalizeRequiredNextEvidence(result.requiredNextEvidence, confirmationNeed, needsBetterPhoto),
     fitmentConfidence: normalizeFitmentConfidence(result.fitmentConfidence, result.possibleVehicleContexts),
     scanCategory: resolvedScanCategory,
@@ -2418,8 +2419,14 @@ function normalizePossibleVehicleContexts(value: IdentificationResult["possibleV
     .slice(0, 3);
 }
 
-function normalizeMeasurements(value: IdentificationResult["measurements"]): PartMeasurement[] {
+function normalizeMeasurements(
+  value: IdentificationResult["measurements"],
+  measurementContext: MeasurementContext | null,
+): PartMeasurement[] {
   return (value ?? [])
+    .filter((measurement) =>
+      measurement.method === "visible_marking"
+      || (measurement.method === "reference_object" && measurementContext !== null))
     .map((measurement) => ({
       label: cleanText(measurement.label, ""),
       valueMm: normalizeMeasurementValue(measurement.valueMm),

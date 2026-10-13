@@ -20,6 +20,7 @@ import {
 } from "../types";
 
 type AIErrorCode =
+  | "feature_disabled"
   | "image_too_large"
   | "invalid_input"
   | "invalid_response"
@@ -279,6 +280,13 @@ export function getAIErrorMessage(error: unknown) {
 
 export function getAIErrorDetails(code: string | undefined | null): AIErrorDetails {
   switch (code) {
+    case "feature_disabled":
+      return {
+        category: "setup",
+        description: "This beta has follow-up chat disabled at the server, so retrying will not send a provider request.",
+        retryLabel: "Unavailable",
+        title: "Follow-up chat is unavailable",
+      };
     case "rate_limited":
       return {
         category: "provider_unavailable",
@@ -526,9 +534,8 @@ function buildFollowUpContext(lookup: Lookup, question: string) {
     .join("\n")
     .slice(0, Math.max(0, CHAT_USER_MESSAGE_MAX_CHARS - questionLine.length - 1));
 
-  // Chat saves the question before sending, so it is usually already the last history message.
-  // The saved copy has its whitespace collapsed (createChatMessage), so compare collapsed forms —
-  // a question typed with a newline would otherwise be sent once as history and again as itself.
+  // Older saved conversations can end with an unanswered question being retried.
+  // Compare collapsed whitespace so that question is not included twice in the prompt.
   const history = lookup.chatHistory.slice(-7);
   const last = history[history.length - 1];
   if (last?.role === "user" && collapseWhitespace(last.content) === collapseWhitespace(question)) {

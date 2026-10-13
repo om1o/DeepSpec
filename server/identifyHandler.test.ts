@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import handler from "../api/identify";
+import { enforceRateLimit } from "./rateLimit.shared";
 const mocks = vi.hoisted(() => ({ createClient: vi.fn(), identify: vi.fn() }));
 vi.mock("@supabase/supabase-js", () => ({ createClient: mocks.createClient }));
 vi.mock("./identify.shared", async (original) => ({ ...await original<typeof import("./identify.shared")>(), createIdentifyResponse: mocks.identify }));
@@ -20,9 +21,9 @@ describe("identify HTTP credit gate", () => {
     mocks.identify.mockResolvedValue({ status: 200, body: { result: {} } });
   });
   afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); });
-  function client(data: unknown) {
+  function client(data: unknown, qa = false) {
     const rpc = vi.fn(async () => ({ data, error: null }));
-    mocks.createClient.mockReturnValue({ auth: { getUser: vi.fn(async () => ({ data: { user: { id: "verified-user", email_confirmed_at: "2026-10-07" } }, error: null })) }, rpc });
+    mocks.createClient.mockReturnValue({ auth: { getUser: vi.fn(async () => ({ data: { user: { id: "verified-user", email_confirmed_at: "2026-10-07", app_metadata: qa ? { deepspec_scan_qa: true } : {} } }, error: null })) }, rpc });
     return rpc;
   }
   it("never invokes identification when the free allowance is exhausted", async () => {
@@ -67,12 +68,50 @@ describe("identify HTTP credit gate", () => {
     await handler({ method: "POST", body, headers: { authorization: "Bearer token" } }, response());
     expect(rpc).toHaveBeenLastCalledWith("finalize_scan_credit", { p_user_id: "verified-user", p_reservation_id: "paid-hold", p_succeeded: status === 200 });
   });
-  it("keeps the explicit development bypass working", async () => {
+  function configureQa() {
+    vi.stubEnv("DEEPSPEC_ENFORCE_SCAN_CREDITS", "false");
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("VERCEL_ENV", "preview");
+    vi.stubEnv("DEEPSPEC_QA_SCAN_USER_ID", "verified-user");
+    vi.stubEnv("DEEPSPEC_QA_SCAN_EXPIRES_AT", new Date(Date.now() + 3_600_000).toISOString());
+  }
+  it("runs two full eight-image suites for the dedicated QA identity without spending credits", async () => {
+    configureQa();
+    const rpc = client({ ok: false }, true);
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      mocks.identify.mockResolvedValueOnce({ status: attempt === 3 ? 502 : 200, body: {} });
+      const res = response();
+      await handler({ method: "POST", body, headers: { authorization: "Bearer token" } }, res);
+      expect(res.status).toHaveBeenCalledWith(attempt === 3 ? 502 : 200);
+    }
+    expect(mocks.identify).toHaveBeenCalledTimes(16);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+  it("still blocks a QA identity at the rate limiter before invoking its provider", async () => {
+    configureQa();
+    client({ ok: false }, true);
+    vi.mocked(enforceRateLimit).mockResolvedValueOnce({ ok: false, status: 429, retryAfterSeconds: 60, body: { error: { code: "rate_limit_exceeded", message: "Wait" } } });
+    const res = response();
+    await handler({ method: "POST", body, headers: { authorization: "Bearer token" } }, res);
+    expect(res.status).toHaveBeenCalledWith(429);
+    expect(mocks.identify).not.toHaveBeenCalled();
+  });
+  it("blocks an exhausted QA account in production even with every QA flag set", async () => {
+    configureQa();
+    vi.stubEnv("VERCEL_ENV", "production");
+    client({ ok: false }, true);
+    const res = response();
+    await handler({ method: "POST", body, headers: { authorization: "Bearer token", "x-deepspec-qa": "true" } }, res);
+    expect(res.status).toHaveBeenCalledWith(402);
+    expect(mocks.identify).not.toHaveBeenCalled();
+  });
+  it("never skips authentication just because the development credit switch is false", async () => {
     vi.stubEnv("DEEPSPEC_ENFORCE_SCAN_CREDITS", "false");
     vi.stubEnv("NODE_ENV", "development");
     vi.stubEnv("VERCEL_ENV", "development");
-    await handler({ method: "POST", body }, response());
-    expect(mocks.identify).toHaveBeenCalledOnce();
-    expect(mocks.createClient).not.toHaveBeenCalled();
+    const res = response();
+    await handler({ method: "POST", body }, res);
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(mocks.identify).not.toHaveBeenCalled();
   });
 });

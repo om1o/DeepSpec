@@ -1,0 +1,78 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> deep-spec@0.1.0 check
+> npm run lint && npm test && npm run build
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> deep-spec@0.1.0 lint
+> eslint .
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> deep-spec@0.1.0 test
+> vitest run --configLoader native --pool threads --maxWorkers=1 --no-file-parallelism
+
+
+ RUN  v4.1.6 /workspace/scratch/920a1c818f66/DeepSpec
+
+ ❯ server/vercel-layout.test.ts (9 tests | 1 failed) 15ms
+     × keeps only HTTP entry points in api, within the 12-function limit 6ms
+     × uses Node ESM-resolvable extensions in every runtime-relative import 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/vercel-layout.test.ts > Vercel Hobby deployment layout > keeps only HTTP entry points in api, within the 12-function limit
+AssertionError: expected [ 'account-entitlement.ts', …(9) ] to deeply equal [ 'account-entitlement.ts', …(5) ]
+
+- Expected
++ Received
+
+  [
+    "account-entitlement.ts",
+    "billing-checkout.ts",
+    "billing-portal.ts",
+    "billing-webhook.ts",
++   "chat.shared.test.ts",
++   "chat.shared.ts",
+    "chat.ts",
++   "identify.shared.test.ts",
++   "identify.shared.ts",
+    "identify.ts",
+  ]
+
+ ❯ server/vercel-layout.test.ts:32:26
+     30|     // Vercel discovers files in api as functions, including helpers a…
+     31|     const files = readdirSync(resolve(process.cwd(), "api"), { recursi…
+     32|     expect(files.sort()).toEqual(endpoints.map(({ name }) => `${name}.…
+       |                          ^
+     33|     expect(files.length).toBeLessThanOrEqual(12);
+     34|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  server/vercel-layout.test.ts > Vercel Hobby deployment layout > uses Node ESM-resolvable extensions in every runtime-relative import
+AssertionError: /workspace/scratch/c17e31fd15f8/DeepSpec/api/chat.shared.ts must emit a resolvable Node ESM import: expected '../src/services/systemPrompts' to match /\.js$/
+
+- Expected:
+/\.js$/
+
++ Received:
+"../src/services/systemPrompts"
+
+ ❯ server/vercel-layout.test.ts:47:77
+     45|       const relativeImports = source.matchAll(/from\s+["'](\.{1,2}\/[^…
+     46|       for (const [, specifier] of relativeImports) {
+     47|         expect(specifier, `${file} must emit a resolvable Node ESM imp…
+       |                                                                             ^
+     48|       }
+     49|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed | 101 passed (102)
+      Tests  2 failed | 1409 passed (1411)
+   Start at  02:45:52
+   Duration  110.94s (transform 2.14s, setup 6.04s, import 4.52s, tests 31.25s, environment 54.21s)
+

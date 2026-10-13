@@ -93,6 +93,15 @@ export default defineConfig(async ({ mode }) => {
               return;
             }
 
+            const { createChatResponse, isChatEnabled } = (await server.ssrLoadModule("/server/chat.shared.ts")) as typeof import("./server/chat.shared");
+            if (!isChatEnabled(serverEnv)) {
+              const result = await createChatResponse(undefined, serverEnv);
+              response.statusCode = result.status;
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify(result.body));
+              return;
+            }
+
             const { enforceRateLimit } = (await server.ssrLoadModule("/server/rateLimit.shared.ts")) as typeof import("./server/rateLimit.shared");
             const { requireSession } = (await server.ssrLoadModule("/server/requireSession.shared.ts")) as typeof import("./server/requireSession.shared");
             const chatRateLimit = await enforceRateLimit("chat", request.headers, serverEnv);
@@ -112,7 +121,6 @@ export default defineConfig(async ({ mode }) => {
             }
 
             const body = await readJsonBody(request).catch(() => null);
-            const { createChatResponse } = (await server.ssrLoadModule("/server/chat.shared.ts")) as typeof import("./server/chat.shared");
             const result = await createChatResponse(body, serverEnv);
             response.statusCode = result.status;
             response.setHeader("Content-Type", "application/json");
@@ -198,10 +206,16 @@ export default defineConfig(async ({ mode }) => {
         // silently shadow the app again. Trade-off: this disables PWA offline precaching in
         // production. Flip back to false (and bump the SW) once you actually want offline support.
         selfDestroying: true,
-        includeAssets: ["icon-192.png", "icon-512.png", "brand/deepspec-logo.webp"],
+        includeAssets: [
+          "icon-192.png",
+          "icon-512.png",
+          "brand/deepspec-symbol.webp",
+          "brand/deepspec-scan-badge-glass.webp",
+          "brand/deepspec-scan-badge-solid.png",
+        ],
         manifest: {
-          name: "Deep Spec",
-          short_name: "Deep Spec",
+          name: "DeepSpec",
+          short_name: "DeepSpec",
           description: "Know what you're looking at.",
           theme_color: "#04070E",
           background_color: "#04070E",
@@ -231,7 +245,7 @@ export default defineConfig(async ({ mode }) => {
           // install-time precache; it loads on demand when the feature runs.
           // The logo PNG stays only for social-share/og:image tags; the app
           // itself uses the precached WebP.
-          globIgnores: ["**/transformers.web-*.js", "**/brand/deepspec-logo.png"],
+          globIgnores: ["**/transformers.web-*.js", "**/brand/deepspec-logo.png", "**/brand/deepspec-symbol.png", "**/brand/deepspec-scan-badge-*.png"],
         },
         devOptions: {
           enabled: false,

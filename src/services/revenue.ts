@@ -20,9 +20,9 @@ export type EntitlementState = {
   currentPeriodEnd?: string;
   planId?: PlanId;
   planName: string;
-  scanAllowance: number;
-  scansUsed: number;
-  status: "free" | "verification_required" | "active";
+  scanAllowance: number | null;
+  scansUsed: number | null;
+  status: "unknown" | "free" | "verification_required" | "active";
 };
 
 export type ServerEntitlement = {
@@ -32,7 +32,7 @@ export type ServerEntitlement = {
   planName?: string;
   scanAllowance?: number;
   scansUsed?: number;
-  status: "free" | "active" | "past_due" | "canceled" | "inactive";
+  status: "free" | "verification_required" | "active" | "past_due" | "canceled" | "inactive";
   verifiedAt: string;
 };
 
@@ -105,13 +105,44 @@ export function getRevenuePlan(planId: string | null | undefined) {
   return REVENUE_PLANS.find((plan) => plan.id === planId) ?? null;
 }
 
-export function getEntitlementState(scansUsed: number, serverEntitlement?: ServerEntitlement | null): EntitlementState {
+export function getEntitlementState(
+  serverEntitlement?: ServerEntitlement | null,
+  fallbackStatus: "unknown" | "verification_required" = "unknown",
+): EntitlementState {
+  if (!serverEntitlement) {
+    return fallbackStatus === "verification_required"
+      ? {
+          planName: "Verification required",
+          scanAllowance: null,
+          scansUsed: null,
+          status: "verification_required",
+        }
+      : {
+          planName: "Access unavailable",
+          scanAllowance: null,
+          scansUsed: null,
+          status: "unknown",
+        };
+  }
+
+  if (serverEntitlement.status === "verification_required") {
+    return {
+      planName: "Verification required",
+      scanAllowance: null,
+      scansUsed: null,
+      status: "verification_required",
+    };
+  }
+
   if (
-    serverEntitlement?.status === "active" &&
+    serverEntitlement.status === "active" &&
     serverEntitlement.planId &&
     typeof serverEntitlement.scanAllowance === "number" &&
     Number.isFinite(serverEntitlement.scanAllowance) &&
-    serverEntitlement.scanAllowance > 0
+    serverEntitlement.scanAllowance > 0 &&
+    typeof serverEntitlement.scansUsed === "number" &&
+    Number.isFinite(serverEntitlement.scansUsed) &&
+    serverEntitlement.scansUsed >= 0
   ) {
     const plan = getRevenuePlan(serverEntitlement.planId);
     return {
@@ -119,25 +150,46 @@ export function getEntitlementState(scansUsed: number, serverEntitlement?: Serve
       planId: serverEntitlement.planId,
       planName: serverEntitlement.planName || plan?.name || "Verified paid plan",
       scanAllowance: serverEntitlement.scanAllowance,
-      scansUsed: Math.max(0, Math.floor(serverEntitlement.scansUsed ?? 0)),
+      scansUsed: Math.floor(serverEntitlement.scansUsed),
       status: "active",
     };
   }
 
+  if (serverEntitlement.status === "active") {
+    return {
+      planName: "Access unavailable",
+      scanAllowance: null,
+      scansUsed: null,
+      status: "unknown",
+    };
+  }
+
+  const scanAllowance = serverEntitlement.scanAllowance;
+  const scansUsed = serverEntitlement.scansUsed;
+  const hasAuthoritativeCounts =
+    typeof scanAllowance === "number" &&
+    Number.isFinite(scanAllowance) &&
+    scanAllowance >= 0 &&
+    typeof scansUsed === "number" &&
+    Number.isFinite(scansUsed) &&
+    scansUsed >= 0;
+
   return {
     planName: "Free preview",
-    scanAllowance: 5,
-    scansUsed: serverEntitlement?.status === "free" && typeof serverEntitlement.scansUsed === "number" && Number.isFinite(serverEntitlement.scansUsed)
-      ? Math.max(0, Math.floor(serverEntitlement.scansUsed))
-      : scansUsed,
+    scanAllowance: hasAuthoritativeCounts ? Math.floor(scanAllowance) : null,
+    scansUsed: hasAuthoritativeCounts ? Math.floor(scansUsed) : null,
     status: "free",
   };
 }
 
 export function hasScanEntitlement(state: EntitlementState) {
-  return state.scansUsed < state.scanAllowance;
+  return state.scansUsed !== null && state.scanAllowance !== null && state.scansUsed < state.scanAllowance;
 }
 
 export function getRemainingScans(state: EntitlementState) {
+  if (state.scansUsed === null || state.scanAllowance === null) {
+    return null;
+  }
+
   return Math.max(0, state.scanAllowance - state.scansUsed);
 }

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { BrandLockup } from "../components/BrandLockup";
 import Button from "../components/ui/Button";
 import {
   ensureDefaultOrganization,
@@ -31,7 +32,7 @@ export default function Shop() {
       <div className="mx-auto w-full max-w-6xl">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-12 w-36 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-[var(--ds-accent-line)]" />
+            <BrandLockup />
             <p className="mt-3 text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Shop mode</p>
             <h1 className="mt-1 text-3xl font-black tracking-tight text-[var(--ds-fg-1)]">Work queue</h1>
             <p className="mt-2 text-sm font-semibold text-[var(--ds-fg-2)]">{getCurrentOrganization().name}</p>

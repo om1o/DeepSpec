@@ -1,0 +1,78 @@
+{
+  "checkedAt": "2026-10-11T20:51:55.366404+00:00",
+  "candidate": "96e34ce9ee79d1cf0137d57b218576e833d0ecc6",
+  "preview": "https://deepspec-git-codex-v1-preview-20261010-deep-spec-team.vercel.app",
+  "checks": [
+    {
+      "path": "/brand/deepspec-symbol.png",
+      "status": 200,
+      "contentType": "image/png",
+      "bytes": 578313,
+      "sha256": "3bd2890f862e681ff132fcd332a404bfefe81ce194a01692a21901ae2f6afac2",
+      "matchesBuiltCandidate": true,
+      "dimensions": [
+        1254,
+        1254
+      ]
+    },
+    {
+      "path": "/icon-192.png",
+      "status": 200,
+      "contentType": "image/png",
+      "bytes": 19048,
+      "sha256": "43525beeb7cd676220f8d4d92871f83a3f1da27e1b1cc6f3d3bec3970c72ad46",
+      "matchesBuiltCandidate": true,
+      "dimensions": [
+        192,
+        192
+      ]
+    },
+    {
+      "path": "/icon-512.png",
+      "status": 200,
+      "contentType": "image/png",
+      "bytes": 112370,
+      "sha256": "33bb9e8347149be8c32e5aa0988bd26e62375d8998aab681918b3052c170d7e6",
+      "matchesBuiltCandidate": true,
+      "dimensions": [
+        512,
+        512
+      ]
+    },
+    {
+      "path": "/manifest.webmanifest",
+      "status": 200,
+      "contentType": "application/manifest+json; charset=utf-8",
+      "bytes": 414,
+      "sha256": "2123965f9fa6b48aacedbc481c4c93cc7b06ffe500ad2205b7bccd53c0065244",
+      "matchesBuiltCandidate": true,
+      "manifest": {
+        "name": "Deep Spec",
+        "short_name": "Deep Spec",
+        "description": "Know what you're looking at.",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#04070E",
+        "theme_color": "#04070E",
+        "lang": "en",
+        "scope": "/",
+        "orientation": "portrait",
+        "icons": [
+          {
+            "src": "/icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any maskable"
+          },
+          {
+            "src": "/icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable"
+          }
+        ]
+      }
+    }
+  ],
+  "boundary": "Read-only GET of mutable branch alias. Exact asset equality, not proof of all deployed source or authenticated application behavior."
+}

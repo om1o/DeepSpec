@@ -14,6 +14,9 @@ describe("AnalyzingOverlay", () => {
   it("shows the step first, then swaps to progress copy with a live elapsed counter at 8s", () => {
     render(<AnalyzingOverlay onCancel={() => {}} step="Reading photo" />);
 
+    expect(screen.getByTestId("scan-brand-animation")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("status")).toHaveTextContent("Reading photo");
+    expect(document.querySelector('img[src="/brand/deepspec-scan-badge-glass.webp"]')).toHaveAttribute("alt", "");
     expect(screen.getByText("0s elapsed")).toBeInTheDocument();
     expect(screen.getAllByText("Reading photo")).toHaveLength(2);
 

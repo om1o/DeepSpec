@@ -3,7 +3,10 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
+import { createSupabaseAdminClient, readSupabaseAdminKey } from "./supabase-admin-env.mjs";
 import { getPolarWebhookSigningKey } from "./polar-webhook-signing.mjs";
+
+import { createConfirmedReplaySession } from "./qa/confirmed-session.mjs";
 
 const PLAN_ALLOWANCE = {
   plus_monthly: 100,
@@ -128,14 +131,14 @@ export function signStandardWebhookBody(rawBody, webhookSecret, options = {}) {
   };
 }
 
-async function main() {
-  const options = parseArgs(process.argv.slice(2));
+export async function main(args = process.argv.slice(2)) {
+  const options = parseArgs(args);
   const baseUrl = options.url || process.env.QA_BASE_URL || process.env.DEEPSPEC_PUBLIC_URL || "http://127.0.0.1:5175";
   const env = readRequiredEnv(options);
 
   console.log(`[0/5] Target: ${baseUrl}`);
   console.log(`      Provider: ${env.provider}`);
-  console.log("      This verifier creates a synthetic anonymous Supabase user and cleans up only that user's synthetic billing entitlement.");
+  console.log("      This verifier creates a disposable confirmed Supabase user and cleans up only that user and its synthetic billing entitlement.");
   if (env.provider === "stripe") {
     console.log("      Stripe mode also creates and deletes one test-mode Stripe customer. It does not make a payment.");
   }
@@ -147,22 +150,20 @@ async function main() {
       persistSession: false,
     },
   });
-  const adminClient = createClient(env.supabaseUrl, env.serviceRoleKey, {
+  const adminClient = createSupabaseAdminClient(env.supabaseUrl, env.serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
     },
   });
 
+  let summary;
+  const failures = [];
   let userId = "";
   let providerCustomerId = "";
   try {
-    console.log("[1/5] Creating synthetic anonymous test user...");
-    const { data, error } = await publicClient.auth.signInAnonymously();
-    if (error || !data.user || !data.session?.access_token) {
-      throw new Error(`Anonymous sign-in failed: ${error?.message ?? "No user/session returned."}`);
-    }
-    userId = data.user.id;
+    console.log("[1/5] Creating a disposable confirmed test user...");
+    const data = await createConfirmedReplaySession(adminClient, publicClient, (id) => { userId = id; });
 
     console.log(`[2/5] Posting signed synthetic ${env.provider} webhook...`);
     const testId = `billing-replay-${randomUUID()}`;
@@ -234,7 +235,7 @@ async function main() {
     console.log("      Portal handoff verified.");
     console.log("[5/5] Entitlement replay verified.");
     console.log(`      Plan=${entitlement.planId} allowance=${entitlement.scanAllowance} provider=${entitlement.billingProvider}`);
-    writeSummary(options.summaryPath, {
+    summary = {
       baseUrl,
       ok: true,
       planId: entitlement.planId,
@@ -243,22 +244,40 @@ async function main() {
       provider: entitlement.billingProvider,
       scanAllowance: entitlement.scanAllowance,
       verifiedAt: new Date().toISOString(),
-    });
+    };
+  } catch (error) {
+    failures.push(error);
   } finally {
+    try {
+      const { error: signOutError } = await publicClient.auth.signOut({ scope: "local" });
+      if (signOutError) failures.push(new Error("Could not revoke the local replay session."));
+    } catch { failures.push(new Error("Could not revoke the local replay session.")); }
     if (providerCustomerId && env.provider === "stripe" && !options.keepProviderCustomer) {
-      await deleteStripeTestCustomer(env.stripeSecretKey, providerCustomerId);
-      console.log("[cleanup] Deleted synthetic Stripe test customer.");
+      try {
+        await deleteStripeTestCustomer(env.stripeSecretKey, providerCustomerId);
+        console.log("[cleanup] Deleted synthetic Stripe test customer.");
+      } catch (error) { failures.push(error); }
     } else if (providerCustomerId && env.provider === "stripe") {
       console.log("[cleanup] Kept synthetic Stripe test customer because --keep-provider-customer was set.");
     }
 
     if (userId && !options.keepEntitlement) {
-      await adminClient.from("billing_entitlements").delete().eq("user_id", userId);
-      console.log("[cleanup] Cleaned up synthetic billing entitlement row.");
+      try {
+        const { error: entitlementError } = await adminClient.from("billing_entitlements").delete().eq("user_id", userId);
+        if (entitlementError) {
+          failures.push(new Error("Synthetic billing entitlement cleanup failed; disposable account retained for investigation."));
+        } else {
+          const { error: userError } = await adminClient.auth.admin.deleteUser(userId);
+          if (userError) failures.push(new Error("Disposable billing replay account cleanup failed."));
+          else console.log("[cleanup] Cleaned up synthetic billing entitlement and disposable account.");
+        }
+      } catch (error) { failures.push(error); }
     } else if (userId) {
-      console.log("[cleanup] Kept synthetic billing entitlement row because --keep-entitlement was set.");
+      console.log("[cleanup] Kept disposable account and synthetic billing entitlement row because --keep-entitlement was set.");
     }
   }
+  if (failures.length) throw new AggregateError(failures, failures.map((error) => error.message).join("\n"));
+  writeSummary(options.summaryPath, summary);
 }
 
 function readRequiredEnv(options) {
@@ -269,7 +288,7 @@ function readRequiredEnv(options) {
 
   const supabaseUrl = String(process.env.VITE_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "").trim();
   const publishableKey = String(process.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "").trim();
-  const serviceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
+  const serviceRoleKey = readSupabaseAdminKey();
   const polarWebhookSecret = String(process.env.POLAR_WEBHOOK_SECRET ?? "").trim();
   const stripeSecretKey = String(process.env.STRIPE_SECRET_KEY ?? "").trim();
   const stripeWebhookSecret = String(process.env.STRIPE_WEBHOOK_SECRET ?? "").trim();
@@ -277,7 +296,7 @@ function readRequiredEnv(options) {
   const missing = [
     ["VITE_SUPABASE_URL or SUPABASE_URL", supabaseUrl],
     ["VITE_SUPABASE_PUBLISHABLE_KEY", publishableKey],
-    ["SUPABASE_SERVICE_ROLE_KEY", serviceRoleKey],
+    ["SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY", serviceRoleKey],
     ...(billingProvider === "polar"
       ? [["POLAR_WEBHOOK_SECRET", polarWebhookSecret]]
       : [
@@ -393,8 +412,7 @@ async function deleteStripeTestCustomer(secretKey, customerId) {
   }).catch(() => null);
 
   if (!response?.ok) {
-    const bodyText = response ? await response.text() : "network_error";
-    console.warn(`[cleanup] Stripe test customer cleanup failed for ${customerId}: ${bodyText}`);
+    throw new Error("Synthetic Stripe test customer cleanup failed.");
   }
 }
 
