@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, vi } from "vitest";
 import Result from "./Result";
+import Chat from "./Chat";
 import * as aiService from "../services/aiService";
 import * as reportService from "../services/report";
 import { getLookup, getLookups, LOOKUPS_STORAGE_KEY, updateLookup } from "../services/storage";
@@ -693,6 +694,14 @@ describe("Result", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
     expect(screen.getByText(/device storage is full/i)).toBeInTheDocument();
+    expect(getLookup(failedLookup.id)?.result).toBeUndefined();
+    expect(getLookup(failedLookup.id)?.errorMessage).toBe("Network error");
+    expect(screen.queryByRole("link", { name: "Ask", exact: true })).not.toBeInTheDocument();
+    const ask = screen.getByRole("button", { name: "Ask", exact: true });
+    expect(ask).toBeDisabled();
+    await userEvent.click(ask);
+    expect(screen.queryByLabelText("Ask a follow-up question")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Why or why not" }));
     fireEvent.change(screen.getByLabelText("Why or why not"), { target: { value: "Starter label is visible" } });
     expect(screen.getByLabelText("Why or why not")).toHaveValue("Starter label is visible");
@@ -701,6 +710,8 @@ describe("Result", () => {
     expect(screen.getByLabelText("Why or why not")).toHaveValue("Starter label is visible");
     expect(screen.getByRole("button", { name: "Retry saving scan result" })).toBeInTheDocument();
 
+    expect(screen.getByRole("button", { name: "Ask", exact: true })).toBeDisabled();
+    expect(getLookup(failedLookup.id)?.result).toBeUndefined();
     write.mockRestore();
 
     await userEvent.click(screen.getByRole("button", { name: "Retry saving scan result" }));
@@ -711,6 +722,12 @@ describe("Result", () => {
     });
     expect(getLookup(failedLookup.id)?.errorMessage).toBeUndefined();
     expect(screen.queryByRole("button", { name: "Retry saving scan result" })).not.toBeInTheDocument();
+    const savedAsk = screen.getByRole("link", { name: "Ask", exact: true });
+    expect(savedAsk).toHaveAttribute("href", `/result/${failedLookup.id}/chat`);
+    await userEvent.click(savedAsk);
+    expect(screen.getByRole("heading", { name: "Alternator" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Ask a follow-up question")).toBeEnabled();
+    expect(aiService.identifyCapturedFrame).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -818,6 +835,7 @@ function renderResult(state: (ScanAnalysisState & { savedLookup?: Lookup }) | nu
       <Routes>
         <Route path="/result" element={<Result />} />
         <Route path="/result/:id" element={<Result />} />
+        <Route path="/result/:id/chat" element={<Chat />} />
       </Routes>
     </MemoryRouter>,
   );

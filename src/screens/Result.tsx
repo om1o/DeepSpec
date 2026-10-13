@@ -44,6 +44,7 @@ export default function Result() {
     ? (lookup ? mergeCloudLookup(lookup, historyLookup) : historyLookup)
     : lookup;
   const inspectionLookup = inspectionBase ? withRetriedLookupResult(inspectionBase, liveScanState) : null;
+  const [hasPendingRetryResult, setHasPendingRetryResult] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [retrySaveLabel, setRetrySaveLabel] = useState("Retry saving feedback");
   const scanState = lookup ? scanStateFromLookup(inspectionBase ?? lookup) : liveScanState ?? getScanState(routeState);
@@ -140,6 +141,7 @@ export default function Result() {
       }
 
       pendingRetryLookupRef.current = null;
+      setHasPendingRetryResult(false);
       if (pendingRatingRef.current !== undefined || pendingCorrectionRef.current !== undefined) {
         handleLookupUpdate(updateLookup(pendingRetry.id, {
           ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
@@ -195,7 +197,7 @@ export default function Result() {
   }
 
   function handleSaveAndAsk(question?: string) {
-    if (!isAccountScopeCurrent(mountedScope)) return;
+    if (!isAccountScopeCurrent(mountedScope) || pendingRetryLookupRef.current) return;
     const saved = lookup ?? saveCurrentScan();
     if (!saved) {
       return;
@@ -283,6 +285,7 @@ export default function Result() {
               result={scanState.result}
               capturedAt={capturedAt}
               canSaveForChat={canSaveForChat}
+              askDisabled={hasPendingRetryResult}
               lookupId={lookup?.id ?? null}
               onSaveAndAsk={handleSaveAndAsk}
               onSaveOnly={handleSaveOnly}
@@ -299,6 +302,7 @@ export default function Result() {
               vehicleContext={lookup?.vehicleContext ?? scanState.vehicleContext}
               onLookupRetrySuccess={(updatedLookup, warning) => {
                 pendingRetryLookupRef.current = warning ? updatedLookup : null;
+                setHasPendingRetryResult(Boolean(warning));
                 setLookup(updatedLookup);
                 setSaveError(warning ?? null);
                 setRetrySaveLabel(warning ? "Retry saving scan result" : "Retry saving feedback");
@@ -477,6 +481,7 @@ function ReportActions({ lookup }: { lookup: Lookup }) {
 }
 
 function AnalysisResult({
+  askDisabled,
   canSaveForChat,
   capturedAt,
   lookupId,
@@ -484,6 +489,7 @@ function AnalysisResult({
   onSaveOnly,
   result,
 }: {
+  askDisabled: boolean;
   canSaveForChat: boolean;
   capturedAt: string | null;
   lookupId: string | null;
@@ -521,7 +527,7 @@ function AnalysisResult({
         <IssueLine result={result} variant="result" />
         <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-3)]">{getAnswerBody(result, summary)}</p>
         {capturedAt ? <p className="mt-3 text-xs font-semibold text-[var(--ds-fg-3)]">Captured {capturedAt}</p> : null}
-        <QuickActions canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} onSaveOnly={onSaveOnly} />
+        <QuickActions askDisabled={askDisabled} canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} onSaveOnly={onSaveOnly} />
         <SceneCategoryList result={result} variant="result" />
         <ResultDetailSections result={result} variant="result" />
       </section>
@@ -556,18 +562,26 @@ function MiniPill({ label }: { label: string }) {
 }
 
 function QuickActions({
+  askDisabled,
   canSaveForChat,
   lookupId,
   onSaveAndAsk,
   onSaveOnly,
 }: {
+  askDisabled: boolean;
   canSaveForChat: boolean;
   lookupId: string | null;
   onSaveAndAsk: () => void;
   onSaveOnly: () => void;
 }) {
   let askAction = null;
-  if (lookupId) {
+  if (askDisabled) {
+    askAction = (
+      <button className="rounded-full bg-[var(--ds-surface)] px-4 py-3 text-center text-sm font-extrabold text-[var(--ds-fg-3)]" type="button" disabled aria-describedby="ask-save-required">
+        Ask
+      </button>
+    );
+  } else if (lookupId) {
     askAction = (
       <Link className="rounded-full bg-[var(--ds-accent)] px-4 py-3 text-center text-sm font-extrabold text-white" to={`/result/${lookupId}/chat`}>
         Ask
@@ -583,6 +597,7 @@ function QuickActions({
 
   return (
     <div className="mt-4 grid grid-cols-2 gap-2">
+      {askDisabled ? <p id="ask-save-required" className="col-span-2 text-xs font-semibold text-[var(--ds-fg-3)]">Retry saving the scan result to enable Ask.</p> : null}
       {askAction ?? <span aria-hidden className="rounded-full bg-[var(--ds-surface)] px-4 py-3" />}
       <button
         className="rounded-full bg-[var(--ds-surface)] px-4 py-3 text-center text-sm font-extrabold text-[var(--ds-fg-1)] disabled:text-[var(--ds-fg-3)]"
