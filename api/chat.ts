@@ -1,6 +1,6 @@
 /// <reference types="node" />
 
-import { createChatResponse } from "../server/chat.shared.js";
+import { createChatResponse, isChatEnabled } from "../server/chat.shared.js";
 import { enforceRateLimit } from "../server/rateLimit.shared.js";
 import { requireSession } from "../server/requireSession.shared.js";
 
@@ -26,6 +26,12 @@ export default async function handler(request: VercelRequest, response: VercelRe
         message: "Use POST for AI follow-up chat.",
       },
     });
+    return;
+  }
+
+  if (!isChatEnabled(process.env)) {
+    const result = await createChatResponse(undefined, process.env);
+    response.status(result.status).json(result.body);
     return;
   }
 

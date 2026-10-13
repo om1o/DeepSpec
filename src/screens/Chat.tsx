@@ -17,6 +17,7 @@ export default function Chat() {
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const isChatDisabled = errorCode === "feature_disabled";
 
@@ -42,11 +43,12 @@ export default function Chat() {
 
   async function handleRetryLastQuestion() {
     const lastUserMessage = lookup ? getLastUnansweredUserMessage(lookup) : null;
-    if (!lastUserMessage || isSending) {
+    const retryQuestion = pendingQuestion ?? lastUserMessage?.content;
+    if (!retryQuestion || isSending) {
       return;
     }
 
-    await sendQuestion(lastUserMessage.content, false);
+    await sendQuestion(retryQuestion, Boolean(pendingQuestion));
   }
 
   async function sendQuestion(trimmedQuestion: string, shouldSaveUserMessage: boolean) {
@@ -58,48 +60,33 @@ export default function Chat() {
     setErrorCode(null);
     setIsSending(true);
 
-    let activeLookup = lookup;
-
-    if (shouldSaveUserMessage) {
-      const userMessage = createChatMessage("user", trimmedQuestion);
-      const savedUserMessage = appendChatMessages(lookup.id, [userMessage]);
-      if (!savedUserMessage.ok) {
-        setError(savedUserMessage.message);
-        setErrorCode("storage");
-        setIsSending(false);
-        return;
-      }
-
-      if (!savedUserMessage.value) {
-        setError("This saved scan was not found.");
-        setErrorCode("not_found");
-        setIsSending(false);
-        return;
-      }
-
-      activeLookup = savedUserMessage.value;
-      setLookup(activeLookup);
-      setQuestion("");
-    }
+    // Keep new questions in memory until an answer is available. A disabled or
+    // failed request must not leave an unanswered question in durable history.
+    if (shouldSaveUserMessage) setPendingQuestion(trimmedQuestion);
 
     try {
-      const answer = await sendFollowUp(activeLookup, trimmedQuestion);
+      const answer = await sendFollowUp(lookup, trimmedQuestion);
       if (!isAccountScopeCurrent(accountScopeRef.current)) return;
       const assistantMessage = createChatMessage("assistant", answer);
-      const savedAssistantMessage = appendChatMessages(activeLookup.id, [assistantMessage]);
-      if (!savedAssistantMessage.ok) {
-        setError(savedAssistantMessage.message);
+      const messages = shouldSaveUserMessage
+        ? [createChatMessage("user", trimmedQuestion), assistantMessage]
+        : [assistantMessage];
+      const savedConversation = appendChatMessages(lookup.id, messages);
+      if (!savedConversation.ok) {
+        setError(savedConversation.message);
         setErrorCode("storage");
         return;
       }
 
-      if (!savedAssistantMessage.value) {
+      if (!savedConversation.value) {
         setError("This saved scan was not found.");
         setErrorCode("not_found");
         return;
       }
 
-      setLookup(savedAssistantMessage.value);
+      setLookup(savedConversation.value);
+      setPendingQuestion(null);
+      setQuestion("");
     } catch (chatError) {
       if (!isAccountScopeCurrent(accountScopeRef.current)) return;
       setError(getAIErrorMessage(chatError));
@@ -129,7 +116,7 @@ export default function Chat() {
   const errorDetails = error ? getAIErrorDetails(errorCode) : null;
   const showSafetyWarning = lookup.result?.isSafetyCritical || lookup.result?.safetyTriage === "needs_professional";
   const lastUnansweredUserMessage = getLastUnansweredUserMessage(lookup);
-  const canRetryLastQuestion = Boolean(error && errorCode !== "feature_disabled" && lastUnansweredUserMessage && canChat && !isSending);
+  const canRetryLastQuestion = Boolean(error && errorCode !== "feature_disabled" && (pendingQuestion || lastUnansweredUserMessage) && canChat && !isSending);
 
   return (
     <main className="ds-chat-page ds-workbench min-h-dvh px-4 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-[var(--ds-fg-1)]">

@@ -107,7 +107,7 @@ export async function createChatResponse(body: unknown, env: Record<string, stri
     : lastRetryableError ?? errorResponse(502, "provider_error", "The AI provider rejected this request.");
 }
 
-function isChatEnabled(env: Record<string, string | undefined>) {
+export function isChatEnabled(env: Record<string, string | undefined>) {
   const configured = env.DEEPSPEC_ENABLE_CHAT?.trim().toLowerCase();
   if (configured === "true") return true;
   if (configured === "false") return false;

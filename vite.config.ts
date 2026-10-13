@@ -93,6 +93,15 @@ export default defineConfig(async ({ mode }) => {
               return;
             }
 
+            const { createChatResponse, isChatEnabled } = (await server.ssrLoadModule("/server/chat.shared.ts")) as typeof import("./server/chat.shared");
+            if (!isChatEnabled(serverEnv)) {
+              const result = await createChatResponse(undefined, serverEnv);
+              response.statusCode = result.status;
+              response.setHeader("Content-Type", "application/json");
+              response.end(JSON.stringify(result.body));
+              return;
+            }
+
             const { enforceRateLimit } = (await server.ssrLoadModule("/server/rateLimit.shared.ts")) as typeof import("./server/rateLimit.shared");
             const { requireSession } = (await server.ssrLoadModule("/server/requireSession.shared.ts")) as typeof import("./server/requireSession.shared");
             const chatRateLimit = await enforceRateLimit("chat", request.headers, serverEnv);
@@ -112,7 +121,6 @@ export default defineConfig(async ({ mode }) => {
             }
 
             const body = await readJsonBody(request).catch(() => null);
-            const { createChatResponse } = (await server.ssrLoadModule("/server/chat.shared.ts")) as typeof import("./server/chat.shared");
             const result = await createChatResponse(body, serverEnv);
             response.statusCode = result.status;
             response.setHeader("Content-Type", "application/json");
