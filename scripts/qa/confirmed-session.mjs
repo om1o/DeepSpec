@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 export function readTestCredentials(env = process.env, prefix = "DEEPSPEC_AUTH_TEST") {
   const email = env[`${prefix}_EMAIL`]?.trim();
@@ -30,7 +30,9 @@ export function assertDistinctUsers(owner, other) {
 // Only a newly created disposable identity may receive synthetic billing grants.
 // The callback records its ID before login so the caller can clean up on failure.
 export async function createConfirmedReplaySession(adminClient, publicClient, onCreated) {
-  const credentials = { email: `deepspec-replay-${randomUUID()}@example.test`, password: randomUUID() + randomUUID() };
+  // Guarantee the Auth.tsx policy independently of randomness, with 256 random bits.
+  // The 68 ASCII bytes also stay below bcrypt's 72-byte password limit.
+  const credentials = { email: `deepspec-replay-${randomUUID()}@example.test`, password: `Aa1!${randomBytes(32).toString("hex")}` };
   const { data, error } = await adminClient.auth.admin.createUser({ ...credentials, email_confirm: true });
   if (error || !data?.user?.id) throw new Error("Could not create the disposable confirmed billing replay account.");
   onCreated(data.user.id);

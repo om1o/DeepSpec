@@ -1,8 +1,16 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
+import { randomBytes } from "node:crypto";
 import { assertConfirmedSession, assertDistinctUsers, createConfirmedReplaySession, readTestCredentials, signInConfirmed } from "./confirmed-session.mjs";
 
+vi.mock("node:crypto", async (importOriginal) => {
+  const crypto = await importOriginal();
+  return { ...crypto, randomBytes: vi.fn(crypto.randomBytes) };
+});
+
 const confirmed = (id = "owner") => ({ user: { id, email_confirmed_at: "2026-10-11T00:00:00Z", is_anonymous: false }, session: { access_token: "secret-token" } });
+const satisfiesPasswordPolicy = (password) => password.length >= 8
+  && /[A-Z]/.test(password) && /[a-z]/.test(password) && /[0-9]/.test(password) && /[!@#$%^&*()_+\-=]/.test(password);
 
 describe("verified QA identity contract", () => {
   it("requires explicit credentials and preserves password bytes", () => {
@@ -45,5 +53,23 @@ describe("verified QA identity contract", () => {
     const record = vi.fn();
     await expect(createConfirmedReplaySession(admin, client, record)).rejects.toThrow("sign-in failed");
     expect(record).toHaveBeenCalledWith("disposable");
+  });
+  it("generates distinct policy-compliant credentials for every disposable account", async () => {
+    const admin = { auth: { admin: { createUser: vi.fn().mockResolvedValue({ data: { user: { id: "disposable" } } }) } } };
+    const client = { auth: { signInWithPassword: vi.fn().mockResolvedValue({ data: confirmed("disposable") }) } };
+    for (let index = 0; index < 256; index += 1) await createConfirmedReplaySession(admin, client, vi.fn());
+    const credentials = admin.auth.admin.createUser.mock.calls.map(([value]) => value);
+    expect(credentials.every(({ password }) => satisfiesPasswordPolicy(password))).toBe(true);
+    expect(credentials.every(({ password }) => Buffer.byteLength(password, "utf8") === 68)).toBe(true);
+    expect(new Set(credentials.map(({ password }) => password)).size).toBe(256);
+    expect(new Set(credentials.map(({ email }) => email)).size).toBe(256);
+  });
+  it.each([0, 255])("guarantees every character class even with uniform random bytes (%s)", async (byte) => {
+    randomBytes.mockReturnValueOnce(Buffer.alloc(32, byte));
+    const admin = { auth: { admin: { createUser: vi.fn().mockResolvedValue({ data: { user: { id: "disposable" } } }) } } };
+    const client = { auth: { signInWithPassword: vi.fn().mockResolvedValue({ data: confirmed("disposable") }) } };
+    await createConfirmedReplaySession(admin, client, vi.fn());
+    expect(randomBytes).toHaveBeenLastCalledWith(32);
+    expect(satisfiesPasswordPolicy(admin.auth.admin.createUser.mock.calls[0][0].password)).toBe(true);
   });
 });

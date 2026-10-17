@@ -7,6 +7,7 @@ import { main as checkout } from "./verify-billing-checkout.mjs";
 import { main as replay } from "./verify-billing-webhook-replay.mjs";
 let client;
 let admin;
+let deleteEntitlements;
 const reply = (body) => ({ ok: true, status: 200, text: async () => JSON.stringify(body) });
 beforeEach(() => {
   vi.clearAllMocks();
@@ -17,10 +18,15 @@ beforeEach(() => {
     signInWithPassword: vi.fn().mockResolvedValue({ data: { user: { id: "disposable", email_confirmed_at: "date" }, session: { access_token: "public-session" } } }),
     signOut: vi.fn().mockResolvedValue({ error: null }),
   } };
+  deleteEntitlements = vi.fn().mockResolvedValue({ error: null });
   admin = { auth: { admin: {
-    createUser: vi.fn().mockResolvedValue({ data: { user: { id: "disposable" } } }),
+    createUser: vi.fn().mockImplementation(async ({ password }) => {
+      const meetsPolicy = password.length >= 8 && /[A-Z]/.test(password) && /[a-z]/.test(password)
+        && /[0-9]/.test(password) && /[!@#$%^&*()_+\-=]/.test(password);
+      return meetsPolicy ? { data: { user: { id: "disposable" } } } : { error: { message: "weak password" } };
+    }),
     deleteUser: vi.fn().mockResolvedValue({ error: null }),
-  } }, from: vi.fn().mockReturnValue({ delete: () => ({ eq: vi.fn().mockResolvedValue({ error: null }) }) }) };
+  } }, from: vi.fn().mockReturnValue({ delete: () => ({ eq: deleteEntitlements }) }) };
   mocks.createClient.mockReturnValueOnce(client).mockReturnValueOnce(admin);
   vi.stubGlobal("fetch", vi.fn());
 });
@@ -52,15 +58,25 @@ describe("billing verifier confirmed-session integration", () => {
       .mockResolvedValueOnce(reply({ url: "https://polar.sh/portal/test" }));
     await replay(["--url", "https://app.example.test"]);
     expect(admin.auth.admin.createUser).toHaveBeenCalledWith(expect.objectContaining({ email_confirm: true }));
+    const { email, password } = admin.auth.admin.createUser.mock.calls[0][0];
+    expect(client.auth.signInWithPassword).toHaveBeenCalledWith({ email, password });
+    expect(JSON.parse(fetch.mock.calls[0][1].body).data.metadata.supabase_user_id).toBe("disposable");
     expect(fetch.mock.calls[1][1].headers.Authorization).toBe("Bearer public-session");
     expect(fetch.mock.calls[2][1].headers.Authorization).toBe("Bearer public-session");
+    expect(admin.from).toHaveBeenCalledExactlyOnceWith("billing_entitlements");
+    expect(deleteEntitlements).toHaveBeenCalledExactlyOnceWith("user_id", "disposable");
     expect(admin.auth.admin.deleteUser).toHaveBeenCalledWith("disposable");
     expect(client.auth.signOut).toHaveBeenCalledWith({ scope: "local" });
+    expect(client.auth.signOut.mock.invocationCallOrder[0]).toBeLessThan(deleteEntitlements.mock.invocationCallOrder[0]);
+    expect(deleteEntitlements.mock.invocationCallOrder[0]).toBeLessThan(admin.auth.admin.deleteUser.mock.invocationCallOrder[0]);
     expect(mocks.writeFileSync).toHaveBeenCalledOnce();
+    const output = JSON.stringify([console.log.mock.calls, mocks.writeFileSync.mock.calls]);
+    for (const secret of [email, password, "public-session", "server-only", "webhook-secret"]) expect(output.includes(secret)).toBe(false);
   });
   it("cleans the created account on failed login and never posts a webhook", async () => {
     client.auth.signInWithPassword.mockResolvedValue({ error: {} });
     await expect(replay([])).rejects.toThrow("sign-in failed");
+    expect(deleteEntitlements).toHaveBeenCalledExactlyOnceWith("user_id", "disposable");
     expect(admin.auth.admin.deleteUser).toHaveBeenCalledWith("disposable");
     expect(fetch).not.toHaveBeenCalled();
     expect(mocks.writeFileSync).not.toHaveBeenCalled();
@@ -80,5 +96,43 @@ describe("billing verifier confirmed-session integration", () => {
     expect(admin.auth.admin.deleteUser).toHaveBeenCalledWith("disposable");
     expect(mocks.writeFileSync).not.toHaveBeenCalled();
   });
-
+  it("redacts rejected creation credentials and never signs in or deletes an unrelated account", async () => {
+    admin.auth.admin.createUser.mockImplementation(async ({ password }) => ({ error: { message: `Rejected ${password} server-only` } }));
+    await expect(replay([])).rejects.toThrow(/^Could not create the disposable confirmed billing replay account\.$/);
+    expect(client.auth.signInWithPassword).not.toHaveBeenCalled();
+    expect(admin.from).not.toHaveBeenCalled();
+    expect(admin.auth.admin.deleteUser).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(mocks.writeFileSync).not.toHaveBeenCalled();
+  });
+  it.each([
+    { id: "existing-account", email_confirmed_at: "date" },
+    { id: "disposable", is_anonymous: true, email_confirmed_at: "date" },
+    { id: "disposable" },
+  ])("rejects mismatched or unconfirmed identities and cleans up only the created account: %j", async (user) => {
+    client.auth.signInWithPassword.mockResolvedValue({ data: { user, session: { access_token: "public-session" } } });
+    await expect(replay([])).rejects.toThrow(/does not match|confirmed user session/);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(deleteEntitlements).toHaveBeenCalledExactlyOnceWith("user_id", "disposable");
+    expect(admin.auth.admin.deleteUser).toHaveBeenCalledExactlyOnceWith("disposable");
+    expect(mocks.writeFileSync).not.toHaveBeenCalled();
+  });
+  it("retains the disposable account when entitlement cleanup fails and emits no success", async () => {
+    client.auth.signInWithPassword.mockResolvedValue({ error: {} });
+    deleteEntitlements.mockResolvedValue({ error: {} });
+    await expect(replay([])).rejects.toThrow("disposable account retained for investigation");
+    expect(deleteEntitlements).toHaveBeenCalledExactlyOnceWith("user_id", "disposable");
+    expect(admin.auth.admin.deleteUser).not.toHaveBeenCalled();
+    expect(mocks.writeFileSync).not.toHaveBeenCalled();
+  });
+  it("rejects a live Stripe key before creating a disposable account or contacting a provider", async () => {
+    vi.stubEnv("BILLING_PROVIDER", "stripe");
+    vi.stubEnv("STRIPE_SECRET_KEY", "sk_live_synthetic_fixture");
+    vi.stubEnv("STRIPE_WEBHOOK_SECRET", "whsec_synthetic_fixture");
+    await expect(replay([])).rejects.toThrow("requires a test-mode STRIPE_SECRET_KEY");
+    expect(mocks.createClient).not.toHaveBeenCalled();
+    expect(admin.auth.admin.createUser).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(mocks.writeFileSync).not.toHaveBeenCalled();
+  });
 });
