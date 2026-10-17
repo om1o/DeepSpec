@@ -6,11 +6,17 @@ import Button from "../components/ui/Button";
 import ScanThumb from "../components/ui/ScanThumb";
 import { AIServiceError, getAIErrorDetails, getAIErrorMessage, sendFollowUp } from "../services/aiService";
 import { appendChatMessages, createChatMessage, getLookup } from "../services/storage";
-import type { Lookup } from "../types";
+import type { ChatMessage, Lookup } from "../types";
 
 export default function Chat() {
-  const accountScopeRef = useRef(getAccountScope());
   const { id } = useParams();
+  const scope = getAccountScope();
+  return <ChatConversation key={JSON.stringify([id, scope.userId, scope.generation])} id={id} />;
+}
+
+function ChatConversation({ id }: { id: string | undefined }) {
+  const accountScopeRef = useRef(getAccountScope());
+  const isMountedRef = useRef(true);
   const [searchParams] = useSearchParams();
   const [lookup, setLookup] = useState<Lookup | null>(() => (id ? getLookup(id) : null));
   const [question, setQuestion] = useState(() => searchParams.get("q")?.trim().slice(0, 500) ?? "");
@@ -18,8 +24,18 @@ export default function Chat() {
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
+  const [pendingExchange, setPendingExchange] = useState<ChatMessage[] | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const isChatDisabled = errorCode === "feature_disabled";
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
+
+  function isCurrentConversation() {
+    return isMountedRef.current && isAccountScopeCurrent(accountScopeRef.current);
+  }
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView?.({ behavior: "smooth", block: "end" });
@@ -27,7 +43,7 @@ export default function Chat() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!isAccountScopeCurrent(accountScopeRef.current) || !lookup || !lookup.result || isSending || isChatDisabled) {
+    if (!isCurrentConversation() || !lookup || !lookup.result || isSending || isChatDisabled || pendingExchange) {
       return;
     }
 
@@ -42,6 +58,7 @@ export default function Chat() {
   }
 
   async function handleRetryLastQuestion() {
+    if (pendingExchange) return;
     const lastUserMessage = lookup ? getLastUnansweredUserMessage(lookup) : null;
     const retryQuestion = pendingQuestion ?? lastUserMessage?.content;
     if (!retryQuestion || isSending) {
@@ -52,7 +69,7 @@ export default function Chat() {
   }
 
   async function sendQuestion(trimmedQuestion: string, shouldSaveUserMessage: boolean) {
-    if (!isAccountScopeCurrent(accountScopeRef.current) || !lookup || !lookup.result || isSending || isChatDisabled) {
+    if (!isCurrentConversation() || !lookup || !lookup.result || isSending || isChatDisabled || pendingExchange) {
       return;
     }
 
@@ -66,34 +83,38 @@ export default function Chat() {
 
     try {
       const answer = await sendFollowUp(lookup, trimmedQuestion);
-      if (!isAccountScopeCurrent(accountScopeRef.current)) return;
-      const assistantMessage = createChatMessage("assistant", answer);
-      const messages = shouldSaveUserMessage
-        ? [createChatMessage("user", trimmedQuestion), assistantMessage]
-        : [assistantMessage];
-      const savedConversation = appendChatMessages(lookup.id, messages);
-      if (!savedConversation.ok) {
-        setError(savedConversation.message);
-        setErrorCode("storage");
-        return;
-      }
-
-      if (!savedConversation.value) {
-        setError("This saved scan was not found.");
-        setErrorCode("not_found");
-        return;
-      }
-
-      setLookup(savedConversation.value);
+      if (!isCurrentConversation()) return;
+      // Reuse these IDs on every persistence retry, including partial writes.
+      const messages = [
+        ...(shouldSaveUserMessage ? [createChatMessage("user", trimmedQuestion)] : []),
+        createChatMessage("assistant", answer),
+      ];
+      setPendingExchange(messages);
       setPendingQuestion(null);
-      setQuestion("");
+      persistExchange(messages);
     } catch (chatError) {
-      if (!isAccountScopeCurrent(accountScopeRef.current)) return;
+      if (!isCurrentConversation()) return;
       setError(getAIErrorMessage(chatError));
       setErrorCode(chatError instanceof AIServiceError ? chatError.code : null);
     } finally {
-      if (isAccountScopeCurrent(accountScopeRef.current)) setIsSending(false);
+      if (isCurrentConversation()) setIsSending(false);
     }
+  }
+
+  function persistExchange(messages: ChatMessage[]) {
+    if (!isCurrentConversation() || !lookup || isChatDisabled) return;
+    const savedConversation = appendChatMessages(lookup.id, messages);
+    if (!isCurrentConversation()) return;
+    if (!savedConversation.ok || !savedConversation.value) {
+      setError(savedConversation.ok ? "This saved scan was not found." : savedConversation.message);
+      setErrorCode("storage");
+      return;
+    }
+    setLookup(savedConversation.value);
+    setPendingExchange(null);
+    setError(null);
+    setErrorCode(null);
+    setQuestion("");
   }
 
   if (!lookup) {
@@ -116,7 +137,8 @@ export default function Chat() {
   const errorDetails = error ? getAIErrorDetails(errorCode) : null;
   const showSafetyWarning = lookup.result?.isSafetyCritical || lookup.result?.safetyTriage === "needs_professional";
   const lastUnansweredUserMessage = getLastUnansweredUserMessage(lookup);
-  const canRetryLastQuestion = Boolean(error && errorCode !== "feature_disabled" && (pendingQuestion || lastUnansweredUserMessage) && canChat && !isSending);
+  const canRetryLastQuestion = Boolean(error && errorCode !== "feature_disabled" && !pendingExchange && (pendingQuestion || lastUnansweredUserMessage) && canChat && !isSending);
+  const visibleMessages = [...lookup.chatHistory, ...(pendingExchange ?? []).filter((message) => !lookup.chatHistory.some((saved) => saved.id === message.id))];
 
   return (
     <main className="ds-chat-page ds-workbench min-h-dvh px-4 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-[var(--ds-fg-1)]">
@@ -153,8 +175,8 @@ export default function Chat() {
 
         <section className="mt-4 flex flex-1 flex-col rounded-[24px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 shadow-sm">
           <div className="flex-1 space-y-3 overflow-y-auto" role="log" aria-label="Conversation" aria-live="polite">
-            {lookup.chatHistory.length > 0 ? (
-              lookup.chatHistory.map((message) => (
+            {visibleMessages.length > 0 ? (
+              visibleMessages.map((message) => (
                 <article
                   key={message.id}
                   className={
@@ -195,6 +217,14 @@ export default function Chat() {
                   Retry last question
                 </Button>
               ) : null}
+              {pendingExchange ? (
+                <>
+                  <p className="mt-2 text-sm leading-6 text-[var(--ds-fg-2)]">Your answer is kept on this page. Retry saving before leaving or reloading.</p>
+                  <Button className="mt-3" type="button" disabled={isSending} onClick={() => persistExchange(pendingExchange)}>
+                    Retry saving answer
+                  </Button>
+                </>
+              ) : null}
             </section>
           ) : null}
 
@@ -203,7 +233,7 @@ export default function Chat() {
               <span className="sr-only">Ask a follow-up question</span>
               <textarea
                 className="min-h-20 w-full resize-none rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-3 text-sm leading-6 text-[var(--ds-fg-1)] outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
-                disabled={!canChat || isSending || isChatDisabled}
+                disabled={!canChat || isSending || isChatDisabled || Boolean(pendingExchange)}
                 maxLength={500}
                 onChange={(event) => setQuestion(event.target.value)}
                 placeholder="What markings should I photograph next?"
@@ -212,7 +242,7 @@ export default function Chat() {
             </label>
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs font-semibold text-[var(--ds-fg-3)]">{question.length}/500</p>
-              <Button disabled={!canChat || isSending || isChatDisabled || !question.trim()} type="submit">
+              <Button disabled={!canChat || isSending || isChatDisabled || Boolean(pendingExchange) || !question.trim()} type="submit">
                 Send
               </Button>
             </div>

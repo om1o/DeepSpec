@@ -358,6 +358,7 @@ export function createChatMessage(role: ChatMessage["role"], content: string): C
 }
 
 export function appendChatMessages(id: string, messages: ChatMessage[]): StorageResult<Lookup | null> {
+  const scope = getAccountScope();
   const read = readLookups();
   if (!read.ok) return { ok: false, message: read.message, value: null };
   const lookups = read.value;
@@ -372,7 +373,7 @@ export function appendChatMessages(id: string, messages: ChatMessage[]): Storage
     return { ok: true, value: lookup };
   }
 
-  const updatedHistory = [...lookup.chatHistory, ...cleanMessages].slice(-MAX_CHAT_MESSAGES);
+  const updatedHistory = mergeChatMessages(lookup.chatHistory, cleanMessages);
   const updatedLookup: Lookup = { ...lookup, chatHistory: updatedHistory, cloudSave: undefined };
   const updatedLookups = [...lookups];
   updatedLookups[index] = updatedLookup;
@@ -380,6 +381,12 @@ export function appendChatMessages(id: string, messages: ChatMessage[]): Storage
   const lookupWriteResult = writeLookups(updatedLookups);
   if (!lookupWriteResult.ok) {
     return { ok: false, message: lookupWriteResult.message, value: updatedLookup };
+  }
+
+  // The primary write notifies subscribers synchronously; one may sign out or
+  // switch accounts. Never write the old exchange under the new account's key.
+  if (!isAccountScopeCurrent(scope)) {
+    return { ok: false, message: "Your account changed. Reopen this scan to continue.", value: null };
   }
 
   const chatWriteResult = writeChatHistory(id, updatedHistory);
@@ -444,10 +451,16 @@ function mergeLookupChatHistory(lookup: Lookup): Lookup {
     const parsed = JSON.parse(raw) as unknown;
     const chatHistory = normalizeChatHistory(parsed);
     if (chatHistory.length === 0) return lookup;
-    return { ...lookup, chatHistory };
+    // A failed auxiliary write (and failed cleanup) can leave an older copy.
+    // Keep both histories, with the primary row winning by message ID.
+    return { ...lookup, chatHistory: mergeChatMessages(chatHistory, lookup.chatHistory) };
   } catch {
     return lookup;
   }
+}
+
+function mergeChatMessages(previous: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+  return [...new Map([...previous, ...incoming].map((message) => [message.id, message])).values()].slice(-MAX_CHAT_MESSAGES);
 }
 
 function writeChatHistory(id: string, history: ChatMessage[]): StorageResult<ChatMessage[]> {
