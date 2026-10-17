@@ -1,0 +1,45 @@
+{
+  "base_commit": "f3884c1864500358f3f59361a726e4f57a0374f5",
+  "test_path": "server/chatHandler.test.ts",
+  "only_import_and_mock_paths_changed": true,
+  "api_test_absent": true,
+  "api_files": [
+    {
+      "path": "api/account-entitlement.ts",
+      "sha256": "fed443a7724a6794650aeb8859d9cd90c31f5bb74e9194c137f0f97b5225a147",
+      "unchanged_from_base": true,
+      "unchanged_from_integrated_base": true
+    },
+    {
+      "path": "api/billing-checkout.ts",
+      "sha256": "68a26cb021f8b373f7e74bd868602e4495545b8b7fc921e71b1b30d391d244f6",
+      "unchanged_from_base": true,
+      "unchanged_from_integrated_base": true
+    },
+    {
+      "path": "api/billing-portal.ts",
+      "sha256": "b465ff7d08cdaa3d2a4463d0090287d1f35ede979d9af3ca3b6b9fcbf5915ad8",
+      "unchanged_from_base": true,
+      "unchanged_from_integrated_base": true
+    },
+    {
+      "path": "api/billing-webhook.ts",
+      "sha256": "52b6da20f0ab13e1906d4dbfa81fd49c2486da9d16f055ee396cc616edf56bc1",
+      "unchanged_from_base": true,
+      "unchanged_from_integrated_base": true
+    },
+    {
+      "path": "api/chat.ts",
+      "sha256": "33ee8a379ab3dc96a59f07ec70a54f08f5541214e7d9545a1244a4a5f0c85c2c",
+      "unchanged_from_base": true,
+      "unchanged_from_integrated_base": true
+    },
+    {
+      "path": "api/identify.ts",
+      "sha256": "8f13d703a2e26bec921808e65b2f3e38828b48f66ecb72a0de6854854dde24d6",
+      "unchanged_from_base": true,
+      "unchanged_from_integrated_base": true
+    }
+  ],
+  "integrated_base_commit": "7666da7d1c799080152759a9da9de8c2d6d056db"
+}

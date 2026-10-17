@@ -1,0 +1,13 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> deep-spec@0.1.0 test
+> vitest run --configLoader native --pool threads --maxWorkers=1 --no-file-parallelism server/chatHandler.test.ts server/chat.shared.test.ts server/vercel-layout.test.ts src/screens/Chat.test.tsx src/services/chat.test.ts
+
+
+ RUN  v4.1.6 <checkout>
+
+
+ Test Files  4 passed (4)
+      Tests  36 passed (36)
+   Start at  06:20:37
+   Duration  5.38s (transform 443ms, setup 264ms, import 685ms, tests 1.35s, environment 2.44s)

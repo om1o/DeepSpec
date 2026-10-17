@@ -1,9 +1,9 @@
-import handler from "./chat";
-import { enforceRateLimit } from "../server/rateLimit.shared";
-import { requireSession } from "../server/requireSession.shared";
+import handler from "../api/chat";
+import { enforceRateLimit } from "./rateLimit.shared";
+import { requireSession } from "./requireSession.shared";
 
-vi.mock("../server/rateLimit.shared", () => ({ enforceRateLimit: vi.fn() }));
-vi.mock("../server/requireSession.shared", () => ({ requireSession: vi.fn() }));
+vi.mock("./rateLimit.shared", () => ({ enforceRateLimit: vi.fn() }));
+vi.mock("./requireSession.shared", () => ({ requireSession: vi.fn() }));
 
 function response() {
   return { status: vi.fn().mockReturnThis(), json: vi.fn(), setHeader: vi.fn() };
