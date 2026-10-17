@@ -1257,8 +1257,9 @@ export function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; ste
           <p className="mt-2 text-sm leading-6" style={{ color: "var(--slate-300)" }}>
             {message}
           </p>
-          <p className="mt-2 text-xs font-semibold tabular-nums" style={{ fontFamily: "var(--font-data)", color: "var(--slate-500)" }}>{elapsedSeconds}s elapsed</p>
         </div>
+        {/* Keep per-second timer changes outside the live progress region. */}
+        <p className="mt-2 text-xs font-semibold tabular-nums" style={{ fontFamily: "var(--font-data)", color: "var(--slate-500)" }}>{elapsedSeconds}s elapsed</p>
         <Button className="mt-5 w-full" variant="ghost" onClick={onCancel}>
           Cancel scan
         </Button>

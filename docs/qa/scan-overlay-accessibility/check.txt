@@ -1,0 +1,54 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> deep-spec@0.1.0 check
+> npm run lint && npm test && npm run build
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> deep-spec@0.1.0 lint
+> eslint .
+
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> deep-spec@0.1.0 test
+> vitest run --configLoader native --pool threads --maxWorkers=1 --no-file-parallelism
+
+
+ RUN  v4.1.6 /workspace/scratch/3f0bcbb8ae99/DeepSpec
+
+ ❯ server/vercel-layout.test.ts (9 tests | 1 failed) 20ms
+     × keeps only HTTP entry points in api, within the 12-function limit 8ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/vercel-layout.test.ts > Vercel Hobby deployment layout > keeps only HTTP entry points in api, within the 12-function limit
+AssertionError: expected [ 'account-entitlement.ts', …(6) ] to deeply equal [ 'account-entitlement.ts', …(5) ]
+
+- Expected
++ Received
+
+  [
+    "account-entitlement.ts",
+    "billing-checkout.ts",
+    "billing-portal.ts",
+    "billing-webhook.ts",
++   "chat.test.ts",
+    "chat.ts",
+    "identify.ts",
+  ]
+
+ ❯ server/vercel-layout.test.ts:32:26
+     30|     // Vercel discovers files in api as functions, including helpers a…
+     31|     const files = readdirSync(resolve(process.cwd(), "api"), { recursi…
+     32|     expect(files.sort()).toEqual(endpoints.map(({ name }) => `${name}.…
+       |                          ^
+     33|     expect(files.length).toBeLessThanOrEqual(12);
+     34|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 100 passed (101)
+      Tests  1 failed | 1384 passed (1385)
+   Start at  06:20:41
+   Duration  108.91s (transform 2.05s, setup 5.59s, import 4.39s, tests 32.82s, environment 52.04s)
