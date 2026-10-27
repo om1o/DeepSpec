@@ -848,12 +848,7 @@ export default function Scanner() {
           </svg>
         </Link>
         <div className="flex flex-col items-center">
-          <span
-            className="text-[15px] font-black tracking-[-0.02em] text-white"
-            style={{ textShadow: "0 1px 8px rgba(0,0,0,0.5)" }}
-          >
-            Deep Spec
-          </span>
+          <img src="/brand/deepspec-logo.webp" alt="DeepSpec" className="h-16 w-24 rounded-[8px] object-contain" />
         </div>
         <button
           type="button"
