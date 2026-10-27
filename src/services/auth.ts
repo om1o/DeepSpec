@@ -122,7 +122,7 @@ async function verifyAuthUser(client: SupabaseClient, revision = authRevision, e
   }
 
   const { data, error } = result;
-  if (error || !data.user || (expectedUserId && data.user.id !== expectedUserId)) {
+  if (error || !data.user || data.user.is_anonymous === true || (expectedUserId && data.user.id !== expectedUserId)) {
     clearVerifiedAuthUserCache();
     setActiveAccount(null);
     return null;
@@ -359,8 +359,9 @@ export async function subscribeToAuthChanges(
     if (getAccountScope().userId !== (session?.user?.id ?? null)) {
       setActiveAccount(null);
     }
-    if (!session?.user) {
+    if (!session?.user || session.user.is_anonymous === true) {
       clearVerifiedAuthUserCache();
+      setActiveAccount(null);
       onChange(null);
       return;
     }
