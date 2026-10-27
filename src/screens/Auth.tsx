@@ -314,7 +314,7 @@ export default function Auth() {
 
   if (isCheckingSession) {
     return (
-      <main className="flex min-h-dvh items-center justify-center bg-[var(--ds-bg)] px-4 text-center text-sm font-bold text-[var(--ds-fg-3)]">
+      <main className="ds-auth-page flex min-h-dvh items-center justify-center px-4 text-center text-sm font-medium text-[var(--ds-fg-3)]">
         <div className="rounded-[8px] border border-white/10 bg-white/10 px-5 py-3 shadow-sm backdrop-blur-md">
           Checking session...
         </div>
@@ -324,38 +324,28 @@ export default function Auth() {
 
   return (
     <main className="ds-auth-page min-h-dvh px-4 pb-8 pt-[max(20px,env(safe-area-inset-top))] text-white">
-      <section className="mx-auto grid min-h-[calc(100dvh-48px)] w-full max-w-6xl items-center gap-5 lg:grid-cols-[1.08fr_0.92fr] lg:gap-12">
+      <section className="ds-auth-layout">
         <div className="ds-auth-story">
-          <img src="/brand/alternator-workbench.webp" alt="" width="1086" height="1448" className="ds-auth-art" />
-          <div className="ds-auth-story-top">
-            <span className="ds-eyebrow">CAR PARTS, MADE CLEARER</span>
-            <h2>Start with a photo.<br /><span>Keep the evidence.</span></h2>
-            <p>Review an AI identification suggestion.<br />Save your inspection and the details that matter.</p>
+          <img src="/brand/auth-workshop.webp" alt="Car parts arranged on a mechanic’s workbench" width="1254" height="1254" className="ds-auth-art" />
+          <div className="ds-auth-story-copy">
+            <p className="ds-auth-eyebrow">FROM CAMERA TO CONTEXT</p>
+            <h2>A closer look.<br />A clearer starting point.</h2>
+            <p>Identify a part, keep the useful details, and bring a better question to the workshop.</p>
           </div>
-          <div className="ds-auth-story-bottom">
-            <span className="ds-art-caption">Illustrative render · Not a scan result</span>
-            <div className="ds-workflow" aria-label="Parts documentation workflow">
-              <StatusCell label="01" value="Capture" />
-              <StatusCell label="02" value="Review" />
-              <StatusCell label="03" value="Save" />
-            </div>
-          </div>
+          <p className="ds-auth-art-caption">DeepSpec. From the car park to the workshop.</p>
         </div>
 
         <section className="ds-auth-card mx-auto flex w-full max-w-[540px] flex-col p-5 sm:p-8">
           <div className="flex items-center justify-between gap-4">
             <BrandLockup size="lg" />
-            <span className={supabaseConfigured ? "rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-medium text-[var(--slate-200)]" : "rounded-[8px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-3 py-1.5 text-xs font-black text-amber-100"}>
+            <span className={supabaseConfigured ? "ds-auth-workspace" : "ds-auth-unavailable"}>
               {supabaseConfigured ? "Your workspace" : "Sign-in unavailable"}
             </span>
           </div>
 
           <div className="mt-9">
-            <p className="ds-eyebrow">YOUR PARTS. YOUR WORKBENCH.</p>
-            <h1 className="mt-3 text-4xl font-bold tracking-tight text-white">Sign in</h1>
-            <p className="mt-3 text-base font-normal leading-7 text-white/68">
-              Photograph a car part. Review an AI suggestion. Save your inspection.
-            </p>
+            <h1 className="ds-auth-title">Sign in to DeepSpec</h1>
+            <p className="ds-auth-intro">Your scans, saved details, and next questions. All in one place.</p>
           </div>
 
           <div className="mt-8 space-y-3">
@@ -385,7 +375,7 @@ export default function Auth() {
             {oauthEnabled ? (
               <div className="flex items-center py-3">
                 <div className="h-px flex-1 bg-white/12" />
-                <span className="mx-4 text-xs font-black uppercase tracking-[0.14em] text-white/45">Or use email</span>
+                <span className="mx-4 text-xs font-medium uppercase tracking-[0.14em] text-white/45">Or use email</span>
                 <div className="h-px flex-1 bg-white/12" />
               </div>
             ) : null}
@@ -404,7 +394,7 @@ export default function Auth() {
                   role="tab"
                   aria-selected={authMode === "link"}
                   onClick={() => switchAuthMode("link")}
-                  className={authMode === "link" ? "h-11 rounded-[7px] bg-white text-sm font-black text-[var(--ds-logo-ink)] shadow-sm" : "h-11 rounded-[7px] text-sm font-black text-white/62"}
+                  className={authMode === "link" ? "h-11 rounded-[7px] bg-white text-sm font-medium text-[var(--ds-logo-ink)] shadow-sm" : "h-11 rounded-[7px] text-sm font-medium text-white/62"}
                 >
                   Email link
                 </button>
@@ -413,14 +403,14 @@ export default function Auth() {
                   role="tab"
                   aria-selected={authMode === "password"}
                   onClick={() => switchAuthMode("password")}
-                  className={authMode === "password" ? "h-11 rounded-[7px] bg-white text-sm font-black text-[var(--ds-logo-ink)] shadow-sm" : "h-11 rounded-[7px] text-sm font-black text-white/62"}
+                  className={authMode === "password" ? "h-11 rounded-[7px] bg-white text-sm font-medium text-[var(--ds-logo-ink)] shadow-sm" : "h-11 rounded-[7px] text-sm font-medium text-white/62"}
                 >
                   Account
                 </button>
               </div>
 
               <label className="block">
-                <span className="mb-2 block text-sm font-black text-white/84">Email address</span>
+                <span className="mb-2 block text-sm font-medium text-white/84">Email address</span>
                 <input
                   className="h-14 w-full rounded-[8px] border border-white/12 bg-white/10 px-4 text-base font-semibold text-white shadow-sm outline-none placeholder:text-white/38 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)] disabled:bg-white/5 disabled:text-white/64"
                   autoCapitalize="none"
@@ -444,20 +434,20 @@ export default function Auth() {
                     <button
                       type="button"
                       onClick={() => setPasswordMode("signin")}
-                      className={passwordMode === "signin" ? "h-11 rounded-[8px] border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] text-sm font-black text-white" : "h-11 rounded-[8px] border border-white/12 bg-white/5 text-sm font-black text-white/62"}
+                      className={passwordMode === "signin" ? "h-11 rounded-[8px] border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] text-sm font-medium text-white" : "h-11 rounded-[8px] border border-white/12 bg-white/5 text-sm font-medium text-white/62"}
                     >
                       Sign in
                     </button>
                     <button
                       type="button"
                       onClick={() => setPasswordMode("signup")}
-                      className={passwordMode === "signup" ? "h-11 rounded-[8px] border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] text-sm font-black text-white" : "h-11 rounded-[8px] border border-white/12 bg-white/5 text-sm font-black text-white/62"}
+                      className={passwordMode === "signup" ? "h-11 rounded-[8px] border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] text-sm font-medium text-white" : "h-11 rounded-[8px] border border-white/12 bg-white/5 text-sm font-medium text-white/62"}
                     >
                       Create
                     </button>
                   </div>
                   <label className="block">
-                    <span className="mb-2 block text-sm font-black text-white/84">Password</span>
+                    <span className="mb-2 block text-sm font-medium text-white/84">Password</span>
                     <input
                       className="h-14 w-full rounded-[8px] border border-white/12 bg-white/10 px-4 text-base font-semibold text-white shadow-sm outline-none placeholder:text-white/38 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)]"
                       autoComplete={passwordMode === "signup" ? "new-password" : "current-password"}
@@ -476,10 +466,10 @@ export default function Auth() {
 
               {authMode === "link" && step === "code" ? (
                 <label className="block">
-                  <span className="mb-2 block text-sm font-black text-white/84">Verification code</span>
+                  <span className="mb-2 block text-sm font-medium text-white/84">Verification code</span>
                   <input
                     ref={codeInputRef}
-                    className="h-14 w-full rounded-[8px] border border-white/12 bg-white/10 px-4 text-center text-xl font-black tracking-[0.4em] text-white shadow-sm outline-none placeholder:text-white/38 placeholder:tracking-normal focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)]"
+                    className="h-14 w-full rounded-[8px] border border-white/12 bg-white/10 px-4 text-center text-xl font-medium tracking-[0.4em] text-white shadow-sm outline-none placeholder:text-white/38 placeholder:tracking-normal focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)]"
                     autoComplete="one-time-code"
                     enterKeyHint="done"
                     inputMode="numeric"
@@ -509,7 +499,7 @@ export default function Auth() {
               ) : null}
 
               <button
-                className="h-14 w-full rounded-[8px] bg-[var(--ds-accent)] px-4 text-base font-black text-white shadow-[var(--ds-shadow-primary)] transition active:bg-[var(--ds-accent-pressed)] disabled:pointer-events-none disabled:opacity-50"
+                className="ds-auth-primary h-14 w-full px-4 text-base font-semibold disabled:pointer-events-none disabled:opacity-50"
                 disabled={
                   isSubmitting
                   || isGoogleLoading
@@ -532,14 +522,14 @@ export default function Auth() {
                     type="button"
                     onClick={handleUseDifferentEmail}
                     disabled={isBusy}
-                    className="h-12 rounded-[8px] border border-white/12 bg-white/5 px-3 text-sm font-black text-white shadow-sm active:bg-white/10"
+                    className="h-12 rounded-[8px] border border-white/12 bg-white/5 px-3 text-sm font-medium text-white shadow-sm active:bg-white/10"
                   >
                     Use another email
                   </button>
                   <button
                     type="button"
                     onClick={handleResendLink}
-                    className="h-12 rounded-[8px] border border-white/12 bg-white/5 px-3 text-sm font-black text-white shadow-sm active:bg-white/10 disabled:pointer-events-none disabled:opacity-50"
+                    className="h-12 rounded-[8px] border border-white/12 bg-white/5 px-3 text-sm font-medium text-white shadow-sm active:bg-white/10 disabled:pointer-events-none disabled:opacity-50"
                     disabled={isBusy || resendCooldown > 0}
                   >
                     {resendCooldown > 0 ? `Send in ${resendCooldown}s` : "Send another link"}
@@ -550,7 +540,7 @@ export default function Auth() {
                     type="button"
                     onClick={handleShowCodeEntry}
                     disabled={isBusy}
-                    className="text-sm font-black text-sky-100 underline decoration-white/30 underline-offset-4"
+                    className="text-sm font-medium text-sky-100 underline decoration-white/30 underline-offset-4"
                   >
                     I have a code
                   </button>
@@ -561,15 +551,6 @@ export default function Auth() {
         </section>
       </section>
     </main>
-  );
-}
-
-function StatusCell({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <span className="ds-workflow-number">{label}</span>
-      <span className="ds-workflow-label">{value}</span>
-    </div>
   );
 }
 
@@ -592,10 +573,10 @@ function OAuthButton({
     <button
       type="button"
       onClick={onClick}
-      className="grid h-14 w-full grid-cols-[44px_1fr_44px] items-center rounded-[8px] border border-white/12 bg-white/95 px-4 text-base font-black text-[var(--ds-logo-ink)] shadow-sm transition active:bg-white disabled:pointer-events-none disabled:opacity-50"
+      className="ds-auth-oauth grid h-14 w-full grid-cols-[44px_1fr_44px] items-center px-4 text-base font-semibold disabled:pointer-events-none disabled:opacity-50"
       disabled={disabled}
     >
-      <span className="text-lg font-black text-[#24292F]" aria-hidden="true">
+      <span className="text-lg font-medium text-[#24292F]" aria-hidden="true">
         {brand}
       </span>
       <span>{isLoading ? loadingLabel : label}</span>
