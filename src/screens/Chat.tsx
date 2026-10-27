@@ -132,7 +132,7 @@ export default function Chat() {
       <div className="mx-auto flex min-h-[calc(100dvh-36px)] w-full max-w-md flex-col">
         <header className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <img src="/brand/deepspec-logo.webp" alt="DeepSpec" className="h-20 w-32 rounded-xl object-contain shadow-sm ring-1 ring-[var(--ds-accent-line)]" />
+            <img src="/brand/deepspec-logo-horizontal.svg" alt="DeepSpec" className="block h-[33px] w-[140px] shrink-0 object-contain sm:h-[43px] sm:w-[178px]" />
             <h1 className="mt-2 truncate text-2xl font-extrabold tracking-tight">Ask about this scan</h1>
           </div>
           <Link to={`/result/${lookup.id}`} className="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200">

@@ -848,7 +848,7 @@ export default function Scanner() {
           </svg>
         </Link>
         <div className="flex flex-col items-center">
-          <img src="/brand/deepspec-logo.webp" alt="DeepSpec" className="h-16 w-24 rounded-[8px] object-contain" />
+          <img src="/brand/deepspec-logo-horizontal.svg" alt="DeepSpec" className="block h-[33px] w-[140px] shrink-0 object-contain sm:h-[43px] sm:w-[178px]" />
         </div>
         <button
           type="button"
