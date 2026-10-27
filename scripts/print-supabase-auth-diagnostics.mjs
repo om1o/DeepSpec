@@ -1,7 +1,7 @@
 console.log("DeepSpec Supabase Auth diagnostics SQL");
 console.log("");
 console.log("Use this only in the Supabase SQL Editor for the DeepSpec project.");
-console.log("It is read-only and helps diagnose `Database error creating anonymous user` failures.");
+console.log("It is read-only and helps diagnose database errors during confirmed QA account provisioning.");
 console.log("Run every query, then inspect the Auth logs entry for the matching /signup failure.");
 console.log("");
 console.log(`-- 1. List every trigger attached to auth.users.
@@ -16,7 +16,7 @@ where event_object_schema = 'auth'
 order by trigger_name;
 
 -- 2. Show Postgres trigger definitions for auth.users, including disabled triggers.
--- If a non-internal trigger appears here, it can block anonymous sign-up.
+-- If a non-internal trigger appears here, it can block account provisioning.
 select
   tg.tgname as trigger_name,
   tg.tgenabled as enabled_state,
@@ -70,7 +70,7 @@ where n.nspname not in ('pg_catalog', 'information_schema')
   )
 order by schema_name, function_name;
 
--- 5. Check whether a profiles table exists and has constraints that could reject anonymous users.
+-- 5. Check whether a profiles table exists and has constraints that could reject new confirmed users.
 select
   to_regclass('public.profiles') as profiles_table,
   to_regclass('public.users') as public_users_table;
@@ -211,6 +211,6 @@ select
 from storage.buckets
 where id = 'scan-images';
 
--- 12. Confirm anonymous Auth is enabled through the verifier first, then rerun:
+-- 12. Confirm dedicated verified QA account credentials are configured and anonymous Auth is disabled first, then rerun:
 -- npm run verify:supabase
 `);

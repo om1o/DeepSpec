@@ -144,6 +144,33 @@ describe("storage", () => {
     expect(listener).toHaveBeenCalledTimes(2);
   });
 
+  it("rejects writes using another account's scan ID and retains both accounts' records", () => {
+    setActiveAccount("owner-a");
+    const first = createLookup(scanState).value;
+    appendChatMessages(first.id, [createChatMessage("user", "Owner A private chat")]);
+    const firstKey = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    const firstBytes = localStorage.getItem(firstKey);
+    setActiveAccount("owner-b");
+    const second = createLookup(scanState).value;
+    const secondKey = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    const secondBytes = localStorage.getItem(secondKey);
+
+    expect(updateLookup(first.id, { notes: "Other account overwrite" }).ok).toBe(false);
+    expect(updateLookupResult(first.id, scanState.result!).ok).toBe(false);
+    expect(appendChatMessages(first.id, [createChatMessage("user", "Other account message")]).ok).toBe(false);
+    expect(deleteLookup(first.id).ok).toBe(false);
+    expect(localStorage.getItem(firstKey)).toBe(firstBytes);
+    expect(localStorage.getItem(secondKey)).toBe(secondBytes);
+    expect(getLookups().map(({ id }) => id)).toEqual([second.id]);
+
+    setActiveAccount(null);
+    expect(getLookup(first.id)).toBeNull();
+    expect(getLookup(second.id)).toBeNull();
+    setActiveAccount("owner-a");
+    expect(getLookup(first.id)?.chatHistory[0]?.content).toBe("Owner A private chat");
+    expect(getLookup(second.id)).toBeNull();
+  });
+
   it("retains cloud receipts after reading storage and rejects obsolete completions", () => {
     const saved = createLookup(scanState).value;
     const receipt = { attemptId: "attempt-1", attemptedAt: new Date().toISOString(), status: "unconfirmed" as const, scope: "scan" as const };
@@ -368,6 +395,10 @@ describe("storage", () => {
   });
 
   it("updates AI result on successful retry", () => {
+    const durableRetryFrame = {
+      imageBase64: "data:image/jpeg;base64,recovered-durable-frame",
+      capturedAt: "2026-05-16T00:00:07.000Z",
+    };
     const failedScanState: ScanAnalysisState = {
       frame: {
         imageBase64: "data:image/jpeg;base64,test",
@@ -384,7 +415,7 @@ describe("storage", () => {
     const result = updateLookupResult(lookup.id, scanState.result!, {
       analysisSource: "manual_retry",
       savedAt: "2026-05-16T00:00:06.000Z",
-    });
+    }, durableRetryFrame);
 
     expect(result.ok).toBe(true);
     const updated = getLookup(lookup.id);
@@ -400,6 +431,7 @@ describe("storage", () => {
       trainingLabel: "Alternator",
     });
     expect(updated?.result?.partName).toBe("Alternator");
+    expect(updated?.frame).toEqual(durableRetryFrame);
   });
 
 
@@ -438,6 +470,78 @@ describe("storage", () => {
 
     expect(getLookups()[0].chatHistory).toHaveLength(2);
     expect(getLookup(lookup.id)?.chatHistory).toHaveLength(2);
+  });
+
+  it.each([false, true])("repairs a partially persisted exchange idempotently (stale auxiliary retained: %s)", (retainStale) => {
+    const saved = createLookup(scanState).value;
+    const earlier = [createChatMessage("user", "Earlier question"), createChatMessage("assistant", "Earlier answer")];
+    appendChatMessages(saved.id, earlier);
+    const exchange = [createChatMessage("user", "Next question"), createChatMessage("assistant", "Completed answer")];
+    const chatKey = accountStorageKey(`deep-spec:chat:${saved.id}`);
+    const originalWrite = Storage.prototype.setItem;
+    const writeSpy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (key, value) {
+      if (key === chatKey) throw new DOMException("Full", "QuotaExceededError");
+      originalWrite.call(this, key, value);
+    });
+    const removeSpy = retainStale ? vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => { throw new Error("Unavailable"); }) : null;
+    try {
+      expect(appendChatMessages(saved.id, exchange).ok).toBe(false);
+      expect(getLookups()[0].chatHistory).toEqual([...earlier, ...exchange]);
+      expect(getLookup(saved.id)?.chatHistory).toEqual([...earlier, ...exchange]);
+      expect(appendChatMessages(saved.id, exchange).ok).toBe(false);
+      expect(getLookups()[0].chatHistory).toEqual([...earlier, ...exchange]);
+    } finally {
+      writeSpy.mockRestore();
+      removeSpy?.mockRestore();
+    }
+    expect(appendChatMessages(saved.id, exchange).ok).toBe(true);
+    expect(appendChatMessages(saved.id, exchange).ok).toBe(true);
+    expect(getLookup(saved.id)?.chatHistory).toEqual([...earlier, ...exchange]);
+    expect(JSON.parse(localStorage.getItem(chatKey)!)).toEqual([...earlier, ...exchange]);
+  });
+
+  it("retries a failed primary write with the original message IDs", () => {
+    const saved = createLookup(scanState).value;
+    const exchange = [createChatMessage("user", "Question"), createChatMessage("assistant", "Answer")];
+    const writeSpy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("Full", "QuotaExceededError"); });
+    expect(appendChatMessages(saved.id, exchange).ok).toBe(false);
+    expect(getLookup(saved.id)?.chatHistory).toEqual([]);
+    writeSpy.mockRestore();
+    expect(appendChatMessages(saved.id, exchange).ok).toBe(true);
+    expect(appendChatMessages(saved.id, exchange).ok).toBe(true);
+    expect(getLookup(saved.id)?.chatHistory).toEqual(exchange);
+  });
+
+  it("keeps newer messages and the history cap on retry while allowing identical text with new IDs", () => {
+    const saved = createLookup(scanState).value;
+    const earlier = Array.from({ length: 38 }, (_, index) => createChatMessage("user", `Earlier ${index}`));
+    appendChatMessages(saved.id, earlier);
+    const exchange = [createChatMessage("user", "Question"), createChatMessage("assistant", "Answer")];
+    appendChatMessages(saved.id, exchange);
+    const newer = [createChatMessage("user", "Question"), createChatMessage("assistant", "Answer")];
+    appendChatMessages(saved.id, newer);
+    appendChatMessages(saved.id, exchange);
+    expect(getLookup(saved.id)?.chatHistory).toEqual([...earlier.slice(2), ...exchange, ...newer]);
+  });
+
+  it("refuses a retry after deletion instead of recreating the scan", () => {
+    const saved = createLookup(scanState).value;
+    const exchange = [createChatMessage("assistant", "Answer")];
+    appendChatMessages(saved.id, exchange);
+    deleteLookup(saved.id);
+    expect(appendChatMessages(saved.id, exchange)).toMatchObject({ ok: false, value: null });
+    expect(getLookups()).toEqual([]);
+  });
+
+  it("refuses a cross-account auxiliary write if a lookup-change listener switches accounts", () => {
+    const saved = createLookup(scanState).value;
+    const unsubscribe = subscribeToLookupChanges(() => setActiveAccount("other-user"));
+    try {
+      expect(appendChatMessages(saved.id, [createChatMessage("assistant", "Private answer")]).ok).toBe(false);
+      expect(localStorage.getItem(accountStorageKey(`deep-spec:chat:${saved.id}`))).toBeNull();
+    } finally {
+      unsubscribe();
+    }
   });
 
   it("refuses a 51st scan without discarding existing evidence, and permits freeing space", () => {

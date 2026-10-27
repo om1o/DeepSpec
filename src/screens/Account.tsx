@@ -1,20 +1,23 @@
+import { BrandLockup } from "../components/BrandLockup";
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { getAuthClient } from "../services/auth";
 import { getEntitlementState, getRemainingScans, hasScanEntitlement, type ServerEntitlement } from "../services/revenue";
-import { getLookups } from "../services/storage";
 
 type EntitlementVerification =
   | { status: "checking" }
   | { status: "verified"; entitlement: ServerEntitlement }
-  | { status: "locked"; message: string };
+  | { status: "verification_required"; message: string }
+  | { status: "unavailable"; message: string };
 
 export default function Account() {
   const [params] = useSearchParams();
   const [verification, setVerification] = useState<EntitlementVerification>({ status: "checking" });
   const [portalStatus, setPortalStatus] = useState<string | null>(null);
-  const scansUsed = getLookups().length;
-  const entitlement = getEntitlementState(scansUsed, verification.status === "verified" ? verification.entitlement : null);
+  const entitlement = getEntitlementState(
+    verification.status === "verified" ? verification.entitlement : null,
+    verification.status === "verification_required" ? "verification_required" : "unknown",
+  );
   const remaining = getRemainingScans(entitlement);
   const checkoutState = params.get("checkout");
 
@@ -27,7 +30,7 @@ export default function Account() {
       const token = session?.data.session?.access_token;
       if (!token) {
         if (isMounted) {
-          setVerification({ status: "locked", message: "Sign in to verify entitlement." });
+          setVerification({ status: "verification_required", message: "Sign in with a verified account to check scan access." });
         }
         return;
       }
@@ -41,8 +44,8 @@ export default function Account() {
       if (!response?.ok || !body?.entitlement) {
         if (isMounted) {
           setVerification({
-            status: "locked",
-            message: body?.error?.message ?? "Entitlement check unavailable. Paid access stays locked until verified.",
+            status: "unavailable",
+            message: body?.error?.message ?? "Entitlement check unavailable. Scan access cannot be confirmed right now.",
           });
         }
         return;
@@ -93,13 +96,16 @@ export default function Account() {
   return (
     <main className="min-h-dvh bg-[var(--ds-page)] px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-slate-950">
       <div className="mx-auto w-full max-w-2xl">
-        <header className="flex items-center justify-between gap-3">
-          <Link to="/scan" className="text-sm font-bold text-[var(--ds-accent)]">
-            Scan
-          </Link>
-          <Link to="/pricing" className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-900">
-            Pricing
-          </Link>
+        <header className="ds-app-header">
+          <BrandLockup size="sm" />
+          <nav className="flex items-center gap-4" aria-label="Account navigation">
+            <Link to="/scan" className="text-sm font-semibold text-[var(--slate-100)]">
+              Scan
+            </Link>
+            <Link to="/pricing" className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-900">
+              Pricing
+            </Link>
+          </nav>
         </header>
 
         <section className="mt-8 rounded-[8px] border border-slate-200 bg-white p-6 shadow-sm">
@@ -112,13 +118,13 @@ export default function Account() {
           ) : null}
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
             <Metric label="Plan" value={entitlement.planName} />
-            <Metric label="Scans used" value={String(entitlement.scansUsed)} />
-            <Metric label="Remaining" value={String(remaining)} />
+            <Metric label="Scans used" value={formatMetric(entitlement.scansUsed)} />
+            <Metric label="Remaining" value={formatMetric(remaining)} />
           </div>
           <p className="mt-5 text-sm leading-6 text-slate-600">
-            Status: {hasScanEntitlement(entitlement) ? "Scanning allowed" : "Scan limit reached"}.
+            Status: {getAccessStatus(entitlement)}.
             {" "}
-            {verification.status === "checking" ? "Checking entitlement..." : getVerificationMessage(verification, entitlement.status)}
+            {verification.status === "checking" ? "Checking account access..." : getVerificationMessage(verification, entitlement.status)}
           </p>
           <button
             className="mt-5 h-11 rounded-full bg-slate-950 px-4 text-sm font-bold text-white disabled:opacity-50"
@@ -136,7 +142,7 @@ export default function Account() {
         <section className="mt-4 rounded-[8px] border border-slate-200 bg-white p-6 text-sm leading-6 text-slate-600 shadow-sm">
           <h2 className="text-lg font-black tracking-tight text-slate-950">How access works</h2>
           <p className="mt-2">
-            Paid access reads from server entitlement storage tied to your verified session. Local browser data tracks free-preview usage only; it cannot unlock paid plans.
+            Free and paid scan usage must come from the server account record tied to your verified session. Saved scans in this browser do not determine your allowance.
           </p>
         </section>
       </div>
@@ -145,17 +151,35 @@ export default function Account() {
 }
 
 function getVerificationMessage(verification: EntitlementVerification, entitlementStatus: string) {
-  if (verification.status === "locked") {
-    return /fail-closed|until verified/i.test(verification.message)
-      ? verification.message
-      : `${verification.message} Paid access stays locked until verified.`;
+  if (verification.status === "verification_required" || verification.status === "unavailable") {
+    return verification.message;
   }
 
   if (verification.status === "verified" && entitlementStatus === "active") {
     return "Entitlement verified.";
   }
 
-  return "No active paid plan. Paid scans stay locked until verified.";
+  if (verification.status === "verified" && entitlementStatus === "free") {
+    return "The server verified this account and its free-scan usage.";
+  }
+
+  if (verification.status === "verified" && entitlementStatus === "verification_required") {
+    return "Confirm an email or phone identity before scanning.";
+  }
+
+  return "Scan access could not be verified.";
+}
+
+function getAccessStatus(entitlement: ReturnType<typeof getEntitlementState>) {
+  if (hasScanEntitlement(entitlement)) return "Scanning allowed";
+  if (entitlement.status === "verification_required") return "Verification required";
+  if (entitlement.status === "free" && entitlement.scanAllowance === null) return "Scan allowance unavailable";
+  if (entitlement.status === "unknown") return "Access unavailable";
+  return "Scan limit reached";
+}
+
+function formatMetric(value: number | null) {
+  return value === null ? "Unavailable" : String(value);
 }
 
 function Metric({ label, value }: { label: string; value: string }) {

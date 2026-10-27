@@ -42,7 +42,7 @@ describe("Phase 8 Supabase validation tooling", () => {
   it("checks private image upload, durable dataset writes, owner reads, cross-user blocks, and cleanup", () => {
     expect(verifier).toContain("/auth/v1/settings");
     expect(verifier).toContain("PGRST205");
-    expect(verifier.indexOf("signInAnonymously(ownerClient, config)")).toBeLessThan(
+    expect(verifier.indexOf("signInConfirmed(ownerClient, ownerCredentials)")).toBeLessThan(
       verifier.indexOf('from("scan_lookups").upsert'),
     );
     expect(verifier).toContain("storage.from(SCAN_BUCKET).upload");
@@ -62,18 +62,18 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(verifier).toContain("scan_corrections owner read failed");
     expect(verifier).toContain("scan_model_runs owner read failed");
     expect(verifier).toContain("sync_events owner read failed");
-    expect(verifier).toContain("another anonymous user cannot read");
+    expect(verifier).toContain("another confirmed user cannot read");
     expect(verifier).toContain("assertCrossUserCannotRead");
     // Cleanup lives in a shared helper with behavioral tests for deletion,
     // isolation and failed cleanup in scripts/qa/cloud-fixture-checks.test.mjs.
     expect(verifier).toContain("await cleanupCloudFixture(ownerClient, userId, id, path)");
   });
 
-  it("prints actionable Supabase Auth diagnostics when anonymous sign-in fails", () => {
-    expect(verifier).toContain("Anonymous sign-ins are enabled in Supabase Auth settings.");
-    expect(verifier).toContain("logs/auth-logs");
-    expect(verifier).toContain("supabase:print-auth-diagnostics");
-    expect(verifier).toContain("auth.users");
+  it("requires confirmed QA identities and keeps schema diagnostics available", () => {
+    expect(verifier).toContain("Anonymous sign-ins are disabled in Supabase Auth settings.");
+    expect(verifier).not.toContain("signInAnonymously");
+    expect(verifier).toContain("DEEPSPEC_AUTH_TEST_OTHER");
+    expect(verifier).toContain("assertDistinctUsers(firstSession.user, otherSession.user)");
     expect(authDiagnostics).toContain("security_type");
     expect(authDiagnostics).toContain("profiles_table");
     expect(authDiagnostics).toContain("suggested_drop_trigger_sql");
@@ -106,7 +106,7 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(ciWorkflow).toContain("npm run verify:auth");
     expect(ciWorkflow).toContain("Supabase public settings are not configured; auth verifier did not run.");
     expect(ciWorkflow).toContain("Production-readiness branches and main must prove Supabase auth provider readiness.");
-    expect(ciWorkflow).toContain("Supabase public settings are not configured; cloud sync verifier did not run.");
+    expect(ciWorkflow).toContain("Supabase settings or confirmed QA credentials are not configured; cloud sync verifier did not run.");
     expect(ciWorkflow.match(/secrets\.VITE_SUPABASE_URL \|\| vars\.VITE_SUPABASE_URL/g)).toHaveLength(2);
     expect(ciWorkflow.match(/secrets\.VITE_SUPABASE_PUBLISHABLE_KEY \|\| vars\.VITE_SUPABASE_PUBLISHABLE_KEY/g)).toHaveLength(2);
     expect(ciWorkflow).toContain("GITHUB_STEP_SUMMARY");

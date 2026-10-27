@@ -1,5 +1,6 @@
 import { ClipboardEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { BrandLockup } from "../components/BrandLockup";
 import {
   getVerifiedAuthUser,
   hasPendingSignOut,
@@ -8,7 +9,6 @@ import {
   normalizePostAuthRedirectPath,
   isSupabaseAuthConfigured,
   sendEmailSignInLink,
-  signInAnonymously,
   signInWithGitHub,
   signInWithGoogle,
   signInWithPassword,
@@ -20,7 +20,7 @@ import {
 
 type AuthStep = "email" | "sent" | "code";
 type AuthMode = "link" | "password";
-type PasswordMode = "signin" | "signup" | "anonymous";
+type PasswordMode = "signin" | "signup";
 const CODE_LENGTH = 6;
 const RESEND_COOLDOWN_SECONDS = 30;
 
@@ -154,9 +154,7 @@ export default function Auth() {
       setIsSubmitting(true);
       try {
         const normalizedEmail = email.trim().toLowerCase();
-        const user = passwordMode === "anonymous"
-          ? await signInAnonymously()
-          : passwordMode === "signup"
+        const user = passwordMode === "signup"
             ? await signUpWithPassword(normalizedEmail, password, postAuthPath)
             : await signInWithPassword(normalizedEmail, password);
         if (user) {
@@ -330,9 +328,9 @@ export default function Auth() {
         <div className="ds-auth-story">
           <img src="/brand/alternator-workbench.webp" alt="" width="1086" height="1448" className="ds-auth-art" />
           <div className="ds-auth-story-top">
-            <span className="ds-eyebrow">FROM THE BENCH TO THE RECORD</span>
-            <h2>A clearer picture.<br /><span>A better part record.</span></h2>
-            <p>Capture a part. Review the evidence.<br />Keep the details that matter.</p>
+            <span className="ds-eyebrow">CAR PARTS, MADE CLEARER</span>
+            <h2>Start with a photo.<br /><span>Keep the evidence.</span></h2>
+            <p>Review an AI identification suggestion.<br />Save your inspection and the details that matter.</p>
           </div>
           <div className="ds-auth-story-bottom">
             <span className="ds-art-caption">Illustrative render · Not a scan result</span>
@@ -346,8 +344,8 @@ export default function Auth() {
 
         <section className="ds-auth-card mx-auto flex w-full max-w-[540px] flex-col p-5 sm:p-8">
           <div className="flex items-center justify-between gap-4">
-            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-14 w-44 rounded-[8px] bg-white object-contain p-1 shadow-sm ring-1 ring-white/20" />
-            <span className={supabaseConfigured ? "rounded-[8px] border border-[var(--ds-ok-line)] bg-[var(--ds-ok-soft)] px-3 py-1.5 text-xs font-black text-sky-100" : "rounded-[8px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-3 py-1.5 text-xs font-black text-amber-100"}>
+            <BrandLockup size="lg" />
+            <span className={supabaseConfigured ? "rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-medium text-[var(--slate-200)]" : "rounded-[8px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-3 py-1.5 text-xs font-black text-amber-100"}>
               {supabaseConfigured ? "Your workspace" : "Sign-in unavailable"}
             </span>
           </div>
@@ -355,8 +353,8 @@ export default function Auth() {
           <div className="mt-9">
             <p className="ds-eyebrow">YOUR PARTS. YOUR WORKBENCH.</p>
             <h1 className="mt-3 text-4xl font-bold tracking-tight text-white">Sign in</h1>
-            <p className="mt-3 text-base font-semibold leading-7 text-white/68">
-              Pick up where you left off, or capture your first part.
+            <p className="mt-3 text-base font-normal leading-7 text-white/68">
+              Photograph a car part. Review an AI suggestion. Save your inspection.
             </p>
           </div>
 
@@ -421,30 +419,28 @@ export default function Auth() {
                 </button>
               </div>
 
-              {authMode === "link" || passwordMode !== "anonymous" ? (
-                <label className="block">
-                  <span className="mb-2 block text-sm font-black text-white/84">Email address</span>
-                  <input
-                    className="h-14 w-full rounded-[8px] border border-white/12 bg-white/10 px-4 text-base font-semibold text-white shadow-sm outline-none placeholder:text-white/38 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)] disabled:bg-white/5 disabled:text-white/64"
-                    autoCapitalize="none"
-                    autoComplete="email"
-                    disabled={(authMode === "link" && step !== "email") || isSubmitting}
-                    enterKeyHint="next"
-                    inputMode="email"
-                    name="email"
-                    onChange={(event) => setEmail(event.target.value)}
-                    placeholder="you@shop.com"
-                    required={(authMode === "link" || passwordMode !== "anonymous") && supabaseConfigured}
-                    spellCheck={false}
-                    type="email"
-                    value={email}
-                  />
-                </label>
-              ) : null}
+              <label className="block">
+                <span className="mb-2 block text-sm font-black text-white/84">Email address</span>
+                <input
+                  className="h-14 w-full rounded-[8px] border border-white/12 bg-white/10 px-4 text-base font-semibold text-white shadow-sm outline-none placeholder:text-white/38 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)] disabled:bg-white/5 disabled:text-white/64"
+                  autoCapitalize="none"
+                  autoComplete="email"
+                  disabled={(authMode === "link" && step !== "email") || isSubmitting}
+                  enterKeyHint="next"
+                  inputMode="email"
+                  name="email"
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="you@example.com"
+                  required={supabaseConfigured}
+                  spellCheck={false}
+                  type="email"
+                  value={email}
+                />
+              </label>
 
               {authMode === "password" ? (
                 <>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
                       onClick={() => setPasswordMode("signin")}
@@ -459,35 +455,22 @@ export default function Auth() {
                     >
                       Create
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setPasswordMode("anonymous")}
-                      className={passwordMode === "anonymous" ? "h-11 rounded-[8px] border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] text-sm font-black text-white" : "h-11 rounded-[8px] border border-white/12 bg-white/5 text-sm font-black text-white/62"}
-                    >
-                      No email
-                    </button>
                   </div>
-                  {passwordMode !== "anonymous" ? (
-                    <label className="block">
-                      <span className="mb-2 block text-sm font-black text-white/84">Password</span>
-                      <input
-                        className="h-14 w-full rounded-[8px] border border-white/12 bg-white/10 px-4 text-base font-semibold text-white shadow-sm outline-none placeholder:text-white/38 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)]"
-                        autoComplete={passwordMode === "signup" ? "new-password" : "current-password"}
-                        disabled={isSubmitting}
-                        minLength={passwordMode === "signup" ? 8 : undefined}
-                        name="password"
-                        onChange={(event) => setPassword(event.target.value)}
-                        placeholder="Your password"
-                        required={supabaseConfigured}
-                        type="password"
-                        value={password}
-                      />
-                    </label>
-                  ) : (
-                    <p className="rounded-[8px] border border-sky-300/30 bg-sky-400/12 px-4 py-3 text-sm font-bold leading-6 text-sky-100">
-                      Temporary session on this browser. After signing out or clearing browser data, you cannot sign back in to this temporary account. Use an email account for records you need to keep accessing.
-                    </p>
-                  )}
+                  <label className="block">
+                    <span className="mb-2 block text-sm font-black text-white/84">Password</span>
+                    <input
+                      className="h-14 w-full rounded-[8px] border border-white/12 bg-white/10 px-4 text-base font-semibold text-white shadow-sm outline-none placeholder:text-white/38 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)]"
+                      autoComplete={passwordMode === "signup" ? "new-password" : "current-password"}
+                      disabled={isSubmitting}
+                      minLength={passwordMode === "signup" ? 8 : undefined}
+                      name="password"
+                      onChange={(event) => setPassword(event.target.value)}
+                      placeholder="Your password"
+                      required={supabaseConfigured}
+                      type="password"
+                      value={password}
+                    />
+                  </label>
                 </>
               ) : null}
 
@@ -630,10 +613,6 @@ function submitLabel(
 ) {
   if (isSubmitting) {
     if (authMode === "password") {
-      if (passwordMode === "anonymous") {
-        return "Starting session...";
-      }
-
       return passwordMode === "signup" ? "Creating account..." : "Checking password...";
     }
     return step === "code" ? "Checking code..." : "Sending link...";
@@ -644,10 +623,6 @@ function submitLabel(
   }
 
   if (authMode === "password") {
-    if (passwordMode === "anonymous") {
-      return "Continue without email";
-    }
-
     return passwordMode === "signup" ? "Create account" : "Sign in to scanner";
   }
 

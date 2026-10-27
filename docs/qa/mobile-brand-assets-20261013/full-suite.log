@@ -1,0 +1,40 @@
+
+ RUN  v4.1.6 /workspace/scratch/c17e31fd15f8/DeepSpec-brand-verify
+
+ ❯ server/vercel-layout.test.ts (9 tests | 1 failed) 15ms
+     × keeps only HTTP entry points in api, within the 12-function limit 6ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/vercel-layout.test.ts > Vercel Hobby deployment layout > keeps only HTTP entry points in api, within the 12-function limit
+AssertionError: expected [ 'account-entitlement.ts', …(6) ] to deeply equal [ 'account-entitlement.ts', …(5) ]
+
+- Expected
++ Received
+
+  [
+    "account-entitlement.ts",
+    "billing-checkout.ts",
+    "billing-portal.ts",
+    "billing-webhook.ts",
++   "chat.test.ts",
+    "chat.ts",
+    "identify.ts",
+  ]
+
+ ❯ server/vercel-layout.test.ts:32:26
+     30|     // Vercel discovers files in api as functions, including helpers a…
+     31|     const files = readdirSync(resolve(process.cwd(), "api"), { recursi…
+     32|     expect(files.sort()).toEqual(endpoints.map(({ name }) => `${name}.…
+       |                          ^
+     33|     expect(files.length).toBeLessThanOrEqual(12);
+     34|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 100 passed (101)
+      Tests  1 failed | 1380 passed (1381)
+   Start at  02:54:14
+   Duration  102.01s (transform 1.86s, setup 4.21s, import 4.21s, tests 29.76s, environment 50.12s)
+

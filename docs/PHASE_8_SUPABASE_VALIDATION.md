@@ -10,7 +10,7 @@ In Supabase:
 
 1. Create a project.
 2. Apply every SQL file in `supabase/migrations` in timestamp order.
-3. Enable anonymous sign-ins in Auth if you want device-only users.
+3. Disable anonymous sign-ins in Auth and provision two dedicated confirmed QA accounts.
 4. Confirm the `scan-images` storage bucket is private.
 5. Copy the project URL and publishable/anon key.
 
@@ -83,34 +83,38 @@ npm run verify:supabase
 
 The verifier must:
 
-1. Check that anonymous sign-ins are enabled.
-1. Sign in as an anonymous Supabase user.
+1. Check that anonymous sign-ins are disabled.
+1. Sign in with both confirmed QA accounts and verify their user IDs differ before writing fixtures.
 2. Upload a tiny private test image to `scan-images`.
 3. Upsert a test row in `public.scan_lookups` with image hash, MIME type, and byte length metadata.
 4. Write representative durable dataset detail rows in `public.scan_candidates`, `public.scan_evidence`, `public.scan_corrections`, `public.scan_model_runs`, and `public.sync_events`.
 5. Read the parent scan row and every detail table back as the owner.
-6. Sign in as a second anonymous user and prove that user cannot read the first user's parent scan row or detail rows.
+6. Prove the second confirmed account cannot read the owner's parent scan rows or detail rows.
 7. Download the private image as the owner.
 8. Delete the sync audit event, test row, and test image.
 
 If any step fails, Phase 8 is not complete yet. Fix the Supabase config, migration, bucket, Auth setting, or RLS policy, then run the verifier again.
 
-The current hosted Auth blocker is tracked in [GitHub issue #106](https://github.com/om1o/DeepSpec/issues/106).
+## If Confirmed Sign-In Fails
 
-## If Anonymous Sign-In Returns A Database Error
+Set `DEEPSPEC_AUTH_TEST_EMAIL` and `DEEPSPEC_AUTH_TEST_PASSWORD` for the owner,
+and `DEEPSPEC_AUTH_TEST_OTHER_EMAIL` and `DEEPSPEC_AUTH_TEST_OTHER_PASSWORD` for
+a separate confirmed QA account. These are dedicated test accounts in the target
+project, not customer accounts. Keep credentials in local secret storage or CI
+secrets; never commit them. Password whitespace is significant.
 
-If `npm run verify:supabase` says `Database error creating anonymous user`, the app reached Supabase Auth but Supabase failed while inserting the anonymous user.
-The verifier now confirms `external.anonymous_users` before sign-in, so a failure after that preflight is not a React/browser bug and is not fixed by changing the publishable key.
+The verifier fails before fixture writes if either identity is missing,
+unconfirmed, anonymous, or the same account. Check the target project, credentials,
+confirmation status and Supabase Auth logs. Do not enable anonymous sign-ins to
+unblock it. `npm run supabase:print-auth-diagnostics` prints read-only schema and
+trigger diagnostics when account provisioning encounters a database error.
 
-Check this before changing app code:
-
-1. Supabase Dashboard -> Authentication -> Sign In / Providers -> Anonymous sign-ins is enabled.
-2. Supabase Dashboard -> Auth logs: open the failed `/signup` event and read the database error. The verifier prints the project-specific Auth logs link when it can derive the project ref from `VITE_SUPABASE_URL`.
-3. Run `npm run supabase:print-auth-diagnostics`, paste the printed read-only SQL into Supabase SQL Editor, and inspect every result set. It also checks whether the durable dataset tables, required columns, RLS, authenticated grants, and private `scan-images` bucket are present.
-4. If SQL shows non-internal triggers on `auth.users`, inspect the matching function body, `security_type`, owner, and `function_config`. A trigger function writing to `public.profiles` or `public.users` must be `security definer` and should pin `search_path`.
-5. If SQL shows `public.profiles` / `public.users` constraints, make sure they allow anonymous users or remove the trigger that writes to them. Do not run the generated drop-trigger statements until the Auth log or function body proves that trigger is the failing object.
-6. Apply this repo's migrations if the table, column, grant, RLS, policy, or bucket checks are missing anything.
-7. Rerun `npm run verify:supabase`.
+Billing checkout uses the owner QA credentials without making a payment. Billing
+webhook replay instead provisions a fresh confirmed disposable identity with the
+server-only admin key, signs in through the public client, and removes that identity
+and its synthetic entitlement on completion or failure. `--keep-entitlement`
+intentionally retains both for investigation. Never use real customer identities
+for synthetic billing grants. Live verification remains a separate release gate.
 
 ## GitHub Actions
 
@@ -118,10 +122,12 @@ The GitHub CI workflow runs `npm run check` on pushes and pull requests. It also
 
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_PUBLISHABLE_KEY`
+- `DEEPSPEC_AUTH_TEST_EMAIL` / `DEEPSPEC_AUTH_TEST_PASSWORD`
+- `DEEPSPEC_AUTH_TEST_OTHER_EMAIL` / `DEEPSPEC_AUTH_TEST_OTHER_PASSWORD`
 
 If those secrets are missing, ordinary feature PRs record an explicit "not verified" warning in the GitHub step summary. `main` and `codex/production-readiness-release*` branches fail instead, because those branches must prove Supabase cloud sync before they can be called release-ready.
 
-Do not start Phase 9 until anonymous sign-in can create a user and the verifier passes.
+Do not start Phase 9 until both confirmed QA accounts can sign in and the verifier passes.
 
 ## If scan_lookups Is Missing From The Schema Cache
 

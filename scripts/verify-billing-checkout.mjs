@@ -3,6 +3,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 
+import { signInConfirmed } from "./qa/confirmed-session.mjs";
+
 const DEFAULT_SUMMARY_PATH = "artifacts/release-gates/billing-checkout-summary.json";
 const PLAN_IDS = new Set(["plus_monthly", "plus_yearly", "scan_pack", "pro_beta"]);
 
@@ -52,13 +54,13 @@ function isExpectedProviderHost(hostname, expectedHostSuffix) {
   return hostname === expectedHostSuffix || hostname.endsWith(`.${expectedHostSuffix}`);
 }
 
-async function main() {
-  const options = parseArgs(process.argv.slice(2));
+export async function main(args = process.argv.slice(2)) {
+  const options = parseArgs(args);
   const baseUrl = options.url || process.env.QA_BASE_URL || process.env.DEEPSPEC_PUBLIC_URL || "http://127.0.0.1:5175";
   const env = readRequiredEnv();
 
   console.log(`[0/4] Target: ${baseUrl}`);
-  console.log("      This verifier creates a synthetic anonymous Supabase session and asks DeepSpec for a sandbox checkout URL. It does not make a payment.");
+  console.log("      This verifier uses a dedicated confirmed QA account and asks DeepSpec for a sandbox checkout URL. It does not make a payment.");
 
   if (env.liveBillingEnabled && !options.allowLiveCheckoutUrl) {
     throw new Error("Refusing to create a checkout URL while DEEPSPEC_ENABLE_LIVE_BILLING=true. Pass --allow-live-checkout-url only for an intentional production dry run.");
@@ -72,38 +74,47 @@ async function main() {
     },
   });
 
-  console.log("[1/4] Creating synthetic anonymous test session...");
-  const { data, error } = await publicClient.auth.signInAnonymously();
-  if (error || !data.user || !data.session?.access_token) {
-    throw new Error(`Anonymous sign-in failed: ${error?.message ?? "No user/session returned."}`);
-  }
+  console.log("[1/4] Signing in with the confirmed QA account...");
+  let summary;
+  const failures = [];
+  try {
+    const data = await signInConfirmed(publicClient);
 
-  console.log("[2/4] Requesting checkout URL through /api/billing-checkout...");
-  const response = await postJson(`${baseUrl.replace(/\/$/, "")}/api/billing-checkout`, {
-    origin: baseUrl.replace(/\/$/, ""),
-    planId: options.planId,
-  }, {
-    Authorization: `Bearer ${data.session.access_token}`,
-  });
-  if (!response.ok || typeof response.body?.url !== "string") {
-    throw new Error(`Checkout request failed: HTTP ${response.status} ${response.bodyText}`);
-  }
+    console.log("[2/4] Requesting checkout URL through /api/billing-checkout...");
+    const response = await postJson(`${baseUrl.replace(/\/$/, "")}/api/billing-checkout`, {
+      origin: baseUrl.replace(/\/$/, ""),
+      planId: options.planId,
+    }, {
+      Authorization: `Bearer ${data.session.access_token}`,
+    });
+    if (!response.ok || typeof response.body?.url !== "string") {
+      throw new Error(`Checkout request failed: HTTP ${response.status} ${response.bodyText}`);
+    }
 
-  const checkoutUrl = classifyCheckoutUrl(response.body.url, env.provider);
-  if (!checkoutUrl.ok) {
-    throw new Error(checkoutUrl.message);
-  }
+    const checkoutUrl = classifyCheckoutUrl(response.body.url, env.provider);
+    if (!checkoutUrl.ok) {
+      throw new Error(checkoutUrl.message);
+    }
 
-  console.log("[3/4] Checkout URL verified.");
-  console.log(`      Provider=${env.provider} plan=${options.planId} checkoutOrigin=${checkoutUrl.origin}`);
-  writeSummary(options.summaryPath, {
-    baseUrl,
-    checkoutOrigin: checkoutUrl.origin,
-    ok: true,
-    planId: options.planId,
-    provider: env.provider,
-    verifiedAt: new Date().toISOString(),
-  });
+    console.log("[3/4] Checkout URL verified.");
+    console.log(`      Provider=${env.provider} plan=${options.planId} checkoutOrigin=${checkoutUrl.origin}`);
+    summary = {
+      baseUrl,
+      checkoutOrigin: checkoutUrl.origin,
+      ok: true,
+      planId: options.planId,
+      provider: env.provider,
+      verifiedAt: new Date().toISOString(),
+    };
+  } catch (error) { failures.push(error); }
+  finally {
+    try {
+      const { error } = await publicClient.auth.signOut({ scope: "local" });
+      if (error) failures.push(new Error("QA session cleanup failed."));
+    } catch { failures.push(new Error("QA session cleanup failed.")); }
+  }
+  if (failures.length) throw new AggregateError(failures, failures.map((error) => error.message).join("\n"));
+  writeSummary(options.summaryPath, summary);
 }
 
 function readRequiredEnv() {
@@ -227,14 +238,14 @@ function loadLocalEnv(filename) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
 
-    const separatorIndex = trimmed.indexOf("=");
+    const separatorIndex = line.indexOf("=");
     if (separatorIndex === -1) continue;
-
-    const key = trimmed.slice(0, separatorIndex).trim();
-    const rawValue = trimmed.slice(separatorIndex + 1).trim();
-    if (!key || process.env[key]) continue;
-
-    process.env[key] = rawValue.replace(/^["']|["']$/g, "");
+    const key = line.slice(0, separatorIndex).trim();
+    const rawValue = line.slice(separatorIndex + 1);
+    if (!key || process.env[key] !== undefined) continue;
+    const value = rawValue.trim();
+    const quoted = (value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"));
+    process.env[key] = quoted ? value.slice(1, -1) : key.endsWith("_PASSWORD") ? rawValue : value;
   }
 }
 

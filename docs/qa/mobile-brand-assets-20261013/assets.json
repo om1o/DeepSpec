@@ -1,0 +1,40 @@
+[
+  {
+    "name": "deepspec-symbol",
+    "css_pixels": 56,
+    "export_pixels": 168,
+    "alpha_exact": true,
+    "visible_rgb_exact": true,
+    "files": [
+      {
+        "path": "public/brand/deepspec-symbol.png",
+        "bytes": 578313,
+        "sha256": "3bd2890f862e681ff132fcd332a404bfefe81ce194a01692a21901ae2f6afac2"
+      },
+      {
+        "path": "public/brand/deepspec-symbol.webp",
+        "bytes": 9552,
+        "sha256": "dfb48a65124b42c01cbd1137b728fefcbee4a086997ae32838c391d1b7daf311"
+      }
+    ]
+  },
+  {
+    "name": "deepspec-scan-badge-glass",
+    "css_pixels": 104,
+    "export_pixels": 336,
+    "alpha_exact": true,
+    "visible_rgb_exact": true,
+    "files": [
+      {
+        "path": "public/brand/deepspec-scan-badge-glass.png",
+        "bytes": 604256,
+        "sha256": "5202823b70743b81d3835f60113c0852f2e5b878512120eddb1459a9e6db2777"
+      },
+      {
+        "path": "public/brand/deepspec-scan-badge-glass.webp",
+        "bytes": 37376,
+        "sha256": "45617e75534dbadc2687564768fc77f37d4fc3ea5fd396ec8d34965056810c93"
+      }
+    ]
+  }
+]

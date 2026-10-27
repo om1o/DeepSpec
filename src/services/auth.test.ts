@@ -5,7 +5,6 @@ const supabaseMock = vi.hoisted(() => ({
     exchangeCodeForSession: vi.fn(),
     getUser: vi.fn(),
     onAuthStateChange: vi.fn(),
-    signInAnonymously: vi.fn(),
     signInWithOtp: vi.fn(),
     signInWithPassword: vi.fn(),
     signOut: vi.fn(),
@@ -31,7 +30,6 @@ describe("auth service", () => {
     supabaseMock.auth.exchangeCodeForSession.mockReset();
     supabaseMock.auth.getUser.mockReset();
     supabaseMock.auth.onAuthStateChange.mockReset();
-    supabaseMock.auth.signInAnonymously.mockReset();
     supabaseMock.auth.signInWithOtp.mockReset();
     supabaseMock.auth.signInWithPassword.mockReset();
     supabaseMock.auth.signOut.mockReset();
@@ -50,7 +48,6 @@ describe("auth service", () => {
       },
     });
     supabaseMock.auth.exchangeCodeForSession.mockResolvedValue({ data: {}, error: null });
-    supabaseMock.auth.signInAnonymously.mockResolvedValue({ data: {}, error: null });
     supabaseMock.auth.signInWithOtp.mockResolvedValue({ data: {}, error: null });
     supabaseMock.auth.signInWithPassword.mockResolvedValue({ data: {}, error: null });
     supabaseMock.auth.signUp.mockResolvedValue({ data: { session: { access_token: "token" } }, error: null });
@@ -130,26 +127,6 @@ describe("auth service", () => {
     });
   });
 
-  it("starts anonymous sessions through Supabase and verifies the returned user", async () => {
-    const { signInAnonymously } = await import("./auth");
-    supabaseMock.auth.getUser.mockResolvedValue({
-      data: {
-        user: {
-          app_metadata: {},
-          aud: "authenticated",
-          created_at: new Date(0).toISOString(),
-          id: "anonymous-user",
-          user_metadata: {},
-        },
-      },
-      error: null,
-    });
-
-    await expect(signInAnonymously()).resolves.toEqual(expect.objectContaining({ id: "anonymous-user" }));
-
-    expect(supabaseMock.auth.signInAnonymously).toHaveBeenCalledTimes(1);
-  });
-
   it("creates a password account only when Supabase returns an active session", async () => {
     const { signUpWithPassword } = await import("./auth");
     supabaseMock.auth.getUser.mockResolvedValue({
@@ -223,6 +200,94 @@ describe("auth service", () => {
 
     await expect(signUpWithPassword("new@example.com", "correct-password")).resolves.toBeNull();
     expect(supabaseMock.auth.getUser).not.toHaveBeenCalled();
+  });
+
+  it("rejects legacy anonymous users without caching or deleting their device records", async () => {
+    const { getVerifiedAuthUser } = await import("./auth");
+    const { getAccountScope, setActiveAccount } = await import("../lib/accountScope");
+    setActiveAccount("legacy-user");
+    const recordKey = "deep-spec:account:legacy-user:lookups";
+    localStorage.setItem(recordKey, "preserved-records");
+    supabaseMock.auth.getUser.mockResolvedValue({
+      data: { user: { ...makeAuthUser("legacy-user"), is_anonymous: true } }, error: null,
+    });
+
+    expect(await getVerifiedAuthUser()).toBeNull();
+    expect(getAccountScope().userId).toBeNull();
+    expect(await getVerifiedAuthUser()).toBeNull();
+    expect(supabaseMock.auth.getUser).toHaveBeenCalledTimes(2);
+    expect(supabaseMock.auth.signOut).not.toHaveBeenCalled();
+    expect(localStorage.getItem(recordKey)).toBe("preserved-records");
+  });
+
+  it.each(["INITIAL_SESSION", "SIGNED_IN", "TOKEN_REFRESHED", "USER_UPDATED"])("blocks anonymous %s events immediately, including the same account ID", async (event) => {
+    vi.useFakeTimers();
+    const { subscribeToAuthChanges } = await import("./auth");
+    const { getAccountScope, setActiveAccount } = await import("../lib/accountScope");
+    setActiveAccount("legacy-user");
+    const onChange = vi.fn();
+    const onVerifying = vi.fn();
+    const cleanup = await subscribeToAuthChanges(onChange, onVerifying);
+    try {
+      const listener = supabaseMock.auth.onAuthStateChange.mock.calls[0][0];
+      listener(event, { user: { ...makeAuthUser("legacy-user"), is_anonymous: true } });
+      expect(onChange).toHaveBeenCalledExactlyOnceWith(null);
+      expect(getAccountScope().userId).toBeNull();
+      expect(onVerifying).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(supabaseMock.auth.getUser).not.toHaveBeenCalled();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("rejects an anonymous server result even when an auth event claims a permanent user", async () => {
+    vi.useFakeTimers();
+    const { subscribeToAuthChanges } = await import("./auth");
+    const { getAccountScope } = await import("../lib/accountScope");
+    const onChange = vi.fn();
+    const cleanup = await subscribeToAuthChanges(onChange);
+    supabaseMock.auth.getUser.mockResolvedValue({
+      data: { user: { ...makeAuthUser("legacy-user"), is_anonymous: true } }, error: null,
+    });
+    try {
+      const listener = supabaseMock.auth.onAuthStateChange.mock.calls[0][0];
+      listener("SIGNED_IN", { user: { ...makeAuthUser("legacy-user"), is_anonymous: false } });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onChange).toHaveBeenCalledExactlyOnceWith(null);
+      expect(getAccountScope().userId).toBeNull();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("keeps a pending sign-out locked when explicit sign-in verifies an anonymous user", async () => {
+    localStorage.setItem("deep-spec:sign-out-pending", "existing-lock");
+    const { hasPendingSignOut, signInWithPassword } = await import("./auth");
+    const { getAccountScope } = await import("../lib/accountScope");
+    const user = { ...makeAuthUser("legacy-user"), is_anonymous: true };
+    supabaseMock.auth.signInWithPassword.mockResolvedValue({ data: { user }, error: null });
+    supabaseMock.auth.getUser.mockResolvedValue({ data: { user }, error: null });
+
+    await expect(signInWithPassword("user@example.com", "synthetic-password")).rejects.toThrow("Could not verify this session");
+    expect(hasPendingSignOut()).toBe(true);
+    expect(getAccountScope().userId).toBeNull();
+  });
+
+  it("allows a verified permanent password sign-in after rejecting a legacy anonymous session", async () => {
+    const { getVerifiedAuthUser, signInWithPassword } = await import("./auth");
+    const { getAccountScope } = await import("../lib/accountScope");
+    const permanentUser = { ...makeAuthUser("permanent-user"), is_anonymous: false };
+    supabaseMock.auth.getUser
+      .mockResolvedValueOnce({ data: { user: { ...makeAuthUser("legacy-user"), is_anonymous: true } }, error: null })
+      .mockResolvedValueOnce({ data: { user: permanentUser }, error: null });
+    supabaseMock.auth.signInWithPassword.mockResolvedValue({ data: { user: permanentUser }, error: null });
+
+    expect(await getVerifiedAuthUser()).toBeNull();
+    expect(await signInWithPassword("user@example.com", "synthetic-password")).toEqual(permanentUser);
+    expect(getAccountScope().userId).toBe("permanent-user");
+    expect(await getVerifiedAuthUser()).toEqual(permanentUser);
+    expect(supabaseMock.auth.getUser).toHaveBeenCalledTimes(2);
   });
 
   it("fails closed when Supabase user verification hangs", async () => {

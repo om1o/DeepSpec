@@ -1,0 +1,18 @@
+Run: https://github.com/om1o/DeepSpec/actions/runs/38162100792
+Job: 114536977972
+Associated PR head: 96e34ce9ee79d1cf0137d57b218576e833d0ecc6
+CI Node major: 22
+Selected log evidence (not the full log):
+
+2026-10-11T18:02:00.1445110Z HEAD is now at cabbcae Merge 96e34ce9ee79d1cf0137d57b218576e833d0ecc6 into a28e1a19147a50751248f2546fae4224f332aa9c
+2026-10-11T18:04:26.1960560Z  Test Files  97 passed (97)
+2026-10-11T18:04:26.1965443Z       Tests  1317 passed (1317)
+2026-10-11T18:04:34.7541588Z Public asset integrity passed: all internal links and referenced assets exist.
+2026-10-11T18:04:35.0848158Z       Signup is enabled.
+2026-10-11T18:04:35.0878221Z       Anonymous sign-ins are disabled; confirmed accounts are required.
+2026-10-11T18:04:35.0938636Z       Provider settings: verified (not an end-to-end sign-in).
+2026-10-11T18:04:35.0940044Z       Password sign-in: skipped — credentials not supplied.
+2026-10-11T18:04:35.0941217Z       Email code sign-in: skipped — received code not supplied.
+2026-10-11T18:04:35.0942090Z       Email code request: skipped.
+2026-10-11T18:04:35.0942907Z       OAuth browser sign-in: not tested by this verifier.
+2026-10-11T18:04:35.1844906Z ##[warning]Supabase settings or confirmed QA credentials are not configured; cloud sync verifier did not run.

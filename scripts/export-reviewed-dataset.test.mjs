@@ -86,6 +86,13 @@ describe("server-only export transport", () => {
     expect(requests[0].options.headers.Prefer).toBe("count=exact");
     expect(requests[0].options.signal).toBeInstanceOf(AbortSignal);
   });
+  it("does not send an opaque Supabase secret key as a bearer token", async () => {
+    const requests = [];
+    const client = createExportClient({ url: "https://project.supabase.co", key: "sb_secret_test", fetchImpl: async (url, options) => { requests.push({ url, options }); return new Response(JSON.stringify([row]), { headers: { "content-range": "0-0/1" } }); } });
+    await client.list("v1");
+    expect(requests[0].options.headers.apikey).toBe("sb_secret_test");
+    expect(requests[0].options.headers.Authorization).toBeUndefined();
+  });
   it("rejects a server count above the cap even if response rows are truncated", async () => {
     const client = createExportClient({ url: "https://project.supabase.co", key: "test", fetchImpl: async () => new Response("[]", { headers: { "content-range": "0-199/201" } }) });
     await expect(client.list("v1")).rejects.toThrow(/200-membership/);

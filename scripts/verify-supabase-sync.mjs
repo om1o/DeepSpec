@@ -5,6 +5,8 @@ import { createClient } from "@supabase/supabase-js";
 import { assertPrivateStorageDenied } from "./qa/storage-access-check.mjs";
 import { assertInspectionSchema, cleanupCloudFixture, fetchCloudVerification, verifyInspectionRoundTrip } from "./qa/cloud-fixture-checks.mjs";
 
+import { assertDistinctUsers, readTestCredentials, signInConfirmed } from "./qa/confirmed-session.mjs";
+
 const SCAN_BUCKET = "scan-images";
 const inspectionMode = process.argv.includes("--inspection");
 const TEST_IMAGE_BYTES = Buffer.from(
@@ -38,12 +40,15 @@ let userId;
 let imagePath;
 let secondImagePath;
 let ownerClient;
+let otherClient;
 let failureMessage;
 
 try {
   console.log("[0/9] Checking Supabase Auth settings...");
+  const ownerCredentials = readTestCredentials();
+  const otherCredentials = readTestCredentials(process.env, "DEEPSPEC_AUTH_TEST_OTHER");
   await runPreflight(config);
-  console.log("      Anonymous sign-ins are enabled in Supabase Auth settings.");
+  console.log("      Anonymous sign-ins are disabled in Supabase Auth settings.");
 
   ownerClient = createClient(config.url, config.key, {
     global: { fetch: fetchCloudVerification },
@@ -54,10 +59,16 @@ try {
     },
   });
 
-  console.log("[1/9] Signing in as an anonymous Supabase user...");
-  console.log("      Generated scan fixtures will be removed and checked; temporary anonymous auth accounts cannot be removed with public credentials.");
-  const firstUser = await signInAnonymously(ownerClient, config);
-  userId = firstUser.id;
+  console.log("[1/9] Signing in with two dedicated confirmed QA accounts...");
+  console.log("      Only generated scan/image fixtures will be removed; QA accounts are retained.");
+  const firstSession = await signInConfirmed(ownerClient, ownerCredentials);
+  otherClient = createClient(config.url, config.key, {
+    global: { fetch: fetchCloudVerification },
+    auth: { autoRefreshToken: false, detectSessionInUrl: false, persistSession: false },
+  });
+  const otherSession = await signInConfirmed(otherClient, otherCredentials);
+  assertDistinctUsers(firstSession.user, otherSession.user);
+  userId = firstSession.user.id;
   if (inspectionMode) {
     console.log("      Checking inspection schema before any scan or image writes...");
     await assertInspectionSchema(ownerClient);
@@ -111,16 +122,7 @@ try {
   await assertOwnerDatasetRows(ownerClient, secondTestId);
   await assertOwnerScanCount(ownerClient, [testId, secondTestId]);
 
-  console.log("[6/9] Proving another anonymous user cannot read those scan datasets...");
-  const otherClient = createClient(config.url, config.key, {
-    global: { fetch: fetchCloudVerification },
-    auth: {
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-      persistSession: false,
-    },
-  });
-  await signInAnonymously(otherClient, config);
+  console.log("[6/9] Proving another confirmed user cannot read those scan datasets...");
   await assertCrossUserCannotRead(otherClient, "scan_lookups", "local_id", testId);
   await assertCrossUserCannotRead(otherClient, "scan_candidates", "scan_local_id", testId);
   await assertCrossUserCannotRead(otherClient, "scan_evidence", "scan_local_id", testId);
@@ -155,6 +157,14 @@ try {
     if (!ownerClient || !userId || !path) continue;
     try { await cleanupCloudFixture(ownerClient, userId, id, path); }
     catch (error) { failureMessage = [failureMessage, error instanceof Error ? error.message : "Unknown fixture cleanup failure."].filter(Boolean).join("\n"); }
+  }
+
+  for (const client of [ownerClient, otherClient]) {
+    if (!client) continue;
+    try {
+      const { error } = await client.auth.signOut({ scope: "local" });
+      if (error) failureMessage = [failureMessage, "QA session cleanup failed."].filter(Boolean).join("\n");
+    } catch { failureMessage = [failureMessage, "QA session cleanup failed."].filter(Boolean).join("\n"); }
   }
 
   if (failureMessage) {
@@ -198,50 +208,6 @@ async function writeScanLookupRow(supabase, userId, localId, rowImagePath, train
   );
 }
 
-async function signInAnonymously(supabase, config) {
-  const { data, error } = await supabase.auth.signInAnonymously();
-  if (error || !data.user) {
-    const code = error?.code ? ` (${error.code})` : "";
-    const status = error?.status ? `HTTP ${error.status}` : "unknown status";
-    const dashboardLinks = getDashboardLinks(config.url);
-    throw new Error(
-      [
-        `Anonymous sign-in failed: ${error?.message ?? "No user returned"}${code}, ${status}.`,
-        "Anonymous sign-ins were enabled during preflight, but this request failed. Check network reachability and Auth logs before diagnosing a database problem.",
-        dashboardLinks
-          ? `Open Auth logs for the failed /signup event: ${dashboardLinks.authLogs}`
-          : "Open Supabase Dashboard -> Auth logs for the failed /signup event.",
-        "Then run `npm run supabase:print-auth-diagnostics` and paste the SQL into Supabase SQL Editor.",
-        dashboardLinks ? `SQL Editor: ${dashboardLinks.sqlEditor}` : "Look for triggers or functions on auth.users that write to missing or constrained profile tables.",
-        "Common causes: an outdated Auth schema, or a database trigger on auth.users failing while inserting into public.profiles or another required table.",
-        "The private scan table and storage checks cannot run until Auth can create an anonymous user.",
-      ].join(" "),
-    );
-  }
-
-  return data.user;
-}
-
-function getDashboardLinks(projectUrl) {
-  let hostname;
-
-  try {
-    hostname = new URL(projectUrl).hostname;
-  } catch {
-    return null;
-  }
-
-  const projectRef = hostname.endsWith(".supabase.co") ? hostname.replace(".supabase.co", "") : "";
-  if (!projectRef) {
-    return null;
-  }
-
-  return {
-    authLogs: `https://supabase.com/dashboard/project/${projectRef}/logs/auth-logs`,
-    sqlEditor: `https://supabase.com/dashboard/project/${projectRef}/sql/new`,
-  };
-}
-
 async function runPreflight(config) {
   const headers = {
     apikey: config.key,
@@ -253,8 +219,8 @@ async function runPreflight(config) {
     throw new Error(`Could not read Supabase Auth settings: ${settings.status} ${settings.bodyText}`);
   }
 
-  if (settings.body?.external?.anonymous_users !== true) {
-    throw new Error("Anonymous sign-ins are disabled in Supabase Auth settings.");
+  if (settings.body?.external?.anonymous_users !== false) {
+    throw new Error("Disable anonymous sign-ins before preview promotion.");
   }
 }
 
@@ -432,7 +398,7 @@ async function assertCrossUserCannotRead(supabase, table, idColumn, scanLocalId)
   await assertNoError(crossRead, `${table} cross-user RLS check failed`);
 
   if ((crossRead.data ?? []).length !== 0) {
-    throw new Error(`RLS failed: another anonymous user could read ${table}.`);
+    throw new Error(`RLS failed: another confirmed user could read ${table}.`);
   }
 }
 
@@ -473,14 +439,14 @@ function loadLocalEnv(filename) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
 
-    const separatorIndex = trimmed.indexOf("=");
+    const separatorIndex = line.indexOf("=");
     if (separatorIndex === -1) continue;
-
-    const key = trimmed.slice(0, separatorIndex).trim();
-    const rawValue = trimmed.slice(separatorIndex + 1).trim();
-    if (!key || process.env[key]) continue;
-
-    process.env[key] = rawValue.replace(/^["']|["']$/g, "");
+    const key = line.slice(0, separatorIndex).trim();
+    const rawValue = line.slice(separatorIndex + 1);
+    if (!key || process.env[key] !== undefined) continue;
+    const value = rawValue.trim();
+    const quoted = (value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"));
+    process.env[key] = quoted ? value.slice(1, -1) : key.endsWith("_PASSWORD") ? rawValue : value;
   }
 }
 

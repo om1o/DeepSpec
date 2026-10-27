@@ -1,0 +1,33 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> deep-spec@0.1.0 build
+> tsc -b && vite build --configLoader native && npm run verify:public
+
+vite v8.0.13 building client environment for production...
+
+transforming...✓ 149 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/registerSW.js                                              0.13 kB
+dist/manifest.webmanifest                                       0.41 kB
+dist/index.html                                                 4.70 kB │ gzip:     1.60 kB
+dist/assets/ort-wasm-simd-threaded.asyncify-DMmc6YqF.wasm  23,567.05 kB │ gzip: 5,824.05 kB
+dist/assets/index-D9tTkyrc.css                                 92.50 kB │ gzip:    16.80 kB
+dist/assets/Scanner-DmQbRUY6.js                                79.93 kB │ gzip:    25.12 kB
+dist/assets/dist-BBk4flvF.js                                  196.31 kB │ gzip:    50.03 kB
+dist/assets/index-Bount8l7.js                                 480.90 kB │ gzip:   143.19 kB
+dist/assets/transformers.web-B1qhAfOh.js                      550.87 kB │ gzip:   156.50 kB
+
+[plugin builtin:vite-reporter]
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 994ms
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> deep-spec@0.1.0 verify:public
+> node scripts/verify-public-assets.mjs && node scripts/verify-brand-assets.mjs
+
+Public asset integrity passed: all internal links and referenced assets exist.
+Brand assets: lossless alpha, 3x dimensions, byte budgets and bundle references passed.

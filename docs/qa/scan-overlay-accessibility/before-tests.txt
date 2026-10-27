@@ -1,0 +1,69 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> deep-spec@0.1.0 test
+> vitest run --configLoader native --pool threads --maxWorkers=1 --no-file-parallelism src/screens/AnalyzingOverlay.test.tsx
+
+
+ RUN  v4.1.6 /workspace/scratch/3f0bcbb8ae99/DeepSpec
+
+stdout | src/screens/AnalyzingOverlay.test.tsx
+[DeepSpec CropBox] cropbox-trace-1 loaded — VITE_DEEPSPEC_CROP_BOX="off" -> enabled=false
+
+stdout | src/screens/AnalyzingOverlay.test.tsx
+[DeepSpec CropBox] component module loaded (cropbox-trace-1)
+
+stdout | src/screens/AnalyzingOverlay.test.tsx
+[DeepSpec SAM] promptableSegmentation v7 (five-point prompts + best-fit mask selection) loaded
+
+stdout | src/screens/AnalyzingOverlay.test.tsx
+[DeepSpec UI] Scanner chunk ui-trace-v1 (scan-completion + tier trace) loaded
+
+ ❯ src/screens/AnalyzingOverlay.test.tsx (5 tests | 2 failed) 233ms
+     × keeps visible timer ticks outside live regions without mutating the status 21ms
+     × keeps download progress and completion in the status while the timer remains separate 17ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/screens/AnalyzingOverlay.test.tsx > AnalyzingOverlay > keeps visible timer ticks outside live regions without mutating the status
+Error: expect(element).not.toContainElement(element)
+
+<div
+  aria-live="polite"
+  role="status"
+/> contains: <p
+  class="mt-2 text-xs font-semibold tabular-nums"
+  style="font-family: var(--font-data); color: var(--slate-500);"
+/>
+
+ ❯ src/screens/AnalyzingOverlay.test.tsx:56:24
+     54|     const timer = screen.getByText("0s elapsed");
+     55|     expect(status).toHaveAttribute("aria-live", "polite");
+     56|     expect(status).not.toContainElement(timer);
+       |                        ^
+     57|     expect(timer.closest('[aria-live], [role="status"], [role="alert"]…
+     58|     expect(timer.closest('[aria-hidden="true"]')).toBeNull();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/screens/AnalyzingOverlay.test.tsx > AnalyzingOverlay > keeps download progress and completion in the status while the timer remains separate
+Error: expect(element).not.toHaveTextContent()
+
+Expected element not to have text content:
+  /elapsed|Almost done/
+Received:
+  Reading photoDownloading offline model... 25%9s elapsed
+ ❯ src/screens/AnalyzingOverlay.test.tsx:104:24
+    102|     act(() => vi.advanceTimersByTime(9000));
+    103|     expect(screen.getByText("9s elapsed")).toBeVisible();
+    104|     expect(status).not.toHaveTextContent(/elapsed|Almost done/);
+       |                        ^
+    105|     expect(status).toHaveTextContent("Downloading offline model... 25%…
+    106|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 3 passed (5)
+   Start at  06:20:09
+   Duration  1.67s (transform 476ms, setup 99ms, import 556ms, tests 233ms, environment 617ms)

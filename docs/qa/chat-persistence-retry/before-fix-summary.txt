@@ -1,0 +1,20 @@
+Regression run against unmodified production code at f3884c1, with the new tests applied.
+
+ FAIL  src/screens/Chat.test.tsx > Chat > retries a completed answer after primary failure without another provider call
+ FAIL  src/screens/Chat.test.tsx > Chat > retries a completed answer after auxiliary failure without another provider call
+ FAIL  src/screens/Chat.test.tsx > Chat > blocks a completed save retry after switching accounts to other-user
+ FAIL  src/screens/Chat.test.tsx > Chat > blocks a completed save retry after switching accounts to test-user
+ FAIL  src/screens/Chat.test.tsx > Chat > blocks a completed save retry after switching accounts to null
+ FAIL  src/screens/Chat.test.tsx > Chat > ignores a provider completion after navigating to /result/lookup-2/chat
+ FAIL  src/screens/Chat.test.tsx > Chat > ignores a provider completion after navigating to /away
+ FAIL  src/screens/Chat.test.tsx > Chat > clears a completed unsaved exchange when the scan route changes
+ FAIL  src/screens/Chat.test.tsx > Chat > does not recreate a deleted scan when retrying the retained answer
+ FAIL  src/screens/Chat.test.tsx > Chat > reopens the durable exchange after an auxiliary-write failure without another provider call
+ FAIL  src/services/storage.test.ts > storage > repairs a partially persisted exchange idempotently (stale auxiliary retained: false)
+ FAIL  src/services/storage.test.ts > storage > repairs a partially persisted exchange idempotently (stale auxiliary retained: true)
+ FAIL  src/services/storage.test.ts > storage > retries a failed primary write with the original message IDs
+ FAIL  src/services/storage.test.ts > storage > keeps newer messages and the history cap on retry while allowing identical text with new IDs
+ FAIL  src/services/storage.test.ts > storage > refuses a cross-account auxiliary write if a lookup-change listener switches accounts
+ Test Files  2 failed (2)
+      Tests  15 failed | 71 passed (86)
+   Duration  4.09s (transform 248ms, setup 160ms, import 343ms, tests 2.04s, environment 1.26s)

@@ -30,7 +30,7 @@ function cloud() {
     return { error: null };
   });
   const client = {
-    auth: { getSession: async () => ({ data: { session: { user: { id: "user-1" } } }, error: null }) },
+    auth: { getSession: async () => ({ data: { session: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "user-1" } } }, error: null }) },
     storage: { from: () => ({ upload }) },
     rpc: vi.fn(async (_name: string, args: Record<string, unknown>) => {
       await pauseDetails();

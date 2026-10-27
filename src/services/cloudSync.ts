@@ -30,7 +30,7 @@ export type CloudSyncStatus = {
 
 export type CloudHealthStepId =
   | "configured"
-  | "anonymousAuth"
+  | "verifiedAuth"
   | "storageUpload"
   | "rowUpsert"
   | "datasetDetails"
@@ -124,10 +124,24 @@ export async function verifyCloudHealth(): Promise<CloudHealthReport> {
   const testId = `health-${createRuntimeId()}`;
 
   try {
-    ownerClient = await createVerificationClient(config);
-    const owner = await signInForHealthCheck(ownerClient);
+    const authClient = await getClient();
+    const session = await authClient.auth.getSession();
+    assertAccount(scope);
+    if (session.error) throw new Error(session.error.message);
+    const token = session.data.session?.access_token;
+    if (!scope.userId || !token) throw new Error("Sign in to a verified account before checking cloud sync.");
+    const verified = await authClient.auth.getUser(token);
+    assertAccount(scope);
+    if (verified.error) throw new Error(verified.error.message);
+    const owner = verified.data.user;
+    if (!owner || owner.id !== scope.userId) throw new Error("Sign in to the account that owns this scan before syncing.");
+    assertVerifiedCloudUser(owner);
+    // Pin the probe and cleanup to the captured owner's token. Switching the
+    // interactive account must never move these requests to a different user.
+    ownerClient = await createVerificationClient(config, token);
+    assertAccount(scope);
     userId = owner.id;
-    report = updateCloudHealthCheck(report, "anonymousAuth", "pass", "Signed you in securely.");
+    report = updateCloudHealthCheck(report, "verifiedAuth", "pass", "Your confirmed account was verified.");
 
     imagePath = `${userId}/${testId}.jpg`;
     await assertCloudResult(
@@ -137,6 +151,7 @@ export async function verifyCloudHealth(): Promise<CloudHealthReport> {
       }),
       "Private image upload failed",
     );
+    assertAccount(scope);
     report = updateCloudHealthCheck(report, "storageUpload", "pass", "Your scan photo uploaded privately.");
 
     await assertCloudResult(
@@ -167,20 +182,23 @@ export async function verifyCloudHealth(): Promise<CloudHealthReport> {
       ),
       "scan_lookups upsert failed",
     );
+    assertAccount(scope);
     report = updateCloudHealthCheck(report, "rowUpsert", "pass", "Your scan saved to the cloud.");
 
     await writeCloudHealthDatasetDetails(ownerClient, userId, testId);
+    assertAccount(scope);
     report = updateCloudHealthCheck(report, "datasetDetails", "pass", "Scan details saved.");
 
     const otherClient = await createVerificationClient(config);
-    await signInForHealthCheck(otherClient);
+    assertAccount(scope);
     await assertCloudHealthRlsIsolation(otherClient, testId);
-    report = updateCloudHealthCheck(report, "rlsIsolation", "pass", "Your scans stay private to you.");
+    assertAccount(scope);
+    report = updateCloudHealthCheck(report, "rlsIsolation", "pass", "Signed-out visitors could not read the test scans.");
 
     return saveReport({
       ...report,
       lastVerifiedAt: checkedAt,
-      message: "Cloud sync is working. Your scans save and stay private to you.",
+      message: "Cloud saves and signed-out privacy checks passed for this account.",
       overall: "ready",
     });
   } catch (error) {
@@ -730,9 +748,11 @@ async function assertCloudHealthRlsIsolation(supabase: SupabaseClient, scanLocal
 
   for (const check of checks) {
     const crossRead = await supabase.from(check.table).select(check.idColumn).eq(check.idColumn, scanLocalId);
-    await assertCloudResult(crossRead, `${check.table} cross-user RLS read failed`);
+    // Revoking table SELECT from the signed-out role is also a valid denial.
+    if (crossRead.error?.code === "42501") continue;
+    await assertCloudResult(crossRead, `${check.table} signed-out RLS read failed`);
     if ((crossRead.data ?? []).length > 0) {
-      throw new Error(`RLS failed: another anonymous user could read ${check.table}.`);
+      throw new Error(`RLS failed: a signed-out visitor could read ${check.table}.`);
     }
   }
 }
@@ -893,9 +913,10 @@ async function getClient() {
   return client;
 }
 
-async function createVerificationClient(config: CloudSyncConfig): Promise<SupabaseClient> {
+async function createVerificationClient(config: CloudSyncConfig, token?: string): Promise<SupabaseClient> {
   const { createClient } = await import("@supabase/supabase-js");
   return createClient(config.url, config.key, {
+    ...(token ? { accessToken: async () => token } : {}),
     auth: {
       autoRefreshToken: false,
       detectSessionInUrl: false,
@@ -914,16 +935,14 @@ async function ensureCloudUser(supabase: SupabaseClient, scope: AccountScope): P
   if (session.error) throw new Error(session.error.message);
   const user = session.data.session?.user;
   if (!user || user.id !== scope.userId) throw new Error("Sign in to the account that owns this scan before syncing.");
+  assertVerifiedCloudUser(user);
   return user;
 }
 
-async function signInForHealthCheck(supabase: SupabaseClient): Promise<User> {
-  const anonymousSignIn = await supabase.auth.signInAnonymously();
-  if (anonymousSignIn.error || !anonymousSignIn.data.user) {
-    throw new Error(anonymousSignIn.error?.message ?? "Anonymous sign-in failed.");
+function assertVerifiedCloudUser(user: User) {
+  if (user.is_anonymous === true || (!user.email_confirmed_at && !user.phone_confirmed_at)) {
+    throw new Error("Sign in to a verified account before syncing. Confirm your email or phone first.");
   }
-
-  return anonymousSignIn.data.user;
 }
 
 async function assertCloudResult(result: { error: { message?: string } | null }, label: string) {
@@ -1011,7 +1030,7 @@ function getFriendlySyncError(error: unknown) {
   // Anchored to Supabase's actual auth wording ("Anonymous sign-ins are disabled", "Signups not
   // allowed"): a bare "signup" also matched the waitlist_signups table in unrelated errors.
   if (/anonymous[\s_-]*(?:sign|auth|provider)|signups? (?:is |are )?(?:not allowed|disabled)|sign-in|sign in/i.test(message)) {
-    return "Cloud sync needs Supabase anonymous sign-ins enabled before scans can upload.";
+    return "Sign in to a verified account before syncing. Confirm your email or phone first.";
   }
 
   if (/failed to fetch|networkerror|network error|fetch failed|load failed|timed out|timeout|aborted/i.test(message)) {
@@ -1056,11 +1075,11 @@ function createCloudHealthReport(config: CloudSyncConfig | null, checkedAt: stri
         configured ? "Cloud sync is connected." : "Cloud sync isn't connected yet.",
         configured ? "pass" : "fail",
       ),
-      anonymousAuth: createCloudHealthCheck("anonymousAuth", "Secure sign-in", "Not checked yet.", "unknown"),
+      verifiedAuth: createCloudHealthCheck("verifiedAuth", "Verified account", "Not checked yet.", "unknown"),
       storageUpload: createCloudHealthCheck("storageUpload", "Photo upload", "Not checked yet.", "unknown"),
       rowUpsert: createCloudHealthCheck("rowUpsert", "Saving scans", "Not checked yet.", "unknown"),
       datasetDetails: createCloudHealthCheck("datasetDetails", "Scan details", "Not checked yet.", "unknown"),
-      rlsIsolation: createCloudHealthCheck("rlsIsolation", "Private to you", "Not checked yet.", "unknown"),
+      rlsIsolation: createCloudHealthCheck("rlsIsolation", "Signed-out privacy", "Not checked yet.", "unknown"),
     },
     configured,
     lastVerifiedAt: null,
@@ -1121,7 +1140,7 @@ function readCloudHealthReport(): CloudHealthReport | null {
     const raw = localStorage.getItem(accountStorageKey(CLOUD_HEALTH_STORAGE_KEY));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as CloudHealthReport;
-    if (!parsed || typeof parsed !== "object" || !parsed.checks) return null;
+    if (!parsed || typeof parsed !== "object" || !parsed.checks?.verifiedAuth) return null;
     return parsed;
   } catch {
     return null;

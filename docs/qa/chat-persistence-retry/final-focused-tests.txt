@@ -1,0 +1,14 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> deep-spec@0.1.0 test
+> vitest run --configLoader native --pool threads --maxWorkers=1 --no-file-parallelism src/screens/Chat.test.tsx src/services/storage.test.ts src/App.test.tsx src/lib/accountScope.test.ts src/services/aiService.test.ts server/chat.shared.test.ts api/chat.test.ts src/screens/AnalyzingOverlay.test.tsx
+
+
+ RUN  v4.1.6 /workspace/scratch/882791ab0eb0/DeepSpec
+
+
+ Test Files  8 passed (8)
+      Tests  137 passed (137)
+   Start at  06:28:06
+   Duration  8.96s (transform 522ms, setup 430ms, import 816ms, tests 2.57s, environment 4.08s)
+

@@ -43,7 +43,7 @@ VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=your_publishable_or_anon_key
 ```
 
-Never put a Supabase service-role key in a `VITE_` variable. Browser code can only use the publishable/anon key. Apply the migration in `supabase/migrations/20260518000100_deepspec_secure_foundation.sql`, enable Supabase anonymous sign-ins if you want device-only users to sync scans, and keep the `scan-images` bucket private.
+Never put a Supabase service-role key in a `VITE_` variable. Browser code can only use the publishable/anon key. Apply every migration in `supabase/migrations` in timestamp order, disable Supabase anonymous sign-ins before preview promotion, and keep the `scan-images` bucket private.
 
 For email sign-in, the app requests a Supabase OTP email with a `/scan` redirect link. The default Supabase template sends a magic link; if you want typed code entry too, configure the email template to show the OTP token with `{{ .Token }}`. Users can also sign in with Supabase email/password credentials or create a password account. If Supabase requires email confirmation, the app waits for confirmation instead of opening the scanner immediately.
 
@@ -166,7 +166,7 @@ Waitlist and feedback entries save locally first, then sync to Supabase only whe
 - `public.scan_lookups`: owned by `auth.uid()`, no anonymous table access, RLS for select/insert/update/delete.
 - `storage.scan-images`: private bucket; users can only access files in their own user-id folder.
 - `public.waitlist_signups` and `public.feedback_submissions`: public insert only, narrow validation checks, no public read.
-- The browser uses Supabase Auth anonymous sign-in for scan sync. That creates a real auth user without building a full account system yet.
+- The browser requires an existing confirmed, non-anonymous Supabase account for cloud sync; local-only use does not create an Auth identity.
 
 To prove a real Supabase project is wired correctly, run:
 
@@ -174,7 +174,7 @@ To prove a real Supabase project is wired correctly, run:
 npm run verify:supabase
 ```
 
-That command signs in anonymously, uploads a private test image, writes a scan row, checks cross-user RLS blocking, downloads the owner image, and cleans up. See `docs/PHASE_8_SUPABASE_VALIDATION.md` for the full Phase 8 checklist.
+That command uses two dedicated confirmed QA accounts (`DEEPSPEC_AUTH_TEST_EMAIL`/`PASSWORD` and `DEEPSPEC_AUTH_TEST_OTHER_EMAIL`/`PASSWORD`), uploads private test images, writes scan fixtures, checks cross-user RLS blocking, downloads the owner images, and cleans up only those generated fixtures. See `docs/PHASE_8_SUPABASE_VALIDATION.md` for the full Phase 8 checklist.
 
 ## Test before moving on
 

@@ -1,0 +1,44 @@
+{
+  "candidate": "96e34ce9ee79d1cf0137d57b218576e833d0ecc6",
+  "preview": "https://deepspec-git-codex-v1-preview-20261010-deep-spec-team.vercel.app/auth",
+  "viewport": {
+    "width": 1363,
+    "height": 936
+  },
+  "horizontalOverflow": false,
+  "brand": {
+    "src": "/brand/deepspec-symbol.png",
+    "loaded": true,
+    "naturalWidth": 1254,
+    "naturalHeight": 1254,
+    "renderedWidth": 56,
+    "renderedHeight": 56,
+    "accessibleName": "DeepSpec"
+  },
+  "observedNavigation": [
+    {
+      "requested": "/",
+      "final": "/auth"
+    },
+    {
+      "requested": "/history",
+      "final": "/auth"
+    }
+  ],
+  "visibleControls": [
+    "Email link tab",
+    "Account tab (selected)",
+    "Email address",
+    "Password",
+    "Sign in to scanner"
+  ],
+  "console": "No application-origin error in captured cloud-browser log. Two chrome-extension metadata errors were recorded; this is not complete network instrumentation.",
+  "deploymentInspector": "Vercel detail page redirected to sign-in; no direct immutable-deployment identity was verified.",
+  "limits": [
+    "Mutable preview alias; branding asset hashes match candidate, but that is not full deployed-source attestation.",
+    "Signed-out desktop only; no authenticated navigation or five protected branded screens inspected.",
+    "Mobile rendering not verified; QA doctor browser executable absent and install failed.",
+    "No physical-device or installed-PWA testing."
+  ],
+  "evidenceRecordedAt": "2026-10-11T20:57:03.067676+00:00"
+}

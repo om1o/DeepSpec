@@ -122,7 +122,7 @@ async function verifyAuthUser(client: SupabaseClient, revision = authRevision, e
   }
 
   const { data, error } = result;
-  if (error || !data.user || (expectedUserId && data.user.id !== expectedUserId)) {
+  if (error || !data.user || data.user.is_anonymous === true || (expectedUserId && data.user.id !== expectedUserId)) {
     clearVerifiedAuthUserCache();
     setActiveAccount(null);
     return null;
@@ -255,27 +255,6 @@ export async function signUpWithPassword(email: string, password: string, redire
   return user;
 }
 
-export async function signInAnonymously() {
-  const signOutAtStart = { revision: signOutRevision, lock: readSignOutLock(), generation: readSignOutGeneration() };
-  assertSignInCurrent(signOutAtStart);
-  const client = await getRequiredAuthClient();
-  assertSignInCurrent(signOutAtStart);
-  const result = await client.auth.signInAnonymously();
-
-  if (result.error) {
-    throw new Error(result.error.message);
-  }
-
-  assertSignInCurrent(signOutAtStart);
-  clearVerifiedAuthUserCache();
-  const user = await verifyAuthUser(client, ++authRevision, result.data?.user?.id, true);
-  if (!user) {
-    throw new Error("Could not verify this session. Try again.");
-  }
-
-  return user;
-}
-
 export async function signInWithGoogle(redirectPath?: string) {
   return signInWithOAuthProvider("google", redirectPath);
 }
@@ -380,8 +359,9 @@ export async function subscribeToAuthChanges(
     if (getAccountScope().userId !== (session?.user?.id ?? null)) {
       setActiveAccount(null);
     }
-    if (!session?.user) {
+    if (!session?.user || session.user.is_anonymous === true) {
       clearVerifiedAuthUserCache();
+      setActiveAccount(null);
       onChange(null);
       return;
     }
