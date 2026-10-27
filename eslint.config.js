@@ -15,6 +15,8 @@ export default tseslint.config(
       "datasets",
       "dev-dist",
       "dist",
+      // Standalone exported marketing assets have their own browser and syntax checks.
+      "marketing/deepspec-visual-search/dist/**",
     ],
   },
   js.configs.recommended,

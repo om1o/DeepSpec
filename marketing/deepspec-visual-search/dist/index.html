@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>DeepSpec · See your car differently</title>
+  <meta name="description" content="Explore car parts with your camera. Identify possible matches, ask follow-up questions, and keep useful scan reports with DeepSpec.">
+  <meta name="theme-color" content="#0b1520">
+  <meta property="og:title" content="DeepSpec · See your car differently">
+  <meta property="og:description" content="From a photo to a clearer starting point. Visual discovery for your car.">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="https://deepspec-visual-search.aoraboracora.chatgpt.site/assets/car-park.webp">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="canonical" href="https://deepspec-visual-search.aoraboracora.chatgpt.site/">
+  <link rel="icon" href="/assets/favicon.png" type="image/png">
+  <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.406bf05edb41.css">
+  <link rel="stylesheet" href="/signin.c8f9d2cfe9de.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <a class="brand-link" href="/" aria-label="DeepSpec home"><img class="brand-logo" src="/assets/white-logo-horizontal.svg" width="260" height="62" alt="DeepSpec white logo"></a>
+    <nav aria-label="Main navigation"><a class="current" href="#main" aria-current="page">Visual search</a><a href="#discover">What you can do</a><a href="#anywhere">DeepSpec on the go</a></nav>
+    <a class="header-sign-in" data-auth href="https://deepspec-7fxpiw11g-deep-spec-team.vercel.app/auth">Sign in <span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></span></a>
+  </header>
+  <main id="main">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-content">
+        <h1 id="hero-title">See the part.<br><span>Understand more.</span></h1>
+        <p>Identify possible car parts from a photo, explore the evidence, and bring better questions to the workshop.</p>
+        <a class="glass-button" data-auth href="https://deepspec-7fxpiw11g-deep-spec-team.vercel.app/auth">Sign in to DeepSpec <span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></span></a>
+        <a class="explore-link" href="#discover">Explore more <span aria-hidden="true">↓</span></a>
+      </div>
+      <div class="hero-visual" id="intro-demo" aria-label="Animated illustration of a DeepSpec photo scan">
+        <img class="park-photo" src="/assets/car-park.webp" alt="A graphite car outside a mechanic’s workshop in a blue-hour car park" width="1128" height="1394" fetchpriority="high">
+        <div class="phone">
+          <div class="phone-camera" aria-hidden="true"></div>
+          <div class="phone-top"><img class="brand-logo" src="/assets/blue-glass-logo.svg" alt="DeepSpec" width="260" height="62"><span>Illustrative scan</span></div>
+          <div class="phone-view">
+            <img src="/assets/brake-detail.webp" alt="A brake rotor photographed on a workshop bench" width="1672" height="941">
+            <div class="scan-target" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <div class="scan-line" aria-hidden="true"></div>
+            <div class="camera-controls" aria-hidden="true"><span>×1</span><span class="shutter"></span><span>＋</span></div>
+          </div>
+          <div class="scan-result"><div class="match-icon" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></div><div><span class="result-kicker"><span class="review-status">Scanning…</span><span class="review-example-label">Example</span></span><strong>Brake rotor</strong><p>Example review appears below.</p></div></div>
+          <div class="phone-prompt"><span>What does this part do?</span><span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></span></div>
+          <div class="phone-home" aria-hidden="true"></div>
+        </div>
+        <article class="demo-review-panel" aria-label="Example AI review">
+          <div class="demo-review-heading"><span>AI review</span><span>Predetermined example</span></div>
+          <strong>Brake rotor</strong>
+          <p id="demo-review-text" data-review="Likely a ventilated brake rotor. The friction surface and center hub are visible. Confirm the part number and vehicle fitment." aria-hidden="true">Likely a ventilated brake rotor. The friction surface and center hub are visible. Confirm the part number and vehicle fitment.</p>
+          <span class="sr-only">Likely a ventilated brake rotor. The friction surface and center hub are visible. Confirm the part number and vehicle fitment.</span>
+        </article>
+        <div class="intro-controls"><button type="button" id="replay-intro" aria-label="Replay intro">↻ <span>Replay</span></button><button type="button" id="motion-toggle" aria-pressed="false" aria-label="Pause animation">Ⅱ</button></div>
+      </div>
+    </section>
+
+    <div class="feature-flow" id="discover">
+      <section class="feature-row" aria-labelledby="identify-title">
+        <div class="visual-panel still-life"><img src="/assets/parts-still-life.webp" width="1254" height="1254" alt="A brake rotor, oil filter, and spark plug on a mechanic’s trolley, adapted from the Lens scene" loading="lazy"><div class="image-callout"><span class="callout-symbol" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M9 9h6v6H9Z"/></svg></span><span>Start with a photo</span></div></div>
+        <div class="feature-copy"><h2 id="identify-title">Put a name to the part</h2><p>A component on the bench. A part under the bonnet. Take a photo to explore what it could be, then review the details before your next step.</p><a class="text-link" data-auth href="https://deepspec-7fxpiw11g-deep-spec-team.vercel.app/auth">Sign in to DeepSpec <span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></span></a></div>
+      </section>
+      <section class="feature-row reverse" aria-labelledby="details-title">
+        <div class="visual-panel detail-panel"><img src="/assets/mechanical-detail.webp" width="1254" height="1254" alt="A close view of machined valves and springs with blue reflections" loading="lazy"><div class="detail-brackets" aria-hidden="true"><i></i><i></i><i></i><i></i></div></div>
+        <div class="feature-copy"><h2 id="details-title">Explore the details around you</h2><p>Get curious about the things that keep your car moving. Use an image to explore a part’s purpose and bring a little more understanding to the workshop.</p><a class="text-link" data-auth href="https://deepspec-7fxpiw11g-deep-spec-team.vercel.app/auth">Sign in to DeepSpec <span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></span></a></div>
+      </section>
+      <section class="feature-row" aria-labelledby="evidence-title">
+        <div class="visual-panel evidence-panel"><img src="/assets/brake-detail.webp" width="1672" height="941" alt="A mechanic’s gloved hands examining a brake rotor beside tools" loading="lazy"><div class="evidence-note"><span aria-hidden="true">◎</span><p>Look closer.<br><strong>Review the evidence.</strong></p></div></div>
+        <div class="feature-copy"><h2 id="evidence-title">Look beyond the first answer</h2><p>Review the evidence behind a result and see where details are uncertain. Clear markings, the right angle, and vehicle context can help you ask better questions.</p><a class="text-link" data-auth href="https://deepspec-7fxpiw11g-deep-spec-team.vercel.app/auth">Sign in to DeepSpec <span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></span></a></div>
+      </section>
+    </div>
+
+    <section class="questions-section" aria-labelledby="questions-title">
+      <div class="questions-heading"><h2 id="questions-title">Ask questions about what you see</h2><p>The first result is just the beginning. Keep the conversation going with follow-up questions about your scan.</p></div>
+      <div class="question-stage"><img class="question-photo" src="/assets/workshop-car.webp" width="1672" height="941" alt="A graphite car with an exposed brake assembly in a mechanic’s garage" loading="lazy"><div class="conversation" aria-label="Example follow-up questions"><p class="example-label">Questions you could ask</p><p>What does this part do?<span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></span></p><p>Which markings should I check?<span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></span></p><p>What should I ask my mechanic?<span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></span></p></div></div>
+      <a class="glass-button" data-auth href="https://deepspec-7fxpiw11g-deep-spec-team.vercel.app/auth">Sign in to DeepSpec <span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></span></a>
+    </section>
+
+    <div class="feature-flow lower-features">
+      <section class="feature-row reverse" aria-labelledby="save-title">
+        <div class="visual-panel saved-panel"><div class="saved-photo"><img src="/assets/parts-still-life.webp" width="1254" height="1254" alt="Car components arranged together on a workshop trolley" loading="lazy"></div><div class="saved-label"><span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4Z"/></svg></span><div><strong>A useful discovery.</strong><p>Ready to revisit.</p></div></div></div>
+        <div class="feature-copy"><h2 id="save-title">Keep your discoveries together</h2><p>Save a scan so you can come back to the part, revisit the conversation, and pick up where you left off. Useful details, all in one place.</p><a class="text-link" data-auth href="https://deepspec-7fxpiw11g-deep-spec-team.vercel.app/auth">Sign in to DeepSpec <span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></span></a></div>
+      </section>
+      <section class="feature-row" aria-labelledby="share-title">
+        <div class="visual-panel share-panel"><img src="/assets/car-park.webp" width="1128" height="1394" alt="A car parked outside a well-lit workshop, ready for the next conversation" loading="lazy"><div class="share-note"><span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></span><strong>Take the details<br>to the workshop.</strong></div></div>
+        <div class="feature-copy"><h2 id="share-title">Bring more context to the garage</h2><p>Share or export your scan report before you talk to a mechanic. A photo and the right details make a useful place to start.</p><a class="text-link" data-auth href="https://deepspec-7fxpiw11g-deep-spec-team.vercel.app/auth">Sign in to DeepSpec <span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></span></a></div>
+      </section>
+    </div>
+
+    <section class="anywhere-section" id="anywhere" aria-labelledby="anywhere-title">
+      <img class="brand-logo anywhere-logo" src="/assets/white-logo-horizontal.svg" alt="DeepSpec" width="260" height="62" loading="lazy">
+      <h2 id="anywhere-title">A closer look.<br>Wherever your car takes you.</h2>
+      <p>Use DeepSpec on your phone or desktop.<br>Sign in, open the scanner, and start with what you see.</p>
+      <a class="glass-button" data-auth href="https://deepspec-7fxpiw11g-deep-spec-team.vercel.app/auth">Sign in to DeepSpec <span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></span></a>
+      <p class="fitment-note">Photo-based identification is a starting point. Confirm part numbers, vehicle details, and fitment with a qualified professional.</p>
+    </section>
+
+    <section class="more-section" aria-labelledby="more-title"><h2 id="more-title">More ways to explore</h2><div class="more-grid">
+      <a class="explore-card" data-auth href="https://deepspec-7fxpiw11g-deep-spec-team.vercel.app/auth"><img src="/assets/parts-still-life.webp" width="1254" height="1254" alt="" loading="lazy"><div><h3>Start with a part</h3><p>Take a photo and explore a possible identification.</p><span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></span></div></a>
+      <a class="explore-card" data-auth href="https://deepspec-7fxpiw11g-deep-spec-team.vercel.app/auth"><img src="/assets/mechanical-detail.webp" width="1254" height="1254" alt="" loading="lazy"><div><h3>Follow your curiosity</h3><p>Ask a question and get a little more context.</p><span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></span></div></a>
+      <a class="explore-card" data-auth href="https://deepspec-7fxpiw11g-deep-spec-team.vercel.app/auth"><img src="/assets/workshop-car.webp" width="1672" height="941" alt="" loading="lazy"><div><h3>Prepare for the workshop</h3><p>Keep useful details ready for the conversation.</p><span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></span></div></a>
+    </div></section>
+  </main>
+  <footer class="site-footer"><a class="brand-link" href="/" aria-label="DeepSpec home"><img class="brand-logo" src="/assets/white-logo-horizontal.svg" width="260" height="62" alt="DeepSpec"></a><p>From the car park to the workshop.</p><div><a href="https://github.com/om1o/DeepSpec" target="_blank" rel="noopener noreferrer">GitHub <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></a><a data-auth href="https://deepspec-7fxpiw11g-deep-spec-team.vercel.app/auth">Sign in <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></a></div></footer>
+  <script src="/intro.5b4dc92620c4.js" defer></script>
+  <script src="/signin.91d53ae60d11.js" defer></script>
+</body>
+</html>
