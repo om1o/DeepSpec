@@ -117,11 +117,10 @@
       cancelTimeline();
       const pose = getComputedStyle(phone).transform;
       const base = pose === 'none' ? '' : pose + ' ';
-      const scanTravel = Math.max(100, view.clientHeight * 0.57);
+      const scanTravel = view.clientHeight * 0.64;
       const settle = 'cubic-bezier(.2,.75,.2,1)';
       try {
-        // The first effect is also the shared clock for review text. Reduced
-        // motion still autoplays the information sequence without spatial motion.
+        // The first effect is also the shared clock for the scan and review.
         makeAnimation(result, reduced ? [
           { offset: 0, opacity: 1 },
           { offset: 1, opacity: 1 },
@@ -146,14 +145,6 @@
             { offset: at(12300), transform: 'scale(1.1)', easing: 'ease-in-out' },
             { offset: 1, transform: 'scale(1)' },
           ], phase);
-          makeAnimation(line, [
-            { offset: 0, transform: 'translateY(0)', opacity: 0 },
-            { offset: at(300), transform: 'translateY(0)', opacity: 0 },
-            { offset: at(500), transform: 'translateY(0)', opacity: 1 },
-            { offset: at(2800), transform: `translateY(${scanTravel}px)`, opacity: 1 },
-            { offset: at(3100), transform: `translateY(${scanTravel}px)`, opacity: 0 },
-            { offset: 1, transform: 'translateY(0)', opacity: 0 },
-          ], phase);
           makeAnimation(target, [
             { offset: 0, transform: 'scale(1.1)', opacity: 0.65 },
             { offset: at(400), transform: 'scale(1.1)', opacity: 0.9, easing: 'ease-in-out' },
@@ -164,6 +155,16 @@
             { offset: 1, transform: 'scale(1.1)', opacity: 0.65 },
           ], phase);
         }
+        // Keep the requested downward scan in both modes. Reduced motion holds
+        // the phone/photo still and uses a softer beam without camera movement.
+        const beamOpacity = reduced ? 0.8 : 1;
+        makeAnimation(line, [
+          { offset: 0, transform: 'translateY(0)', opacity: beamOpacity },
+          { offset: at(2800), transform: `translateY(${scanTravel}px)`, opacity: beamOpacity },
+          { offset: at(3000), transform: `translateY(${scanTravel}px)`, opacity: 0 },
+          { offset: at(12800), transform: 'translateY(0)', opacity: 0 },
+          { offset: 1, transform: 'translateY(0)', opacity: beamOpacity },
+        ], phase);
         if (reviewPanel) {
           makeAnimation(reviewPanel, reduced ? [
             { offset: 0, opacity: 0 },
@@ -231,7 +232,7 @@
       toggle.textContent = label;
       toggle.setAttribute('aria-label', label);
       toggle.setAttribute('aria-pressed', String(userPaused));
-      toggle.title = reduced ? 'The demo autoplays with reduced motion.' : '';
+      toggle.title = reduced ? 'A gentle scan autoplays with the camera held still.' : '';
       replay.disabled = !available;
       replay.title = available ? 'Replay the example scan and review' : '';
       demo.dataset.introState = !available ? 'unavailable' : playing ? 'playing' : 'paused';

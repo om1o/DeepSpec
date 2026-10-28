@@ -80,8 +80,8 @@ a:focus-visible, button:focus-visible { outline: 2px solid #c9eaff; outline-offs
 .scan-target i:nth-child(2), .detail-brackets i:nth-child(2) { top: 0; right: 0; border-width: 2px 2px 0 0; border-top-right-radius: 8px; }
 .scan-target i:nth-child(3), .detail-brackets i:nth-child(3) { bottom: 0; left: 0; border-width: 0 0 2px 2px; border-bottom-left-radius: 8px; }
 .scan-target i:nth-child(4), .detail-brackets i:nth-child(4) { bottom: 0; right: 0; border-width: 0 2px 2px 0; border-bottom-right-radius: 8px; }
-.scan-line { position: absolute; z-index: 3; top: 18%; left: 11%; right: 11%; height: 3px; display: block; background: #c5eeff; box-shadow: 0 0 13px #8ed9ff, 0 -7px 17px #6dc6ff80; opacity: 0; }
-.scan-line::before { content: ''; position: absolute; bottom: 2px; left: 0; right: 0; height: 35px; background: linear-gradient(0deg, #92dfff2e, transparent); }
+.scan-line { position: absolute; z-index: 3; top: 12%; left: 8%; right: 8%; height: 4px; display: block; border-radius: 999px; background: linear-gradient(90deg, #8fdcff80, #f0fcff 18%, #fff 50%, #f0fcff 82%, #8fdcff80); box-shadow: 0 0 6px #c5eeff, 0 0 18px #8ed9ffb3; opacity: 0; pointer-events: none; will-change: transform, opacity; }
+.scan-line::before { content: ''; position: absolute; bottom: 2px; left: 0; right: 0; height: 48px; background: linear-gradient(0deg, #92dfff50, transparent); }
 .camera-controls { position: absolute; z-index: 4; bottom: 14px; left: 0; right: 0; display: flex; align-items: center; justify-content: space-evenly; font-size: 12px; color: white; }
 .shutter { width: 38px; height: 38px; border-radius: 50%; background: linear-gradient(160deg,#fff,#cfdde8); border: 4px solid #263e52; outline: 1px solid #f2fbff; box-shadow: 0 2px 7px #0007; }
 .scan-result { display: flex; align-items: flex-start; gap: 11px; padding: 16px 7px 11px; min-height: 103px; opacity: 1; }
@@ -98,8 +98,8 @@ a:focus-visible, button:focus-visible { outline: 2px solid #c9eaff; outline-offs
 .intro-controls button:active { transform: translateY(1px); }
 .intro-status, .intro-phase { position: absolute; left: 22px; bottom: 25px; max-width: 45%; z-index: 8; font-size: 11px; letter-spacing: .035em; color: #d9e9f4; text-shadow: 0 1px 8px #00101f; }
 .intro-running, .intro-paused { /* State hooks are controlled by the shared JS timeline. */ }
-.intro-reduced:not(.intro-manual) .scan-line { display: none; }
-.intro-manual .scan-line { display: block; }
+.intro-reduced .scan-line { box-shadow: 0 0 8px #bcecff99; }
+.intro-reduced .scan-line::before { height: 24px; opacity: .5; }
 
 .feature-flow { max-width: 1100px; margin: 112px auto 0; }
 .feature-row { display: grid; grid-template-columns: 1fr 1fr; gap: 82px; align-items: center; margin-bottom: 112px; }

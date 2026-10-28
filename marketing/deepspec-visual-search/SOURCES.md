@@ -16,12 +16,12 @@ The packaged Sites helper is unavailable in this execution environment. Source s
 
 ## Coherence and motion correction
 
-The primary white mark and wordmark now use exact source-preserving SVG layout wrappers with transparent background, removing the navy tile and excessive source padding. White remains primary; blue glass remains inside the intro only. The page uses one graphite/steel palette and glossy controls. Intro motion is a synchronized browser animation timeline with real pause/replay; reduced-motion starts static but manual Play remains available. Styles and script references use content hashes so revisions load together.
+The primary white mark and wordmark now use exact source-preserving SVG layout wrappers with transparent background, removing the navy tile and excessive source padding. White remains primary; blue glass remains inside the intro only. The page uses one graphite/steel palette and glossy controls. Intro motion is a synchronized browser animation timeline with real pause/replay; reduced motion keeps the camera and photo still while a gentle downward scan plays automatically. Styles and script references use content hashes so revisions load together.
 
 
 ## Automatic demo and sign-in handoff
 
-The intro automatically runs a thirteen-second illustrative scan and review cycle. The fixed review is authored example copy, revealed word by word after scanning; reduced motion uses status changes and a short full-text fade without spatial movement. It performs no runtime AI generation or diagnosis.
+The intro automatically runs a thirteen-second illustrative scan and review cycle. The fixed review is authored example copy, revealed word by word after scanning; reduced motion uses a gentle downward scan with a stationary phone and photo, then status changes and a short full-text fade. It performs no runtime AI generation or diagnosis.
 
 The sign-in handoff uses a short cancellable blue-glass transition inspired by Apple's Motion and Materials Human Interface Guidelines (https://developer.apple.com/design/human-interface-guidelines/motion and https://developer.apple.com/design/human-interface-guidelines/materials). It uses original DeepSpec artwork, not Apple assets. Navigation keeps the clicked link destination and works with a short reduced-motion fade. Modified clicks retain normal browser behavior.
 
