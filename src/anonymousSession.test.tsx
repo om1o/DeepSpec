@@ -43,7 +43,7 @@ async function open(path: string) {
 it.each(["/scan", "/auth"])("keeps legacy anonymous session on credential form from %s without mounting scanner", async path => {
   localStorage.setItem("deep-spec:account:legacy-user:lookups", "preserved");
   await open(path);
-  await screen.findByRole("heading", { name: "Sign in" });
+  await screen.findByRole("heading", { name: "Sign in to DeepSpec" });
   await waitFor(() => expect(mocks.getUser).toHaveBeenCalled());
   await act(async () => {});
   expect(mocks.scannerMount).not.toHaveBeenCalled();
@@ -52,10 +52,10 @@ it.each(["/scan", "/auth"])("keeps legacy anonymous session on credential form f
 });
 it("keeps anonymous reload blocked after the first mount", async () => {
   const view = await open("/scan");
-  await screen.findByRole("heading", { name: "Sign in" });
+  await screen.findByRole("heading", { name: "Sign in to DeepSpec" });
   view.unmount();
   await open("/scan");
-  await screen.findByRole("heading", { name: "Sign in" });
+  await screen.findByRole("heading", { name: "Sign in to DeepSpec" });
   expect(mocks.scannerMount).not.toHaveBeenCalled();
 });
 it("removes an allowed scanner immediately when an anonymous token event arrives", async () => {
@@ -65,7 +65,7 @@ it("removes an allowed scanner immediately when an anonymous token event arrives
   const listener = mocks.onAuthStateChange.mock.calls[0][0];
   mocks.getUser.mockResolvedValue({ data: { user: user(true) }, error: null });
   await act(async () => { listener("TOKEN_REFRESHED", { user: user(true) }); });
-  await screen.findByRole("heading", { name: "Sign in" });
+  await screen.findByRole("heading", { name: "Sign in to DeepSpec" });
   expect(screen.queryByText("Scanner screen")).not.toBeInTheDocument();
   const { getAccountScope } = await import("./lib/accountScope");
   expect(getAccountScope().userId).toBeNull();
@@ -77,7 +77,7 @@ it("allows a permanent user through the real auth service", async () => {
 });
 it("allows a permanent password sign-in from the blocked legacy credential form", async () => {
   await open("/scan");
-  await screen.findByRole("heading", { name: "Sign in" });
+  await screen.findByRole("heading", { name: "Sign in to DeepSpec" });
   mocks.getUser.mockResolvedValue({ data: { user: user(false) }, error: null });
   mocks.signInWithPassword.mockResolvedValue({ data: { user: user(false) }, error: null });
   fireEvent.change(screen.getByPlaceholderText("you@example.com"), { target: { value: "qa@example.com" } });

@@ -1,5 +1,5 @@
 import { ClipboardEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { BrandLockup } from "../components/BrandLockup";
 import {
   getVerifiedAuthUser,
@@ -346,6 +346,7 @@ export default function Auth() {
           <div className="mt-9">
             <h1 className="ds-auth-title">Sign in to DeepSpec</h1>
             <p className="ds-auth-intro">Your scans, saved details, and next questions. All in one place.</p>
+            <Link className="ds-demo-entry" to="/demo">Try the demo <span aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 18 18 6M6 6h12v12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg></span><span className="ds-demo-entry-note">No account needed</span></Link>
           </div>
 
           <div className="mt-8 space-y-3">

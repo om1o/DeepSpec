@@ -10,7 +10,10 @@ performance.mark("app:boot");
 // Warm the Supabase auth client (chunk import + createClient) in parallel with
 // React boot so the protected-route auth check is not the first thing to load it.
 // getAuthClient() memoizes its promise, so RequireAuth reuses this same client.
-void getAuthClient().catch(() => {});
+// The standalone sample demo works without starting an account session.
+if (!/^\/demo(?:\/|$)/.test(window.location.pathname)) {
+  void getAuthClient().catch(() => {});
+}
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

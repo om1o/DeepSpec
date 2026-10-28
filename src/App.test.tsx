@@ -14,6 +14,7 @@ const authMock = vi.hoisted(() => ({
 vi.mock("./services/auth", () => authMock);
 vi.mock("./services/aiService", () => ({ identifyCapturedFrame: authMock.identifyCapturedFrame }));
 vi.mock("./screens/Auth", () => ({ default: () => <div>Auth screen</div> }));
+vi.mock("./screens/Demo", () => ({ default: () => <div>Public demo screen</div> }));
 vi.mock("./screens/Chat", () => ({ default: () => <div>Chat screen</div> }));
 vi.mock("./screens/EarlyAccess", () => ({ default: () => <div>Early access screen</div> }));
 vi.mock("./screens/History", () => ({ default: () => <div>History screen</div> }));
@@ -32,6 +33,15 @@ describe("App auth guard", () => {
     authMock.identifyCapturedFrame.mockReset();
 
     authMock.subscribeToAuthChanges.mockResolvedValue(() => undefined);
+  });
+
+  it("opens the demo without verifying or changing the active account", async () => {
+    setActiveAccount("existing-account");
+    renderApp("/demo");
+    expect(await screen.findByText("Public demo screen")).toBeInTheDocument();
+    expect(authMock.getVerifiedAuthUser).not.toHaveBeenCalled();
+    expect(authMock.subscribeToAuthChanges).not.toHaveBeenCalled();
+    expect(getAccountScope().userId).toBe("existing-account");
   });
 
   it("does not spend scan requests on app mount or reconnect with pending offline estimates", async () => {

@@ -1,6 +1,6 @@
 # DeepSpec brand identity
 
-White is the primary logo. Use the transparent horizontal `deepspec-logo-horizontal.svg` in app headers and `deepspec-mark.svg` for compact placements. The shared `BrandLockup` component keeps all nine current release screens consistent.
+White is the primary logo. Use the transparent horizontal `deepspec-logo-horizontal.svg` in app headers and `deepspec-mark.svg` for compact placements. Both SVGs contain true white path outlines traced from the chosen source, with no raster images, runtime filter or font substitution. The shared `BrandLockup` component keeps current release screens and the public demo consistent.
 
 Logo artwork stays static. Do not pulse, rotate, shimmer, morph or animate the mark or wordmark. Scanner progress text and camera UI may move independently.
 

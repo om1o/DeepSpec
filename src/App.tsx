@@ -16,9 +16,11 @@ import { getAccountScope, setActiveAccount } from "./lib/accountScope";
 
 const loadScanner = () => import("./screens/Scanner");
 const Scanner = lazy(loadScanner);
-// Warm the Scanner chunk alongside app boot so navigating to /scan doesn't
-// stall on the chunk download behind the "Opening camera..." fallback.
-void loadScanner().catch(() => {});
+const Demo = lazy(() => import("./screens/Demo"));
+// Warm the camera for account routes; the public demo needs no camera or ML.
+if (!/^\/demo(?:\/|$)/.test(window.location.pathname)) {
+  void loadScanner().catch(() => {});
+}
 
 type AuthStatus = "checking" | "allowed" | "blocked";
 
@@ -105,6 +107,14 @@ export default function App() {
   return (
     <Routes>
       <Route path="/auth" element={<Auth />} />
+      <Route
+        path="/demo"
+        element={
+          <Suspense fallback={<main className="flex min-h-dvh items-center justify-center bg-[var(--ds-bg)] text-[var(--ds-fg-3)]">Opening demo…</main>}>
+            <Demo />
+          </Suspense>
+        }
+      />
       <Route path="/" element={<Navigate to="/scan" replace />} />
       <Route
         path="/scan"
