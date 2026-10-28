@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { getAuthClient } from "../services/auth";
 import { REVENUE_PLANS, type PlanId } from "../services/revenue";
+import { isGuestPreview } from "../lib/guestPreview";
 
 type CheckoutResponse =
   | { url: string }
@@ -16,10 +17,12 @@ const PREVIEW_LIMITS = [
 ];
 
 export default function Pricing() {
+  const guest = isGuestPreview();
   const [checkoutStatus, setCheckoutStatus] = useState<string | null>(null);
   const [activePlanId, setActivePlanId] = useState<PlanId | null>(null);
 
   async function startCheckout(planId: PlanId) {
+    if (guest) return;
     setActivePlanId(planId);
     setCheckoutStatus("Starting secure provider checkout...");
 
@@ -70,8 +73,9 @@ export default function Pricing() {
               Scan
             </Link>
             <Link to="/account" className="rounded-full border border-white/[0.12] bg-white/[0.08] px-4 py-2 text-sm font-bold text-white">
-              Account
+              {guest ? "Workspace" : "Account"}
             </Link>
+            {guest ? <Link to="/history" className="text-sm font-bold text-white">History</Link> : null}
           </nav>
         </header>
 
@@ -91,11 +95,11 @@ export default function Pricing() {
             <div className="flex items-center justify-between gap-3">
               <p className="font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--slate-200)]">Preview availability</p>
               <span className="rounded-full border border-amber-300/[0.30] bg-amber-300/[0.10] px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-amber-100">
-                Sandbox only
+                {guest ? "Shared preview" : "Sandbox only"}
               </span>
             </div>
             <p className="mt-4 text-sm leading-6 text-[var(--slate-200)]">
-              Paid plans are not available yet. Checkout is a Polar sandbox test, not a live payment. Your account will show verified access and remaining scans when available.
+              {guest ? "You can use the camera, AI, and saved history without an account. Plans are shown for reference; checkout and billing are unavailable in this shared preview." : "Paid plans are not available yet. Checkout is a Polar sandbox test, not a live payment. Your account will show verified access and remaining scans when available."}
             </p>
           </div>
         </section>
@@ -123,11 +127,11 @@ export default function Pricing() {
               </ul>
               <button
                 className="mt-5 h-11 rounded-[8px] border border-[var(--electric-300)] bg-[var(--electric-500)]/[0.14] px-4 text-sm font-bold text-white disabled:opacity-50"
-                disabled={activePlanId !== null}
+                disabled={guest || activePlanId !== null}
                 onClick={() => void startCheckout(plan.id)}
                 type="button"
               >
-                {activePlanId === plan.id ? "Starting..." : "Start sandbox checkout"}
+                {guest ? "Checkout unavailable here" : activePlanId === plan.id ? "Starting..." : "Start sandbox checkout"}
               </button>
             </article>
           ))}

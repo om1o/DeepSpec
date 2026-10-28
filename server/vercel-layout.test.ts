@@ -22,6 +22,7 @@ describe("Vercel Hobby deployment layout", () => {
     const config = JSON.parse(readFileSync(resolve(process.cwd(), "vercel.json"), "utf8"));
 
     expect(config.rewrites).toEqual([
+      { source: "/", destination: "/intro/index.html" },
       { source: "/((?!api/).*)", destination: "/index.html" },
     ]);
   });

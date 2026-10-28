@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --configLoader native",
-    "build": "tsc -b && vite build --configLoader native && npm run verify:public",
+    "build": "node scripts/package-intro.mjs && tsc -b && vite build --configLoader native && npm run verify:public",
     "check": "npm run lint && npm test && npm run build",
     "dataset:sort": "node scripts/sort-drbimmer-dataset.mjs",
     "dataset:hf-auto-sources": "node scripts/build-hf-automotive-sources.mjs",

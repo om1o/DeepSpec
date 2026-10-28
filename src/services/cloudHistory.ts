@@ -1,6 +1,7 @@
 import { getAccountScope, isAccountScopeCurrent } from "../lib/accountScope";
 import { getAuthClient, isSupabaseAuthConfigured } from "./auth";
 import { normalizePartInspection } from "../lib/partInspection";
+import { isGuestPreview } from "../lib/guestPreview";
 import type {
   CandidateMatch,
   CandidatePart,
@@ -78,6 +79,7 @@ type ReadCloudHistoryResult =
   | { ok: false; message: string };
 
 export async function readCloudLookups(limit = DEFAULT_HISTORY_LIMIT): Promise<ReadCloudHistoryResult> {
+  if (isGuestPreview()) return { ok: true, value: [] };
   const scope = getAccountScope();
   const changed = () => ({ ok: false as const, message: "Account changed. Reload your saved scans." });
   if (!isAccountScopeCurrent(scope)) return changed();

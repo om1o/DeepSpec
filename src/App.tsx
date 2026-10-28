@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Fragment, lazy, Suspense, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import Auth from "./screens/Auth";
+import { isGuestPreview } from "./lib/guestPreview";
 import Chat from "./screens/Chat";
 import EarlyAccess from "./screens/EarlyAccess";
 import History from "./screens/History";
@@ -12,17 +13,30 @@ import Shop from "./screens/Shop";
 import ShopJob from "./screens/ShopJob";
 import ShopNewJob from "./screens/ShopNewJob";
 import { getVerifiedAuthUser, subscribeToAuthChanges } from "./services/auth";
-import { getAccountScope, setActiveAccount } from "./lib/accountScope";
+import { getAccountScope, setActiveAccount, setActiveGuestPreview } from "./lib/accountScope";
 
 const loadScanner = () => import("./screens/Scanner");
 const Scanner = lazy(loadScanner);
-const Demo = lazy(() => import("./screens/Demo"));
 // Warm the camera for account routes; the public demo needs no camera or ML.
-if (!/^\/demo(?:\/|$)/.test(window.location.pathname)) {
+if (window.location.pathname !== "/" && !window.location.pathname.startsWith("/intro")) {
   void loadScanner().catch(() => {});
 }
 
 type AuthStatus = "checking" | "allowed" | "blocked";
+
+function GuestAccess({ children }: { children: ReactNode }) {
+  const [ready] = useState(setActiveGuestPreview);
+  return ready ? <>{children}</> : <Navigate to="/auth" replace />;
+}
+
+function AppAccess({ children }: { children: ReactNode }) {
+  return isGuestPreview() ? <GuestAccess>{children}</GuestAccess> : <RequireAuth>{children}</RequireAuth>;
+}
+
+function IntroEntry() {
+  useEffect(() => { window.location.replace("/intro/index.html"); }, []);
+  return <main className="flex min-h-dvh items-center justify-center bg-[var(--ds-bg)] text-[var(--ds-fg-3)]"><a href="/intro/index.html">Open DeepSpec</a></main>;
+}
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const location = useLocation();
@@ -106,104 +120,98 @@ function ScannerRouteFallback() {
 export default function App() {
   return (
     <Routes>
-      <Route path="/auth" element={<Auth />} />
-      <Route
-        path="/demo"
-        element={
-          <Suspense fallback={<main className="flex min-h-dvh items-center justify-center bg-[var(--ds-bg)] text-[var(--ds-fg-3)]">Opening demo…</main>}>
-            <Demo />
-          </Suspense>
-        }
-      />
-      <Route path="/" element={<Navigate to="/scan" replace />} />
+      <Route path="/auth" element={isGuestPreview() ? <Navigate to="/scan" replace /> : <Auth />} />
+      <Route path="/demo" element={<Navigate to="/scan" replace />} />
+      <Route path="/intro" element={<IntroEntry />} />
+      <Route path="/" element={isGuestPreview() ? <IntroEntry /> : <Navigate to="/scan" replace />} />
       <Route
         path="/scan"
         element={
-          <RequireAuth>
+          <AppAccess>
             <Suspense fallback={<ScannerRouteFallback />}>
               <Scanner />
             </Suspense>
-          </RequireAuth>
+          </AppAccess>
         }
       />
       <Route
         path="/history"
         element={
-          <RequireAuth>
+          <AppAccess>
             <History />
-          </RequireAuth>
+          </AppAccess>
         }
       />
       <Route
         path="/early-access"
         element={
-          <RequireAuth>
+          <AppAccess>
             <EarlyAccess />
-          </RequireAuth>
+          </AppAccess>
         }
       />
       <Route
         path="/pricing"
         element={
-          <RequireAuth>
+          <AppAccess>
             <Pricing />
-          </RequireAuth>
+          </AppAccess>
         }
       />
       <Route
         path="/shop"
         element={
-          <RequireAuth>
+          <AppAccess>
             <Shop />
-          </RequireAuth>
+          </AppAccess>
         }
       />
       <Route
         path="/shop/new"
         element={
-          <RequireAuth>
+          <AppAccess>
             <ShopNewJob />
-          </RequireAuth>
+          </AppAccess>
         }
       />
       <Route
         path="/shop/jobs/:jobId"
         element={
-          <RequireAuth>
+          <AppAccess>
             <ShopJob />
-          </RequireAuth>
+          </AppAccess>
         }
       />
       <Route
         path="/account"
         element={
-          <RequireAuth>
+          <AppAccess>
             <Account />
-          </RequireAuth>
+          </AppAccess>
         }
       />
       <Route
         path="/result"
         element={
-          <RequireAuth>
+          <AppAccess>
             <Result />
-          </RequireAuth>
+          </AppAccess>
         }
       />
       <Route
         path="/result/:id"
         element={
-          <RequireAuth>
+          <AppAccess>
             <Result />
-          </RequireAuth>
+          </AppAccess>
         }
       />
       <Route
         path="/result/:id/chat"
         element={
-          <RequireAuth>
+          <AppAccess>
             <Chat />
-          </RequireAuth>
+          </AppAccess>
         }
       />
       <Route path="*" element={<Navigate to="/" replace />} />

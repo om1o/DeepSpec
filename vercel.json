@@ -1,5 +1,8 @@
 {
+  "env": { "DEEPSPEC_GUEST_PREVIEW": "true" },
+  "build": { "env": { "DEEPSPEC_GUEST_PREVIEW": "true" } },
   "rewrites": [
+    { "source": "/", "destination": "/intro/index.html" },
     {
       "source": "/((?!api/).*)",
       "destination": "/index.html"

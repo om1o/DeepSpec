@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { getAccountScope, setActiveAccount } from "./lib/accountScope";
 import { createLookup } from "./services/storage";
@@ -14,7 +14,6 @@ const authMock = vi.hoisted(() => ({
 vi.mock("./services/auth", () => authMock);
 vi.mock("./services/aiService", () => ({ identifyCapturedFrame: authMock.identifyCapturedFrame }));
 vi.mock("./screens/Auth", () => ({ default: () => <div>Auth screen</div> }));
-vi.mock("./screens/Demo", () => ({ default: () => <div>Public demo screen</div> }));
 vi.mock("./screens/Chat", () => ({ default: () => <div>Chat screen</div> }));
 vi.mock("./screens/EarlyAccess", () => ({ default: () => <div>Early access screen</div> }));
 vi.mock("./screens/History", () => ({ default: () => <div>History screen</div> }));
@@ -35,13 +34,23 @@ describe("App auth guard", () => {
     authMock.subscribeToAuthChanges.mockResolvedValue(() => undefined);
   });
 
-  it("opens the demo without verifying or changing the active account", async () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each([
+    ["/scan", "Scanner screen"], ["/history", "History screen"],
+    ["/result/scan-id", "Result screen"], ["/result/scan-id/chat", "Chat screen"],
+    ["/shop", "Shop screen"], ["/account", "Account screen"],
+    ["/auth", "Scanner screen"], ["/demo", "Scanner screen"],
+  ])("opens the real %s route without code sign-in in the explicit preview", async (path, label) => {
+    vi.stubEnv("VITE_DEEPSPEC_GUEST_PREVIEW", "true");
     setActiveAccount("existing-account");
-    renderApp("/demo");
-    expect(await screen.findByText("Public demo screen")).toBeInTheDocument();
+    renderApp(path);
+    expect(await screen.findByText(label)).toBeInTheDocument();
     expect(authMock.getVerifiedAuthUser).not.toHaveBeenCalled();
     expect(authMock.subscribeToAuthChanges).not.toHaveBeenCalled();
-    expect(getAccountScope().userId).toBe("existing-account");
+    expect(getAccountScope().userId).toBeNull();
+    expect(getAccountScope().kind).toBe("guest");
+    expect(authMock.identifyCapturedFrame).not.toHaveBeenCalled();
   });
 
   it("does not spend scan requests on app mount or reconnect with pending offline estimates", async () => {

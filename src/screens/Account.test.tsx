@@ -3,18 +3,35 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Account from "./Account";
 import { getAuthClient } from "../services/auth";
+import { isGuestPreview } from "../lib/guestPreview";
 
 vi.mock("../services/auth", () => ({ getAuthClient: vi.fn() }));
+vi.mock("../lib/guestPreview", () => ({ isGuestPreview: vi.fn() }));
 
 const getAuthClientMock = vi.mocked(getAuthClient);
 const getSession = vi.fn();
+const isGuestPreviewMock = vi.mocked(isGuestPreview);
 
 describe("Account", () => {
   beforeEach(() => {
     getSession.mockReset();
+    isGuestPreviewMock.mockReturnValue(false);
     getAuthClientMock.mockReset();
     getAuthClientMock.mockResolvedValue({ auth: { getSession } } as never);
     vi.unstubAllGlobals();
+  });
+
+  it("shows a device workspace without checking an account or billing in guest preview", () => {
+    isGuestPreviewMock.mockReturnValue(true);
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    renderAccount();
+    expect(screen.getByRole("heading", { name: "Ready on this device" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "History" })).toHaveAttribute("href", "/history");
+    expect(screen.getByRole("link", { name: "Open camera" })).toHaveAttribute("href", "/scan");
+    expect(screen.queryByRole("button", { name: "Manage billing" })).not.toBeInTheDocument();
+    expect(getAuthClientMock).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("shows verification-required without deriving allowance from local history", async () => {

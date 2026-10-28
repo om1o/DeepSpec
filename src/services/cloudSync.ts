@@ -4,8 +4,10 @@ import { getAuthClient } from "./auth";
 import { getLookup, readLookups, recordCloudRevision, recordCloudSaveAttempt } from "./storage";
 import type { FeedbackSubmission, Lookup, WaitlistSignup } from "../types";
 import { feedbackCloudMessage, getFeedbackIssue, normalizeFeedbackContext } from "./feedbackDetails";
+import { isGuestPreview } from "../lib/guestPreview";
 
 const SCAN_BUCKET = "scan-images";
+const GUEST_LOCAL_MESSAGE = "Guest scans stay on this browser. Account cloud sync is off in this preview.";
 const CLOUD_HEALTH_STORAGE_KEY = "deep-spec:cloud-health";
 const SCAN_LOOKUP_OPTIONAL_COLUMNS = [
   "customer_visible_report_json",
@@ -76,6 +78,7 @@ export type CloudBatchSyncResult = {
 };
 
 export function getCloudSyncStatus(): CloudSyncStatus {
+  if (isGuestPreview()) return { configured: false, message: GUEST_LOCAL_MESSAGE };
   const config = getCloudSyncConfig();
 
   if (!config) {
@@ -230,6 +233,7 @@ export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult
 }
 
 async function syncLookupForAccount(lookup: Lookup, scope: AccountScope): Promise<CloudSyncResult> {
+  if (isGuestPreview()) return { ok: false, message: GUEST_LOCAL_MESSAGE };
   if (!getCloudSyncConfig()) {
     return {
       ok: false,
@@ -563,6 +567,7 @@ async function syncDatasetDetailTables(supabase: SupabaseClient, userId: string,
 }
 
 export async function syncAnalysisFailuresToCloud(lookup: Lookup): Promise<CloudSyncResult> {
+  if (isGuestPreview()) return { ok: false, message: GUEST_LOCAL_MESSAGE };
   const scope = getAccountScope();
   const guard = () => { if (!isAccountScopeCurrent(scope)) throw new Error("Account changed."); };
   try {
@@ -889,6 +894,7 @@ export async function syncFeedbackToCloud(feedback: FeedbackSubmission): Promise
 }
 
 function getCloudSyncConfig(): CloudSyncConfig | null {
+  if (isGuestPreview()) return null;
   const env = import.meta.env;
   const url = env.VITE_SUPABASE_URL?.trim();
   const key = env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim();
@@ -901,6 +907,7 @@ function getCloudSyncConfig(): CloudSyncConfig | null {
 }
 
 async function getClient() {
+  if (isGuestPreview()) throw new Error(GUEST_LOCAL_MESSAGE);
   // Reuse the single persistent auth client so only one GoTrueClient ever
   // owns the shared auth-token storage key. Callers have already validated
   // config (same VITE_SUPABASE_* env that getAuthClient reads), so a null

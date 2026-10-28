@@ -1,4 +1,4 @@
-import { accountStorageKey, setActiveAccount } from "../lib/accountScope";
+import { accountStorageKey, setActiveAccount, setActiveGuestPreview } from "../lib/accountScope";
 import {
   detectLegacyScans,
   importLegacyScans,
@@ -101,9 +101,38 @@ const scanState: ScanAnalysisState = {
 };
 
 describe("storage", () => {
+  afterEach(() => vi.unstubAllEnvs());
   beforeEach(() => {
     localStorage.clear();
     vi.restoreAllMocks();
+  });
+
+  it("uses the real scan/chat storage for guests without exposing account or unassigned records", () => {
+    setActiveAccount("private-owner");
+    const ownerScan = createLookup(scanState).value;
+    const ownerKey = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    const ownerBytes = localStorage.getItem(ownerKey);
+    const legacyBytes = JSON.stringify([{ id: "unknown-owner" }]);
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, legacyBytes);
+    localStorage.setItem("sb-existing-auth-token", "existing session");
+    vi.stubEnv("VITE_DEEPSPEC_GUEST_PREVIEW", "true");
+    setActiveGuestPreview();
+    expect(readLookups()).toEqual({ ok: true, value: [] });
+    expect(getLookup(ownerScan.id)).toBeNull();
+    expect(detectLegacyScans()).toEqual({ ok: true, value: null });
+    const guestScan = createLookup(scanState);
+    expect(guestScan.ok).toBe(true);
+    expect(appendChatMessages(guestScan.value.id, [createChatMessage("assistant", "Live answer kept for this guest")]).ok).toBe(true);
+    setActiveAccount(null);
+    setActiveGuestPreview();
+    expect(getLookup(guestScan.value.id)?.chatHistory[0].content).toBe("Live answer kept for this guest");
+    expect(localStorage.getItem(ownerKey)).toBe(ownerBytes);
+    expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBe(legacyBytes);
+    expect(localStorage.getItem("sb-existing-auth-token")).toBe("existing session");
+    vi.stubEnv("VITE_DEEPSPEC_GUEST_PREVIEW", "false");
+    setActiveAccount("private-owner");
+    expect(getLookup(guestScan.value.id)).toBeNull();
+    expect(getLookup(ownerScan.id)).not.toBeNull();
   });
 
   it("isolates scans and chat while preserving another account and unassigned records", () => {
