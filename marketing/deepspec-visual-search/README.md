@@ -1,33 +1,17 @@
-# DeepSpec visual-search landing page
+# DeepSpec intro and real app entry
 
-A buildless static landing page. White is the primary brand; blue glass is reserved for the intro and sign-in handoff. The flat-white logo uses crisp source-traced vector paths; blue-glass accents preserve the original material.
+A static intro with the chosen white vector identity, blue-glass entry handoff, downward scan animation and small material interactions. The shared Sites page is public.
 
-## Run locally
+Every entry button opens the actual GitHub app’s `/scan` route without email/code sign-in in the explicit preview. There is no preset sample application. The existing camera/upload, saved scans, result, inspection, export, shop and chat code uses a separate browser-local workspace. Account cloud records and normal production access remain separate.
 
-```sh
-python -m http.server 8765 --directory dist
-```
+Stable full-app URL: https://deepspec-git-codex-v1-brand-motion-refresh-deep-spec-team.vercel.app
 
-Open http://localhost:8765. No package installation or backend keys are required.
+The intro phone illustrates an authored review. Actual user images are sent to the real identify endpoint; no example answer is injected into the app. The current Vercel Preview still needs its server `GEMINI_API_KEY` for live AI analysis. Quota verification works, and uploaded photos persist locally if analysis is unavailable.
 
-## Update assets
+## Run and update
 
-Edit `dist/index.html`, `dist/styles.css`, `dist/intro.js`, or `dist/signin.js` / `dist/signin.css` / `dist/micro.js` / `dist/micro.css`, then run:
+Run `python -m http.server 8765 --directory dist`. After editing static resources, run `python package-static.py` and commit canonical and fingerprinted files together. White remains primary; all logo artwork stays static. See `SOURCES.md` and `brand-assets.md`.
 
-```sh
-python package-static.py
-```
+The full app’s `scripts/package-intro.mjs` packages this tracked design into `public/intro` and converts its entry links to same-origin `/scan`.
 
-This fingerprints CSS and scripts so updated files load together. Commit the resulting source and generated files.
-
-## Demo behavior
-
-The intro autoplays an illustrative scan and predetermined example AI review. The visible scan line sweeps downward before the review and repeats each cycle. Reduced motion keeps the phone and photo still while a softer scan line autoplays. Pause freezes the text and motion; Replay restarts them. No AI endpoint is called.
-
-Normal sign-in clicks run a brief cancellable blue-glass transition, then open the link destination. Modified clicks retain normal browser behavior. Sign-in uses the verified V1 preview URL until a production app domain is confirmed.
-
-See `SOURCES.md` and `brand-assets.md` for references and brand rules. No credentials, Sites project identity, private user data, or local QA artifacts are included.
-
-Verified sign-in destination: https://deepspec-7tfvm2171-deep-spec-team.vercel.app/auth (branding/auth commit ffe0a592c6849145858c0720d5bfba9a2beff9a4).
-
-The visible scan now includes a restrained camera settle, focus lock and result confirmation. Other sections have subtle scroll, hover, press and focus responses. The hero includes a public `/demo` link for sample scans, authored reviews and browser-local saves without signing in. The normal app remains authenticated.
+No credentials, Sites project identity or local QA artifacts are included in this export.

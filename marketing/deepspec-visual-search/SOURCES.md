@@ -6,7 +6,7 @@
 - Generated valve-and-spring macro is an image edit of the source Lens exploration photo, retaining its clustered macro framing.
 - The blue-glass intro logo is faithfully recreated from the user's supplied fourth-panel reference. The user subsequently selected WHITE as the main brand mark; the primary logo and app icon use the same geometry in flat white, while blue glass is reserved for the phone intro. GitHub's current assets differ from that chosen identity; no claim that the new variant was downloaded from the repository.
 - Product and route evidence: https://github.com/om1o/DeepSpec. Identification from photos, saved scans, follow-up questions, evidence and reports. No accuracy, price, supported-vehicle or fitment claims added.
-- Sign-in endpoint verified HTTP 200: https://deepspec-7tfvm2171-deep-spec-team.vercel.app/auth (Vercel preview; no production domain confirmed).
+- Full real-app no-login preview: https://deepspec-git-codex-v1-brand-motion-refresh-deep-spec-team.vercel.app (GitHub app commit acbb3d3bdc1a93effe8fb28d346b68ea97c3c86f). Intro entry buttons open its actual `/scan` route.
 - Intro is a clearly labeled illustrative scan animation. Result copy is example content, not a live analysis of a visitor image.
 - All logo artwork stays static everywhere; scan animation is confined to the introduction and includes pause, replay and reduced-motion behavior.
 
@@ -27,10 +27,14 @@ The sign-in handoff uses a short cancellable blue-glass transition inspired by A
 
 White remains the primary app identity. Context-specific transparent SVG lockups and mark-only assets replace opaque pasted logo panels; blue glass is confined to intro and handoff accents.
 
-The sign-in endpoint now uses the successful V1 branding/auth preview for GitHub commit ffe0a592c6849145858c0720d5bfba9a2beff9a4. This replaces the older preview branch that still displayed the old D mark. Current account and scanner behavior is retained.
+The entry handoff now opens the real scanner in the no-login preview. The existing camera/upload, analysis, saved scan, report and chat code is reused; the previous sample app is removed.
 
 ## Motion and testing polish
 
 The scan uses a small camera settle, brief photo focus, bracket acquisition and a restrained result confirmation. The downward beam and authored review remain synchronized and support pause/replay, lifecycle handling and reduced camera motion. Other sections use one-shot entrance effects and short hover/focus/press feedback; content remains visible without JavaScript and reduced motion skips decorative movement.
 
-The normal app now has an isolated public `/demo` route with authored examples and browser-local sample state, so its scan/result/saved flow can be tried without an account. It does not run real AI analysis or change normal account authentication.
+The no-login preview uses the full real GitHub app with browser-local scan state and live identify/chat endpoints. Production account access remains separate.
+
+The shared Sites page is public. All app entry links open the real scanner without the email/code screen. The intro phone still illustrates the authored review requested for the landing animation; the opened app analyzes the visitor’s own camera or uploaded image.
+
+Live verification: a real uploaded engine photo reaches `/api/identify` without Authorization. The distributed guest quota connection passes. Image analysis currently returns `not_configured` because Vercel Preview lacks `GEMINI_API_KEY`; no sample answer is substituted. The actual photo remains in browser-local history and opens after reload. The stable branch URL follows successful redeployments.

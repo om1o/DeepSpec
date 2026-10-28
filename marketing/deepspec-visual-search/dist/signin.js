@@ -31,12 +31,12 @@
       <section class="signin-glass-card" role="dialog" aria-modal="true" aria-labelledby="signin-transition-title" aria-describedby="signin-transition-description" tabindex="-1">
         <div class="signin-glass-edge" aria-hidden="true"></div>
         <div class="signin-glass-sheen" aria-hidden="true"></div>
-        <button class="signin-close" type="button" aria-label="Cancel opening sign in"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button>
+        <button class="signin-close" type="button" aria-label="Cancel opening DeepSpec"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button>
         <div class="signin-brand-surface"><img class="signin-blue-glass-logo" src="/assets/blue-glass-mark.svg" width="128" height="128" alt="DeepSpec blue-glass logo"></div>
         <h2 id="signin-transition-title">Opening DeepSpec</h2>
-        <p id="signin-transition-description">Taking you to sign in.</p>
+        <p id="signin-transition-description">Opening your scanner.</p>
         <div class="signin-progress" aria-hidden="true"><span></span></div>
-        <a class="signin-continue" href="/">Continue to sign in <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></a>
+        <a class="signin-continue" href="/scan">Continue to scanner <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></a>
         <p class="signin-live-status" role="status" aria-live="polite"></p>
       </section>`;
     document.body.append(overlay);
@@ -115,7 +115,7 @@
     overlay.dataset.motion = reduced ? 'reduced' : 'full';
     overlay.dataset.duration = String(duration);
     fallback.href = destination;
-    status.textContent = 'Opening DeepSpec sign in.';
+    status.textContent = 'Opening the DeepSpec scanner.';
     card.focus({ preventScroll: true });
 
     const rect = anchor.getBoundingClientRect();
@@ -151,7 +151,7 @@
     navigationTimer = window.setTimeout(() => {
       if (!active) return;
       overlay.dataset.state = 'navigating';
-      status.textContent = 'Continuing to sign in. If this page stays open, use Continue to sign in.';
+      status.textContent = 'Continuing to the scanner. If this page stays open, use Continue to scanner.';
       try {
         window.location.assign(destination);
       } catch {
@@ -163,7 +163,7 @@
 
   document.addEventListener('click', (event) => {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    const anchor = event.target instanceof Element ? event.target.closest('a[data-auth]') : null;
+    const anchor = event.target instanceof Element ? event.target.closest('a[data-entry]') : null;
     if (!anchor || anchor.hasAttribute('download') || (anchor.target && anchor.target.toLowerCase() !== '_self')) return;
     let url;
     try { url = new URL(anchor.href); } catch { return; }
