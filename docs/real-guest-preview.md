@@ -15,3 +15,5 @@ DEEPSPEC_GUEST_PREVIEW=true VERCEL_ENV=preview npm run dev
 Live analysis still uses the existing server provider configuration. Missing provider/network/quota errors are shown honestly by the normal app. No keys belong in client code. Account billing, cloud sync and training consent are outside the browser workspace.
 
 `npm run build` packages the intro from the tracked marketing source and verifies its resources. `scripts/package-intro.mjs` keeps the intro, white vector identity and blue-glass entry synchronized with the real app.
+
+Guest preview limits are verified through the narrow `deepspec-guest-quota` Supabase Edge function using the project’s injected server credentials. The Vercel API sends only a SHA-256 hash of the trusted client IP and a fixed identify/chat scope. The function can only increment the existing rate-limit counters with fixed limits; it returns allow/deny and never returns a key or account data. Quota failures remain closed. Normal account traffic keeps the original limiter.

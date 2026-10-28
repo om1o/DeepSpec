@@ -18,6 +18,7 @@ function mockRpc(impl: () => Promise<RpcResult>) {
 afterEach(() => {
   supabaseMock.createClient.mockReset();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("enforceRateLimit", () => {
@@ -114,5 +115,37 @@ describe("enforceRateLimit", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     await expect(enforceRateLimit("identify", HEADERS, ENV)).resolves.toEqual({ ok: true });
     expect(warn).toHaveBeenCalled();
+  });
+
+  const preview = { NODE_ENV: "production", VERCEL_ENV: "preview", DEEPSPEC_GUEST_PREVIEW: "true", DEEPSPEC_GUEST_QUOTA_URL: "https://project.supabase.co/functions/v1/deepspec-guest-quota" };
+
+  it("uses the consume-only Edge quota for explicit account-free preview requests", async () => {
+    const fetchMock = vi.fn(async () => Response.json({ allowed: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(enforceRateLimit("identify", HEADERS, preview)).resolves.toEqual({ ok: true });
+    expect(supabaseMock.createClient).not.toHaveBeenCalled();
+    const options = (fetchMock.mock.calls[0] as unknown as [unknown, RequestInit])[1];
+    expect(JSON.parse(String(options.body))).toMatchObject({ scope: "identify" });
+    expect(String(options.body)).not.toContain("203.0.113.9");
+  });
+
+  it("does not enter the guest quota path for production, disabled flags or supplied auth", async () => {
+    const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
+    const rpc = mockRpc(async () => ({ data: true, error: null }));
+    const configured = { ...ENV, ...preview };
+    await expect(enforceRateLimit("identify", HEADERS, { ...configured, VERCEL_ENV: "production" })).resolves.toEqual({ ok: true });
+    await expect(enforceRateLimit("identify", HEADERS, { ...configured, DEEPSPEC_GUEST_PREVIEW: "false" })).resolves.toEqual({ ok: true });
+    await expect(enforceRateLimit("identify", { ...HEADERS, authorization: "Bearer real-session" }, configured)).resolves.toEqual({ ok: true });
+    expect(rpc).toHaveBeenCalledTimes(6);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for missing preview IP, missing quota URL and quota outages", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("quota offline")); vi.stubGlobal("fetch", fetchMock);
+    await expect(enforceRateLimit("identify", {}, preview)).resolves.toMatchObject(unavailable);
+    await expect(enforceRateLimit("identify", HEADERS, { ...preview, DEEPSPEC_GUEST_QUOTA_URL: undefined })).resolves.toMatchObject(unavailable);
+    await expect(enforceRateLimit("identify", HEADERS, preview)).resolves.toMatchObject(unavailable);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(supabaseMock.createClient).not.toHaveBeenCalled();
   });
 });
