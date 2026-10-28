@@ -1,6 +1,6 @@
 # DeepSpec visual-search landing page
 
-A buildless static landing page. White is the primary brand; blue glass is reserved for the intro and sign-in handoff. Logo variants use transparent, source-preserving SVGs.
+A buildless static landing page. White is the primary brand; blue glass is reserved for the intro and sign-in handoff. The flat-white logo uses crisp source-traced vector paths; blue-glass accents preserve the original material.
 
 ## Run locally
 
@@ -12,7 +12,7 @@ Open http://localhost:8765. No package installation or backend keys are required
 
 ## Update assets
 
-Edit `dist/index.html`, `dist/styles.css`, `dist/intro.js`, or `dist/signin.js` / `dist/signin.css`, then run:
+Edit `dist/index.html`, `dist/styles.css`, `dist/intro.js`, or `dist/signin.js` / `dist/signin.css` / `dist/micro.js` / `dist/micro.css`, then run:
 
 ```sh
 python package-static.py
@@ -28,4 +28,6 @@ Normal sign-in clicks run a brief cancellable blue-glass transition, then open t
 
 See `SOURCES.md` and `brand-assets.md` for references and brand rules. No credentials, Sites project identity, private user data, or local QA artifacts are included.
 
-Verified sign-in destination: https://deepspec-7fxpiw11g-deep-spec-team.vercel.app/auth (branding/auth commit 40b1843b7550ebaed79f6bf5bda5ba85a4e605a3).
+Verified sign-in destination: https://deepspec-7tfvm2171-deep-spec-team.vercel.app/auth (branding/auth commit ffe0a592c6849145858c0720d5bfba9a2beff9a4).
+
+The visible scan now includes a restrained camera settle, focus lock and result confirmation. Other sections have subtle scroll, hover, press and focus responses. The hero includes a public `/demo` link for sample scans, authored reviews and browser-local saves without signing in. The normal app remains authenticated.

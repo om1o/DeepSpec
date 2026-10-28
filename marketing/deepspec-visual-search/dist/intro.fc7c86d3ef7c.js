@@ -21,6 +21,7 @@
     const review = demo?.querySelector('#demo-review-text') || result?.querySelector('p');
     const status = demo?.querySelector('.review-status') || result?.querySelector('.result-kicker');
     const heading = result?.querySelector('strong');
+    const matchIcon = result?.querySelector('.match-icon');
     const reviewPanel = demo?.querySelector('.demo-review-panel');
     if (!demo || !toggle || !replay || !phone || !view || !photo || !line || !target || !result || !prompt || !review) return () => {};
 
@@ -46,6 +47,7 @@
     let offscreen = initialRect.bottom <= 0 || initialRect.top >= window.innerHeight;
 
     demo.dataset.introEngine = 'waapi-v3';
+    demo.dataset.introPolish = 'focus-v1';
     demo.dataset.introDuration = String(CYCLE_MS);
     const currentPhase = () => Number(animations[0]?.currentTime || 0) % CYCLE_MS;
     const at = (milliseconds) => milliseconds / CYCLE_MS;
@@ -118,7 +120,10 @@
       const pose = getComputedStyle(phone).transform;
       const base = pose === 'none' ? '' : pose + ' ';
       const scanTravel = view.clientHeight * 0.64;
+      const computedFilter = getComputedStyle(photo).filter;
+      const photoFilter = computedFilter === 'none' ? '' : computedFilter + ' ';
       const settle = 'cubic-bezier(.2,.75,.2,1)';
+      const focusEase = 'cubic-bezier(.22,.68,.15,1)';
       try {
         // The first effect is also the shared clock for the scan and review.
         makeAnimation(result, reduced ? [
@@ -132,39 +137,62 @@
           { offset: 1, transform: 'translateY(7px)', opacity: 0.6 },
         ], phase);
         if (!reduced) {
+          // The device stays planted; a small settle reads like the camera
+          // finding the part rather than the whole interface floating around.
           makeAnimation(phone, [
-            { offset: 0, transform: base + 'translateY(12px) rotate(-1.5deg)', easing: settle },
-            { offset: at(700), transform: base + 'translateY(0) rotate(0deg)' },
-            { offset: at(12300), transform: base + 'translateY(0) rotate(0deg)', easing: 'ease-in-out' },
-            { offset: 1, transform: base + 'translateY(12px) rotate(-1.5deg)' },
+            { offset: 0, transform: base + 'translateY(5px) rotate(-.35deg)', easing: settle },
+            { offset: at(650), transform: base + 'translateY(0) rotate(0deg)' },
+            { offset: at(12400), transform: base + 'translateY(0) rotate(0deg)', easing: 'ease-in-out' },
+            { offset: 1, transform: base + 'translateY(5px) rotate(-.35deg)' },
           ], phase);
           makeAnimation(photo, [
-            { offset: 0, transform: 'scale(1)' },
-            { offset: at(300), transform: 'scale(1)', easing: 'ease-in-out' },
-            { offset: at(3000), transform: 'scale(1.1)' },
-            { offset: at(12300), transform: 'scale(1.1)', easing: 'ease-in-out' },
-            { offset: 1, transform: 'scale(1)' },
+            { offset: 0, transform: 'scale(1.012) translateY(1px)', filter: photoFilter + 'blur(.65px)', easing: focusEase },
+            { offset: at(500), transform: 'scale(1.025) translateY(0)', filter: photoFilter + 'blur(.1px)', easing: 'ease-in-out' },
+            { offset: at(900), transform: 'scale(1.023) translateY(0)', filter: photoFilter + 'blur(0px)', easing: 'ease-in-out' },
+            { offset: at(2900), transform: 'scale(1.055) translateY(0)', filter: photoFilter + 'blur(0px)' },
+            { offset: at(12400), transform: 'scale(1.055) translateY(0)', filter: photoFilter + 'blur(0px)', easing: 'ease-in-out' },
+            { offset: 1, transform: 'scale(1.012) translateY(1px)', filter: photoFilter + 'blur(.65px)' },
           ], phase);
           makeAnimation(target, [
-            { offset: 0, transform: 'scale(1.1)', opacity: 0.65 },
-            { offset: at(400), transform: 'scale(1.1)', opacity: 0.9, easing: 'ease-in-out' },
-            { offset: at(2900), transform: 'scale(1)', opacity: 1, easing: settle },
-            { offset: at(3300), transform: 'scale(.98)', opacity: 1 },
-            { offset: at(3700), transform: 'scale(1)', opacity: 1 },
-            { offset: at(12300), transform: 'scale(1)', opacity: 1 },
-            { offset: 1, transform: 'scale(1.1)', opacity: 0.65 },
+            { offset: 0, transform: 'scale(1.075)', opacity: 0.6, easing: focusEase },
+            { offset: at(500), transform: 'scale(1.012)', opacity: 0.92, easing: 'ease-in-out' },
+            { offset: at(850), transform: 'scale(1.025)', opacity: 0.86, easing: focusEase },
+            { offset: at(1250), transform: 'scale(1)', opacity: 1 },
+            { offset: at(2750), transform: 'scale(1)', opacity: 1, easing: focusEase },
+            { offset: at(3070), transform: 'scale(.986)', opacity: 1, easing: settle },
+            { offset: at(3400), transform: 'scale(1)', opacity: 1 },
+            { offset: at(12400), transform: 'scale(1)', opacity: 1, easing: 'ease-in-out' },
+            { offset: 1, transform: 'scale(1.075)', opacity: 0.6 },
           ], phase);
         }
         // Keep the requested downward scan in both modes. Reduced motion holds
         // the phone/photo still and uses a softer beam without camera movement.
         const beamOpacity = reduced ? 0.8 : 1;
         makeAnimation(line, [
-          { offset: 0, transform: 'translateY(0)', opacity: beamOpacity },
-          { offset: at(2800), transform: `translateY(${scanTravel}px)`, opacity: beamOpacity },
-          { offset: at(3000), transform: `translateY(${scanTravel}px)`, opacity: 0 },
-          { offset: at(12800), transform: 'translateY(0)', opacity: 0 },
-          { offset: 1, transform: 'translateY(0)', opacity: beamOpacity },
+          { offset: 0, transform: 'translateY(0)', opacity: beamOpacity * 0.35 },
+          { offset: at(160), transform: 'translateY(0)', opacity: beamOpacity },
+          // Constant downward velocity keeps the beam readable on every size.
+          { offset: at(2760), transform: `translateY(${scanTravel}px)`, opacity: beamOpacity },
+          { offset: at(2980), transform: `translateY(${scanTravel}px)`, opacity: 0 },
+          { offset: at(12840), transform: 'translateY(0)', opacity: 0 },
+          { offset: 1, transform: 'translateY(0)', opacity: beamOpacity * 0.35 },
         ], phase);
+        if (matchIcon) {
+          makeAnimation(matchIcon, reduced ? [
+            { offset: 0, opacity: 0.65 },
+            { offset: at(3850), opacity: 0.65 },
+            { offset: at(4100), opacity: 1 },
+            { offset: at(12600), opacity: 1 },
+            { offset: 1, opacity: 0.65 },
+          ] : [
+            { offset: 0, transform: 'scale(.96)', opacity: 0.65 },
+            { offset: at(3850), transform: 'scale(.96)', opacity: 0.65, easing: settle },
+            { offset: at(4100), transform: 'scale(1.07)', opacity: 1, easing: focusEase },
+            { offset: at(4350), transform: 'scale(1)', opacity: 1 },
+            { offset: at(12600), transform: 'scale(1)', opacity: 1 },
+            { offset: 1, transform: 'scale(.96)', opacity: 0.65 },
+          ], phase);
+        }
         if (reviewPanel) {
           makeAnimation(reviewPanel, reduced ? [
             { offset: 0, opacity: 0 },

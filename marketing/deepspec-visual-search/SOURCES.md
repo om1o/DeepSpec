@@ -6,7 +6,7 @@
 - Generated valve-and-spring macro is an image edit of the source Lens exploration photo, retaining its clustered macro framing.
 - The blue-glass intro logo is faithfully recreated from the user's supplied fourth-panel reference. The user subsequently selected WHITE as the main brand mark; the primary logo and app icon use the same geometry in flat white, while blue glass is reserved for the phone intro. GitHub's current assets differ from that chosen identity; no claim that the new variant was downloaded from the repository.
 - Product and route evidence: https://github.com/om1o/DeepSpec. Identification from photos, saved scans, follow-up questions, evidence and reports. No accuracy, price, supported-vehicle or fitment claims added.
-- Sign-in endpoint verified HTTP 200: https://deepspec-7fxpiw11g-deep-spec-team.vercel.app/auth (Vercel preview; no production domain confirmed).
+- Sign-in endpoint verified HTTP 200: https://deepspec-7tfvm2171-deep-spec-team.vercel.app/auth (Vercel preview; no production domain confirmed).
 - Intro is a clearly labeled illustrative scan animation. Result copy is example content, not a live analysis of a visitor image.
 - All logo artwork stays static everywhere; scan animation is confined to the introduction and includes pause, replay and reduced-motion behavior.
 
@@ -16,7 +16,7 @@ The packaged Sites helper is unavailable in this execution environment. Source s
 
 ## Coherence and motion correction
 
-The primary white mark and wordmark now use exact source-preserving SVG layout wrappers with transparent background, removing the navy tile and excessive source padding. White remains primary; blue glass remains inside the intro only. The page uses one graphite/steel palette and glossy controls. Intro motion is a synchronized browser animation timeline with real pause/replay; reduced motion keeps the camera and photo still while a gentle downward scan plays automatically. Styles and script references use content hashes so revisions load together.
+The primary white mark and wordmark now use source-traced SVG path outlines with transparent background, preserving the selected geometry and lettering while removing raster scaling and live filters. White remains primary; blue glass remains inside the intro only. The page uses one graphite/steel palette and glossy controls. Intro motion is a synchronized browser animation timeline with real pause/replay; reduced motion keeps the camera and photo still while a gentle downward scan plays automatically. Styles and script references use content hashes so revisions load together.
 
 
 ## Automatic demo and sign-in handoff
@@ -27,4 +27,10 @@ The sign-in handoff uses a short cancellable blue-glass transition inspired by A
 
 White remains the primary app identity. Context-specific transparent SVG lockups and mark-only assets replace opaque pasted logo panels; blue glass is confined to intro and handoff accents.
 
-The sign-in endpoint now uses the successful V1 branding/auth preview for GitHub commit 40b1843b7550ebaed79f6bf5bda5ba85a4e605a3. This replaces the older preview branch that still displayed the old D mark. Current account and scanner behavior is retained.
+The sign-in endpoint now uses the successful V1 branding/auth preview for GitHub commit ffe0a592c6849145858c0720d5bfba9a2beff9a4. This replaces the older preview branch that still displayed the old D mark. Current account and scanner behavior is retained.
+
+## Motion and testing polish
+
+The scan uses a small camera settle, brief photo focus, bracket acquisition and a restrained result confirmation. The downward beam and authored review remain synchronized and support pause/replay, lifecycle handling and reduced camera motion. Other sections use one-shot entrance effects and short hover/focus/press feedback; content remains visible without JavaScript and reduced motion skips decorative movement.
+
+The normal app now has an isolated public `/demo` route with authored examples and browser-local sample state, so its scan/result/saved flow can be tried without an account. It does not run real AI analysis or change normal account authentication.

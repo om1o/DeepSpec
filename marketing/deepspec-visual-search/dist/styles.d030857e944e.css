@@ -58,6 +58,10 @@ a:focus-visible, button:focus-visible { outline: 2px solid #c9eaff; outline-offs
 .hero h1 span { color: #d7e5f0; }
 .hero-content>p:first-of-type { font-size: 21px; line-height: 1.55; color: var(--muted); max-width: 500px; margin-top: 28px; letter-spacing: -.015em; }
 .hero-content>.glass-button { margin-top: 33px; }
+.hero-demo-link { display: flex; align-items: center; gap: 10px; width: max-content; max-width: 100%; min-height: 32px; margin-top: 12px; color: #e0edf7; font-size: 13px; }
+.hero-demo-link>span { padding-left: 10px; border-left: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+.hero-demo-link .ui-icon { width: 15px; height: 15px; }
+.hero-demo-link:hover { color: #fff; }
 .hero-support { margin-top: 22px; font-size: 14px; line-height: 1.6; color: #8ea3b5; }
 .explore-link { display: flex; align-items: center; gap: 17px; width: max-content; margin-top: 39px; font-size: 14px; font-weight: 500; color: #b9cad8; }
 .explore-link span { font-size: 22px; color: #e1eef7; }
@@ -257,11 +261,12 @@ a:focus-visible, button:focus-visible { outline: 2px solid #c9eaff; outline-offs
   .site-header nav { margin-left:auto; gap:0; font-size:12px; }
   .site-header nav a:not(.current) { display:none; }
   .header-sign-in { margin-left:0; padding:10px 14px; min-height:41px; gap:11px; font-size:12px; border-radius:12px; }
-  .hero { grid-template-columns:1fr; margin:30px 6% 0; gap:29px; }
+  .hero { grid-template-columns:1fr; margin:22px 6% 0; gap:22px; }
   .hero-content { text-align:center; padding:0; max-width:540px; margin:auto; }
   .hero h1 { font-size:clamp(40px,10.1vw,51px); line-height:1.06; letter-spacing:-.05em; max-width:510px; margin:auto; }
-  .hero-content>p:first-of-type { font-size:16px; line-height:1.55; max-width:390px; margin:20px auto 0; }
-  .hero-content>.glass-button { margin-top:23px; font-size:14px; min-height:52px; padding:15px 22px; border-radius:15px; }
+  .hero-content>p:first-of-type { font-size:16px; line-height:1.55; max-width:390px; margin:16px auto 0; }
+  .hero-content>.glass-button { margin-top:20px; font-size:14px; min-height:52px; padding:15px 22px; border-radius:15px; }
+  .hero-demo-link { margin:8px auto 0; }
   .hero-support { display:none; }
   .explore-link { display:none; }
   .hero-visual { margin:0; width:100%; min-height:555px; border-radius:25px; }

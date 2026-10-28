@@ -5,9 +5,9 @@ Primary identity: white. Blue glass remains an intro accent. All logo artwork st
 - `dist/assets/white-logo-horizontal.svg`: 260×62 intrinsic size. Recommended header placement: 180×43 (or 156×37 on mobile).
 - `dist/assets/white-mark.svg`: 64×64 intrinsic size. Use when an icon-only mark is needed.
 
-Both files embed the existing selected white logo source and crop its exact original symbol and wordmark using SVG viewports. No letters or logo geometry are redrawn. A static luminance-to-alpha filter converts the navy background into transparency, so the white artwork works on the page's graphite/navy surfaces without a visible rectangle. No CSS blend mode or extra image filter is needed.
+Both flat-white files now use source-traced SVG path outlines, preserving the chosen symbol and original lettering. They contain no raster image, embedded bitmap, live filter or font dependency. This removes the soft raster/filter scaling pipeline while retaining the same identity at header and compact sizes.
 
-Browser inspection checked the horizontal lockup at 260, 180 and 156 pixels wide on three dark background colors. Edges are clean, typography remains readable and no navy tile or alpha glow appears.
+Browser comparisons passed at 260, 178, 140 and 112 pixels wide and for the 64-pixel mark. Native silhouette differences stay within one source pixel of the original boundary; no lettering or identity was redesigned.
 
 Unused failed native transparent export: `exec-0155f883-ff9d-4074-82b5-68950fc0b887.png` has a broad alpha glow and must not be shipped.
 
