@@ -18,6 +18,7 @@ concurrency:
 jobs:
   repair-preview:
     if: github.repository == 'om1o/DeepSpec' && github.ref == 'refs/heads/codex/v1-brand-motion-refresh'
+    environment: Preview
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
