@@ -74,6 +74,14 @@ describe("readCloudLookups", () => {
     expect(result.ok && result.value[0].result).toBeUndefined();
   });
 
+  it("retains grounded chat references and paragraphs in an account's saved cloud scan", async () => {
+    const message = { id: "reply-1", role: "assistant", content: "Visible wear\n\nCompare the marking.", timestamp: "2026-09-18T12:00:00.000Z", sources: [{ label: "Reference", url: "https://example.com/reference", sourceType: "reference" }] };
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, chat_history: [message] }], error: null });
+    const { readCloudLookups } = await import("./cloudHistory");
+    const result = await readCloudLookups();
+    expect(result.ok && result.value[0].chatHistory).toEqual([message]);
+  });
+
   it("retains shop columns when only the inspection migration is missing", async () => {
     mocks.select.mockImplementation((columns) => columns.includes("inspection_json")
       ? { data: null, error: { message: "column scan_lookups.inspection_json does not exist" } }

@@ -355,9 +355,15 @@ export function createChatMessage(role: ChatMessage["role"], content: string): C
   return {
     id: createId(),
     role,
-    content: cleanText(content, role === "user" ? 500 : 1200),
+    content: cleanChatContent(role, content),
     timestamp: new Date().toISOString(),
   };
+}
+
+function cleanChatContent(role: ChatMessage["role"], content: string) {
+  return role === "user"
+    ? cleanText(content, 500)
+    : content.replace(/\r\n?/g, "\n").split("\n").map((line) => line.trimEnd()).join("\n").replace(/\n{3,}/g, "\n\n").trim().slice(0, 6000);
 }
 
 export function appendChatMessages(id: string, messages: ChatMessage[]): StorageResult<Lookup | null> {
@@ -1075,7 +1081,7 @@ function normalizeSourceLinks(value: unknown): SourceLink[] {
     .filter((item): item is Partial<SourceLink> => typeof item === "object" && item !== null)
     .map((link) => ({
       label: typeof link.label === "string" ? cleanText(link.label, 80) : "",
-      url: typeof link.url === "string" ? cleanText(link.url, 300) : "",
+      url: typeof link.url === "string" && link.url.length <= 2048 ? link.url.trim() : "",
       sourceType: isSourceType(link.sourceType) ? link.sourceType : "reference",
     }))
     .filter((link) => link.label && /^https:\/\//.test(link.url))
@@ -1103,7 +1109,8 @@ function normalizeChatMessage(value: unknown): ChatMessage | null {
   return {
     id: typeof message.id === "string" ? message.id : createId(),
     role: message.role,
-    content: cleanText(message.content, message.role === "user" ? 500 : 1200),
+    content: cleanChatContent(message.role, message.content),
+    ...(message.role === "assistant" && Array.isArray(message.sources) ? { sources: normalizeSourceLinks(message.sources) } : {}),
     timestamp: message.timestamp,
   };
 }

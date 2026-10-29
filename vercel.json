@@ -8,6 +8,11 @@
       "DEEPSPEC_GUEST_PREVIEW": "true"
     }
   },
+  "functions": {
+    "api/identify.ts": {
+      "includeFiles": "datasets/verified/hf-automotive-sources-v1/records.jsonl"
+    }
+  },
   "rewrites": [
     {
       "source": "/",

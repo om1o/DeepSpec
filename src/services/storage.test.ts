@@ -501,6 +501,18 @@ describe("storage", () => {
     expect(getLookup(lookup.id)?.chatHistory).toHaveLength(2);
   });
 
+  it("preserves detailed assistant paragraphs and real research references when reopening a scan", () => {
+    const lookup = createLookup(scanState).value;
+    const answer = "Visible observations\n\n" + "The belt has visible edge wear. ".repeat(45).trimEnd() + "\n\nNext checks\n- Read the marking.\n- Compare the tensioner position.";
+    const source = { label: "Belt reference", url: "https://example.com/reference?token=" + "a".repeat(400), sourceType: "reference" as const };
+    const message = { ...createChatMessage("assistant", answer), sources: [source], searchSuggestions: "<script>must not persist</script>" };
+    expect(appendChatMessages(lookup.id, [message]).ok).toBe(true);
+    const saved = getLookup(lookup.id)?.chatHistory[0];
+    expect(saved).toMatchObject({ content: answer, sources: [source] });
+    expect(saved).not.toHaveProperty("searchSuggestions");
+    expect(JSON.stringify(getLookups())).not.toContain("must not persist");
+  });
+
   it.each([false, true])("repairs a partially persisted exchange idempotently (stale auxiliary retained: %s)", (retainStale) => {
     const saved = createLookup(scanState).value;
     const earlier = [createChatMessage("user", "Earlier question"), createChatMessage("assistant", "Earlier answer")];

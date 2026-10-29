@@ -484,6 +484,7 @@ function parseChatHistory(value: unknown): ChatMessage[] {
       id: isString(item.id) ? item.id : `chat-${Math.random().toString(16).slice(2)}`,
       role: item.role === "assistant" ? "assistant" : "user",
       content: isString(item.content) ? item.content : "",
+      ...(item.role === "assistant" && Array.isArray(item.sources) ? { sources: parseSourceLinks(item.sources) } : {}),
       timestamp: isString(item.timestamp) ? item.timestamp : new Date().toISOString(),
     }))
     .filter((item) => item.content.length > 0);

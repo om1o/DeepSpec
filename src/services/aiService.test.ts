@@ -1,5 +1,6 @@
-import { getAIErrorDetails, identifyCapturedFrame, runAI, sendFollowUp } from "./aiService";
+import { getAIErrorDetails, identifyCapturedFrame, runAI, sendFollowUp, sendFollowUpDetails } from "./aiService";
 import { identifyOnDevice } from "./onDeviceIdentify";
+import { setActiveAccount } from "../lib/accountScope";
 
 vi.mock("./onDeviceIdentify", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./onDeviceIdentify")>();
@@ -45,6 +46,7 @@ const result = {
 describe("aiService", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    setActiveAccount("chat-test-owner");
   });
 
   afterEach(() => {
@@ -346,6 +348,45 @@ describe("aiService", () => {
     ).resolves.toBe("The alternator charges the battery while the engine runs.");
 
     expect(JSON.stringify(fetchSpy.mock.calls[0][1]?.body)).toContain("Part name: Alternator");
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toHaveProperty("imageBase64", "data:image/jpeg;base64,test");
+  });
+
+  it("sends opt-in research references with the actual saved photo and keeps grounded response metadata", async () => {
+    const sources = [{ label: "Service reference", url: "https://example.com/manual", sourceType: "reference" }];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "Visible wear\n\nCompare the belt marking.", sources, searchSuggestions: "<div>Related searches</div>" }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const lookup = { frame: { imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-05-16T00:00:00.000Z" }, result, scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    await expect(sendFollowUpDetails(lookup, "Research this marking", { research: true, sourceUrls: ["https://example.com/manual"] })).resolves.toEqual({ message: "Visible wear\n\nCompare the belt marking.", sources, searchSuggestions: "<div>Related searches</div>" });
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toMatchObject({ imageBase64: lookup.frame.imageBase64, research: true, sourceUrls: ["https://example.com/manual"] });
+  });
+
+  it("loads a signed cloud photo in the browser and sends bounded image data to chat", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(new Uint8Array([0xff, 0xd8, 0xff, 0x00]), { status: 200, headers: { "Content-Type": "image/jpeg" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: "The saved photo shows the belt edge." }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const lookup = { frame: { imageBase64: "https://example.com/private.jpg", capturedAt: "2026-05-16T00:00:00.000Z" }, result, scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    await sendFollowUp(lookup, "What do the observations mean?");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy.mock.calls[0]).toEqual([lookup.frame.imageBase64, expect.objectContaining({ credentials: "omit" })]);
+    expect(fetchSpy.mock.calls[1][0]).toBe("/api/chat");
+    expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body))).toHaveProperty("imageBase64", "data:image/jpeg;base64,/9j/AA==");
+  });
+
+  it("does not mix an old cloud photo with the new account's chat token after a switch", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementationOnce(async () => {
+      setActiveAccount("different-owner");
+      return new Response(new Uint8Array([0xff, 0xd8, 0xff, 0x00]), { status: 200, headers: { "Content-Type": "image/jpeg" } });
+    });
+    const lookup = { frame: { imageBase64: "https://example.com/private.jpg", capturedAt: "2026-05-16T00:00:00.000Z" }, result, scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    await expect(sendFollowUp(lookup, "Inspect this photo")).rejects.toThrow("Account changed");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0][0]).toBe(lookup.frame.imageBase64);
+  });
+
+  it("reports an expired or unavailable cloud photo instead of silently using text-only chat", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response("expired", { status: 403 }));
+    const lookup = { frame: { imageBase64: "https://example.com/expired.jpg", capturedAt: "2026-05-16T00:00:00.000Z" }, result, scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    await expect(sendFollowUp(lookup, "Inspect this photo")).rejects.toThrow("saved photo could not be loaded");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the question inside the server's 3000-char cut on a long, detailed chat, and sends it once", async () => {

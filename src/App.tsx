@@ -17,7 +17,7 @@ import { getAccountScope, setActiveAccount, setActiveGuestPreview } from "./lib/
 
 const loadScanner = () => import("./screens/Scanner");
 const Scanner = lazy(loadScanner);
-// Warm the camera for account routes; the public demo needs no camera or ML.
+// Load capture tools on app routes after the intro.
 if (window.location.pathname !== "/" && !window.location.pathname.startsWith("/intro")) {
   void loadScanner().catch(() => {});
 }
@@ -112,7 +112,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
 function ScannerRouteFallback() {
   return (
     <main className="flex min-h-dvh items-center justify-center bg-[var(--ds-bg)] px-4 text-center text-sm font-bold text-[var(--ds-fg-3)]">
-      Opening camera...
+      Opening DeepSpec...
     </main>
   );
 }

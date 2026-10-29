@@ -34,6 +34,15 @@ describe("Vercel Hobby deployment layout", () => {
     expect(files.length).toBeLessThanOrEqual(12);
   });
 
+  it("ships the existing verified source index with identification", () => {
+    const config = JSON.parse(readFileSync(resolve(process.cwd(), "vercel.json"), "utf8"));
+    const indexPath = config.functions["api/identify.ts"].includeFiles;
+    expect(indexPath).toBe("datasets/verified/hf-automotive-sources-v1/records.jsonl");
+    const records = readFileSync(resolve(process.cwd(), indexPath), "utf8")
+      .trim().split(/\r?\n/).map((line) => JSON.parse(line));
+    expect(records.length).toBeGreaterThan(0);
+  });
+
   it("uses Node ESM-resolvable extensions in every runtime-relative import", () => {
     const runtimeFiles = ["api", "server"].flatMap((directory) =>
       readdirSync(resolve(process.cwd(), directory), { recursive: true })
