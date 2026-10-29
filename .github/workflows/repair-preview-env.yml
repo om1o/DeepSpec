@@ -1,0 +1,155 @@
+name: Repair DeepSpec Preview AI configuration
+
+on:
+  push:
+    branches:
+      - codex/v1-brand-motion-refresh
+    paths:
+      - .github/workflows/repair-preview-env.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repair-deepspec-preview-env
+  cancel-in-progress: false
+
+jobs:
+  repair-preview:
+    if: github.repository == 'om1o/DeepSpec' && github.ref == 'refs/heads/codex/v1-brand-motion-refresh'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+    steps:
+      - name: Check existing repository secrets
+        run: |
+          node --input-type=module <<'NODE'
+          const required = ['GEMINI_API_KEY', 'VERCEL_TOKEN'];
+          const missing = required.filter((key) => !process.env[key]?.trim());
+          for (const key of required) {
+            console.log(`${key}: ${missing.includes(key) ? 'missing' : 'configured'}`);
+          }
+          if (missing.length) {
+            console.error(`Required repository secrets are missing: ${missing.join(', ')}`);
+            process.exitCode = 1;
+          }
+          NODE
+
+      - name: Configure this branch's Preview server key
+        run: |
+          node --input-type=module <<'NODE'
+          const project = 'prj_gvo3TMEWjjwkdB1m3iinJT7MTjnP';
+          const branch = 'codex/v1-brand-motion-refresh';
+          const url = new URL(`https://api.vercel.com/v10/projects/${project}/env`);
+          url.searchParams.set('slug', 'deep-spec-team');
+          url.searchParams.set('upsert', 'true');
+          try {
+            const response = await fetch(url, {
+              method: 'POST',
+              redirect: 'error',
+              signal: AbortSignal.timeout(30000),
+              headers: {
+                Authorization: `Bearer ${process.env.VERCEL_TOKEN}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                key: 'GEMINI_API_KEY',
+                value: process.env.GEMINI_API_KEY,
+                type: 'encrypted',
+                target: ['preview'],
+                gitBranch: branch,
+              }),
+            });
+            console.log(`Preview environment update HTTP ${response.status}`);
+            await response.body?.cancel();
+            if (!response.ok) process.exitCode = 1;
+          } catch {
+            console.error('Preview environment update request failed.');
+            process.exitCode = 1;
+          }
+          NODE
+
+      - name: Build a fresh Preview with the current project environment
+        run: |
+          node --input-type=module <<'NODE'
+          const project = 'prj_gvo3TMEWjjwkdB1m3iinJT7MTjnP';
+          const branch = 'codex/v1-brand-motion-refresh';
+          const headers = {
+            Authorization: `Bearer ${process.env.VERCEL_TOKEN}`,
+            'Content-Type': 'application/json',
+          };
+          const scopedUrl = (path) => {
+            const url = new URL(path, 'https://api.vercel.com');
+            url.searchParams.set('slug', 'deep-spec-team');
+            return url;
+          };
+          try {
+            const url = scopedUrl('/v13/deployments');
+            url.searchParams.set('forceNew', '1');
+            const response = await fetch(url, {
+              method: 'POST',
+              redirect: 'error',
+              signal: AbortSignal.timeout(30000),
+              headers,
+              // Omitting target selects Preview. A fresh Git deployment reads
+              // current project variables instead of inheriting an old build's.
+              body: JSON.stringify({
+                name: 'deepspec',
+                project,
+                gitSource: {
+                  type: 'github',
+                  org: 'om1o',
+                  repo: 'DeepSpec',
+                  ref: branch,
+                  sha: process.env.GITHUB_SHA,
+                },
+              }),
+            });
+            console.log(`Preview deployment creation HTTP ${response.status}`);
+            if (!response.ok) {
+              await response.body?.cancel();
+              process.exit(1);
+            }
+            const created = await response.json();
+            const id = created.id;
+            const hostname = created.url;
+            if (typeof id !== 'string' || !/^(?:dpl_)?[A-Za-z0-9]{10,80}$/.test(id)
+              || typeof hostname !== 'string' || !/^[a-z0-9-]+\.vercel\.app$/.test(hostname)
+              || (created.target != null && created.target !== 'preview')) {
+              console.error('Preview deployment metadata did not match the expected scope.');
+              process.exit(1);
+            }
+            console.log(`Preview deployment ${id} https://${hostname}`);
+            const deadline = Date.now() + 360000;
+            while (Date.now() < deadline) {
+              await new Promise((resolve) => setTimeout(resolve, 5000));
+              const statusResponse = await fetch(scopedUrl(`/v13/deployments/${encodeURIComponent(id)}`), {
+                redirect: 'error',
+                signal: AbortSignal.timeout(30000),
+                headers,
+              });
+              if (!statusResponse.ok) {
+                console.error(`Preview deployment check HTTP ${statusResponse.status}`);
+                await statusResponse.body?.cancel();
+                process.exit(1);
+              }
+              const status = await statusResponse.json();
+              if (status.readyState === 'READY') {
+                console.log(`Preview deployment ready ${id} https://${hostname}`);
+                process.exit(0);
+              }
+              if (['ERROR', 'CANCELED'].includes(status.readyState)) {
+                console.error('Preview deployment did not complete successfully.');
+                process.exit(1);
+              }
+            }
+            console.error('Preview deployment did not become ready before the deadline.');
+            process.exitCode = 1;
+          } catch {
+            console.error('Preview deployment request failed.');
+            process.exitCode = 1;
+          }
+          NODE
