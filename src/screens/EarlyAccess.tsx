@@ -9,8 +9,10 @@ import type { FeedbackSubmission, WaitlistSignup } from "../types";
 import { FEEDBACK_ISSUES, getFeedbackIssue, type FeedbackIssue } from "../services/feedbackDetails";
 import { getLookup } from "../services/storage";
 import { getAccountScope, isAccountScopeCurrent } from "../lib/accountScope";
+import { isGuestPreview } from "../lib/guestPreview";
 
 export default function EarlyAccess() {
+  const guest = isGuestPreview();
   const [mountedScope] = useState(getAccountScope);
   const [searchParams] = useSearchParams();
   const scanId = searchParams.get("scan");
@@ -32,15 +34,20 @@ export default function EarlyAccess() {
   const [contactEmail, setContactEmail] = useState("");
   const [waitlistStatus, setWaitlistStatus] = useState<string | null>(null);
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
-  const cloudSync = getCloudSyncStatus();
+  const cloudSync = guest
+    ? { configured: false, message: "Your scans and feedback are saved in this browser. No account is needed." }
+    : getCloudSyncStatus();
   const cloudStatusMessage = cloudSync.message;
   const demandSignals = useMemo(
-    () => [
+    () => guest ? [
+      { label: "Feedback notes", value: String(stats.feedback.length) },
+      { label: "Storage", value: "This browser" },
+    ] : [
       { label: "Local waitlist entries", value: String(stats.waitlist.length) },
       { label: "Feedback notes", value: String(stats.feedback.length) },
       { label: "Cloud sync", value: cloudSync.configured ? "On" : "Off" },
     ],
-    [cloudSync.configured, stats],
+    [cloudSync.configured, guest, stats],
   );
 
   async function handleWaitlistSubmit(event: FormEvent<HTMLFormElement>) {
@@ -96,7 +103,7 @@ export default function EarlyAccess() {
     }
 
     if (!cloudSync.configured) {
-      setFeedbackStatus("Feedback saved on this device. Cloud sync is off for this build.");
+      setFeedbackStatus(guest ? "Feedback saved in this browser." : "Feedback saved on this device. Cloud sync is off for this build.");
       return;
     }
 
@@ -136,8 +143,7 @@ export default function EarlyAccess() {
           <p className="text-sm font-bold text-[var(--ds-accent)]">The visual layer for parts</p>
           <h2 className="mt-2 text-2xl font-extrabold tracking-tight">Point, isolate, identify.</h2>
           <p className="mt-3 text-sm leading-6 text-neutral-500">
-            Deep Spec reads the part through your camera and returns the answer. Join the waitlist and shape
-            what ships first.
+            {guest ? "Use the camera to inspect a part, then save a note about what worked or what could be better." : "Deep Spec reads the part through your camera and returns the answer. Join the waitlist and shape what ships first."}
           </p>
           <p className="mt-3 rounded-2xl border border-neutral-100 bg-neutral-50 p-3 text-sm leading-6 text-neutral-500">
             {cloudStatusMessage}
@@ -150,10 +156,10 @@ export default function EarlyAccess() {
               </div>
             ))}
           </div>
-          <CloudHealthCard className="mt-4" />
+          {guest ? null : <CloudHealthCard className="mt-4" />}
         </section>
 
-        <form className="mt-4 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm" onSubmit={handleWaitlistSubmit}>
+        {guest ? null : <form className="mt-4 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm" onSubmit={handleWaitlistSubmit}>
           <h2 className="text-lg font-extrabold tracking-tight">Join the waitlist</h2>
           <p className="mt-2 text-sm leading-6 text-neutral-500">
             Saved on this device first. With cloud sync on, the entry goes to the private waitlist too.
@@ -197,12 +203,12 @@ export default function EarlyAccess() {
           <Button className="mt-4 w-full" type="submit">
             Save waitlist entry
           </Button>
-        </form>
+        </form>}
 
         <form ref={reportForm} id="feedback" className="mt-4 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm" onSubmit={handleFeedbackSubmit}>
-          <h2 className="text-lg font-extrabold tracking-tight">Send product feedback</h2>
+          <h2 className="text-lg font-extrabold tracking-tight">{guest ? "Product feedback" : "Send product feedback"}</h2>
           <p className="mt-2 text-sm leading-6 text-neutral-500">
-            Tell us what would make Deep Spec worth keeping in the bay. Saved on this device first, synced when cloud is on.
+            {guest ? "Keep your feedback with this browser's workspace. These notes stay on this device." : "Tell us what would make Deep Spec worth keeping in the bay. Saved on this device first, synced when cloud is on."}
           </p>
           <label className="mt-4 block">
             <span className="text-sm font-bold">What went wrong?</span>

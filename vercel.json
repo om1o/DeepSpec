@@ -1,5 +1,23 @@
 {
+  "env": {
+    "DEEPSPEC_GUEST_PREVIEW": "true",
+    "DEEPSPEC_GUEST_QUOTA_URL": "https://tvmomaxmiecguqikpckb.supabase.co/functions/v1/deepspec-guest-quota"
+  },
+  "build": {
+    "env": {
+      "DEEPSPEC_GUEST_PREVIEW": "true"
+    }
+  },
+  "functions": {
+    "api/identify.ts": {
+      "includeFiles": "datasets/verified/hf-automotive-sources-v1/records.jsonl"
+    }
+  },
   "rewrites": [
+    {
+      "source": "/",
+      "destination": "/intro/index.html"
+    },
     {
       "source": "/((?!api/).*)",
       "destination": "/index.html"

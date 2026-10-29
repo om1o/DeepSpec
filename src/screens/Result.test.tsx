@@ -170,10 +170,10 @@ describe("Result", () => {
       "data:image/jpeg;base64,test-image",
     );
     expect(screen.getAllByText("It charges the battery while the engine runs.").length).toBeGreaterThan(0);
-    expect(screen.getByText("Best match")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Ask" })).toBeInTheDocument();
+    expect(screen.getByText("AI overview")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ask DeepSpec" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
-    expect(screen.queryByText("Other possible matches")).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Other possible matches" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Complete brief" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Refine" })).not.toBeInTheDocument();
     expect(screen.queryByText("More evidence")).not.toBeInTheDocument();
@@ -240,7 +240,7 @@ describe("Result", () => {
     expect(screen.queryByText(/backup AI model/i)).not.toBeInTheDocument();
   });
 
-  it("keeps OCR label data out of the default simple answer sheet", () => {
+  it("restores detected label text and exact research tools in the AI view", async () => {
     renderResult({
       ...successfulScan,
       result: {
@@ -253,9 +253,25 @@ describe("Result", () => {
     });
 
     expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Text output" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Likely part number")).not.toBeInTheDocument();
-    expect(screen.queryByText("Visible label text: DENSO 104210-1230")).not.toBeInTheDocument();
+    expect(screen.getByText("AI overview")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("tab", { name: "Text output" }));
+    expect(screen.getByRole("region", { name: "Text output" })).toBeInTheDocument();
+    expect(screen.getByText("DENSO 104210-1230")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Search exact" })).toHaveAttribute("href", "https://www.google.com/search?q=DENSO%20104210-1230");
+    expect(screen.getByRole("link", { name: "Search with part" })).toHaveAttribute("href", "https://www.google.com/search?q=DENSO%20104210-1230%20Alternator%20car%20part");
+    expect(screen.getByTestId("result-photo-panel")).not.toContainElement(screen.getByTestId("result-overview-panel"));
+    expect(screen.getByTestId("result-photo-canvas")).not.toContainElement(screen.getByRole("heading", { level: 1, name: "Alternator" }));
+  });
+
+  it("opens returned research and video references from the full AI view", async () => {
+    renderResult({ ...successfulScan, result: { ...successfulScan.result!, sourceLinks: [
+      ...successfulScan.result!.sourceLinks,
+      { label: "Video inspection", url: "https://youtu.be/inspection", sourceType: "reference" },
+    ] } });
+    await userEvent.click(screen.getByRole("tab", { name: "Sources" }));
+    expect(screen.getByRole("link", { name: /Search this part/ })).toHaveAttribute("href", successfulScan.result!.sourceLinks[0].url);
+    expect(screen.getByRole("link", { name: /Video inspection/ })).toHaveAttribute("href", "https://youtu.be/inspection");
+    expect(screen.getByRole("link", { name: /Search YouTube/ })).toHaveAttribute("href", "https://www.youtube.com/results?search_query=Alternator%20car%20part");
   });
 
   it("keeps weak results simple without retake spam", () => {
@@ -382,7 +398,7 @@ describe("Result", () => {
       </MemoryRouter>,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+    await userEvent.click(screen.getByRole("button", { name: "Ask DeepSpec" }));
 
     expect(screen.getByText("Chat page")).toBeInTheDocument();
     const savedLookups = JSON.parse(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY)) ?? "[]") as Lookup[];
@@ -696,8 +712,8 @@ describe("Result", () => {
     expect(screen.getByText(/device storage is full/i)).toBeInTheDocument();
     expect(getLookup(failedLookup.id)?.result).toBeUndefined();
     expect(getLookup(failedLookup.id)?.errorMessage).toBe("Network error");
-    expect(screen.queryByRole("link", { name: "Ask", exact: true })).not.toBeInTheDocument();
-    const ask = screen.getByRole("button", { name: "Ask", exact: true });
+    expect(screen.queryByRole("link", { name: "Ask DeepSpec", exact: true })).not.toBeInTheDocument();
+    const ask = screen.getByRole("button", { name: "Ask DeepSpec", exact: true });
     expect(ask).toBeDisabled();
     await userEvent.click(ask);
     expect(screen.queryByLabelText("Ask a follow-up question")).not.toBeInTheDocument();
@@ -710,7 +726,7 @@ describe("Result", () => {
     expect(screen.getByLabelText("Why or why not")).toHaveValue("Starter label is visible");
     expect(screen.getByRole("button", { name: "Retry saving scan result" })).toBeInTheDocument();
 
-    expect(screen.getByRole("button", { name: "Ask", exact: true })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Ask DeepSpec", exact: true })).toBeDisabled();
     expect(getLookup(failedLookup.id)?.result).toBeUndefined();
     write.mockRestore();
 
@@ -722,7 +738,7 @@ describe("Result", () => {
     });
     expect(getLookup(failedLookup.id)?.errorMessage).toBeUndefined();
     expect(screen.queryByRole("button", { name: "Retry saving scan result" })).not.toBeInTheDocument();
-    const savedAsk = screen.getByRole("link", { name: "Ask", exact: true });
+    const savedAsk = screen.getByRole("link", { name: "Ask DeepSpec", exact: true });
     expect(savedAsk).toHaveAttribute("href", `/result/${failedLookup.id}/chat`);
     await userEvent.click(savedAsk);
     expect(screen.getByRole("heading", { name: "Alternator" })).toBeInTheDocument();

@@ -125,6 +125,19 @@ describe("createIdentifyResponse", () => {
     });
   });
 
+  it("uses the configured OpenRouter/HF provider when no Gemini key is configured", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    await expect(createIdentifyResponse({ imageBase64 }, { DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true", HF_TOKEN: "hf-test", HF_IDENTIFY_ENDPOINT_URL: "https://openrouter.ai/api/v1/chat/completions" })).resolves.toMatchObject({ status: 200, body: { result: { partName: "Alternator" }, modelRun: { provider: "huggingface", fallbackReason: "gemini_not_configured" } } });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0][0]).toBe("https://openrouter.ai/api/v1/chat/completions");
+  });
+
+  it("reports the configured backup's real failure instead of a misleading missing-Gemini error", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ error: { message: "Provider busy" } }), { status: 429, headers: { "Content-Type": "application/json" } }));
+    await expect(createIdentifyResponse({ imageBase64 }, { DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true", HF_TOKEN: "hf-test", DEEPSPEC_BACKUP_RATE_LIMIT_RETRIES: "0" })).resolves.toMatchObject({ status: 429, body: { error: { code: "rate_limited" } } });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects invalid image payloads", async () => {
     await expect(
       createIdentifyResponse(
@@ -1413,7 +1426,7 @@ describe("createIdentifyResponse", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+            candidates: [{ content: { parts: [{ text: JSON.stringify({ ...result, evidence: Array.from({ length: 6 }, (_, index) => `Visible feature ${index + 1}`) }) }] } }],
           }),
           {
             status: 200,

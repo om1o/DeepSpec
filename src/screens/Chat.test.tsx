@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { vi } from "vitest";
 import Chat from "./Chat";
-import { AIServiceError, sendFollowUp } from "../services/aiService";
+import { AIServiceError, sendFollowUp, sendFollowUpDetails } from "../services/aiService";
 import { LOOKUPS_STORAGE_KEY } from "../services/storage";
 import type { ChatMessage } from "../types";
 import type { Lookup } from "../types";
@@ -15,10 +15,12 @@ vi.mock("../services/aiService", async () => {
   return {
     ...actual,
     sendFollowUp: vi.fn(),
+    sendFollowUpDetails: vi.fn(),
   };
 });
 
 const sendFollowUpMock = vi.mocked(sendFollowUp);
+const sendFollowUpDetailsMock = vi.mocked(sendFollowUpDetails);
 
 const lookup: Lookup = {
   id: "lookup-1",
@@ -57,6 +59,7 @@ describe("Chat", () => {
   beforeEach(() => {
     localStorage.clear();
     sendFollowUpMock.mockReset();
+    sendFollowUpDetailsMock.mockReset();
   });
 
   it("shows a saved scan not found state", () => {
@@ -81,6 +84,93 @@ describe("Chat", () => {
     expect(chatHistory).toHaveLength(2);
     expect(chatHistory.map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(sendFollowUpMock).toHaveBeenCalledWith(expect.objectContaining({ id: lookup.id }), "What does it do?");
+  });
+
+  it("keeps the question before its answer when message creation crosses a clock tick", async () => {
+    sendFollowUpMock.mockResolvedValue("The answer follows your question.");
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    renderChat(`/result/${lookup.id}/chat`);
+    await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "What is visible?");
+    const clock = vi.spyOn(Date.prototype, "toISOString")
+      .mockReturnValueOnce("2026-05-16T00:01:00.000Z")
+      .mockReturnValueOnce("2026-05-16T00:01:00.001Z");
+    try {
+      await userEvent.click(screen.getByRole("button", { name: "Send" }));
+      await screen.findByText("The answer follows your question.");
+      expect(getLookup(lookup.id)?.chatHistory.map((message) => message.role)).toEqual(["user", "assistant"]);
+      expect(getLookup(lookup.id)?.chatHistory.map((message) => message.timestamp)).toEqual([
+        "2026-05-16T00:01:00.000Z",
+        "2026-05-16T00:01:00.001Z",
+      ]);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("keeps the saved photo and existing source references beside the full conversation", () => {
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([{
+      ...lookup,
+      result: {
+        ...lookup.result!,
+        sourceLinks: [{ label: "Alternator inspection video", url: "https://www.youtube.com/watch?v=inspection", sourceType: "reference" }],
+      },
+    }]));
+
+    renderChat(`/result/${lookup.id}/chat`);
+
+    expect(screen.getByRole("heading", { name: "Ask DeepSpec" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Saved photo of Alternator" })).toHaveAttribute("src", lookup.frame.imageBase64);
+    expect(screen.getByRole("link", { name: "Open full scan photo" })).toHaveAttribute("href", `/result/${lookup.id}`);
+    expect(screen.getByRole("link", { name: /Open AI view/ })).toHaveAttribute("href", `/result/${lookup.id}`);
+    expect(screen.getByRole("link", { name: /Alternator inspection video/ })).toHaveAttribute("href", "https://www.youtube.com/watch?v=inspection");
+  });
+
+  it("researches an explicit video reference and saves real answer sources with the conversation", async () => {
+    const sources = [{ label: "Inspection reference", url: "https://www.denso-am.eu/alternators", sourceType: "reference" as const }];
+    sendFollowUpDetailsMock.mockResolvedValue({
+      message: "Visible evidence\nThe pulley is visible.\n\nNext check\nPhotograph the label.",
+      sources,
+      searchSuggestions: '<a href="https://www.google.com/search?q=alternator" target="_blank">Search suggestions</a>',
+    });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    renderChat(`/result/${lookup.id}/chat`);
+    await userEvent.click(screen.getByRole("checkbox", { name: "Research web and video sources" }));
+    await userEvent.type(screen.getByLabelText("Reference URL (optional)"), "https://www.youtube.com/watch?v=inspection");
+    await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "Compare this reference with my photo.");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText(/The pulley is visible/)).toBeInTheDocument();
+    expect(sendFollowUpDetailsMock).toHaveBeenCalledWith(expect.objectContaining({ id: lookup.id }), "Compare this reference with my photo.", {
+      research: true,
+      sourceUrls: ["https://www.youtube.com/watch?v=inspection"],
+    });
+    expect(sendFollowUpMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("link", { name: /Inspection reference/ })).toHaveAttribute("href", sources[0].url);
+    const suggestions = screen.getByTitle("Google Search suggestions");
+    expect(suggestions).toHaveAttribute("sandbox", "allow-popups allow-popups-to-escape-sandbox");
+    expect(suggestions).toHaveAttribute("referrerpolicy", "no-referrer");
+    const savedAnswer = getLookup(lookup.id)?.chatHistory.at(-1);
+    expect(savedAnswer?.sources).toEqual(sources);
+    expect(savedAnswer?.content).toContain("Visible evidence\nThe pulley is visible.\n\nNext check");
+    expect(JSON.stringify(getLookup(lookup.id)?.chatHistory)).not.toContain("Search suggestions");
+  });
+
+  it("retries research using the original reference after controls change", async () => {
+    sendFollowUpDetailsMock
+      .mockRejectedValueOnce(new AIServiceError("provider_error", "Temporary research failure."))
+      .mockResolvedValueOnce({ message: "Use the visible markings to compare this part." });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    renderChat(`/result/${lookup.id}/chat`);
+    await userEvent.click(screen.getByRole("checkbox", { name: "Research web and video sources" }));
+    await userEvent.type(screen.getByLabelText("Reference URL (optional)"), "https://example.com/inspection");
+    await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "Compare this source.");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("Temporary research failure.");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Research web and video sources" }));
+    await userEvent.click(screen.getByRole("button", { name: "Retry last question" }));
+    expect(await screen.findByText("Use the visible markings to compare this part.")).toBeInTheDocument();
+    expect(sendFollowUpDetailsMock).toHaveBeenLastCalledWith(expect.anything(), "Compare this source.", { research: true, sourceUrls: ["https://example.com/inspection"] });
+    expect(sendFollowUpMock).not.toHaveBeenCalled();
   });
 
   it.each(["other-user", "test-user"])("discards a pending answer after account change ending at %s", async (finalAccount) => {

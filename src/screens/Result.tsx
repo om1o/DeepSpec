@@ -2,12 +2,14 @@ import { createAnalysisAttemptId } from "../lib/analysisAttempt";
 import { prepareRetryFrame } from "../lib/retryFrame";
 import { applyShopFitmentContext } from "../lib/shopFitmentContext";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { isGuestPreview } from "../lib/guestPreview";
 import { BrandLockup } from "../components/BrandLockup";
 import { useEffect, useRef, useState } from "react";
 import { AIServiceError, getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
 import { syncAnalysisFailuresToCloud } from "../services/cloudSync";
 import Button from "../components/ui/Button";
 import { IsolatedPartView } from "../components/result/IsolatedPartView";
+import { ScanSources } from "../components/result/ScanSources";
 import { PartInspectionForm } from "../components/result/PartInspectionForm";
 import { TrainingConsentPanel } from "../components/result/TrainingConsentPanel";
 import { IntakeDraft } from "../components/result/IntakeDraft";
@@ -227,13 +229,18 @@ export default function Result() {
 
   return (
     <main className="ds-result-page ds-workbench min-h-dvh bg-[var(--ds-bg)] text-[var(--ds-fg-1)]">
-      <div className="mx-auto grid min-h-dvh w-full max-w-6xl lg:grid-cols-[minmax(0,1fr)_430px] lg:p-4">
-        <section className="relative min-h-[48dvh] overflow-hidden bg-[#020617] text-white lg:sticky lg:top-4 lg:min-h-[calc(100dvh-32px)] lg:rounded-[30px]">
-          {/* On desktop the answer card is pulled 40px over this panel (lg:-ml-10), so the photo,
-              header and title keep clear of that strip (lg:right-10) — otherwise the card hid the
-              photo's right edge, any label placed there, and part of the Back button. */}
-          {frame?.imageBase64 ? (
-            <div className="absolute inset-0 lg:right-10">
+      <div className="mx-auto grid min-h-dvh w-full max-w-[1600px] lg:grid-cols-[minmax(0,1fr)_430px] lg:gap-5 lg:p-5">
+        <section aria-label="Scan photo" data-testid="result-photo-panel" className="relative flex h-[48dvh] min-h-[320px] flex-col overflow-hidden bg-[#020617] text-white lg:sticky lg:top-5 lg:h-[calc(100dvh-40px)] lg:min-h-0 lg:rounded-[24px]">
+          <header className="relative z-10 flex shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4 pb-4 pt-[max(18px,env(safe-area-inset-top))]">
+            <BrandLockup size="sm" />
+            <h1 className="sr-only">{simpleSummary?.title ?? "Captured frame"}</h1>
+            <nav className="flex gap-2" aria-label="Scan navigation">
+              <Link to="/history" aria-label="Open saved scan history" className="ds-workbench-back">Saved scans</Link>
+              <Link to="/scan" className="ds-workbench-back">Back</Link>
+            </nav>
+          </header>
+          <div data-testid="result-photo-canvas" className="relative min-h-0 flex-1">
+            {frame?.imageBase64 ? (
               <IsolatedPartView
                 frameBase64={frame.imageBase64}
                 isolatedImageBase64={scanState?.isolatedImageBase64}
@@ -245,36 +252,11 @@ export default function Result() {
                 objects={scanState?.isolatedObjects}
                 variant="result"
               />
-            </div>
-          ) : (
-            <div className="absolute inset-0 grid place-items-center bg-[#061522] px-8 text-center text-sm text-white/62">
-              No frame captured.
-            </div>
-          )}
-          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(2,6,23,0.58),rgba(2,6,23,0.02)_38%,rgba(2,6,23,0.76))]" />
-          <header className="absolute left-0 right-0 top-0 z-10 lg:right-10 flex items-center justify-between px-4 pt-[max(18px,env(safe-area-inset-top))]">
-            <BrandLockup size="sm" />
-            <nav className="flex gap-2" aria-label="Scan navigation">
-              <Link to="/history" aria-label="Open saved scan history" className="ds-workbench-back">Saved scans</Link>
-              <Link to="/scan" className="ds-workbench-back">
-                Back
-              </Link>
-            </nav>
-          </header>
-          <div className="absolute bottom-8 left-0 right-0 z-10 px-4 lg:right-10">
-            <p className="ds-eyebrow">SCANNED PHOTO · REVIEW THE EVIDENCE</p>
-            <h1 className="mt-2 truncate text-3xl font-extrabold tracking-tight text-white">
-              {simpleSummary?.title ?? "Captured frame"}
-            </h1>
-            {simpleSummary ? (
-              <p className="mt-2 max-w-xl text-sm font-semibold leading-6 text-white/76">
-                {simpleSummary.body}
-              </p>
-            ) : null}
+            ) : <div className="absolute inset-0 grid place-items-center bg-[#061522] px-8 text-center text-sm text-white/62">No frame captured.</div>}
           </div>
         </section>
 
-        <div className="ds-result-sheet relative z-10 -mt-7 rounded-t-[30px] bg-[var(--ds-page)] px-4 pb-8 pt-4 shadow-[0_-18px_48px_rgba(2,6,23,0.18)] lg:my-8 lg:-ml-10 lg:max-h-[calc(100dvh-64px)] lg:overflow-y-auto lg:rounded-[30px] lg:border lg:border-[var(--ds-border)] lg:shadow-[0_24px_70px_rgba(2,6,23,0.28)]">
+        <div data-testid="result-overview-panel" className="ds-result-sheet relative min-w-0 rounded-t-[24px] border-t border-[var(--ds-border)] bg-[var(--ds-page)] px-4 pb-8 pt-4 lg:rounded-[24px] lg:border lg:max-h-[calc(100dvh-40px)] lg:overflow-y-auto">
           <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-300 lg:hidden" />
           <div className="space-y-3">
           {storageWarning ? <StorageWarning message={storageWarning} /> : null}
@@ -331,7 +313,7 @@ export default function Result() {
             ...(pendingCorrectionRef.current !== undefined ? { correction: pendingCorrectionRef.current } : {}),
           })} /> : null}
           {inspectionLookup ? <ReportActions lookup={inspectionLookup} /> : null}
-          {inspectionLookup ? <TrainingConsentPanel key={`consent:${inspectionLookup.id}`} scanId={inspectionLookup.id} /> : null}
+          {inspectionLookup && !isGuestPreview() ? <TrainingConsentPanel key={`consent:${inspectionLookup.id}`} scanId={inspectionLookup.id} /> : null}
           {datasetSourceUrls.length > 0 ? <SourceFinePrint urls={datasetSourceUrls} /> : null}
           <Link
             className="block rounded-xl border border-[var(--ds-border)] p-4 text-center text-sm font-bold text-[var(--ds-fg-1)]"
@@ -341,7 +323,7 @@ export default function Result() {
           </Link>
         </div>
 
-        <Button className="mt-6 w-full" onClick={() => window.location.assign("/")}>
+        <Button className="mt-6 w-full" onClick={() => navigate("/scan")}>
           Try another scan
         </Button>
         </div>
@@ -498,6 +480,7 @@ function AnalysisResult({
   result: IdentificationResult;
 }) {
   const summary = getSimpleResultSummary(result);
+  const [activePanel, setActivePanel] = useState<"overview" | "text" | "sources">("overview");
   const showSafetyWarning = result.isSafetyCritical || result.safetyTriage === "needs_professional";
 
   return (
@@ -505,7 +488,7 @@ function AnalysisResult({
       <section className="rounded-[24px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 shadow-[0_12px_34px_rgba(15,23,42,0.08)]">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[#a7cbd4]">{summary.eyebrow}</p>
+            <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[#a7cbd4]">AI overview</p>
             <h2 className="mt-1 text-2xl font-extrabold tracking-tight">
               {summary.title}
             </h2>
@@ -513,6 +496,7 @@ function AnalysisResult({
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           <MiniPill label={result.scanCategory} />
+          <MiniPill label={`${result.confidence} confidence`} />
           {isOnDeviceResult(result) || shouldShowBackupModelNotice(result) ? <MiniPill label="Estimate" /> : null}
         </div>
         {isOnDeviceResult(result) ? (
@@ -528,8 +512,19 @@ function AnalysisResult({
         <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-3)]">{getAnswerBody(result, summary)}</p>
         {capturedAt ? <p className="mt-3 text-xs font-semibold text-[var(--ds-fg-3)]">Captured {capturedAt}</p> : null}
         <QuickActions askDisabled={askDisabled} canSaveForChat={canSaveForChat} lookupId={lookupId} onSaveAndAsk={onSaveAndAsk} onSaveOnly={onSaveOnly} />
-        <SceneCategoryList result={result} variant="result" />
-        <ResultDetailSections result={result} variant="result" />
+        <div className="mt-5 grid grid-cols-3 gap-1 rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-surface)] p-1" role="tablist" aria-label="AI view sections">
+          {(["overview", "text", "sources"] as const).map((panel) => (
+            <button key={panel} id={`ai-tab-${panel}`} role="tab" type="button" aria-selected={activePanel === panel} aria-controls={`ai-panel-${panel}`} onClick={() => setActivePanel(panel)} className={`min-h-10 rounded-xl px-2 text-xs font-extrabold capitalize ${activePanel === panel ? "bg-white text-[#0b1520] shadow-sm" : "text-[var(--ds-fg-3)]"}`}>{panel === "text" ? "Text output" : panel === "sources" ? "Sources" : "Overview"}</button>
+          ))}
+        </div>
+        <div role="tabpanel" id={`ai-panel-${activePanel}`} aria-labelledby={`ai-tab-${activePanel}`} className="mt-4">
+          {activePanel === "overview" ? <>
+            <SceneCategoryList result={result} variant="result" />
+            <ResultDetailSections result={result} variant="result" />
+            <CandidateMatches result={result} />
+            <FollowUpPrompts lookupId={lookupId} disabled={askDisabled} onSaveAndAsk={onSaveAndAsk} result={result} />
+          </> : activePanel === "text" ? <DetectedText result={result} /> : <ScanSources sources={result.sourceLinks} researchTerm={`${result.partName} car part`} />}
+        </div>
       </section>
 
       {showSafetyWarning ? (
@@ -551,6 +546,55 @@ function shouldShowBackupModelNotice(result: IdentificationResult) {
 
 function isOnDeviceResult(result: IdentificationResult) {
   return result.modelRun?.provider === "on-device";
+}
+
+function CandidateMatches({ result }: { result: IdentificationResult }) {
+  if (!result.candidateMatches.length) return null;
+  return (
+    <section className="mt-4 border-t border-[var(--ds-border)] pt-4" aria-label="Other possible matches">
+      <h3 className="text-xs font-extrabold uppercase tracking-[0.12em] text-[var(--ds-fg-3)]">Other possible matches</h3>
+      {result.candidateMatches.map((candidate) => <article key={`${candidate.partName}:${candidate.reason}`} className="mt-2 rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-surface)] p-3">
+        <p className="text-sm font-extrabold">{candidate.partName} <span className="ml-1 text-xs font-semibold text-[var(--ds-fg-3)]">{candidate.confidence} confidence</span></p>
+        <p className="mt-1 text-xs leading-5 text-[var(--ds-fg-3)]">{candidate.reason}</p>
+      </article>)}
+    </section>
+  );
+}
+
+/** Restore the saved OCR evidence tools from the original DeepSpec result view. */
+function DetectedText({ result }: { result: IdentificationResult }) {
+  const [copyStatus, setCopyStatus] = useState("");
+  const findings = [...new Set(result.evidence.map((item) => item.match(/^OCR label text:\s*(.+)$/i)?.[1]?.replace(/\s+/g, " ").trim()).filter((text): text is string => Boolean(text)))].slice(0, 3);
+  async function copyText(text: string) {
+    try { await navigator.clipboard.writeText(text); setCopyStatus("Copied"); }
+    catch { setCopyStatus("Copy failed"); }
+  }
+  return (
+    <section aria-label="Text output">
+      <h3 className="text-xs font-extrabold uppercase tracking-[0.12em] text-[var(--ds-fg-3)]">Detected label text</h3>
+      {findings.length ? findings.map((text) => {
+        const codes = [...new Set((text.match(/\b[A-Z0-9][A-Z0-9./#:-]{3,}[A-Z0-9]\b/gi) ?? []).filter((token) => /\d/.test(token) && /[A-Z./#:-]/i.test(token)).map((token) => token.toUpperCase()))].slice(0, 4);
+        return <article key={text} className="mt-3 rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-surface)] p-3">
+          <p className="break-words font-mono text-base font-bold leading-7">{text}</p>
+          {codes.length ? <p className="mt-2 break-words text-xs leading-5 text-[var(--ds-fg-3)]">Candidate codes: <span className="font-mono text-[var(--ds-fg-1)]">{codes.join(" · ")}</span></p> : null}
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button type="button" onClick={() => void copyText(text)} className="min-h-10 rounded-full border border-[var(--ds-border)] px-3 text-xs font-bold">Copy text</button>
+            <a href={`https://www.google.com/search?q=${encodeURIComponent(text)}`} target="_blank" rel="noopener noreferrer" className="grid min-h-10 place-items-center rounded-full border border-[var(--ds-border)] px-3 text-xs font-bold">Search exact</a>
+            <a href={`https://www.google.com/search?q=${encodeURIComponent(`${text} ${result.partName} car part`)}`} target="_blank" rel="noopener noreferrer" className="col-span-2 grid min-h-10 place-items-center rounded-full bg-white px-3 text-xs font-bold text-[#0b1520]">Search with part</a>
+          </div>
+        </article>;
+      }) : <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-3)]">No readable label text was returned for this photo. A clear close-up of a marking can help.</p>}
+      {copyStatus ? <p role="status" className="mt-2 text-xs text-[var(--ds-fg-3)]">{copyStatus}</p> : null}
+    </section>
+  );
+}
+
+function FollowUpPrompts({ lookupId, disabled, onSaveAndAsk, result }: { lookupId: string | null; disabled: boolean; onSaveAndAsk: (question?: string) => void; result: IdentificationResult }) {
+  const prompts = ["What should I check next?", "How serious is this?", result.needsBetterPhoto ? "What photo angle would help?" : "What symptoms match this part?"];
+  return <section className="mt-4 border-t border-[var(--ds-border)] pt-4" aria-label="Follow-up questions">
+    <h3 className="text-xs font-extrabold uppercase tracking-[0.12em] text-[var(--ds-fg-3)]">Ask next</h3>
+    <div className="mt-2 grid gap-2">{prompts.map((question) => lookupId && !disabled ? <Link key={question} to={`/result/${lookupId}/chat?q=${encodeURIComponent(question)}`} className="rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-surface)] px-3 py-3 text-sm font-semibold">{question}</Link> : <button key={question} type="button" disabled={disabled} onClick={() => onSaveAndAsk(question)} className="rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-surface)] px-3 py-3 text-left text-sm font-semibold disabled:opacity-45">{question}</button>)}</div>
+  </section>;
 }
 
 function MiniPill({ label }: { label: string }) {
@@ -578,19 +622,19 @@ function QuickActions({
   if (askDisabled) {
     askAction = (
       <button className="rounded-full bg-[var(--ds-surface)] px-4 py-3 text-center text-sm font-extrabold text-[var(--ds-fg-3)]" type="button" disabled aria-describedby="ask-save-required">
-        Ask
+        Ask DeepSpec
       </button>
     );
   } else if (lookupId) {
     askAction = (
-      <Link className="rounded-full bg-[var(--ds-accent)] px-4 py-3 text-center text-sm font-extrabold text-white" to={`/result/${lookupId}/chat`}>
-        Ask
+      <Link className="rounded-full border border-white/70 bg-[linear-gradient(180deg,#fff,#dce4eb)] px-4 py-3 text-center text-sm font-extrabold text-[#0b1520] shadow-[inset_0_1px_0_#fff,0_6px_18px_rgba(0,0,0,.18)]" to={`/result/${lookupId}/chat`}>
+        Ask DeepSpec
       </Link>
     );
   } else if (canSaveForChat) {
     askAction = (
-      <button className="rounded-full bg-[var(--ds-accent)] px-4 py-3 text-center text-sm font-extrabold text-white" type="button" onClick={onSaveAndAsk}>
-        Ask
+      <button className="rounded-full border border-white/70 bg-[linear-gradient(180deg,#fff,#dce4eb)] px-4 py-3 text-center text-sm font-extrabold text-[#0b1520] shadow-[inset_0_1px_0_#fff,0_6px_18px_rgba(0,0,0,.18)]" type="button" onClick={onSaveAndAsk}>
+        Ask DeepSpec
       </button>
     );
   }

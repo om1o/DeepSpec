@@ -1,6 +1,7 @@
 import { getAccountScope, isAccountScopeCurrent } from "../lib/accountScope";
 import { getAuthClient, isSupabaseAuthConfigured } from "./auth";
 import { normalizePartInspection } from "../lib/partInspection";
+import { isGuestPreview } from "../lib/guestPreview";
 import type {
   CandidateMatch,
   CandidatePart,
@@ -78,6 +79,7 @@ type ReadCloudHistoryResult =
   | { ok: false; message: string };
 
 export async function readCloudLookups(limit = DEFAULT_HISTORY_LIMIT): Promise<ReadCloudHistoryResult> {
+  if (isGuestPreview()) return { ok: true, value: [] };
   const scope = getAccountScope();
   const changed = () => ({ ok: false as const, message: "Account changed. Reload your saved scans." });
   if (!isAccountScopeCurrent(scope)) return changed();
@@ -482,6 +484,7 @@ function parseChatHistory(value: unknown): ChatMessage[] {
       id: isString(item.id) ? item.id : `chat-${Math.random().toString(16).slice(2)}`,
       role: item.role === "assistant" ? "assistant" : "user",
       content: isString(item.content) ? item.content : "",
+      ...(item.role === "assistant" && Array.isArray(item.sources) ? { sources: parseSourceLinks(item.sources) } : {}),
       timestamp: isString(item.timestamp) ? item.timestamp : new Date().toISOString(),
     }))
     .filter((item) => item.content.length > 0);

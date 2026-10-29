@@ -8,9 +8,13 @@ import { ENGAGEMENT_STORAGE_KEY } from "../services/engagement";
 import * as cloudSync from "../services/cloudSync";
 import { createLookup } from "../services/storage";
 import { getEngagementData } from "../services/engagement";
+import { isGuestPreview } from "../lib/guestPreview";
+
+vi.mock("../lib/guestPreview", () => ({ isGuestPreview: vi.fn() }));
 
 describe("EarlyAccess", () => {
   beforeEach(() => {
+    vi.mocked(isGuestPreview).mockReturnValue(false);
     localStorage.clear();
     vi.stubEnv("VITE_SUPABASE_URL", "");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "");
@@ -28,6 +32,25 @@ describe("EarlyAccess", () => {
     expect(screen.getByText("The visual layer for parts")).toBeInTheDocument();
     expect(screen.getByText("Off")).toBeInTheDocument();
     expect(screen.getByText("Your scans are saved on this device. Cloud sync is off for this build.")).toBeInTheDocument();
+  });
+
+  it("saves guest feedback locally and hides account cloud actions even with cloud configured", async () => {
+    vi.mocked(isGuestPreview).mockReturnValue(true);
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const feedbackSync = vi.spyOn(cloudSync, "syncFeedbackToCloud");
+    const waitlistSync = vi.spyOn(cloudSync, "syncWaitlistSignupToCloud");
+    const health = vi.spyOn(cloudSync, "verifyCloudHealth");
+    renderEarlyAccess();
+    expect(screen.queryByRole("button", { name: "Check cloud sync" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save waitlist entry" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Feedback"), { target: { value: "Keep the part label visible during the scan." } });
+    await userEvent.click(screen.getByRole("button", { name: "Save feedback" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Feedback saved in this browser.");
+    expect(getEngagementData().feedback[0].message).toBe("Keep the part label visible during the scan.");
+    expect(feedbackSync).not.toHaveBeenCalled();
+    expect(waitlistSync).not.toHaveBeenCalled();
+    expect(health).not.toHaveBeenCalled();
   });
 
   it("saves waitlist and feedback entries locally", async () => {

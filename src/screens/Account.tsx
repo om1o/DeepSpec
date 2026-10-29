@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { getAuthClient } from "../services/auth";
 import { getEntitlementState, getRemainingScans, hasScanEntitlement, type ServerEntitlement } from "../services/revenue";
+import { isGuestPreview } from "../lib/guestPreview";
 
 type EntitlementVerification =
   | { status: "checking" }
@@ -11,6 +12,41 @@ type EntitlementVerification =
   | { status: "unavailable"; message: string };
 
 export default function Account() {
+  return isGuestPreview() ? <DeviceWorkspace /> : <AccountAccess />;
+}
+
+function DeviceWorkspace() {
+  return (
+    <main className="min-h-dvh bg-[var(--ds-page)] px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-slate-950">
+      <div className="mx-auto w-full max-w-2xl">
+        <header className="ds-app-header">
+          <BrandLockup size="sm" />
+          <nav className="flex items-center gap-4" aria-label="Workspace navigation">
+            <Link to="/scan" className="text-sm font-semibold text-[var(--slate-100)]">Scan</Link>
+            <Link to="/history" className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-900">History</Link>
+          </nav>
+        </header>
+        <section className="mt-8 rounded-[8px] border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="text-sm font-extrabold uppercase tracking-[0.14em] text-[var(--ds-accent)]">Your workspace</p>
+          <h1 className="mt-3 text-3xl font-black tracking-tight">Ready on this device</h1>
+          <p className="mt-4 text-sm leading-6 text-slate-600">Use your camera, review AI results, and ask follow-up questions without creating an account.</p>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <Metric label="Saved records" value="This browser" />
+            <Metric label="Account" value="Not required" />
+          </div>
+          <p className="mt-5 text-sm leading-6 text-slate-600">Saved scans, notes, and chats stay in this browser. They are separate from signed-in account records and do not sync across devices. Clearing browser storage removes them.</p>
+          <Link to="/scan" className="mt-5 inline-flex h-11 items-center rounded-full bg-slate-950 px-5 text-sm font-bold text-white">Open camera</Link>
+        </section>
+        <section className="mt-4 rounded-[8px] border border-slate-200 bg-white p-6 text-sm leading-6 text-slate-600 shadow-sm">
+          <h2 className="text-lg font-black tracking-tight text-slate-950">Shared preview</h2>
+          <p className="mt-2">AI requests use the preview's request limits. Purchases and billing are unavailable here.</p>
+        </section>
+      </div>
+    </main>
+  );
+}
+
+function AccountAccess() {
   const [params] = useSearchParams();
   const [verification, setVerification] = useState<EntitlementVerification>({ status: "checking" });
   const [portalStatus, setPortalStatus] = useState<string | null>(null);

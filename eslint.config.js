@@ -15,10 +15,19 @@ export default tseslint.config(
       "datasets",
       "dev-dist",
       "dist",
+      // Standalone exported marketing assets have their own browser and syntax checks.
+      "marketing/deepspec-visual-search/dist/**",
     ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    files: ["public/intro/**/*.js"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      globals: globals.browser,
+    },
+  },
   {
     files: ["scripts/**/*.mjs"],
     languageOptions: {

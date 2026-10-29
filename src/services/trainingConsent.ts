@@ -1,11 +1,13 @@
 import { getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import { getAuthClient } from "./auth";
+import { isGuestPreview } from "../lib/guestPreview";
 
 export const TRAINING_CONSENT_POLICY_VERSION = "2026-09-27-v1";
 export type TrainingConsent = { enabled: boolean; revision: number | null; updatedAt: string | null };
 const columns = "user_id,scan_local_id,training_consent,policy_version,revision,updated_at";
 
 function checkScope(scope: AccountScope) {
+  if (isGuestPreview()) throw new Error("Training consent applies only to account-backed cloud scans.");
   if (!isAccountScopeCurrent(scope)) throw new Error("Account changed. Reopen this scan before changing consent.");
 }
 
