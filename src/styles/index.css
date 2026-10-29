@@ -306,9 +306,48 @@ button, a {
 /* Primary logo artwork remains static during scan progress. */
 .ds-primary-logo { animation: none !important; transition: none !important; transform: none !important; filter: none !important; }
 .ds-scan-brand-animation { position: relative; isolation: isolate; width: 120px; height: 120px; }
-.ds-scan-brand-animation::before,.ds-scan-brand-animation::after { display: none; }
-.ds-scan-glass-badge { position: absolute; inset: 8px; width: 104px; height: 104px; object-fit: contain; animation: none; transform: none; filter: none; }
-.ds-scan-lock-corner { display: none; }
+.ds-scan-brand-animation::before {
+  content: "";
+  display: block;
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1.5px;
+  background: linear-gradient(90deg, transparent, var(--ds-scan) 25%, #d5f2f6 50%, var(--ds-scan) 75%, transparent);
+  box-shadow: 0 0 10px rgba(94,147,166,.24);
+  pointer-events: none;
+  --ds-progress-beam-opacity: .85;
+  animation: ds-progress-sweep 3s linear infinite;
+}
+.ds-scan-brand-animation::after {
+  content: "";
+  display: block;
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(94,147,166,.10), transparent 72%);
+  pointer-events: none;
+}
+.ds-scan-glass-badge { position: absolute; z-index: 1; inset: 8px; width: 104px; height: 104px; object-fit: contain; animation: none; transform: none; filter: none; }
+.ds-scan-lock-corner {
+  display: block;
+  position: absolute;
+  z-index: 2;
+  width: 12px;
+  height: 12px;
+  border-color: var(--ds-scan);
+  border-style: solid;
+  opacity: .55;
+  pointer-events: none;
+  animation: ds-progress-acquire .6s var(--ds-ease-scan) both;
+}
+.ds-scan-lock-corner-tl { top: 0; left: 0; border-width: 1px 0 0 1px; border-radius: 4px 0 0 0; }
+.ds-scan-lock-corner-tr { top: 0; right: 0; border-width: 1px 1px 0 0; border-radius: 0 4px 0 0; }
+.ds-scan-lock-corner-bl { bottom: 0; left: 0; border-width: 0 0 1px 1px; border-radius: 0 0 0 4px; }
+.ds-scan-lock-corner-br { bottom: 0; right: 0; border-width: 0 1px 1px 0; border-radius: 0 0 4px 0; }
 
 /* ── HUD overlay text ──────────────────────────────────────────────── */
 .scanner-hud {
@@ -447,6 +486,18 @@ button, a {
   8%   { opacity: 0.9; }
   92%  { opacity: 0.9; }
   100% { top: 100%; opacity: 0; }
+}
+
+@keyframes ds-progress-sweep {
+  0% { transform: translateY(8px); opacity: 0; }
+  8% { opacity: var(--ds-progress-beam-opacity); }
+  86% { transform: translateY(112px); opacity: var(--ds-progress-beam-opacity); }
+  94%, 100% { transform: translateY(112px); opacity: 0; }
+}
+
+@keyframes ds-progress-acquire {
+  from { opacity: 0; }
+  to { opacity: .55; }
 }
 
 @keyframes ds-bracket-pulse {
@@ -633,6 +684,12 @@ button, a {
   .ds-scan-brand-animation::after {
     animation: none;
     transition: none;
+  }
+  /* Keep the requested downward scan, gently, with the white artwork still. */
+  .ds-scan-brand-animation::before {
+    --ds-progress-beam-opacity: .42;
+    animation: ds-progress-sweep 5.4s linear infinite;
+    box-shadow: none;
   }
 }
 
