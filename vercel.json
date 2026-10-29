@@ -1,13 +1,4 @@
 {
-  "env": {
-    "DEEPSPEC_GUEST_PREVIEW": "true",
-    "DEEPSPEC_GUEST_QUOTA_URL": "https://tvmomaxmiecguqikpckb.supabase.co/functions/v1/deepspec-guest-quota"
-  },
-  "build": {
-    "env": {
-      "DEEPSPEC_GUEST_PREVIEW": "true"
-    }
-  },
   "rewrites": [
     {
       "source": "/",
