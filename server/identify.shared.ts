@@ -71,6 +71,7 @@ const DEFAULT_GEMINI_IDENTIFY_HEDGE_DELAY_MS = 4_000;
 const DEFAULT_HF_IDENTIFY_TIMEOUT_MS = 45_000;
 const DEFAULT_GROQ_IDENTIFY_TIMEOUT_MS = 45_000;
 const DEFAULT_OLLAMA_IDENTIFY_TIMEOUT_MS = 180_000;
+const IDENTIFY_NOT_CONFIGURED_MESSAGE = "Deep Spec AI is not configured. Configure a supported server-side identify provider.";
 const DEFAULT_DATASET_ROOT = "datasets/raw/drbimmer-car-parts-and-damage-dataset";
 const DEFAULT_DATASET_INDEX_PATH = "datasets/derived/drbimmer-car-parts-and-damage-dataset/records.jsonl";
 const DEFAULT_HF_AUTOMOTIVE_SOURCE_INDEX_PATH = "datasets/verified/hf-automotive-sources-v1/records.jsonl";
@@ -104,7 +105,7 @@ export function validateIdentifyRequest(body: unknown, env?: Record<string, stri
     ? Boolean(getHfToken(env))
     : Boolean(env.GEMINI_API_KEY) || isHfIdentifyFallbackConfigured(env) || isGroqIdentifyFallbackConfigured(env) || isOllamaIdentifyFallbackEnabled(env));
   if (!configured) {
-    return errorResponse(500, "not_configured", "Deep Spec AI is not configured. Add GEMINI_API_KEY on the server.");
+    return errorResponse(500, "not_configured", IDENTIFY_NOT_CONFIGURED_MESSAGE);
   }
   return null;
 }
@@ -165,7 +166,7 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
 
     return hasOllamaFallback
       ? createOllamaIdentifyResponse(parsed, ocr, env)
-      : lastRetryableError ?? errorResponse(500, "not_configured", "Deep Spec AI is not configured. Add GEMINI_API_KEY on the server.");
+      : lastRetryableError ?? errorResponse(500, "not_configured", IDENTIFY_NOT_CONFIGURED_MESSAGE);
   }
 
   const models = getIdentifyModels(env);
@@ -572,7 +573,6 @@ type IdentifyBackend = {
   token: string;
   model: string;
   endpoint: string;
-  routingProvider?: string;
   timeoutMs: number;
 };
 
@@ -588,14 +588,15 @@ async function createHfIdentifyResponse(
     return errorResponse(500, "not_configured", "Hugging Face identify fallback is enabled, but no HF_TOKEN is configured.");
   }
 
+  const endpoint = getHfIdentifyEndpoint(env);
+
   return createBackendIdentifyResponse(
     {
       provider: "huggingface",
       label: "Hugging Face",
       token,
-      model: getHfIdentifyModel(env),
-      endpoint: getHfIdentifyEndpoint(env),
-      routingProvider: env.HF_IDENTIFY_PROVIDER?.trim() || undefined,
+      model: getHfIdentifyModel(env, endpoint),
+      endpoint,
       timeoutMs: getHfIdentifyTimeoutMs(env),
     },
     parsed,
@@ -747,7 +748,6 @@ function fetchBackendIdentify(
     },
     body: JSON.stringify({
       model: backend.model,
-      ...(backend.routingProvider ? { provider: backend.routingProvider } : {}),
       messages: [
         {
           role: "system",
@@ -777,8 +777,21 @@ function getHfToken(env: Record<string, string | undefined>) {
   return env.HF_TOKEN?.trim() || env.HF_API_TOKEN?.trim() || env.HUGGINGFACE_API_KEY?.trim() || "";
 }
 
-function getHfIdentifyModel(env: Record<string, string | undefined>) {
-  return env.HF_IDENTIFY_MODEL?.trim() || DEFAULT_HF_IDENTIFY_MODEL;
+function getHfIdentifyModel(env: Record<string, string | undefined>, endpoint: string) {
+  const model = env.HF_IDENTIFY_MODEL?.trim() || DEFAULT_HF_IDENTIFY_MODEL;
+  const routingProvider = env.HF_IDENTIFY_PROVIDER?.trim();
+  if (!routingProvider || !isHfRouterEndpoint(endpoint) || model.lastIndexOf(":") > model.lastIndexOf("/")) {
+    return model;
+  }
+  return `${model}:${routingProvider}`;
+}
+
+function isHfRouterEndpoint(endpoint: string) {
+  try {
+    return new URL(endpoint).origin === "https://router.huggingface.co";
+  } catch {
+    return false;
+  }
 }
 
 function getHfIdentifyEndpoint(env: Record<string, string | undefined>) {

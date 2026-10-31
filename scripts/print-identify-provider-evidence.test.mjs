@@ -80,6 +80,20 @@ describe("classifyIdentifyProviderReadiness", () => {
     expect(result.checks.join("\n")).toContain("Release eval: Identify eval passed");
     expect(result.checks.join("\n")).toContain("Cloud fallback ready: Groq");
   });
+
+  it("accepts enabled Hugging Face as the sole production cloud route", () => {
+    const result = classifyIdentifyProviderReadiness({
+      env: {
+        DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true",
+        HF_TOKEN: "hf_secret",
+      },
+      identifySummary: PASSING_IDENTIFY_SUMMARY,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.recommendation).toBe("live_identify_ready");
+    expect(result.checks.join("\n")).toContain("Identify provider route configured: Hugging Face.");
+  });
 });
 
 describe("buildIdentifyProviderEvidence", () => {

@@ -49,7 +49,7 @@ export function classifyIdentifyProviderReadiness({ env = {}, identifySummary = 
   if (readyProductionRoutes.length > 0) {
     checks.push(`Identify provider route configured: ${readyProductionRoutes.map((provider) => provider.name).join(", ")}.`);
   } else {
-    blockers.push("No production cloud identify route is configured. Add GEMINI_API_KEY or enable Groq with GROQ_API_KEY.");
+    blockers.push("No production cloud identify route is configured. Configure a supported server-side identify provider.");
   }
 
   for (const provider of providers) {
@@ -103,7 +103,8 @@ function buildProviderStatuses(env) {
   const geminiKeyPresent = hasValue(env.GEMINI_API_KEY);
   const groqEnabled = env.DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK === "true";
   const groqTokenPresent = hasValue(env.GROQ_API_KEY);
-  const hfEnabled = env.DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK === "true" || env.DEEPSPEC_FORCE_HF_IDENTIFY === "true";
+  const hfFallbackEnabled = env.DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK === "true";
+  const hfEnabled = hfFallbackEnabled || env.DEEPSPEC_FORCE_HF_IDENTIFY === "true";
   const hfTokenPresent = hasValue(env.HF_TOKEN) || hasValue(env.HF_API_TOKEN) || hasValue(env.HUGGINGFACE_API_KEY);
   const ollamaEnabled = env.DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK === "true";
 
@@ -143,10 +144,10 @@ function buildProviderStatuses(env) {
       localOnly: false,
       model: env.HF_IDENTIFY_MODEL?.trim() || "Qwen/Qwen2.5-VL-7B-Instruct",
       name: isOpenRouterEndpoint(env.HF_IDENTIFY_ENDPOINT_URL) ? "OpenRouter/HF adapter" : "Hugging Face",
-      productionRoute: false,
+      productionRoute: hfFallbackEnabled,
       ready: hfEnabled && hfTokenPresent,
       requiresToken: true,
-      role: "cloud fallback",
+      role: hfFallbackEnabled && !geminiKeyPresent ? "cloud route" : "cloud fallback",
       tokenNames: ["HF_TOKEN", "HF_API_TOKEN", "HUGGINGFACE_API_KEY"],
       tokenPresent: hfTokenPresent,
     },

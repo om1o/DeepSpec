@@ -114,12 +114,13 @@ describe("createIdentifyResponse", () => {
     }
   });
 
-  it("requires a server-side Gemini key", async () => {
+  it("requires a supported server-side identify provider", async () => {
     await expect(createIdentifyResponse({ imageBase64 }, {})).resolves.toMatchObject({
       status: 500,
       body: {
         error: {
           code: "not_configured",
+          message: "Deep Spec AI is not configured. Configure a supported server-side identify provider.",
         },
       },
     });
@@ -130,6 +131,18 @@ describe("createIdentifyResponse", () => {
     await expect(createIdentifyResponse({ imageBase64 }, { DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true", HF_TOKEN: "hf-test", HF_IDENTIFY_ENDPOINT_URL: "https://openrouter.ai/api/v1/chat/completions" })).resolves.toMatchObject({ status: 200, body: { result: { partName: "Alternator" }, modelRun: { provider: "huggingface", fallbackReason: "gemini_not_configured" } } });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(fetchSpy.mock.calls[0][0]).toBe("https://openrouter.ai/api/v1/chat/completions");
+  });
+
+  it("selects a Hugging Face inference provider through the routed model suffix", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    await createIdentifyResponse({ imageBase64 }, {
+      DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true",
+      HF_TOKEN: "hf-test",
+      HF_IDENTIFY_PROVIDER: "featherless-ai",
+    });
+    const requestBody = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(requestBody.model).toBe("Qwen/Qwen2.5-VL-7B-Instruct:featherless-ai");
+    expect(requestBody).not.toHaveProperty("provider");
   });
 
   it("reports the configured backup's real failure instead of a misleading missing-Gemini error", async () => {
