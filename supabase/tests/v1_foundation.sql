@@ -46,8 +46,12 @@ begin
   perform set_config('role', 'postgres', true);
   perform set_config('request.jwt.claim.sub', '', true);
   perform set_config('role', 'anon', true);
-  insert into public.feedback_submissions(category, message)
-    values ('other', 'Generated logged-out rollback-only feedback');
+  begin
+    insert into public.feedback_submissions(category, message)
+      values ('other', 'Generated logged-out rollback-only feedback');
+    raise exception 'Anonymous feedback write was accepted';
+  exception when insufficient_privilege then null;
+  end;
   perform set_config('role', 'postgres', true);
 end $$;
 rollback;

@@ -10,6 +10,8 @@ const membershipHardeningMigrationPath = join(migrationsDir, "20261010171030_har
 const shopJobIdentityMigrationPath = join(migrationsDir, "20261031101500_harden_shop_job_identity.sql");
 const billingIdempotencyMigrationPath = join(migrationsDir, "20261031142108_billing_webhook_idempotency.sql");
 const billingIdempotencySqlTestPath = join(process.cwd(), "supabase", "tests", "billing_webhook_idempotency.sql");
+const publicWriteHardeningMigrationPath = join(migrationsDir, "20261031153000_harden_public_write_surfaces.sql");
+const publicWriteHardeningSqlTestPath = join(process.cwd(), "supabase", "tests", "public_write_hardening.sql");
 const srcPath = join(process.cwd(), "src");
 
 describe("Supabase secure foundation migration", () => {
@@ -42,7 +44,7 @@ describe("Supabase secure foundation migration", () => {
     expect(sql).toContain("notify pgrst, 'reload schema'");
   });
 
-  it("keeps public waitlist and feedback writes narrow", () => {
+  it("creates the original waitlist and feedback surfaces behind RLS", () => {
     expect(sql).toContain("alter table public.waitlist_signups enable row level security");
     expect(sql).toContain("alter table public.feedback_submissions enable row level security");
     expect(sql).toContain("grant insert on public.waitlist_signups to anon, authenticated");
@@ -53,6 +55,44 @@ describe("Supabase secure foundation migration", () => {
     const source = readSourceFiles(srcPath);
     expect(source).not.toMatch(/service[_-]?role/i);
     expect(source).not.toMatch(/SUPABASE_SERVICE/i);
+  });
+});
+
+describe("Supabase form-write hardening migration", () => {
+  const sql = readFileSync(publicWriteHardeningMigrationPath, "utf8");
+
+  it("removes anonymous writes and binds protected metadata to database defaults", () => {
+    expect(sql).toContain("alter column user_id set default auth.uid()");
+    expect(sql).toContain("revoke insert on public.waitlist_signups from public, anon, authenticated");
+    expect(sql).toContain("revoke insert on public.feedback_submissions from public, anon, authenticated");
+    expect(sql).toContain("grant insert (email, user_type, main_problem)");
+    expect(sql).toContain("grant insert (category, message, contact_email, issue_code, scan_local_id, reported_prediction)");
+    expect(sql).toContain("to authenticated");
+    expect(sql).not.toMatch(/to anon\b/);
+    expect(sql).toContain("auth.jwt() ->> 'is_anonymous'");
+  });
+
+  it("caps user-controlled text and includes a rollback-only privilege regression", () => {
+    expect(sql).toContain("length(main_problem) <= 800");
+    expect(sql).toContain("length(message) between 8 and 800");
+    expect(sql).toContain("length(contact_email) <= 160");
+    expect(sql).toContain("waitlist_signups_user_created_idx");
+    expect(sql).toContain("feedback_submissions_user_created_idx");
+    expect(sql).toContain("create function public.enforce_form_write_quota()");
+    expect(sql).toContain("pg_advisory_xact_lock");
+    expect(sql).toContain("daily_limit := 3");
+    expect(sql).toContain("daily_limit := 20");
+    expect(sql).toContain("created_at <= now()");
+    const regression = readFileSync(publicWriteHardeningSqlTestPath, "utf8");
+    expect(regression).toContain("has_table_privilege('anon', 'public.waitlist_signups', 'insert')");
+    expect(regression).toContain("has_column_privilege('authenticated', 'public.feedback_submissions', 'user_id', 'insert')");
+    expect(regression).toContain("repeat('x', 801)");
+    expect(regression).toContain("'is_anonymous', true");
+    expect(regression).toContain("Anonymous authenticated feedback user was accepted");
+    expect(regression).toContain("now() + interval '10 years'");
+    expect(regression).toContain("Twenty-first daily feedback should fail");
+    expect(regression).toContain("Fourth daily signup should fail");
+    expect(regression).toContain("rollback;");
   });
 });
 

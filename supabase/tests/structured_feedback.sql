@@ -15,21 +15,21 @@ begin
     values(owner_id, scan_id, now(), now()), (other_id, other_scan, now(), now());
   perform set_config('request.jwt.claim.sub', owner_id::text, true);
   perform set_config('role', 'authenticated', true);
-  insert into public.feedback_submissions(id, user_id, category, issue_code, scan_local_id, reported_prediction, message)
-    values(report_id, owner_id, 'ai_result', 'wrong_part', scan_id, 'Alternator', 'Actually a starter.');
+  insert into public.feedback_submissions(category, issue_code, scan_local_id, reported_prediction, message)
+    values('ai_result', 'wrong_part', scan_id, 'Alternator', 'Actually a starter.') returning id into report_id;
   if not exists(select 1 from public.feedback_submissions where id = report_id and issue_code = 'wrong_part') then
     raise exception 'Owner could not read structured report';
   end if;
   begin
-    insert into public.feedback_submissions(user_id, issue_code, message) values(owner_id, 'not_an_issue', 'Invalid issue attempt');
+    insert into public.feedback_submissions(issue_code, message) values('not_an_issue', 'Invalid issue attempt');
     raise exception 'Unknown issue was accepted';
   exception when check_violation then null; end;
   begin
-    insert into public.feedback_submissions(user_id, scan_local_id, message) values(owner_id, other_scan, 'Cross-account scan attempt');
+    insert into public.feedback_submissions(scan_local_id, message) values(other_scan, 'Cross-account scan attempt');
     raise exception 'Another owner scan was linked';
   exception when foreign_key_violation then null; end;
   begin
-    insert into public.feedback_submissions(user_id, reported_prediction, message) values(owner_id, repeat('x', 161), 'Oversize prediction attempt');
+    insert into public.feedback_submissions(reported_prediction, message) values(repeat('x', 161), 'Oversize prediction attempt');
     raise exception 'Unbounded prediction accepted';
   exception when check_violation then null; end;
   begin
@@ -44,11 +44,10 @@ begin
   exception when insufficient_privilege then null; end;
   perform set_config('role', 'anon', true);
   perform set_config('request.jwt.claim.sub', '', true);
-  insert into public.feedback_submissions(issue_code, message) values('bug', 'Logged-out report still works');
   begin
-    insert into public.feedback_submissions(scan_local_id, message) values(scan_id, 'Anonymous linked report');
-    raise exception 'Anonymous scan link accepted';
-  exception when check_violation then null; end;
+    insert into public.feedback_submissions(issue_code, message) values('bug', 'Logged-out report should fail');
+    raise exception 'Anonymous report was accepted';
+  exception when insufficient_privilege then null; end;
   perform set_config('role', 'postgres', true);
   delete from public.scan_lookups where user_id = owner_id and local_id = scan_id;
   select scan_local_id, reported_prediction into linked, prediction from public.feedback_submissions where id = report_id;

@@ -821,7 +821,6 @@ export async function syncWaitlistSignupToCloud(signup: WaitlistSignup): Promise
     const inserted = await supabase.from("waitlist_signups").insert({
       email: signup.email,
       main_problem: signup.mainProblem,
-      source: "pwa",
       user_type: signup.userType,
     });
 
@@ -867,14 +866,12 @@ export async function syncFeedbackToCloud(feedback: FeedbackSubmission): Promise
     }
     checkFeedbackAccount();
     const inserted = await supabase.from("feedback_submissions").insert({
-      ...(scope.userId ? { user_id: scope.userId } : {}),
       category: feedback.category,
       issue_code: issue?.id ?? null,
       scan_local_id: linkedScan && context ? context.scanId : null,
       reported_prediction: linkedScan && context ? context.predictedPart : null,
       contact_email: feedback.contactEmail || null,
       message: feedbackCloudMessage(feedback),
-      source: "pwa",
     });
     checkFeedbackAccount();
 
@@ -1031,6 +1028,10 @@ function getFriendlySyncError(error: unknown) {
   // allowed"): a bare "signup" also matched the waitlist_signups table in unrelated errors.
   if (/anonymous[\s_-]*(?:sign|auth|provider)|signups? (?:is |are )?(?:not allowed|disabled)|sign-in|sign in/i.test(message)) {
     return "Sign in to a verified account before syncing. Confirm your email or phone first.";
+  }
+
+  if (/daily form submission limit reached/i.test(message)) {
+    return "Daily submission limit reached. Try again tomorrow.";
   }
 
   if (/failed to fetch|networkerror|network error|fetch failed|load failed|timed out|timeout|aborted/i.test(message)) {

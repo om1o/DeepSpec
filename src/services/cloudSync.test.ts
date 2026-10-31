@@ -967,6 +967,11 @@ describe("cloudSync", () => {
         userType: "car_owner",
       }),
     ).resolves.toEqual({ ok: true, message: "Waitlist entry synced." });
+    expect(insert).toHaveBeenNthCalledWith(1, {
+      email: "user@example.com",
+      main_problem: "I want help identifying leaks.",
+      user_type: "car_owner",
+    });
     await expect(
       syncFeedbackToCloud({
         category: "scanner",
@@ -986,14 +991,12 @@ describe("cloudSync", () => {
       message: "It is a starter.",
     });
     expect(insert).toHaveBeenLastCalledWith({
-      user_id: "user-1",
       category: "ai_result",
       issue_code: "wrong_part",
       scan_local_id: "scan-1",
       reported_prediction: "Alternator",
       contact_email: null,
       message: "DeepSpec report v1\nIssue: wrong_part\nScan: scan-1\nPrediction: Alternator\n\nIt is a starter.",
-      source: "pwa",
     });
     expect(insert).toHaveBeenCalledTimes(3);
     expect(scanQuery.eq).toHaveBeenCalledWith("user_id", "user-1");
@@ -1021,7 +1024,7 @@ describe("cloudSync", () => {
       return;
     }
     expect(result.ok).toBe(true);
-    expect(insert).toHaveBeenCalledWith({ user_id: "user-1", category: "ai_result", contact_email: null, source: "pwa", issue_code: "wrong_part", scan_local_id: null, reported_prediction: null,
+    expect(insert).toHaveBeenCalledWith({ category: "ai_result", contact_email: null, issue_code: "wrong_part", scan_local_id: null, reported_prediction: null,
       message: mode === "no-context" ? "DeepSpec report v1\nIssue: wrong_part\n\nStarter, not alternator." : "DeepSpec report v1\nIssue: wrong_part\nScan: local-scan\nPrediction: Alternator\n\nStarter, not alternator.",
     });
     if (mode === "no-context") expect(query.select).not.toHaveBeenCalled();
@@ -1072,6 +1075,12 @@ describe("cloudSync", () => {
 
       expect(result.message).toMatch(/verified account/i);
       expect(result.message).not.toMatch(/anonymous sign-ins enabled/i);
+    });
+
+    it("explains the server-enforced daily form quota", async () => {
+      const result = await syncWithInsertError({ message: "Daily form submission limit reached" });
+
+      expect(result).toEqual({ ok: false, message: "Daily submission limit reached. Try again tomorrow." });
     });
   });
 
