@@ -6,6 +6,7 @@ import { ScanSources } from "../components/result/ScanSources";
 import Button from "../components/ui/Button";
 import ScanThumb from "../components/ui/ScanThumb";
 import { AIServiceError, getAIErrorDetails, getAIErrorMessage, sendFollowUp, sendFollowUpDetails } from "../services/aiService";
+import { syncLookupToCloud } from "../services/cloudSync";
 import { appendChatMessages, createChatMessage, getLookup } from "../services/storage";
 import type { ChatMessage, Lookup } from "../types";
 import "./chatWorkspace.css";
@@ -29,6 +30,8 @@ function ChatConversation({ id }: { id: string | undefined }) {
   const [isSending, setIsSending] = useState(false);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [pendingExchange, setPendingExchange] = useState<ChatMessage[] | null>(null);
+  const [cloudSyncPending, setCloudSyncPending] = useState(false);
+  const [isCloudSyncing, setIsCloudSyncing] = useState(false);
   const [research, setResearch] = useState(false);
   const [sourceUrl, setSourceUrl] = useState("");
   const [searchSuggestionsByMessage, setSearchSuggestionsByMessage] = useState<Record<string, string>>({});
@@ -139,6 +142,35 @@ function ChatConversation({ id }: { id: string | undefined }) {
     setErrorCode(null);
     setQuestion("");
     pendingOptionsRef.current = null;
+    void syncConversation(savedConversation.value);
+  }
+
+  async function syncConversation(savedLookup: Lookup) {
+    if (!isCurrentConversation() || isCloudSyncing) return;
+    setIsCloudSyncing(true);
+    const result = await syncLookupToCloud(savedLookup);
+    if (!isCurrentConversation()) return;
+    setIsCloudSyncing(false);
+    if (result.ok) {
+      setCloudSyncPending(false);
+      setError((current) => errorCode === "cloud_sync" ? null : current);
+      setErrorCode((current) => current === "cloud_sync" ? null : current);
+      return;
+    }
+    setCloudSyncPending(true);
+    setError(result.message);
+    setErrorCode("cloud_sync");
+  }
+
+  async function handleRetryCloudSync() {
+    if (!isCurrentConversation() || !lookup || !cloudSyncPending || isCloudSyncing) return;
+    const currentLookup = getLookup(lookup.id);
+    if (!currentLookup) {
+      setError("This saved scan was not found.");
+      setErrorCode("storage");
+      return;
+    }
+    await syncConversation(currentLookup);
   }
 
   if (!lookup) {
@@ -158,13 +190,18 @@ function ChatConversation({ id }: { id: string | undefined }) {
 
   const partName = lookup.result?.partName ?? "Captured frame";
   const canChat = Boolean(lookup.result);
-  const errorDetails = error ? getAIErrorDetails(errorCode) : null;
+  const errorDetails = error ? errorCode === "cloud_sync" ? {
+    category: "storage" as const,
+    description: "The conversation is saved on this device. Retry cloud save to make it available on your other signed-in devices.",
+    retryLabel: "Retry cloud save",
+    title: "Conversation needs cloud sync",
+  } : getAIErrorDetails(errorCode) : null;
   const showSafetyWarning = lookup.result?.isSafetyCritical || lookup.result?.safetyTriage === "needs_professional";
   const lastUnansweredUserMessage = getLastUnansweredUserMessage(lookup);
   const canRetryLastQuestion = Boolean(error && errorCode !== "feature_disabled" && !pendingExchange && (pendingQuestion || lastUnansweredUserMessage) && canChat && !isSending);
   const visibleMessages = [...lookup.chatHistory, ...(pendingExchange ?? []).filter((message) => !lookup.chatHistory.some((saved) => saved.id === message.id))];
 
-  const inputDisabled = !canChat || isSending || isChatDisabled || Boolean(pendingExchange);
+  const inputDisabled = !canChat || isSending || isCloudSyncing || isChatDisabled || Boolean(pendingExchange);
 
   return (
     <main className="ds-chat-page ds-workbench ds-chat-workspace text-[var(--ds-fg-1)]">
@@ -269,6 +306,11 @@ function ChatConversation({ id }: { id: string | undefined }) {
                     <p className="mt-2 text-sm leading-6 text-[var(--ds-fg-2)]">Your answer is kept on this page. Retry saving before leaving or reloading.</p>
                     <Button className="mt-3" type="button" disabled={isSending} onClick={() => persistExchange(pendingExchange)}>Retry saving answer</Button>
                   </>
+                ) : null}
+                {cloudSyncPending ? (
+                  <Button className="mt-3" type="button" disabled={isCloudSyncing} onClick={handleRetryCloudSync}>
+                    {isCloudSyncing ? "Saving to cloud…" : "Retry cloud save"}
+                  </Button>
                 ) : null}
               </section>
             ) : null}

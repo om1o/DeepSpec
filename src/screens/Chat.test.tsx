@@ -6,6 +6,7 @@ import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { vi } from "vitest";
 import Chat from "./Chat";
 import { AIServiceError, sendFollowUp, sendFollowUpDetails } from "../services/aiService";
+import { syncLookupToCloud } from "../services/cloudSync";
 import { LOOKUPS_STORAGE_KEY } from "../services/storage";
 import type { ChatMessage } from "../types";
 import type { Lookup } from "../types";
@@ -19,8 +20,13 @@ vi.mock("../services/aiService", async () => {
   };
 });
 
+vi.mock("../services/cloudSync", () => ({
+  syncLookupToCloud: vi.fn(),
+}));
+
 const sendFollowUpMock = vi.mocked(sendFollowUp);
 const sendFollowUpDetailsMock = vi.mocked(sendFollowUpDetails);
+const syncLookupToCloudMock = vi.mocked(syncLookupToCloud);
 
 const lookup: Lookup = {
   id: "lookup-1",
@@ -60,6 +66,8 @@ describe("Chat", () => {
     localStorage.clear();
     sendFollowUpMock.mockReset();
     sendFollowUpDetailsMock.mockReset();
+    syncLookupToCloudMock.mockReset();
+    syncLookupToCloudMock.mockResolvedValue({ ok: true, message: "Scan synced." });
   });
 
   it("shows a saved scan not found state", () => {
@@ -84,6 +92,58 @@ describe("Chat", () => {
     expect(chatHistory).toHaveLength(2);
     expect(chatHistory.map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(sendFollowUpMock).toHaveBeenCalledWith(expect.objectContaining({ id: lookup.id }), "What does it do?");
+    expect(syncLookupToCloudMock).toHaveBeenCalledWith(expect.objectContaining({
+      id: lookup.id,
+      chatHistory: expect.arrayContaining([
+        expect.objectContaining({ role: "user", content: "What does it do?" }),
+        expect.objectContaining({ role: "assistant", content: "The alternator charges the battery while the engine runs." }),
+      ]),
+    }));
+  });
+
+  it("keeps a local reply and retries cloud sync without another provider call", async () => {
+    sendFollowUpMock.mockResolvedValue("Keep this answer locally.");
+    syncLookupToCloudMock
+      .mockResolvedValueOnce({ ok: false, message: "Cloud save was not confirmed." })
+      .mockResolvedValueOnce({ ok: true, message: "Scan synced." });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    renderChat(`/result/${lookup.id}/chat`);
+
+    await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "Will this be saved?");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(await screen.findByText("Cloud save was not confirmed.")).toBeInTheDocument();
+    expect(getLookup(lookup.id)?.chatHistory.map((message) => message.content)).toEqual([
+      "Will this be saved?",
+      "Keep this answer locally.",
+    ]);
+
+    await userEvent.click(screen.getByRole("button", { name: "Retry cloud save" }));
+
+    expect(syncLookupToCloudMock).toHaveBeenCalledTimes(2);
+    expect(sendFollowUpMock).toHaveBeenCalledTimes(1);
+    expect(await screen.findByLabelText("Ask a follow-up question")).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Retry cloud save" })).not.toBeInTheDocument();
+  });
+
+  it("does not retry a failed cloud save after the account changes", async () => {
+    sendFollowUpMock.mockResolvedValue("Private answer.");
+    syncLookupToCloudMock.mockResolvedValue({ ok: false, message: "Cloud save was not confirmed." });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    renderChat(`/result/${lookup.id}/chat`);
+    await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "Private question");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByRole("button", { name: "Retry cloud save" });
+
+    setActiveAccount("other-user");
+    await userEvent.click(screen.getByRole("button", { name: "Retry cloud save" }));
+
+    expect(syncLookupToCloudMock).toHaveBeenCalledTimes(1);
+    setActiveAccount("test-user");
+    expect(getLookup(lookup.id)?.chatHistory.map((message) => message.content)).toEqual([
+      "Private question",
+      "Private answer.",
+    ]);
   });
 
   it("keeps the question before its answer when message creation crosses a clock tick", async () => {
