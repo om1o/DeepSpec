@@ -92,7 +92,8 @@ try {
     await page.reload();
     await page.getByText("Synthetic QA brake component", { exact: true }).first().waitFor();
     await page.screenshot({ path: `${output}/${width}-saved-result.png`, fullPage: true });
-    await page.goto(`${base}/scan`);
+    await page.goto(base);
+    await page.waitForURL("**/scan");
     await page.getByRole("button", { name: "Upload photo", exact: true }).first().waitFor();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "Scanner horizontal overflow");
     await page.screenshot({ path: `${output}/${width}-scanner.png`, fullPage: true });
@@ -102,7 +103,7 @@ try {
     await page.goto(`${base}/history`);
     await page.waitForURL("**/auth");
     assert.ok(await page.evaluate(id => localStorage.getItem(`deep-spec:account:${id}:deep-spec:lookups`)?.includes("Synthetic QA brake component"), user.id), "Sign-out must preserve account device bytes");
-    report.checks.push({ width, height, reducedMotion: reduced, status: "passed", checks: ["root intro", "13 account entry links", "intro/auth/scanner no horizontal overflow", "keyboard Enter/Escape focus return (normal motion)", "intro transition to login", "direct history blocked", "synthetic password login returns to requested history", "authenticated refresh", "synthetic device fixture save/history/detail/reload", "authenticated scanner", "sign out locks history"] });
+    report.checks.push({ width, height, reducedMotion: reduced, status: "passed", checks: ["signed-out root intro", "13 account entry links", "intro/auth/scanner no horizontal overflow", "keyboard Enter/Escape focus return (normal motion)", "intro transition to login", "direct history blocked", "synthetic password login returns to requested history", "authenticated refresh", "synthetic device fixture save/history/detail/reload", "signed-in root skips intro", "authenticated scanner", "sign out locks history"] });
     await context.close();
   }
   assert.equal(report.pageErrors.length, 0, "Unexpected browser page errors");

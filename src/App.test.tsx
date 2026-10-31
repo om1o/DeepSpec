@@ -169,18 +169,25 @@ describe("App auth guard", () => {
     expect(screen.queryByText("Auth screen")).not.toBeInTheDocument();
   });
 
-  it("opens the visual intro before account routes at the app root", () => {
-    const replace = vi.fn();
-    vi.stubGlobal("window", { ...window, location: { ...window.location, replace } });
-    try {
-      renderApp("/");
-      expect(replace).toHaveBeenCalledWith("/intro/index.html");
-      expect(screen.getByRole("link", { name: "Open DeepSpec" })).toHaveAttribute("href", "/intro/index.html");
-      expect(authMock.getVerifiedAuthUser).not.toHaveBeenCalled();
-      expect(screen.queryByText("Scanner screen")).not.toBeInTheDocument();
-    } finally {
-      vi.unstubAllGlobals();
-    }
+  it("opens the visual intro at the app root when no session is verified", async () => {
+    authMock.getVerifiedAuthUser.mockResolvedValue(null);
+
+    renderApp("/");
+
+    expect(screen.getByText("Checking your session...")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "Open DeepSpec" })).toHaveAttribute("href", "/intro/index.html");
+    expect(authMock.getVerifiedAuthUser).toHaveBeenCalled();
+    expect(screen.queryByText("Scanner screen")).not.toBeInTheDocument();
+  });
+
+  it("skips the intro at the app root when the session is verified", async () => {
+    authMock.getVerifiedAuthUser.mockResolvedValue({ id: "returning-user" });
+
+    renderApp("/");
+
+    expect(await screen.findByText("Scanner screen")).toBeInTheDocument();
+    expect(authMock.getVerifiedAuthUser).toHaveBeenCalled();
+    expect(getAccountScope().userId).toBe("returning-user");
   });
 
   it("protects the pricing route behind verified auth", async () => {

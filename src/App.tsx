@@ -28,6 +28,39 @@ function IntroEntry() {
   return <main className="flex min-h-dvh items-center justify-center bg-[var(--ds-bg)] text-[var(--ds-fg-3)]"><a href="/intro/index.html">Open DeepSpec</a></main>;
 }
 
+function RootEntry() {
+  const [status, setStatus] = useState<AuthStatus>("checking");
+
+  useEffect(() => {
+    let isMounted = true;
+    getVerifiedAuthUser()
+      .then((user) => {
+        if (isMounted) {
+          setActiveAccount(user?.id ?? null);
+          setStatus(user ? "allowed" : "blocked");
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setActiveAccount(null);
+          setStatus("blocked");
+        }
+      });
+    return () => { isMounted = false; };
+  }, []);
+
+  useEffect(() => {
+    if (status === "blocked") window.location.replace("/intro/index.html");
+  }, [status]);
+
+  if (status === "allowed") return <Navigate to="/scan" replace />;
+  return (
+    <main className="flex min-h-dvh items-center justify-center bg-[var(--ds-bg)] px-4 text-center text-sm font-bold text-[var(--ds-fg-3)]">
+      {status === "checking" ? "Checking your session..." : <a href="/intro/index.html">Open DeepSpec</a>}
+    </main>
+  );
+}
+
 function RequireAuth({ children }: { children: ReactNode }) {
   const location = useLocation();
   const [status, setStatus] = useState<AuthStatus>("checking");
@@ -113,7 +146,7 @@ export default function App() {
       <Route path="/auth" element={<Auth />} />
       <Route path="/demo" element={<Navigate to="/scan" replace />} />
       <Route path="/intro" element={<IntroEntry />} />
-      <Route path="/" element={<IntroEntry />} />
+      <Route path="/" element={<RootEntry />} />
       <Route
         path="/scan"
         element={

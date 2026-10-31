@@ -34,7 +34,7 @@
   "rewrites": [
     {
       "source": "/",
-      "destination": "/intro/index.html"
+      "destination": "/index.html"
     },
     {
       "source": "/((?!api/).*)",
