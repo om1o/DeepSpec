@@ -157,7 +157,7 @@ export default defineConfig(async ({ mode }) => {
 
             const body = await readJsonBody(request).catch(() => null);
             const { createPortalResponse } = (await server.ssrLoadModule("/server/billing.shared.ts")) as typeof import("./server/billing.shared");
-            const result = await createPortalResponse(body, serverEnv);
+            const result = await createPortalResponse(body, serverEnv, request.headers);
             response.statusCode = result.status;
             response.setHeader("Content-Type", "application/json");
             response.end(JSON.stringify(result.body));

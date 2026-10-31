@@ -5,7 +5,6 @@ const supabaseMock = vi.hoisted(() => ({ createClient: vi.fn() }));
 vi.mock("@supabase/supabase-js", () => supabaseMock);
 
 const ENV_ON = {
-  DEEPSPEC_REQUIRE_SESSION: "true",
   SUPABASE_URL: "https://project.supabase.co",
   SUPABASE_SERVICE_ROLE_KEY: "service-role",
 };
@@ -15,8 +14,12 @@ afterEach(() => {
 });
 
 describe("requireSession", () => {
-  it("passes through when the gate is off (default)", async () => {
-    await expect(requireSession({ authorization: "Bearer x" }, {})).resolves.toEqual({ ok: true });
+  it("fails closed when Supabase is not configured", async () => {
+    await expect(requireSession({ authorization: "Bearer x" }, {})).resolves.toMatchObject({
+      ok: false,
+      status: 500,
+      body: { error: { code: "not_configured" } },
+    });
     expect(supabaseMock.createClient).not.toHaveBeenCalled();
   });
 
@@ -39,18 +42,21 @@ describe("requireSession", () => {
     });
   });
 
-  it("passes with the user id for a valid session (anonymous included)", async () => {
+  it("rejects a verified anonymous session", async () => {
     supabaseMock.createClient.mockReturnValue({
-      auth: { getUser: vi.fn(async () => ({ data: { user: { id: "anon-1" } }, error: null })) },
+      auth: { getUser: vi.fn(async () => ({ data: { user: { id: "anon-1", is_anonymous: true } }, error: null })) },
     });
-    await expect(requireSession({ authorization: "Bearer good" }, ENV_ON)).resolves.toEqual({ ok: true, userId: "anon-1" });
+    await expect(requireSession({ authorization: "Bearer good" }, ENV_ON)).resolves.toMatchObject({
+      ok: false,
+      status: 401,
+      body: { error: { code: "invalid_session" } },
+    });
   });
 
-  it("500s when enforced but Supabase is not configured", async () => {
-    await expect(requireSession({ authorization: "Bearer x" }, { DEEPSPEC_REQUIRE_SESSION: "true" })).resolves.toMatchObject({
-      ok: false,
-      status: 500,
-      body: { error: { code: "not_configured" } },
+  it("passes with the user id for a valid authenticated session", async () => {
+    supabaseMock.createClient.mockReturnValue({
+      auth: { getUser: vi.fn(async () => ({ data: { user: { id: "user-1", is_anonymous: false } }, error: null })) },
     });
+    await expect(requireSession({ authorization: "Bearer good" }, ENV_ON)).resolves.toEqual({ ok: true, userId: "user-1" });
   });
 });

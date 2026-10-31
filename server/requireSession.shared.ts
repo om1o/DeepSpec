@@ -1,9 +1,8 @@
 import { createSupabaseAdminClient, getSupabaseAdminKey } from "./supabaseAdmin.shared.js";
 
-// Optional auth gate for the paid AI endpoints. Off by default. When on, it requires a
-// valid Supabase session on /api/identify and /api/chat. This is an auth gate, not a
-// complete cost-control layer; IP rate limiting (rateLimit.shared.ts) and scan credits
-// cap API cost.
+// Paid AI endpoints always require a non-anonymous Supabase session. This is an auth
+// gate, not a complete cost-control layer; IP rate limiting (rateLimit.shared.ts) and
+// scan credits cap API cost.
 
 type SessionEnv = Record<string, string | undefined>;
 
@@ -16,20 +15,18 @@ const createSessionClient = createSupabaseAdminClient as unknown as (
   key: string,
   options?: unknown,
 ) => {
-  auth: { getUser: (token: string) => Promise<{ data: { user: { id: string } | null }; error: unknown }> };
+  auth: {
+    getUser: (token: string) => Promise<{
+      data: { user: { id: string; is_anonymous?: boolean } | null };
+      error: unknown;
+    }>;
+  };
 };
 
 export async function requireSession(
   headers: Record<string, string | string[] | undefined>,
   env: SessionEnv,
 ): Promise<SessionDecision> {
-  // Default OFF. Turn on DEEPSPEC_REQUIRE_SESSION=true only after confirming Supabase
-  // email auth is enabled and established before the first scan — otherwise legitimate
-  // users who reach identify/chat without a session get a 401.
-  if (env.DEEPSPEC_REQUIRE_SESSION !== "true") {
-    return { ok: true };
-  }
-
   const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
   const serviceRoleKey = getSupabaseAdminKey(env);
   if (!supabaseUrl || !serviceRoleKey) {
@@ -53,7 +50,7 @@ export async function requireSession(
     auth: { autoRefreshToken: false, persistSession: false },
   });
   const { data, error } = await supabase.auth.getUser(token);
-  if (error || !data.user) {
+  if (error || !data.user || data.user.is_anonymous === true) {
     return {
       ok: false,
       status: 401,

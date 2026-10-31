@@ -36,7 +36,7 @@
         <h2 id="signin-transition-title">Opening DeepSpec sign in</h2>
         <p id="signin-transition-description">Taking you to sign in.</p>
         <div class="signin-progress" aria-hidden="true"><span></span></div>
-        <a class="signin-continue" href="https://deepspec-git-codex-v1-brand-motion-refresh-deep-spec-team.vercel.app/auth">Continue to sign in <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></a>
+        <a class="signin-continue" href="/auth">Continue to sign in <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></a>
         <p class="signin-live-status" role="status" aria-live="polite"></p>
       </section>`;
     document.body.append(overlay);

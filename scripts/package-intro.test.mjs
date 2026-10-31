@@ -36,7 +36,7 @@ describe("intro packaging", () => {
     const entries = [...packaged.window.document.querySelectorAll("a[data-entry]")];
     expect(sourceEntries).toHaveLength(13);
     expect(entries).toHaveLength(sourceEntries.length);
-    expect(sourceEntries.every((entry) => new URL(entry.href).pathname === "/auth")).toBe(true);
+    expect(sourceEntries.every((entry) => entry.getAttribute("href") === "/auth")).toBe(true);
     expect(entries.every((entry) => entry.getAttribute("href") === "/auth")).toBe(true);
     expect(signin).toContain('class="signin-continue" href="/auth"');
     expect(signin).toContain("Continue to sign in");

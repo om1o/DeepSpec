@@ -34,6 +34,23 @@ describe("Vercel Hobby deployment layout", () => {
     expect(config.env?.DEEPSPEC_GUEST_QUOTA_URL).toBeUndefined();
   });
 
+  it("sets baseline browser security headers without blocking Supabase or camera images", () => {
+    const config = JSON.parse(readFileSync(resolve(process.cwd(), "vercel.json"), "utf8"));
+    const headers = Object.fromEntries(config.headers[0].headers.map(({ key, value }) => [key, value]));
+
+    expect(config.headers[0].source).toBe("/(.*)");
+    expect(headers["Content-Security-Policy"]).toContain("connect-src 'self' https://*.supabase.co wss://*.supabase.co");
+    expect(headers["Content-Security-Policy"]).toContain("https://huggingface.co https://*.aws.cdn.hf.co");
+    expect(headers["Content-Security-Policy"]).toContain("img-src 'self' data: blob: https:");
+    expect(headers["Content-Security-Policy"]).toContain("frame-ancestors 'none'");
+    expect(headers["Content-Security-Policy"]).toContain("font-src 'self' data: https://fonts.gstatic.com");
+    expect(headers["Content-Security-Policy"]).toContain("style-src 'self' 'unsafe-inline' https://fonts.googleapis.com");
+    expect(headers["Content-Security-Policy"]).toContain("script-src 'self'");
+    expect(headers["Permissions-Policy"]).toContain("camera=(self)");
+    expect(headers["X-Content-Type-Options"]).toBe("nosniff");
+    expect(headers["X-Frame-Options"]).toBe("DENY");
+  });
+
   it("keeps only HTTP entry points in api, within the 12-function limit", () => {
     // Vercel discovers files in api as functions, including helpers and tests.
     const files = readdirSync(resolve(process.cwd(), "api"), { recursive: true });
