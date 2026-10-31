@@ -32,6 +32,7 @@ grant update (
 
 revoke update on public.job_scans from authenticated;
 grant update (
+  org_id,
   review_status,
   customer_visible_report_json
 ) on public.job_scans to authenticated;

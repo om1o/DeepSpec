@@ -17,14 +17,14 @@ begin
     raise exception 'Authenticated clients can rewrite shop job identity';
   end if;
 
-  if has_column_privilege('authenticated', 'public.job_scans', 'org_id', 'update')
-    or has_column_privilege('authenticated', 'public.job_scans', 'job_id', 'update')
+  if has_column_privilege('authenticated', 'public.job_scans', 'job_id', 'update')
     or has_column_privilege('authenticated', 'public.job_scans', 'user_id', 'update')
     or has_column_privilege('authenticated', 'public.job_scans', 'scan_local_id', 'update') then
     raise exception 'Authenticated clients can rewrite job scan identity';
   end if;
 
   if not has_column_privilege('authenticated', 'public.shop_jobs', 'status', 'update')
+    or not has_column_privilege('authenticated', 'public.job_scans', 'org_id', 'update')
     or not has_column_privilege('authenticated', 'public.job_scans', 'review_status', 'update') then
     raise exception 'Expected shop workflow updates are unavailable';
   end if;

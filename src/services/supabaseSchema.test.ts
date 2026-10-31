@@ -123,8 +123,7 @@ describe("Supabase shop job identity hardening migration", () => {
     expect(sql).toContain("revoke update on public.shop_jobs from authenticated");
     expect(sql).toContain("revoke update on public.job_scans from authenticated");
     expect(sql).toContain("grant update (\n  title,");
-    expect(sql).toContain("grant update (\n  review_status,\n  customer_visible_report_json");
-    expect(sql).not.toContain("grant update (\n  org_id,");
+    expect(sql).toContain("grant update (\n  org_id,\n  review_status,\n  customer_visible_report_json");
     expect(sql).not.toContain("grant update (\n  job_id,");
     expect(sql).not.toContain("grant update (\n  user_id,");
   });

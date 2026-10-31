@@ -84,7 +84,9 @@ begin
     raise exception 'Failed job transaction left partial changes';
   end if;
 
-  -- Exact-revision retries are idempotent and never change parent inspection/images.
+  -- Exact-revision retries exercise the authenticated job_scans conflict path.
+  -- org_id remains assignable to the same composite job identity so the RPC can
+  -- retry, while the immutable job_id and composite FK prevent reassignment.
   perform public.sync_scan_details(scan_id, 3, candidates, evidence, correction, job);
   if pg_temp.child_snapshot(owner_id, scan_id) is distinct from winner then raise exception 'Retry changed details'; end if;
   if not exists(select 1 from public.scan_lookups where user_id = owner_id and local_id = scan_id
