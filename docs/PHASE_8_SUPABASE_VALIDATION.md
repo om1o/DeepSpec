@@ -11,14 +11,16 @@ In Supabase:
 1. Create a project.
 2. Apply every SQL file in `supabase/migrations` in timestamp order.
 3. Enable anonymous sign-ins in Auth if you want device-only users.
-4. Confirm the `scan-images` storage bucket is private.
-5. Copy the project URL and publishable/anon key.
+4. Set the Auth Site URL to the production origin and allow the exact `/auth?next=/scan` callback.
+5. Confirm the `scan-images` storage bucket is private.
+6. Copy the project URL and publishable/anon key.
 
 In `.env.local`:
 
 ```bash
 VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=your_publishable_or_anon_key
+DEEPSPEC_AUTH_REDIRECT_URL=https://deepspec.vercel.app/auth?next=%2Fscan
 # Set these only after the matching provider is enabled in Supabase Auth.
 VITE_ENABLE_GOOGLE_AUTH=
 VITE_ENABLE_GITHUB_AUTH=

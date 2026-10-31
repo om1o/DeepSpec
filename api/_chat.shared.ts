@@ -1,4 +1,4 @@
-import { FOLLOWUP_PROMPT } from "../src/services/systemPrompts";
+import { FOLLOWUP_PROMPT } from "../src/services/systemPrompts.js";
 
 type JsonObject = Record<string, unknown>;
 

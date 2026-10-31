@@ -13,6 +13,8 @@ const config = {
 const testEmail = process.env.DEEPSPEC_AUTH_TEST_EMAIL?.trim();
 const testPassword = process.env.DEEPSPEC_AUTH_TEST_PASSWORD?.trim();
 const testOtpCode = process.env.DEEPSPEC_AUTH_TEST_EMAIL_CODE?.trim();
+const authRedirectUrl = process.env.DEEPSPEC_AUTH_REDIRECT_URL?.trim()
+  || "https://deepspec.vercel.app/auth?next=%2Fscan";
 const args = new Set(process.argv.slice(2));
 const shouldSendOtp = process.env.DEEPSPEC_AUTH_SEND_CODE === "true" || args.has("--send-code");
 const requireCredentials = process.env.DEEPSPEC_AUTH_REQUIRE_CREDENTIALS === "true" || args.has("--require-credentials");
@@ -116,7 +118,7 @@ async function assertOAuthUrl(supabase, provider) {
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider,
     options: {
-      redirectTo: "http://127.0.0.1:5173/scan",
+      redirectTo: authRedirectUrl,
       skipBrowserRedirect: true,
     },
   });
@@ -143,7 +145,7 @@ async function assertOtpRequest(supabase, email) {
   const { error } = await supabase.auth.signInWithOtp({
     email,
     options: {
-      emailRedirectTo: "http://127.0.0.1:5173/scan",
+      emailRedirectTo: authRedirectUrl,
       shouldCreateUser: true,
     },
   });

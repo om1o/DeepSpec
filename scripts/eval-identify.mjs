@@ -690,7 +690,7 @@ function unquoteEnvValue(value) {
 async function loadIdentifyPipeline() {
   const { createServer } = await import("vite");
   const server = await createServer(buildEvalViteServerOptions());
-  const module = await server.ssrLoadModule("/api/identify.shared.ts");
+  const module = await server.ssrLoadModule("/api/_identify.shared.ts");
 
   return {
     createIdentifyResponse: module.createIdentifyResponse,

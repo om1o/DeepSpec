@@ -1,4 +1,4 @@
-import { createChatResponse } from "./chat.shared";
+import { createChatResponse } from "./_chat.shared.js";
 
 describe("createChatResponse", () => {
   beforeEach(() => {

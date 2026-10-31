@@ -38,7 +38,7 @@ export default defineConfig(async ({ mode }) => {
             }
 
             const body = await readJsonBody(request).catch(() => null);
-            const { createIdentifyResponse } = (await server.ssrLoadModule("/api/identify.shared.ts")) as typeof import("./api/identify.shared");
+            const { createIdentifyResponse } = (await server.ssrLoadModule("/api/_identify.shared.ts")) as typeof import("./api/_identify.shared");
             const result = await createIdentifyResponse(body, serverEnv);
             response.statusCode = result.status;
             response.setHeader("Content-Type", "application/json");
@@ -56,7 +56,7 @@ export default defineConfig(async ({ mode }) => {
             }
 
             const body = await readJsonBody(request).catch(() => null);
-            const { createChatResponse } = (await server.ssrLoadModule("/api/chat.shared.ts")) as typeof import("./api/chat.shared");
+            const { createChatResponse } = (await server.ssrLoadModule("/api/_chat.shared.ts")) as typeof import("./api/_chat.shared");
             const result = await createChatResponse(body, serverEnv);
             response.statusCode = result.status;
             response.setHeader("Content-Type", "application/json");
@@ -111,13 +111,13 @@ export default defineConfig(async ({ mode }) => {
       globals: true,
       setupFiles: "./src/test/setup.ts",
       testTimeout: 15_000,
-      exclude: ["**/node_modules/**", "**/.git/**", ".ditto-site/**", "artifacts/**"],
+      exclude: ["**/node_modules/**", "**/.git/**", ".ditto-site/**", ".vercel/**", "artifacts/**"],
     },
     server: {
       allowedHosts: [".trycloudflare.com"],
       host: "0.0.0.0",
-      port: 5174,
-      strictPort: false,
+      port: 3000,
+      strictPort: true,
     },
     preview: {
       allowedHosts: [".trycloudflare.com"],
