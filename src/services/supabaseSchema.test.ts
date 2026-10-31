@@ -8,6 +8,8 @@ const durableDatasetMigrationPath = join(migrationsDir, "20260528000309_durable_
 const mechanicShopMigrationPath = join(migrationsDir, "20260618000100_mechanic_shop_mode.sql");
 const membershipHardeningMigrationPath = join(migrationsDir, "20261010171030_harden_organization_member_identity.sql");
 const shopJobIdentityMigrationPath = join(migrationsDir, "20261031101500_harden_shop_job_identity.sql");
+const billingIdempotencyMigrationPath = join(migrationsDir, "20261031142108_billing_webhook_idempotency.sql");
+const billingIdempotencySqlTestPath = join(process.cwd(), "supabase", "tests", "billing_webhook_idempotency.sql");
 const srcPath = join(process.cwd(), "src");
 
 describe("Supabase secure foundation migration", () => {
@@ -126,6 +128,41 @@ describe("Supabase shop job identity hardening migration", () => {
     expect(sql).toContain("grant update (\n  org_id,\n  review_status,\n  customer_visible_report_json");
     expect(sql).not.toContain("grant update (\n  job_id,");
     expect(sql).not.toContain("grant update (\n  user_id,");
+  });
+});
+
+describe("Supabase billing webhook idempotency migration", () => {
+  const sql = readFileSync(billingIdempotencyMigrationPath, "utf8");
+
+  it("records an immutable provider event key before granting credits", () => {
+    expect(sql).toContain("primary key (billing_provider, event_key)");
+    expect(sql).toContain("insert into public.billing_purchase_events");
+    expect(sql).toContain("on conflict (billing_provider, event_key) do nothing");
+    expect(sql).toContain("if not coalesce(event_inserted, false) then");
+  });
+
+  it("updates the entitlement in the same database function", () => {
+    expect(sql).toContain("create function public.apply_billing_purchase");
+    expect(sql).toContain("insert into public.billing_entitlements");
+    expect(sql).toContain("scan_allowance = case when p_additive");
+  });
+
+  it("keeps the event ledger and RPC server-only", () => {
+    expect(sql).toContain("alter table public.billing_purchase_events enable row level security");
+    expect(sql).toContain("revoke all on public.billing_purchase_events from public, anon, authenticated, service_role");
+    expect(sql).toContain("grant select, insert on public.billing_purchase_events to service_role");
+    expect(sql).toContain("revoke all on function public.apply_billing_purchase");
+    expect(sql).toContain("grant execute on function public.apply_billing_purchase");
+  });
+
+  it("includes a rollback-only duplicate-event SQL regression", () => {
+    const regression = readFileSync(billingIdempotencySqlTestPath, "utf8");
+    expect(regression).toContain("duplicate_applied := public.apply_billing_purchase");
+    expect(regression).toContain("if duplicate_applied is distinct from false");
+    expect(regression).toContain("if allowance <> 20");
+    expect(regression).toContain("if event_count <> 1");
+    expect(regression).toContain("'public.billing_purchase_events', 'truncate'");
+    expect(regression).toContain("rollback;");
   });
 });
 

@@ -154,7 +154,7 @@ export async function createCheckoutResponse(
       return liveGuard;
     }
 
-    return createPolarCheckoutResponse(parsed.planId, parsed.origin, env, headers);
+    return createPolarCheckoutResponse(parsed.planId, env, headers);
   }
 
   if (provider !== "stripe") {
@@ -181,7 +181,10 @@ export async function createCheckoutResponse(
     return verifiedUser.error;
   }
 
-  const origin = parsed.origin || env.DEEPSPEC_PUBLIC_URL || "http://localhost:5174";
+  const origin = getBillingRedirectOrigin(env);
+  if (!origin) {
+    return billingRedirectConfigurationError();
+  }
   const params = new URLSearchParams({
     mode: plan.billingMode,
     "line_items[0][price]": priceId,
@@ -200,7 +203,6 @@ export async function createCheckoutResponse(
 
 async function createPolarCheckoutResponse(
   planId: PlanId,
-  originInput: string,
   env: BillingEnv,
   headers: Record<string, string | string[] | undefined>,
 ): Promise<BillingResponse> {
@@ -220,8 +222,10 @@ async function createPolarCheckoutResponse(
     return verifiedUser.error;
   }
 
-  const origin = originInput || env.DEEPSPEC_PUBLIC_URL || "http://localhost:5174";
-  const baseOrigin = origin.replace(/\/$/, "");
+  const baseOrigin = getBillingRedirectOrigin(env);
+  if (!baseOrigin) {
+    return billingRedirectConfigurationError();
+  }
   return postPolarJson(`${getPolarApiBaseUrl(env)}/v1/checkouts/`, {
     allow_discount_codes: true,
     external_customer_id: verifiedUser.userId,
@@ -237,7 +241,7 @@ async function createPolarCheckoutResponse(
 }
 
 export async function createPortalResponse(
-  body: unknown,
+  _body: unknown,
   env: BillingEnv,
   headers: Record<string, string | string[] | undefined> = {},
 ): Promise<BillingResponse> {
@@ -248,7 +252,7 @@ export async function createPortalResponse(
       return liveGuard;
     }
 
-    return createPolarPortalResponse(body, env, headers);
+    return createPolarPortalResponse(env, headers);
   }
 
   if (provider !== "stripe") {
@@ -275,9 +279,10 @@ export async function createPortalResponse(
     return errorResponse(400, "missing_customer", "A provider customer id is required for the billing portal.");
   }
 
-  const origin = isRecord(body) && typeof body.origin === "string" && body.origin.trim()
-    ? body.origin.trim()
-    : env.DEEPSPEC_PUBLIC_URL || "http://localhost:5174";
+  const origin = getBillingRedirectOrigin(env);
+  if (!origin) {
+    return billingRedirectConfigurationError();
+  }
   const params = new URLSearchParams({
     customer: customerId,
     return_url: `${origin.replace(/\/$/, "")}/account`,
@@ -287,7 +292,6 @@ export async function createPortalResponse(
 }
 
 async function createPolarPortalResponse(
-  body: unknown,
   env: BillingEnv,
   headers: Record<string, string | string[] | undefined>,
 ): Promise<BillingResponse> {
@@ -301,9 +305,11 @@ async function createPolarPortalResponse(
     return entitlement.error;
   }
 
-  const returnUrl = isRecord(body) && typeof body.origin === "string" && body.origin.trim()
-    ? `${body.origin.trim().replace(/\/$/, "")}/account`
-    : `${(env.DEEPSPEC_PUBLIC_URL || "http://localhost:5174").replace(/\/$/, "")}/account`;
+  const origin = getBillingRedirectOrigin(env);
+  if (!origin) {
+    return billingRedirectConfigurationError();
+  }
+  const returnUrl = `${origin}/account`;
   const customerId = getStringValue(entitlement.row?.provider_customer_id);
   const payload = customerId
     ? { customer_id: customerId, return_url: returnUrl }
@@ -645,40 +651,24 @@ async function writeCheckoutEntitlement(
   if (!customerId) {
     return { error: errorResponse(400, "missing_customer", "Billing checkout session has no customer id.") };
   }
-
-  const existing = await readExistingEntitlement(supabase, userId);
-  if ("error" in existing) {
-    return existing;
+  const checkoutId = getStringValue(session.id);
+  if (!checkoutId) {
+    return { error: errorResponse(400, "missing_checkout", "Billing checkout session has no checkout id.") };
   }
 
-  const currentAllowance = Math.max(0, Number(existing.row?.scan_allowance ?? 0));
-  const scanAllowance = plan.billingMode === "payment" && Number.isFinite(currentAllowance)
-    ? currentAllowance + plan.scanAllowance
-    : plan.scanAllowance;
-
-  const { error } = await supabase
-    .from("billing_entitlements")
-    .upsert({
-      current_period_end: getStripeTimestampIso(session.current_period_end),
-      billing_provider: "stripe",
-      plan_id: plan.id,
-      provider_checkout_id: getStringValue(session.id) || null,
-      provider_customer_id: customerId,
-      provider_subscription_id: getStringValue(session.subscription) || null,
-      scan_allowance: scanAllowance,
-      status: getCheckoutStatus(session),
-      stripe_checkout_session_id: getStringValue(session.id) || null,
-      stripe_customer_id: customerId,
-      stripe_subscription_id: getStringValue(session.subscription) || null,
-      updated_at: new Date().toISOString(),
-      user_id: userId,
-    }, { onConflict: "user_id" });
-
-  if (error) {
-    return { error: errorResponse(502, "entitlement_write_failed", "DeepSpec could not activate paid access.") };
-  }
-
-  return { handled: true };
+  return applyBillingPurchase(supabase, {
+    additive: plan.billingMode === "payment",
+    billingProvider: "stripe",
+    currentPeriodEnd: getStripeTimestampIso(session.current_period_end),
+    eventKey: checkoutId,
+    planId: plan.id,
+    providerCheckoutId: checkoutId,
+    providerCustomerId: customerId,
+    providerSubscriptionId: getStringValue(session.subscription) || null,
+    scanAllowance: plan.scanAllowance,
+    status: getCheckoutStatus(session),
+    userId,
+  });
 }
 
 async function writePolarOrderEntitlement(
@@ -707,37 +697,59 @@ async function writePolarOrderEntitlement(
   if (!customerId) {
     return { error: errorResponse(400, "missing_customer", "Billing order has no customer id.") };
   }
-
-  const existing = await readExistingEntitlement(supabase, userId);
-  if ("error" in existing) {
-    return existing;
+  const orderId = getStringValue(order.id);
+  if (!orderId) {
+    return { error: errorResponse(400, "missing_order", "Billing order has no order id.") };
   }
-
-  const currentAllowance = Math.max(0, Number(existing.row?.scan_allowance ?? 0));
-  const scanAllowance = plan.billingMode === "payment" && Number.isFinite(currentAllowance)
-    ? currentAllowance + plan.scanAllowance
-    : plan.scanAllowance;
   const subscriptionId = getStringValue(order.subscription_id) || getStringValue(subscription?.id);
 
-  const { error } = await supabase
-    .from("billing_entitlements")
-    .upsert({
-      billing_provider: "polar",
-      current_period_end: getIsoString(subscription?.current_period_end),
-      plan_id: plan.id,
-      provider_checkout_id: getStringValue(order.checkout_id) || null,
-      provider_customer_id: customerId,
-      provider_subscription_id: subscriptionId || null,
-      scan_allowance: scanAllowance,
-      status: "active",
-      updated_at: new Date().toISOString(),
-      user_id: userId,
-    }, { onConflict: "user_id" });
+  return applyBillingPurchase(supabase, {
+    additive: plan.billingMode === "payment",
+    billingProvider: "polar",
+    currentPeriodEnd: getIsoString(subscription?.current_period_end),
+    eventKey: orderId,
+    planId: plan.id,
+    providerCheckoutId: getStringValue(order.checkout_id) || null,
+    providerCustomerId: customerId,
+    providerSubscriptionId: subscriptionId || null,
+    scanAllowance: plan.scanAllowance,
+    status: "active",
+    userId,
+  });
+}
 
+async function applyBillingPurchase(
+  supabase: BillingSupabaseClient,
+  purchase: {
+    additive: boolean;
+    billingProvider: "polar" | "stripe";
+    currentPeriodEnd: string | null;
+    eventKey: string;
+    planId: PlanId;
+    providerCheckoutId: string | null;
+    providerCustomerId: string;
+    providerSubscriptionId: string | null;
+    scanAllowance: number;
+    status: string;
+    userId: string;
+  },
+): Promise<{ handled: boolean } | { error: BillingErrorResponse }> {
+  const { error } = await supabase.rpc("apply_billing_purchase", {
+    p_additive: purchase.additive,
+    p_billing_provider: purchase.billingProvider,
+    p_current_period_end: purchase.currentPeriodEnd,
+    p_event_key: purchase.eventKey,
+    p_plan_id: purchase.planId,
+    p_provider_checkout_id: purchase.providerCheckoutId,
+    p_provider_customer_id: purchase.providerCustomerId,
+    p_provider_subscription_id: purchase.providerSubscriptionId,
+    p_scan_allowance: purchase.scanAllowance,
+    p_status: purchase.status,
+    p_user_id: purchase.userId,
+  });
   if (error) {
     return { error: errorResponse(502, "entitlement_write_failed", "DeepSpec could not activate paid access.") };
   }
-
   return { handled: true };
 }
 
@@ -900,7 +912,7 @@ async function updateEntitlementByProviderKey(
   return { handled: true };
 }
 
-function parseCheckoutBody(body: unknown): { planId: PlanId; origin: string } | { error: BillingErrorResponse } {
+function parseCheckoutBody(body: unknown): { planId: PlanId } | { error: BillingErrorResponse } {
   if (!isRecord(body) || typeof body.planId !== "string") {
     return { error: errorResponse(400, "invalid_input", "Choose a DeepSpec plan before checkout.") };
   }
@@ -911,8 +923,30 @@ function parseCheckoutBody(body: unknown): { planId: PlanId; origin: string } | 
 
   return {
     planId: body.planId,
-    origin: typeof body.origin === "string" ? body.origin.trim().slice(0, 200) : "",
   };
+}
+
+function getBillingRedirectOrigin(env: BillingEnv): string | null {
+  const configured = env.DEEPSPEC_PUBLIC_URL?.trim();
+  if (!configured) {
+    return env.NODE_ENV === "production" || env.VERCEL_ENV === "production"
+      ? null
+      : "http://localhost:5174";
+  }
+
+  try {
+    const url = new URL(configured);
+    const isLoopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
+    if (url.username || url.password || url.search || url.hash || (url.pathname && url.pathname !== "/")) return null;
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopback)) return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function billingRedirectConfigurationError(): BillingErrorResponse {
+  return errorResponse(500, "redirect_not_configured", "Server billing redirects are not configured safely.");
 }
 
 function parseSignedStripeEvent(

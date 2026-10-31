@@ -57,10 +57,14 @@ describe("billing shared", () => {
     });
     vi.stubGlobal("fetch", vi.fn(async (_url, init: { method?: string; body?: unknown }) => {
       expect(init.method).toBe("POST");
-      expect(String(init.body)).toContain("mode=subscription");
-      expect(String(init.body)).toContain("line_items%5B0%5D%5Bprice%5D=price_plus");
-      expect(String(init.body)).toContain("client_reference_id=user-1");
-      expect(String(init.body)).toContain("metadata%5Bsupabase_user_id%5D=user-1");
+      const params = new URLSearchParams(String(init.body));
+      expect(params.get("mode")).toBe("subscription");
+      expect(params.get("line_items[0][price]")).toBe("price_plus");
+      expect(params.get("client_reference_id")).toBe("user-1");
+      expect(params.get("metadata[supabase_user_id]")).toBe("user-1");
+      expect(params.get("success_url")).toBe("https://deepspec.app/account?checkout=success");
+      expect(params.get("cancel_url")).toBe("https://deepspec.app/pricing?checkout=cancelled");
+      expect(String(init.body)).not.toContain("attacker.example");
       return new Response(JSON.stringify({ url: "https://checkout.stripe.test/session" }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -68,9 +72,10 @@ describe("billing shared", () => {
     }));
 
     await expect(createCheckoutResponse(
-      { planId: "plus_monthly", origin: "https://deepspec.app" },
+      { planId: "plus_monthly", origin: "https://attacker.example" },
       {
         BILLING_PROVIDER: "stripe",
+        DEEPSPEC_PUBLIC_URL: "https://deepspec.app/",
         STRIPE_SECRET_KEY: "sk_test",
         STRIPE_PRICE_DEEPSPEC_PLUS_MONTHLY: "price_plus",
         SUPABASE_SERVICE_ROLE_KEY: "service-role",
@@ -108,6 +113,9 @@ describe("billing shared", () => {
         },
       });
       expect(body.success_url).toContain("checkout_id={CHECKOUT_ID}");
+      expect(body.success_url).toBe("https://deepspec.app/account?checkout=success&checkout_id={CHECKOUT_ID}");
+      expect(body.return_url).toBe("https://deepspec.app/pricing?checkout=cancelled");
+      expect(JSON.stringify(body)).not.toContain("attacker.example");
       return new Response(JSON.stringify({ url: "https://polar.sh/checkout/session" }), {
         status: 201,
         headers: { "Content-Type": "application/json" },
@@ -115,9 +123,10 @@ describe("billing shared", () => {
     }));
 
     await expect(createCheckoutResponse(
-      { planId: "plus_monthly", origin: "https://deepspec.app" },
+      { planId: "plus_monthly", origin: "https://attacker.example" },
       {
         BILLING_PROVIDER: "polar",
+        DEEPSPEC_PUBLIC_URL: "https://deepspec.app",
         POLAR_ACCESS_TOKEN: "polar-token",
         POLAR_ENVIRONMENT: "sandbox",
         POLAR_PRODUCT_DEEPSPEC_PLUS_MONTHLY: "polar-product-plus",
@@ -139,6 +148,7 @@ describe("billing shared", () => {
       { planId: "plus_monthly", origin: "https://deepspec.app" },
       {
         BILLING_PROVIDER: "polar",
+        DEEPSPEC_PUBLIC_URL: "https://deepspec.app",
         POLAR_ACCESS_TOKEN: "polar-token",
         POLAR_ENVIRONMENT: "production",
         POLAR_PRODUCT_DEEPSPEC_PLUS_MONTHLY: "polar-product-plus",
@@ -177,6 +187,7 @@ describe("billing shared", () => {
       { planId: "plus_monthly", origin: "https://deepspec.app" },
       {
         BILLING_PROVIDER: "polar",
+        DEEPSPEC_PUBLIC_URL: "https://deepspec.app",
         DEEPSPEC_ENABLE_LIVE_BILLING: "true",
         POLAR_ACCESS_TOKEN: "polar-token",
         POLAR_ENVIRONMENT: "production",
@@ -282,8 +293,11 @@ describe("billing shared", () => {
       })),
     });
     vi.stubGlobal("fetch", vi.fn(async (_url, init: { body?: unknown }) => {
-      expect(String(init.body)).toContain("customer=cus_server");
+      const params = new URLSearchParams(String(init.body));
+      expect(params.get("customer")).toBe("cus_server");
+      expect(params.get("return_url")).toBe("https://deepspec.app/account");
       expect(String(init.body)).not.toContain("cus_attacker");
+      expect(String(init.body)).not.toContain("attacker.example");
       return new Response(JSON.stringify({ url: "https://billing.stripe.test/session" }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -291,9 +305,10 @@ describe("billing shared", () => {
     }));
 
     await expect(createPortalResponse(
-      { origin: "https://deepspec.app", stripeCustomerId: "cus_attacker" },
+      { origin: "https://attacker.example", stripeCustomerId: "cus_attacker" },
       {
         BILLING_PROVIDER: "stripe",
+        DEEPSPEC_PUBLIC_URL: "https://deepspec.app",
         STRIPE_SECRET_KEY: "sk_test",
         SUPABASE_SERVICE_ROLE_KEY: "service-role",
         SUPABASE_URL: "https://deep-spec.supabase.co",
@@ -342,9 +357,10 @@ describe("billing shared", () => {
     }));
 
     await expect(createPortalResponse(
-      { origin: "https://deepspec.app" },
+      { origin: "https://attacker.example" },
       {
         BILLING_PROVIDER: "polar",
+        DEEPSPEC_PUBLIC_URL: "https://deepspec.app",
         POLAR_ACCESS_TOKEN: "polar-token",
         POLAR_ENVIRONMENT: "sandbox",
         SUPABASE_SERVICE_ROLE_KEY: "service-role",
@@ -355,6 +371,36 @@ describe("billing shared", () => {
       status: 200,
       body: { url: "https://polar.sh/customer-portal/session" },
     });
+  });
+
+  it("rejects client redirect origins when hosted billing has no server-owned public URL", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    supabaseMock.createClient.mockReturnValue({
+      auth: {
+        getUser: vi.fn(async () => ({
+          data: { user: { id: "user-1", email_confirmed_at: "2026-07-01T00:00:00.000Z" } },
+          error: null,
+        })),
+      },
+    });
+
+    await expect(createCheckoutResponse(
+      { planId: "plus_monthly", origin: "https://attacker.example" },
+      {
+        BILLING_PROVIDER: "stripe",
+        STRIPE_SECRET_KEY: "sk_test",
+        STRIPE_PRICE_DEEPSPEC_PLUS_MONTHLY: "price_plus",
+        SUPABASE_SERVICE_ROLE_KEY: "service-role",
+        SUPABASE_URL: "https://deep-spec.supabase.co",
+        VERCEL_ENV: "production",
+      },
+      { authorization: "Bearer verified-token" },
+    )).resolves.toMatchObject({
+      status: 500,
+      body: { error: { code: "redirect_not_configured" } },
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("requires a provider customer id for the Stripe customer portal", async () => {
@@ -603,7 +649,7 @@ describe("billing shared", () => {
 
   it("activates entitlement rows from completed Checkout sessions", async () => {
     const table = createBillingTableMock({ existingRow: { scan_allowance: 100, scans_used: 4 } });
-    supabaseMock.createClient.mockReturnValue({ from: table.from });
+    supabaseMock.createClient.mockReturnValue({ from: table.from, rpc: table.rpc });
     const body = JSON.stringify({
       data: {
         object: {
@@ -633,18 +679,19 @@ describe("billing shared", () => {
       },
     });
 
-    expect(table.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      plan_id: "plus_monthly",
-      scan_allowance: 100,
-      status: "active",
-      stripe_checkout_session_id: "cs_123",
-      stripe_customer_id: "cus_123",
-      stripe_subscription_id: "sub_123",
-      provider_checkout_id: "cs_123",
-      provider_customer_id: "cus_123",
-      provider_subscription_id: "sub_123",
-      user_id: "user-1",
-    }), { onConflict: "user_id" });
+    expect(table.rpc).toHaveBeenCalledWith("apply_billing_purchase", {
+      p_additive: false,
+      p_billing_provider: "stripe",
+      p_current_period_end: null,
+      p_event_key: "cs_123",
+      p_plan_id: "plus_monthly",
+      p_provider_checkout_id: "cs_123",
+      p_provider_customer_id: "cus_123",
+      p_provider_subscription_id: "sub_123",
+      p_scan_allowance: 100,
+      p_status: "active",
+      p_user_id: "user-1",
+    });
   });
 
   it("rejects Polar webhooks with an invalid signature before writing entitlements", async () => {
@@ -704,7 +751,7 @@ describe("billing shared", () => {
 
   it("activates entitlement rows from paid Polar orders", async () => {
     const table = createBillingTableMock({ existingRow: { scan_allowance: 5, scans_used: 2 } });
-    supabaseMock.createClient.mockReturnValue({ from: table.from });
+    supabaseMock.createClient.mockReturnValue({ from: table.from, rpc: table.rpc });
     const body = JSON.stringify({
       data: {
         checkout_id: "polar-checkout-1",
@@ -737,16 +784,19 @@ describe("billing shared", () => {
       },
     });
 
-    expect(table.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      billing_provider: "polar",
-      plan_id: "scan_pack",
-      provider_checkout_id: "polar-checkout-1",
-      provider_customer_id: "polar-customer-1",
-      provider_subscription_id: null,
-      scan_allowance: 25,
-      status: "active",
-      user_id: "user-1",
-    }), { onConflict: "user_id" });
+    expect(table.rpc).toHaveBeenCalledWith("apply_billing_purchase", {
+      p_additive: true,
+      p_billing_provider: "polar",
+      p_current_period_end: null,
+      p_event_key: "polar-order-1",
+      p_plan_id: "scan_pack",
+      p_provider_checkout_id: "polar-checkout-1",
+      p_provider_customer_id: "polar-customer-1",
+      p_provider_subscription_id: null,
+      p_scan_allowance: 20,
+      p_status: "active",
+      p_user_id: "user-1",
+    });
   });
 
   it("updates entitlement rows from Polar subscription lifecycle events", async () => {
@@ -793,7 +843,7 @@ describe("billing shared", () => {
 
   it("adds one-time scan pack credits to an existing entitlement", async () => {
     const table = createBillingTableMock({ existingRow: { scan_allowance: 5, scans_used: 2 } });
-    supabaseMock.createClient.mockReturnValue({ from: table.from });
+    supabaseMock.createClient.mockReturnValue({ from: table.from, rpc: table.rpc });
     const body = JSON.stringify({
       data: {
         object: {
@@ -811,12 +861,87 @@ describe("billing shared", () => {
 
     await createWebhookResponse(body, { "stripe-signature": signStripeBody(body) }, webhookEnv());
 
-    expect(table.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      plan_id: "scan_pack",
-      scan_allowance: 25,
-      status: "active",
-      user_id: "user-1",
-    }), { onConflict: "user_id" });
+    expect(table.rpc).toHaveBeenCalledWith("apply_billing_purchase", expect.objectContaining({
+      p_additive: true,
+      p_billing_provider: "stripe",
+      p_event_key: "cs_pack",
+      p_plan_id: "scan_pack",
+      p_scan_allowance: 20,
+      p_user_id: "user-1",
+    }));
+  });
+
+  it("fails closed when the atomic purchase RPC cannot record the entitlement", async () => {
+    const table = createBillingTableMock();
+    table.rpc.mockResolvedValueOnce({ data: null, error: { message: "Database unavailable" } });
+    supabaseMock.createClient.mockReturnValue({ from: table.from, rpc: table.rpc });
+    const body = JSON.stringify({
+      data: { object: {
+        client_reference_id: "user-1",
+        customer: "cus_failed",
+        id: "cs_failed",
+        metadata: { deepspec_plan_id: "scan_pack" },
+        payment_status: "paid",
+      } },
+      type: "checkout.session.completed",
+    });
+
+    await expect(createWebhookResponse(
+      body,
+      { "stripe-signature": signStripeBody(body) },
+      webhookEnv(),
+    )).resolves.toMatchObject({
+      status: 502,
+      body: { error: { code: "entitlement_write_failed" } },
+    });
+    expect(table.upsert).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["stripe", "sequential"],
+    ["stripe", "concurrent"],
+    ["polar", "sequential"],
+    ["polar", "concurrent"],
+  ] as const)("grants one scan pack for duplicate %s deliveries received %sly", async (provider, delivery) => {
+    const atomic = createAtomicBillingRpcMock(5);
+    const table = createBillingTableMock();
+    supabaseMock.createClient.mockReturnValue({ from: table.from, rpc: atomic.rpc });
+    const body = provider === "stripe"
+      ? JSON.stringify({
+          data: { object: {
+            client_reference_id: "user-1",
+            customer: "cus_duplicate",
+            id: "cs_duplicate",
+            metadata: { deepspec_plan_id: "scan_pack" },
+            payment_status: "paid",
+          } },
+          type: "checkout.session.completed",
+        })
+      : JSON.stringify({
+          data: {
+            checkout_id: "polar-checkout-duplicate",
+            customer_id: "polar-customer-duplicate",
+            id: "polar-order-duplicate",
+            metadata: { deepspec_plan_id: "scan_pack", supabase_user_id: "user-1" },
+            paid: true,
+          },
+          type: "order.paid",
+        });
+    const deliver = () => provider === "stripe"
+      ? createWebhookResponse(body, { "stripe-signature": signStripeBody(body) }, webhookEnv())
+      : createWebhookResponse(body, signStandardWebhookBody(body), polarWebhookEnv());
+
+    const responses = delivery === "concurrent"
+      ? await Promise.all([deliver(), deliver()])
+      : [await deliver(), await deliver()];
+
+    expect(responses).toEqual([
+      expect.objectContaining({ status: 200, body: expect.objectContaining({ handled: true }) }),
+      expect.objectContaining({ status: 200, body: expect.objectContaining({ handled: true }) }),
+    ]);
+    expect(atomic.allowance()).toBe(25);
+    expect(atomic.applied()).toBe(1);
+    expect(atomic.rpc).toHaveBeenCalledTimes(2);
   });
 
   it("updates entitlement status from later subscription events without trusting the browser", async () => {
@@ -963,14 +1088,39 @@ function createBillingTableMock({ existingRow = null }: { existingRow?: Record<s
     update,
     upsert,
   }));
+  const rpc = vi.fn(async () => ({ data: true, error: null }));
 
   return {
     from,
+    rpc,
     select,
     selectEq,
     maybeSingle,
     update,
     updateEq,
     upsert,
+  };
+}
+
+function createAtomicBillingRpcMock(initialAllowance: number) {
+  const eventKeys = new Set<string>();
+  let scanAllowance = initialAllowance;
+  let appliedEvents = 0;
+  const rpc = vi.fn(async (name: string, args: Record<string, unknown>) => {
+    expect(name).toBe("apply_billing_purchase");
+    const eventKey = `${String(args.p_billing_provider)}:${String(args.p_event_key)}`;
+    if (eventKeys.has(eventKey)) return { data: false, error: null };
+    eventKeys.add(eventKey);
+    await Promise.resolve();
+    scanAllowance = args.p_additive
+      ? scanAllowance + Number(args.p_scan_allowance)
+      : Number(args.p_scan_allowance);
+    appliedEvents += 1;
+    return { data: true, error: null };
+  });
+  return {
+    allowance: () => scanAllowance,
+    applied: () => appliedEvents,
+    rpc,
   };
 }
