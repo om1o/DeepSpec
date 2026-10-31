@@ -7,6 +7,7 @@ const foundationMigrationPath = join(migrationsDir, "20260518000100_deepspec_sec
 const durableDatasetMigrationPath = join(migrationsDir, "20260528000309_durable_dataset_tables.sql");
 const mechanicShopMigrationPath = join(migrationsDir, "20260618000100_mechanic_shop_mode.sql");
 const membershipHardeningMigrationPath = join(migrationsDir, "20261010171030_harden_organization_member_identity.sql");
+const shopJobIdentityMigrationPath = join(migrationsDir, "20261031101500_harden_shop_job_identity.sql");
 const srcPath = join(process.cwd(), "src");
 
 describe("Supabase secure foundation migration", () => {
@@ -105,6 +106,27 @@ describe("Supabase organization membership hardening migration", () => {
     expect(sql).toContain("revoke update on public.organization_members from authenticated");
     expect(sql).toContain("drop policy if exists organization_members_update_self on public.organization_members");
     expect(sql).not.toContain("create policy organization_members_update_self");
+  });
+});
+
+describe("Supabase shop job identity hardening migration", () => {
+  const sql = readFileSync(shopJobIdentityMigrationPath, "utf8");
+
+  it("binds every job scan to a job in the same organization", () => {
+    expect(sql).toContain("constraint shop_jobs_id_org_key unique (id, org_id)");
+    expect(sql).toContain("constraint job_scans_job_org_fk");
+    expect(sql).toContain("foreign key (job_id, org_id)");
+    expect(sql).toContain("references public.shop_jobs (id, org_id)");
+  });
+
+  it("keeps identity columns immutable while allowing workflow updates", () => {
+    expect(sql).toContain("revoke update on public.shop_jobs from authenticated");
+    expect(sql).toContain("revoke update on public.job_scans from authenticated");
+    expect(sql).toContain("grant update (\n  title,");
+    expect(sql).toContain("grant update (\n  review_status,\n  customer_visible_report_json");
+    expect(sql).not.toContain("grant update (\n  org_id,");
+    expect(sql).not.toContain("grant update (\n  job_id,");
+    expect(sql).not.toContain("grant update (\n  user_id,");
   });
 });
 
