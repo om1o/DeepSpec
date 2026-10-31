@@ -299,6 +299,7 @@ async function main() {
       const response = await createIdentifyResponseWithRetry(identify, dataUrl, env, options.rateLimitRetries);
       const providerMs = Date.now() - providerStartedAt;
       const result = response.status === 200 ? response.body.result : null;
+      const modelRun = response.status === 200 ? response.body.modelRun : null;
       const error = response.status === 200 ? null : response.body.error;
       const score = scoreIdentificationResult(result, expectedLabels);
       const totalMs = Date.now() - startedAt;
@@ -318,6 +319,8 @@ async function main() {
         scanCategory: result?.scanCategory ?? null,
         safetyTriage: result?.safetyTriage ?? null,
         isSafetyCritical: result?.isSafetyCritical ?? null,
+        provider: modelRun?.provider ?? null,
+        model: modelRun?.model ?? null,
         matchedLabels: score.matchedLabels,
         failureReasons: providerAvailabilityFailure ? [error.code] : score.failureReasons,
         invalidResponse: error?.code === "invalid_response",
@@ -388,6 +391,7 @@ async function main() {
       providerTimeoutMs: env.DEEPSPEC_IDENTIFY_PROVIDER_TIMEOUT_MS || "25000",
       hfProviderTimeoutMs: env.DEEPSPEC_HF_IDENTIFY_TIMEOUT_MS || "45000",
       rateLimitRetries: options.rateLimitRetries,
+      evaluatedRoutes: buildEvaluatedRoutes(results, env),
     },
     datasetRoot: options.datasetRoot,
     datasetIndex: options.datasetIndex,
@@ -406,6 +410,56 @@ async function main() {
   if (exitCode !== 0) {
     console.error("Identify eval did not meet the release gate. Inspect the summary before shipping.");
     process.exitCode = exitCode;
+  }
+}
+
+export function buildEvaluatedRoutes(results, env) {
+  const routes = new Map();
+
+  for (const result of results) {
+    if (!result?.provider || !result?.model) continue;
+    const endpointRoute = getEvalEndpointRoute(result.provider, env);
+    if (!endpointRoute) continue;
+
+    const key = `${result.provider}\n${result.model}\n${endpointRoute}`;
+    const route = routes.get(key) ?? {
+      provider: result.provider,
+      model: result.model,
+      endpointRoute,
+      attemptedCount: 0,
+      passCount: 0,
+      failureCount: 0,
+    };
+    route.attemptedCount += 1;
+    if (result.status === 200 && Array.isArray(result.failureReasons) && result.failureReasons.length === 0) {
+      route.passCount += 1;
+    } else {
+      route.failureCount += 1;
+    }
+    routes.set(key, route);
+  }
+
+  return [...routes.values()];
+}
+
+function getEvalEndpointRoute(provider, env) {
+  if (provider === "gemini") {
+    return "https://generativelanguage.googleapis.com/v1beta/models/:model:generateContent";
+  }
+
+  const raw = provider === "groq"
+    ? env.GROQ_IDENTIFY_ENDPOINT_URL?.trim() || "https://api.groq.com/openai/v1/chat/completions"
+    : provider === "huggingface"
+      ? env.HF_IDENTIFY_ENDPOINT_URL?.trim() || "https://router.huggingface.co/v1/chat/completions"
+      : "";
+  if (!raw) return null;
+
+  const endpoint = raw.endsWith("/chat/completions") ? raw : `${raw.replace(/\/$/, "")}/v1/chat/completions`;
+  try {
+    const url = new URL(endpoint);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return null;
   }
 }
 

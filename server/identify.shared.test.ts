@@ -133,6 +133,41 @@ describe("createIdentifyResponse", () => {
     expect(fetchSpy.mock.calls[0][0]).toBe("https://openrouter.ai/api/v1/chat/completions");
   });
 
+  it.each([
+    ["HTTP", "http://router.huggingface.co/v1/chat/completions"],
+    ["a lookalike host", "https://router.huggingface.co.attacker.example/v1/chat/completions"],
+    ["an unapproved host", "https://attacker.example/v1/chat/completions"],
+    ["a custom port", "https://router.huggingface.co:8443/v1/chat/completions"],
+  ])("does not send an HF bearer token or image to %s", async (_label, endpoint) => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    await expect(createIdentifyResponse({ imageBase64 }, {
+      DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true",
+      HF_TOKEN: "hf-test",
+      HF_IDENTIFY_ENDPOINT_URL: endpoint,
+    })).resolves.toMatchObject({
+      status: 500,
+      body: { error: { code: "not_configured", message: expect.stringContaining("supported provider host") } },
+    });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not send a Groq bearer token or image outside the exact HTTPS Groq host", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    await expect(createIdentifyResponse({ imageBase64 }, {
+      DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK: "true",
+      GROQ_API_KEY: "groq-test",
+      GROQ_IDENTIFY_ENDPOINT_URL: "https://api.groq.com.attacker.example/openai/v1/chat/completions",
+    })).resolves.toMatchObject({
+      status: 500,
+      body: { error: { code: "not_configured", message: expect.stringContaining("supported provider host") } },
+    });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("selects a Hugging Face inference provider through the routed model suffix", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
     await createIdentifyResponse({ imageBase64 }, {

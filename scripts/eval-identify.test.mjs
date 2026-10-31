@@ -7,6 +7,7 @@ import {
   PUBLIC_SAMPLE_SIZE,
   RELEASE_SAMPLE_IMAGES,
   buildPublicSampleImages,
+  buildEvaluatedRoutes,
   createIdentifyResponseWithRetry,
   buildEvalViteServerOptions,
   buildReviewLookup,
@@ -285,6 +286,22 @@ describe("identify eval scoring", () => {
       provider: "hf",
     });
     expect(() => parseArgs(["--provider", "bad"])).toThrow(/provider must be auto, gemini, or hf/);
+  });
+
+  it("records the exact evaluated provider, model, and endpoint route", () => {
+    expect(buildEvaluatedRoutes([
+      { provider: "huggingface", model: "openai/gpt-4.1-mini", status: 200, failureReasons: [] },
+      { provider: "huggingface", model: "openai/gpt-4.1-mini", status: 200, failureReasons: ["wrong_result"] },
+    ], {
+      HF_IDENTIFY_ENDPOINT_URL: "https://openrouter.ai/api/v1/chat/completions",
+    })).toEqual([{
+      provider: "huggingface",
+      model: "openai/gpt-4.1-mini",
+      endpointRoute: "https://openrouter.ai/api/v1/chat/completions",
+      attemptedCount: 2,
+      passCount: 1,
+      failureCount: 1,
+    }]);
   });
 
   it("fails the release gate when provider availability or scoring blocks the eval", () => {

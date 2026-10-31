@@ -7,6 +7,8 @@ const DEFAULT_IDENTIFY_SUMMARY = ".deepspec-eval/identify-summary.json";
 const DEFAULT_MARKDOWN_PATH = "artifacts/release-gates/identify-provider-evidence.md";
 const DEFAULT_JSON_PATH = "artifacts/release-gates/identify-provider-evidence.json";
 const DEFAULT_MIN_SAMPLE_SIZE = 50;
+const DEFAULT_MAX_EVAL_AGE_MS = 24 * 60 * 60 * 1000;
+const MAX_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 loadLocalEnv(".env.local");
 loadLocalEnv(".env");
@@ -17,7 +19,11 @@ export function buildIdentifyProviderEvidence({
   identifySummary = null,
   options = {},
 } = {}) {
-  const readiness = classifyIdentifyProviderReadiness({ env, identifySummary, options });
+  const readiness = classifyIdentifyProviderReadiness({
+    env,
+    identifySummary,
+    options: { ...options, now: options.now ?? generatedAt },
+  });
   const evidence = {
     generatedAt,
     liveIdentifyReady: readiness.ok,
@@ -36,6 +42,7 @@ export function buildIdentifyProviderEvidence({
 
 export function classifyIdentifyProviderReadiness({ env = {}, identifySummary = null, options = {} } = {}) {
   const minSampleSize = Number(options.minSampleSize ?? DEFAULT_MIN_SAMPLE_SIZE);
+  const maxEvalAgeMs = Number(options.maxEvalAgeMs ?? DEFAULT_MAX_EVAL_AGE_MS);
   const providers = buildProviderStatuses(env);
   const release = classifyIdentifyEvalSummary(identifySummary, { minSampleSize });
   const checks = [];
@@ -44,6 +51,9 @@ export function classifyIdentifyProviderReadiness({ env = {}, identifySummary = 
 
   const productionCloudRoutes = providers.filter((provider) => provider.productionRoute === true);
   const readyProductionRoutes = productionCloudRoutes.filter((provider) => provider.ready);
+  const activeProductionRoute = ["groq", "gemini", "huggingface"]
+    .map((providerId) => readyProductionRoutes.find((provider) => provider.providerId === providerId))
+    .find(Boolean);
   const readyCloudBackups = providers.filter((provider) => provider.ready && provider.cloudBackup === true);
 
   if (readyProductionRoutes.length > 0) {
@@ -55,6 +65,10 @@ export function classifyIdentifyProviderReadiness({ env = {}, identifySummary = 
   for (const provider of providers) {
     if (provider.enabled && provider.requiresToken && !provider.tokenPresent) {
       warnings.push(`${provider.name} is enabled but missing ${provider.tokenNames.join(" or ")}.`);
+    }
+
+    if (provider.enabled && !provider.endpointAllowed) {
+      warnings.push(`${provider.name} endpoint must use HTTPS on an explicitly supported provider host.`);
     }
 
     if (provider.enabled && provider.localOnly) {
@@ -72,8 +86,17 @@ export function classifyIdentifyProviderReadiness({ env = {}, identifySummary = 
     warnings.push("No cloud fallback is ready. A single provider outage can still block paid scans.");
   }
 
-  if (release.ok) {
-    checks.push(`Release eval: ${release.message}`);
+  const evalEvidence = classifyEvalRouteEvidence({
+    activeProductionRoute,
+    identifySummary,
+    maxEvalAgeMs,
+    minSampleSize,
+    now: options.now,
+  });
+  if (release.ok && evalEvidence.ok) {
+    checks.push(`Release eval: ${release.message} ${evalEvidence.message}`);
+  } else if (release.ok) {
+    blockers.push(`Release eval evidence: ${evalEvidence.message}`);
   } else {
     blockers.push(`Release eval: ${release.message}`);
   }
@@ -93,6 +116,7 @@ export function classifyIdentifyProviderReadiness({ env = {}, identifySummary = 
     recommendation,
     release: {
       ...release,
+      evidence: evalEvidence,
       summary: summaryDetails,
     },
     warnings,
@@ -113,9 +137,12 @@ function buildProviderStatuses(env) {
       cloudBackup: false,
       enabled: true,
       endpointOrigin: "https://generativelanguage.googleapis.com",
+      endpointRoute: "https://generativelanguage.googleapis.com/v1beta/models/:model:generateContent",
+      endpointAllowed: true,
       localOnly: false,
       model: env.GEMINI_MODEL?.trim() || "gemini-2.5-flash",
       name: "Gemini",
+      providerId: "gemini",
       productionRoute: true,
       ready: geminiKeyPresent,
       requiresToken: true,
@@ -127,11 +154,14 @@ function buildProviderStatuses(env) {
       cloudBackup: true,
       enabled: groqEnabled,
       endpointOrigin: originFor(env.GROQ_IDENTIFY_ENDPOINT_URL, "https://api.groq.com"),
+      endpointRoute: chatCompletionsRoute(env.GROQ_IDENTIFY_ENDPOINT_URL, "https://api.groq.com/openai/v1/chat/completions"),
+      endpointAllowed: isAllowedProviderEndpoint("groq", env.GROQ_IDENTIFY_ENDPOINT_URL, "https://api.groq.com/openai/v1/chat/completions"),
       localOnly: false,
       model: env.GROQ_IDENTIFY_MODEL?.trim() || "meta-llama/llama-4-scout-17b-16e-instruct",
       name: "Groq",
+      providerId: "groq",
       productionRoute: groqEnabled,
-      ready: groqEnabled && groqTokenPresent,
+      ready: groqEnabled && groqTokenPresent && isAllowedProviderEndpoint("groq", env.GROQ_IDENTIFY_ENDPOINT_URL, "https://api.groq.com/openai/v1/chat/completions"),
       requiresToken: true,
       role: "cloud route",
       tokenNames: ["GROQ_API_KEY"],
@@ -141,11 +171,14 @@ function buildProviderStatuses(env) {
       cloudBackup: true,
       enabled: hfEnabled,
       endpointOrigin: originFor(env.HF_IDENTIFY_ENDPOINT_URL, "https://router.huggingface.co"),
+      endpointRoute: chatCompletionsRoute(env.HF_IDENTIFY_ENDPOINT_URL, "https://router.huggingface.co/v1/chat/completions"),
+      endpointAllowed: isAllowedProviderEndpoint("huggingface", env.HF_IDENTIFY_ENDPOINT_URL, "https://router.huggingface.co/v1/chat/completions"),
       localOnly: false,
       model: env.HF_IDENTIFY_MODEL?.trim() || "Qwen/Qwen2.5-VL-7B-Instruct",
       name: isOpenRouterEndpoint(env.HF_IDENTIFY_ENDPOINT_URL) ? "OpenRouter/HF adapter" : "Hugging Face",
+      providerId: "huggingface",
       productionRoute: hfFallbackEnabled,
-      ready: hfEnabled && hfTokenPresent,
+      ready: hfEnabled && hfTokenPresent && isAllowedProviderEndpoint("huggingface", env.HF_IDENTIFY_ENDPOINT_URL, "https://router.huggingface.co/v1/chat/completions"),
       requiresToken: true,
       role: hfFallbackEnabled && !geminiKeyPresent ? "cloud route" : "cloud fallback",
       tokenNames: ["HF_TOKEN", "HF_API_TOKEN", "HUGGINGFACE_API_KEY"],
@@ -155,9 +188,12 @@ function buildProviderStatuses(env) {
       cloudBackup: false,
       enabled: ollamaEnabled,
       endpointOrigin: originFor(env.OLLAMA_BASE_URL, "http://127.0.0.1:11434"),
+      endpointRoute: originFor(env.OLLAMA_BASE_URL, "http://127.0.0.1:11434"),
+      endpointAllowed: true,
       localOnly: true,
       model: env.OLLAMA_IDENTIFY_MODEL?.trim() || "llava:latest",
       name: "Ollama",
+      providerId: "ollama",
       productionRoute: false,
       ready: ollamaEnabled,
       requiresToken: false,
@@ -166,6 +202,80 @@ function buildProviderStatuses(env) {
       tokenPresent: true,
     },
   ];
+}
+
+function classifyEvalRouteEvidence({ activeProductionRoute, identifySummary, maxEvalAgeMs, minSampleSize, now }) {
+  const generatedAtMs = Date.parse(identifySummary?.generatedAt ?? "");
+  const nowMs = Date.parse(now ?? new Date().toISOString());
+  if (!Number.isFinite(generatedAtMs) || !Number.isFinite(nowMs)) {
+    return { ok: false, message: "The passing eval has no valid generatedAt timestamp." };
+  }
+
+  const ageMs = nowMs - generatedAtMs;
+  if (ageMs < -MAX_FUTURE_CLOCK_SKEW_MS || ageMs > maxEvalAgeMs) {
+    return { ok: false, message: `The passing eval is stale or outside the allowed clock skew (maximum age ${Math.round(maxEvalAgeMs / 3_600_000)} hours).` };
+  }
+
+  if (!activeProductionRoute) {
+    return { ok: false, message: "No active production route is available to match against the eval." };
+  }
+
+  const evaluatedRoutes = Array.isArray(identifySummary?.modelConfig?.evaluatedRoutes)
+    ? identifySummary.modelConfig.evaluatedRoutes
+    : [];
+  const matchingRoute = evaluatedRoutes.find((route) =>
+    route?.provider === activeProductionRoute.providerId
+      && route?.model === activeProductionRoute.model
+      && route?.endpointRoute === activeProductionRoute.endpointRoute,
+  );
+  if (!matchingRoute) {
+    return {
+      ok: false,
+      message: `The passing eval does not match the active ${activeProductionRoute.name} provider, model, and endpoint route.`,
+    };
+  }
+
+  const attemptedCount = Number(matchingRoute.attemptedCount ?? 0);
+  const passCount = Number(matchingRoute.passCount ?? 0);
+  const failureCount = Number(matchingRoute.failureCount ?? 0);
+  if (attemptedCount < minSampleSize || passCount < minSampleSize || failureCount !== 0 || passCount !== attemptedCount) {
+    return {
+      ok: false,
+      message: `The active ${activeProductionRoute.name} route has ${passCount}/${attemptedCount} passing samples and ${failureCount} failures; it requires at least ${minSampleSize} attempts, every attempt passing, and zero failures.`,
+    };
+  }
+
+  return {
+    ok: true,
+    message: `Evidence is fresh and ${passCount}/${attemptedCount} active-route samples pass for ${activeProductionRoute.name} (${activeProductionRoute.model}, ${activeProductionRoute.endpointRoute}).`,
+  };
+}
+
+function chatCompletionsRoute(rawValue, fallback) {
+  const raw = rawValue?.trim() || fallback;
+  const endpoint = raw.endsWith("/chat/completions") ? raw : `${raw.replace(/\/$/, "")}/v1/chat/completions`;
+  try {
+    const url = new URL(endpoint);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return endpoint;
+  }
+}
+
+function isAllowedProviderEndpoint(provider, rawValue, fallback) {
+  const allowedHosts = provider === "groq"
+    ? new Set(["api.groq.com"])
+    : new Set(["openrouter.ai", "router.huggingface.co"]);
+  try {
+    const url = new URL(rawValue?.trim() || fallback);
+    return url.protocol === "https:"
+      && url.port === ""
+      && url.username === ""
+      && url.password === ""
+      && allowedHosts.has(url.hostname);
+  } catch {
+    return false;
+  }
 }
 
 function summarizeIdentifySummary(summary) {
@@ -223,6 +333,11 @@ function renderMarkdownEvidence(evidence) {
     "",
     "## Provider Chain",
     ...evidence.readiness.providers.map(formatProvider),
+    "",
+    "## Credentialed Endpoint Policy",
+    "- Image and bearer-token requests require HTTPS, the default port, no embedded URL credentials, and an exact supported host.",
+    "- Identify hosts: generativelanguage.googleapis.com, api.groq.com, router.huggingface.co, openrouter.ai.",
+    "- OCR host: api-inference.huggingface.co. Subdomains and lookalike suffixes are not accepted.",
     "",
     "## Release Eval Gate",
     `- Status: ${evidence.readiness.release.ok ? "pass" : "blocked"}`,

@@ -79,6 +79,15 @@ const RETRYABLE_PROVIDER_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 const DEFAULT_BACKUP_RATE_LIMIT_RETRIES = 1;
 const DEFAULT_BACKUP_RETRY_BACKOFF_MS = 800;
 
+// Credentialed image requests are restricted to exact, supported provider hosts.
+// Subdomains, lookalike suffixes, custom ports, embedded credentials, and HTTP are rejected.
+const CREDENTIALED_PROVIDER_HOSTS: Record<"gemini" | "groq" | "huggingface" | "huggingface_ocr", ReadonlySet<string>> = {
+  gemini: new Set(["generativelanguage.googleapis.com"]),
+  groq: new Set(["api.groq.com"]),
+  huggingface: new Set(["openrouter.ai", "router.huggingface.co"]),
+  huggingface_ocr: new Set(["api-inference.huggingface.co"]),
+};
+
 const GEMINI_IDENTIFY_PROMPT = [
   "Identify the main visible vehicle part or damage from the photo.",
   `Return only JSON with: partName, confidence, confidenceScore, confidenceRange, confirmationNeed, scanCategory, whatItDoes, visibleObservations, evidence, evidenceRegions, sceneObjects, concerns, candidateMatches, primaryPart, candidateParts, possibleVehicleContexts, measurements, requiredNextEvidence, fitmentConfidence, safetyTriage, isSafetyCritical, nextAction, needsBetterPhoto, sourceLinks.`,
@@ -568,7 +577,7 @@ function logIdentifyAttempt(
 }
 
 type IdentifyBackend = {
-  provider: IdentifyProvider;
+  provider: "groq" | "huggingface";
   label: string;
   token: string;
   model: string;
@@ -645,6 +654,14 @@ async function createBackendIdentifyResponse(
   fallbackReason: string,
 ): Promise<IdentifyResponse> {
   const { provider, label, model } = backend;
+  if (!isAllowedCredentialedProviderEndpoint(provider, backend.endpoint)) {
+    return errorResponse(
+      500,
+      "not_configured",
+      `${label} endpoint must use HTTPS on a supported provider host.`,
+    );
+  }
+
   const startedAt = Date.now();
   const response = await fetchBackendIdentify(backend, parsed, ocr, sourceContext);
 
@@ -763,6 +780,22 @@ function fetchBackendIdentify(
       response_format: { type: "json_object" },
     }),
   }).catch(() => null);
+}
+
+function isAllowedCredentialedProviderEndpoint(
+  provider: "gemini" | "groq" | "huggingface" | "huggingface_ocr",
+  endpoint: string,
+) {
+  try {
+    const url = new URL(endpoint);
+    return url.protocol === "https:"
+      && url.port === ""
+      && url.username === ""
+      && url.password === ""
+      && CREDENTIALED_PROVIDER_HOSTS[provider].has(url.hostname);
+  } catch {
+    return false;
+  }
 }
 
 function isHfIdentifyForced(env: Record<string, string | undefined>) {
@@ -1058,6 +1091,9 @@ function fetchGeminiIdentify(
   signal?: AbortSignal,
 ) {
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  if (!isAllowedCredentialedProviderEndpoint("gemini", endpoint)) {
+    return Promise.resolve(null);
+  }
 
   return fetch(endpoint, {
     method: "POST",
@@ -1110,6 +1146,9 @@ function fetchGeminiRescueIdentify(
   env: Record<string, string | undefined>,
 ) {
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  if (!isAllowedCredentialedProviderEndpoint("gemini", endpoint)) {
+    return Promise.resolve(null);
+  }
 
   return fetch(endpoint, {
     method: "POST",
@@ -3007,6 +3046,9 @@ async function runOcrFallback(
 
   const model = env.HUGGINGFACE_OCR_MODEL || DEFAULT_OCR_MODEL;
   const endpoint = `https://api-inference.huggingface.co/models/${encodeURIComponent(model)}`;
+  if (!isAllowedCredentialedProviderEndpoint("huggingface_ocr", endpoint)) {
+    return null;
+  }
 
   const response = await fetch(endpoint, {
     method: "POST",
