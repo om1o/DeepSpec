@@ -45,8 +45,8 @@ try {
     });
     const page = await context.newPage();
     page.on("pageerror", error => report.pageErrors.push({ width, message: error.message }));
-    await page.goto(base);
-    await page.waitForURL("**/intro/index.html");
+    await page.goto(base, { waitUntil: "domcontentloaded" });
+    await page.waitForFunction(() => window.location.pathname === "/intro/index.html");
     await page.locator("a.header-sign-in").waitFor();
     assert.equal(await page.locator("[data-entry][href='/auth']").count(), 13);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "Intro horizontal overflow");
