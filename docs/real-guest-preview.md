@@ -1,4 +1,10 @@
-# Real app without code sign-in
+# Historical guest preview (superseded)
+
+The October 29 authenticated repair supersedes the instructions below. The normal journey is now intro → `/auth` → authenticated app. The client guest flag, API auth/credit bypass and guest limiter selection are removed; setting the old environment flags no longer enables account-free access. Guest storage remains untouched and is never silently imported into an account. The unused guest quota helper/Edge source remains for provenance; this repair does not deploy or change it.
+
+The following describes PR #124 before the repair, not current setup instructions. See [the hosting audit](REPAIR_HOSTING_AUDIT_2026-10-29.md) for current deployment requirements.
+
+## Prior behavior
 
 The preview opens on the packaged DeepSpec intro. Every entry button opens `/scan`, the existing camera/upload scanner. `/demo` and `/auth` also lead to that scanner in this preview; the former sample application is removed.
 

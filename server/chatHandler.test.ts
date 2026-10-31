@@ -98,23 +98,38 @@ function configureGuestPreview() {
   vi.stubEnv("DEEPSPEC_ENABLE_CHAT", "false");
 }
 
-it("runs live account-free preview chat even when project chat is disabled", async () => {
+it("does not let obsolete guest flags enable disabled chat", async () => {
   configureGuestPreview();
-  vi.mocked(enforceRateLimit).mockResolvedValue({ ok: true });
-  const fetchMock = vi.fn(async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "Inspect the visible marking." }] } }] }), { headers: { "Content-Type": "application/json" } }));
+  const fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
   const res = response();
   await handler({ method: "POST", body: { userMessage: "Which marking should I inspect?" } }, res);
-  expect(enforceRateLimit).toHaveBeenCalledWith("chat", {}, process.env);
+  expect(res.status).toHaveBeenCalledWith(503);
+  expect(res.json).toHaveBeenCalledWith({ error: { code: "feature_disabled", message: "Follow-up chat is unavailable in this beta." } });
+  expect(enforceRateLimit).not.toHaveBeenCalled();
   expect(requireSession).not.toHaveBeenCalled();
-  expect(fetchMock).toHaveBeenCalledOnce();
-  expect(res.status).toHaveBeenCalledWith(200);
-  expect(res.json).toHaveBeenCalledWith({ message: "Inspect the visible marking." });
+  expect(fetchMock).not.toHaveBeenCalled();
   expect(process.env.DEEPSPEC_ENABLE_CHAT).toBe("false");
 });
 
-it.each([429, 503] as const)("fails closed before guest chat provider use when IP quota is unavailable (%i)", async (status) => {
+it("requires a verified session for enabled chat despite obsolete guest flags", async () => {
   configureGuestPreview();
+  vi.stubEnv("DEEPSPEC_ENABLE_CHAT", "true");
+  vi.mocked(enforceRateLimit).mockResolvedValue({ ok: true });
+  vi.mocked(requireSession).mockResolvedValue({ ok: false, status: 401, body: { error: { code: "missing_session", message: "Sign in" } } });
+  const fetchMock = vi.fn();
+  vi.stubGlobal("fetch", fetchMock);
+  const res = response();
+  await handler({ method: "POST", body: { userMessage: "What next?" } }, res);
+  expect(enforceRateLimit).toHaveBeenCalledWith("chat", {}, process.env);
+  expect(requireSession).toHaveBeenCalledWith({}, process.env);
+  expect(res.status).toHaveBeenCalledWith(401);
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it.each([429, 503] as const)("preserves enabled-chat limiter failures despite obsolete guest flags (%i)", async (status) => {
+  configureGuestPreview();
+  vi.stubEnv("DEEPSPEC_ENABLE_CHAT", "true");
   const body = { error: { code: "preview_limited", message: "Wait" } };
   vi.mocked(enforceRateLimit).mockResolvedValue({ ok: false, status, body, retryAfterSeconds: 30 });
   const fetchMock = vi.fn();

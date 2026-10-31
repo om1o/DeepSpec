@@ -457,7 +457,8 @@ describe("cloudSync", () => {
     expect((await syncAnalysisFailuresToCloud(cloudOnly)).ok).toBe(false);
   });
 
-  it("uploads an immutable scan image and inserts the dataset row for the current user", async () => {
+  it.each(["false", "true"])("uploads an immutable scan image for the current user with obsolete guest flag %s", async (flag) => {
+    vi.stubEnv("VITE_DEEPSPEC_GUEST_PREVIEW", flag);
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
     const upload = vi.fn().mockResolvedValue({ error: null });

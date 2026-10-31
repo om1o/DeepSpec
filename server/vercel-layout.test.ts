@@ -27,6 +27,13 @@ describe("Vercel Hobby deployment layout", () => {
     ]);
   });
 
+  it("does not configure an account-free guest build or server runtime", () => {
+    const config = JSON.parse(readFileSync(resolve(process.cwd(), "vercel.json"), "utf8"));
+    expect(config.env?.DEEPSPEC_GUEST_PREVIEW).toBeUndefined();
+    expect(config.build?.env?.DEEPSPEC_GUEST_PREVIEW).toBeUndefined();
+    expect(config.env?.DEEPSPEC_GUEST_QUOTA_URL).toBeUndefined();
+  });
+
   it("keeps only HTTP entry points in api, within the 12-function limit", () => {
     // Vercel discovers files in api as functions, including helpers and tests.
     const files = readdirSync(resolve(process.cwd(), "api"), { recursive: true });

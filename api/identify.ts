@@ -4,7 +4,6 @@ import { createIdentifyResponse, validateIdentifyRequest } from "../server/ident
 import { consumeReservedScanCredit, reserveScanCredit } from "../server/billing.shared.js";
 import { enforceRateLimit } from "../server/rateLimit.shared.js";
 import { requireSession } from "../server/requireSession.shared.js";
-import { isGuestPreviewRequest } from "../server/guestPreview.shared.js";
 
 type VercelRequest = {
   headers?: Record<string, string | string[] | undefined>;
@@ -40,13 +39,10 @@ export default async function handler(request: VercelRequest, response: VercelRe
     return;
   }
 
-  const guestPreview = isGuestPreviewRequest(headers, process.env);
-  if (!guestPreview) {
-    const session = await requireSession(headers, process.env);
-    if (session.ok === false) {
-      response.status(session.status).json(session.body);
-      return;
-    }
+  const session = await requireSession(headers, process.env);
+  if (session.ok === false) {
+    response.status(session.status).json(session.body);
+    return;
   }
 
   const invalid = validateIdentifyRequest(request.body, process.env);
@@ -54,13 +50,13 @@ export default async function handler(request: VercelRequest, response: VercelRe
     response.status(invalid.status).json(invalid.body);
     return;
   }
-  const reservation = guestPreview ? undefined : await reserveScanCredit(headers, process.env);
-  if (reservation?.ok === false) {
+  const reservation = await reserveScanCredit(headers, process.env);
+  if (reservation.ok === false) {
     response.status(reservation.error.status).json(reservation.error.body);
     return;
   }
 
   const result = await createIdentifyResponse(request.body, process.env);
-  if (reservation) await consumeReservedScanCredit(reservation, process.env, result.status === 200);
+  await consumeReservedScanCredit(reservation, process.env, result.status === 200);
   response.status(result.status).json(result.body);
 }

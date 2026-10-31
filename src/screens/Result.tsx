@@ -2,7 +2,6 @@ import { createAnalysisAttemptId } from "../lib/analysisAttempt";
 import { prepareRetryFrame } from "../lib/retryFrame";
 import { applyShopFitmentContext } from "../lib/shopFitmentContext";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { isGuestPreview } from "../lib/guestPreview";
 import { BrandLockup } from "../components/BrandLockup";
 import { useEffect, useRef, useState } from "react";
 import { AIServiceError, getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
@@ -313,7 +312,7 @@ export default function Result() {
             ...(pendingCorrectionRef.current !== undefined ? { correction: pendingCorrectionRef.current } : {}),
           })} /> : null}
           {inspectionLookup ? <ReportActions lookup={inspectionLookup} /> : null}
-          {inspectionLookup && !isGuestPreview() ? <TrainingConsentPanel key={`consent:${inspectionLookup.id}`} scanId={inspectionLookup.id} /> : null}
+          {inspectionLookup ? <TrainingConsentPanel key={`consent:${inspectionLookup.id}`} scanId={inspectionLookup.id} /> : null}
           {datasetSourceUrls.length > 0 ? <SourceFinePrint urls={datasetSourceUrls} /> : null}
           <Link
             className="block rounded-xl border border-[var(--ds-border)] p-4 text-center text-sm font-bold text-[var(--ds-fg-1)]"

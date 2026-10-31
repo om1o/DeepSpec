@@ -11,10 +11,10 @@ afterEach(async () => {
 });
 
 describe("findMissingPublicTargets", () => {
-  it("resolves the real scanner route to the app entrypoint without exempting unknown assets", async () => {
+  it("resolves login and scanner routes to the app entrypoint without exempting unknown assets", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "deepspec-public-routes-"));
     temporaryDirectories.push(root);
-    await writeFile(path.join(root, "index.html"), '<a href="/scan">Open scanner</a><img src="/scan/missing.webp"><a href="/not-a-route">Missing</a>');
+    await writeFile(path.join(root, "index.html"), '<a href="/auth">Sign in</a><a href="/scan">Open scanner</a><img src="/scan/missing.webp"><a href="/not-a-route">Missing</a>');
 
     await expect(findMissingPublicTargets(root)).resolves.toEqual([
       { source: "index.html", reference: "/not-a-route", target: "not-a-route" },

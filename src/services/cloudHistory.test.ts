@@ -5,6 +5,8 @@ type SelectResult = { data: unknown; error: { message?: string } | null };
 
 const mocks = vi.hoisted(() => ({
   select: vi.fn<(columns: string) => SelectResult>(),
+  eq: vi.fn(),
+  limit: vi.fn(),
 }));
 
 vi.mock("./auth", () => ({
@@ -13,7 +15,7 @@ vi.mock("./auth", () => ({
     auth: { getUser: async () => ({ data: { user: { id: "user-1" } }, error: null }) },
     from: () => ({
       select: (columns: string) => ({
-        eq: () => ({ order: () => ({ limit: async () => mocks.select(columns) }) }),
+        eq: (...args: unknown[]) => { mocks.eq(...args); return { order: () => ({ limit: async (limit: number) => { mocks.limit(limit); return mocks.select(columns); } }) }; },
       }),
     }),
     storage: { from: () => ({ createSignedUrls: async () => ({ data: [], error: null }) }) },
@@ -44,6 +46,20 @@ describe("readCloudLookups", () => {
   beforeEach(() => {
     setActiveAccount("user-1");
     mocks.select.mockReset();
+    mocks.eq.mockReset();
+    mocks.limit.mockReset();
+  });
+
+  it("reads the verified account history with its owner filter and limit despite an obsolete preview flag", async () => {
+    vi.stubEnv("VITE_DEEPSPEC_GUEST_PREVIEW", "true");
+    mocks.select.mockReturnValue({ data: [shopRow], error: null });
+    try {
+      const { readCloudLookups } = await import("./cloudHistory");
+      const result = await readCloudLookups(12);
+      expect(result.ok && result.value.map(({ id }) => id)).toEqual(["scan-1"]);
+      expect(mocks.eq).toHaveBeenCalledWith("user_id", "user-1");
+      expect(mocks.limit).toHaveBeenCalledWith(12);
+    } finally { vi.unstubAllEnvs(); }
   });
 
   it("loads the cloud revision with the snapshot, including through optional-column fallback", async () => {

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 const SITE_ORIGIN = "https://deepspec.app";
 const DEFAULT_DIST_DIR = "dist";
 // These public links are served by the app entrypoint, rather than asset files.
-const APP_ROUTES = new Set(["/scan"]);
+const APP_ROUTES = new Set(["/auth", "/scan"]);
 
 export async function findMissingPublicTargets(distDir = DEFAULT_DIST_DIR) {
   const root = path.resolve(distDir);

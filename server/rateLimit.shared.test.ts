@@ -119,33 +119,23 @@ describe("enforceRateLimit", () => {
 
   const preview = { NODE_ENV: "production", VERCEL_ENV: "preview", DEEPSPEC_GUEST_PREVIEW: "true", DEEPSPEC_GUEST_QUOTA_URL: "https://project.supabase.co/functions/v1/deepspec-guest-quota" };
 
-  it("uses the consume-only Edge quota for explicit account-free preview requests", async () => {
-    const fetchMock = vi.fn(async () => Response.json({ allowed: true }));
+  it.each(["identify", "chat"] as const)("keeps the original %s limits despite obsolete guest flags", async (scope) => {
+    const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    await expect(enforceRateLimit("identify", HEADERS, preview)).resolves.toEqual({ ok: true });
-    expect(supabaseMock.createClient).not.toHaveBeenCalled();
-    const options = (fetchMock.mock.calls[0] as unknown as [unknown, RequestInit])[1];
-    expect(JSON.parse(String(options.body))).toMatchObject({ scope: "identify" });
-    expect(String(options.body)).not.toContain("203.0.113.9");
-  });
-
-  it("does not enter the guest quota path for production, disabled flags or supplied auth", async () => {
-    const fetchMock = vi.fn(); vi.stubGlobal("fetch", fetchMock);
     const rpc = mockRpc(async () => ({ data: true, error: null }));
-    const configured = { ...ENV, ...preview };
-    await expect(enforceRateLimit("identify", HEADERS, { ...configured, VERCEL_ENV: "production" })).resolves.toEqual({ ok: true });
-    await expect(enforceRateLimit("identify", HEADERS, { ...configured, DEEPSPEC_GUEST_PREVIEW: "false" })).resolves.toEqual({ ok: true });
-    await expect(enforceRateLimit("identify", { ...HEADERS, authorization: "Bearer real-session" }, configured)).resolves.toEqual({ ok: true });
-    expect(rpc).toHaveBeenCalledTimes(6);
+    await expect(enforceRateLimit(scope, HEADERS, { ...ENV, ...preview })).resolves.toEqual({ ok: true });
+    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(rpc).toHaveBeenCalledWith("check_rate_limit", { p_key: `${scope}:min:203.0.113.9`, p_max: scope === "identify" ? 15 : 30, p_window_seconds: 60 });
+    expect(rpc).toHaveBeenCalledWith("check_rate_limit", { p_key: `${scope}:day:203.0.113.9`, p_max: scope === "identify" ? 150 : 300, p_window_seconds: 86_400 });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("fails closed for missing preview IP, missing quota URL and quota outages", async () => {
-    const fetchMock = vi.fn().mockRejectedValue(new Error("quota offline")); vi.stubGlobal("fetch", fetchMock);
-    await expect(enforceRateLimit("identify", {}, preview)).resolves.toMatchObject(unavailable);
-    await expect(enforceRateLimit("identify", HEADERS, { ...preview, DEEPSPEC_GUEST_QUOTA_URL: undefined })).resolves.toMatchObject(unavailable);
+  it("fails closed without the original store even if a guest quota URL is configured", async () => {
+    const fetchMock = vi.fn(async () => Response.json({ allowed: true }));
+    vi.stubGlobal("fetch", fetchMock);
     await expect(enforceRateLimit("identify", HEADERS, preview)).resolves.toMatchObject(unavailable);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await expect(enforceRateLimit("chat", {}, { ...ENV, ...preview })).resolves.toMatchObject(unavailable);
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(supabaseMock.createClient).not.toHaveBeenCalled();
   });
 });

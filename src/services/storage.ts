@@ -4,7 +4,6 @@ import type { PartInspectionDraft } from "../types";
 import { normalizePartInspection, withLatestInspection } from "../lib/partInspection";
 import { accountStorageKey, getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import { inspectionDraftKey } from "./inspectionDraft";
-import { isGuestPreview } from "../lib/guestPreview";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
 export const MAX_SAVED_LOOKUPS = 50;
@@ -160,7 +159,6 @@ export type LegacyScanRecovery = {
 };
 
 export function detectLegacyScans(): StorageResult<LegacyScanRecovery | null> {
-  if (isGuestPreview()) return { ok: true, value: null };
   try {
     const raw = localStorage.getItem(LOOKUPS_STORAGE_KEY);
     if (raw === null) return { ok: true, value: null };
@@ -195,7 +193,6 @@ export function detectLegacyScans(): StorageResult<LegacyScanRecovery | null> {
 
 export function importLegacyScans(recovery: LegacyScanRecovery, ownerConfirmed: boolean): StorageResult<Lookup[]> {
   const failed = (message: string): StorageResult<Lookup[]> => ({ ok: false, value: [], message });
-  if (isGuestPreview()) return failed("Older device records are not available in the guest preview.");
   if (!ownerConfirmed || !isAccountScopeCurrent(recovery.scope)) {
     return failed("Confirm ownership in the same signed-in account before importing older scans.");
   }

@@ -3,7 +3,6 @@
 import { createChatResponse, isChatEnabled } from "../server/chat.shared.js";
 import { enforceRateLimit } from "../server/rateLimit.shared.js";
 import { requireSession } from "../server/requireSession.shared.js";
-import { isGuestPreviewRequest } from "../server/guestPreview.shared.js";
 
 type VercelRequest = {
   headers?: Record<string, string | string[] | undefined>;
@@ -30,14 +29,13 @@ export default async function handler(request: VercelRequest, response: VercelRe
     return;
   }
 
-  const headers = request.headers ?? {};
-  const guestPreview = isGuestPreviewRequest(headers, process.env);
-  const chatEnv = guestPreview ? { ...process.env, DEEPSPEC_ENABLE_CHAT: "true" } : process.env;
-  if (!isChatEnabled(chatEnv)) {
-    const result = await createChatResponse(undefined, chatEnv);
+  if (!isChatEnabled(process.env)) {
+    const result = await createChatResponse(undefined, process.env);
     response.status(result.status).json(result.body);
     return;
   }
+
+  const headers = request.headers ?? {};
 
   const rateLimit = await enforceRateLimit("chat", headers, process.env);
   if (rateLimit.ok === false) {
@@ -46,14 +44,12 @@ export default async function handler(request: VercelRequest, response: VercelRe
     return;
   }
 
-  if (!guestPreview) {
-    const session = await requireSession(headers, process.env);
-    if (session.ok === false) {
-      response.status(session.status).json(session.body);
-      return;
-    }
+  const session = await requireSession(headers, process.env);
+  if (session.ok === false) {
+    response.status(session.status).json(session.body);
+    return;
   }
 
-  const result = await createChatResponse(request.body, chatEnv);
+  const result = await createChatResponse(request.body, process.env);
   response.status(result.status).json(result.body);
 }

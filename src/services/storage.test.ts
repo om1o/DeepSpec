@@ -1,4 +1,4 @@
-import { accountStorageKey, setActiveAccount, setActiveGuestPreview } from "../lib/accountScope";
+import { accountStorageKey, setActiveAccount } from "../lib/accountScope";
 import {
   detectLegacyScans,
   importLegacyScans,
@@ -107,32 +107,24 @@ describe("storage", () => {
     vi.restoreAllMocks();
   });
 
-  it("uses the real scan/chat storage for guests without exposing account or unassigned records", () => {
+  it("reopens account scans with the obsolete guest flag without importing or changing guest records", () => {
+    vi.stubEnv("VITE_DEEPSPEC_GUEST_PREVIEW", "true");
+    const guestKey = "deep-spec:guest-preview:retired-browser-id:deep-spec:lookups";
+    const guestBytes = JSON.stringify([{ ...scanState, id: "guest-record" }]);
+    localStorage.setItem(guestKey, guestBytes);
     setActiveAccount("private-owner");
     const ownerScan = createLookup(scanState).value;
-    const ownerKey = accountStorageKey(LOOKUPS_STORAGE_KEY);
-    const ownerBytes = localStorage.getItem(ownerKey);
-    const legacyBytes = JSON.stringify([{ id: "unknown-owner" }]);
-    localStorage.setItem(LOOKUPS_STORAGE_KEY, legacyBytes);
-    localStorage.setItem("sb-existing-auth-token", "existing session");
-    vi.stubEnv("VITE_DEEPSPEC_GUEST_PREVIEW", "true");
-    setActiveGuestPreview();
-    expect(readLookups()).toEqual({ ok: true, value: [] });
-    expect(getLookup(ownerScan.id)).toBeNull();
-    expect(detectLegacyScans()).toEqual({ ok: true, value: null });
-    const guestScan = createLookup(scanState);
-    expect(guestScan.ok).toBe(true);
-    expect(appendChatMessages(guestScan.value.id, [createChatMessage("assistant", "Live answer kept for this guest")]).ok).toBe(true);
+    expect(appendChatMessages(ownerScan.id, [createChatMessage("assistant", "Account reply\n\nWith paragraphs")]).ok).toBe(true);
     setActiveAccount(null);
-    setActiveGuestPreview();
-    expect(getLookup(guestScan.value.id)?.chatHistory[0].content).toBe("Live answer kept for this guest");
-    expect(localStorage.getItem(ownerKey)).toBe(ownerBytes);
-    expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBe(legacyBytes);
-    expect(localStorage.getItem("sb-existing-auth-token")).toBe("existing session");
-    vi.stubEnv("VITE_DEEPSPEC_GUEST_PREVIEW", "false");
+    expect(getLookup(ownerScan.id)).toBeNull();
+    expect(createLookup(scanState).ok).toBe(false);
+    setActiveAccount("other-owner");
+    expect(getLookup(ownerScan.id)).toBeNull();
+    expect(getLookup("guest-record")).toBeNull();
     setActiveAccount("private-owner");
-    expect(getLookup(guestScan.value.id)).toBeNull();
-    expect(getLookup(ownerScan.id)).not.toBeNull();
+    expect(getLookup(ownerScan.id)?.chatHistory[0].content).toBe("Account reply\n\nWith paragraphs");
+    expect(getLookup("guest-record")).toBeNull();
+    expect(localStorage.getItem(guestKey)).toBe(guestBytes);
   });
 
   it("isolates scans and chat while preserving another account and unassigned records", () => {
@@ -585,7 +577,8 @@ describe("storage", () => {
     }
   });
 
-  it("refuses a 51st scan without discarding existing evidence, and permits freeing space", () => {
+  it.each(["false", "true"])("preserves the 50-scan limit without discarding evidence with obsolete guest flag %s", (flag) => {
+    vi.stubEnv("VITE_DEEPSPEC_GUEST_PREVIEW", flag);
     const first = createLookup(scanState).value;
     updateLookup(first.id, { notes: "Unsynced bench notes" });
     appendChatMessages(first.id, [createChatMessage("user", "Keep the first scan's chat")]);
@@ -739,7 +732,7 @@ describe("storage", () => {
 
 describe("owner-confirmed legacy scan recovery", () => {
   beforeEach(() => { vi.restoreAllMocks(); localStorage.clear(); setActiveAccount("legacy-owner"); });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
   function seedLegacy() {
     const record = createLookup(scanState).value;
@@ -766,7 +759,8 @@ describe("owner-confirmed legacy scan recovery", () => {
     expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBe(raw);
   });
 
-  it("imports human work and separate chat, preserves existing scans and legacy bytes, and never syncs account associations", () => {
+  it.each(["false", "true"])("imports owner-confirmed legacy scans without changing source bytes with obsolete guest flag %s", (flag) => {
+    vi.stubEnv("VITE_DEEPSPEC_GUEST_PREVIEW", flag);
     const { record, raw } = seedLegacy();
     const chat = JSON.stringify([createChatMessage("user", "My old question")]);
     localStorage.setItem(`deep-spec:chat:${record.id}`, chat);

@@ -1,6 +1,5 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { isGuestPreview } from "../lib/guestPreview";
 import { BrandLockup } from "../components/BrandLockup";
 import Button from "../components/ui/Button";
 import ScanThumb from "../components/ui/ScanThumb";
@@ -147,16 +146,16 @@ export default function History() {
             <p className="mt-2 text-sm leading-6 text-[var(--ds-fg-3)]">A place for every capture, correction, and inspection.</p>
           </div>
           <nav className="ds-history-nav" aria-label="Saved scans navigation">
-            {isGuestPreview() ? <a href="/" className="ds-workbench-back">Intro</a> : <button
+            <button
               type="button"
               onClick={handleSignOut}
               disabled={isSigningOut}
               className="rounded-full bg-[var(--ds-elevated)] px-4 py-2 text-sm font-bold text-[var(--ds-fg-2)] shadow-sm ring-1 ring-[var(--ds-border)] disabled:opacity-60"
             >
               {isSigningOut ? "Signing out..." : "Sign out"}
-            </button>}
+            </button>
             <Link to="/early-access" className="rounded-full bg-[var(--ds-elevated)] px-4 py-2 text-sm font-bold text-[var(--ds-fg-2)] shadow-sm ring-1 ring-[var(--ds-border)]">
-              {isGuestPreview() ? "Feedback" : "Join"}
+              Join
             </Link>
             <Link to="/shop" className="rounded-full bg-[var(--ds-elevated)] px-4 py-2 text-sm font-bold text-[var(--ds-fg-2)] shadow-sm ring-1 ring-[var(--ds-border)]">
               Shop

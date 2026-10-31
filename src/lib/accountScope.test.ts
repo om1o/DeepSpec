@@ -1,4 +1,4 @@
-import { accountStorageKey, getAccountScope, hasUnassignedDeviceRecords, isAccountScopeCurrent, isCurrentAccountRouteState, setActiveAccount, setActiveGuestPreview, withAccountRouteState } from "./accountScope";
+import { accountStorageKey, getAccountScope, hasUnassignedDeviceRecords, isAccountScopeCurrent, isCurrentAccountRouteState, setActiveAccount, withAccountRouteState } from "./accountScope";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -41,37 +41,16 @@ it("rejects old router payloads and untagged legacy payloads", () => {
   expect(isCurrentAccountRouteState({ savedLookup: { id: "a-scan" } })).toBe(false);
 });
 
-it("never enables a guest workspace in a normal build", () => {
-  vi.stubEnv("VITE_DEEPSPEC_GUEST_PREVIEW", "false");
-  setActiveAccount(null);
-  expect(setActiveGuestPreview()).toBe(false);
-  expect(getAccountScope()).toMatchObject({ kind: "none", userId: null });
-  expect(() => accountStorageKey("deep-spec:lookups")).toThrow(/Sign in/);
-});
-
-it("gives guests a separate local identity and invalidates work across guest/account switches", () => {
+it("ignores obsolete preview flags and preserves guest namespaces without adopting them", () => {
   vi.stubEnv("VITE_DEEPSPEC_GUEST_PREVIEW", "true");
+  const key = "deep-spec:guest-preview:retired-browser-id:deep-spec:lookups";
+  const guestBytes = "[{guest records remain unchanged}]";
+  localStorage.setItem(key, guestBytes);
+  setActiveAccount(null);
+  expect(() => accountStorageKey("deep-spec:lookups")).toThrow(/Sign in/);
+  expect(isCurrentAccountRouteState({ accountId: null, guestId: "retired-browser-id" })).toBe(false);
   setActiveAccount("owner");
-  const owner = getAccountScope();
-  const ownerKey = accountStorageKey("deep-spec:lookups");
-  const ownerRoute = withAccountRouteState({ savedLookup: { id: "owner-scan" } });
-  localStorage.setItem(ownerKey, "private scans");
-  expect(setActiveGuestPreview()).toBe(true);
-  const guest = getAccountScope();
-  expect(guest).toMatchObject({ kind: "guest", userId: null, guestId: expect.any(String) });
-  expect(accountStorageKey("deep-spec:lookups")).toMatch(/^deep-spec:guest-preview:/);
-  expect(accountStorageKey("deep-spec:lookups")).not.toBe(ownerKey);
+  expect(accountStorageKey("deep-spec:lookups")).toBe("deep-spec:account:owner:deep-spec:lookups");
   expect(localStorage.getItem(accountStorageKey("deep-spec:lookups"))).toBeNull();
-  expect(localStorage.getItem(ownerKey)).toBe("private scans");
-  expect(isAccountScopeCurrent(owner)).toBe(false);
-  expect(isCurrentAccountRouteState(ownerRoute)).toBe(false);
-  const guestRoute = withAccountRouteState({ savedLookup: { id: "guest-scan" } });
-  expect(isCurrentAccountRouteState(guestRoute)).toBe(true);
-  expect(isCurrentAccountRouteState({ accountId: null })).toBe(false);
-  setActiveAccount("owner");
-  expect(isAccountScopeCurrent(guest)).toBe(false);
-  expect(isCurrentAccountRouteState(guestRoute)).toBe(false);
-  setActiveGuestPreview();
-  expect(isAccountScopeCurrent(guest)).toBe(false);
-  expect(isAccountScopeCurrent(getAccountScope())).toBe(true);
+  expect(localStorage.getItem(key)).toBe(guestBytes);
 });

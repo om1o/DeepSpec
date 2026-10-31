@@ -124,19 +124,30 @@ describe("identify HTTP credit gate", () => {
     vi.stubEnv("NODE_ENV", "production");
   }
 
-  it("runs the real provider path for an account-free preview after IP limits pass", async () => {
+  it("rejects unauthenticated identification even with the obsolete guest preview flags", async () => {
     configureGuestPreview();
+    vi.mocked(requireSession).mockResolvedValueOnce({ ok: false, status: 401, body: { error: { code: "missing_session", message: "Sign in" } } });
     const res = response();
     await handler({ method: "POST", body }, res);
     expect(enforceRateLimit).toHaveBeenCalledWith("identify", {}, process.env);
-    expect(requireSession).not.toHaveBeenCalled();
+    expect(requireSession).toHaveBeenCalledWith({}, process.env);
     expect(mocks.createClient).not.toHaveBeenCalled();
-    expect(mocks.identify).toHaveBeenCalledWith(body, process.env);
-    expect(res.status).toHaveBeenCalledWith(200);
-    expect(res.json).toHaveBeenCalledWith({ result: {} });
+    expect(mocks.identify).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(401);
   });
 
-  it.each([429, 503] as const)("keeps guest preview closed when its IP quota cannot pass (%i)", async (status) => {
+  it("does not let obsolete guest flags bypass exhausted account credits", async () => {
+    configureGuestPreview();
+    const rpc = client({ ok: false });
+    const res = response();
+    await handler({ method: "POST", body, headers: { authorization: "Bearer token" } }, res);
+    expect(requireSession).toHaveBeenCalledOnce();
+    expect(rpc).toHaveBeenCalledWith("reserve_scan_credit", { p_user_id: "verified-user", p_free_eligible: true });
+    expect(res.status).toHaveBeenCalledWith(402);
+    expect(mocks.identify).not.toHaveBeenCalled();
+  });
+
+  it.each([429, 503] as const)("preserves limiter failures despite obsolete guest flags (%i)", async (status) => {
     configureGuestPreview();
     const failure = { error: { code: status === 429 ? "rate_limited" : "rate_limit_unavailable", message: "Wait" } };
     vi.mocked(enforceRateLimit).mockResolvedValueOnce({ ok: false, status, retryAfterSeconds: 60, body: failure });
@@ -149,7 +160,7 @@ describe("identify HTTP credit gate", () => {
     expect(requireSession).not.toHaveBeenCalled();
   });
 
-  it("still validates preview uploads before invoking a provider", async () => {
+  it("still validates uploads with obsolete guest flags before invoking a provider", async () => {
     configureGuestPreview();
     const res = response();
     await handler({ method: "POST", body: { imageBase64: "https://example.com/sample.jpg" } }, res);

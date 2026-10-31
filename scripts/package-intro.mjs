@@ -11,6 +11,7 @@ const fingerprint = (data) => createHash("sha256").update(data).digest("hex").sl
 const prefixAssets = (text) => text
   .replaceAll('"/assets/', '"/intro/assets/')
   .replaceAll("'/assets/", "'/intro/assets/")
+  .replace(/href="https:\/\/[^"\s]+\/auth"/g, 'href="/auth"')
   .replace(/url\((['"]?)\/assets\//g, "url($1/intro/assets/");
 
 await mkdir(target, { recursive: true });
@@ -20,30 +21,14 @@ let html = await readFile(path.join(source, "index.html"), "utf8");
 html = prefixAssets(html)
   .replace(/^\s*<link rel="canonical"[^>]*>\n/gm, "")
   .replace(/https:\/\/[^"\s]+\.chatgpt\.site\/assets\//g, "/intro/assets/")
-  .replaceAll('href="/site.webmanifest"', 'href="/intro/site.webmanifest"')
-  .replace(/^\s*<a class="hero-demo-link"[^\n]+<\/a>\n/gm, '        <p class="hero-demo-link">Use your camera or upload a photo.</p>\n')
-  .replace(/href="https:\/\/[^"\s]+\/(?:auth|demo|scan)"/g, 'href="/scan"')
-  .replaceAll("data-auth", "data-entry")
-  .replaceAll(">Sign in to DeepSpec <", ">Open DeepSpec <")
-  .replaceAll(">Sign in <", ">Open app <")
-  .replaceAll("Sign in, open the scanner, and start with what you see.", "Open the scanner, and start with what you see.");
+  .replaceAll('href="/site.webmanifest"', 'href="/intro/site.webmanifest"');
 
 const resources = [
   ["styles", "css"], ["intro", "js"], ["signin", "css"],
   ["signin", "js"], ["micro", "css"], ["micro", "js"],
 ];
 for (const [stem, extension] of resources) {
-  let text = prefixAssets(await readFile(path.join(source, `${stem}.${extension}`), "utf8"));
-  if (stem === "signin" && extension === "js") {
-    text = text
-      .replaceAll("a[data-auth]", "a[data-entry]")
-      .replaceAll("Cancel opening sign in", "Cancel opening DeepSpec")
-      .replaceAll("Taking you to sign in.", "Opening your scanner.")
-      .replaceAll("Continuing to sign in. If this page stays open, use Continue to sign in.", "Continuing to the scanner. If this page stays open, use Continue to scanner.")
-      .replaceAll("Continue to sign in", "Continue to scanner")
-      .replaceAll("Opening DeepSpec sign in.", "Opening the DeepSpec scanner.")
-      .replaceAll('class="signin-continue" href="/"', 'class="signin-continue" href="/scan"');
-  }
+  const text = prefixAssets(await readFile(path.join(source, `${stem}.${extension}`), "utf8"));
   for (const old of await readdir(target)) {
     if (new RegExp(`^${stem}\\.[a-f0-9]{12}\\.${extension}$`).test(old)) await rm(path.join(target, old));
   }
@@ -59,4 +44,4 @@ manifest.icons = manifest.icons.map((icon) => ({ ...icon, src: `/intro${icon.src
 await writeFile(path.join(target, "site.webmanifest"), `${JSON.stringify(manifest, null, 2)}\n`);
 await writeFile(path.join(target, "index.html"), html);
 await cp(path.join(source, "robots.txt"), path.join(target, "robots.txt"));
-console.log("Intro packaged: same-origin assets, real /scan entry and blue-glass handoff.");
+console.log("Intro packaged: same-origin assets, authenticated /auth entry and blue-glass handoff.");

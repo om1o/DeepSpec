@@ -37,20 +37,24 @@ describe("App auth guard", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   it.each([
-    ["/scan", "Scanner screen"], ["/history", "History screen"],
-    ["/result/scan-id", "Result screen"], ["/result/scan-id/chat", "Chat screen"],
-    ["/shop", "Shop screen"], ["/account", "Account screen"],
-    ["/auth", "Scanner screen"], ["/demo", "Scanner screen"],
-  ])("opens the real %s route without code sign-in in the explicit preview", async (path, label) => {
+    "/scan", "/history", "/result/scan-id", "/result/scan-id/chat",
+    "/shop", "/account", "/pricing", "/demo",
+  ])("requires verified login for %s even with an old preview flag", async (path) => {
     vi.stubEnv("VITE_DEEPSPEC_GUEST_PREVIEW", "true");
-    setActiveAccount("existing-account");
+    setActiveAccount(null);
+    authMock.getVerifiedAuthUser.mockResolvedValue(null);
     renderApp(path);
-    expect(await screen.findByText(label)).toBeInTheDocument();
-    expect(authMock.getVerifiedAuthUser).not.toHaveBeenCalled();
-    expect(authMock.subscribeToAuthChanges).not.toHaveBeenCalled();
+    expect(await screen.findByText("Auth screen")).toBeInTheDocument();
+    expect(authMock.getVerifiedAuthUser).toHaveBeenCalled();
     expect(getAccountScope().userId).toBeNull();
-    expect(getAccountScope().kind).toBe("guest");
     expect(authMock.identifyCapturedFrame).not.toHaveBeenCalled();
+  });
+
+  it("keeps the login route available with an old preview flag", async () => {
+    vi.stubEnv("VITE_DEEPSPEC_GUEST_PREVIEW", "true");
+    renderApp("/auth");
+    expect(await screen.findByText("Auth screen")).toBeInTheDocument();
+    expect(screen.queryByText("Scanner screen")).not.toBeInTheDocument();
   });
 
   it("does not spend scan requests on app mount or reconnect with pending offline estimates", async () => {
@@ -165,18 +169,18 @@ describe("App auth guard", () => {
     expect(screen.queryByText("Auth screen")).not.toBeInTheDocument();
   });
 
-  it("sends the app root to the scanner route", async () => {
-    authMock.getVerifiedAuthUser.mockResolvedValue({
-      app_metadata: {},
-      aud: "authenticated",
-      created_at: new Date(0).toISOString(),
-      id: "verified-user",
-      user_metadata: {},
-    });
-
-    renderApp("/");
-
-    expect(await screen.findByText("Scanner screen")).toBeInTheDocument();
+  it("opens the visual intro before account routes at the app root", () => {
+    const replace = vi.fn();
+    vi.stubGlobal("window", { ...window, location: { ...window.location, replace } });
+    try {
+      renderApp("/");
+      expect(replace).toHaveBeenCalledWith("/intro/index.html");
+      expect(screen.getByRole("link", { name: "Open DeepSpec" })).toHaveAttribute("href", "/intro/index.html");
+      expect(authMock.getVerifiedAuthUser).not.toHaveBeenCalled();
+      expect(screen.queryByText("Scanner screen")).not.toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("protects the pricing route behind verified auth", async () => {

@@ -1,7 +1,6 @@
 import { CHAT_USER_MESSAGE_MAX_CHARS, IDENTIFY_PROMPT } from "./systemPrompts";
 import { identifyOnDevice, isOnDeviceFallbackEnabled } from "./onDeviceIdentify";
 import { getAuthClient } from "./auth";
-import { isGuestPreview } from "../lib/guestPreview";
 import { getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import { prepareRetryFrame } from "../lib/retryFrame";
 import {
@@ -202,7 +201,6 @@ function isAbortError(error: unknown) {
 }
 
 async function getAuthHeader() {
-  if (isGuestPreview()) return "";
   const client = await getAuthClient().catch(() => null);
   if (!client) {
     return "";
