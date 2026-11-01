@@ -12,13 +12,13 @@ The Windows release includes `COPYRIGHT.txt` alongside the executable with Godot
 
 ## Blender 4.5.10 LTS
 
-Blender was used as an offline content-processing tool to clean, triangulate, validate, and re-export the tide-gauge GLB. Blender is distributed under the GNU General Public License; Blender is not embedded in or redistributed with the game.
+Blender was used as an offline content-processing tool to clean, triangulate, validate, and re-export the tide-gauge GLB, and to generate the project's original harbor service truck from a deterministic Python source file. Blender is distributed under the GNU General Public License; Blender is not embedded in or redistributed with the game.
 
 - Release: https://www.blender.org/download/lts/4-5/
 - License: https://www.blender.org/about/license/
 - glTF exporter documentation: https://docs.blender.org/manual/en/4.5/addons/import_export/scene_gltf2.html
 
-The portable archive was checked against Blender's published SHA-256 manifest before use. Exact version, hashes, geometry counts, and re-import results are recorded in `assets/reports/hushpoint_tide_gauge_pipeline.json`.
+The portable archive was checked against Blender's published SHA-256 manifest before use. Exact version, hashes, geometry counts, and re-import results are recorded in `assets/reports/hushpoint_tide_gauge_pipeline.json` and `assets/reports/hushpoint_service_truck_generation.json`. The service truck contains no third-party geometry or textures; its Higgsfield concept reference was used for broad material language only.
 
 ## Higgsfield-generated tide gauge
 

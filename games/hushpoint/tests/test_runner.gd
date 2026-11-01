@@ -332,6 +332,20 @@ func _test_legacy_save_migration() -> void:
 	_check(restored.final_radio_choice.is_empty(), "migration must not invent a final choice")
 	_check(restored.to_save_dict()["version"] == GameState.SAVE_VERSION, "migrated save should serialize at the current version")
 
+	var completed_source = GameState.new()
+	_complete_exterior(completed_source)
+	_win_game(completed_source)
+	var completed_legacy: Dictionary = completed_source.to_save_dict()
+	completed_legacy["version"] = 1
+	for field_name in GameState.EXTERIOR_SAVE_FIELDS:
+		completed_legacy.erase(field_name)
+	completed_legacy.erase("final_radio_choice")
+	var completed_restored = GameState.new()
+	_check(completed_restored.load_save_dict(completed_legacy), "completed version-one save should migrate")
+	_check(completed_restored.victory, "completed legacy migration must preserve victory")
+	_check(completed_restored.exterior_escape_unlocked, "completed legacy migration must keep a reachable surface route")
+	_check(completed_restored.return_to_exterior(), "completed legacy migration must still allow the player to return outside")
+
 
 func _test_invalid_save_is_atomic() -> void:
 	var state = GameState.new()

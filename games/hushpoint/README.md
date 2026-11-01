@@ -27,17 +27,18 @@ This focused vertical slice targets a 25–42 minute first playthrough; that pac
 ## Run
 
 ```powershell
-$Godot = "C:\Users\omiol\AppData\Local\Microsoft\WinGet\Packages\GodotEngine.GodotEngine_Microsoft.Winget.Source_8wekyb3d8bbwe\Godot_v4.7.2-stable_win64.exe"
-& $Godot --path .
+godot --path .
 ```
+
+The run and test commands assume the Godot 4.7.2 executable is available as `godot` on `PATH`.
 
 ## Test
 
 ```powershell
-& $Godot --headless --path . --import
-& $Godot --headless --path . --script tests/test_runner.gd
-& $Godot --headless --path . --script tests/integration_runner.gd
+powershell -ExecutionPolicy Bypass -File .\test.ps1
 ```
+
+The wrapper gives all save-mutating runners a temporary `user://` profile, then removes that exact profile after the run. Those runners refuse to start outside the isolated profile so development tests cannot overwrite a player's save or accessibility settings.
 
 ## Build
 
@@ -51,6 +52,6 @@ The Windows build is written to `build/Hushpoint.exe`.
 
 The design uses only abstract lessons from Resident Evil 2's resource pressure and revisitable exploration, Alien: Isolation's sound-reactive pursuit, and Dead Space's readable weak points and intensity valleys. HUSHPOINT copies no story, character, location, code, model, texture, UI, sound, or puzzle solution.
 
-The surface setting is grounded in public coastal-engineering information from NOAA and the U.S. Army Corps of Engineers. One original tide-gauge concept and source GLB were generated through Higgsfield, then processed through a deterministic Blender pipeline before Godot import. Full model IDs, job IDs, hashes, prompts, licensing caveats, and source links are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and `assets/README.md`.
+The surface setting is grounded in public coastal-engineering information from NOAA and the U.S. Army Corps of Engineers. One original tide-gauge concept and source GLB were generated through Higgsfield, then processed through a deterministic Blender pipeline before Godot import. The harbor service truck is original deterministic Blender geometry and uses that concept only for broad material direction. Full model IDs, job IDs, hashes, prompts, licensing caveats, and source links are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and `assets/README.md`.
 
 See [GAME_DESIGN.md](GAME_DESIGN.md) for the plot, lore, mechanics, level flow, and provenance notes.

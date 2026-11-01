@@ -71,9 +71,48 @@ var _built: bool = false
 func configure(game_state: RefCounted, game_controller: Node) -> HushPlayer:
 	state = game_state
 	game = game_controller
+	_reset_runtime_state()
 	if _built:
 		_sync_equipment_visibility()
 	return self
+
+
+func _reset_runtime_state() -> void:
+	control_enabled = false
+	stamina = 1.0
+	lamp_heat = 0.0
+	lamp_on = true
+	aiming = false
+	crouching = false
+	velocity = Vector3.ZERO
+	rotation = Vector3.ZERO
+	_interactable = null
+	_current_prompt = ""
+	_yaw_angle = 0.0
+	_pitch_angle = deg_to_rad(-8.0)
+	_recoil = 0.0
+	_step_distance = 0.0
+	_motion_time = 0.0
+	_lamp_lock_time = 0.0
+	_dead_reported = false
+	_fallback_health = 100
+	_fallback_magazine = 6
+	_fallback_ammo = 12
+	if not _built:
+		return
+	var capsule := _collision.shape as CapsuleShape3D
+	if capsule != null:
+		capsule.height = 1.72
+	_collision.position.y = 0.86
+	_visual_root.scale = Vector3.ONE
+	_camera_rig.global_position = global_position + Vector3.UP * 1.5
+	_camera_rig.rotation.y = _yaw_angle
+	_pitch_pivot.rotation.x = _pitch_angle
+	_spring_arm.spring_length = 3.35
+	camera.fov = 68.0
+	camera.position.x = 0.62
+	lamp.visible = false
+	lamp.light_energy = 3.2
 
 
 func set_reduced_camera_motion(enabled: bool) -> void:

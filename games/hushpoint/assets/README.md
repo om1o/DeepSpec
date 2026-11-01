@@ -27,6 +27,29 @@ Visual QA is preserved at `reports/hushpoint_tide_gauge_preview.png`. The provid
 
 Environment limitation: no system-wide Blender installation is claimed. On this managed Windows machine, the verified portable runtime executed from `%TEMP%\hushpoint-blender-4.5.10\runtime`; moving the identical runtime into `AppData\Local\HushpointTools` triggered a Windows side-by-side configuration error, and moving it back restored execution. The wrapper detects the working temporary path automatically for this session, or accepts an explicit `-BlenderPath` on another machine.
 
+## Original Blender harbor service truck
+
+- Game-ready model: `models/hushpoint_service_truck.glb`
+- Editable source of truth: `tools/generate_service_truck.py`
+- Machine-readable generation and re-import report: `reports/hushpoint_service_truck_generation.json`
+- Blender studio preview: `reports/hushpoint_service_truck_preview.png`
+- Godot in-engine evidence: `reports/hushpoint_service_truck_ingame.png`
+- Provenance: original deterministic Blender geometry authored for HUSHPOINT; no third-party mesh or texture.
+
+The generator creates 123 practical vehicle components, applies their modifiers, and joins them by PBR material into 10 runtime meshes. The validated output is 10,908 triangles, 5,692 authored vertices, 2.62 x 5.08 x 3.13 meters, and remains below its 20,000-triangle budget. SHA-256 values for the script, GLB, preview, and art-direction reference are recorded in the report.
+
+The existing Higgsfield tide-gauge concept informed only the truck's broad visual language—galvanized steel, muted safety yellow, an amber beacon, and exposed harbor hardware. It supplied no geometry, texture, logo, or copied design. No additional provider generation or credit spend was used for the truck.
+
+Rebuild it from the HUSHPOINT project directory with Blender 4.5.10 LTS:
+
+```powershell
+blender --background --factory-startup --python tools/generate_service_truck.py -- `
+  --output assets/models/hushpoint_service_truck.glb `
+  --report assets/reports/hushpoint_service_truck_generation.json `
+  --preview assets/reports/hushpoint_service_truck_preview.png `
+  --reference assets/concepts/higgsfield_tide_gauge_z_image.png
+```
+
 ## Original Blender fallback
 
 - Source: `source/port_mercy_tide_gauge_original.glb`

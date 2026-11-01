@@ -3,11 +3,12 @@ extends RefCounted
 
 ## Builds the ordinary surface approach to Hushpoint. This scene intentionally
 ## contains no supernatural escalation: game.gd owns the transition into horror.
-## Geometry is primitive and deliberately low-count so the exterior remains
-## practical on integrated GPUs.
+## Geometry stays deliberately low-count so the exterior remains practical on
+## integrated GPUs, with authored hero assets where the player first arrives.
 
 const WorldBuilder = preload("res://scripts/world_builder.gd")
 const TIDE_GAUGE_SCENE: PackedScene = preload("res://assets/models/hushpoint_tide_gauge_optimized.glb")
+const SERVICE_TRUCK_SCENE: PackedScene = preload("res://assets/models/hushpoint_service_truck.glb")
 
 
 static func _add_higgsfield_tide_gauge(parent: Node3D, position: Vector3) -> Node3D:
@@ -122,30 +123,27 @@ static func _add_wind_mist(parent: Node3D) -> GPUParticles3D:
 
 static func _add_utility_truck(
 	parent: Node3D,
-	position: Vector3,
-	paint: Material,
-	dark_metal: Material,
-	glass: Material,
-	rubber: Material
+	position: Vector3
 ) -> Node3D:
-	var truck := Node3D.new()
+	var truck := SERVICE_TRUCK_SCENE.instantiate() as Node3D
 	truck.name = "LenaUtilityTruck"
 	truck.position = position
 	parent.add_child(truck)
-	WorldBuilder.box(truck, Vector3(0, 0.82, 0.3), Vector3(2.15, 0.72, 4.5), paint, "TruckBody")
-	WorldBuilder.box(truck, Vector3(0, 1.55, -1.05), Vector3(2.05, 0.82, 1.65), paint, "TruckCab")
-	WorldBuilder.box(truck, Vector3(0, 1.64, -1.91), Vector3(1.72, 0.48, 0.08), glass, "Windshield", false)
-	WorldBuilder.box(truck, Vector3(0, 1.28, 1.35), Vector3(1.76, 0.62, 1.65), dark_metal, "EquipmentBed", false)
-	WorldBuilder.box(truck, Vector3(0, 1.75, 1.35), Vector3(1.45, 0.34, 1.0), paint, "ToolChest", false)
-	for wheel_position in [
-		Vector3(-1.04, 0.55, -1.2),
-		Vector3(1.04, 0.55, -1.2),
-		Vector3(-1.04, 0.55, 1.25),
-		Vector3(1.04, 0.55, 1.25),
+	# Authored GLB meshes are visual-only; these two simple shapes preserve the
+	# original walk-blocking behavior without generating expensive mesh collision.
+	for collision_data in [
+		["TruckLowerCollision", Vector3(0, 0.90, 0), Vector3(2.30, 1.10, 4.40)],
+		["TruckCabCollision", Vector3(0, 1.75, -0.55), Vector3(2.10, 1.30, 1.60)],
 	]:
-		WorldBuilder.cylinder(truck, wheel_position, 0.43, 0.24, rubber, Vector3(0, 0, PI / 2.0), "TruckWheel")
-	WorldBuilder.box(truck, Vector3(-0.64, 1.0, -2.0), Vector3(0.38, 0.18, 0.08), glass, "HeadlampL", false)
-	WorldBuilder.box(truck, Vector3(0.64, 1.0, -2.0), Vector3(0.38, 0.18, 0.08), glass, "HeadlampR", false)
+		var body := StaticBody3D.new()
+		body.name = collision_data[0]
+		body.position = collision_data[1]
+		var collision := CollisionShape3D.new()
+		var shape := BoxShape3D.new()
+		shape.size = collision_data[2]
+		collision.shape = shape
+		body.add_child(collision)
+		truck.add_child(body)
 	return truck
 
 
@@ -325,8 +323,6 @@ static func build(parent: Node3D) -> Dictionary:
 	var dark_metal := WorldBuilder.material(Color("29363a"), 0.35, 0.72)
 	var galvanized := WorldBuilder.material(Color("667477"), 0.48, 0.66)
 	var safety := WorldBuilder.material(Color("c99537"), 0.58, 0.28, Color("8c5d19"))
-	var truck_paint := WorldBuilder.material(Color("d4c15c"), 0.54, 0.22)
-	var rubber := WorldBuilder.material(Color("101314"), 0.99)
 	var wood := WorldBuilder.material(Color("604b37"), 0.88)
 	var rock := WorldBuilder.material(Color("465154"), 0.98)
 	var grass := WorldBuilder.material(Color("455447"), 0.98)
@@ -365,7 +361,7 @@ static func build(parent: Node3D) -> Dictionary:
 	for wave_z in range(-42, 75, 13):
 		WorldBuilder.box(parent, Vector3(45, -0.90, wave_z), Vector3(20, 0.025, 0.12), glass, "WaveLine", false)
 
-	_add_utility_truck(parent, Vector3(-13.2, 0, 50), truck_paint, dark_metal, glass, rubber)
+	_add_utility_truck(parent, Vector3(-13.2, 0, 50))
 	_add_harbor_office(parent, weatherboard, dark_metal, glass, galvanized)
 	var tide_gauge: Dictionary = _add_pier_and_tide_gauge(parent, wood, dark_metal, safety, glass)
 	_add_lighthouse(parent, Vector3(23, 0, -17), white_paint, red_paint, dark_metal, glass)
@@ -384,7 +380,7 @@ static func build(parent: Node3D) -> Dictionary:
 	var tutorial_interactions: Array[Dictionary] = []
 	var work_order := _interaction(
 		parent,
-		Vector3(-13.2, 2.05, 51.3),
+		Vector3(-13.2, 1.85, 51.85),
 		Vector3(0.62, 0.06, 0.78),
 		"surface_work_order",
 		"E  READ MAINTENANCE WORK ORDER",
@@ -399,7 +395,7 @@ static func build(parent: Node3D) -> Dictionary:
 
 	var equipment := _interaction(
 		parent,
-		Vector3(-13.2, 1.35, 52.34),
+		Vector3(-13.2, 1.30, 52.68),
 		Vector3(1.15, 0.42, 0.18),
 		"surface_equipment",
 		"E  CHECK FIELD EQUIPMENT",

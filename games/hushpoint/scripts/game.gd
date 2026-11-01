@@ -61,6 +61,9 @@ var checkpoint_position := Vector3.ZERO
 var flicker_time := 0.0
 var ambient: AudioStreamPlayer
 var bell_audio: AudioStreamPlayer3D
+var radio_audio_players: Array[AudioStreamPlayer] = []
+var one_shot_audio_players: Array[AudioStreamPlayer3D] = []
+var audio_enabled: bool = true
 var environment_settings: Environment
 var fill_light: DirectionalLight3D
 var reduced_flashes: bool = false
@@ -91,6 +94,18 @@ func _exit_tree() -> void:
 	if is_instance_valid(bell_audio):
 		bell_audio.stop()
 		bell_audio.stream = null
+	for radio_audio in radio_audio_players:
+		if is_instance_valid(radio_audio):
+			radio_audio.stop()
+			radio_audio.stream = null
+			radio_audio.free()
+	radio_audio_players.clear()
+	for one_shot_audio in one_shot_audio_players:
+		if is_instance_valid(one_shot_audio):
+			one_shot_audio.stop()
+			one_shot_audio.stream = null
+			one_shot_audio.free()
+	one_shot_audio_players.clear()
 
 
 func _process(delta: float) -> void:
@@ -119,7 +134,7 @@ func _process(delta: float) -> void:
 		lightning_flash_time -= delta
 		fill_light.light_energy = 1.8
 	elif is_instance_valid(fill_light):
-		fill_light.light_energy = 0.46 if state.exterior_returned else (0.55 if not state.station_entered else 0.32)
+		fill_light.light_energy = 0.72 if state.exterior_returned else (0.95 if not state.station_entered else 0.32)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -192,21 +207,23 @@ func _build_world() -> void:
 
 
 func _build_audio() -> void:
+	audio_enabled = DisplayServer.get_name() != "headless"
 	ambient = AudioStreamPlayer.new()
 	ambient.name = "IndustrialDrone"
-	ambient.stream = AudioFactoryClass.industrial_drone()
 	ambient.volume_db = -18.0
 	add_child(ambient)
-	# Godot's headless audio driver retains looped WAV playback until process exit.
-	# Runtime builds still receive the full procedural drone.
-	if DisplayServer.get_name() != "headless":
+	# Headless QA validates state and input without allocating playback resources.
+	# Native runtime builds still receive the complete procedural soundscape.
+	if audio_enabled:
+		ambient.stream = AudioFactoryClass.industrial_drone()
 		ambient.play()
 	bell_audio = AudioStreamPlayer3D.new()
 	bell_audio.name = "BellmanBell"
-	bell_audio.stream = AudioFactoryClass.bell()
 	bell_audio.max_distance = 70.0
 	bell_audio.volume_db = -4.0
 	add_child(bell_audio)
+	if audio_enabled:
+		bell_audio.stream = AudioFactoryClass.bell()
 
 
 func _build_ui() -> void:
@@ -260,7 +277,11 @@ func show_title() -> void:
 	mode = MODE_TITLE
 	_set_actor_activity(false)
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-	ui.show_title(FileAccess.file_exists(SAVE_PATH))
+	var has_valid_save := (
+		not _read_save_candidate(SAVE_PATH).is_empty()
+		or not _read_save_candidate(SAVE_BACKUP_PATH).is_empty()
+	)
+	ui.show_title(has_valid_save)
 
 
 func _new_game() -> void:
@@ -273,6 +294,8 @@ func _new_game() -> void:
 	_reset_world_visuals()
 	_sync_phase_visuals()
 	_set_surface_mood(false)
+	if not _write_save():
+		ui.show_notice("NEW RUN STARTED — SAVE UNAVAILABLE")
 	mode = MODE_INTRO
 	_set_actor_activity(false)
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -288,6 +311,7 @@ func _continue_game() -> void:
 
 
 func _enter_gameplay() -> void:
+	var entering_from_intro := mode == MODE_INTRO
 	if not state.final_radio_choice.is_empty():
 		_show_ending(state.final_radio_choice)
 		return
@@ -300,6 +324,11 @@ func _enter_gameplay() -> void:
 	update_hud()
 	if not FileAccess.file_exists(SAVE_PATH):
 		_write_save()
+	if entering_from_intro:
+		_play_radio_line(
+			"JUNE KESTREL / HARBOR CONTROL",
+			"Truck Seven, routine discrepancy check. Verify the brass staff, reset R-4, sign the sheet, and leave the gate controls alone."
+		)
 
 
 func _pause_game() -> void:
@@ -344,9 +373,12 @@ func _set_actor_activity(active: bool) -> void:
 			enemy.set_active(false)
 			continue
 		if enemy == bellman:
-			if state.bellman_state != "dormant" and state.bellman_state != "banished" and not enemy.active:
+			var bellman_allowed: bool = state.bellman_state != "dormant" and state.bellman_state != "banished"
+			if bellman_allowed and not enemy.active:
 				enemy.set_active(true)
-				enemy.set_physics_process(enemy.active)
+			elif not bellman_allowed:
+				enemy.set_active(false)
+			enemy.set_physics_process(bellman_allowed and enemy.active)
 			continue
 		var spawn_index := int(enemy.get_meta("spawn_index", 0))
 		var allowed := spawn_index == 0
@@ -392,8 +424,10 @@ func handle_interaction(body: Node) -> void:
 			_handle_purge_breaker(body, int(payload))
 		"recorder":
 			checkpoint_position = player.global_position
-			_write_save()
-			ui.show_notice("VOICE CHECKPOINT RECORDED")
+			if _write_save():
+				ui.show_notice("VOICE CHECKPOINT RECORDED")
+			else:
+				ui.show_notice("CHECKPOINT FAILED — PREVIOUS SAVE PRESERVED")
 		"storage":
 			_open_inventory()
 		"lore":
@@ -442,7 +476,10 @@ func _handle_surface_tutorial(body: Node) -> void:
 		checkpoint_position = player.global_position
 		_sync_phase_visuals()
 		_set_surface_mood(false)
-		ui.show_notice("JUNE / VERIFIED: UPPER CONTROL ONLY. DO NOT MOVE THE GATES.")
+		_play_radio_line(
+			"JUNE KESTREL / VERIFIED",
+			"Upper control only. The brake fault is below the public floor. Do not move the gates."
+		)
 		_write_save()
 		_set_actor_activity(true)
 		return
@@ -452,7 +489,11 @@ func _handle_surface_tutorial(body: Node) -> void:
 	if step == "check_equipment":
 		ui.show_notice("FIELD KIT CHECKED — F TO TOGGLE THE INSPECTION LAMP")
 	elif step == "log_report":
-		ui.show_notice("UNPOWERED PA / UNKNOWN: GAUGE. RELAY. SHEET. HOME.")
+		_play_radio_line(
+			"UNPOWERED PA / UNKNOWN",
+			"Gauge. Relay. Sheet. Home.",
+			true
+		)
 	elif payload is Dictionary and payload.has("title"):
 		mode = MODE_OVERLAY
 		_set_actor_activity(false)
@@ -472,7 +513,10 @@ func _handle_surface_exit(body: Node) -> void:
 	_sync_phase_visuals()
 	_set_surface_mood(true)
 	_set_actor_activity(true)
-	ui.show_notice("JUNE / VERIFIED: HUSHPOINT NEVER SENT A GATE COMMAND. RETURN TO TRUCK SEVEN.")
+	_play_radio_line(
+		"JUNE KESTREL / VERIFIED",
+		"Hushpoint never sent a gate command. Get back to Truck Seven. Do not answer any call that arrives early."
+	)
 	_write_save()
 
 
@@ -573,8 +617,10 @@ func _handle_tide_valve(number: int) -> void:
 		state.transition_bellman("hunting")
 		bellman.global_position = world_data["bellman_spawn"]
 		bellman.set_active(true)
-		bell_audio.global_position = bellman.global_position
-		bell_audio.play()
+		bellman.set_physics_process(bellman.active)
+		if audio_enabled:
+			bell_audio.global_position = bellman.global_position
+			bell_audio.play()
 		emit_noise(player.global_position, 1.0)
 		_reveal_harmonic_key_if_ready()
 		_write_save()
@@ -637,14 +683,14 @@ func _handle_steam_valve(body: Node) -> void:
 	emit_noise(body.global_position, 1.0)
 	_play_one_shot(body.global_position, AudioFactoryClass.tone(86.0, 0.8, 0.46, 2.8, 0.76, 81), -4.0)
 	if is_instance_valid(bellman) and bellman.active and bellman.global_position.distance_to(body.global_position) <= 11.0:
+		if not state.spool_assembled:
+			ui.show_notice("PRESSURE VENTED — THE RECONSTRUCTED SIGNAL IS MISSING")
+			return
 		if state.bellman_state == "searching":
 			state.transition_bellman("hunting")
 		state.transition_bellman("staggered")
 		bellman.expose_regulator(7.0)
-		if state.spool_assembled:
-			ui.show_notice("REGULATOR EXPOSED — AIM THE LAMP AND LAND 3 NODE SHOTS")
-		else:
-			ui.show_notice("REGULATOR EXPOSED — THE RECONSTRUCTED SIGNAL IS MISSING")
+		ui.show_notice("REGULATOR EXPOSED — AIM THE LAMP AND LAND 3 NODE SHOTS")
 	else:
 		ui.show_notice("PRESSURE VENTED — THE STATION HEARS IT")
 
@@ -825,7 +871,8 @@ func on_bellman_banished(_enemy: Node = null) -> void:
 		state.transition_bellman("staggered")
 	if state.transition_bellman("banished"):
 		bellman.set_active(false)
-		ui.show_notice("CONTROL CRYSTALS BROKEN — GIDEON RUSK: NOW MAKE IT QUIET")
+		ui.show_notice("CONTROL CRYSTALS BROKEN")
+		_play_radio_line("GIDEON RUSK / LOCAL CARRIER", "Now make it quiet.", true)
 		_write_save()
 		update_hud()
 
@@ -854,8 +901,9 @@ func play_enemy_cue(enemy: Node3D, cue: String) -> void:
 	elif cue == "wader_emerge":
 		_play_one_shot(enemy.global_position, AudioFactoryClass.tone(58.0, 0.7, 0.48, 4.0, 0.68, 29), -4.0)
 	elif enemy == bellman:
-		bell_audio.global_position = enemy.global_position
-		bell_audio.play()
+		if audio_enabled:
+			bell_audio.global_position = enemy.global_position
+			bell_audio.play()
 	else:
 		_play_one_shot(enemy.global_position, AudioFactoryClass.tone(103.0, 0.22, 0.32, 8.0, 0.52, 41), -7.0)
 
@@ -890,14 +938,53 @@ func _spawn_impact(position: Vector3, color: Color) -> void:
 
 
 func _play_one_shot(position: Vector3, stream: AudioStream, volume_db: float) -> void:
+	if not audio_enabled:
+		return
 	var audio := AudioStreamPlayer3D.new()
 	audio.stream = stream
 	audio.volume_db = volume_db
 	audio.max_distance = 48.0
 	effects_root.add_child(audio)
 	audio.global_position = position
-	audio.finished.connect(audio.queue_free)
+	one_shot_audio_players.append(audio)
+	audio.finished.connect(_release_one_shot_audio.bind(audio), CONNECT_ONE_SHOT)
 	audio.play()
+
+
+func _release_one_shot_audio(audio: AudioStreamPlayer3D) -> void:
+	one_shot_audio_players.erase(audio)
+	if is_instance_valid(audio):
+		audio.stop()
+		audio.stream = null
+		audio.queue_free()
+
+
+func _play_radio_line(speaker: String, text: String, corrupted: bool = false) -> void:
+	ui.show_radio_line(speaker, text)
+	if not audio_enabled:
+		return
+	var audio := AudioStreamPlayer.new()
+	audio.stream = AudioFactoryClass.tone(
+		430.0 if corrupted else 780.0,
+		0.18,
+		0.2,
+		9.0,
+		0.32 if corrupted else 0.08,
+		97 if corrupted else 43
+	)
+	audio.volume_db = -8.0
+	effects_root.add_child(audio)
+	radio_audio_players.append(audio)
+	audio.finished.connect(_release_radio_audio.bind(audio), CONNECT_ONE_SHOT)
+	audio.play()
+
+
+func _release_radio_audio(audio: AudioStreamPlayer) -> void:
+	radio_audio_players.erase(audio)
+	if is_instance_valid(audio):
+		audio.stop()
+		audio.stream = null
+		audio.queue_free()
 
 
 func _write_save() -> bool:
@@ -911,44 +998,118 @@ func _write_save() -> bool:
 		return false
 	temp_file.store_string(JSON.stringify(save_data, "  "))
 	temp_file.close()
+	if _read_save_candidate(SAVE_TEMP_PATH).is_empty():
+		_remove_save_file(SAVE_TEMP_PATH)
+		return false
+
+	var backup_valid := not _read_save_candidate(SAVE_BACKUP_PATH).is_empty()
 	if FileAccess.file_exists(SAVE_PATH):
-		if FileAccess.file_exists(SAVE_BACKUP_PATH):
-			DirAccess.remove_absolute(SAVE_BACKUP_PATH)
-		DirAccess.copy_absolute(SAVE_PATH, SAVE_BACKUP_PATH)
-		DirAccess.remove_absolute(SAVE_PATH)
-	var error := DirAccess.rename_absolute(SAVE_TEMP_PATH, SAVE_PATH)
-	return error == OK
+		var main_valid := not _read_save_candidate(SAVE_PATH).is_empty()
+		if main_valid:
+			if FileAccess.file_exists(SAVE_BACKUP_PATH) and not _remove_save_file(SAVE_BACKUP_PATH):
+				return false
+			if DirAccess.copy_absolute(
+				ProjectSettings.globalize_path(SAVE_PATH),
+				ProjectSettings.globalize_path(SAVE_BACKUP_PATH)
+			) != OK:
+				return false
+			backup_valid = true
+		if not _remove_save_file(SAVE_PATH):
+			return false
+
+	var error := DirAccess.rename_absolute(
+		ProjectSettings.globalize_path(SAVE_TEMP_PATH),
+		ProjectSettings.globalize_path(SAVE_PATH)
+	)
+	if error == OK:
+		return true
+	if backup_valid:
+		var rollback_error := DirAccess.copy_absolute(
+			ProjectSettings.globalize_path(SAVE_BACKUP_PATH),
+			ProjectSettings.globalize_path(SAVE_PATH)
+		)
+		if rollback_error != OK:
+			push_error("Save promotion and primary rollback both failed; validated backup remains at %s" % SAVE_BACKUP_PATH)
+	return false
 
 
 func _load_game() -> bool:
-	var file := FileAccess.open(SAVE_PATH, FileAccess.READ)
-	if file == null:
+	var loaded: Dictionary = {}
+	var loaded_path := ""
+	for save_path in [SAVE_PATH, SAVE_BACKUP_PATH]:
+		loaded = _read_save_candidate(save_path)
+		if not loaded.is_empty():
+			loaded_path = save_path
+			break
+	if loaded.is_empty():
 		return false
-	var decoded: Variant = JSON.parse_string(file.get_as_text())
-	file.close()
-	if typeof(decoded) != TYPE_DICTIONARY or typeof(decoded.get("state")) != TYPE_DICTIONARY:
-		return false
-	var candidate = GameStateClass.new()
-	if not candidate.load_save_dict(decoded["state"]):
-		return false
-	var position_data: Variant = decoded.get("checkpoint", [])
-	if typeof(position_data) != TYPE_ARRAY or position_data.size() != 3:
-		return false
-	state = candidate
+	state = loaded["state"]
 	consumed.clear()
-	var consumed_data: Variant = decoded.get("consumed", [])
-	if typeof(consumed_data) == TYPE_ARRAY:
-		for interaction_id in consumed_data:
-			if typeof(interaction_id) == TYPE_STRING:
-				consumed[interaction_id] = true
-	checkpoint_position = Vector3(float(position_data[0]), float(position_data[1]), float(position_data[2]))
+	for interaction_id in loaded["consumed"]:
+		consumed[interaction_id] = true
+	checkpoint_position = loaded["checkpoint"]
 	player.configure(state, self)
 	player.global_position = checkpoint_position
 	_reset_enemies()
 	_apply_saved_world()
 	_sync_phase_visuals()
 	_set_surface_mood(state.exterior_returned)
+	if loaded_path == SAVE_BACKUP_PATH and not _restore_primary_from_backup():
+		push_warning("Loaded the validated backup, but could not heal the primary save file.")
 	return true
+
+
+func _read_save_candidate(path: String) -> Dictionary:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return {}
+	var parser := JSON.new()
+	var parse_error := parser.parse(file.get_as_text())
+	file.close()
+	if parse_error != OK:
+		return {}
+	var decoded: Variant = parser.data
+	if typeof(decoded) != TYPE_DICTIONARY or typeof(decoded.get("state")) != TYPE_DICTIONARY:
+		return {}
+	var candidate = GameStateClass.new()
+	if not candidate.load_save_dict(decoded["state"]):
+		return {}
+	var position_data: Variant = decoded.get("checkpoint", [])
+	if typeof(position_data) != TYPE_ARRAY or position_data.size() != 3:
+		return {}
+	for coordinate in position_data:
+		if typeof(coordinate) != TYPE_INT and typeof(coordinate) != TYPE_FLOAT:
+			return {}
+	var consumed_data: Variant = decoded.get("consumed", [])
+	if typeof(consumed_data) != TYPE_ARRAY:
+		return {}
+	var validated_consumed: Array[String] = []
+	for interaction_id in consumed_data:
+		if typeof(interaction_id) != TYPE_STRING:
+			return {}
+		validated_consumed.append(interaction_id)
+	return {
+		"state": candidate,
+		"consumed": validated_consumed,
+		"checkpoint": Vector3(float(position_data[0]), float(position_data[1]), float(position_data[2])),
+	}
+
+
+func _restore_primary_from_backup() -> bool:
+	if _read_save_candidate(SAVE_BACKUP_PATH).is_empty():
+		return false
+	if FileAccess.file_exists(SAVE_PATH) and not _remove_save_file(SAVE_PATH):
+		return false
+	return DirAccess.copy_absolute(
+		ProjectSettings.globalize_path(SAVE_BACKUP_PATH),
+		ProjectSettings.globalize_path(SAVE_PATH)
+	) == OK
+
+
+func _remove_save_file(path: String) -> bool:
+	if not FileAccess.file_exists(path):
+		return true
+	return DirAccess.remove_absolute(ProjectSettings.globalize_path(path)) == OK
 
 
 func _reset_enemies() -> void:
@@ -1036,16 +1197,18 @@ func _set_surface_mood(storm: bool) -> void:
 		return
 	if state.station_entered and not state.exterior_returned:
 		environment_settings.background_color = Color("020609")
+		environment_settings.background_energy_multiplier = 0.32
 		environment_settings.ambient_light_color = Color("19313a")
 		environment_settings.ambient_light_energy = 0.58
 		environment_settings.fog_density = 0.0065
 		if is_instance_valid(ambient):
 			ambient.volume_db = -18.0
 		return
-	environment_settings.background_color = Color("13252c") if not storm else Color("050b10")
-	environment_settings.ambient_light_color = Color("557079") if not storm else Color("263c46")
-	environment_settings.ambient_light_energy = 0.92 if not storm else 0.62
-	environment_settings.fog_density = 0.0028 if not storm else 0.008
+	environment_settings.background_color = Color("40545b") if not storm else Color("050b10")
+	environment_settings.background_energy_multiplier = 0.72 if not storm else 0.36
+	environment_settings.ambient_light_color = Color("a8bdc1") if not storm else Color("263c46")
+	environment_settings.ambient_light_energy = 1.22 if not storm else 0.68
+	environment_settings.fog_density = 0.0016 if not storm else 0.008
 	if is_instance_valid(ambient):
 		ambient.volume_db = -31.0 if not storm else -24.0
 

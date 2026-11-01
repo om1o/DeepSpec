@@ -65,9 +65,27 @@ func configure(
 	game = game_controller
 	_configured = true
 	_apply_kind_tuning()
+	_reset_runtime_state()
 	if is_inside_tree():
 		_rebuild_actor()
 	return self
+
+
+func _reset_runtime_state() -> void:
+	active = false
+	ai_state = STATE_DORMANT
+	health = max_health
+	velocity = Vector3.ZERO
+	rotation = Vector3.ZERO
+	_investigation_point = Vector3.ZERO
+	_investigation_time = 0.0
+	_attack_cooldown = 0.0
+	_state_time = 0.0
+	_weak_reveal_time = 0.0
+	_regulator_exposed_time = 0.0
+	_bellman_weak_hits = 0
+	_downed_recovery_time = 0.0
+	_state_before_deactivation = STATE_IDLE
 
 
 func _ready() -> void:
@@ -302,7 +320,7 @@ func receive_shot(
 	var weak_hit := weak_distance <= (0.42 if kind == "bellman" else 0.36) and weak_visible
 
 	if kind == "bellman":
-		if weak_hit and _regulator_exposed_time > 0.0:
+		if weak_hit and _regulator_exposed_time > 0.0 and _bellman_release_ready():
 			_bellman_weak_hits += 1
 			if _bellman_weak_hits >= 3:
 				_permanent_defeat()
@@ -329,7 +347,7 @@ func reveal_weak_point(duration: float = 0.25) -> void:
 
 
 func expose_regulator(duration: float = 7.0) -> bool:
-	if kind != "bellman" or ai_state == STATE_DEAD:
+	if kind != "bellman" or ai_state == STATE_DEAD or not _bellman_release_ready():
 		return false
 	_regulator_exposed_time = maxf(_regulator_exposed_time, duration)
 	_weak_reveal_time = maxf(_weak_reveal_time, duration)
@@ -475,6 +493,8 @@ func _update_downed(delta: float) -> void:
 func _permanent_defeat() -> void:
 	if ai_state == STATE_DEAD:
 		return
+	if kind == "bellman" and not _external_bellman_banished() and not _bellman_release_ready():
+		return
 	_set_state(STATE_DEAD)
 	active = false
 	velocity = Vector3.ZERO
@@ -531,6 +551,17 @@ func _external_bellman_banished() -> bool:
 		return false
 	var external_state: Variant = game.get("state")
 	return external_state != null and str(external_state.get("bellman_state")) == "banished"
+
+
+func _bellman_release_ready() -> bool:
+	if kind != "bellman" or game == null:
+		return false
+	var external_state: Variant = game.get("state")
+	return (
+		external_state != null
+		and bool(external_state.get("tide_balanced"))
+		and bool(external_state.get("spool_assembled"))
+	)
 
 
 func _set_state(next_state: String) -> void:

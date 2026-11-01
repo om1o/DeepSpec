@@ -2,6 +2,7 @@ extends SceneTree
 
 const MAIN_SCENE := preload("res://main.tscn")
 const GAME_STATE := preload("res://scripts/game_state.gd")
+const TEST_PROFILE_ENV := "HUSHPOINT_TEST_PROFILE"
 const SAVE_PATHS := [
 	"user://hushpoint_save.json",
 	"user://hushpoint_save.tmp",
@@ -65,7 +66,19 @@ var preserved_saves: Dictionary = {}
 
 
 func _initialize() -> void:
+	if not _using_isolated_test_profile():
+		printerr("HUSHPOINT INTEGRATION: REFUSED (run through test.ps1 so user:// is isolated)")
+		quit(2)
+		return
 	call_deferred("_run")
+
+
+func _using_isolated_test_profile() -> bool:
+	var profile_root := OS.get_environment(TEST_PROFILE_ENV).replace("\\", "/").trim_suffix("/").to_lower()
+	if profile_root.is_empty():
+		return false
+	var user_root := ProjectSettings.globalize_path("user://").replace("\\", "/").to_lower()
+	return user_root == profile_root or user_root.begins_with(profile_root + "/")
 
 
 func _run() -> void:
@@ -83,13 +96,16 @@ func _run() -> void:
 	_test_ordered_surface_sequence()
 	_test_staged_handgun_pickup()
 	_test_fuses_and_power()
+	_test_tide_and_bellman_without_signal()
+	_test_bellman_pause_and_premature_gate()
 	_test_spool_assembly()
-	_test_tide_bellman_and_key_reveal()
 	_test_steam_and_banishment()
 	_test_vault_and_purge_escape_unlock()
 	_test_surface_return_and_break_ending()
 	_test_answer_ending_on_fresh_state()
 	_test_save_roundtrip_through_orchestrator()
+	_test_backup_recovery()
+	_test_new_game_resets_runtime_and_save()
 
 	if is_instance_valid(game):
 		game.queue_free()
@@ -242,6 +258,7 @@ func _test_new_game_intro_and_surface_spawn() -> void:
 	var hud_screen: Variant = ui.get("hud_screen")
 	_check(is_instance_valid(hud_screen) and hud_screen.visible, "gameplay HUD must be visible")
 	_check(FileAccess.file_exists(SAVE_PATHS[0]), "entering a new game must create its initial save")
+	_check(str(ui.get("radio_speaker_label").text) == "JUNE KESTREL / HARBOR CONTROL", "opening gameplay must stage June's verified radio call")
 	_phase_result("new game, intro, and surface spawn", before)
 
 
@@ -344,10 +361,13 @@ func _test_spool_assembly() -> void:
 	_check(is_instance_valid(lore_screen) and lore_screen.visible, "reconstructed message must be visible")
 	ui.emit_signal("overlay_closed")
 	_check(str(game.get("mode")) == "playing", "closing Mara's message must resume gameplay")
+	var key := _interaction("harmonic_key")
+	_check(is_instance_valid(key) and key.visible, "solved spool and tide puzzles must reveal the harmonic key")
+	_check(is_instance_valid(key) and key.collision_layer == 1, "revealed harmonic key must become interactable")
 	_phase_result("spool assembly", before)
 
 
-func _test_tide_bellman_and_key_reveal() -> void:
+func _test_tide_and_bellman_without_signal() -> void:
 	var before := failures
 	var state: Variant = game.get("state")
 	var valve_1 := _interaction("tide_valve_1")
@@ -368,10 +388,48 @@ func _test_tide_bellman_and_key_reveal() -> void:
 	_check(str(state.bellman_state) == "hunting", "solved counterflow must awaken the Bellman into hunting")
 	var bellman: Variant = game.get("bellman")
 	_check(is_instance_valid(bellman) and bool(bellman.get("active")), "awakened Bellman actor must be active")
+	_check(is_instance_valid(bellman) and bellman.is_physics_processing(), "awakened Bellman actor must process physics")
 	var key := _interaction("harmonic_key")
-	_check(is_instance_valid(key) and key.visible, "solved spool and tide puzzles must reveal the harmonic key")
-	_check(is_instance_valid(key) and key.collision_layer == 1, "revealed harmonic key must become interactable")
-	_phase_result("tide, Bellman, and key reveal", before)
+	_check(is_instance_valid(key) and not key.visible, "tide balance alone must not reveal the harmonic key")
+	_check(is_instance_valid(key) and key.collision_layer == 0, "hidden harmonic key must remain non-interactable")
+	_phase_result("tide and Bellman without reconstructed signal", before)
+
+
+func _test_bellman_pause_and_premature_gate() -> void:
+	var before := failures
+	var state: Variant = game.get("state")
+	var bellman: Variant = game.get("bellman")
+	var ui: Variant = game.get("ui")
+	_check(is_instance_valid(bellman) and bool(bellman.get("active")), "Bellman pause regression requires an active actor")
+	game.call("_open_inventory")
+	_check(str(game.get("mode")) == "overlay", "inventory must suspend the live encounter")
+	_check(not bellman.is_physics_processing(), "inventory must pause Bellman physics")
+	ui.emit_signal("overlay_closed")
+	_check(str(game.get("mode")) == "playing", "closing inventory must resume gameplay")
+	_check(bool(bellman.get("active")) and bellman.is_physics_processing(), "active Bellman must resume physics after an overlay")
+
+	var steam_valves := _interactions_of_kind("steam_valve")
+	_check(not steam_valves.is_empty(), "premature gate regression requires a steam valve")
+	if steam_valves.is_empty() or not is_instance_valid(bellman):
+		_phase_result("Bellman pause and premature gate", before)
+		return
+	var steam: Node3D = steam_valves[0]
+	bellman.global_position = steam.global_position
+	_interact(steam)
+	_check(not bool(state.spool_assembled), "premature gate fixture must not have the reconstructed signal")
+	_check(float(bellman.get("_regulator_exposed_time")) <= 0.0, "steam must not expose the regulator without the reconstructed signal")
+	_check(str(state.bellman_state) == "hunting", "failed steam exposure must not advance durable Bellman state")
+
+	var weak_node: Variant = bellman.get("_weak_node")
+	_check(is_instance_valid(weak_node), "Bellman must expose a physical weak-node target")
+	if is_instance_valid(weak_node):
+		for _shot_index in range(3):
+			var result: Dictionary = bellman.call("receive_shot", weak_node.global_position, 1.0, true)
+			_check(not bool(result.get("permanent", false)), "pre-signal weak shots must never permanently defeat Bellman")
+	_check(str(bellman.get("ai_state")) != "dead", "pre-signal shots must leave Bellman alive")
+	_check(bool(bellman.get("active")), "pre-signal shots must leave Bellman available for the real encounter")
+	_check(int(bellman.get("_bellman_weak_hits")) == 0, "pre-signal shots must not accumulate hidden completion progress")
+	_phase_result("Bellman pause and premature gate", before)
 
 
 func _test_steam_and_banishment() -> void:
@@ -390,11 +448,20 @@ func _test_steam_and_banishment() -> void:
 	_check(float(bellman.get("_regulator_exposed_time")) > 0.0, "venting steam beside the Bellman must expose his regulator")
 	_check(str(bellman.get("ai_state")) == "stagger", "steam exposure must stagger the Bellman actor")
 
-	# The headless runner has no aiming device. Simulate the successful three-node-shot
-	# callback while retaining the real exposed actor and orchestrator transition.
-	game.call("on_bellman_banished", bellman)
-	_check(str(state.bellman_state) == "banished", "simulated regulator destruction must banish the Bellman")
+	var weak_node: Variant = bellman.get("_weak_node")
+	_check(is_instance_valid(weak_node), "exposed Bellman must retain a physical regulator target")
+	var shot_results: Array[Dictionary] = []
+	if is_instance_valid(weak_node):
+		for _shot_index in range(3):
+			shot_results.append(bellman.call("receive_shot", weak_node.global_position, 1.0, true))
+	_check(shot_results.size() == 3, "the headless encounter must land all three real regulator shots")
+	if shot_results.size() == 3:
+		_check(not bool(shot_results[0].get("permanent", false)), "first regulator hit must stagger rather than finish")
+		_check(not bool(shot_results[1].get("permanent", false)), "second regulator hit must stagger rather than finish")
+		_check(bool(shot_results[2].get("permanent", false)), "third regulator hit must permanently defeat Bellman")
+	_check(str(state.bellman_state) == "banished", "three physical regulator hits must banish the Bellman")
 	_check(not bool(bellman.get("active")), "banished Bellman actor must deactivate")
+	_check(str(game.get("ui").get("radio_speaker_label").text) == "GIDEON RUSK / LOCAL CARRIER", "Bellman defeat must stage Gideon's release line")
 	_phase_result("steam and banishment", before)
 
 
@@ -515,6 +582,87 @@ func _test_save_roundtrip_through_orchestrator() -> void:
 	_check(str(restored_state.final_radio_choice) == "break", "loaded completed save must retain its selected ending")
 	_check(game.get("exterior_root").visible and not game.get("interior_root").visible, "completed save load must restore the exterior world phase")
 	_phase_result("save write and load", before)
+
+
+func _test_backup_recovery() -> void:
+	var before := failures
+	var main_path := ProjectSettings.globalize_path(SAVE_PATHS[0])
+	var backup_path := ProjectSettings.globalize_path(SAVE_PATHS[2])
+	_remove_file(SAVE_PATHS[2])
+	var copy_error := DirAccess.copy_absolute(main_path, backup_path)
+	_check(copy_error == OK, "backup recovery fixture must copy a valid primary save")
+	_remove_file(SAVE_PATHS[0])
+	game.call("show_title")
+	var ui: Node = game.get("ui")
+	var continue_button: Button = ui.get("continue_button")
+	_check(continue_button.visible, "a valid backup-only save must keep Continue available on the title screen")
+	_check(bool(game.call("_load_game")), "backup-only save must load when the primary is missing")
+	_check(FileAccess.file_exists(SAVE_PATHS[0]), "backup-only load must heal the missing primary save")
+	var corrupt_file := FileAccess.open(SAVE_PATHS[0], FileAccess.WRITE)
+	_check(corrupt_file != null, "backup recovery fixture must open the primary save")
+	if corrupt_file != null:
+		corrupt_file.store_string("{not valid json")
+		corrupt_file.close()
+	_check(bool(game.call("_load_game")), "corrupt primary save must fall back to the validated backup")
+	var healed_file := FileAccess.open(SAVE_PATHS[0], FileAccess.READ)
+	var healed_data: Variant = null
+	if healed_file != null:
+		healed_data = JSON.parse_string(healed_file.get_as_text())
+		healed_file.close()
+	_check(typeof(healed_data) == TYPE_DICTIONARY, "backup recovery must restore a readable primary save")
+	_phase_result("backup save recovery", before)
+
+
+func _test_new_game_resets_runtime_and_save() -> void:
+	var before := failures
+	var old_state: Variant = game.get("state")
+	var player: Variant = game.get("player")
+	var enemies: Variant = game.get("enemies")
+	player.set("_dead_reported", true)
+	player.set("stamina", 0.08)
+	player.set("lamp_heat", 0.94)
+	for enemy in enemies:
+		enemy.set("ai_state", enemy.STATE_DEAD)
+		enemy.set("active", false)
+		enemy.set("health", 0.0)
+		enemy.set("_state_time", 9.0)
+		enemy.set("_bellman_weak_hits", 2)
+	game.call("_new_game")
+	var fresh_state: Variant = game.get("state")
+	_check(fresh_state != old_state, "New Game must replace the completed runtime state")
+	_check(str(game.get("mode")) == "intro", "New Game must return to the routine-call intro")
+	_check(not bool(player.get("_dead_reported")), "New Game must clear the player's one-shot death report")
+	_check(is_equal_approx(float(player.get("stamina")), 1.0), "New Game must restore full stamina")
+	_check(is_zero_approx(float(player.get("lamp_heat"))), "New Game must clear lamp heat")
+	for enemy in enemies:
+		_check(str(enemy.get("ai_state")) == enemy.STATE_DORMANT, "New Game must return every threat to dormant state")
+		_check(is_equal_approx(float(enemy.get("health")), float(enemy.get("max_health"))), "New Game must restore every threat's health")
+		_check(is_zero_approx(float(enemy.get("_state_time"))), "New Game must clear every threat timer")
+		_check(int(enemy.get("_bellman_weak_hits")) == 0, "New Game must clear Bellman weak-hit progress")
+	_check(FileAccess.file_exists(SAVE_PATHS[0]), "New Game must immediately replace any prior Continue save")
+	var fresh_file := FileAccess.open(SAVE_PATHS[0], FileAccess.READ)
+	var fresh_save: Variant = null
+	if fresh_file != null:
+		fresh_save = JSON.parse_string(fresh_file.get_as_text())
+		fresh_file.close()
+	_check(typeof(fresh_save) == TYPE_DICTIONARY, "fresh New Game save must contain valid JSON")
+	if typeof(fresh_save) == TYPE_DICTIONARY:
+		var saved_state: Variant = fresh_save.get("state")
+		_check(typeof(saved_state) == TYPE_DICTIONARY, "fresh New Game save must contain state data")
+		if typeof(saved_state) == TYPE_DICTIONARY:
+			_check(not bool(saved_state.get("station_entered", true)), "fresh save must not retain station progress")
+			_check(not bool(saved_state.get("victory", true)), "fresh save must not retain victory")
+			_check(str(saved_state.get("final_radio_choice", "stale")).is_empty(), "fresh save must not retain an ending")
+		_check(fresh_save.get("consumed", ["stale"]).is_empty(), "fresh save must clear consumed interactions")
+	var reset_enemy: Variant = enemies[0] if not enemies.is_empty() else null
+	if is_instance_valid(reset_enemy):
+		reset_enemy.call("set_active", true)
+		_check(bool(reset_enemy.get("active")), "a reset threat must be activatable in the next run")
+		_check(str(reset_enemy.get("ai_state")) != reset_enemy.STATE_DEAD, "a reset threat must not retain terminal AI state")
+		reset_enemy.call("set_active", false)
+	_check(bool(player.call("receive_damage", fresh_state.MAX_HEALTH)), "a reset player must accept lethal damage in the next run")
+	_check(str(game.get("mode")) == "dead", "a second-run death must still open the death screen")
+	_phase_result("New Game runtime and save reset", before)
 
 
 func _prepare_fresh_state_for_radio(candidate) -> bool:

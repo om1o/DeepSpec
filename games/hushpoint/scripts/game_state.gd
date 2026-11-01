@@ -590,7 +590,7 @@ func load_save_dict(data: Dictionary) -> bool:
 		save_data["version"] = SAVE_VERSION
 		for field_name in EXTERIOR_OPENING_FIELDS:
 			save_data[field_name] = true
-		save_data["exterior_escape_unlocked"] = false
+		save_data["exterior_escape_unlocked"] = bool(save_data.get("victory", false))
 		save_data["exterior_returned"] = false
 		save_data["final_radio_choice"] = ""
 

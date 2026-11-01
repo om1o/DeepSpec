@@ -38,6 +38,9 @@ const RED := Color("cc554b")
 const GREEN := Color("75b78f")
 const LINE := Color("34474c")
 
+const SETTINGS_PATH := "user://hushpoint_settings.cfg"
+const SETTINGS_SECTION := "accessibility"
+
 const ITEM_NAMES := {
 	"handgun_ammo": "9 mm cartridges",
 	"healing_wrap": "Pressure wrap",
@@ -126,6 +129,9 @@ var cached_lore_entries: Array = []
 var lore_title_label: Label
 var lore_body_label: RichTextLabel
 var pause_controls: VBoxContainer
+var title_controls_card: PanelContainer
+var title_shake_toggle: CheckButton
+var title_flash_toggle: CheckButton
 var shake_toggle: CheckButton
 var flash_toggle: CheckButton
 var victory_stats_label: Label
@@ -136,12 +142,19 @@ var damage_overlay: ColorRect
 var notice_panel: PanelContainer
 var notice_label: Label
 var notice_tween: Tween
+var radio_panel: PanelContainer
+var radio_speaker_label: Label
+var radio_text_label: Label
+var radio_tween: Tween
 
 
 func _ready() -> void:
 	layer = 30
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_build_interface()
+	_load_settings()
+	_sync_setting_controls()
+	call_deferred("_emit_loaded_settings")
 	show_title(false)
 
 
@@ -214,7 +227,7 @@ func _build_title() -> void:
 	title.add_theme_constant_override("letter_spacing", 8)
 	identity.add_child(title)
 
-	var subtitle := _label("THE BUILDING REMEMBERS WHAT THE WATER TOOK", 14, MUTED)
+	var subtitle := _label("KINMOUTH COASTAL BARRIER / CALL-OUT 03-117", 14, MUTED)
 	subtitle.add_theme_constant_override("letter_spacing", 2)
 	identity.add_child(subtitle)
 
@@ -224,8 +237,8 @@ func _build_title() -> void:
 	identity.add_child(divider)
 
 	var premise := _label(
-		"An original survival-horror story about sound, pressure,\n"
-		+ "and the danger of hearing exactly what you miss.",
+		"A routine sensor discrepancy. A paper gauge that refuses to lie.\n"
+		+ "Clock in, verify the reading, and go home.",
 		17,
 		Color(PAPER, 0.78)
 	)
@@ -260,11 +273,17 @@ func _build_title() -> void:
 	menu_column.add_child(_button("CONTROLS + ACCESSIBILITY", _toggle_title_controls))
 	menu_column.add_child(_button("LEAVE HUSHPOINT", _on_quit))
 
-	var control_card := PanelContainer.new()
-	control_card.name = "ControlsCard"
-	control_card.visible = false
-	control_card.add_theme_stylebox_override("panel", _panel_style(Color("d90b1216"), LINE, 1, 3))
-	menu_column.add_child(control_card)
+	title_controls_card = PanelContainer.new()
+	title_controls_card.name = "ControlsCard"
+	title_controls_card.visible = false
+	title_controls_card.add_theme_stylebox_override("panel", _panel_style(Color("d90b1216"), LINE, 1, 3))
+	menu_column.add_child(title_controls_card)
+	var controls_margin := MarginContainer.new()
+	_set_margins(controls_margin, 14, 12, 14, 12)
+	title_controls_card.add_child(controls_margin)
+	var controls_stack := VBoxContainer.new()
+	controls_stack.add_theme_constant_override("separation", 6)
+	controls_margin.add_child(controls_stack)
 	var control_text := _label(
 		"WASD  MOVE     SHIFT  SPRINT\n"
 		+ "CTRL  CROUCH  RMB  AIM\n"
@@ -274,11 +293,22 @@ func _build_title() -> void:
 		13,
 		Color(PAPER, 0.78)
 	)
-	control_text.set_offsets_preset(Control.PRESET_FULL_RECT)
-	control_text.custom_minimum_size = Vector2(280, 120)
+	control_text.custom_minimum_size = Vector2(280, 106)
 	control_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	control_text.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	control_card.add_child(control_text)
+	controls_stack.add_child(control_text)
+	var accessibility_header := _label("ACCESSIBILITY", 11, CYAN)
+	accessibility_header.add_theme_constant_override("letter_spacing", 2)
+	controls_stack.add_child(accessibility_header)
+	title_shake_toggle = _check_button("REDUCE CAMERA SHAKE")
+	title_shake_toggle.toggled.connect(_on_shake_toggled)
+	controls_stack.add_child(title_shake_toggle)
+	title_flash_toggle = _check_button("REDUCE HARD FLASHES")
+	title_flash_toggle.toggled.connect(_on_flash_toggled)
+	controls_stack.add_child(title_flash_toggle)
+	var accessibility_note := _label("Saved automatically. Subtitles and visual interaction cues stay enabled.", 11, MUTED)
+	accessibility_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	controls_stack.add_child(accessibility_note)
 
 	var version := _label("ORIGINAL VERTICAL SLICE  /  GODOT DESKTOP BUILD", 11, Color(MUTED, 0.65))
 	version.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
@@ -610,10 +640,10 @@ func _build_pause() -> void:
 	settings_header.add_theme_constant_override("letter_spacing", 2)
 	pause_controls.add_child(settings_header)
 	shake_toggle = _check_button("REDUCE CAMERA SHAKE")
-	shake_toggle.toggled.connect(_on_setting_toggled)
+	shake_toggle.toggled.connect(_on_shake_toggled)
 	pause_controls.add_child(shake_toggle)
 	flash_toggle = _check_button("REDUCE HARD FLASHES")
-	flash_toggle.toggled.connect(_on_setting_toggled)
+	flash_toggle.toggled.connect(_on_flash_toggled)
 	pause_controls.add_child(flash_toggle)
 	pause_controls.add_child(_label("Both settings can be changed at any time.\nSubtitles and visual interaction cues remain enabled.", 12, MUTED))
 
@@ -744,12 +774,38 @@ func _build_global_effects(root: Control) -> void:
 	notice_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	notice_panel.add_child(notice_label)
 
+	radio_panel = PanelContainer.new()
+	radio_panel.name = "RadioDialogue"
+	radio_panel.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	radio_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	radio_panel.offset_left = 290
+	radio_panel.offset_right = -290
+	radio_panel.offset_bottom = -52
+	radio_panel.custom_minimum_size.y = 92
+	radio_panel.add_theme_stylebox_override("panel", _panel_style(Color("f20a1115"), Color(CYAN, 0.7), 1, 3))
+	radio_panel.modulate.a = 0.0
+	radio_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(radio_panel)
+	var radio_margin := MarginContainer.new()
+	_set_margins(radio_margin, 18, 12, 18, 12)
+	radio_panel.add_child(radio_margin)
+	var radio_stack := VBoxContainer.new()
+	radio_stack.add_theme_constant_override("separation", 5)
+	radio_margin.add_child(radio_stack)
+	radio_speaker_label = _label("", 11, CYAN)
+	radio_speaker_label.add_theme_constant_override("letter_spacing", 2)
+	radio_stack.add_child(radio_speaker_label)
+	radio_text_label = _label("", 15, PAPER)
+	radio_text_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	radio_stack.add_child(radio_text_label)
+
 
 ## Public API -----------------------------------------------------------------
 
 func show_title(has_save: bool = false) -> void:
 	mode = ScreenMode.TITLE
 	_show_only(title_screen)
+	_sync_setting_controls()
 	continue_button.visible = has_save
 	vignette.visible = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -856,8 +912,7 @@ func show_pause() -> void:
 	_show_only(pause_screen)
 	vignette.visible = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-	shake_toggle.button_pressed = reduced_shake
-	flash_toggle.button_pressed = reduced_flashes
+	_sync_setting_controls()
 	pause_controls.get_child(3).call_deferred("grab_focus")
 
 
@@ -900,6 +955,19 @@ func show_notice(text: String) -> void:
 	notice_tween.tween_property(notice_panel, "modulate:a", 1.0, 0.16)
 	notice_tween.tween_interval(2.2)
 	notice_tween.tween_property(notice_panel, "modulate:a", 0.0, 0.5)
+
+
+func show_radio_line(speaker: String, text: String) -> void:
+	if radio_tween != null and radio_tween.is_valid():
+		radio_tween.kill()
+	radio_speaker_label.text = speaker.to_upper()
+	radio_text_label.text = text
+	radio_panel.modulate.a = 0.0
+	radio_tween = create_tween()
+	radio_tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	radio_tween.tween_property(radio_panel, "modulate:a", 1.0, 0.18)
+	radio_tween.tween_interval(3.8)
+	radio_tween.tween_property(radio_panel, "modulate:a", 0.0, 0.5)
 
 
 ## Inventory rendering --------------------------------------------------------
@@ -1139,14 +1207,64 @@ func _refresh_intro() -> void:
 
 
 func _toggle_title_controls() -> void:
-	var card := title_screen.find_child("ControlsCard", true, false)
-	if card != null:
-		card.visible = not card.visible
+	if title_controls_card == null:
+		return
+	title_controls_card.visible = not title_controls_card.visible
+	if title_controls_card.visible:
+		_sync_setting_controls()
+		title_shake_toggle.call_deferred("grab_focus")
 
 
-func _on_setting_toggled(_enabled: bool) -> void:
-	reduced_shake = shake_toggle.button_pressed
-	reduced_flashes = flash_toggle.button_pressed
+func _on_shake_toggled(enabled: bool) -> void:
+	reduced_shake = enabled
+	_apply_setting_change()
+
+
+func _on_flash_toggled(enabled: bool) -> void:
+	reduced_flashes = enabled
+	_apply_setting_change()
+
+
+func _apply_setting_change() -> void:
+	_sync_setting_controls()
+	_save_settings()
+	settings_changed.emit(reduced_shake, reduced_flashes)
+
+
+func _sync_setting_controls() -> void:
+	for toggle in [title_shake_toggle, shake_toggle]:
+		if is_instance_valid(toggle):
+			toggle.set_pressed_no_signal(reduced_shake)
+	for toggle in [title_flash_toggle, flash_toggle]:
+		if is_instance_valid(toggle):
+			toggle.set_pressed_no_signal(reduced_flashes)
+
+
+func _load_settings() -> void:
+	var config := ConfigFile.new()
+	var load_error := config.load(SETTINGS_PATH)
+	if load_error == ERR_FILE_NOT_FOUND:
+		return
+	if load_error != OK:
+		push_warning("HUSHPOINT accessibility settings could not be loaded (error %d)." % load_error)
+		return
+	reduced_shake = bool(config.get_value(SETTINGS_SECTION, "reduced_shake", false))
+	reduced_flashes = bool(config.get_value(SETTINGS_SECTION, "reduced_flashes", false))
+
+
+func _save_settings() -> void:
+	var config := ConfigFile.new()
+	var load_error := config.load(SETTINGS_PATH)
+	if load_error != OK and load_error != ERR_FILE_NOT_FOUND:
+		push_warning("HUSHPOINT accessibility settings will replace an unreadable file (error %d)." % load_error)
+	config.set_value(SETTINGS_SECTION, "reduced_shake", reduced_shake)
+	config.set_value(SETTINGS_SECTION, "reduced_flashes", reduced_flashes)
+	var save_error := config.save(SETTINGS_PATH)
+	if save_error != OK:
+		push_warning("HUSHPOINT accessibility settings could not be saved (error %d)." % save_error)
+
+
+func _emit_loaded_settings() -> void:
 	settings_changed.emit(reduced_shake, reduced_flashes)
 
 
@@ -1155,6 +1273,10 @@ func _on_setting_toggled(_enabled: bool) -> void:
 func _show_only(target: Control) -> void:
 	for screen in screens:
 		screen.visible = screen == target
+	if target != hud_screen and is_instance_valid(radio_panel):
+		if radio_tween != null and radio_tween.is_valid():
+			radio_tween.kill()
+		radio_panel.modulate.a = 0.0
 
 
 func _label(text_value: String, font_size: int, color: Color) -> Label:

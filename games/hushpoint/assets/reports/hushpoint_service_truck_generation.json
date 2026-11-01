@@ -1,0 +1,73 @@
+{
+  "art_direction_reference": "higgsfield_tide_gauge_z_image.png",
+  "art_direction_reference_sha256": "cee0670590236f109c404817a157829c91992f5acdd4ec56a8f41fa434c3283f",
+  "asset": "HUSHPOINT Harbor Service Truck",
+  "asset_version": "1.0.0",
+  "authored_component_count": 123,
+  "blender_version": "4.5.10 LTS",
+  "external_generation_spend": false,
+  "generation_metrics": {
+    "bounds_max_m": [
+      1.31,
+      2.39,
+      3.16
+    ],
+    "bounds_min_m": [
+      -1.31,
+      -2.6903,
+      0.03
+    ],
+    "dimensions_m": [
+      2.62,
+      5.0803,
+      3.13
+    ],
+    "mesh_objects": 10,
+    "triangles_evaluated": 10908,
+    "vertices": 5692
+  },
+  "materials": [
+    "PBR_AmberSignalLens",
+    "PBR_BrushedSteelPanel",
+    "PBR_DarkPowdercoat",
+    "PBR_GalvanizedSteel",
+    "PBR_HeadlampLens",
+    "PBR_RedSignalLens",
+    "PBR_ReflectiveWhite",
+    "PBR_SafetyYellowPaint",
+    "PBR_SmokedSafetyGlass",
+    "PBR_TireRubber"
+  ],
+  "output_file": "hushpoint_service_truck.glb",
+  "output_sha256": "550f1246e7cf465ad3da1cdd1114e20bc8a21a4f903eb265d0e255e568e97f58",
+  "preview_file": "hushpoint_service_truck_preview.png",
+  "preview_sha256": "8f93735003fbd961913e2b0d951e04ac2daf9b3f4a0420be1f12409aeb33c7c2",
+  "reference_use": "Visual language only: galvanized steel, muted safety yellow, amber beacon, exposed practical hardware.",
+  "reimport_validation": {
+    "bounds_max_m": [
+      1.31,
+      2.39,
+      3.16
+    ],
+    "bounds_min_m": [
+      -1.31,
+      -2.6903,
+      0.03
+    ],
+    "dimensions_m": [
+      2.62,
+      5.0803,
+      3.13
+    ],
+    "mesh_objects": 10,
+    "status": "pass",
+    "triangles_evaluated": 10908,
+    "vertices": 21112
+  },
+  "runtime_mesh_strategy": "Applied modifiers, then joined by PBR material to limit draw calls.",
+  "source_script": "generate_service_truck.py",
+  "source_script_sha256": "0181fbf3bf224e52343b49eda406f9758f8ef75052c98454d39b97b0dea2c1ea",
+  "source_type": "deterministic_blender_python",
+  "status": "pass",
+  "third_party_geometry_or_textures": false
+}
