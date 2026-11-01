@@ -1,5 +1,5 @@
 import { accountStorageKey, setActiveAccount, withAccountRouteState } from "../lib/accountScope";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, vi } from "vitest";
@@ -10,6 +10,14 @@ import * as reportService from "../services/report";
 import { getLookup, getLookups, LOOKUPS_STORAGE_KEY, updateLookup } from "../services/storage";
 import { emptyPartInspection } from "../lib/partInspection";
 import type { Lookup, ScanAnalysisState } from "../types";
+
+const cloudHistoryMocks = vi.hoisted(() => ({
+  readCloudLookup: vi.fn(),
+}));
+
+vi.mock("../services/cloudHistory", () => ({
+  readCloudLookup: cloudHistoryMocks.readCloudLookup,
+}));
 
 const frame = {
   imageBase64: "data:image/jpeg;base64,test-image",
@@ -67,6 +75,8 @@ describe("Result", () => {
     sessionStorage.clear();
     vi.stubEnv("VITE_SUPABASE_URL", "");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "");
+    cloudHistoryMocks.readCloudLookup.mockReset();
+    cloudHistoryMocks.readCloudLookup.mockResolvedValue({ ok: true, value: null });
   });
 
   afterEach(() => {
@@ -441,10 +451,82 @@ describe("Result", () => {
     expect(screen.getAllByText("It charges the battery while the engine runs.").length).toBeGreaterThan(0);
   });
 
-  it("handles a direct result route without captured state", () => {
-    renderResult(null);
+  it("handles an unrouted result page without captured state", () => {
+    renderResult(null, "/result");
 
     expect(screen.getByText("No frame captured.")).toBeInTheDocument();
+  });
+
+  it("never substitutes the latest scan for a missing routed result", async () => {
+    sessionStorage.setItem(accountStorageKey("deep-spec:latest-scan-state"), JSON.stringify(successfulScan));
+    let resolveRead: ((value: { ok: true; value: null }) => void) | undefined;
+    cloudHistoryMocks.readCloudLookup.mockReturnValue(new Promise((resolve) => { resolveRead = resolve; }));
+
+    renderResult(null, "/result/requested-scan");
+
+    expect(screen.getAllByText("Loading saved scan...")).toHaveLength(2);
+    await act(async () => { resolveRead?.({ ok: true, value: null }); });
+    expect(await screen.findByRole("heading", { name: "Saved scan not found" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 1, name: "Alternator" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "Captured car part" })).not.toBeInTheDocument();
+  });
+
+  it("restores an exact cloud-only result after refresh and retains its photo, result, and chat", async () => {
+    const cloudLookup = makeLookup({
+      id: "cloud-only",
+      frame: { imageBase64: "https://example.test/signed-cloud-photo", capturedAt: frame.capturedAt },
+      result: { ...successfulScan.result!, partName: "Cloud-only starter" },
+      chatHistory: [{ id: "cloud-chat", role: "assistant", content: "Saved cloud guidance", timestamp: "2026-05-16T00:01:00.000Z" }],
+    });
+    cloudHistoryMocks.readCloudLookup.mockResolvedValue({ ok: true, value: cloudLookup });
+
+    renderResult(null, "/result/cloud-only");
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Cloud-only starter" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute("src", "https://example.test/signed-cloud-photo");
+    await userEvent.click(screen.getByRole("button", { name: "Ask DeepSpec" }));
+    expect(await screen.findByText("Saved cloud guidance")).toBeInTheDocument();
+    expect(getLookup("cloud-only")).toMatchObject({
+      id: "cloud-only",
+      frame: cloudLookup.frame,
+      result: { partName: "Cloud-only starter" },
+      chatHistory: cloudLookup.chatHistory,
+    });
+  });
+
+  it("shows not found for an exact cloud miss", async () => {
+    renderResult(null, "/result/missing-cloud-scan");
+
+    expect(await screen.findByRole("heading", { name: "Saved scan not found" })).toBeInTheDocument();
+    expect(screen.getByText("No scan with this link exists in your signed-in account.")).toBeInTheDocument();
+  });
+
+  it("shows a retryable cloud outage without showing another scan", async () => {
+    const restored = makeLookup({ id: "retry-cloud", result: { ...successfulScan.result!, partName: "Recovered starter" } });
+    cloudHistoryMocks.readCloudLookup
+      .mockResolvedValueOnce({ ok: false, message: "Cloud history is temporarily unavailable." })
+      .mockResolvedValueOnce({ ok: true, value: restored });
+
+    renderResult(null, "/result/retry-cloud");
+
+    expect(await screen.findByRole("heading", { name: "Saved scan unavailable" })).toBeInTheDocument();
+    expect(screen.getByText("Cloud history is temporarily unavailable.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Retry loading" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Recovered starter" })).toBeInTheDocument();
+  });
+
+  it("does not reveal a cloud response after the active account changes", async () => {
+    let resolveRead: ((value: { ok: true; value: Lookup }) => void) | undefined;
+    cloudHistoryMocks.readCloudLookup.mockReturnValue(new Promise((resolve) => { resolveRead = resolve; }));
+    const foreignLookup = makeLookup({ id: "account-bound", result: { ...successfulScan.result!, partName: "Private account result" } });
+
+    renderResult(null, "/result/account-bound");
+    setActiveAccount("other-user");
+    resolveRead?.({ ok: true, value: foreignLookup });
+
+    await waitFor(() => expect(screen.queryByText("Loading saved scan...")).not.toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: "Saved scan unavailable" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Private account result" })).not.toBeInTheDocument();
   });
 
   it("captures distrust and a reason for a saved scan", async () => {

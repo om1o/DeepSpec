@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   select: vi.fn<(columns: string) => SelectResult>(),
   eq: vi.fn(),
   limit: vi.fn(),
+  signedUrls: vi.fn(),
 }));
 
 vi.mock("./auth", () => ({
@@ -14,11 +15,16 @@ vi.mock("./auth", () => ({
   getAuthClient: async () => ({
     auth: { getUser: async () => ({ data: { user: { id: "user-1" } }, error: null }) },
     from: () => ({
-      select: (columns: string) => ({
-        eq: (...args: unknown[]) => { mocks.eq(...args); return { order: () => ({ limit: async (limit: number) => { mocks.limit(limit); return mocks.select(columns); } }) }; },
-      }),
+      select: (columns: string) => {
+        const query = {
+          eq: (...args: unknown[]) => { mocks.eq(...args); return query; },
+          order: () => query,
+          limit: async (limit: number) => { mocks.limit(limit); return mocks.select(columns); },
+        };
+        return query;
+      },
     }),
-    storage: { from: () => ({ createSignedUrls: async () => ({ data: [], error: null }) }) },
+    storage: { from: () => ({ createSignedUrls: mocks.signedUrls }) },
   }),
 }));
 
@@ -48,6 +54,8 @@ describe("readCloudLookups", () => {
     mocks.select.mockReset();
     mocks.eq.mockReset();
     mocks.limit.mockReset();
+    mocks.signedUrls.mockReset();
+    mocks.signedUrls.mockResolvedValue({ data: [], error: null });
   });
 
   it("reads the verified account history with its owner filter and limit despite an obsolete preview flag", async () => {
@@ -169,5 +177,91 @@ describe("readCloudLookups", () => {
 
     expect(mocks.select).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ ok: false, message: "permission denied for table scan_lookups" });
+  });
+});
+
+describe("readCloudLookup", () => {
+  beforeEach(() => {
+    setActiveAccount("user-1");
+    mocks.select.mockReset();
+    mocks.eq.mockReset();
+    mocks.limit.mockReset();
+    mocks.signedUrls.mockReset();
+    mocks.signedUrls.mockResolvedValue({ data: [], error: null });
+  });
+
+  it("reads only the requested record for the verified account and restores its photo, result, and chat", async () => {
+    const chat = [{ id: "message-1", role: "assistant", content: "Keep this cloud answer.", timestamp: "2026-09-18T12:01:00.000Z" }];
+    mocks.select.mockReturnValue({
+      data: [{
+        ...shopRow,
+        image_path: "user-1/scan-1/original.webp",
+        chat_history: chat,
+        result_json: { partName: "Cloud alternator", confidence: "high", evidence: [] },
+      }],
+      error: null,
+    });
+    mocks.signedUrls.mockResolvedValue({
+      data: [{ path: "user-1/scan-1/original.webp", signedUrl: "https://example.test/private-photo" }],
+      error: null,
+    });
+
+    const { readCloudLookup } = await import("./cloudHistory");
+    const result = await readCloudLookup("scan-1");
+
+    expect(mocks.eq.mock.calls).toEqual(expect.arrayContaining([
+      ["user_id", "user-1"],
+      ["local_id", "scan-1"],
+    ]));
+    expect(mocks.limit).toHaveBeenCalledWith(2);
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        id: "scan-1",
+        frame: { imageBase64: "https://example.test/private-photo" },
+        result: { partName: "Cloud alternator" },
+        chatHistory: chat,
+      },
+    });
+  });
+
+  it("returns not found instead of substituting a different row", async () => {
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, local_id: "different-scan" }], error: null });
+    const { readCloudLookup } = await import("./cloudHistory");
+
+    expect(await readCloudLookup("scan-1")).toEqual({ ok: true, value: null });
+  });
+
+  it("returns a retryable read error without weakening the account filter", async () => {
+    mocks.select.mockReturnValue({ data: null, error: { message: "temporary gateway outage" } });
+    const { readCloudLookup } = await import("./cloudHistory");
+
+    expect(await readCloudLookup("scan-1")).toEqual({ ok: false, message: "temporary gateway outage" });
+    expect(mocks.eq).toHaveBeenCalledWith("user_id", "user-1");
+    expect(mocks.eq).toHaveBeenCalledWith("local_id", "scan-1");
+  });
+
+  it("fails closed when a private scan photo cannot be signed", async () => {
+    mocks.select.mockReturnValue({
+      data: [{ ...shopRow, image_path: "user-1/scan-1/original.webp" }],
+      error: null,
+    });
+    mocks.signedUrls.mockResolvedValue({ data: [], error: { message: "storage unavailable" } });
+    const { readCloudLookup } = await import("./cloudHistory");
+
+    expect(await readCloudLookup("scan-1")).toEqual({
+      ok: false,
+      message: "The saved scan photo could not be loaded. Try again.",
+    });
+  });
+
+  it("discards the exact record if the active account changes while it is loading", async () => {
+    mocks.select.mockImplementation(() => {
+      setActiveAccount("user-2");
+      return { data: [shopRow], error: null };
+    });
+    const { readCloudLookup } = await import("./cloudHistory");
+
+    expect(await readCloudLookup("scan-1")).toEqual({ ok: false, message: "Account changed. Reload your saved scans." });
   });
 });

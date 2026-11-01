@@ -5,6 +5,7 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { BrandLockup } from "../components/BrandLockup";
 import { useEffect, useRef, useState } from "react";
 import { AIServiceError, getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
+import { readCloudLookup } from "../services/cloudHistory";
 import { syncAnalysisFailuresToCloud } from "../services/cloudSync";
 import Button from "../components/ui/Button";
 import { IsolatedPartView } from "../components/result/IsolatedPartView";
@@ -26,20 +27,23 @@ import { getShopJob } from "../services/shop";
 import { createLookup, getLookup, normalizeLookup, recordLookupAnalysisFailure, saveExistingLookup, scanStateFromLookup, updateLookup, updateLookupResult, withRetriedLookupResult } from "../services/storage";
 import type { CapturedFrame, IdentificationResult, Lookup, Rating, ScanAnalysisState, ShopJob as ShopJobRecord } from "../types";
 
+type ResultRestoreStatus = "ready" | "loading" | "not-found" | "error";
+
 export default function Result() {
+  const { id } = useParams();
+  return <ResultView key={id ?? "current-result"} id={id} />;
+}
+
+function ResultView({ id }: { id: string | undefined }) {
   const [mountedScope] = useState(getAccountScope);
   const location = useLocation();
   const routeState = isCurrentAccountRouteState(location.state) ? location.state : null;
   const navigate = useNavigate();
-  const { id } = useParams();
   const historyLookup = normalizeLookup(routeState?.savedLookup);
-  const [lookup, setLookup] = useState<Lookup | null>(() => {
-    if (!id) return null;
-    const local = getLookup(id);
-    const fromHistory = normalizeLookup(routeState?.savedLookup);
-    if (local && fromHistory?.id === id) return withLatestInspection(local, fromHistory);
-    return local;
-  });
+  const [lookup, setLookup] = useState<Lookup | null>(() => resolveRoutedLookup(id, routeState));
+  const [restoreStatus, setRestoreStatus] = useState<ResultRestoreStatus>(() => id && !resolveRoutedLookup(id, routeState) ? "loading" : "ready");
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [restoreAttempt, setRestoreAttempt] = useState(0);
   const [liveScanState, setLiveScanState] = useState<ScanAnalysisState | null>(null);
   const inspectionBase = historyLookup && historyLookup.id === id
     ? (lookup ? mergeCloudLookup(lookup, historyLookup) : historyLookup)
@@ -48,8 +52,8 @@ export default function Result() {
   const [hasPendingRetryResult, setHasPendingRetryResult] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [retrySaveLabel, setRetrySaveLabel] = useState("Retry saving feedback");
-  const scanState = lookup ? scanStateFromLookup(inspectionBase ?? lookup) : liveScanState ?? getScanState(routeState);
-  const frame = scanState?.frame ?? readLatestCapturedFrame();
+  const scanState = liveScanState ?? (lookup ? scanStateFromLookup(inspectionBase ?? lookup) : (id ? null : getScanState(routeState)));
+  const frame = scanState?.frame ?? (id ? undefined : readLatestCapturedFrame());
   const capturedAt = frame?.capturedAt ? new Date(frame.capturedAt).toLocaleString() : null;
   const storageWarning = scanState?.storageWarning;
   const shopJob = scanState?.jobId ? getShopJob(scanState.jobId) : null;
@@ -60,6 +64,68 @@ export default function Result() {
   const pendingRatingRef = useRef<Rating | undefined>(undefined);
   const pendingCorrectionRef = useRef<string | null | undefined>(undefined);
   const pendingRetryLookupRef = useRef<Lookup | null>(null);
+  const locallySavedLookup = lookup ? getLookup(lookup.id) : null;
+
+  useEffect(() => {
+    let cancelled = false;
+    async function restoreResult() {
+      await Promise.resolve();
+      if (cancelled) return;
+      if (!id) {
+        setRestoreStatus("ready");
+        setRestoreError(null);
+        return;
+      }
+
+      const immediate = resolveRoutedLookup(id, isCurrentAccountRouteState(location.state) ? location.state : null);
+      if (immediate) {
+        setLookup(immediate);
+        setRestoreStatus("ready");
+        setRestoreError(null);
+        return;
+      }
+
+      setLookup(null);
+      setLiveScanState(null);
+      setRestoreStatus("loading");
+      setRestoreError(null);
+
+      let result: Awaited<ReturnType<typeof readCloudLookup>>;
+      try {
+        result = await readCloudLookup(id);
+      } catch {
+        if (!cancelled) {
+          setRestoreStatus("error");
+          setRestoreError("DeepSpec could not reach saved scans. Check your connection and try again.");
+        }
+        return;
+      }
+      if (cancelled) return;
+      if (!isAccountScopeCurrent(mountedScope)) {
+        setLookup(null);
+        setRestoreStatus("error");
+        setRestoreError("Account changed. Reload this saved scan from the current account.");
+        return;
+      }
+      if (!result.ok) {
+        setRestoreStatus("error");
+        setRestoreError(result.message);
+        return;
+      }
+      if (!result.value) {
+        setRestoreStatus("not-found");
+        return;
+      }
+
+      const local = getLookup(id);
+      setLookup(local ? mergeCloudLookup(local, result.value) : result.value);
+      setRestoreStatus("ready");
+    }
+
+    void restoreResult();
+
+    return () => { cancelled = true; };
+  }, [id, location.state, mountedScope, restoreAttempt]);
 
   function trackManualCorrectionOnce() {
     if (manualCorrectionTrackedRef.current) {
@@ -199,7 +265,7 @@ export default function Result() {
 
   function handleSaveAndAsk(question?: string) {
     if (!isAccountScopeCurrent(mountedScope) || pendingRetryLookupRef.current) return;
-    const saved = lookup ?? saveCurrentScan();
+    const saved = lookup && locallySavedLookup ? lookup : saveCurrentScan();
     if (!saved) {
       return;
     }
@@ -251,13 +317,20 @@ export default function Result() {
                 objects={scanState?.isolatedObjects}
                 variant="result"
               />
-            ) : <div className="absolute inset-0 grid place-items-center bg-[#061522] px-8 text-center text-sm text-white/62">No frame captured.</div>}
+            ) : <div className="absolute inset-0 grid place-items-center bg-[#061522] px-8 text-center text-sm text-white/62">{getRestorePhotoMessage(restoreStatus)}</div>}
           </div>
         </section>
 
         <div data-testid="result-overview-panel" className="ds-result-sheet relative min-w-0 rounded-t-[24px] border-t border-[var(--ds-border)] bg-[var(--ds-page)] px-4 pb-8 pt-4 lg:rounded-[24px] lg:border lg:max-h-[calc(100dvh-40px)] lg:overflow-y-auto">
           <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-300 lg:hidden" />
           <div className="space-y-3">
+          {restoreStatus !== "ready" ? (
+            <ResultRestoreState
+              message={restoreError}
+              onRetry={() => setRestoreAttempt((attempt) => attempt + 1)}
+              status={restoreStatus}
+            />
+          ) : <>
           {storageWarning ? <StorageWarning message={storageWarning} /> : null}
           {saveError ? <StorageWarning message={saveError} /> : null}
           {shopJob ? <ShopJobBanner job={shopJob} /> : null}
@@ -267,7 +340,7 @@ export default function Result() {
               capturedAt={capturedAt}
               canSaveForChat={canSaveForChat}
               askDisabled={hasPendingRetryResult}
-              lookupId={lookup?.id ?? null}
+              lookupId={locallySavedLookup?.id ?? null}
               onSaveAndAsk={handleSaveAndAsk}
               onSaveOnly={handleSaveOnly}
             />
@@ -279,7 +352,7 @@ export default function Result() {
               message={scanState.errorMessage} 
               capturedAt={capturedAt} 
               frame={frame}
-              lookup={lookup}
+              lookup={locallySavedLookup ? lookup : null}
               vehicleContext={lookup?.vehicleContext ?? scanState.vehicleContext}
               onLookupRetrySuccess={(updatedLookup, warning) => {
                 pendingRetryLookupRef.current = warning ? updatedLookup : null;
@@ -320,6 +393,7 @@ export default function Result() {
           >
             Report a result or AR problem
           </Link>
+          </>}
         </div>
 
         <Button className="mt-6 w-full" onClick={() => navigate("/scan")}>
@@ -329,6 +403,63 @@ export default function Result() {
       </div>
       <ScanDebugOverlay info={scanState?.debug} />
     </main>
+  );
+}
+
+function resolveRoutedLookup(id: string | undefined, routeState: unknown): Lookup | null {
+  if (!id) return null;
+  const local = getLookup(id);
+  const fromRoute = normalizeLookup(
+    routeState && typeof routeState === "object" && "savedLookup" in routeState
+      ? routeState.savedLookup
+      : null,
+  );
+  const exactRoute = fromRoute?.id === id ? fromRoute : null;
+  if (local && exactRoute) return withLatestInspection(local, exactRoute);
+  return local ?? exactRoute;
+}
+
+function getRestorePhotoMessage(status: ResultRestoreStatus) {
+  if (status === "loading") return "Loading saved scan...";
+  if (status === "not-found") return "Saved scan not found.";
+  if (status === "error") return "Saved scan unavailable.";
+  return "No frame captured.";
+}
+
+function ResultRestoreState({
+  message,
+  onRetry,
+  status,
+}: {
+  message: string | null;
+  onRetry: () => void;
+  status: Exclude<ResultRestoreStatus, "ready">;
+}) {
+  if (status === "loading") {
+    return (
+      <section aria-live="polite" className="rounded-[22px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-5">
+        <p className="text-sm font-bold text-[#a7cbd4]">Loading saved scan...</p>
+        <p className="mt-2 text-sm leading-6 text-[var(--ds-fg-3)]">Checking this signed-in account for the exact result.</p>
+      </section>
+    );
+  }
+
+  if (status === "not-found") {
+    return (
+      <section className="rounded-[22px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-5">
+        <h2 className="text-xl font-extrabold tracking-tight">Saved scan not found</h2>
+        <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-3)]">No scan with this link exists in your signed-in account.</p>
+        <Link className="mt-4 inline-flex min-h-11 items-center rounded-full border border-[var(--ds-border)] px-4 text-sm font-bold" to="/history">Open saved scans</Link>
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-[22px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-5" role="alert">
+      <h2 className="text-xl font-extrabold tracking-tight">Saved scan unavailable</h2>
+      <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-2)]">{message ?? "DeepSpec could not load this saved scan."}</p>
+      <Button className="mt-4" onClick={onRetry}>Retry loading</Button>
+    </section>
   );
 }
 

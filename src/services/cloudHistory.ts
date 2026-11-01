@@ -77,25 +77,21 @@ type ReadCloudHistoryResult =
   | { ok: true; value: Lookup[] }
   | { ok: false; message: string };
 
+type ReadCloudLookupResult =
+  | { ok: true; value: Lookup | null }
+  | { ok: false; message: string };
+
+type AuthClient = NonNullable<Awaited<ReturnType<typeof getAuthClient>>>;
+type VerifiedClientResult =
+  | { ok: true; value: AuthClient }
+  | { ok: false; message: string };
+
 export async function readCloudLookups(limit = DEFAULT_HISTORY_LIMIT): Promise<ReadCloudHistoryResult> {
   const scope = getAccountScope();
   const changed = () => ({ ok: false as const, message: "Account changed. Reload your saved scans." });
-  if (!isAccountScopeCurrent(scope)) return changed();
-  if (!isSupabaseAuthConfigured()) {
-    return { ok: false, message: "Supabase auth is not configured for this build." };
-  }
-
-  const supabase = await getAuthClient();
-  if (!isAccountScopeCurrent(scope)) return changed();
-  if (!supabase) {
-    return { ok: false, message: "Supabase auth is not configured for this build." };
-  }
-
-  const userResult = await supabase.auth.getUser();
-  if (!isAccountScopeCurrent(scope)) return changed();
-  if (userResult.error || !userResult.data.user || userResult.data.user.id !== scope.userId) {
-    return { ok: false, message: "No verified Supabase session was found." };
-  }
+  const clientResult = await getVerifiedCloudClient(scope);
+  if (!clientResult.ok) return clientResult;
+  const supabase = clientResult.value;
 
   const selectRows = (columns: string): PromiseLike<CloudHistoryQueryResult> => supabase
     .from("scan_lookups")
@@ -103,24 +99,8 @@ export async function readCloudLookups(limit = DEFAULT_HISTORY_LIMIT): Promise<R
     .eq("user_id", scope.userId)
     .order("created_at", { ascending: false })
     .limit(limit);
-  let optionalColumns = [...CLOUD_HISTORY_SHOP_COLUMNS, "inspection_json", "analysis_attempt_id"];
-  let rowsResult = await selectRows(`${CLOUD_HISTORY_CORE_SELECT},${optionalColumns.join(",")}`);
-  if (!isAccountScopeCurrent(scope)) return changed();
-  // The shop and inspection migrations may be deployed independently. Drop only the
-  // missing group, preserving whichever fields this database supports.
-  for (let attempt = 0; attempt < 3 && rowsResult.error; attempt += 1) {
-    if (isMissingShopColumn(rowsResult.error)) {
-      optionalColumns = optionalColumns.filter((column) => !CLOUD_HISTORY_SHOP_COLUMNS.includes(column));
-    } else if (isMissingInspectionColumn(rowsResult.error)) {
-      optionalColumns = optionalColumns.filter((column) => column !== "inspection_json");
-    } else if (/does not exist|schema cache|could not find .* column/i.test(rowsResult.error.message ?? "") && rowsResult.error.message?.includes("analysis_attempt_id")) {
-      optionalColumns = optionalColumns.filter((column) => column !== "analysis_attempt_id");
-    } else {
-      break;
-    }
-    rowsResult = await selectRows([CLOUD_HISTORY_CORE_SELECT, ...optionalColumns].join(","));
-    if (!isAccountScopeCurrent(scope)) return changed();
-  }
+  const rowsResult = await selectCloudRowsWithFallback(selectRows, scope);
+  if (!rowsResult) return changed();
 
   if (rowsResult.error) {
     return { ok: false, message: rowsResult.error.message ?? "Could not load cloud scan history." };
@@ -134,6 +114,98 @@ export async function readCloudLookups(limit = DEFAULT_HISTORY_LIMIT): Promise<R
     .filter((lookup): lookup is Lookup => Boolean(lookup));
 
   return { ok: true, value: lookups };
+}
+
+export async function readCloudLookup(id: string): Promise<ReadCloudLookupResult> {
+  const requestedId = id.trim();
+  if (!requestedId) return { ok: true, value: null };
+
+  const scope = getAccountScope();
+  const changed = () => ({ ok: false as const, message: "Account changed. Reload your saved scans." });
+  const clientResult = await getVerifiedCloudClient(scope);
+  if (!clientResult.ok) return clientResult;
+  const supabase = clientResult.value;
+
+  const selectRows = (columns: string): PromiseLike<CloudHistoryQueryResult> => supabase
+    .from("scan_lookups")
+    .select(columns)
+    .eq("user_id", scope.userId)
+    .eq("local_id", requestedId)
+    .limit(2);
+  const rowsResult = await selectCloudRowsWithFallback(selectRows, scope);
+  if (!rowsResult) return changed();
+  if (rowsResult.error) {
+    return { ok: false, message: rowsResult.error.message ?? "Could not load this saved scan." };
+  }
+
+  const matchingRows = Array.isArray(rowsResult.data)
+    ? (rowsResult.data as CloudHistoryRow[]).filter((row) => row.local_id === requestedId)
+    : [];
+  if (matchingRows.length === 0) return { ok: true, value: null };
+  if (matchingRows.length > 1) {
+    return { ok: false, message: "This saved scan could not be identified uniquely. Try again." };
+  }
+
+  const signedImageMap = await getSignedImageMap(supabase, matchingRows);
+  if (!isAccountScopeCurrent(scope)) return changed();
+  const imagePath = matchingRows[0].image_path;
+  if (isString(imagePath) && !signedImageMap.has(imagePath)) {
+    return { ok: false, message: "The saved scan photo could not be loaded. Try again." };
+  }
+  return { ok: true, value: mapCloudRowToLookup(matchingRows[0], signedImageMap, 0) };
+}
+
+async function getVerifiedCloudClient(scope: ReturnType<typeof getAccountScope>): Promise<VerifiedClientResult> {
+  if (!isAccountScopeCurrent(scope)) {
+    return { ok: false, message: "Account changed. Reload your saved scans." };
+  }
+  if (!isSupabaseAuthConfigured()) {
+    return { ok: false, message: "Supabase auth is not configured for this build." };
+  }
+
+  const supabase = await getAuthClient();
+  if (!isAccountScopeCurrent(scope)) {
+    return { ok: false, message: "Account changed. Reload your saved scans." };
+  }
+  if (!supabase) {
+    return { ok: false, message: "Supabase auth is not configured for this build." };
+  }
+
+  const userResult = await supabase.auth.getUser();
+  if (!isAccountScopeCurrent(scope)) {
+    return { ok: false, message: "Account changed. Reload your saved scans." };
+  }
+  if (userResult.error || !userResult.data.user || userResult.data.user.id !== scope.userId) {
+    return { ok: false, message: "No verified Supabase session was found." };
+  }
+
+  return { ok: true, value: supabase };
+}
+
+async function selectCloudRowsWithFallback(
+  selectRows: (columns: string) => PromiseLike<CloudHistoryQueryResult>,
+  scope: ReturnType<typeof getAccountScope>,
+): Promise<CloudHistoryQueryResult | null> {
+  let optionalColumns = [...CLOUD_HISTORY_SHOP_COLUMNS, "inspection_json", "analysis_attempt_id"];
+  let rowsResult = await selectRows(`${CLOUD_HISTORY_CORE_SELECT},${optionalColumns.join(",")}`);
+  if (!isAccountScopeCurrent(scope)) return null;
+
+  // Optional migrations can land independently. Remove only the unavailable group.
+  for (let attempt = 0; attempt < 3 && rowsResult.error; attempt += 1) {
+    if (isMissingShopColumn(rowsResult.error)) {
+      optionalColumns = optionalColumns.filter((column) => !CLOUD_HISTORY_SHOP_COLUMNS.includes(column));
+    } else if (isMissingInspectionColumn(rowsResult.error)) {
+      optionalColumns = optionalColumns.filter((column) => column !== "inspection_json");
+    } else if (/does not exist|schema cache|could not find .* column/i.test(rowsResult.error.message ?? "") && rowsResult.error.message?.includes("analysis_attempt_id")) {
+      optionalColumns = optionalColumns.filter((column) => column !== "analysis_attempt_id");
+    } else {
+      break;
+    }
+    rowsResult = await selectRows([CLOUD_HISTORY_CORE_SELECT, ...optionalColumns].join(","));
+    if (!isAccountScopeCurrent(scope)) return null;
+  }
+
+  return rowsResult;
 }
 
 /** A select naming a shop column the database doesn't have (Postgres 42703 or a stale schema cache). */
