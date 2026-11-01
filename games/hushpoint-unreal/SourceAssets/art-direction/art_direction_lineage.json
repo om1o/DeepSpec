@@ -1,0 +1,42 @@
+{
+  "date": "2026-11-01",
+  "decision": "Storm Authority global baseline; Blackwater Pursuit normal flooded interiors; Counterflow Cathedral Bellman and finale only.",
+  "generator": "OpenAI built-in image generation",
+  "images": [
+    {
+      "direction": "A - Storm Authority",
+      "file": "direction-a-storm-authority-openai.png",
+      "sha256": "d3250eb11935e2ae482311530e4c136bde3e0b801b253454de87b31e3eff1d75",
+      "prompt": "Use case: stylized-concept\nAsset type: HUSHPOINT Unreal Engine visual-direction reference A, landscape cinematic game frame\nPrimary request: Create an original over-the-shoulder third-person survival-horror concept named STORM AUTHORITY, not based on any existing franchise.\nScene/backdrop: Entrance of an aging North Sea coastal pumping station during a violent night storm; grounded civic infrastructure, wet concrete, galvanized railings, flood gauges, realistic pipes, one compact twin-lamp emergency floodlight tower, rain sheets, wind-driven spray, believable maintenance clutter, open service door leading into warmth.\nSubject: Lena Vale, an original municipal flood-control engineer, seen from behind in a practical navy storm coat with restrained amber reflective strips and compact equipment bag. No celebrity likeness.\nStyle/medium: Premium grounded realistic game concept art with physically plausible materials and modest asset density feasible for a focused Unreal Engine vertical slice.\nComposition/framing: 16:9 landscape, close right-shoulder camera, 35 mm lens feeling, clear navigation silhouette and doorway objective, restrained cinematic framing.\nLighting/mood: Cold cyan storm skylight and lightning outside, warm sodium emergency pools inside, glossy wet reflections, soft indirect bounce, subtle volumetric mist, readable deep shadows rather than crushed black.\nConstraints: no HUD, no readable text, no logos, no zombies, no gore, no copied monsters, no recognizable characters, props, rooms, or locations from existing games; original public flood-control engineering; no watermark."
+    },
+    {
+      "direction": "B - Blackwater Pursuit",
+      "file": "direction-b-blackwater-pursuit-openai.png",
+      "sha256": "581222eb70bd1a47cb6ba674c296a44de556c0bc1b981540b8efe772132afc28",
+      "prompt": "Use case: stylized-concept\nAsset type: HUSHPOINT Unreal Engine visual-direction reference B, landscape cinematic game frame\nPrimary request: Create an original over-the-shoulder third-person survival-horror concept named BLACKWATER PURSUIT, not based on any existing franchise.\nScene/backdrop: A narrow, partially submerged service gallery beneath an aging coastal pumping station; waist-high black floodwater, corroded valve wheels, cable trays, pressure doors, peeling generic safety paint, ceiling condensation, and distant ripples suggesting one unseen sound-hunting threat.\nSubject: Lena Vale, an original municipal flood-control engineer, seen from behind in a practical rain-darkened navy utility coat, compact shoulder bag, and flashlight. No celebrity likeness.\nStyle/medium: Premium grounded realistic game concept art with physically plausible materials, suitable as an Unreal Engine environment target.\nComposition/framing: 16:9 landscape, tight close right-shoulder camera, 40 mm lens feeling, strong foreground occlusion, deliberate threatening negative space behind the player, clear route readability.\nLighting/mood: One practical flashlight cone, sparse green maintenance lamps, a distant red breaker beacon, subtle warm emergency-room bounce, wet-metal reflections, low fog only near water; darkness tense but navigable.\nConstraints: no HUD, no readable text, no logos, no zombies, no gore, no copied monsters, no recognizable characters, props, rooms, or locations from existing games; original civic infrastructure design; no watermark."
+    },
+    {
+      "direction": "C - Counterflow Cathedral",
+      "file": "direction-c-counterflow-cathedral-openai.png",
+      "sha256": "4841239a7d8e9a942583c12b72057db28f8b78601e4165b721d694ff3f6a5f5d",
+      "prompt": "Use case: stylized-concept\nAsset type: HUSHPOINT Unreal Engine visual-direction reference C, landscape cinematic game frame\nPrimary request: Create an original over-the-shoulder third-person survival-horror concept named COUNTERFLOW CATHEDRAL, not based on any existing franchise.\nScene/backdrop: The vast central counterflow chamber of a monumental coastal pumping station: original brutalist concrete arches, enormous turbines and tide conduits, suspended catwalks, thin curtains of falling water, three physical breaker towers, and a distant bell-shaped industrial stalker silhouette built from corroded civic machinery.\nSubject: Lena Vale, an original municipal flood-control engineer, seen from behind in a practical navy storm coat with restrained amber safety trim and compact equipment bag. No celebrity likeness.\nStyle/medium: Premium cinematic realistic game concept art with buildable modular geometry and physically plausible wet materials, suitable as an Unreal Engine environment target.\nComposition/framing: 16:9 landscape, shoulder camera pulled slightly wider, 28 mm lens feeling, architectural awe and threat, clear golden navigation path through the chamber, player remains readable against the scale.\nLighting/mood: Cold moonlight shafts through storm vents, deep teal indirect illumination, restrained amber service lamps, one red purge beacon, wet-floor reflections and luminous mist used sparingly, strong silhouette readability.\nConstraints: dramatic but feasible for a focused vertical slice; no HUD, no readable text, no logos, no zombies, no gore, no copied monsters, no recognizable characters, props, rooms, or locations from existing games; original civic infrastructure; no watermark."
+    }
+  ],
+  "higgsfield_environment_attempts": {
+    "charged_credits": 0.0,
+    "jobs": [
+      {
+        "job_id": "86bd5bb1-e0c8-4a85-bdc2-8233d5c35b3e",
+        "model": "z_image",
+        "status": "failed"
+      },
+      {
+        "job_id": "7a96f167-e58d-4f0f-85d2-e29c43ab6f1e",
+        "model": "z_image",
+        "status": "failed"
+      }
+    ],
+    "note": "No environment image was returned. The existing Higgsfield floodlight concept and SAM 3D model remain the provider contribution to the chosen hybrid."
+  },
+  "usage": "Preproduction visual reference only; not a runtime texture, game screenshot, or proof of Unreal performance."
+}

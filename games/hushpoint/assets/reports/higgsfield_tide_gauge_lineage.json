@@ -1,0 +1,93 @@
+{
+  "asset": "HUSHPOINT Tide Gauge & Telemetry Cabinet",
+  "date": "2026-11-01",
+  "image": {
+    "cost_credits": 0.15,
+    "job_id": "4ff7cf22-39f3-40ab-853e-99e5d0c5e903",
+    "prompt": "Original game-ready industrial coastal tide gauge and telemetry sensor cabinet, single freestanding hero prop on a clean neutral gray studio background, three-quarter front view, weathered galvanized steel enclosure on two sturdy legs, analog brass tide staff on the side, compact radar sensor hood, sealed conduit, small amber status lamp, bolt plates and rain streaks, believable public-infrastructure engineering, restrained blue-gray and safety-yellow accents, no logos, no readable text, no people, no weapons, no monsters, no copyrighted characters, centered full object with generous empty margin, realistic PBR product render, even soft lighting, every part clearly separated for image-to-3D reconstruction",
+    "raw_file": "../concepts/higgsfield_tide_gauge_z_image.png",
+    "sha256": "cee0670590236f109c404817a157829c91992f5acdd4ec56a8f41fa434c3283f"
+  },
+  "mesh": {
+    "cost_credits": 1,
+    "detection_threshold": 0.25,
+    "job_id": "c7b785d4-fa62-4e8a-b570-c8459f1e15fd",
+    "model": "sam_3_3d",
+    "prompt": "Lift the entire freestanding tide gauge and telemetry cabinet as one object, including all support legs, base plate, yellow center pipe, enclosure and top sensor hood. Ignore the plain gray background.",
+    "raw_file": "../source/higgsfield_sam3d_c7b785d4-fa62-4e8a-b570-c8459f1e15fd_raw.glb",
+    "seed": 11989,
+    "sha256": "820a1bd16c42f3a4ea73c8225d72c1e7df280b3b8759cb2a0da4818fb43e81df",
+    "source_image_job_id": "4ff7cf22-39f3-40ab-853e-99e5d0c5e903",
+    "textured_glb": true
+  },
+  "blender_processing": {
+    "archive_sha256": "ef6d846b8015f47ade6df3f9322ce17419080a5d922fa562b6c966064fe30dce",
+    "archive_url": "https://ftp.nluug.nl/pub/graphics/blender/release/Blender4.5/blender-4.5.10-windows-x64.zip",
+    "before": {
+      "dimensions_m": [
+        0.303627,
+        0.271656,
+        0.99969
+      ],
+      "materials": 1,
+      "mesh_objects": 1,
+      "triangles": 7735,
+      "vertices": 6337
+    },
+    "command": "blender --background --factory-startup --python tools/blender_asset_pipeline.py -- --input assets/source/higgsfield_sam3d_c7b785d4-fa62-4e8a-b570-c8459f1e15fd_raw.glb --output assets/models/hushpoint_tide_gauge_optimized.glb --report assets/reports/hushpoint_tide_gauge_pipeline.json --decimate-threshold 50000 --target-triangles 30000 --asset-name HUSHPOINT_Tide_Gauge",
+    "execution_environment": {
+      "persistent_install_verified": false,
+      "runtime_location_used": "%TEMP%/hushpoint-blender-4.5.10/runtime/blender-4.5.10-windows-x64/blender.exe",
+      "runtime_location_verified": true,
+      "windows_path_policy_note": "The verified portable runtime executed successfully from TEMP. Moving the identical runtime to AppData/Local/HushpointTools produced a Windows side-by-side startup error; moving it back to TEMP restored execution. No system-wide Blender installation is claimed."
+    },
+    "manifest_source_url": "https://ftp.nluug.nl/pub/graphics/blender/release/Blender4.5/blender-4.5.10.sha256",
+    "operations": {
+      "decimation_applied": false,
+      "textured_provider_normals_preserved": true,
+      "triangulation_applied": true,
+      "transforms_applied": true
+    },
+    "output": {
+      "embedded_texture_sidecar": "../models/hushpoint_tide_gauge_optimized_Image_0.png",
+      "embedded_texture_sidecar_sha256": "ce9c50b43325ef68401a5de65829fbf0515aa00fef0e15dc3539fceb5cdbaf11",
+      "file": "../models/hushpoint_tide_gauge_optimized.glb",
+      "materials": 1,
+      "mesh_objects": 1,
+      "sha256": "070de42e0e35d2eb84f2487a11d52974944138ed800329649ca52534b3611918",
+      "triangles": 7735,
+      "vertices_after_blender_cleanup": 6337,
+      "vertices_after_gltf_reimport": 23185
+    },
+    "pipeline_report": "hushpoint_tide_gauge_pipeline.json",
+    "preview": {
+      "file": "hushpoint_tide_gauge_preview.png",
+      "sha256": "7b9c0c8d1d63723ac3f348bcaa96cde58ef729a809a27ee0d0c55685ba741fed"
+    },
+    "reimport_validation": "pass",
+    "version_output": [
+      "Blender 4.5.10 LTS",
+      "build date: 2026-05-19",
+      "build time: 01:33:42",
+      "build commit date: 2026-05-18",
+      "build commit time: 13:28",
+      "build hash: 6dc0b208d1b5",
+      "build branch: blender-v4.5-release",
+      "build platform: Windows",
+      "build type: Release"
+    ]
+  },
+  "godot_validation": {
+    "engine": "Godot 4.7.2 stable official",
+    "imported_files": [
+      "../models/hushpoint_tide_gauge_optimized.glb",
+      "../models/port_mercy_tide_gauge.glb"
+    ],
+    "runtime_load": "pass",
+    "runtime_mesh_instances": 1,
+    "status": "pass"
+  },
+  "provider": "Higgsfield",
+  "status": "blender_cleaned_and_godot_imported",
+  "usage_terms": "Generated through the user's connected Higgsfield account; use remains subject to Higgsfield's applicable service terms."
+}

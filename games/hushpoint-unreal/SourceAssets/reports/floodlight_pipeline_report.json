@@ -1,0 +1,470 @@
+{
+  "asset_name": "SM_Hushpoint_Floodlight",
+  "blender": {
+    "actual_version": "4.5.10 LTS",
+    "required_version": "4.5.10 LTS",
+    "version_match": true
+  },
+  "collision_proxies": {
+    "count": 3,
+    "objects": [
+      {
+        "dimensions_cm": [
+          134.103,
+          115.999,
+          29.4
+        ],
+        "name": "UCX_SM_Hushpoint_Floodlight_00",
+        "shape": "box",
+        "triangles": 12
+      },
+      {
+        "dimensions_cm": [
+          27.791,
+          27.791,
+          289.8
+        ],
+        "name": "UCX_SM_Hushpoint_Floodlight_01",
+        "shape": "octagonal_prism",
+        "triangles": 28
+      },
+      {
+        "dimensions_cm": [
+          134.103,
+          99.083,
+          100.8
+        ],
+        "name": "UCX_SM_Hushpoint_Floodlight_02",
+        "shape": "box",
+        "triangles": 12
+      }
+    ],
+    "total_triangles": 52,
+    "usage": "Unreal simple collision only; excluded from rendered GLB and preview."
+  },
+  "coordinate_contract": {
+    "blender_glb_units": "meters",
+    "fbx_axis_forward": "-Y",
+    "fbx_axis_up": "Z",
+    "fbx_unit_metadata": "metric; Unreal importer target is centimeters",
+    "pivot": "bottom-center at (0, 0, 0)",
+    "unreal_expected_height_cm": 420.0,
+    "unreal_import_uniform_scale": 1.0
+  },
+  "input": {
+    "bytes": 1585612,
+    "file": "higgsfield_sam3d_99aec965-11b1-4c20-af4d-ca064aac2d77_raw.glb",
+    "sha256": "fa5d4f0ceb5edc1adb61bf33f85c879c34030a4b32e7a5df36c68f0bf3185d29"
+  },
+  "operations": {
+    "joined_meshes": 1,
+    "pivot": "ground_center_at_world_origin",
+    "pivot_error": {
+      "bottom_z_m": 0.0,
+      "center_x_m": 0.0,
+      "center_y_m": 0.0
+    },
+    "source_height_m": 1.000809,
+    "target_height_m": 4.2,
+    "uniform_scale_factor": 4.196603389,
+    "unreal_expected_height_cm": 420.0,
+    "unreal_import_uniform_scale": 1.0
+  },
+  "outputs": {
+    "blend": {
+      "bytes": 1728600,
+      "file": "SM_Hushpoint_Floodlight.blend",
+      "sha256": "958dfcfca1e94d766055a64e17a9ef68c50ef74c3eb697a905beb97b23583412"
+    },
+    "fbx": {
+      "bytes": 2057356,
+      "file": "SM_Hushpoint_Floodlight.fbx",
+      "sha256": "e4a8ab7e6c484283db547614bc5ec03e4b51df0fe15590987e161776402d1800"
+    },
+    "glb": {
+      "bytes": 2444688,
+      "file": "SM_Hushpoint_Floodlight.glb",
+      "sha256": "661b0faa0529f7f1339255e9693dcfac846ed0aceb0f0d56313109770d66e829"
+    },
+    "preview": {
+      "bytes": 1209051,
+      "file": "SM_Hushpoint_Floodlight_preview.png",
+      "sha256": "e6e8d71c531f0518097160b023ba15d6817551ec9ec40b9dc5c5d9c587cc8dcc"
+    }
+  },
+  "pipeline_script_sha256": "da252c18a7a6a586e3e569e78dfbf9b972b30f40390ef5f85bec4b52c2ce2a1c",
+  "pipeline_version": "1.0.0",
+  "preview_status": "pass",
+  "processed_metrics": {
+    "bounds_max_m": [
+      0.698454,
+      0.604162,
+      4.2
+    ],
+    "bounds_min_m": [
+      -0.698454,
+      -0.604162,
+      0.0
+    ],
+    "dimensions_cm": [
+      139.691,
+      120.832,
+      420.0
+    ],
+    "dimensions_m": [
+      1.396908,
+      1.208324,
+      4.2
+    ],
+    "materials": {
+      "count": 1,
+      "materials": [
+        {
+          "image_textures": [
+            {
+              "name": "Image_0",
+              "packed": true,
+              "size_px": [
+                1024,
+                1024
+              ]
+            }
+          ],
+          "name": "M_Hushpoint_Floodlight",
+          "uses_nodes": true
+        }
+      ],
+      "uv_layers": {
+        "SM_Hushpoint_Floodlight": [
+          "UVMap"
+        ]
+      }
+    },
+    "mesh_objects": 1,
+    "topology": [
+      {
+        "boundary_edges": 4318,
+        "degenerate_faces": 0,
+        "edges": 12791,
+        "faces": 7088,
+        "loose_edges": 0,
+        "loose_vertices": 0,
+        "non_manifold_edges": 4318,
+        "object": "SM_Hushpoint_Floodlight",
+        "triangles": 7088,
+        "vertices": 5974
+      }
+    ],
+    "totals": {
+      "boundary_edges": 4318,
+      "degenerate_faces": 0,
+      "edges": 12791,
+      "faces": 7088,
+      "loose_edges": 0,
+      "loose_vertices": 0,
+      "non_manifold_edges": 4318,
+      "triangles": 7088,
+      "vertices": 5974
+    }
+  },
+  "quality_status": "review_required",
+  "reimport_validation": {
+    "fbx": {
+      "collision_proxies": {
+        "blender_fbx_interchange_status": "pass",
+        "count": 3,
+        "expected_names": [
+          "UCX_SM_Hushpoint_Floodlight_00",
+          "UCX_SM_Hushpoint_Floodlight_01",
+          "UCX_SM_Hushpoint_Floodlight_02"
+        ],
+        "name_status": "pass",
+        "objects": [
+          {
+            "boundary_edges": 0,
+            "degenerate_faces": 0,
+            "edges": 18,
+            "faces": 12,
+            "loose_edges": 0,
+            "loose_vertices": 0,
+            "name": "UCX_SM_Hushpoint_Floodlight_00",
+            "non_manifold_edges": 0,
+            "triangles": 12,
+            "vertices": 8
+          },
+          {
+            "boundary_edges": 0,
+            "degenerate_faces": 0,
+            "edges": 42,
+            "faces": 28,
+            "loose_edges": 0,
+            "loose_vertices": 0,
+            "name": "UCX_SM_Hushpoint_Floodlight_01",
+            "non_manifold_edges": 0,
+            "triangles": 28,
+            "vertices": 16
+          },
+          {
+            "boundary_edges": 0,
+            "degenerate_faces": 0,
+            "edges": 18,
+            "faces": 12,
+            "loose_edges": 0,
+            "loose_vertices": 0,
+            "name": "UCX_SM_Hushpoint_Floodlight_02",
+            "non_manifold_edges": 0,
+            "triangles": 12,
+            "vertices": 8
+          }
+        ],
+        "total_triangles": 52,
+        "unreal_collision_binding_status": "pending_editor_import"
+      },
+      "render_mesh": {
+        "bounds_max_m": [
+          0.698454,
+          0.604162,
+          4.2
+        ],
+        "bounds_min_m": [
+          -0.698454,
+          -0.604162,
+          0.0
+        ],
+        "dimensions_cm": [
+          139.691,
+          120.832,
+          420.0
+        ],
+        "dimensions_m": [
+          1.396908,
+          1.208324,
+          4.2
+        ],
+        "format": "fbx",
+        "geometry_status": "pass",
+        "ground_center_pivot_status": "pass",
+        "height_error_m": 0.0,
+        "height_status": "pass",
+        "materials": {
+          "count": 1,
+          "materials": [
+            {
+              "image_textures": [
+                {
+                  "name": "Image_0",
+                  "packed": true,
+                  "size_px": [
+                    1024,
+                    1024
+                  ]
+                }
+              ],
+              "name": "M_Hushpoint_Floodlight",
+              "uses_nodes": true
+            }
+          ],
+          "uv_layers": {
+            "SM_Hushpoint_Floodlight": [
+              "UVMap"
+            ]
+          }
+        },
+        "mesh_objects": 1,
+        "pivot_max_error_m": 0.0,
+        "reported_height_m": 4.2,
+        "topology": [
+          {
+            "boundary_edges": 4318,
+            "degenerate_faces": 0,
+            "edges": 12791,
+            "faces": 7088,
+            "loose_edges": 0,
+            "loose_vertices": 0,
+            "non_manifold_edges": 4318,
+            "object": "SM_Hushpoint_Floodlight",
+            "triangles": 7088,
+            "vertices": 5974
+          }
+        ],
+        "totals": {
+          "boundary_edges": 4318,
+          "degenerate_faces": 0,
+          "edges": 12791,
+          "faces": 7088,
+          "loose_edges": 0,
+          "loose_vertices": 0,
+          "non_manifold_edges": 4318,
+          "triangles": 7088,
+          "vertices": 5974
+        }
+      }
+    },
+    "glb": {
+      "bounds_max_m": [
+        0.698454,
+        0.604162,
+        4.2
+      ],
+      "bounds_min_m": [
+        -0.698454,
+        -0.604162,
+        0.0
+      ],
+      "dimensions_cm": [
+        139.691,
+        120.832,
+        420.0
+      ],
+      "dimensions_m": [
+        1.396908,
+        1.208324,
+        4.2
+      ],
+      "format": "glb",
+      "geometry_status": "pass",
+      "ground_center_pivot_status": "pass",
+      "height_error_m": 0.0,
+      "height_status": "pass",
+      "materials": {
+        "count": 1,
+        "materials": [
+          {
+            "image_textures": [
+              {
+                "name": "Image_0",
+                "packed": true,
+                "size_px": [
+                  1024,
+                  1024
+                ]
+              }
+            ],
+            "name": "M_Hushpoint_Floodlight",
+            "uses_nodes": true
+          }
+        ],
+        "uv_layers": {
+          "SM_Hushpoint_Floodlight": [
+            "UVMap"
+          ]
+        }
+      },
+      "mesh_objects": 1,
+      "pivot_max_error_m": 0.0,
+      "reported_height_m": 4.2,
+      "topology": [
+        {
+          "boundary_edges": 21264,
+          "degenerate_faces": 0,
+          "edges": 21264,
+          "faces": 7088,
+          "loose_edges": 0,
+          "loose_vertices": 0,
+          "non_manifold_edges": 21264,
+          "object": "SM_Hushpoint_Floodlight",
+          "triangles": 7088,
+          "vertices": 21264
+        }
+      ],
+      "totals": {
+        "boundary_edges": 21264,
+        "degenerate_faces": 0,
+        "edges": 21264,
+        "faces": 7088,
+        "loose_edges": 0,
+        "loose_vertices": 0,
+        "non_manifold_edges": 21264,
+        "triangles": 7088,
+        "vertices": 21264
+      }
+    }
+  },
+  "source_metrics": {
+    "bounds_max_m": [
+      0.166362,
+      0.142568,
+      0.500001
+    ],
+    "bounds_min_m": [
+      -0.166504,
+      -0.145361,
+      -0.500809
+    ],
+    "dimensions_cm": [
+      33.287,
+      28.793,
+      100.081
+    ],
+    "dimensions_m": [
+      0.332866,
+      0.287929,
+      1.000809
+    ],
+    "materials": {
+      "count": 1,
+      "materials": [
+        {
+          "image_textures": [
+            {
+              "name": "Image_0",
+              "packed": true,
+              "size_px": [
+                1024,
+                1024
+              ]
+            }
+          ],
+          "name": "Material_0",
+          "uses_nodes": true
+        }
+      ],
+      "uv_layers": {
+        "geometry_0": [
+          "UVMap"
+        ]
+      }
+    },
+    "mesh_objects": 1,
+    "topology": [
+      {
+        "boundary_edges": 4318,
+        "degenerate_faces": 0,
+        "edges": 12791,
+        "faces": 7088,
+        "loose_edges": 0,
+        "loose_vertices": 0,
+        "non_manifold_edges": 4318,
+        "object": "geometry_0",
+        "triangles": 7088,
+        "vertices": 5974
+      }
+    ],
+    "totals": {
+      "boundary_edges": 4318,
+      "degenerate_faces": 0,
+      "edges": 12791,
+      "faces": 7088,
+      "loose_edges": 0,
+      "loose_vertices": 0,
+      "non_manifold_edges": 4318,
+      "triangles": 7088,
+      "vertices": 5974
+    }
+  },
+  "status": "pass",
+  "triangle_budget": {
+    "budget": 60000,
+    "count": 7088,
+    "status": "pass"
+  },
+  "unreal_editor_validation": {
+    "reason": "Unreal Engine is not installed in this environment; Blender re-import validates render geometry and UCX names but cannot prove Unreal collision binding or distance-field behavior.",
+    "status": "pending"
+  },
+  "warnings": [
+    "Mesh has 4318 non-manifold edges; acceptable for rendering only after visual review, not fabrication or collision generation.",
+    "Software Lumen mesh-distance-field behavior requires Unreal visual review. If this open render mesh creates distance-field artifacts, disable Affect Distance Field Lighting for the asset and rely on authored lights and surrounding closed geometry.",
+    "The provider render mesh is non-manifold. Never use it as auto complex collision or Complex Collision As Simple; use the authored UCX proxies."
+  ]
+}

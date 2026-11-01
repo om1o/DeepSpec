@@ -1,0 +1,48 @@
+{
+  "asset": "HUSHPOINT coastal emergency floodlight tower",
+  "date": "2026-11-01",
+  "generation_cost_credits": {
+    "concept": 0.15,
+    "mesh": 1.0,
+    "total": 1.15
+  },
+  "image": {
+    "cost_credits": 0.15,
+    "job_id": "9ab4f5aa-a615-4d06-acc9-bfe79574743b",
+    "model": "Z Image",
+    "prompt": "Original game-ready industrial coastal emergency floodlight tower prop, single freestanding object on a clean neutral light gray studio background, orthographic three-quarter front view, compact galvanized tripod base with bolted feet, telescoping weathered steel mast, twin rectangular marine floodlamp housings with thick protective visors and glass lenses, sealed junction box, coiled conduit, small amber warning beacon, believable public flood-barrier engineering, restrained blue-gray metal and safety-yellow accents, realistic PBR product render, even soft shadowless lighting, every component clearly separated, full object centered with generous empty margin, no logos, no readable text, no people, no weapons, no monsters, no copyrighted design",
+    "raw_file": "../concepts/higgsfield_floodlight_z_image.png",
+    "sha256": "46a67e63fbe12c48bc5bae44215352374e322c45f0d85b71b62155b5e3e14d34",
+    "source_url": "https://d8j0ntlcm91z4.cloudfront.net/user_3KBy1PizXkaOGtnRyd3vX3eGkE9/hf_20261101_190132_9ab4f5aa-a615-4d06-acc9-bfe79574743b.png"
+  },
+  "mesh": {
+    "cost_credits": 1.0,
+    "detection_threshold": 0.25,
+    "export_textured_glb": true,
+    "job_id": "99aec965-11b1-4c20-af4d-ca064aac2d77",
+    "model": "SAM 3D",
+    "model_id": "sam_3_3d",
+    "prompt": "Lift the complete freestanding industrial coastal emergency floodlight tower as one object, including the bolted tripod base, telescoping mast, twin rectangular lamp housings, junction box, cable and amber beacon. Ignore the plain studio background.",
+    "raw_file": "../raw/higgsfield_sam3d_99aec965-11b1-4c20-af4d-ca064aac2d77_raw.glb",
+    "seed": 26011,
+    "sha256": "fa5d4f0ceb5edc1adb61bf33f85c879c34030a4b32e7a5df36c68f0bf3185d29",
+    "source_image_job_id": "9ab4f5aa-a615-4d06-acc9-bfe79574743b",
+    "source_url": "https://d8j0ntlcm91z4.cloudfront.net/user_3KBy1PizXkaOGtnRyd3vX3eGkE9/hf_20261101_190151_99aec965-11b1-4c20-af4d-ca064aac2d77.glb"
+  },
+  "processed_outputs": {
+    "editable_blend": "../processed/SM_Hushpoint_Floodlight.blend",
+    "pipeline_report": "floodlight_pipeline_report.json",
+    "preview": "SM_Hushpoint_Floodlight_preview.png",
+    "unreal_fbx": "../processed/SM_Hushpoint_Floodlight.fbx",
+    "validated_glb": "../processed/SM_Hushpoint_Floodlight.glb"
+  },
+  "provider": "Higgsfield",
+  "status": "source_preserved_and_blender_processed",
+  "usage": {
+    "allowed_in_this_repository": "prototype and evaluation only",
+    "connected_plan_at_generation": "Free",
+    "caveat": "Higgsfield's ownership help says generated outputs may be used commercially on all plans, while its pricing table marks commercial use as unavailable on the Free plan. This conflict is unresolved. Do not ship or monetize this generated asset unless Higgsfield provides written clarification, or regenerate and revalidate it under a plan that explicitly includes commercial use.",
+    "ownership_help_url": "https://higgsfield.ai/creator-hub/help-center/account/who-owns-my-generations-and-can-i-use-them-commercially",
+    "pricing_url": "https://higgsfield.ai/pricing"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "FileVersion": 3,
+  "Category": "Games",
+  "Description": "Blueprint-first Unreal Engine 5 migration scaffold for HUSHPOINT.",
+  "TargetPlatforms": [
+    "Windows"
+  ],
+  "Plugins": [
+    {
+      "Name": "EnhancedInput",
+      "Enabled": true
+    }
+  ]
+}
