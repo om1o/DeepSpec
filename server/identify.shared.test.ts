@@ -1225,6 +1225,9 @@ describe("createIdentifyResponse", () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(fetchSpy.mock.calls[0][0]).toBe("https://api.groq.com/openai/v1/chat/completions");
+    expect(JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string)).toMatchObject({
+      model: "qwen/qwen3.8-27b",
+    });
   });
 
   it("ignores a Groq key unless the Groq fallback is explicitly enabled", async () => {

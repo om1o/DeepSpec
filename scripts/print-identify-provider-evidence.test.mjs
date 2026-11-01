@@ -12,7 +12,7 @@ const GEMINI_ROUTE = {
 };
 const GROQ_ROUTE = {
   provider: "groq",
-  model: "meta-llama/llama-4-scout-17b-16e-instruct",
+  model: "qwen/qwen3.8-27b",
   endpointRoute: "https://api.groq.com/openai/v1/chat/completions",
   attemptedCount: 50,
   passCount: 50,

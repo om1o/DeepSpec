@@ -113,7 +113,7 @@ Effective order in `createIdentifyResponse()`:
 | Tool (model) | Role | Endpoint | Key env | Timeout |
 |---|---|---|---|---|
 | **gemini-2.5-flash** (+ `-flash-lite`) | Primary vision identify | `generativelanguage.googleapis.com/v1beta/models/{model}:generateContent` | `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_FALLBACK_MODELS` | 25 s |
-| **meta-llama/llama-4-scout-17b-16e-instruct** (Groq) | Fallback vision identify | `api.groq.com/openai/v1/chat/completions` | `GROQ_API_KEY`, `DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK` | 45 s |
+| **qwen/qwen3.8-27b** (Groq) | Fallback vision identify | `api.groq.com/openai/v1/chat/completions` | `GROQ_API_KEY`, `DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK` | 45 s |
 | **Qwen/Qwen2.5-VL-7B-Instruct** (HF router) | Fallback vision identify | `router.huggingface.co/v1/chat/completions` | `HF_TOKEN`/`HF_API_TOKEN`/`HUGGINGFACE_API_KEY`, `DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK` | 45 s |
 | **llava:latest** (Ollama) | Local fallback vision identify | `127.0.0.1:11434/api/chat` | `DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK`, `OLLAMA_BASE_URL` | 180 s |
 | **Xenova/clip-vit-base-patch32** | On-device zero-shot classify (offline) | in-browser (WebGPU/WASM, q4) | `VITE_ENABLE_ON_DEVICE_FALLBACK` | 90 s |

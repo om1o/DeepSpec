@@ -6,7 +6,7 @@ This documents the existing app code, not a promise that every model runs on eve
 | --- | --- | --- |
 | `gemini-2.5-flash` | Photo identification, visible problems, follow-up chat | Server `GEMINI_API_KEY`; configurable identify/chat model variables |
 | `gemini-2.5-flash-lite` | Gemini availability fallback / identify hedge | Same server key; configurable fallback lists |
-| `meta-llama/llama-4-scout-17b-16e-instruct` | Groq vision provider, tried before Gemini when enabled | `DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK=true` and `GROQ_API_KEY` |
+| `qwen/qwen3.8-27b` | Groq vision provider, tried before Gemini when enabled | `DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK=true` and `GROQ_API_KEY` |
 | `Qwen/Qwen2.5-VL-7B-Instruct` | OpenAI-compatible Hugging Face fallback | `DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK=true` and `HF_TOKEN` or supported token alias; endpoint/model can select OpenRouter instead |
 | `llava:latest` | Emergency local Ollama vision fallback | Explicit local fallback flag and a running Ollama endpoint; not a bundled cloud model |
 | `microsoft/trocr-large-printed` | Read printed labels, stamped text and part numbers | Label/text request or blurry-label rescue plus a Hugging Face token |

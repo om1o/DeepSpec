@@ -157,7 +157,7 @@ function buildProviderStatuses(env) {
       endpointRoute: chatCompletionsRoute(env.GROQ_IDENTIFY_ENDPOINT_URL, "https://api.groq.com/openai/v1/chat/completions"),
       endpointAllowed: isAllowedProviderEndpoint("groq", env.GROQ_IDENTIFY_ENDPOINT_URL, "https://api.groq.com/openai/v1/chat/completions"),
       localOnly: false,
-      model: env.GROQ_IDENTIFY_MODEL?.trim() || "meta-llama/llama-4-scout-17b-16e-instruct",
+      model: env.GROQ_IDENTIFY_MODEL?.trim() || "qwen/qwen3.8-27b",
       name: "Groq",
       providerId: "groq",
       productionRoute: groqEnabled,
