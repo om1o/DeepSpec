@@ -1,20 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import handler from "./identify";
-import { consumeReservedScanCredit, reserveScanCredit } from "../server/billing.shared";
-import { createIdentifyResponse, validateIdentifyRequest } from "../server/identify.shared";
-import { enforceRateLimit } from "../server/rateLimit.shared";
-import { requireSession } from "../server/requireSession.shared";
+import handler from "../api/identify";
+import { consumeReservedScanCredit, reserveScanCredit } from "./billing.shared";
+import { createIdentifyResponse, validateIdentifyRequest } from "./identify.shared";
+import { enforceRateLimit } from "./rateLimit.shared";
+import { requireSession } from "./requireSession.shared";
 
-vi.mock("../server/billing.shared", () => ({
+vi.mock("./billing.shared", () => ({
   consumeReservedScanCredit: vi.fn(),
   reserveScanCredit: vi.fn(),
 }));
-vi.mock("../server/identify.shared", () => ({
+vi.mock("./identify.shared", () => ({
   createIdentifyResponse: vi.fn(),
   validateIdentifyRequest: vi.fn(),
 }));
-vi.mock("../server/rateLimit.shared", () => ({ enforceRateLimit: vi.fn() }));
-vi.mock("../server/requireSession.shared", () => ({ requireSession: vi.fn() }));
+vi.mock("./rateLimit.shared", () => ({ enforceRateLimit: vi.fn() }));
+vi.mock("./requireSession.shared", () => ({ requireSession: vi.fn() }));
 
 const request = {
   method: "POST",

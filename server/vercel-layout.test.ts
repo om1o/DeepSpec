@@ -69,8 +69,17 @@ describe("Vercel Hobby deployment layout", () => {
 
   it("gives AI functions a bounded duration longer than the identify chain", () => {
     const config = JSON.parse(readFileSync(resolve(process.cwd(), "vercel.json"), "utf8"));
-    expect(config.functions["api/identify.ts"].maxDuration).toBe(60);
+    expect(config.functions["api/identify.ts"].maxDuration).toBe(90);
     expect(config.functions["api/chat.ts"].maxDuration).toBe(60);
+    expect(config.functions["api/account-entitlement.ts"].maxDuration).toBe(30);
+    expect(config.functions["api/billing-checkout.ts"].maxDuration).toBe(30);
+    expect(config.functions["api/billing-portal.ts"].maxDuration).toBe(30);
+    expect(config.functions["api/billing-webhook.ts"].maxDuration).toBe(30);
+  });
+
+  it("pins Vercel to the same supported Node major used by CI", () => {
+    const packageJson = JSON.parse(readFileSync(resolve(process.cwd(), "package.json"), "utf8"));
+    expect(packageJson.engines?.node).toBe("22.x");
   });
 
   it("uses Node ESM-resolvable extensions in every runtime-relative import", () => {

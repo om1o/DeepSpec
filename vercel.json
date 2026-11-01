@@ -2,10 +2,22 @@
   "functions": {
     "api/identify.ts": {
       "includeFiles": "datasets/verified/hf-automotive-sources-v1/records.jsonl",
-      "maxDuration": 60
+      "maxDuration": 90
     },
     "api/chat.ts": {
       "maxDuration": 60
+    },
+    "api/account-entitlement.ts": {
+      "maxDuration": 30
+    },
+    "api/billing-checkout.ts": {
+      "maxDuration": 30
+    },
+    "api/billing-portal.ts": {
+      "maxDuration": 30
+    },
+    "api/billing-webhook.ts": {
+      "maxDuration": 30
     }
   },
   "headers": [

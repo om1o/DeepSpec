@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "vite --host 0.0.0.0 --configLoader native",
     "build": "node scripts/package-intro.mjs && tsc -b && vite build --configLoader native && npm run verify:public",
