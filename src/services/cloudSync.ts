@@ -229,7 +229,15 @@ export async function syncLookupToCloud(lookup: Lookup): Promise<CloudSyncResult
   return syncLookupForAccount(lookup, getAccountScope());
 }
 
-async function syncLookupForAccount(lookup: Lookup, scope: AccountScope): Promise<CloudSyncResult> {
+export async function syncLookupChatToCloud(lookup: Lookup): Promise<CloudSyncResult> {
+  return syncLookupForAccount(lookup, getAccountScope(), "chat");
+}
+
+async function syncLookupForAccount(
+  lookup: Lookup,
+  scope: AccountScope,
+  requestedMode: "full" | "chat" = "full",
+): Promise<CloudSyncResult> {
   if (!getCloudSyncConfig()) {
     return {
       ok: false,
@@ -254,6 +262,7 @@ async function syncLookupForAccount(lookup: Lookup, scope: AccountScope): Promis
     const deviceRead = readLookups();
     if (!deviceRead.ok) return { ok: false, message: deviceRead.message };
     lookup = getLookup(lookup.id, deviceRead.value) ?? lookup;
+    const mode = requestedMode === "chat" && isCloudRevision(lookup.cloudRevision) ? "chat" : "full";
     receipt = {
       attemptId: createRuntimeId(), attemptedAt: new Date().toISOString(), status: "unconfirmed",
       scope: lookup.inspection && !lookup.frame.imageBase64.startsWith("data:") ? "inspection" : "scan",
@@ -264,7 +273,9 @@ async function syncLookupForAccount(lookup: Lookup, scope: AccountScope): Promis
       assertAccount(scope);
       if (timedOut) throw new Error("Cloud sync timed out");
     };
-    const operation = performLookupSync(lookup, scope, guard)
+    const operation = (mode === "chat"
+      ? performChatHistorySync(lookup, scope, guard)
+      : performLookupSync(lookup, scope, guard))
       .finally(() => pendingLookupSyncs.delete(pendingKey));
     const result = await withCloudTimeout(operation, CLOUD_SYNC_TIMEOUT_MS, () => { timedOut = true; });
     if (receipt && result.ok && result.shopAssociation) receipt = { ...receipt, shopAssociation: result.shopAssociation };
@@ -277,6 +288,30 @@ async function syncLookupForAccount(lookup: Lookup, scope: AccountScope): Promis
       message: timedOut ? `Cloud save was not confirmed. ${PENDING_SYNC_MESSAGE}` : getFriendlySyncError(error),
     };
   }
+}
+
+async function performChatHistorySync(lookup: Lookup, scope: AccountScope, guard: () => void): Promise<CloudSyncResult> {
+  const revision = lookup.cloudRevision;
+  if (!isCloudRevision(revision)) throw new Error(CLOUD_CONFLICT_MESSAGE);
+
+  const supabase = await getClient();
+  guard();
+  const user = await ensureCloudUser(supabase, scope);
+  guard();
+  const updated = await supabase.from("scan_lookups")
+    .update({ chat_history: lookup.chatHistory, revision: revision + 1 })
+    .eq("user_id", user.id)
+    .eq("local_id", lookup.id)
+    .eq("revision", revision)
+    .select("revision")
+    .maybeSingle();
+  guard();
+  if (updated.error) throw new Error(updated.error.message);
+  if (!isCloudRevision(updated.data?.revision)) throw new Error(CLOUD_CONFLICT_MESSAGE);
+
+  assertAccount(scope);
+  recordCloudRevision(lookup.id, revision, updated.data.revision);
+  return { ok: true, message: "Conversation synced to your saved scan." };
 }
 
 async function performLookupSync(lookup: Lookup, scope: AccountScope, guard: () => void): Promise<CloudSyncResult> {

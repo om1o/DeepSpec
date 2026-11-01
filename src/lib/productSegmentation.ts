@@ -1,4 +1,5 @@
 import type { CapturedFrame, VisualFocusBox } from "../types";
+import { configureSameOriginOnnxRuntime } from "./browserTransformers";
 import { CAPTURE_MAX_EDGE } from "./utils";
 import { supportsWebGpu } from "./webgpu";
 
@@ -181,6 +182,7 @@ function getBackgroundRemovalPipeline(model: string) {
 
   const pipelinePromise = import("@huggingface/transformers")
     .then(async (mod) => {
+      configureSameOriginOnnxRuntime(mod);
       const transformers = mod as TransformersModule;
       const dtype = getSegmentationDtype();
       // Optional visual preparation must not initialize a heavy CPU/WASM fallback.

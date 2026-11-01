@@ -45,7 +45,10 @@ describe("Vercel Hobby deployment layout", () => {
     expect(headers["Content-Security-Policy"]).toContain("frame-ancestors 'none'");
     expect(headers["Content-Security-Policy"]).toContain("font-src 'self' data: https://fonts.gstatic.com");
     expect(headers["Content-Security-Policy"]).toContain("style-src 'self' 'unsafe-inline' https://fonts.googleapis.com");
-    expect(headers["Content-Security-Policy"]).toContain("script-src 'self'");
+    expect(headers["Content-Security-Policy"]).toContain("script-src 'self' 'wasm-unsafe-eval'");
+    expect(headers["Content-Security-Policy"]).not.toContain("cdn.jsdelivr.net");
+    expect(headers["Content-Security-Policy"]).not.toContain("script-src 'self' blob:");
+    expect(headers["Content-Security-Policy"]).not.toContain("'unsafe-eval'");
     expect(headers["Permissions-Policy"]).toContain("camera=(self)");
     expect(headers["X-Content-Type-Options"]).toBe("nosniff");
     expect(headers["X-Frame-Options"]).toBe("DENY");

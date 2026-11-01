@@ -1,12 +1,12 @@
 import { accountStorageKey, setActiveAccount } from "../lib/accountScope";
 import { appendChatMessages, createChatMessage, createLookup, deleteLookup, getLookup } from "../services/storage";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { vi } from "vitest";
 import Chat from "./Chat";
 import { AIServiceError, sendFollowUp, sendFollowUpDetails } from "../services/aiService";
-import { syncLookupToCloud } from "../services/cloudSync";
+import { syncLookupChatToCloud } from "../services/cloudSync";
 import { LOOKUPS_STORAGE_KEY } from "../services/storage";
 import type { ChatMessage } from "../types";
 import type { Lookup } from "../types";
@@ -21,12 +21,12 @@ vi.mock("../services/aiService", async () => {
 });
 
 vi.mock("../services/cloudSync", () => ({
-  syncLookupToCloud: vi.fn(),
+  syncLookupChatToCloud: vi.fn(),
 }));
 
 const sendFollowUpMock = vi.mocked(sendFollowUp);
 const sendFollowUpDetailsMock = vi.mocked(sendFollowUpDetails);
-const syncLookupToCloudMock = vi.mocked(syncLookupToCloud);
+const syncLookupChatToCloudMock = vi.mocked(syncLookupChatToCloud);
 
 const lookup: Lookup = {
   id: "lookup-1",
@@ -66,8 +66,8 @@ describe("Chat", () => {
     localStorage.clear();
     sendFollowUpMock.mockReset();
     sendFollowUpDetailsMock.mockReset();
-    syncLookupToCloudMock.mockReset();
-    syncLookupToCloudMock.mockResolvedValue({ ok: true, message: "Scan synced." });
+    syncLookupChatToCloudMock.mockReset();
+    syncLookupChatToCloudMock.mockResolvedValue({ ok: true, message: "Scan synced." });
   });
 
   it("shows a saved scan not found state", () => {
@@ -92,7 +92,7 @@ describe("Chat", () => {
     expect(chatHistory).toHaveLength(2);
     expect(chatHistory.map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(sendFollowUpMock).toHaveBeenCalledWith(expect.objectContaining({ id: lookup.id }), "What does it do?");
-    expect(syncLookupToCloudMock).toHaveBeenCalledWith(expect.objectContaining({
+    expect(syncLookupChatToCloudMock).toHaveBeenCalledWith(expect.objectContaining({
       id: lookup.id,
       chatHistory: expect.arrayContaining([
         expect.objectContaining({ role: "user", content: "What does it do?" }),
@@ -103,7 +103,7 @@ describe("Chat", () => {
 
   it("keeps a local reply and retries cloud sync without another provider call", async () => {
     sendFollowUpMock.mockResolvedValue("Keep this answer locally.");
-    syncLookupToCloudMock
+    syncLookupChatToCloudMock
       .mockResolvedValueOnce({ ok: false, message: "Cloud save was not confirmed." })
       .mockResolvedValueOnce({ ok: true, message: "Scan synced." });
     localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
@@ -120,7 +120,7 @@ describe("Chat", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Retry cloud save" }));
 
-    expect(syncLookupToCloudMock).toHaveBeenCalledTimes(2);
+    expect(syncLookupChatToCloudMock).toHaveBeenCalledTimes(2);
     expect(sendFollowUpMock).toHaveBeenCalledTimes(1);
     expect(await screen.findByLabelText("Ask a follow-up question")).toBeEnabled();
     expect(screen.queryByRole("button", { name: "Retry cloud save" })).not.toBeInTheDocument();
@@ -128,7 +128,7 @@ describe("Chat", () => {
 
   it("does not retry a failed cloud save after the account changes", async () => {
     sendFollowUpMock.mockResolvedValue("Private answer.");
-    syncLookupToCloudMock.mockResolvedValue({ ok: false, message: "Cloud save was not confirmed." });
+    syncLookupChatToCloudMock.mockResolvedValue({ ok: false, message: "Cloud save was not confirmed." });
     localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
     renderChat(`/result/${lookup.id}/chat`);
     await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "Private question");
@@ -138,7 +138,7 @@ describe("Chat", () => {
     setActiveAccount("other-user");
     await userEvent.click(screen.getByRole("button", { name: "Retry cloud save" }));
 
-    expect(syncLookupToCloudMock).toHaveBeenCalledTimes(1);
+    expect(syncLookupChatToCloudMock).toHaveBeenCalledTimes(1);
     setActiveAccount("test-user");
     expect(getLookup(lookup.id)?.chatHistory.map((message) => message.content)).toEqual([
       "Private question",
@@ -167,7 +167,7 @@ describe("Chat", () => {
     }
   });
 
-  it("keeps the saved photo and existing source references beside the full conversation", () => {
+  it("keeps the saved photo and existing source references beside the full conversation", async () => {
     localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([{
       ...lookup,
       result: {
@@ -180,9 +180,23 @@ describe("Chat", () => {
 
     expect(screen.getByRole("heading", { name: "Ask DeepSpec" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Saved photo of Alternator" })).toHaveAttribute("src", lookup.frame.imageBase64);
-    expect(screen.getByRole("link", { name: "Open full scan photo" })).toHaveAttribute("href", `/result/${lookup.id}`);
-    expect(screen.getByRole("link", { name: /Open AI view/ })).toHaveAttribute("href", `/result/${lookup.id}`);
+    expect(screen.getByRole("link", { name: "Full result" })).toHaveAttribute("href", `/result/${lookup.id}`);
+    await userEvent.click(screen.getByRole("button", { name: /Sources/ }));
     expect(screen.getByRole("link", { name: /Alternator inspection video/ })).toHaveAttribute("href", "https://www.youtube.com/watch?v=inspection");
+  });
+
+  it("renders assistant Markdown while preserving the original stored answer", async () => {
+    const answer = "**Visible evidence:**\n\n- Belt pulley\n- Vented housing";
+    sendFollowUpMock.mockResolvedValue(answer);
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    renderChat(`/result/${lookup.id}/chat`);
+
+    await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "What is visible?");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect((await screen.findByText("Visible evidence:")).tagName).toBe("STRONG");
+    expect(within(screen.getByRole("log")).getByRole("list")).toHaveTextContent("Belt pulley");
+    expect(getLookup(lookup.id)?.chatHistory.at(-1)?.content).toBe(answer);
   });
 
   it("researches an explicit video reference and saves real answer sources with the conversation", async () => {
@@ -413,6 +427,7 @@ describe("Chat", () => {
     expect(await screen.findByText("AI provider is rate-limited")).toBeInTheDocument();
     expect(screen.getByText("Too many AI chat requests right now. Try again in a few minutes.")).toBeInTheDocument();
     expect(screen.getByText(/not proof the model identified the part incorrectly/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry last question" })).not.toBeInTheDocument();
   });
 
   it("explains when beta chat is disabled without offering a retry", async () => {

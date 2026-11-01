@@ -2,11 +2,12 @@ import { getAccountScope, isAccountScopeCurrent } from "../lib/accountScope";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { BrandLockup } from "../components/BrandLockup";
+import { ChatMessageContent } from "../components/chat/ChatMessageContent";
+import { ScanEvidencePanel } from "../components/chat/ScanEvidencePanel";
 import { ScanSources } from "../components/result/ScanSources";
 import Button from "../components/ui/Button";
-import ScanThumb from "../components/ui/ScanThumb";
 import { AIServiceError, getAIErrorDetails, getAIErrorMessage, sendFollowUp, sendFollowUpDetails } from "../services/aiService";
-import { syncLookupToCloud } from "../services/cloudSync";
+import { syncLookupChatToCloud } from "../services/cloudSync";
 import { appendChatMessages, createChatMessage, getLookup } from "../services/storage";
 import type { ChatMessage, Lookup } from "../types";
 import "./chatWorkspace.css";
@@ -37,6 +38,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
   const [searchSuggestionsByMessage, setSearchSuggestionsByMessage] = useState<Record<string, string>>({});
   const pendingOptionsRef = useRef<ResearchOptions | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const questionRef = useRef<HTMLTextAreaElement | null>(null);
   const isChatDisabled = errorCode === "feature_disabled";
 
   useEffect(() => {
@@ -148,7 +150,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
   async function syncConversation(savedLookup: Lookup) {
     if (!isCurrentConversation() || isCloudSyncing) return;
     setIsCloudSyncing(true);
-    const result = await syncLookupToCloud(savedLookup);
+    const result = await syncLookupChatToCloud(savedLookup);
     if (!isCurrentConversation()) return;
     setIsCloudSyncing(false);
     if (result.ok) {
@@ -173,6 +175,15 @@ function ChatConversation({ id }: { id: string | undefined }) {
     await syncConversation(currentLookup);
   }
 
+  function draftEvidenceQuestion(nextQuestion: string) {
+    setQuestion(nextQuestion.slice(0, 500));
+    window.requestAnimationFrame(() => {
+      const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      questionRef.current?.focus();
+      questionRef.current?.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "nearest" });
+    });
+  }
+
   if (!lookup) {
     return (
       <main className="grid min-h-dvh place-items-center bg-[var(--ds-page)] px-5 text-center text-[var(--ds-fg-1)]">
@@ -188,7 +199,6 @@ function ChatConversation({ id }: { id: string | undefined }) {
     );
   }
 
-  const partName = lookup.result?.partName ?? "Captured frame";
   const canChat = Boolean(lookup.result);
   const errorDetails = error ? errorCode === "cloud_sync" ? {
     category: "storage" as const,
@@ -198,7 +208,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
   } : getAIErrorDetails(errorCode) : null;
   const showSafetyWarning = lookup.result?.isSafetyCritical || lookup.result?.safetyTriage === "needs_professional";
   const lastUnansweredUserMessage = getLastUnansweredUserMessage(lookup);
-  const canRetryLastQuestion = Boolean(error && errorCode !== "feature_disabled" && !pendingExchange && (pendingQuestion || lastUnansweredUserMessage) && canChat && !isSending);
+  const canRetryLastQuestion = Boolean(error && errorCode !== "feature_disabled" && errorCode !== "rate_limited" && !pendingExchange && (pendingQuestion || lastUnansweredUserMessage) && canChat && !isSending);
   const visibleMessages = [...lookup.chatHistory, ...(pendingExchange ?? []).filter((message) => !lookup.chatHistory.some((saved) => saved.id === message.id))];
 
   const inputDisabled = !canChat || isSending || isCloudSyncing || isChatDisabled || Boolean(pendingExchange);
@@ -210,7 +220,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
           <div>
             <BrandLockup />
             <div className="ds-chat-heading">
-              <p className="ds-eyebrow">YOUR PHOTO. A FULL CONVERSATION.</p>
+              <p className="ds-eyebrow">PHOTO-BACKED AI WORKSPACE</p>
               <h1 className="text-2xl font-bold tracking-tight">Ask DeepSpec</h1>
             </div>
           </div>
@@ -221,32 +231,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
         </header>
 
         <div className="ds-chat-columns">
-          <aside className="ds-chat-context" aria-label="Scan photo and AI overview">
-            <Link to={`/result/${lookup.id}`} className="ds-chat-photo-link" aria-label="Open full scan photo">
-              <ScanThumb alt={`Saved photo of ${partName}`} className="ds-chat-photo" src={lookup.frame.imageBase64} />
-            </Link>
-            <div className="ds-chat-context-heading">
-              <p className="ds-eyebrow">AI OVERVIEW</p>
-              <h2 className="text-base font-bold tracking-tight">{partName}</h2>
-              <Link to={`/result/${lookup.id}`} className="ds-chat-open-view">Open AI view <svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M4 12 12 4M4 4h8v8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg></Link>
-            </div>
-            <div className="ds-chat-context-full">
-              {lookup.result ? (
-                <>
-                  <p className="text-sm leading-6 text-[var(--ds-fg-3)]">{lookup.result.whatItDoes}</p>
-                  {lookup.result.concerns.length > 0 ? (
-                    <section className="ds-chat-context-section" aria-label="Visible concerns">
-                      <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--ds-fg-3)]">What needs attention</h3>
-                      <ul className="mt-2 space-y-2 text-sm leading-6">
-                        {lookup.result.concerns.map((concern, index) => <li key={index}>{concern}</li>)}
-                      </ul>
-                    </section>
-                  ) : null}
-                  <ScanSources sources={lookup.result.sourceLinks} title="Scan references" />
-                </>
-              ) : <p className="text-sm leading-6 text-[var(--ds-fg-3)]">Get an AI result first, then chat.</p>}
-            </div>
-          </aside>
+          <ScanEvidencePanel lookup={lookup} onDraftQuestion={draftEvidenceQuestion} />
 
           <section className="ds-chat-conversation" aria-label="Full scan conversation">
             {showSafetyWarning ? (
@@ -264,7 +249,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
                     className={message.role === "user" ? "ds-chat-message ds-chat-message-user ml-auto" : "ds-chat-message ds-chat-message-assistant mr-auto"}
                   >
                     <p className="mb-1 text-xs font-bold opacity-80">{message.role === "user" ? "You" : "DeepSpec"}</p>
-                    <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                    <ChatMessageContent content={message.content} markdown={message.role === "assistant"} />
                     {message.role === "assistant" && message.sources?.length ? <ScanSources sources={message.sources} title="Sources used for this answer" /> : null}
                     {searchSuggestionsByMessage[message.id] ? (
                       <iframe
@@ -324,6 +309,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
                   maxLength={500}
                   onChange={(event) => setQuestion(event.target.value)}
                   placeholder="Ask about this photo, a problem, or a reference…"
+                  ref={questionRef}
                   value={question}
                 />
               </label>

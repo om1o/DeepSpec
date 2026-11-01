@@ -1,4 +1,5 @@
 import { createAnalysisAttemptId } from "../lib/analysisAttempt";
+import { configureSameOriginOnnxRuntime } from "../lib/browserTransformers";
 import { SCAN_CATEGORIES, type CapturedFrame, type IdentificationResult, type ScanCategory } from "../types";
 
 // Small zero-shot image classifier that runs fully in the browser (WebGPU, WASM fallback).
@@ -71,7 +72,9 @@ async function getGenerator(): Promise<OnDeviceGenerator> {
 async function loadGenerator(): Promise<OnDeviceGenerator> {
   // Loosely typed at the boundary: the library is heavy, dynamically imported, and only
   // exercised in a real browser, so we depend on its runtime shape rather than its types.
-  const transformers = (await import("@huggingface/transformers")) as unknown as {
+  const module = await import("@huggingface/transformers");
+  configureSameOriginOnnxRuntime(module);
+  const transformers = module as unknown as {
     pipeline: (
       task: string,
       model: string,

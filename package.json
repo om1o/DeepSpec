@@ -51,12 +51,14 @@
     "qa:run": "node scripts/qa/run-user-impact-qa.mjs"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.3.2",
+    "@huggingface/transformers": "4.3.2",
     "@supabase/supabase-js": "^2.105.4",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
+    "react-markdown": "10.1.0",
     "react-router-dom": "^6.30.6",
-    "react-webcam": "^7.2.0"
+    "react-webcam": "^7.2.0",
+    "remark-gfm": "4.0.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

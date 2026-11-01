@@ -52,6 +52,77 @@ describe("cloudSync", () => {
     } finally { read.mockRestore(); }
   });
 
+  it.each(["updated", "stale"])("syncs only chat history for an existing cloud scan: %s", async (outcome) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const maybeSingle = vi.fn().mockResolvedValue({
+      data: outcome === "updated" ? { revision: 3 } : null,
+      error: null,
+    });
+    const query = { eq: vi.fn(), select: vi.fn(), maybeSingle };
+    query.eq.mockReturnValue(query);
+    query.select.mockReturnValue(query);
+    const update = vi.fn().mockReturnValue(query);
+    const storageFrom = vi.fn();
+    mocks.createClient.mockReturnValue({
+      auth: {
+        getSession: vi.fn().mockResolvedValue({
+          data: { session: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "user-1" } } },
+          error: null,
+        }),
+      },
+      from: vi.fn().mockReturnValue({ update }),
+      storage: { from: storageFrom },
+    });
+    const lookup = {
+      ...makeLookup(),
+      cloudRevision: 2,
+      chatHistory: [{ id: "message-1", role: "assistant" as const, content: "Saved answer", timestamp: "2026-10-31T12:00:00.000Z" }],
+    };
+    const { getLookup, saveExistingLookup } = await import("./storage");
+    saveExistingLookup(lookup);
+    const { syncLookupChatToCloud } = await import("./cloudSync");
+
+    const result = await syncLookupChatToCloud(lookup);
+
+    expect(result.ok).toBe(outcome === "updated");
+    expect(update).toHaveBeenCalledExactlyOnceWith({ chat_history: lookup.chatHistory, revision: 3 });
+    expect(query.eq.mock.calls).toEqual([["user_id", "user-1"], ["local_id", lookup.id], ["revision", 2]]);
+    expect(storageFrom).not.toHaveBeenCalled();
+    expect(getLookup(lookup.id)?.cloudRevision).toBe(outcome === "updated" ? 3 : 2);
+    if (outcome === "stale") expect(result.message).toContain("newer cloud version");
+  });
+
+  it("falls back to one full scan sync when chat has no confirmed cloud revision", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    const scanWrite = vi.fn().mockResolvedValue({ data: { revision: 1 }, error: null });
+    const upsert = vi.fn().mockResolvedValue({ error: null });
+    const insert = vi.fn().mockResolvedValue({ error: null });
+    mocks.createClient.mockReturnValue({
+      rpc: mocks.syncDetails,
+      auth: {
+        getSession: vi.fn().mockResolvedValue({
+          data: { session: { user: { email_confirmed_at: "2026-10-11T00:00:00Z", id: "user-1" } } },
+          error: null,
+        }),
+      },
+      from: vi.fn((table) => table === "scan_lookups"
+        ? makeScanWriteQuery(scanWrite)
+        : { delete: makeDeleteQuery, insert, upsert }),
+      storage: { from: vi.fn().mockReturnValue({ upload }) },
+    });
+    const lookup = makeLookup();
+    const { saveExistingLookup } = await import("./storage");
+    saveExistingLookup(lookup);
+    const { syncLookupChatToCloud } = await import("./cloudSync");
+
+    expect((await syncLookupChatToCloud(lookup)).ok).toBe(true);
+    expect(upload).toHaveBeenCalledOnce();
+    expect(scanWrite).toHaveBeenCalledOnce();
+  });
+
   it.each(["auth", "upload", "row"])("stops later writes after a timeout during %s and holds retries until the request settles", async (stage) => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");

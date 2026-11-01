@@ -1,4 +1,5 @@
 import type { CapturedFrame, IsolatedObject, VisualFocusBox } from "../types";
+import { configureSameOriginOnnxRuntime } from "./browserTransformers";
 import type { ProductIsolationResult } from "./productSegmentation";
 import { supportsWebGpu } from "./webgpu";
 import { recordScanDebug } from "./scanDebug";
@@ -511,6 +512,7 @@ function getSamPipeline(model: string): Promise<SamPipeline> {
 
   const pipelinePromise = import("@huggingface/transformers")
     .then(async (mod) => {
+      configureSameOriginOnnxRuntime(mod);
       const transformers = mod as unknown as SamTransformersModule;
       const rawImage = transformers.RawImage;
       // Surface the installed transformers version + which RawImage loaders exist. If a future

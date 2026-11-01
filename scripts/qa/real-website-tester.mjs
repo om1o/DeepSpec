@@ -1062,11 +1062,21 @@ async function runResultChat() {
   await requireAuthForProtectedRoute("result-chat");
   await seedSavedScans();
   await gotoPath("/result/qa-alternator-1/chat");
-  await expectText(/Ask about this scan/i, "chat heading", "frontend", ["src/screens/Chat.tsx"]);
-  await page.getByLabel(/Ask a follow-up question/i).fill("What should I check next?");
+  await expectText(/Ask DeepSpec/i, "chat heading", "frontend", ["src/screens/Chat.tsx"]);
+  await page.getByTestId("chat-focus-target").waitFor({ state: "visible" });
+  await page.getByRole("button", { name: /Function/ }).click();
+  await page.getByRole("button", { name: "Ask about this", exact: true }).click();
+  await page.getByLabel(/Ask a follow-up question/i).waitFor({ state: "focused" });
+  const draft = await page.getByLabel(/Ask a follow-up question/i).inputValue();
+  if (!/What does this QA Alternator do/i.test(draft)) {
+    throw new QaIssue("frontend", "The selected evidence section did not create its linked chat draft.", {
+      likelyFiles: ["src/components/chat/ScanEvidencePanel.tsx", "src/screens/Chat.tsx"],
+      suggestedFix: "Keep evidence selection and the composer linked without submitting the question automatically.",
+    });
+  }
 
   return {
-    details: "Chat route loaded from the saved scan. The tester typed a question but did not submit it, so no provider quota was spent.",
+    details: "Chat route loaded from the saved scan, rendered the verified target geometry, and linked the Function evidence section to a focused draft. The tester did not submit it, so no provider quota was spent.",
     likelyFiles: ["src/screens/Chat.tsx", "src/services/aiService.ts", "server/chat.shared.ts"],
     status: "pass",
   };
@@ -1838,6 +1848,7 @@ function createSeedLookups() {
         capturedAt,
         imageBase64,
       },
+      focusBox: { confidence: 0.92, height: 0.19, width: 0.17, x: 0.24, y: 0.64 },
       id: "qa-alternator-1",
       notes: "QA seeded saved scan.",
       rating: null,
