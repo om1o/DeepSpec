@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { BrandLockup } from "../components/BrandLockup";
 import Button from "../components/ui/Button";
@@ -25,6 +25,9 @@ export default function History() {
   const [deviceRead, setDeviceRead] = useState(readLookups);
   const deviceLookups = deviceRead.value;
   const [cloudLookups, setCloudLookups] = useState<Lookup[]>([]);
+  const [cloudHistoryState, setCloudHistoryState] = useState<"loading" | "ready" | "error">("loading");
+  const cloudHistoryRequest = useRef(0);
+  const isMounted = useRef(false);
   const lookups = useMemo(() => mergeLookups(deviceLookups, cloudLookups), [deviceLookups, cloudLookups]);
   const retryPending = useRef(false);
   const [retryingId, setRetryingId] = useState<string | null>(null);
@@ -33,25 +36,52 @@ export default function History() {
   const [query, setQuery] = useState("");
   const qualityMetrics = useMemo(() => getScanQualityMetrics(), []);
 
-  useEffect(() => {
-    let isMounted = true;
+  const loadCloudHistory = useCallback(async () => {
+    if (!isMounted.current || !isAccountScopeCurrent(mountedScope)) return;
+    const requestId = ++cloudHistoryRequest.current;
 
+    try {
+      const result = await readCloudLookups();
+      if (!isMounted.current || requestId !== cloudHistoryRequest.current || !isAccountScopeCurrent(mountedScope)) return;
+      if (!result.ok) {
+        setCloudHistoryState("error");
+        return;
+      }
+
+      setCloudLookups(result.value);
+      setCloudHistoryState("ready");
+    } catch {
+      if (isMounted.current && requestId === cloudHistoryRequest.current && isAccountScopeCurrent(mountedScope)) {
+        setCloudHistoryState("error");
+      }
+    }
+  }, [mountedScope]);
+
+  useEffect(() => {
+    isMounted.current = true;
+    const requestId = ++cloudHistoryRequest.current;
     void readCloudLookups()
       .then((result) => {
-        if (!isMounted || !isAccountScopeCurrent(mountedScope) || !result.ok) {
+        if (!isMounted.current || requestId !== cloudHistoryRequest.current || !isAccountScopeCurrent(mountedScope)) return;
+        if (!result.ok) {
+          setCloudHistoryState("error");
           return;
         }
 
         setCloudLookups(result.value);
+        setCloudHistoryState("ready");
       })
       .catch(() => {
-        // Keep local history if cloud history fails to load.
+        if (isMounted.current && requestId === cloudHistoryRequest.current && isAccountScopeCurrent(mountedScope)) {
+          setCloudHistoryState("error");
+        }
       });
 
     return () => {
-      isMounted = false;
+      isMounted.current = false;
+      cloudHistoryRequest.current += 1;
     };
-  }, [mountedScope]);
+  }, [loadCloudHistory, mountedScope]);
 
   useEffect(() => {
     if (!isAccountScopeCurrent(mountedScope)) return;
@@ -171,6 +201,20 @@ export default function History() {
           <ScanQualityMetricsPanel metrics={qualityMetrics} />
         </details>
         {storageMessage ? <p role="status" className="mt-4 rounded-2xl bg-[var(--ds-elevated)] p-4 text-sm text-[var(--ds-fg-2)]">{storageMessage}</p> : null}
+        {cloudHistoryState === "loading" ? (
+          <p role="status" className="mt-4 text-sm font-semibold text-[var(--ds-fg-3)]">Loading cloud history...</p>
+        ) : null}
+        {cloudHistoryState === "error" ? (
+          <section role="alert" aria-label="Cloud history unavailable" className="mt-4 rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 text-sm">
+            <p className="font-bold">Cloud history could not load.</p>
+            <p className="mt-2 text-[var(--ds-fg-3)]">Scans saved on this device are still available.</p>
+            <button type="button" className="mt-3 rounded-full px-3 py-2 font-bold underline" onClick={() => {
+              if (!isAccountScopeCurrent(mountedScope)) return;
+              setCloudHistoryState("loading");
+              void loadCloudHistory();
+            }}>Retry cloud history</button>
+          </section>
+        ) : null}
         {!deviceRead.ok ? (
           <section role="alert" className="mt-4 rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 text-sm">
             <p>{deviceRead.message}</p>
@@ -298,7 +342,7 @@ export default function History() {
             <p className="text-sm font-bold">No scans match</p>
             <p className="mt-2 text-sm leading-6 text-[var(--ds-fg-3)]">Clear the filters to see every saved scan.</p>
           </section>
-        ) : deviceRead.ok ? (
+        ) : cloudHistoryState === "ready" && deviceRead.ok ? (
           <section className="ds-history-empty">
             <div className="ds-empty-symbol" aria-hidden="true">
               <svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M10 4H4v6m18-6h6v6M4 22v6h6m18-6v6h-6" /><rect x="10" y="10" width="12" height="12" rx="3" /><path d="M14 16h4m-2-2v4" /></svg>
