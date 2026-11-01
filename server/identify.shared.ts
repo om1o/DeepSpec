@@ -149,6 +149,17 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
   const apiKey = env.GEMINI_API_KEY;
 
   let lastRetryableError: IdentifyResponse | null = null;
+  let lastInvalidResponse: IdentifyResponse | null = null;
+  let lastRouteError: IdentifyResponse | null = null;
+  const recordRouteFailure = (response: IdentifyResponse) => {
+    lastRouteError = response;
+    if (getIdentifyErrorCode(response) === "invalid_response") {
+      lastInvalidResponse = response;
+    }
+    if (isRetryableIdentifyResponse(response)) {
+      lastRetryableError = response;
+    }
+  };
   let triedGroq = false;
   if (hasGroqFallback) {
     triedGroq = true;
@@ -156,18 +167,15 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
       createGroqIdentifyResponse(parsed, ocr, sourceContext, env, "primary", chainSignal),
     );
     if (chainSignal.aborted) return identifyTimeoutResponse();
-    if (response.status === 200 || getIdentifyErrorCode(response) === "invalid_response") {
+    if (response.status === 200) {
       return response;
     }
-
-    if (isRetryableIdentifyResponse(response)) {
-      lastRetryableError = response;
-    }
+    recordRouteFailure(response);
   }
 
   if (!apiKey) {
     if (hasHfFallback) {
-      const reason = lastRetryableError ? getIdentifyErrorCode(lastRetryableError) ?? "provider_unavailable" : "gemini_not_configured";
+      const reason = lastRouteError ? getIdentifyErrorCode(lastRouteError) ?? "provider_unavailable" : "gemini_not_configured";
       const response = await withBackupRateLimitRetry(env, chainSignal, () =>
         createHfIdentifyResponse(parsed, ocr, sourceContext, env, reason, chainSignal),
       );
@@ -175,25 +183,27 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
       if (response.status === 200) {
         return response;
       }
-
-      if ("error" in response.body && response.body.error.code === "invalid_response") {
-        return response;
-      }
-      lastRetryableError = response;
+      recordRouteFailure(response);
     }
 
     if (hasOllamaFallback) {
       const response = await createOllamaIdentifyResponse(parsed, ocr, env, chainSignal);
-      return chainSignal.aborted ? identifyTimeoutResponse() : response;
+      if (chainSignal.aborted) return identifyTimeoutResponse();
+      if (response.status === 200) return response;
+      recordRouteFailure(response);
     }
 
-    return lastRetryableError ?? errorResponse(500, "not_configured", IDENTIFY_NOT_CONFIGURED_MESSAGE);
+    return lastInvalidResponse
+      ?? lastRetryableError
+      ?? lastRouteError
+      ?? errorResponse(500, "not_configured", IDENTIFY_NOT_CONFIGURED_MESSAGE);
   }
 
   const models = getIdentifyModels(env);
   const geminiResult = await createGeminiIdentifyResponse({
     apiKey,
     env,
+    fallbackReason: lastRouteError ? getIdentifyErrorCode(lastRouteError) ?? "provider_unavailable" : undefined,
     fallbackAvailable: hasHfFallback || hasGroqFallback || hasOllamaFallback,
     models,
     ocr,
@@ -202,12 +212,12 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
     sourceContext,
   });
   if (chainSignal.aborted) return identifyTimeoutResponse();
-  if (geminiResult.response.status === 200 || getIdentifyErrorCode(geminiResult.response) === "invalid_response") {
+  if (geminiResult.response.status === 200) {
     return geminiResult.response;
   }
 
   const rateLimited = geminiResult.rateLimited;
-  lastRetryableError = geminiResult.lastRetryableError ?? lastRetryableError;
+  recordRouteFailure(geminiResult.lastFailure);
 
   if (!rateLimited && !hasGroqFallback && !hasHfFallback && !hasOllamaFallback) {
     const rescueResponse = await createGeminiRescueIdentifyResponse(
@@ -222,14 +232,11 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
     if (rescueResponse.status === 200) {
       return rescueResponse;
     }
-
-    if (isRetryableIdentifyResponse(rescueResponse)) {
-      lastRetryableError = rescueResponse;
-    }
+    recordRouteFailure(rescueResponse);
   }
 
-  if (hasGroqFallback && !triedGroq && lastRetryableError) {
-    const reason = getIdentifyErrorCode(lastRetryableError) ?? "provider_unavailable";
+  if (hasGroqFallback && !triedGroq && lastRouteError) {
+    const reason = getIdentifyErrorCode(lastRouteError) ?? "provider_unavailable";
     const response = await withBackupRateLimitRetry(env, chainSignal, () =>
       createGroqIdentifyResponse(parsed, ocr, sourceContext, env, reason, chainSignal),
     );
@@ -237,14 +244,11 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
     if (response.status === 200) {
       return response;
     }
-
-    if ("error" in response.body && response.body.error.code === "invalid_response") {
-      return response;
-    }
+    recordRouteFailure(response);
   }
 
-  if (hasHfFallback && lastRetryableError) {
-    const reason = getIdentifyErrorCode(lastRetryableError) ?? "provider_unavailable";
+  if (hasHfFallback && lastRouteError) {
+    const reason = getIdentifyErrorCode(lastRouteError) ?? "provider_unavailable";
     const response = await withBackupRateLimitRetry(env, chainSignal, () =>
       createHfIdentifyResponse(parsed, ocr, sourceContext, env, reason, chainSignal),
     );
@@ -252,25 +256,24 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
     if (response.status === 200) {
       return response;
     }
-
-    if ("error" in response.body && response.body.error.code === "invalid_response") {
-      return response;
-    }
+    recordRouteFailure(response);
   }
 
-  if (hasOllamaFallback && lastRetryableError) {
+  if (hasOllamaFallback && lastRouteError) {
     const response = await createOllamaIdentifyResponse(parsed, ocr, env, chainSignal);
     if (chainSignal.aborted) return identifyTimeoutResponse();
     if (response.status === 200) {
       return response;
     }
-
-    return "error" in response.body && response.body.error.code === "invalid_response" ? response : lastRetryableError;
+    recordRouteFailure(response);
   }
 
-  return rateLimited
+  return lastInvalidResponse
+    ?? (rateLimited
     ? errorResponse(429, "rate_limited", "Too many AI lookups right now. Try again in a few minutes.")
-    : lastRetryableError ?? errorResponse(502, "provider_error", "The AI provider rejected this request.");
+    : lastRetryableError
+      ?? lastRouteError
+      ?? errorResponse(502, "provider_error", "The AI provider rejected this request."));
 }
 
 function getIdentifyErrorCode(response: IdentifyResponse) {
@@ -280,6 +283,7 @@ function getIdentifyErrorCode(response: IdentifyResponse) {
 type GeminiIdentifyOptions = {
   apiKey: string;
   env: Record<string, string | undefined>;
+  fallbackReason?: string;
   fallbackAvailable: boolean;
   models: string[];
   ocr: { text: string; model: string } | null;
@@ -297,6 +301,7 @@ type GeminiIdentifyAttempt = {
 async function createGeminiIdentifyResponse({
   apiKey,
   env,
+  fallbackReason,
   fallbackAvailable,
   models,
   ocr,
@@ -304,7 +309,7 @@ async function createGeminiIdentifyResponse({
   signal,
   sourceContext,
 }: GeminiIdentifyOptions): Promise<{
-  lastRetryableError: IdentifyResponse;
+  lastFailure: IdentifyResponse;
   rateLimited: boolean;
   response: IdentifyResponse;
 }> {
@@ -324,7 +329,7 @@ async function createGeminiIdentifyResponse({
     const controller = new AbortController();
     controllers.set(model, controller);
     const attemptSignal = AbortSignal.any([controller.signal, signal]);
-    const attempt = createGeminiIdentifyAttempt(model, parsed, ocr, sourceContext, apiKey, env, fallbackAvailable, attemptSignal)
+    const attempt = createGeminiIdentifyAttempt(model, parsed, ocr, sourceContext, apiKey, env, fallbackAvailable, fallbackReason, attemptSignal)
       .finally(() => controllers.delete(model));
     pending.add(attempt);
     attempt.finally(() => pending.delete(attempt));
@@ -337,7 +342,7 @@ async function createGeminiIdentifyResponse({
     if (signal.aborted) {
       for (const controller of controllers.values()) controller.abort();
       const timeout = identifyTimeoutResponse();
-      return { lastRetryableError: timeout, rateLimited: false, response: timeout };
+      return { lastFailure: timeout, rateLimited: false, response: timeout };
     }
     if (pending.size === 0) {
       startNextAttempt();
@@ -354,32 +359,33 @@ async function createGeminiIdentifyResponse({
     }
 
     attempts.push(attempt);
-    if (attempt.response.status === 200 || getIdentifyErrorCode(attempt.response) === "invalid_response") {
+    if (attempt.response.status === 200) {
       for (const controller of controllers.values()) {
         controller.abort();
       }
 
       return {
-        lastRetryableError: attempt.response,
+        lastFailure: attempt.response,
         rateLimited: false,
         response: attempt.response,
       };
     }
   }
 
-  const lastRetryableError = [...attempts]
-    .reverse()
-    .find((attempt) => isRetryableIdentifyResponse(attempt.response))?.response
-    ?? attempts[attempts.length - 1]?.response
-    ?? errorResponse(502, "provider_error", "The AI provider rejected this request.");
+  const lastFailure = selectBestIdentifyFailure(attempts.map((attempt) => attempt.response));
 
   return {
-    lastRetryableError,
+    lastFailure,
     rateLimited: attempts.some((attempt) => attempt.rateLimited),
-    response: fallbackAvailable
-      ? lastRetryableError
-      : attempts[0]?.response ?? lastRetryableError,
+    response: lastFailure,
   };
+}
+
+function selectBestIdentifyFailure(responses: IdentifyResponse[]) {
+  return [...responses].reverse().find((response) => getIdentifyErrorCode(response) === "invalid_response")
+    ?? [...responses].reverse().find(isRetryableIdentifyResponse)
+    ?? responses[responses.length - 1]
+    ?? errorResponse(502, "provider_error", "The AI provider rejected this request.");
 }
 
 async function createGeminiIdentifyAttempt(
@@ -390,6 +396,7 @@ async function createGeminiIdentifyAttempt(
   apiKey: string,
   env: Record<string, string | undefined>,
   backupFallbackAvailable: boolean,
+  fallbackReason?: string,
   signal?: AbortSignal,
 ): Promise<GeminiIdentifyAttempt> {
   const startedAt = Date.now();
@@ -442,6 +449,7 @@ async function createGeminiIdentifyAttempt(
     confidence: normalizedResult.confidence,
     scanCategory: normalizedResult.scanCategory,
     safetyTriage: normalizedResult.safetyTriage,
+    fallbackReason,
     ocrUsed: Boolean(ocr?.text),
   });
 
@@ -454,6 +462,7 @@ async function createGeminiIdentifyAttempt(
           provider: "gemini",
           model,
           latencyMs,
+          fallbackReason,
           ocrUsed: Boolean(ocr?.text),
         }),
       },

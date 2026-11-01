@@ -34,7 +34,11 @@ The release evidence gate requires three independently configured online identif
 
 The complete OCR and provider chain is bounded by `DEEPSPEC_IDENTIFY_TOTAL_TIMEOUT_MS` (50 seconds by default). Vercel allows 60 seconds for identify/chat, and the browser waits 60 seconds by default, so a stalled route is canceled before the customer request disappears and later routes cannot continue spending in the background.
 
+An HTTP 200 response is not a successful route unless its model output parses into a valid DeepSpec identification. Empty or unreadable output is recorded as `invalid_response`, and the chain continues to the next configured hosted provider while time remains. A successful fallback records its actual provider/model and `fallbackReason`; `invalid_response` is returned only after the configured routes are exhausted.
+
 Run `npm run identify:access` to perform metadata-only credential and model checks for all three routes. The command sends no image, performs no inference, and records no account or credential details. It proves current access from the machine that runs it; it does not prove that Vercel has the same environment bindings.
+
+Run `npm run identify:evidence -- --revision <sha> --environment <name>` to write access/config and recorded-eval evidence for an exact revision and environment. This artifact does not claim that live hosted identification passed; that requires an approved real-image request against the deployed revision.
 
 ## Provider references
 

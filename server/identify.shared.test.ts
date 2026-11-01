@@ -1125,37 +1125,104 @@ describe("createIdentifyResponse", () => {
     expect(fetchSpy.mock.calls[1][0]).toBe("https://router.huggingface.co/v1/chat/completions");
   });
 
-  describe.each([
-    ["without Gemini", undefined],
-    ["with Gemini", "test-key"],
-  ])("Groq model-quality failures %s", (_label, geminiKey) => {
-    it.each([
-      ["malformed JSON", "not JSON"],
-      ["empty output", ""],
-    ])("preserves invalid_response for %s without retry or fallback", async (_kind, content) => {
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-        new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      );
+  it("continues from malformed Groq output to Gemini and records the winning route", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: "not JSON" } }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
 
-      await expect(createIdentifyResponse({ imageBase64 }, {
-        DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK: "true",
-        GROQ_API_KEY: "groq-test",
-        GEMINI_API_KEY: geminiKey,
-        DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true",
-        HF_TOKEN: "hf-test",
-        DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK: "true",
-        DEEPSPEC_BACKUP_RETRY_BACKOFF_MS: "0",
-      })).resolves.toMatchObject({
-        status: 502,
-        body: { error: { code: "invalid_response", message: "Groq returned JSON that Deep Spec could not read." } },
-      });
-
-      expect(fetchSpy).toHaveBeenCalledTimes(1);
-      expect(fetchSpy.mock.calls[0][0]).toBe("https://api.groq.com/openai/v1/chat/completions");
+    await expect(createIdentifyResponse({ imageBase64 }, {
+      DEEPSPEC_BACKUP_RATE_LIMIT_RETRIES: "0",
+      DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK: "true",
+      GEMINI_API_KEY: "gemini-test",
+      GEMINI_MODEL: "gemini-2.5-flash-lite",
+      GROQ_API_KEY: "groq-test",
+    })).resolves.toMatchObject({
+      status: 200,
+      body: {
+        modelRun: { provider: "gemini", model: "gemini-2.5-flash-lite", fallbackReason: "invalid_response" },
+        result: { modelRun: { provider: "gemini", fallbackReason: "invalid_response" } },
+      },
     });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy.mock.calls[0][0]).toBe("https://api.groq.com/openai/v1/chat/completions");
+    expect(fetchSpy.mock.calls[1][0]).toEqual(expect.stringContaining("/models/gemini-2.5-flash-lite:generateContent"));
+  });
+
+  it("continues from malformed Gemini output to the hosted HF route", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        candidates: [{ content: { parts: [{ text: "not JSON" }] } }],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        choices: [{ message: { content: JSON.stringify(result) } }],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+
+    await expect(createIdentifyResponse({ imageBase64 }, {
+      DEEPSPEC_BACKUP_RATE_LIMIT_RETRIES: "0",
+      DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true",
+      GEMINI_API_KEY: "gemini-test",
+      GEMINI_MODEL: "gemini-2.5-flash-lite",
+      HF_TOKEN: "hf-test",
+    })).resolves.toMatchObject({
+      status: 200,
+      body: {
+        modelRun: { provider: "huggingface", fallbackReason: "invalid_response" },
+        result: { modelRun: { provider: "huggingface", fallbackReason: "invalid_response" } },
+      },
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy.mock.calls[1][0]).toBe("https://router.huggingface.co/v1/chat/completions");
+  });
+
+  it("returns invalid_response only after every configured hosted route is malformed", async () => {
+    const malformedOpenAiResponse = () => new Response(JSON.stringify({ choices: [{ message: { content: "not JSON" } }] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(malformedOpenAiResponse())
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        candidates: [{ content: { parts: [{ text: "not JSON" }] } }],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(malformedOpenAiResponse());
+
+    await expect(createIdentifyResponse({ imageBase64 }, {
+      DEEPSPEC_BACKUP_RATE_LIMIT_RETRIES: "0",
+      DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK: "true",
+      DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true",
+      GEMINI_API_KEY: "gemini-test",
+      GEMINI_MODEL: "gemini-2.5-flash-lite",
+      GROQ_API_KEY: "groq-test",
+      HF_TOKEN: "hf-test",
+    })).resolves.toMatchObject({
+      status: 502,
+      body: { error: { code: "invalid_response", message: "Hugging Face returned JSON that Deep Spec could not read." } },
+    });
+
+    expect(fetchSpy.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://api.groq.com/openai/v1/chat/completions",
+      expect.stringContaining("/models/gemini-2.5-flash-lite:generateContent"),
+      "https://router.huggingface.co/v1/chat/completions",
+    ]);
   });
 
   it.each([
@@ -2527,7 +2594,7 @@ describe("createIdentifyResponse", () => {
   it.each([
     ["empty", { candidates: [] }],
     ["malformed", { candidates: [{ content: { parts: [{ text: "not JSON" }] } }] }],
-  ])("preserves %s Gemini output with a successful backup available", async (_label, payload) => {
+  ])("falls through from %s Gemini output to a successful hosted backup", async (_label, payload) => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
       new Response(JSON.stringify(String(input).includes("generativelanguage.googleapis.com")
         ? payload
@@ -2542,11 +2609,45 @@ describe("createIdentifyResponse", () => {
       DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true",
       HF_TOKEN: "hf-test",
       DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK: "true",
+      GEMINI_MODEL: "gemini-2.5-flash-lite",
     })).resolves.toMatchObject({
-      status: 502,
-      body: { error: { code: "invalid_response" } },
+      status: 200,
+      body: { modelRun: { provider: "huggingface", fallbackReason: "invalid_response" } },
     });
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not start another hosted route after the global deadline", async () => {
+    let providerSignal: AbortSignal | undefined;
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: "not JSON" } }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockImplementationOnce((_input, init) => new Promise((_resolve, reject) => {
+        providerSignal = init?.signal ?? undefined;
+        providerSignal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      }));
+
+    const startedAt = Date.now();
+    await expect(createIdentifyResponse({ imageBase64 }, {
+      DEEPSPEC_BACKUP_RATE_LIMIT_RETRIES: "0",
+      DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK: "true",
+      DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true",
+      DEEPSPEC_IDENTIFY_TOTAL_TIMEOUT_MS: "1000",
+      GEMINI_API_KEY: "gemini-test",
+      GEMINI_MODEL: "gemini-2.5-flash-lite",
+      GROQ_API_KEY: "groq-test",
+      HF_TOKEN: "hf-test",
+    })).resolves.toMatchObject({
+      status: 504,
+      body: { error: { code: "timeout" } },
+    });
+
+    expect(Date.now() - startedAt).toBeLessThan(2_500);
+    expect(providerSignal?.aborted).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy.mock.calls.some(([url]) => url === "https://router.huggingface.co/v1/chat/completions")).toBe(false);
   });
 
   it("returns an invalid_response error when Gemini returns an empty candidates array", async () => {

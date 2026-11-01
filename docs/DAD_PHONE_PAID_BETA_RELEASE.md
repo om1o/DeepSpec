@@ -60,7 +60,7 @@ Paid beta needs all of these:
 - `npm run eval:identify:provider-health` passes.
 - `npm run eval:identify:hf-health` passes if HF/OpenRouter fallback is enabled.
 - `npm run eval:identify:release` passes the fixed 50-case release gate.
-- `npm run identify:evidence` reports live identify ready.
+- `npm run identify:evidence -- --revision <sha> --environment <name>` reports provider access/config and recorded-eval evidence; approved hosted image acceptance passes separately on that exact revision and environment.
 - `npm run billing:evidence -- --provider polar` reports sandbox evidence ready.
 - `npm run verify:polar-testing-only -- --strict-public-url` passes with no Stripe env values and live billing off.
 - `npm run verify:dad-phone-paid-beta -- --target paid-beta --url <preview-url> --phone-grade <grade>` passes.

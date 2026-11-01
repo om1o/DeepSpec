@@ -79,7 +79,7 @@ describe("classifyIdentifyProviderReadiness", () => {
     expect(result.blockers.join("\n")).toContain("No production cloud identify route");
   });
 
-  it("blocks live identify when the release eval is provider-blocked", () => {
+  it("blocks access/config evidence when the release eval is provider-blocked", () => {
     const result = classifyIdentifyProviderReadiness({
       env: {
         GEMINI_API_KEY: "gemini_secret",
@@ -111,9 +111,9 @@ describe("classifyIdentifyProviderReadiness", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.recommendation).toBe("live_identify_ready");
+    expect(result.recommendation).toBe("access_config_evidence_ready");
     expect(result.checks.join("\n")).toContain("Release eval: Identify eval passed");
-    expect(result.checks.join("\n")).toContain("Cloud fallback ready: Groq");
+    expect(result.checks.join("\n")).toContain("Cloud fallback access/config present: Groq");
     expect(result.checks.join("\n")).toContain("Cloud route redundancy: 3/3");
   });
 
@@ -143,7 +143,7 @@ describe("classifyIdentifyProviderReadiness", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.recommendation).toBe("live_identify_ready");
+    expect(result.recommendation).toBe("access_config_evidence_ready");
     expect(result.checks.join("\n")).toContain("Identify provider route configured: Hugging Face.");
   });
 
@@ -223,15 +223,43 @@ describe("buildIdentifyProviderEvidence", () => {
       },
       generatedAt: "2026-06-19T00:00:00.000Z",
       identifySummary: BLOCKED_IDENTIFY_SUMMARY,
+      options: {
+        environment: "preview",
+        revision: "abc123def456",
+      },
     });
 
-    expect(evidence.liveIdentifyReady).toBe(false);
-    expect(markdown).toContain("Live identify ready: no");
+    expect(evidence.accessConfigEvidenceReady).toBe(false);
+    expect(evidence.context).toEqual({ environment: "preview", revision: "abc123def456" });
+    expect(markdown).toContain("Access/config evidence ready: no");
+    expect(markdown).toContain("Revision: abc123def456");
+    expect(markdown).toContain("Environment: preview");
     expect(markdown).toContain("OpenRouter/HF adapter");
     expect(markdown).toContain("Subdomains and lookalike suffixes are not accepted");
     expect(markdown).toContain("network: 1");
     expect(markdown).toContain("status 502");
     expect(markdown).not.toContain("gemini_secret");
     expect(markdown).not.toContain("hf_secret");
+    expect(markdown.toLowerCase()).not.toContain("live identify ready");
+  });
+
+  it("uses exact revision and environment fields from deployment metadata when available", () => {
+    const { evidence, markdown } = buildIdentifyProviderEvidence({
+      env: {
+        GEMINI_API_KEY: "gemini_secret",
+        VERCEL_ENV: "production",
+        VERCEL_GIT_COMMIT_SHA: "0123456789abcdef",
+      },
+      generatedAt: NOW,
+      identifySummary: passingIdentifySummary(),
+      options: { minCloudRoutes: 1 },
+    });
+
+    expect(evidence.context).toEqual({
+      environment: "production",
+      revision: "0123456789abcdef",
+    });
+    expect(markdown).toContain("Revision: 0123456789abcdef");
+    expect(markdown).toContain("Environment: production");
   });
 });

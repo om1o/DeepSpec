@@ -27,7 +27,8 @@ export function buildIdentifyProviderEvidence({
   });
   const evidence = {
     generatedAt,
-    liveIdentifyReady: readiness.ok,
+    accessConfigEvidenceReady: readiness.ok,
+    context: buildEvidenceContext(env, options),
     recommendation: readiness.recommendation,
     sourceArtifacts: {
       identifySummary: options.identifySummaryPath ?? DEFAULT_IDENTIFY_SUMMARY,
@@ -84,12 +85,12 @@ export function classifyIdentifyProviderReadiness({ env = {}, identifySummary = 
     }
 
     if (provider.enabled && provider.ready) {
-      checks.push(`${provider.name} ${provider.role} is ready with ${provider.model}.`);
+      checks.push(`${provider.name} ${provider.role} access/config is present for ${provider.model}.`);
     }
   }
 
   if (readyCloudBackups.length > 0) {
-    checks.push(`Cloud fallback ready: ${readyCloudBackups.map((provider) => provider.name).join(", ")}.`);
+    checks.push(`Cloud fallback access/config present: ${readyCloudBackups.map((provider) => provider.name).join(", ")}.`);
   } else {
     warnings.push("No cloud fallback is ready. A single provider outage can still block paid scans.");
   }
@@ -111,7 +112,7 @@ export function classifyIdentifyProviderReadiness({ env = {}, identifySummary = 
 
   const summaryDetails = summarizeIdentifySummary(identifySummary);
   const recommendation = blockers.length === 0
-    ? "live_identify_ready"
+    ? "access_config_evidence_ready"
     : readyProductionRoutes.length > 0
       ? "provider_config_ready_release_blocked"
       : "configure_identify_provider";
@@ -331,12 +332,14 @@ function summarizeIdentifySummary(summary) {
 function renderMarkdownEvidence(evidence) {
   const releaseSummary = evidence.readiness.release.summary;
   return [
-    "# DeepSpec Identify Provider Evidence",
+    "# DeepSpec Identify Provider Access/Config Evidence",
     "",
     "## Executive Summary",
-    `- Live identify ready: ${evidence.liveIdentifyReady ? "yes" : "no"}`,
+    `- Access/config evidence ready: ${evidence.accessConfigEvidenceReady ? "yes" : "no"}`,
     `- Recommendation: ${evidence.recommendation}`,
     `- Generated at: ${evidence.generatedAt}`,
+    `- Revision: ${evidence.context.revision ?? "unknown"}`,
+    `- Environment: ${evidence.context.environment ?? "unknown"}`,
     `- Identify summary: ${evidence.sourceArtifacts.identifySummary}`,
     "",
     "## Provider Chain",
@@ -364,15 +367,15 @@ function renderMarkdownEvidence(evidence) {
     formatList("BLOCKED", evidence.readiness.blockers),
     "",
     "## Decision Rule",
-    evidence.liveIdentifyReady
-      ? "The identify gate is technically ready for paid launch, subject to the rest of the paid-launch readiness gate."
-      : "Do not start live payments. Keep provider setup in sandbox or setup mode until this evidence says live identify ready.",
+    evidence.accessConfigEvidenceReady
+      ? "Provider access/config and the recorded eval evidence meet this gate. This does not prove a deployed live scan; run approved hosted image acceptance on the exact revision and environment before launch."
+      : "Provider access/config evidence is incomplete. Keep provider setup in sandbox or setup mode, then rerun this gate and approved hosted image acceptance before launch.",
     "",
   ].join("\n");
 }
 
 function formatProvider(provider) {
-  const state = provider.ready ? "ready" : provider.enabled ? "configured incorrectly" : "disabled";
+  const state = provider.ready ? "access/config present" : provider.enabled ? "configuration incomplete" : "disabled";
   const route = provider.productionRoute ? "production route" : provider.localOnly ? "local only" : "fallback only";
   return [
     `- ${provider.name}: ${state}; ${route}; model ${provider.model}; origin ${provider.endpointOrigin}`,
@@ -415,6 +418,28 @@ function hasValue(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function buildEvidenceContext(env, options) {
+  return {
+    revision: firstValue(
+      options.revision,
+      env.DEEPSPEC_EVIDENCE_REVISION,
+      env.VERCEL_GIT_COMMIT_SHA,
+      env.GITHUB_SHA,
+      env.CI_COMMIT_SHA,
+    ),
+    environment: firstValue(
+      options.environment,
+      env.DEEPSPEC_EVIDENCE_ENVIRONMENT,
+      env.VERCEL_ENV,
+      env.DEPLOYMENT_ENVIRONMENT,
+    ),
+  };
+}
+
+function firstValue(...values) {
+  return values.find(hasValue)?.trim() ?? null;
+}
+
 function originFor(rawValue, fallback) {
   try {
     return new URL(rawValue?.trim() || fallback).origin;
@@ -438,6 +463,8 @@ function parseArgs(args) {
     markdownPath: DEFAULT_MARKDOWN_PATH,
     minCloudRoutes: DEFAULT_MIN_CLOUD_ROUTES,
     minSampleSize: DEFAULT_MIN_SAMPLE_SIZE,
+    revision: undefined,
+    environment: undefined,
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -459,6 +486,12 @@ function parseArgs(args) {
       if (!inlineValue) index += 1;
     } else if (name === "--json") {
       options.jsonPath = value;
+      if (!inlineValue) index += 1;
+    } else if (name === "--revision") {
+      options.revision = value;
+      if (!inlineValue) index += 1;
+    } else if (name === "--environment") {
+      options.environment = value;
       if (!inlineValue) index += 1;
     } else if (name === "--help") {
       printHelp();
@@ -491,6 +524,8 @@ Options:
   --identify-summary <path>   Identify eval summary path.
   --min-cloud-routes <n>      Required configured online routes. Default: ${DEFAULT_MIN_CLOUD_ROUTES}
   --min-sample-size <n>       Minimum release sample size. Default: ${DEFAULT_MIN_SAMPLE_SIZE}
+  --revision <sha>            Exact source revision represented by this evidence.
+  --environment <name>        Exact environment represented by this evidence.
   --markdown <path>           Markdown output path.
   --json <path>               JSON output path.
 `);
@@ -563,7 +598,7 @@ if (isDirectRun(import.meta.url)) {
   console.log(`Wrote ${options.markdownPath}`);
   console.log(`Wrote ${options.jsonPath}`);
 
-  if (!evidence.liveIdentifyReady) {
+  if (!evidence.accessConfigEvidenceReady) {
     process.exitCode = 1;
   }
 }
