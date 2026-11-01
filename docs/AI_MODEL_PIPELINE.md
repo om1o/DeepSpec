@@ -32,6 +32,8 @@ The presence of code does not establish live provider readiness. A successful re
 
 The release evidence gate requires three independently configured online identify routes. The current supported set is Groq, Gemini, and Hugging Face or its explicitly configured OpenRouter-compatible adapter. Configuration readiness does not replace a bounded provider-access probe and one approved real-image acceptance scan on the deployed revision.
 
+The complete OCR and provider chain is bounded by `DEEPSPEC_IDENTIFY_TOTAL_TIMEOUT_MS` (50 seconds by default). Vercel allows 60 seconds for identify/chat, and the browser waits 60 seconds by default, so a stalled route is canceled before the customer request disappears and later routes cannot continue spending in the background.
+
 Run `npm run identify:access` to perform metadata-only credential and model checks for all three routes. The command sends no image, performs no inference, and records no account or credential details. It proves current access from the machine that runs it; it does not prove that Vercel has the same environment bindings.
 
 ## Provider references

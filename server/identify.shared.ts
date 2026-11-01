@@ -67,6 +67,7 @@ const HF_IDENTIFY_MAX_OUTPUT_TOKENS = 2048;
 const OLLAMA_IDENTIFY_MAX_OUTPUT_TOKENS = 900;
 const DEFAULT_GEMINI_IDENTIFY_THINKING_BUDGET = 0;
 const DEFAULT_IDENTIFY_PROVIDER_TIMEOUT_MS = 25_000;
+const DEFAULT_IDENTIFY_TOTAL_TIMEOUT_MS = 50_000;
 const DEFAULT_GEMINI_IDENTIFY_HEDGE_DELAY_MS = 4_000;
 const DEFAULT_HF_IDENTIFY_TIMEOUT_MS = 45_000;
 const DEFAULT_GROQ_IDENTIFY_TIMEOUT_MS = 45_000;
@@ -129,11 +130,14 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
     return parsed.error;
   }
 
-  const ocr = shouldRunOcr(parsed) ? await runOcrFallback(parsed, env) : null;
+  const chainSignal = AbortSignal.timeout(getIdentifyTotalTimeoutMs(env));
+  const ocr = shouldRunOcr(parsed) ? await runOcrFallback(parsed, env, chainSignal) : null;
+  if (chainSignal.aborted) return identifyTimeoutResponse();
   const sourceContext = buildDatasetSourceContext(env);
   const forceHfIdentify = isHfIdentifyForced(env);
   if (forceHfIdentify) {
-    return createHfIdentifyResponse(parsed, ocr, sourceContext, env, "forced_hf_health");
+    const response = await createHfIdentifyResponse(parsed, ocr, sourceContext, env, "forced_hf_health", chainSignal);
+    return chainSignal.aborted ? identifyTimeoutResponse() : response;
   }
 
   const hasHfFallback = isHfIdentifyFallbackConfigured(env);
@@ -145,9 +149,10 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
   let triedGroq = false;
   if (hasGroqFallback) {
     triedGroq = true;
-    const response = await withBackupRateLimitRetry(env, () =>
-      createGroqIdentifyResponse(parsed, ocr, sourceContext, env, "primary"),
+    const response = await withBackupRateLimitRetry(env, chainSignal, () =>
+      createGroqIdentifyResponse(parsed, ocr, sourceContext, env, "primary", chainSignal),
     );
+    if (chainSignal.aborted) return identifyTimeoutResponse();
     if (response.status === 200 || getIdentifyErrorCode(response) === "invalid_response") {
       return response;
     }
@@ -160,9 +165,10 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
   if (!apiKey) {
     if (hasHfFallback) {
       const reason = lastRetryableError ? getIdentifyErrorCode(lastRetryableError) ?? "provider_unavailable" : "gemini_not_configured";
-      const response = await withBackupRateLimitRetry(env, () =>
-        createHfIdentifyResponse(parsed, ocr, sourceContext, env, reason),
+      const response = await withBackupRateLimitRetry(env, chainSignal, () =>
+        createHfIdentifyResponse(parsed, ocr, sourceContext, env, reason, chainSignal),
       );
+      if (chainSignal.aborted) return identifyTimeoutResponse();
       if (response.status === 200) {
         return response;
       }
@@ -173,9 +179,12 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
       lastRetryableError = response;
     }
 
-    return hasOllamaFallback
-      ? createOllamaIdentifyResponse(parsed, ocr, env)
-      : lastRetryableError ?? errorResponse(500, "not_configured", IDENTIFY_NOT_CONFIGURED_MESSAGE);
+    if (hasOllamaFallback) {
+      const response = await createOllamaIdentifyResponse(parsed, ocr, env, chainSignal);
+      return chainSignal.aborted ? identifyTimeoutResponse() : response;
+    }
+
+    return lastRetryableError ?? errorResponse(500, "not_configured", IDENTIFY_NOT_CONFIGURED_MESSAGE);
   }
 
   const models = getIdentifyModels(env);
@@ -186,8 +195,10 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
     models,
     ocr,
     parsed,
+    signal: chainSignal,
     sourceContext,
   });
+  if (chainSignal.aborted) return identifyTimeoutResponse();
   if (geminiResult.response.status === 200 || getIdentifyErrorCode(geminiResult.response) === "invalid_response") {
     return geminiResult.response;
   }
@@ -202,7 +213,9 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
       ocr,
       apiKey,
       env,
+      chainSignal,
     );
+    if (chainSignal.aborted) return identifyTimeoutResponse();
     if (rescueResponse.status === 200) {
       return rescueResponse;
     }
@@ -214,9 +227,10 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
 
   if (hasGroqFallback && !triedGroq && lastRetryableError) {
     const reason = getIdentifyErrorCode(lastRetryableError) ?? "provider_unavailable";
-    const response = await withBackupRateLimitRetry(env, () =>
-      createGroqIdentifyResponse(parsed, ocr, sourceContext, env, reason),
+    const response = await withBackupRateLimitRetry(env, chainSignal, () =>
+      createGroqIdentifyResponse(parsed, ocr, sourceContext, env, reason, chainSignal),
     );
+    if (chainSignal.aborted) return identifyTimeoutResponse();
     if (response.status === 200) {
       return response;
     }
@@ -228,9 +242,10 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
 
   if (hasHfFallback && lastRetryableError) {
     const reason = getIdentifyErrorCode(lastRetryableError) ?? "provider_unavailable";
-    const response = await withBackupRateLimitRetry(env, () =>
-      createHfIdentifyResponse(parsed, ocr, sourceContext, env, reason),
+    const response = await withBackupRateLimitRetry(env, chainSignal, () =>
+      createHfIdentifyResponse(parsed, ocr, sourceContext, env, reason, chainSignal),
     );
+    if (chainSignal.aborted) return identifyTimeoutResponse();
     if (response.status === 200) {
       return response;
     }
@@ -241,7 +256,8 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
   }
 
   if (hasOllamaFallback && lastRetryableError) {
-    const response = await createOllamaIdentifyResponse(parsed, ocr, env);
+    const response = await createOllamaIdentifyResponse(parsed, ocr, env, chainSignal);
+    if (chainSignal.aborted) return identifyTimeoutResponse();
     if (response.status === 200) {
       return response;
     }
@@ -265,6 +281,7 @@ type GeminiIdentifyOptions = {
   models: string[];
   ocr: { text: string; model: string } | null;
   parsed: ParsedIdentifyRequest;
+  signal: AbortSignal;
   sourceContext: string | null;
 };
 
@@ -281,6 +298,7 @@ async function createGeminiIdentifyResponse({
   models,
   ocr,
   parsed,
+  signal,
   sourceContext,
 }: GeminiIdentifyOptions): Promise<{
   lastRetryableError: IdentifyResponse;
@@ -302,7 +320,8 @@ async function createGeminiIdentifyResponse({
     nextModelIndex += 1;
     const controller = new AbortController();
     controllers.set(model, controller);
-    const attempt = createGeminiIdentifyAttempt(model, parsed, ocr, sourceContext, apiKey, env, fallbackAvailable, controller.signal)
+    const attemptSignal = AbortSignal.any([controller.signal, signal]);
+    const attempt = createGeminiIdentifyAttempt(model, parsed, ocr, sourceContext, apiKey, env, fallbackAvailable, attemptSignal)
       .finally(() => controllers.delete(model));
     pending.add(attempt);
     attempt.finally(() => pending.delete(attempt));
@@ -312,6 +331,11 @@ async function createGeminiIdentifyResponse({
   startNextAttempt();
 
   while (pending.size > 0 || nextModelIndex < models.length) {
+    if (signal.aborted) {
+      for (const controller of controllers.values()) controller.abort();
+      const timeout = identifyTimeoutResponse();
+      return { lastRetryableError: timeout, rateLimited: false, response: timeout };
+    }
     if (pending.size === 0) {
       startNextAttempt();
       continue;
@@ -449,9 +473,10 @@ async function createGeminiRescueIdentifyResponse(
   ocr: { text: string; model: string } | null,
   apiKey: string,
   env: Record<string, string | undefined>,
+  signal: AbortSignal,
 ): Promise<IdentifyResponse> {
   const startedAt = Date.now();
-  const response = await fetchGeminiRescueIdentify(model, parsed, ocr, apiKey, env);
+  const response = await fetchGeminiRescueIdentify(model, parsed, ocr, apiKey, env, signal);
 
   if (!response) {
     const networkError = errorResponse(502, "network", "Deep Spec could not reach Gemini.");
@@ -591,6 +616,7 @@ async function createHfIdentifyResponse(
   sourceContext: string | null,
   env: Record<string, string | undefined>,
   fallbackReason: string,
+  signal: AbortSignal,
 ): Promise<IdentifyResponse> {
   const token = getHfToken(env);
   if (!token) {
@@ -613,6 +639,7 @@ async function createHfIdentifyResponse(
     sourceContext,
     env,
     fallbackReason,
+    signal,
   );
 }
 
@@ -622,6 +649,7 @@ async function createGroqIdentifyResponse(
   sourceContext: string | null,
   env: Record<string, string | undefined>,
   fallbackReason: string,
+  signal: AbortSignal,
 ): Promise<IdentifyResponse> {
   const token = getGroqToken(env);
   if (!token) {
@@ -642,6 +670,7 @@ async function createGroqIdentifyResponse(
     sourceContext,
     env,
     fallbackReason,
+    signal,
   );
 }
 
@@ -652,6 +681,7 @@ async function createBackendIdentifyResponse(
   sourceContext: string | null,
   env: Record<string, string | undefined>,
   fallbackReason: string,
+  signal: AbortSignal,
 ): Promise<IdentifyResponse> {
   const { provider, label, model } = backend;
   if (!isAllowedCredentialedProviderEndpoint(provider, backend.endpoint)) {
@@ -663,7 +693,7 @@ async function createBackendIdentifyResponse(
   }
 
   const startedAt = Date.now();
-  const response = await fetchBackendIdentify(backend, parsed, ocr, sourceContext);
+  const response = await fetchBackendIdentify(backend, parsed, ocr, sourceContext, signal);
 
   if (!response) {
     const networkError = errorResponse(502, "network", `Deep Spec could not reach ${label}.`);
@@ -728,6 +758,7 @@ function fetchBackendIdentify(
   parsed: ParsedIdentifyRequest,
   ocr: { text: string; model: string } | null,
   sourceContext: string | null,
+  signal: AbortSignal,
 ) {
   const content = [
     {
@@ -757,7 +788,7 @@ function fetchBackendIdentify(
 
   return fetch(backend.endpoint, {
     method: "POST",
-    signal: AbortSignal.timeout(backend.timeoutMs),
+    signal: providerFetchSignal(backend.timeoutMs, signal),
     headers: {
       Authorization: `Bearer ${backend.token}`,
       "Content-Type": "application/json",
@@ -887,12 +918,15 @@ function getGroqIdentifyTimeoutMs(env: Record<string, string | undefined>) {
 
 async function withBackupRateLimitRetry(
   env: Record<string, string | undefined>,
+  signal: AbortSignal,
   run: () => Promise<IdentifyResponse>,
 ): Promise<IdentifyResponse> {
+  if (signal.aborted) return identifyTimeoutResponse();
   const maxRetries = getBackupRateLimitRetries(env);
   let response = await run();
   for (let attempt = 0; attempt < maxRetries && response.status === 429; attempt += 1) {
-    await delay(getBackupRetryBackoffMs(env) * (attempt + 1));
+    await delay(getBackupRetryBackoffMs(env) * (attempt + 1), signal);
+    if (signal.aborted) return identifyTimeoutResponse();
     response = await run();
   }
 
@@ -909,8 +943,19 @@ function getBackupRetryBackoffMs(env: Record<string, string | undefined>) {
   return Number.isInteger(value) && value >= 0 && value <= 10_000 ? value : DEFAULT_BACKUP_RETRY_BACKOFF_MS;
 }
 
-function delay(ms: number) {
-  return ms > 0 ? new Promise<void>((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
+function delay(ms: number, signal?: AbortSignal) {
+  if (ms <= 0 || signal?.aborted) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const onAbort = () => {
+      clearTimeout(timeoutId);
+      resolve();
+    };
+    const timeoutId = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function extractOpenAiChatText(responseBody: JsonObject | null) {
@@ -939,10 +984,11 @@ async function createOllamaIdentifyResponse(
   parsed: ParsedIdentifyRequest,
   ocr: { text: string; model: string } | null,
   env: Record<string, string | undefined>,
+  signal: AbortSignal,
 ): Promise<IdentifyResponse> {
   const model = env.OLLAMA_IDENTIFY_MODEL?.trim() || DEFAULT_OLLAMA_IDENTIFY_MODEL;
   const startedAt = Date.now();
-  const response = await fetchOllamaIdentify(model, parsed, ocr, env);
+  const response = await fetchOllamaIdentify(model, parsed, ocr, env, signal);
 
   if (!response) {
     const networkError = errorResponse(502, "network", "Deep Spec could not reach the local Ollama fallback.");
@@ -999,6 +1045,7 @@ function fetchOllamaIdentify(
   parsed: ParsedIdentifyRequest,
   ocr: { text: string; model: string } | null,
   env: Record<string, string | undefined>,
+  signal: AbortSignal,
 ) {
   const baseUrl = getOllamaBaseUrl(env);
   if (!baseUrl) {
@@ -1022,7 +1069,7 @@ function fetchOllamaIdentify(
 
   return fetch(`${baseUrl}/api/chat`, {
     method: "POST",
-    signal: AbortSignal.timeout(getOllamaIdentifyTimeoutMs(env)),
+    signal: providerFetchSignal(getOllamaIdentifyTimeoutMs(env), signal),
     headers: {
       "Content-Type": "application/json",
     },
@@ -1144,6 +1191,7 @@ function fetchGeminiRescueIdentify(
   ocr: { text: string; model: string } | null,
   apiKey: string,
   env: Record<string, string | undefined>,
+  signal: AbortSignal,
 ) {
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   if (!isAllowedCredentialedProviderEndpoint("gemini", endpoint)) {
@@ -1152,7 +1200,7 @@ function fetchGeminiRescueIdentify(
 
   return fetch(endpoint, {
     method: "POST",
-    signal: AbortSignal.timeout(Math.min(getIdentifyProviderTimeoutMs(env), 15_000)),
+    signal: providerFetchSignal(Math.min(getIdentifyProviderTimeoutMs(env), 15_000), signal),
     headers: {
       "Content-Type": "application/json",
       "x-goog-api-key": apiKey,
@@ -1195,7 +1243,11 @@ function fetchGeminiRescueIdentify(
 }
 
 function getGeminiFetchSignal(env: Record<string, string | undefined>, signal?: AbortSignal) {
-  const timeoutSignal = AbortSignal.timeout(getIdentifyProviderTimeoutMs(env));
+  return providerFetchSignal(getIdentifyProviderTimeoutMs(env), signal);
+}
+
+function providerFetchSignal(timeoutMs: number, signal?: AbortSignal) {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
   return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 }
 
@@ -1225,6 +1277,17 @@ function getIdentifyProviderTimeoutMs(env: Record<string, string | undefined>) {
   }
 
   return timeoutMs;
+}
+
+function getIdentifyTotalTimeoutMs(env: Record<string, string | undefined>) {
+  const timeoutMs = Number(env.DEEPSPEC_IDENTIFY_TOTAL_TIMEOUT_MS);
+  return Number.isInteger(timeoutMs) && timeoutMs >= 1_000 && timeoutMs <= 55_000
+    ? timeoutMs
+    : DEFAULT_IDENTIFY_TOTAL_TIMEOUT_MS;
+}
+
+function identifyTimeoutResponse(): IdentifyResponse {
+  return errorResponse(504, "timeout", "Identification took too long. Try again with a clear photo.");
 }
 
 function parseIdentifyRequest(body: unknown): ParsedIdentifyRequest | { error: IdentifyResponse } {
@@ -3038,6 +3101,7 @@ function shouldRunOcr(parsed: { userMessage: string; labelRescueTrigger: LabelRe
 async function runOcrFallback(
   parsed: { base64: string; mimeType: string },
   env: Record<string, string | undefined>,
+  signal: AbortSignal,
 ): Promise<{ text: string; model: string } | null> {
   const token = env.HUGGINGFACE_API_KEY || env.HF_API_TOKEN || env.HF_TOKEN;
   if (!token) {
@@ -3052,7 +3116,7 @@ async function runOcrFallback(
 
   const response = await fetch(endpoint, {
     method: "POST",
-    signal: AbortSignal.timeout(12_000),
+    signal: providerFetchSignal(12_000, signal),
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": parsed.mimeType,

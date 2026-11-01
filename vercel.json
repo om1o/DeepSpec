@@ -1,7 +1,11 @@
 {
   "functions": {
     "api/identify.ts": {
-      "includeFiles": "datasets/verified/hf-automotive-sources-v1/records.jsonl"
+      "includeFiles": "datasets/verified/hf-automotive-sources-v1/records.jsonl",
+      "maxDuration": 60
+    },
+    "api/chat.ts": {
+      "maxDuration": 60
     }
   },
   "headers": [

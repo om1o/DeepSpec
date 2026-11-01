@@ -2507,6 +2507,23 @@ describe("createIdentifyResponse", () => {
     });
   });
 
+  it("cancels a hung provider chain before the browser deadline", async () => {
+    let providerSignal: AbortSignal | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation((_input, init) => new Promise((_resolve, reject) => {
+      providerSignal = init?.signal ?? undefined;
+      providerSignal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    }));
+
+    await expect(createIdentifyResponse({ imageBase64 }, {
+      DEEPSPEC_IDENTIFY_TOTAL_TIMEOUT_MS: "1000",
+      GEMINI_API_KEY: "test-key",
+    })).resolves.toMatchObject({
+      status: 504,
+      body: { error: { code: "timeout" } },
+    });
+    expect(providerSignal?.aborted).toBe(true);
+  });
+
   it.each([
     ["empty", { candidates: [] }],
     ["malformed", { candidates: [{ content: { parts: [{ text: "not JSON" }] } }] }],

@@ -63,7 +63,7 @@ type AIApiFailure = {
 };
 
 const ON_DEVICE_PROVIDER_FALLBACK_TIMEOUT_MS = 90_000;
-const DEFAULT_IDENTIFY_CLIENT_TIMEOUT_MS = 45_000;
+const DEFAULT_IDENTIFY_CLIENT_TIMEOUT_MS = 60_000;
 const DEFAULT_CHAT_CLIENT_TIMEOUT_MS = 30_000;
 
 export class AIServiceError extends Error {
@@ -190,7 +190,7 @@ function getIdentifyClientTimeoutMs() {
   const raw = import.meta.env.VITE_DEEPSPEC_IDENTIFY_CLIENT_TIMEOUT_MS
     || (typeof process !== "undefined" ? process.env.VITE_DEEPSPEC_IDENTIFY_CLIENT_TIMEOUT_MS : undefined);
   const timeoutMs = Number(raw);
-  return Number.isInteger(timeoutMs) && timeoutMs >= 1_000 && timeoutMs <= 120_000
+  return Number.isInteger(timeoutMs) && timeoutMs >= 1_000 && timeoutMs <= 75_000
     ? timeoutMs
     : DEFAULT_IDENTIFY_CLIENT_TIMEOUT_MS;
 }
