@@ -1,5 +1,49 @@
 # DeepSpec V1 Preview QA Report
 
+## Hosted API and scan release gate — 2026-11-01 (America/New_York)
+
+**Decision: do not promote the current Vercel deployments.** The repaired local candidate is packageable and its guarded scan path passes synthetic verification, but no deployed revision combines those repairs with a configured provider and a completed authenticated scan/save/history journey.
+
+### Revision and live endpoint evidence
+
+| Target | Observed result | Release meaning |
+| --- | --- | --- |
+| Production [`https://deepspec.vercel.app`](https://deepspec.vercel.app) | `/` = `200`; `/auth` = `404`; `/scan` = `404`; safe `GET /api/identify` = `500 FUNCTION_INVOCATION_FAILED` | Production is on an older deployment and is not a usable app or scan API. The identify function fails before its expected `405` method guard. |
+| PR [#124](https://github.com/om1o/DeepSpec/pull/124) immutable Preview [`f9ba5cc3`](https://github.com/om1o/DeepSpec/commit/f9ba5cc3736b3b16fd1836f8ec4b655cb29d2ec3) | `/`, `/auth` and `/scan` = `200`; safe `GET /api/identify` = `405` | Routing and function packaging load. A bounded minimal-image probe reached `500 not_configured`: the Preview runtime does not have a usable AI-provider credential. No real inference was attempted. |
+| Local repair branch `codex/hosted-v1-repair-20261031` | Tested runtime head `6b640376`, 14 runtime commits after PR #124; this report is a documentation-only successor | Session-aware entry, unconditional API session gates, Vercel routing/package repairs and subsequent security fixes are local only. This revision has not been pushed, deployed or accepted in a hosted environment. |
+
+GitHub's two existing repair workflows stopped without changing Vercel because the repository did not expose the required encrypted deployment/provider secrets. Provider credentials still exist in local configuration by variable name, so this evidence does **not** show that a key was lost or needs to be recreated. No secret value was read into this report.
+
+### Local verification on the repaired candidate
+
+| Check | Result |
+| --- | --- |
+| Vercel/API focused verification | **PASS:** 10 files / 234 tests; identify and chat dependency traces contain all expected files with zero trace warnings; six API functions remain below the configured Vercel function count limit. |
+| Provider/session/credit/scanner verification | **PASS:** 210 API/provider/session/rate-limit/credit tests. The broader scanner/API run initially exposed one timing-sensitive blocked-camera retake test. Commit `6b640376` gives its two asynchronous image-processing passes bounded time; the exact test and the complete `Scanner.test.tsx` file now pass (**50/50**). |
+| TypeScript and lint | **PASS:** node TypeScript project and full `npm run lint`. |
+| Production build | **PASS:** 149 modules, TypeScript, Vite bundle, public assets and brand integrity. Existing large model/WASM bundle warnings remain performance debt, not a build failure. |
+| QA doctor | **BLOCKED BY LOCAL ENVIRONMENT:** this isolated worktree has no app server, Supabase public variables or test-account password. Browser launch itself passed. This is not evidence of a hosted product defect. Artifacts: `artifacts/qa/2026-11-01T04-04-57-044Z/`. |
+
+The identify handler fails closed in this order: distributed rate limit, verified non-anonymous Supabase session, validated request/provider configuration, scan-credit reservation, then inference. A provider success cannot bypass authentication or credit accounting. Actual Vercel function-duration settings remain unverified; provider waits can reach 45 seconds, so the deployed Functions duration must be checked against the project's Vercel plan/settings before acceptance: [Vercel function limits](https://vercel.com/docs/functions/limitations).
+
+### Supabase readiness
+
+- Project `deepspec` is `ACTIVE_HEALTHY`. `check_rate_limit`, `reserve_scan_credit`, `finalize_scan_credit` and `sync_scan_details` exist.
+- The `deepspec-guest-quota` Edge Function is active and its safe `GET` method probe returned the expected `405 method_not_allowed`. Last-24-hour Edge/Function logs contained no error-like messages, but this low-volume observation is not an uptime guarantee.
+- Production includes the scan revision, free-usage, billing-entitlement and mechanic-shop migrations through `20261013224258`. It does **not** include the three local migrations dated October 31 for shop-job identity, billing-webhook idempotency and public-write hardening. Therefore production does not yet match this release branch. No remote migration was applied.
+- Security Advisor still reports leaked-password protection disabled. Enable and recheck it in the Auth dashboard before public launch: [Supabase password security guidance](https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection). RLS-with-no-policy notices remain on intentional server-only tables; broad client policies must not be added to silence those notices.
+
+### Required closed-loop acceptance
+
+1. Review the 14 runtime commits plus this evidence update, push them to an isolated branch, and create a new immutable Preview. Do not promote the older production or PR #124 deployment.
+2. Apply the three reviewed local migrations to the intended Supabase environment, then rerun schema, security and performance advisors.
+3. With explicit credential-change approval, install the existing server-only Supabase secret and one existing provider credential in the correct Vercel Preview scope. Verify the deployment's function-duration setting. Do not expose or recreate secrets unnecessarily.
+4. Verify signed-out `/scan` redirects to the original sign-in flow and unauthenticated identify calls return `401`, not validation/provider output.
+5. With one explicitly approved provider request and the existing authorized account, complete sign-in/session restore → upload known car-part image → real identification → save → refresh → history → logout/login → reopen, including photo and chat history. Record the immutable revision, environment, provider/model/run metadata and failure recovery.
+6. Only after those checks pass, rerun CI/build and add external monitoring for `/`, `/auth` and API health. No provider can honestly be guaranteed to work “at all times”; acceptance requires fail-closed behavior, alerts and a separately verified fallback if continuous inference is promised.
+
+No deployment, push, merge, provider call, account creation, auth email, credential change, remote migration or paid action was performed during this gate.
+
 ## Current evidence reconciliation — 2026-10-22 (America/New_York)
 
 **Decision: release acceptance remains unverified; this documentation update is not launch approval.** October 26 is conditional. The implementation candidate inspected is [`a908ba32b78aeaed7e998ef4b3ed193340e0313c`](https://github.com/om1o/DeepSpec/commit/a908ba32b78aeaed7e998ef4b3ed193340e0313c), PR [#119](https://github.com/om1o/DeepSpec/pull/119), branch `codex/v1-preview-20261010`, targeting `codex/mechanic-shop-mode` at `a28e1a19147a50751248f2546fae4224f332aa9c`. The PR was open and unmerged at inspection. This supersedes the current-candidate designation below; the October 11 observations remain historical, with their original dates, revisions and limitations preserved.
