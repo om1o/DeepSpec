@@ -56,7 +56,25 @@ export default async function handler(request: VercelRequest, response: VercelRe
     return;
   }
 
-  const result = await createIdentifyResponse(request.body, process.env);
-  await consumeReservedScanCredit(reservation, process.env, result.status === 200);
+  let result;
+  try {
+    result = await createIdentifyResponse(request.body, process.env);
+  } catch {
+    result = {
+      status: 500,
+      body: {
+        error: {
+          code: "unexpected_error",
+          message: "DeepSpec could not complete this identification. Try again.",
+        },
+      },
+    };
+  }
+
+  try {
+    await consumeReservedScanCredit(reservation, process.env, result.status === 200);
+  } catch {
+    console.warn("[DeepSpec] Could not finalize a paid scan credit.");
+  }
   response.status(result.status).json(result.body);
 }

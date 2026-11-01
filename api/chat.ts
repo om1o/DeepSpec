@@ -37,16 +37,16 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
   const headers = request.headers ?? {};
 
+  const session = await requireSession(headers, process.env);
+  if (session.ok === false) {
+    response.status(session.status).json(session.body);
+    return;
+  }
+
   const rateLimit = await enforceRateLimit("chat", headers, process.env);
   if (rateLimit.ok === false) {
     response.setHeader("Retry-After", String(rateLimit.retryAfterSeconds));
     response.status(rateLimit.status).json(rateLimit.body);
-    return;
-  }
-
-  const session = await requireSession(headers, process.env);
-  if (session.ok === false) {
-    response.status(session.status).json(session.body);
     return;
   }
 

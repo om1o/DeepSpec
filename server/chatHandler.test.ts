@@ -47,6 +47,7 @@ it.each([
   [503, "rate_limit_unavailable"],
 ])("keeps enabled-chat rate limit failures (%s)", async (status, code) => {
   vi.stubEnv("DEEPSPEC_ENABLE_CHAT", "true");
+  vi.mocked(requireSession).mockResolvedValue({ ok: true, userId: "confirmed-user" });
   const body = { error: { code, message: "Rejected" } };
   vi.mocked(enforceRateLimit).mockResolvedValue({ ok: false, status, body, retryAfterSeconds: 30 });
   const fetchMock = vi.fn();
@@ -56,13 +57,12 @@ it.each([
   expect(res.status).toHaveBeenCalledWith(status);
   expect(res.json).toHaveBeenCalledWith(body);
   expect(res.setHeader).toHaveBeenCalledWith("Retry-After", "30");
-  expect(requireSession).not.toHaveBeenCalled();
+  expect(requireSession).toHaveBeenCalledOnce();
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
 it.each([[401, "missing_session"], [401, "invalid_session"], [500, "not_configured"]])("keeps enabled-chat authorization failures (%s %s)", async (status, code) => {
   vi.stubEnv("DEEPSPEC_ENABLE_CHAT", "true");
-  vi.mocked(enforceRateLimit).mockResolvedValue({ ok: true });
   const body = { error: { code, message: "Rejected" } };
   vi.mocked(requireSession).mockResolvedValue({ ok: false, status, body });
   const fetchMock = vi.fn();
@@ -72,6 +72,7 @@ it.each([[401, "missing_session"], [401, "invalid_session"], [500, "not_configur
   expect(res.status).toHaveBeenCalledWith(status);
   expect(res.json).toHaveBeenCalledWith(body);
   expect(requireSession).toHaveBeenCalledWith({ authorization: "Bearer test-session" }, process.env);
+  expect(enforceRateLimit).not.toHaveBeenCalled();
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
@@ -115,14 +116,13 @@ it("does not let obsolete guest flags enable disabled chat", async () => {
 it("requires a verified session for enabled chat despite obsolete guest flags", async () => {
   configureGuestPreview();
   vi.stubEnv("DEEPSPEC_ENABLE_CHAT", "true");
-  vi.mocked(enforceRateLimit).mockResolvedValue({ ok: true });
   vi.mocked(requireSession).mockResolvedValue({ ok: false, status: 401, body: { error: { code: "missing_session", message: "Sign in" } } });
   const fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
   const res = response();
   await handler({ method: "POST", body: { userMessage: "What next?" } }, res);
-  expect(enforceRateLimit).toHaveBeenCalledWith("chat", {}, process.env);
   expect(requireSession).toHaveBeenCalledWith({}, process.env);
+  expect(enforceRateLimit).not.toHaveBeenCalled();
   expect(res.status).toHaveBeenCalledWith(401);
   expect(fetchMock).not.toHaveBeenCalled();
 });
@@ -130,6 +130,7 @@ it("requires a verified session for enabled chat despite obsolete guest flags", 
 it.each([429, 503] as const)("preserves enabled-chat limiter failures despite obsolete guest flags (%i)", async (status) => {
   configureGuestPreview();
   vi.stubEnv("DEEPSPEC_ENABLE_CHAT", "true");
+  vi.mocked(requireSession).mockResolvedValue({ ok: true, userId: "confirmed-user" });
   const body = { error: { code: "preview_limited", message: "Wait" } };
   vi.mocked(enforceRateLimit).mockResolvedValue({ ok: false, status, body, retryAfterSeconds: 30 });
   const fetchMock = vi.fn();
@@ -138,7 +139,7 @@ it.each([429, 503] as const)("preserves enabled-chat limiter failures despite ob
   await handler({ method: "POST", body: { userMessage: "What next?" } }, res);
   expect(res.status).toHaveBeenCalledWith(status);
   expect(res.setHeader).toHaveBeenCalledWith("Retry-After", "30");
-  expect(requireSession).not.toHaveBeenCalled();
+  expect(requireSession).toHaveBeenCalledOnce();
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
@@ -169,13 +170,13 @@ it("does not use the guest chat feature override for authenticated preview reque
 it("still verifies supplied preview credentials when regular chat is enabled", async () => {
   configureGuestPreview();
   vi.stubEnv("DEEPSPEC_ENABLE_CHAT", "true");
-  vi.mocked(enforceRateLimit).mockResolvedValue({ ok: true });
   vi.mocked(requireSession).mockResolvedValue({ ok: false, status: 401, body: { error: { code: "invalid_session", message: "Invalid" } } });
   const fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
   const res = response();
   await handler({ method: "POST", headers: { authorization: "Bearer invalid" }, body: { userMessage: "What next?" } }, res);
   expect(requireSession).toHaveBeenCalledWith({ authorization: "Bearer invalid" }, process.env);
+  expect(enforceRateLimit).not.toHaveBeenCalled();
   expect(res.status).toHaveBeenCalledWith(401);
   expect(fetchMock).not.toHaveBeenCalled();
 });

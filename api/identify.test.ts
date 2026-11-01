@@ -1,0 +1,94 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import handler from "./identify";
+import { consumeReservedScanCredit, reserveScanCredit } from "../server/billing.shared";
+import { createIdentifyResponse, validateIdentifyRequest } from "../server/identify.shared";
+import { enforceRateLimit } from "../server/rateLimit.shared";
+import { requireSession } from "../server/requireSession.shared";
+
+vi.mock("../server/billing.shared", () => ({
+  consumeReservedScanCredit: vi.fn(),
+  reserveScanCredit: vi.fn(),
+}));
+vi.mock("../server/identify.shared", () => ({
+  createIdentifyResponse: vi.fn(),
+  validateIdentifyRequest: vi.fn(),
+}));
+vi.mock("../server/rateLimit.shared", () => ({ enforceRateLimit: vi.fn() }));
+vi.mock("../server/requireSession.shared", () => ({ requireSession: vi.fn() }));
+
+const request = {
+  method: "POST",
+  headers: { authorization: "Bearer test-session" },
+  body: { imageBase64: "data:image/jpeg;base64,aGVsbG8=" },
+};
+const reservation = {
+  enforced: true as const,
+  ok: true as const,
+  reservationId: "paid-hold",
+  userId: "verified-user",
+};
+
+function createResponse() {
+  const response = {
+    status: vi.fn(),
+    json: vi.fn(),
+    setHeader: vi.fn(),
+  };
+  response.status.mockReturnValue(response);
+  return response;
+}
+
+describe("identify reservation finalization", () => {
+  beforeEach(() => {
+    vi.mocked(enforceRateLimit).mockResolvedValue({ ok: true });
+    vi.mocked(requireSession).mockResolvedValue({ ok: true, userId: "verified-user" });
+    vi.mocked(validateIdentifyRequest).mockReturnValue(null);
+    vi.mocked(reserveScanCredit).mockResolvedValue(reservation);
+    vi.mocked(consumeReservedScanCredit).mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+  });
+
+  it("finalizes a reservation as failed when identification throws", async () => {
+    vi.mocked(createIdentifyResponse).mockRejectedValue(new Error("private provider detail"));
+    const response = createResponse();
+
+    await handler(request, response);
+
+    expect(consumeReservedScanCredit).toHaveBeenCalledWith(reservation, process.env, false);
+    expect(response.status).toHaveBeenCalledWith(500);
+    expect(response.json).toHaveBeenCalledWith({
+      error: {
+        code: "unexpected_error",
+        message: "DeepSpec could not complete this identification. Try again.",
+      },
+    });
+    expect(JSON.stringify(response.json.mock.calls)).not.toContain("private provider detail");
+  });
+
+  it("preserves the safe provider response when finalization throws", async () => {
+    const providerFailure = {
+      status: 502,
+      body: {
+        error: {
+          code: "provider_error",
+          message: "The AI provider could not complete this request.",
+        },
+      },
+    };
+    vi.mocked(createIdentifyResponse).mockResolvedValue(providerFailure);
+    vi.mocked(consumeReservedScanCredit).mockRejectedValue(new Error("private database detail"));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const response = createResponse();
+
+    await handler(request, response);
+
+    expect(consumeReservedScanCredit).toHaveBeenCalledWith(reservation, process.env, false);
+    expect(response.status).toHaveBeenCalledWith(providerFailure.status);
+    expect(response.json).toHaveBeenCalledWith(providerFailure.body);
+    expect(JSON.stringify(response.json.mock.calls)).not.toContain("private database detail");
+  });
+});
