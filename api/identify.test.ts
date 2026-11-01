@@ -91,4 +91,20 @@ describe("identify reservation finalization", () => {
     expect(response.json).toHaveBeenCalledWith(providerFailure.body);
     expect(JSON.stringify(response.json.mock.calls)).not.toContain("private database detail");
   });
+
+  it("finalizes before a response-write failure can exit the handler", async () => {
+    vi.mocked(createIdentifyResponse).mockResolvedValue({
+      status: 502,
+      body: { error: { code: "provider_error", message: "Provider unavailable." } },
+    });
+    const responseFailure = new Error("response closed");
+    const response = createResponse();
+    response.status.mockImplementation(() => { throw responseFailure; });
+
+    await expect(handler(request, response)).rejects.toBe(responseFailure);
+
+    expect(consumeReservedScanCredit).toHaveBeenCalledWith(reservation, process.env, false);
+    expect(vi.mocked(consumeReservedScanCredit).mock.invocationCallOrder[0])
+      .toBeLessThan(response.status.mock.invocationCallOrder[0]);
+  });
 });
