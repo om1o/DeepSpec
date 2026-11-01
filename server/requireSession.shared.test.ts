@@ -31,6 +31,15 @@ describe("requireSession", () => {
     });
   });
 
+  it("returns the same missing-session response before checking server configuration", async () => {
+    await expect(requireSession({}, {})).resolves.toMatchObject({
+      ok: false,
+      status: 401,
+      body: { error: { code: "missing_session" } },
+    });
+    expect(supabaseMock.createClient).not.toHaveBeenCalled();
+  });
+
   it("401s when the token cannot be verified", async () => {
     supabaseMock.createClient.mockReturnValue({
       auth: { getUser: vi.fn(async () => ({ data: { user: null }, error: { message: "bad token" } })) },
@@ -50,6 +59,31 @@ describe("requireSession", () => {
       ok: false,
       status: 401,
       body: { error: { code: "invalid_session" } },
+    });
+  });
+
+  it("returns 503 when Supabase session verification rejects", async () => {
+    supabaseMock.createClient.mockReturnValue({
+      auth: { getUser: vi.fn(async () => { throw new Error("network down"); }) },
+    });
+    await expect(requireSession({ authorization: "Bearer good" }, ENV_ON)).resolves.toMatchObject({
+      ok: false,
+      status: 503,
+      body: { error: { code: "session_unavailable" } },
+    });
+  });
+
+  it.each([
+    { name: "AuthRetryableFetchError", status: 0 },
+    { name: "AuthApiError", status: 503 },
+  ])("returns 503 for retryable Supabase auth failures: %j", async (error) => {
+    supabaseMock.createClient.mockReturnValue({
+      auth: { getUser: vi.fn(async () => ({ data: { user: null }, error })) },
+    });
+    await expect(requireSession({ authorization: "Bearer good" }, ENV_ON)).resolves.toMatchObject({
+      ok: false,
+      status: 503,
+      body: { error: { code: "session_unavailable" } },
     });
   });
 

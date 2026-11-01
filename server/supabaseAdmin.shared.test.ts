@@ -1,7 +1,11 @@
 // @vitest-environment node
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSupabaseAdminClient as createScriptAdminClient } from "../scripts/supabase-admin-env.mjs";
-import { createSupabaseAdminClient, getSupabaseAdminKey } from "./supabaseAdmin.shared";
+import { createSupabaseAdminClient, createSupabaseAdminFetch, getSupabaseAdminKey } from "./supabaseAdmin.shared";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("getSupabaseAdminKey", () => {
   it("prefers the rotatable Supabase secret key", () => {
@@ -115,5 +119,19 @@ describe("createSupabaseAdminClient", () => {
     expect(requests[0]?.get("apikey")).toBe("sb_secret_test");
     expect(requests[0]?.get("authorization")).toBeNull();
     expect(requests[1]?.get("authorization")).toBe("Bearer user-jwt");
+  });
+
+  it("aborts a stalled admin request instead of consuming the function lifetime", async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    })) as typeof fetch;
+    const safeFetch = createSupabaseAdminFetch("sb_secret_test", fetchImpl);
+    const request = expect(safeFetch("https://project.supabase.co/rest/v1/rate_limit_hits"))
+      .rejects.toThrow("Supabase request timed out.");
+    await vi.advanceTimersByTimeAsync(8_000);
+    await request;
+
+    expect(fetchImpl).toHaveBeenCalledOnce();
   });
 });

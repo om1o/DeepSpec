@@ -27,6 +27,15 @@ export async function requireSession(
   headers: Record<string, string | string[] | undefined>,
   env: SessionEnv,
 ): Promise<SessionDecision> {
+  const token = parseBearerToken(headers.authorization ?? headers.Authorization);
+  if (!token) {
+    return {
+      ok: false,
+      status: 401,
+      body: { error: { code: "missing_session", message: "Sign in to use DeepSpec." } },
+    };
+  }
+
   const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
   const serviceRoleKey = getSupabaseAdminKey(env);
   if (!supabaseUrl || !serviceRoleKey) {
@@ -37,19 +46,20 @@ export async function requireSession(
     };
   }
 
-  const token = parseBearerToken(headers.authorization ?? headers.Authorization);
-  if (!token) {
-    return {
-      ok: false,
-      status: 401,
-      body: { error: { code: "missing_session", message: "Sign in to use DeepSpec." } },
-    };
-  }
-
   const supabase = createSessionClient(supabaseUrl, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
-  const { data, error } = await supabase.auth.getUser(token);
+  let verification: Awaited<ReturnType<typeof supabase.auth.getUser>>;
+  try {
+    verification = await supabase.auth.getUser(token);
+  } catch {
+    return sessionUnavailable();
+  }
+
+  const { data, error } = verification;
+  if (isRetryableSessionError(error)) {
+    return sessionUnavailable();
+  }
   if (error || !data.user || data.user.is_anonymous === true) {
     return {
       ok: false,
@@ -59,6 +69,33 @@ export async function requireSession(
   }
 
   return { ok: true, userId: data.user.id };
+}
+
+function sessionUnavailable(): SessionDecision {
+  return {
+    ok: false,
+    status: 503,
+    body: {
+      error: {
+        code: "session_unavailable",
+        message: "DeepSpec cannot verify your session right now. Please try again shortly.",
+      },
+    },
+  };
+}
+
+function isRetryableSessionError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const candidate = error as { name?: unknown; status?: unknown };
+  const status = typeof candidate.status === "number" ? candidate.status : null;
+  const name = typeof candidate.name === "string" ? candidate.name : "";
+  return status === 0
+    || (status !== null && status >= 500)
+    || name === "AuthRetryableFetchError"
+    || name === "AuthUnknownError";
 }
 
 function parseBearerToken(value: string | string[] | undefined): string | null {
