@@ -57,6 +57,9 @@ describe("intro packaging", () => {
     await run(process.execPath, [path.join(root, "scripts/package-intro.mjs")]);
     expect(await readFile(path.join(root, "public/intro/index.html"), "utf8")).toBe(html);
     expect(await readFile(path.join(root, "public/intro/assets/blue-glass-mark.svg"))).toEqual(await readFile("marketing/deepspec-visual-search/dist/assets/blue-glass-mark.svg"));
+    expect(await readFile(path.join(root, "public/intro/assets/electric-d.webp"))).toEqual(await readFile("marketing/deepspec-visual-search/dist/assets/electric-d.webp"));
+    expect(html).toContain('/intro/assets/electric-d.webp');
+    expect(html).not.toContain('white-logo-horizontal.svg');
   });
 
   it.each([{ reduced: false, duration: 980 }, { reduced: true, duration: 160 }])("preserves the accessible handoff and cancellation with reduced motion=$reduced", ({ reduced, duration }) => {

@@ -68,23 +68,43 @@ describe("Auth", () => {
     vi.unstubAllEnvs();
   });
 
-  it("uses Deep Spec branding and defaults to account sign-in without unconfigured OAuth providers", async () => {
+  it("uses the electric D identity and defaults to account sign-in without unconfigured OAuth providers", async () => {
     await renderAuth();
 
     expect(await screen.findByRole("heading", { name: "Sign in to DeepSpec" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "DeepSpec" })).toBeInTheDocument();
-    expect(document.querySelector('img[src="/brand/deepspec-logo-horizontal.svg"]')).toHaveAttribute("alt", "");
+    expect(document.querySelector('img[src="/brand/deepspec-symbol.webp"]')).toHaveAttribute("alt", "");
+    expect(document.querySelector('img[src="/brand/auth-workshop.webp"]')).not.toBeInTheDocument();
+    expect(screen.getByText("Account workspace")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to intro" })).toHaveAttribute("href", "/intro/index.html");
     expect(screen.queryByRole("button", { name: "Continue with Google" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Continue with GitHub" })).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText("you@example.com")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Email link" })).toHaveAttribute("aria-controls", "auth-method-panel");
     expect(screen.getByRole("tab", { name: "Account" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Account" })).toHaveAttribute("tabindex", "0");
+    expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", "auth-password-tab");
+    expect(screen.getByRole("button", { name: "Sign in" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Create" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: "Sign in to scanner" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "No email" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Continue without email" })).not.toBeInTheDocument();
-    expect(screen.getByText("Your workspace")).toBeInTheDocument();
     expect(screen.queryByText(/facebook/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/microsoft/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/apple/i)).not.toBeInTheDocument();
+  });
+
+  it("supports arrow-key navigation between auth method tabs", async () => {
+    const user = userEvent.setup();
+    await renderAuth();
+    const accountTab = await screen.findByRole("tab", { name: "Account" });
+
+    accountTab.focus();
+    await user.keyboard("{ArrowLeft}");
+
+    expect(screen.getByRole("tab", { name: "Email link" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "Email link" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", "auth-link-tab");
   });
 
   it("shows OAuth providers only when they are enabled for the build", async () => {

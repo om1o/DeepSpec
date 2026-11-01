@@ -4,21 +4,32 @@ type BrandLockupProps = {
   variant?: "horizontal" | "mark";
 };
 
-const sizes = { sm: "w-[112px]", md: "w-[140px] sm:w-[178px]", lg: "w-[178px]" } as const;
+const sizes = {
+  sm: { mark: "size-8", text: "text-lg" },
+  md: { mark: "size-10", text: "text-[22px]" },
+  lg: { mark: "size-13", text: "text-[28px]" },
+} as const;
 
-/** White is the primary identity. The logo artwork stays static in every variant. */
+/** The electric D is static; scan motion stays outside the primary identity. */
 export function BrandLockup({ className = "", size = "md", variant = "horizontal" }: BrandLockupProps) {
   const mark = variant === "mark";
+  const classes = sizes[size];
+
   return (
-    <span role="img" aria-label="DeepSpec" className={`inline-flex shrink-0 items-center ${className}`}>
+    <span role="img" aria-label="DeepSpec" className={`inline-flex shrink-0 items-center gap-2 ${className}`}>
       <img
-        src={mark ? "/brand/deepspec-mark.svg" : "/brand/deepspec-logo-horizontal.svg"}
+        src="/brand/deepspec-symbol.webp"
         alt=""
-        width={mark ? 64 : 260}
-        height={mark ? 64 : 62}
-        className={`ds-primary-logo block h-auto object-contain ${mark ? "size-11" : sizes[size]}`}
+        width="168"
+        height="168"
+        className={`ds-primary-logo block shrink-0 object-contain ${classes.mark}`}
         draggable={false}
       />
+      {mark ? null : (
+        <span aria-hidden="true" className={`${classes.text} whitespace-nowrap font-extrabold leading-none tracking-normal text-white`}>
+          Deep<span className="text-[#55d9ff]">Spec</span>
+        </span>
+      )}
     </span>
   );
 }

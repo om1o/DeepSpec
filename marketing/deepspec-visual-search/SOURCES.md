@@ -16,7 +16,7 @@ The packaged Sites helper is unavailable in this execution environment. Source s
 
 ## Coherence and motion correction
 
-The primary white mark and wordmark now use source-traced SVG path outlines with transparent background, preserving the selected geometry and lettering while removing raster scaling and live filters. White remains primary; blue glass remains inside the intro only. The page uses one graphite/steel palette and glossy controls. Intro motion is a synchronized browser animation timeline with real pause/replay; reduced motion keeps the camera and photo still while a gentle downward scan plays automatically. Styles and script references use content hashes so revisions load together.
+The electric D is the primary mark across the intro and app, using the existing transparent lossless WebP with an accessible HTML wordmark. Blue glass remains the scanner/loading accent. The page uses one graphite/steel palette and glossy controls. Intro motion is a synchronized browser animation timeline with real pause/replay; reduced motion keeps the camera and photo still while a gentle downward scan plays automatically. Styles and script references use content hashes so revisions load together.
 
 
 ## Automatic demo and sign-in handoff

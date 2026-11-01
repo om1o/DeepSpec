@@ -1,4 +1,4 @@
-import { ClipboardEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { ClipboardEvent, FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { BrandLockup } from "../components/BrandLockup";
 import {
@@ -312,11 +312,20 @@ export default function Auth() {
     autoSubmittedCodeRef.current = null;
   }
 
+  function handleAuthModeKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const nextMode: AuthMode = event.key === "ArrowLeft" || event.key === "Home" ? "link" : "password";
+    switchAuthMode(nextMode);
+    document.getElementById(`auth-${nextMode}-tab`)?.focus();
+  }
+
   if (isCheckingSession) {
     return (
       <main className="ds-auth-page flex min-h-dvh items-center justify-center px-4 text-center text-sm font-medium text-[var(--ds-fg-3)]">
-        <div className="rounded-[8px] border border-white/10 bg-white/10 px-5 py-3 shadow-sm backdrop-blur-md">
-          Checking session...
+        <div className="ds-auth-session-check" aria-live="polite">
+          <BrandLockup size="md" />
+          <span>Checking session...</span>
         </div>
       </main>
     );
@@ -325,28 +334,31 @@ export default function Auth() {
   return (
     <main className="ds-auth-page min-h-dvh px-4 pb-8 pt-[max(20px,env(safe-area-inset-top))] text-white">
       <section className="ds-auth-layout">
-        <div className="ds-auth-story">
-          <img src="/brand/auth-workshop.webp" alt="Car parts arranged on a mechanic’s workbench" width="1254" height="1254" className="ds-auth-art" />
-          <div className="ds-auth-story-copy">
-            <p className="ds-auth-eyebrow">FROM CAMERA TO CONTEXT</p>
-            <h2>A closer look.<br />A clearer starting point.</h2>
-            <p>Identify a part, keep the useful details, and bring a better question to the workshop.</p>
+        <div className="ds-auth-story" aria-hidden="true">
+          <div className="ds-auth-signal">
+            <span className="ds-auth-signal-frame" />
+            <img src="/brand/deepspec-symbol.webp" alt="" width="168" height="168" className="ds-auth-hero-mark" />
+            <span className="ds-auth-scan-beam" />
           </div>
-          <p className="ds-auth-art-caption">DeepSpec. From the car park to the workshop.</p>
+          <div className="ds-auth-story-copy">
+            <p className="ds-auth-eyebrow">DEEPSPEC VISUAL INTELLIGENCE</p>
+            <h2>See the part.<br /><span>Keep the context.</span></h2>
+            <p>Sign in and pick up where you left off.</p>
+          </div>
         </div>
 
         <section className="ds-auth-card mx-auto flex w-full max-w-[540px] flex-col p-5 sm:p-8">
           <div className="flex items-center justify-between gap-4">
             <BrandLockup size="lg" />
             <span className={supabaseConfigured ? "ds-auth-workspace" : "ds-auth-unavailable"}>
-              {supabaseConfigured ? "Your workspace" : "Sign-in unavailable"}
+              {supabaseConfigured ? "Account workspace" : "Sign-in unavailable"}
             </span>
           </div>
 
           <div className="mt-9">
             <h1 className="ds-auth-title">Sign in to DeepSpec</h1>
-            <p className="ds-auth-intro">Your scans, saved details, and next questions. All in one place.</p>
-            <a className="ds-demo-entry" href="/intro/index.html">View intro</a>
+            <p className="ds-auth-intro">Open your scans, saved details, and conversations.</p>
+            <a className="ds-demo-entry" href="/intro/index.html">Back to intro</a>
           </div>
 
           <div className="mt-8 space-y-3">
@@ -391,25 +403,34 @@ export default function Auth() {
 
               <div className="grid grid-cols-2 gap-1 rounded-[8px] bg-white/10 p-1" role="tablist" aria-label="Sign in method">
                 <button
+                  id="auth-link-tab"
                   type="button"
                   role="tab"
+                  aria-controls="auth-method-panel"
                   aria-selected={authMode === "link"}
                   onClick={() => switchAuthMode("link")}
+                  onKeyDown={handleAuthModeKeyDown}
+                  tabIndex={authMode === "link" ? 0 : -1}
                   className={authMode === "link" ? "h-11 rounded-[7px] bg-white text-sm font-medium text-[var(--ds-logo-ink)] shadow-sm" : "h-11 rounded-[7px] text-sm font-medium text-white/62"}
                 >
                   Email link
                 </button>
                 <button
+                  id="auth-password-tab"
                   type="button"
                   role="tab"
+                  aria-controls="auth-method-panel"
                   aria-selected={authMode === "password"}
                   onClick={() => switchAuthMode("password")}
+                  onKeyDown={handleAuthModeKeyDown}
+                  tabIndex={authMode === "password" ? 0 : -1}
                   className={authMode === "password" ? "h-11 rounded-[7px] bg-white text-sm font-medium text-[var(--ds-logo-ink)] shadow-sm" : "h-11 rounded-[7px] text-sm font-medium text-white/62"}
                 >
                   Account
                 </button>
               </div>
 
+              <div id="auth-method-panel" role="tabpanel" aria-labelledby={`auth-${authMode}-tab`} className="space-y-4">
               <label className="block">
                 <span className="mb-2 block text-sm font-medium text-white/84">Email address</span>
                 <input
@@ -434,6 +455,7 @@ export default function Auth() {
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
+                      aria-pressed={passwordMode === "signin"}
                       onClick={() => setPasswordMode("signin")}
                       className={passwordMode === "signin" ? "h-11 rounded-[8px] border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] text-sm font-medium text-white" : "h-11 rounded-[8px] border border-white/12 bg-white/5 text-sm font-medium text-white/62"}
                     >
@@ -441,6 +463,7 @@ export default function Auth() {
                     </button>
                     <button
                       type="button"
+                      aria-pressed={passwordMode === "signup"}
                       onClick={() => setPasswordMode("signup")}
                       className={passwordMode === "signup" ? "h-11 rounded-[8px] border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] text-sm font-medium text-white" : "h-11 rounded-[8px] border border-white/12 bg-white/5 text-sm font-medium text-white/62"}
                     >
@@ -486,6 +509,7 @@ export default function Auth() {
                   />
                 </label>
               ) : null}
+              </div>
 
               {visibleNotice ? (
                 <p role="status" className="rounded-[8px] border border-sky-300/30 bg-sky-400/12 px-4 py-3 text-sm font-bold leading-6 text-sky-100">
@@ -577,7 +601,7 @@ function OAuthButton({
       className="ds-auth-oauth grid h-14 w-full grid-cols-[44px_1fr_44px] items-center px-4 text-base font-semibold disabled:pointer-events-none disabled:opacity-50"
       disabled={disabled}
     >
-      <span className="text-lg font-medium text-[#24292F]" aria-hidden="true">
+      <span className="text-lg font-medium text-white" aria-hidden="true">
         {brand}
       </span>
       <span>{isLoading ? loadingLabel : label}</span>

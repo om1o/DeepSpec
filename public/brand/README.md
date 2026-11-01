@@ -1,11 +1,11 @@
 # DeepSpec brand identity
 
-White is the primary logo. Use the transparent horizontal `deepspec-logo-horizontal.svg` in app headers and `deepspec-mark.svg` for compact placements. Both SVGs contain true white path outlines traced from the chosen source, with no raster images, runtime filter or font substitution. The shared `BrandLockup` component keeps current release screens and the public demo consistent.
+The electric D is the primary product identity. Use the transparent, lossless `deepspec-symbol.webp` in the shared `BrandLockup`; the white `Deep` and electric-cyan `Spec` text are rendered as accessible app UI so the mark stays crisp at every header size. Matching `icon-192.png` and `icon-512.png` files cover the favicon, Apple touch icon, manifest, and installed-app surfaces.
 
 Logo artwork stays static. Do not pulse, rotate, shimmer, morph or animate the mark or wordmark. Scanner progress text and camera UI may move independently.
 
-`deepspec-blue-glass-intro.webp` is an optional accent for intro artwork only. It never replaces the primary white identity.
+`deepspec-blue-glass-intro.webp` and the split-rotor badges are motion and marketing accents. They do not replace the electric D on product identity or app-install surfaces.
 
-The existing PNG/WebP aliases, social image, browser icons and installed-app icons all use the white identity. Runtime WebP symbol and badge exports retain lossless alpha, 3x dimensions and byte budgets required by `verify:public`.
+The horizontal white SVG and framed-rotor exports remain available for legacy marketing compositions. Runtime WebP symbol and badge exports retain lossless alpha, 3x dimensions, and byte budgets required by `verify:public`.
 
-The auth presentation continues the landing page graphite (#0b1520), white controls, subtle gloss and DM Sans typography. Auth methods, validation, sessions and redirects remain unchanged.
+The auth presentation uses the app's graphite, electric blue, cyan, and slate tokens. Auth methods, validation, sessions, and redirects remain unchanged.
