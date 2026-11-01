@@ -100,9 +100,11 @@ describe("classifyIdentifyProviderReadiness", () => {
   it("passes only when a production route and the release eval are both ready", () => {
     const result = classifyIdentifyProviderReadiness({
       env: {
+        DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true",
         DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK: "true",
         GEMINI_API_KEY: "gemini_secret",
         GROQ_API_KEY: "groq_secret",
+        HF_TOKEN: "hf_secret",
       },
       identifySummary: passingIdentifySummary(GROQ_ROUTE),
       options: { now: NOW },
@@ -112,6 +114,22 @@ describe("classifyIdentifyProviderReadiness", () => {
     expect(result.recommendation).toBe("live_identify_ready");
     expect(result.checks.join("\n")).toContain("Release eval: Identify eval passed");
     expect(result.checks.join("\n")).toContain("Cloud fallback ready: Groq");
+    expect(result.checks.join("\n")).toContain("Cloud route redundancy: 3/3");
+  });
+
+  it("blocks release readiness when fewer than three online routes are configured", () => {
+    const result = classifyIdentifyProviderReadiness({
+      env: {
+        DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK: "true",
+        GEMINI_API_KEY: "gemini_secret",
+        GROQ_API_KEY: "groq_secret",
+      },
+      identifySummary: passingIdentifySummary(GROQ_ROUTE),
+      options: { now: NOW },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.blockers.join("\n")).toContain("Cloud route redundancy: 2/3");
   });
 
   it("accepts enabled Hugging Face as the sole production cloud route", () => {
@@ -121,7 +139,7 @@ describe("classifyIdentifyProviderReadiness", () => {
         HF_TOKEN: "hf_secret",
       },
       identifySummary: passingIdentifySummary(HF_ROUTE),
-      options: { now: NOW },
+      options: { minCloudRoutes: 1, now: NOW },
     });
 
     expect(result.ok).toBe(true);

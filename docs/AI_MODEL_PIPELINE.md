@@ -30,6 +30,10 @@ Research references use public HTTPS URLs, with up to three explicit references.
 
 The presence of code does not establish live provider readiness. A successful real image request and follow-up request against the deployed server are required before claiming cloud identification or research works. No sample answer is substituted when credentials are unavailable.
 
+The release evidence gate requires three independently configured online identify routes. The current supported set is Groq, Gemini, and Hugging Face or its explicitly configured OpenRouter-compatible adapter. Configuration readiness does not replace a bounded provider-access probe and one approved real-image acceptance scan on the deployed revision.
+
+Run `npm run identify:access` to perform metadata-only credential and model checks for all three routes. The command sends no image, performs no inference, and records no account or credential details. It proves current access from the machine that runs it; it does not prove that Vercel has the same environment bindings.
+
 ## Provider references
 
 - [Gemini Google Search grounding](https://ai.google.dev/gemini-api/docs/google-search)

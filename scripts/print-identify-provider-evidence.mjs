@@ -6,6 +6,7 @@ import { classifyIdentifyEvalSummary } from "./verify-identify-eval-summary.mjs"
 const DEFAULT_IDENTIFY_SUMMARY = ".deepspec-eval/identify-summary.json";
 const DEFAULT_MARKDOWN_PATH = "artifacts/release-gates/identify-provider-evidence.md";
 const DEFAULT_JSON_PATH = "artifacts/release-gates/identify-provider-evidence.json";
+const DEFAULT_MIN_CLOUD_ROUTES = 3;
 const DEFAULT_MIN_SAMPLE_SIZE = 50;
 const DEFAULT_MAX_EVAL_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_FUTURE_CLOCK_SKEW_MS = 5 * 60 * 1000;
@@ -42,6 +43,7 @@ export function buildIdentifyProviderEvidence({
 
 export function classifyIdentifyProviderReadiness({ env = {}, identifySummary = null, options = {} } = {}) {
   const minSampleSize = Number(options.minSampleSize ?? DEFAULT_MIN_SAMPLE_SIZE);
+  const minCloudRoutes = Number(options.minCloudRoutes ?? DEFAULT_MIN_CLOUD_ROUTES);
   const maxEvalAgeMs = Number(options.maxEvalAgeMs ?? DEFAULT_MAX_EVAL_AGE_MS);
   const providers = buildProviderStatuses(env);
   const release = classifyIdentifyEvalSummary(identifySummary, { minSampleSize });
@@ -60,6 +62,12 @@ export function classifyIdentifyProviderReadiness({ env = {}, identifySummary = 
     checks.push(`Identify provider route configured: ${readyProductionRoutes.map((provider) => provider.name).join(", ")}.`);
   } else {
     blockers.push("No production cloud identify route is configured. Configure a supported server-side identify provider.");
+  }
+
+  if (readyProductionRoutes.length >= minCloudRoutes) {
+    checks.push(`Cloud route redundancy: ${readyProductionRoutes.length}/${minCloudRoutes} required routes are configured.`);
+  } else if (readyProductionRoutes.length > 0) {
+    blockers.push(`Cloud route redundancy: ${readyProductionRoutes.length}/${minCloudRoutes} required routes are configured.`);
   }
 
   for (const provider of providers) {
@@ -428,6 +436,7 @@ function parseArgs(args) {
     identifySummaryPath: DEFAULT_IDENTIFY_SUMMARY,
     jsonPath: DEFAULT_JSON_PATH,
     markdownPath: DEFAULT_MARKDOWN_PATH,
+    minCloudRoutes: DEFAULT_MIN_CLOUD_ROUTES,
     minSampleSize: DEFAULT_MIN_SAMPLE_SIZE,
   };
 
@@ -441,6 +450,9 @@ function parseArgs(args) {
       if (!inlineValue) index += 1;
     } else if (name === "--min-sample-size") {
       options.minSampleSize = parseMinSampleSize(value);
+      if (!inlineValue) index += 1;
+    } else if (name === "--min-cloud-routes") {
+      options.minCloudRoutes = parsePositiveInteger(value, "--min-cloud-routes");
       if (!inlineValue) index += 1;
     } else if (name === "--markdown") {
       options.markdownPath = value;
@@ -460,12 +472,16 @@ function parseArgs(args) {
 }
 
 function parseMinSampleSize(value) {
-  const sampleSize = Number(value);
-  if (!Number.isInteger(sampleSize) || sampleSize < 1) {
-    throw new Error("--min-sample-size must be a positive integer.");
+  return parsePositiveInteger(value, "--min-sample-size");
+}
+
+function parsePositiveInteger(value, optionName) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`${optionName} must be a positive integer.`);
   }
 
-  return sampleSize;
+  return parsed;
 }
 
 function printHelp() {
@@ -473,6 +489,7 @@ function printHelp() {
 
 Options:
   --identify-summary <path>   Identify eval summary path.
+  --min-cloud-routes <n>      Required configured online routes. Default: ${DEFAULT_MIN_CLOUD_ROUTES}
   --min-sample-size <n>       Minimum release sample size. Default: ${DEFAULT_MIN_SAMPLE_SIZE}
   --markdown <path>           Markdown output path.
   --json <path>               JSON output path.

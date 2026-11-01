@@ -1312,6 +1312,48 @@ describe("createIdentifyResponse", () => {
     expect(fetchSpy.mock.calls[1][0]).toEqual(expect.stringContaining("/models/gemini-2.5-flash:generateContent"));
   });
 
+  it("reaches the third online route when Groq and Gemini are unavailable", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "groq unavailable" } }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "gemini unavailable" } }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "gemini fallback unavailable" } }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+
+    await expect(createIdentifyResponse({ imageBase64 }, {
+      DEEPSPEC_BACKUP_RATE_LIMIT_RETRIES: "0",
+      DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK: "true",
+      DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true",
+      DEEPSPEC_GEMINI_IDENTIFY_HEDGE_DELAY_MS: "0",
+      GEMINI_API_KEY: "gemini-test",
+      GROQ_API_KEY: "groq-test",
+      HF_TOKEN: "hf-test",
+    })).resolves.toMatchObject({
+      status: 200,
+      body: { modelRun: { provider: "huggingface", fallbackReason: "provider_error" } },
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
+    expect(fetchSpy.mock.calls[0][0]).toBe("https://api.groq.com/openai/v1/chat/completions");
+    expect(fetchSpy.mock.calls.slice(1, 3).map(([url]) => String(url))).toEqual(expect.arrayContaining([
+      expect.stringContaining("/models/gemini-2.5-flash:generateContent"),
+      expect.stringContaining("/models/gemini-2.5-flash-lite:generateContent"),
+    ]));
+    expect(fetchSpy.mock.calls[3][0]).toBe("https://router.huggingface.co/v1/chat/completions");
+  });
+
   it("uses local Ollama vision only after Gemini identify models are rate limited", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
