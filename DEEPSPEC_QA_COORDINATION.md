@@ -2,7 +2,7 @@
 
 Updated: 2026-11-01 (America/New_York)
 
-Authoritative hosted candidate: pushed head `9be45ac2` on `codex/hosted-v1-repair-20261031`, Ready at `https://deepspec-gr6aivk2u-deep-spec-team.vercel.app`. The actual manager lane ID is unknown. PR #124 head is an ancestor 33 commits behind this branch; no merge or Production promotion occurred. Claims below distinguish local/synthetic checks from hosted/real-account acceptance.
+Authoritative hosted application revision: `9be45ac2` on `codex/hosted-v1-repair-20261031`, Ready at `https://deepspec-gr6aivk2u-deep-spec-team.vercel.app`. Documentation-only evidence successors do not change that tested runtime. The actual manager lane ID is unknown. PR #124 head is an ancestor 33 application commits behind; no merge or Production promotion occurred. Claims below distinguish local/synthetic checks from hosted/real-account acceptance.
 
 This board records ownership; it is not an atomic lock. Any worker must claim a specific task and file scope through the active coordination mechanism before editing. Overlapping external changes remain serialized behind explicit approval.
 
