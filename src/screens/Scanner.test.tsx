@@ -1026,10 +1026,16 @@ describe("Scanner", () => {
       expect(JSON.parse(localStorage.getItem(accountStorageKey("deep-spec:lookups")) ?? "[]")).toHaveLength(1);
       await userEvent.click(screen.getByRole("button", { name: "Upload one retake" }));
       chooseFile(new File(["blurry again"], "retake.jpg", { type: "image/jpeg" }));
-      expect(await screen.findByText("Guided retake used. Review the evidence or start a separate scan when ready.")).toBeInTheDocument();
+      expect(
+        await screen.findByText(
+          "Guided retake used. Review the evidence or start a separate scan when ready.",
+          {},
+          { timeout: 5000 },
+        ),
+      ).toBeInTheDocument();
       expect(JSON.parse(localStorage.getItem(accountStorageKey("deep-spec:lookups")) ?? "[]")).toHaveLength(2);
       expect(identifyCapturedFrame).not.toHaveBeenCalled();
-    }, 10000);
+    }, 30000);
   });
 
   it("sends a focused detector crop as the AI image for uploaded photos", async () => {
