@@ -180,29 +180,31 @@ describe("Result", () => {
     expect(screen.queryByText("Capture another angle")).not.toBeInTheDocument();
   });
 
-  it("flags when a backup AI model produced the result", () => {
+  it.each([
+    ["groq", "qwen/qwen3.8-27b", "primary"],
+    ["huggingface", "google/gemma-4-31b-it:free", "gemini_not_configured"],
+  ] as const)("describes a %s winner as cloud analysis without inventing a fallback cause", (provider, model, fallbackReason) => {
     renderResult({
       ...successfulScan,
       result: {
         ...successfulScan.result!,
         modelRun: {
-          provider: "huggingface",
-          model: "google/gemma-4-31b-it:free",
+          provider,
+          model,
           latencyMs: 1234,
-          fallbackReason: "rate_limited",
+          fallbackReason,
           ocrUsed: false,
         },
       },
     });
 
     expect(
-      screen.getByText(
-        "Ran on the backup model while the main one was busy. Double-check before relying on it.",
-      ),
+      screen.getByText("Analysis completed using a DeepSpec cloud model. Double-check critical details before relying on it."),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/main one was busy|backup model/i)).not.toBeInTheDocument();
   });
 
-  it("does not flag a backup model on the normal Gemini path", () => {
+  it("does not add an alternate route notice to a Gemini result", () => {
     renderResult({
       ...successfulScan,
       result: {
@@ -216,10 +218,31 @@ describe("Result", () => {
       },
     });
 
-    expect(screen.queryByText(/backup AI model/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Analysis completed using/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/main one was busy|backup model/i)).not.toBeInTheDocument();
   });
 
-  it("flags an on-device offline estimate distinctly from a cloud backup", () => {
+  it("describes an Ollama winner as locally hosted without naming provider internals", () => {
+    renderResult({
+      ...successfulScan,
+      result: {
+        ...successfulScan.result!,
+        modelRun: {
+          provider: "ollama",
+          model: "qwen2.5vl:7b",
+          latencyMs: 900,
+          ocrUsed: false,
+        },
+      },
+    });
+
+    expect(
+      screen.getByText("Analysis completed using a locally hosted model. Double-check critical details before relying on it."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/ollama|main one was busy|backup model/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps the on-device offline warning distinct from hosted route notices", () => {
     renderResult({
       ...successfulScan,
       result: {
@@ -237,7 +260,8 @@ describe("Result", () => {
     expect(
       screen.getByText("Offline estimate from the on-device model. Reconnect for a full Deep Spec analysis."),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/backup AI model/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Analysis completed using/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/main one was busy|backup model/i)).not.toBeInTheDocument();
   });
 
   it("restores detected label text and exact research tools in the AI view", async () => {

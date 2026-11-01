@@ -479,6 +479,7 @@ function AnalysisResult({
   result: IdentificationResult;
 }) {
   const summary = getSimpleResultSummary(result);
+  const modelRouteNotice = getModelRouteNotice(result);
   const [activePanel, setActivePanel] = useState<"overview" | "text" | "sources">("overview");
   const showSafetyWarning = result.isSafetyCritical || result.safetyTriage === "needs_professional";
 
@@ -496,15 +497,15 @@ function AnalysisResult({
         <div className="mt-3 flex flex-wrap gap-2">
           <MiniPill label={result.scanCategory} />
           <MiniPill label={`${result.confidence} confidence`} />
-          {isOnDeviceResult(result) || shouldShowBackupModelNotice(result) ? <MiniPill label="Estimate" /> : null}
+          {isOnDeviceResult(result) || modelRouteNotice ? <MiniPill label="Estimate" /> : null}
         </div>
         {isOnDeviceResult(result) ? (
           <p className="mt-3 rounded-2xl border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-3 py-2 text-xs font-semibold leading-5 text-[var(--ds-fg-2)]">
             Offline estimate from the on-device model. Reconnect for a full Deep Spec analysis.
           </p>
-        ) : shouldShowBackupModelNotice(result) ? (
+        ) : modelRouteNotice ? (
           <p className="mt-3 rounded-2xl border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-3 py-2 text-xs font-semibold leading-5 text-[var(--ds-fg-2)]">
-            Ran on the backup model while the main one was busy. Double-check before relying on it.
+            {modelRouteNotice}
           </p>
         ) : null}
         <IssueLine result={result} variant="result" />
@@ -538,9 +539,15 @@ function AnalysisResult({
   );
 }
 
-function shouldShowBackupModelNotice(result: IdentificationResult) {
+function getModelRouteNotice(result: IdentificationResult) {
   const provider = result.modelRun?.provider;
-  return provider === "huggingface" || provider === "groq" || provider === "ollama";
+  if (provider === "huggingface" || provider === "groq") {
+    return "Analysis completed using a DeepSpec cloud model. Double-check critical details before relying on it.";
+  }
+  if (provider === "ollama") {
+    return "Analysis completed using a locally hosted model. Double-check critical details before relying on it.";
+  }
+  return null;
 }
 
 function isOnDeviceResult(result: IdentificationResult) {
