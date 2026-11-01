@@ -2,6 +2,8 @@
 
 This directory preserves the exact Higgsfield inputs and the Blender-processed floodlight interchange files for the Unreal migration. The provider files under `concepts/` and `raw/` are immutable. Rebuild only the outputs under `processed/` and `reports/`.
 
+The approved environment reference boards and their generation lineage are in `art-direction/`. They remain preproduction references and are not runtime textures or evidence of an Unreal build.
+
 ## Floodlight outputs
 
 - `processed/SM_Hushpoint_Floodlight.fbx`: Unreal-targeted static mesh with embedded material data and three `UCX_` collision proxies.

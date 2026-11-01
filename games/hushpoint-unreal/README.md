@@ -4,6 +4,8 @@ This directory is the honest starting point for replacing the existing Godot bui
 
 The existing Godot game remains the behavioral reference and working fallback until an Unreal package passes the full acceptance gate in [MIGRATION_PLAN.md](MIGRATION_PLAN.md). Unreal cannot convert its GDScript, procedural scene construction, saves, tests, or gameplay logic; those systems must be re-authored and verified in Unreal.
 
+The approved visual direction is [Pressure Gradient](ART_DIRECTION.md): 60% grounded Storm Authority, 30% claustrophobic Blackwater Pursuit, and 10% Counterflow Cathedral reserved for the Bellman/finale. Its three original reference boards are checked in with prompts and hashes; they are targets, not screenshots of an implemented build.
+
 ## What is configured
 
 - Windows desktop, DirectX 12, Shader Model 6, deferred rendering.

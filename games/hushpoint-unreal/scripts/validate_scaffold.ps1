@@ -97,6 +97,8 @@ $settingsText = Read-RequiredText 'Config\DefaultGameUserSettings.ini'
 $inputText = Read-RequiredText 'Config\DefaultInput.ini'
 $migrationText = Read-RequiredText 'MIGRATION_PLAN.md'
 $validationText = Read-RequiredText 'VALIDATION.md'
+$artDirectionText = Read-RequiredText 'ART_DIRECTION.md'
+$artLineageText = Read-RequiredText 'SourceAssets\art-direction\art_direction_lineage.json'
 $engineIni = Read-IniAssignments $engineText 'DefaultEngine.ini'
 $gameIni = Read-IniAssignments $gameText 'DefaultGame.ini'
 $settingsIni = Read-IniAssignments $settingsText 'DefaultGameUserSettings.ini'
@@ -185,6 +187,70 @@ foreach ($contract in @(
     Require-Literal $migrationText $contract 'MIGRATION_PLAN.md'
 }
 Require-Literal $validationText 'Blocked` is not a product pass' 'VALIDATION.md'
+
+foreach ($contract in @(
+    '60% Storm Authority',
+    '30% Blackwater Pursuit',
+    '10% Counterflow Cathedral',
+    'not runtime textures',
+    'The packaged captures are the acceptance evidence'
+)) {
+    Require-Literal $artDirectionText $contract 'ART_DIRECTION.md'
+}
+
+if ($artLineageText) {
+    try {
+        $artLineage = $artLineageText | ConvertFrom-Json
+        $artImages = @($artLineage.images)
+        if ($artImages.Count -ne 3) {
+            Add-Failure "art_direction_lineage.json must declare exactly three images; found $($artImages.Count)."
+        }
+
+        $expectedDirections = @(
+            'A - Storm Authority',
+            'B - Blackwater Pursuit',
+            'C - Counterflow Cathedral'
+        )
+        foreach ($direction in $expectedDirections) {
+            if (@($artImages | Where-Object { $_.direction -ceq $direction }).Count -ne 1) {
+                Add-Failure "art_direction_lineage.json must declare $direction exactly once."
+            }
+        }
+
+        foreach ($image in $artImages) {
+            $fileName = [string]$image.file
+            $expectedHash = ([string]$image.sha256).ToLowerInvariant()
+            if (-not $fileName -or [System.IO.Path]::GetFileName($fileName) -cne $fileName) {
+                Add-Failure "Art-direction image filename must be a leaf filename: $fileName"
+                continue
+            }
+            if ($expectedHash -notmatch '^[0-9a-f]{64}$') {
+                Add-Failure "Art-direction image has an invalid SHA256 value: $fileName"
+                continue
+            }
+
+            $imagePath = Join-Path $projectRoot "SourceAssets\art-direction\$fileName"
+            if (-not (Test-Path -LiteralPath $imagePath -PathType Leaf)) {
+                Add-Failure "Missing art-direction image: SourceAssets\art-direction\$fileName"
+                continue
+            }
+            $actualHash = (Get-FileHash -LiteralPath $imagePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualHash -cne $expectedHash) {
+                Add-Failure "Art-direction image hash mismatch for $fileName."
+            }
+        }
+
+        if ([double]$artLineage.higgsfield_environment_attempts.charged_credits -ne 0.0) {
+            Add-Failure 'Failed Higgsfield environment attempts must record zero charged credits.'
+        }
+        if ([string]$artLineage.usage -notmatch 'not a runtime texture.*proof of Unreal performance') {
+            Add-Failure 'art_direction_lineage.json must state that the boards are not runtime assets or Unreal proof.'
+        }
+    }
+    catch {
+        Add-Failure "art_direction_lineage.json is not valid JSON: $($_.Exception.Message)"
+    }
+}
 
 if ($failures.Count -gt 0) {
     Write-Error ("HUSHPOINT Unreal scaffold validation failed:`n - " + ($failures -join "`n - "))
