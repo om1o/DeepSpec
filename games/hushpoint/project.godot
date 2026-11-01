@@ -1,0 +1,38 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[application]
+
+config/name="HUSHPOINT"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.7")
+boot_splash/bg_color=Color(0.006, 0.012, 0.02, 1)
+boot_splash/show_image=false
+
+[audio]
+
+default_bus_layout="res://default_bus_layout.tres"
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/size/window_width_override=1280
+window/size/window_height_override=720
+window/stretch/mode="canvas_items"
+window/handheld/orientation=1
+
+[rendering]
+
+renderer/rendering_method="mobile"
+anti_aliasing/quality/msaa_3d=2
+scaling_3d/scale=0.9
+environment/defaults/default_clear_color=Color(0.004, 0.008, 0.014, 1)
+anti_aliasing/quality/screen_space_aa=1

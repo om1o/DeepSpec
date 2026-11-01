@@ -1,0 +1,6 @@
+.godot/
+build/
+qa/
+*.log
+__pycache__/
+*.py[cod]

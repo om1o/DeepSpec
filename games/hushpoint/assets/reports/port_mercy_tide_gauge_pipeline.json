@@ -1,0 +1,164 @@
+{
+  "after_cleanup": {
+    "bounds_max_m": [
+      0.75,
+      0.48,
+      3.765
+    ],
+    "bounds_min_m": [
+      -0.48,
+      -0.48,
+      0.0
+    ],
+    "dimensions_m": [
+      1.23,
+      0.96,
+      3.765
+    ],
+    "materials": [
+      "Galvanized_Metal",
+      "Gauge_Black",
+      "Gauge_White",
+      "Marine_Civic_Blue",
+      "Safety_Yellow",
+      "Signal_Red",
+      "Solar_Cells",
+      "Status_Lens"
+    ],
+    "mesh_objects": 53,
+    "triangles": 1812,
+    "vertices": 3288
+  },
+  "asset_name": "Port_Mercy_Tide_Gauge",
+  "before": {
+    "bounds_max_m": [
+      0.75,
+      0.48,
+      3.765
+    ],
+    "bounds_min_m": [
+      -0.48,
+      -0.48,
+      0.0
+    ],
+    "dimensions_m": [
+      1.23,
+      0.96,
+      3.765
+    ],
+    "materials": [
+      "Galvanized_Metal",
+      "Gauge_Black",
+      "Gauge_White",
+      "Marine_Civic_Blue",
+      "Safety_Yellow",
+      "Signal_Red",
+      "Solar_Cells",
+      "Status_Lens"
+    ],
+    "mesh_objects": 53,
+    "triangles": 1812,
+    "vertices": 3288
+  },
+  "blender_version": "4.5.10 LTS",
+  "input_file": "port_mercy_tide_gauge_original.glb",
+  "input_sha256": "a770ed64f2b2ffb32cd1c33e0bae60bdc1176b324cbec2947044100913aad247",
+  "operations": {
+    "decimate_threshold": 50000,
+    "decimation_applied": false,
+    "requested_decimate_ratio": 1.0,
+    "target_triangles": 30000,
+    "weighted_normals_applied": [
+      "Port_Mercy_Tide_Gauge_01",
+      "Port_Mercy_Tide_Gauge_02",
+      "Port_Mercy_Tide_Gauge_03",
+      "Port_Mercy_Tide_Gauge_04",
+      "Port_Mercy_Tide_Gauge_05",
+      "Port_Mercy_Tide_Gauge_06",
+      "Port_Mercy_Tide_Gauge_07",
+      "Port_Mercy_Tide_Gauge_08",
+      "Port_Mercy_Tide_Gauge_09",
+      "Port_Mercy_Tide_Gauge_10",
+      "Port_Mercy_Tide_Gauge_11",
+      "Port_Mercy_Tide_Gauge_12",
+      "Port_Mercy_Tide_Gauge_13",
+      "Port_Mercy_Tide_Gauge_14",
+      "Port_Mercy_Tide_Gauge_15",
+      "Port_Mercy_Tide_Gauge_16",
+      "Port_Mercy_Tide_Gauge_17",
+      "Port_Mercy_Tide_Gauge_18",
+      "Port_Mercy_Tide_Gauge_19",
+      "Port_Mercy_Tide_Gauge_20",
+      "Port_Mercy_Tide_Gauge_21",
+      "Port_Mercy_Tide_Gauge_22",
+      "Port_Mercy_Tide_Gauge_23",
+      "Port_Mercy_Tide_Gauge_24",
+      "Port_Mercy_Tide_Gauge_25",
+      "Port_Mercy_Tide_Gauge_26",
+      "Port_Mercy_Tide_Gauge_27",
+      "Port_Mercy_Tide_Gauge_28",
+      "Port_Mercy_Tide_Gauge_29",
+      "Port_Mercy_Tide_Gauge_30",
+      "Port_Mercy_Tide_Gauge_31",
+      "Port_Mercy_Tide_Gauge_32",
+      "Port_Mercy_Tide_Gauge_33",
+      "Port_Mercy_Tide_Gauge_34",
+      "Port_Mercy_Tide_Gauge_35",
+      "Port_Mercy_Tide_Gauge_36",
+      "Port_Mercy_Tide_Gauge_37",
+      "Port_Mercy_Tide_Gauge_38",
+      "Port_Mercy_Tide_Gauge_39",
+      "Port_Mercy_Tide_Gauge_40",
+      "Port_Mercy_Tide_Gauge_41",
+      "Port_Mercy_Tide_Gauge_42",
+      "Port_Mercy_Tide_Gauge_43",
+      "Port_Mercy_Tide_Gauge_44",
+      "Port_Mercy_Tide_Gauge_45",
+      "Port_Mercy_Tide_Gauge_46",
+      "Port_Mercy_Tide_Gauge_47",
+      "Port_Mercy_Tide_Gauge_48",
+      "Port_Mercy_Tide_Gauge_49",
+      "Port_Mercy_Tide_Gauge_50",
+      "Port_Mercy_Tide_Gauge_51",
+      "Port_Mercy_Tide_Gauge_52",
+      "Port_Mercy_Tide_Gauge_53"
+    ],
+    "weighted_normals_skipped_textured": []
+  },
+  "output_file": "port_mercy_tide_gauge.glb",
+  "output_sha256": "15aebc37cddc92452082aac3b953ecbe5971cefbc07117a192067641cdd28b51",
+  "pipeline_version": "1.0.0",
+  "reimport_validation": {
+    "bounds_max_m": [
+      0.75,
+      0.48,
+      3.765
+    ],
+    "bounds_min_m": [
+      -0.48,
+      -0.48,
+      0.0
+    ],
+    "dimensions_m": [
+      1.23,
+      0.96,
+      3.765
+    ],
+    "materials": [
+      "Galvanized_Metal",
+      "Gauge_Black",
+      "Gauge_White",
+      "Marine_Civic_Blue",
+      "Safety_Yellow",
+      "Signal_Red",
+      "Solar_Cells",
+      "Status_Lens"
+    ],
+    "mesh_objects": 53,
+    "status": "pass",
+    "triangles": 1812,
+    "vertices": 3288
+  },
+  "status": "pass",
+  "warnings": []
+}

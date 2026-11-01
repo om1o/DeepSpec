@@ -1,0 +1,91 @@
+{
+  "after_cleanup": {
+    "bounds_max_m": [
+      0.153369,
+      0.130341,
+      0.499337
+    ],
+    "bounds_min_m": [
+      -0.150258,
+      -0.141315,
+      -0.500353
+    ],
+    "dimensions_m": [
+      0.303627,
+      0.271656,
+      0.99969
+    ],
+    "materials": [
+      "Material_0"
+    ],
+    "mesh_objects": 1,
+    "triangles": 7735,
+    "vertices": 6337
+  },
+  "asset_name": "HUSHPOINT_Tide_Gauge",
+  "before": {
+    "bounds_max_m": [
+      0.153369,
+      0.130341,
+      0.499337
+    ],
+    "bounds_min_m": [
+      -0.150258,
+      -0.141315,
+      -0.500353
+    ],
+    "dimensions_m": [
+      0.303627,
+      0.271656,
+      0.99969
+    ],
+    "materials": [
+      "Material_0"
+    ],
+    "mesh_objects": 1,
+    "triangles": 7735,
+    "vertices": 6337
+  },
+  "blender_version": "4.5.10 LTS",
+  "input_file": "higgsfield_sam3d_c7b785d4-fa62-4e8a-b570-c8459f1e15fd_raw.glb",
+  "input_sha256": "820a1bd16c42f3a4ea73c8225d72c1e7df280b3b8759cb2a0da4818fb43e81df",
+  "operations": {
+    "decimate_threshold": 50000,
+    "decimation_applied": false,
+    "requested_decimate_ratio": 1.0,
+    "target_triangles": 30000,
+    "weighted_normals_applied": [],
+    "weighted_normals_skipped_textured": [
+      "HUSHPOINT_Tide_Gauge"
+    ]
+  },
+  "output_file": "hushpoint_tide_gauge_optimized.glb",
+  "output_sha256": "070de42e0e35d2eb84f2487a11d52974944138ed800329649ca52534b3611918",
+  "pipeline_version": "1.0.0",
+  "reimport_validation": {
+    "bounds_max_m": [
+      0.153369,
+      0.130341,
+      0.499337
+    ],
+    "bounds_min_m": [
+      -0.150258,
+      -0.141315,
+      -0.500353
+    ],
+    "dimensions_m": [
+      0.303627,
+      0.271656,
+      0.99969
+    ],
+    "materials": [
+      "Material_0"
+    ],
+    "mesh_objects": 1,
+    "status": "pass",
+    "triangles": 7735,
+    "vertices": 23185
+  },
+  "status": "pass",
+  "warnings": []
+}
