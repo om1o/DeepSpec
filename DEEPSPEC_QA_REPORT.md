@@ -1,5 +1,35 @@
 # DeepSpec V1 Preview QA Report
 
+## Browser AI fallback and evidence-linked chat repair - 2026-11-01 (America/New_York)
+
+**Current decision: implementation commit `da95dc70` is locally verified and suitable for a branch Preview, but it is not Production acceptance.** The repair addresses the observed CSP fallback block, duplicate chat photo upload, raw Markdown, and the requested evidence-linked chat workspace. The previously proven authorized-account journey was on ancestor `9be45ac2`; this newer runtime still requires an authenticated hosted retest before promotion.
+
+### Fix and evidence ledger
+
+| Scope | Implemented behavior | Evidence and boundary |
+| --- | --- | --- |
+| Browser ONNX/Transformers fallback | All three browser Transformers entry points clear the library's jsDelivr WASM override before pipeline creation. Vercel CSP now keeps `script-src` same-origin and adds only `'wasm-unsafe-eval'`; it does not allow jsDelivr, `blob:` scripts or general `'unsafe-eval'`. | Unit and Vercel-layout regressions pass; the production build emits `ort-wasm-simd-threaded.asyncify-*.wasm` as a same-origin asset. A real fallback model download/inference and controlled hosted primary-provider failure were not run, so fallback availability is not yet accepted. See [Transformers.js environment configuration](https://huggingface.co/docs/transformers.js/api/env) and [MDN `script-src`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy/script-src). |
+| Duplicate chat photo upload `400` | Chat-only cloud saves use an account-guarded compare-and-swap update of `chat_history` and `revision` when a confirmed cloud revision exists. They do not upload the unchanged scan photo again. A record without a confirmed cloud revision falls back to the established full sync once. | Success, stale-revision conflict, account isolation and no-revision fallback are covered. Live Supabase upload/network evidence on this revision remains pending authenticated Preview QA. |
+| Markdown and privacy | Assistant messages render supported GFM Markdown; user messages remain literal. Raw HTML is inert, only credential-free HTTPS links become anchors, and provider-supplied Markdown images do not trigger remote browser fetches. | Component and integrated Chat tests cover emphasis, lists, unsafe links, HTML, image suppression and durable stored content. |
+| Evidence-linked chat UI | The real saved photo, provider/model, six divided evidence controls, selected detail and an evidence-to-composer action are presented beside the conversation. Only a persisted focus box with valid normalized geometry and confidence at least `0.60` is drawn over the photo; free-text evidence remains text. | Real-component screenshots at `1440x900`, `1024x1366` and `390x844` are committed in [chat evidence](docs/qa/chat-ai-customer-evidence-20261101/README.md). These are fixture-backed browser renders, not a hosted login/provider/cloud claim. |
+
+### Exact implementation verification
+
+- Full final repository suite: **116 files / 1,662 tests passed** with the single-worker forks pool.
+- Final affected Markdown/Chat/mobile regression: **3 files / 34 tests passed**. Earlier fallback/cloud/UI focused gate: **9 files / 148 tests passed**.
+- `npm run lint`: passed.
+- `npm run build`: passed TypeScript, Vite production bundling, intro packaging, public-asset integrity and brand-asset integrity. The optional Transformers chunk remains about `579.58 kB`, and the emitted ONNX WASM remains about `26.86 MB`; these are performance debt, not hidden as complete.
+- Production dependency audit: no high or critical finding; two moderate React Router advisories remain. The new Markdown dependencies were not reported as vulnerable by `npm audit --omit=dev`.
+- QA Doctor against `http://127.0.0.1:4178`: server, public Supabase configuration, database reachability, Chromium, `/auth`, visible rendering, console/network capture and selectors passed. The authorized account password is not present in this worktree, so Auth and the protected customer journey were correctly classified `missing env`, not product failures: `artifacts/qa/2026-11-01T21-40-53-552Z/qa-doctor.md`.
+
+### Remaining acceptance
+
+1. Build the branch Preview at `da95dc70` or its documentation-only successor and verify the deployed CSP header plus same-origin WASM request under a controlled browser-fallback attempt.
+2. With an existing authorized session, repeat login/session restore -> scan -> save -> history -> reopen -> photo-backed chat -> refresh/logout/login -> reopen. Confirm no duplicate Storage upload occurs and Markdown is formatted on the integrated Preview.
+3. Physical iPhone/iPad Safari remains untested. The committed phone/tablet evidence is browser emulation only.
+
+No provider call, account creation, auth email, cloud-data mutation, credential/security change, merge, Production promotion or paid Higgsfield generation occurred in this repair pass.
+
 ## Current customer acceptance and electric identity - 2026-11-01 (America/New_York)
 
 **Current decision: the branch Preview is a credible bounded V1 beta candidate, but Production is not approved.** The authorized-account customer journey passed on application ancestor `9be45ac2`. Electric-D identity commit `891d0663` then changed presentation and assets only, passed the complete code gate, and was independently observed on its exact Ready Vercel Preview. This section supersedes the pre-login blockers in the older same-day section below; older sections remain dated evidence rather than current status.
@@ -39,8 +69,8 @@
 | P0 Production | The modern server secret is verified through the successful branch flow, but the exposed legacy Supabase credential has not been deactivated. | Rotate/deactivate the legacy key in a separately approved security change, immediately probe all six server consumers, and retain a rollback window. |
 | P1 Security | Supabase leaked-password protection remains disabled. | Enable it in the dashboard if the plan supports it, then repeat password/Auth recovery smoke checks. |
 | P1 Acceptance | Two-account isolation and physical iPhone/iPad camera/PWA behavior remain unverified. | Run two authorized identities plus real iOS Safari/Android Chrome capture, denial, upload fallback, save and reopen checks. |
-| P1 Fallback | The hosted CSP blocks the jsDelivr ONNX/Transformers fallback resources. The primary hosted Groq scan succeeded, but that does not validate the browser fallback. | Self-host/allow only the required pinned resources and test a controlled primary-provider failure before promising fallback availability. |
-| P2 Quality | Chat persistence emitted one duplicate storage upload `400` while metadata/sync still succeeded; chat displayed raw `**` markers; the optional model/WASM bundle remains large. | Deduplicate the photo write, render supported Markdown safely, and defer-load the optional model path. |
+| P1 Fallback | `da95dc70` removes the jsDelivr runtime override and permits only same-origin WASM compilation, but a controlled hosted fallback inference has not run. | Verify the Preview's CSP header and same-origin WASM request while forcing the primary provider to fail safely before promising fallback availability. |
+| P2 Quality | `da95dc70` locally removes the duplicate chat photo write and renders safe Markdown. The optional model/WASM bundle remains large, and the repair has not completed the authenticated hosted retest. | Repeat the photo-backed chat flow on the exact Preview and confirm network/storage behavior; defer-load or shrink the optional model path separately. |
 | P2 Reliability | A hard process termination can strand a reserved scan credit until reconciliation exists. | Add reservation expiry/reconciliation before claiming continuous billing reliability. |
 
 No merge, Production promotion, provider retry, new account, password reset, purchase, external message or security-setting change occurred in this acceptance pass. Production and the Preview are separate environments; a Ready Preview is not evidence that Production now serves this revision.
