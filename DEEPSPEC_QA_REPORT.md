@@ -1,6 +1,53 @@
 # DeepSpec V1 Preview QA Report
 
-## Hosted API and scan release gate - 2026-11-01 (America/New_York)
+## Current customer acceptance and electric identity - 2026-11-01 (America/New_York)
+
+**Current decision: the branch Preview is a credible bounded V1 beta candidate, but Production is not approved.** The authorized-account customer journey passed on application ancestor `9be45ac2`. Electric-D identity commit `891d0663` then changed presentation and assets only, passed the complete code gate, and was independently observed on its exact Ready Vercel Preview. This section supersedes the pre-login blockers in the older same-day section below; older sections remain dated evidence rather than current status.
+
+### Revision and environment ledger
+
+| Evidence target | Result |
+| --- | --- |
+| Real customer-flow application | `9be45ac2`; authorized email-link account, live provider, Supabase persistence and chat were exercised on the branch Preview. |
+| Electric-D implementation | [`891d0663`](https://github.com/om1o/DeepSpec/commit/891d066365dd7a259395917d8f7bcccb7d75fc6e); no Auth handler, redirect, provider, storage, database or credential logic changed. |
+| Exact identity Preview | Vercel deployment `dpl_6GHLG7XykGioqYLpHvwpMXo57AmF`, Ready at [`https://deepspec-nytdrlzgq-deep-spec-team.vercel.app`](https://deepspec-nytdrlzgq-deep-spec-team.vercel.app), with the stable branch alias [`https://deepspec-git-codex-hosted-v1-repair-20261031-deep-spec-team.vercel.app`](https://deepspec-git-codex-hosted-v1-repair-20261031-deep-spec-team.vercel.app). Six Node functions were emitted with the configured `30/60/90` second limits. |
+| GitHub gate | [CI run `41349052996`](https://github.com/om1o/DeepSpec/actions/runs/41349052996) completed successfully for exact SHA `891d0663`; its Quality gate completed install plus `Run lint, tests, and build`. Conditional Auth/cloud workflow steps are not counted as customer-flow proof. |
+
+### Real customer journey
+
+| Journey | Observed result | Boundary |
+| --- | --- | --- |
+| Email-link sign-in and session | **PASS.** A fresh link returned to the branch Preview, protected routes opened, logout relocked them, and a fresh sign-in restored the account. An authenticated visit to `/` skipped the intro and opened `/scan`. | One authorized account only; no password reset, account creation or credential inspection. |
+| Live identification | **PASS.** The permitted engine fixture produced `/api/identify` `200` through Groq using `qwen/qwen3.8-27b`, with fallback reason `primary`. The UI returned `Engine assembly`, high confidence and visible uncertainty guidance. | This proves technical completion, not general model accuracy or uptime. No second inference was run. |
+| Cloud save and history | **PASS.** The UI reported `Scan saved to cloud`; image upload, lookup, detail/model and sync writes succeeded. History showed exactly `1/1`, survived refresh, and reopened the exact photo/result after logout and login. | One account does not prove cross-account isolation. |
+| Photo-backed follow-up chat | **PASS.** `/api/chat` returned `200` through Gemini with photo-aware limits; the exchange survived refresh and logout/login. | This was one provider request, not fallback or reliability sampling. |
+| Failure handling | **PASS for accessible cases.** A non-image README and a generated 13 MB JPEG were rejected before identification. Protected-route and logout behavior passed. | Physical camera permission, oversized real-phone photos and expired-session timing remain untested. |
+| Test data | One fixture-backed scan record/photo and one follow-up exchange were created under the authorized account. | They were not deleted because the QA scope forbids destructive cleanup of existing user data. |
+
+### Identity, responsive and automated evidence
+
+- The intro, Auth screen, shared in-app lockup, favicon, Apple touch icon and manifest icons now use the electric D. The blue-glass phone/scanner animation remains a secondary motion treatment.
+- Hosted desktop `1440x900` and phone-emulated `390x844` screenshots show the same identity, reachable controls and no visible overlap: [committed evidence](docs/qa/electric-d-customer-acceptance-20261101/README.md).
+- Auth method tabs now expose `aria-controls`, a tabpanel relationship, roving focus and arrow/Home/End keyboard behavior. Sign-in/Create selection exposes `aria-pressed`; reduced motion freezes the scan beam; input placeholder contrast is approximately `7.78:1` against its field background.
+- Final local verification on `891d0663`: **113 test files / 1,648 tests passed** with the single-worker forks pool; focused Auth/session/intro regression was **8 files / 106 tests**; `npm run lint` passed; `npm run build` passed TypeScript, Vite production bundling, intro packaging and public/brand integrity. The first threads-pool full run stopped making completion progress and was canceled; the isolated complete rerun passed and is the authoritative result.
+- No secret value, session artifact or browser log was committed. One generated browser log was removed before staging.
+
+### Remaining release risks
+
+| Priority | Risk | Release action |
+| --- | --- | --- |
+| P0 Production | The modern server secret is verified through the successful branch flow, but the exposed legacy Supabase credential has not been deactivated. | Rotate/deactivate the legacy key in a separately approved security change, immediately probe all six server consumers, and retain a rollback window. |
+| P1 Security | Supabase leaked-password protection remains disabled. | Enable it in the dashboard if the plan supports it, then repeat password/Auth recovery smoke checks. |
+| P1 Acceptance | Two-account isolation and physical iPhone/iPad camera/PWA behavior remain unverified. | Run two authorized identities plus real iOS Safari/Android Chrome capture, denial, upload fallback, save and reopen checks. |
+| P1 Fallback | The hosted CSP blocks the jsDelivr ONNX/Transformers fallback resources. The primary hosted Groq scan succeeded, but that does not validate the browser fallback. | Self-host/allow only the required pinned resources and test a controlled primary-provider failure before promising fallback availability. |
+| P2 Quality | Chat persistence emitted one duplicate storage upload `400` while metadata/sync still succeeded; chat displayed raw `**` markers; the optional model/WASM bundle remains large. | Deduplicate the photo write, render supported Markdown safely, and defer-load the optional model path. |
+| P2 Reliability | A hard process termination can strand a reserved scan credit until reconciliation exists. | Add reservation expiry/reconciliation before claiming continuous billing reliability. |
+
+No merge, Production promotion, provider retry, new account, password reset, purchase, external message or security-setting change occurred in this acceptance pass. Production and the Preview are separate environments; a Ready Preview is not evidence that Production now serves this revision.
+
+## Historical pre-customer hosted API and scan release gate - 2026-11-01 (America/New_York)
+
+The following section records the state before the authorized login and live customer loop completed. Its blocked-login and no-inference statements are superseded by the current acceptance section above.
 
 **Decision: do not promote Production yet.** Tested application revision `9be45ac2` is pushed and its rebuilt immutable Vercel Preview is Ready. Exact-head CI passed the complete code gate, the release migrations are applied in production Supabase, and an existing modern Supabase server secret plus existing identify-provider credentials are installed only for this Preview branch. Promotion remains blocked until the authorized account completes the real scan/save/reopen journey, one provider succeeds, and the exposed legacy server credential can then be deactivated without losing rollback.
 
