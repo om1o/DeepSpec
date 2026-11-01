@@ -116,6 +116,9 @@ const STRIPE_PORTAL_URL = "https://api.stripe.com/v1/billing_portal/sessions";
 const STRIPE_SIGNATURE_TOLERANCE_SECONDS = 300;
 const POLAR_API_BASE_URL = "https://api.polar.sh";
 const POLAR_SANDBOX_API_BASE_URL = "https://sandbox-api.polar.sh";
+const BILLING_PROVIDER_TIMEOUT_MS = 10_000;
+const BILLING_PROVIDER_ERROR_MESSAGE = "The billing provider could not create a billing session.";
+const BILLING_PROVIDER_TIMEOUT_MESSAGE = "The billing provider took too long to respond.";
 const STANDARD_WEBHOOK_TOLERANCE_SECONDS = 300;
 
 const STRIPE_PRICE_ENV_KEYS: Record<PlanId, string> = {
@@ -903,10 +906,20 @@ async function updateEntitlementByProviderKey(
   const query = subscriptionId
     ? table.update(payload).eq("provider_subscription_id", subscriptionId)
     : table.update(payload).eq("provider_customer_id", customerId);
-  const { error } = await query;
+  const { data, error } = await query.select("user_id");
 
   if (error) {
     return { error: errorResponse(502, "entitlement_write_failed", "DeepSpec could not update paid access.") };
+  }
+
+  if (!Array.isArray(data) || data.length !== 1) {
+    return {
+      error: errorResponse(
+        503,
+        "entitlement_update_missed",
+        "DeepSpec could not match the billing event to exactly one paid-access record.",
+      ),
+    };
   }
 
   return { handled: true };
@@ -1253,31 +1266,28 @@ function isServerEntitlementStatus(value: unknown): value is ServerEntitlement["
 }
 
 async function postStripeSession(url: string, params: URLSearchParams, secretKey: string): Promise<BillingResponse> {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${secretKey}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: params,
-  }).catch(() => null);
+  return withBillingProviderTimeout(async (signal) => {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${secretKey}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: params,
+      signal,
+    });
+    const payload = await readProviderJson(response, signal);
+    if (!response.ok || !isRecord(payload) || typeof payload.url !== "string") {
+      return errorResponse(response.ok ? 502 : response.status, "stripe_error", BILLING_PROVIDER_ERROR_MESSAGE);
+    }
 
-  if (!response) {
-    return errorResponse(502, "provider_unreachable", "DeepSpec could not reach the billing provider.");
-  }
-
-  const payload = await response.json().catch(() => null);
-  if (!response.ok || !isRecord(payload) || typeof payload.url !== "string") {
-    const message = getStripeErrorMessage(payload);
-    return errorResponse(response.status, "stripe_error", message);
-  }
-
-  return {
-    status: 200,
-    body: {
-      url: payload.url,
-    },
-  };
+    return {
+      status: 200,
+      body: {
+        url: payload.url,
+      },
+    };
+  });
 }
 
 async function postPolarJson(
@@ -1286,31 +1296,57 @@ async function postPolarJson(
   accessToken: string,
   urlField: "customer_portal_url" | "url",
 ): Promise<BillingResponse> {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  }).catch(() => null);
+  return withBillingProviderTimeout(async (signal) => {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal,
+    });
+    const responseBody = await readProviderJson(response, signal);
+    if (!response.ok || !isRecord(responseBody) || typeof responseBody[urlField] !== "string") {
+      return errorResponse(response.ok ? 502 : response.status, "polar_error", BILLING_PROVIDER_ERROR_MESSAGE);
+    }
 
-  if (!response) {
-    return errorResponse(502, "provider_unreachable", "DeepSpec could not reach the billing provider.");
+    return {
+      status: 200,
+      body: {
+        url: responseBody[urlField],
+      },
+    };
+  });
+}
+
+async function withBillingProviderTimeout(
+  operation: (signal: AbortSignal) => Promise<BillingResponse>,
+): Promise<BillingResponse> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), BILLING_PROVIDER_TIMEOUT_MS);
+
+  try {
+    return await operation(controller.signal);
+  } catch {
+    return controller.signal.aborted
+      ? errorResponse(504, "provider_timeout", BILLING_PROVIDER_TIMEOUT_MESSAGE)
+      : errorResponse(502, "provider_unreachable", "DeepSpec could not reach the billing provider.");
+  } finally {
+    clearTimeout(timeout);
   }
+}
 
-  const responseBody = await response.json().catch(() => null);
-  if (!response.ok || !isRecord(responseBody) || typeof responseBody[urlField] !== "string") {
-    const message = getProviderErrorMessage(responseBody, "The billing provider could not create a billing session.");
-    return errorResponse(response.status, "polar_error", message);
+async function readProviderJson(response: Response, signal: AbortSignal): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch (error) {
+    if (signal.aborted) {
+      throw error;
+    }
+
+    return null;
   }
-
-  return {
-    status: 200,
-    body: {
-      url: responseBody[urlField],
-    },
-  };
 }
 
 function getPolarApiBaseUrl(env: BillingEnv) {
@@ -1454,30 +1490,6 @@ function isPlanId(value: string): value is PlanId {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
-}
-
-function getStripeErrorMessage(payload: unknown) {
-  if (!isRecord(payload) || !isRecord(payload.error) || typeof payload.error.message !== "string") {
-    return "The billing provider could not create a billing session.";
-  }
-
-  return payload.error.message;
-}
-
-function getProviderErrorMessage(payload: unknown, fallback: string) {
-  if (isRecord(payload) && typeof payload.detail === "string") {
-    return payload.detail;
-  }
-
-  if (isRecord(payload) && isRecord(payload.error) && typeof payload.error.message === "string") {
-    return payload.error.message;
-  }
-
-  if (isRecord(payload) && typeof payload.message === "string") {
-    return payload.message;
-  }
-
-  return fallback;
 }
 
 function errorResponse(status: number, code: string, message: string): BillingErrorResponse {
