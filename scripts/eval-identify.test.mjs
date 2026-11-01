@@ -54,7 +54,7 @@ describe("identify eval scoring", () => {
   it.each([
     ["empty", { candidates: [] }],
     ["malformed", { candidates: [{ content: { parts: [{ text: "not JSON" }] } }] }],
-  ])("keeps %s Gemini output as a reviewable evaluation failure", async (_label, payload) => {
+  ])("keeps %s provider output as a reviewable failure after exhausting configured routes", async (_label, payload) => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
       new Response(JSON.stringify(String(input).includes("generativelanguage.googleapis.com")
         ? payload
@@ -79,7 +79,7 @@ describe("identify eval scoring", () => {
         score: { ok: false, matchedLabels: [], failureReasons: ["pipeline_error"] },
       });
       expect(lookup).toMatchObject({ rating: "down", trainingLabel: "Back-bumper" });
-      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
     } finally {
       fetchSpy.mockRestore();
     }
