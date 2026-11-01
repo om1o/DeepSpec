@@ -5,20 +5,30 @@ export type RectLike = {
   width: number;
 };
 
-export const SCANNER_RETICLE_WIDTH_RATIO = 0.64;
-export const SCANNER_RETICLE_MAX_WIDTH_PX = 330;
-export const SCANNER_RETICLE_CENTER_Y_RATIO = 0.45;
-export const SCANNER_RETICLE_ASPECT_RATIO = 3 / 4;
+export const SCANNER_RETICLE_WIDTH_RATIO = 0.72;
+export const SCANNER_RETICLE_HEIGHT_RATIO = 0.52;
+export const SCANNER_RETICLE_MAX_WIDTH_PX = 320;
+export const SCANNER_RETICLE_MAX_HEIGHT_PX = 240;
+export const SCANNER_RETICLE_CENTER_X_RATIO = 0.5;
+export const SCANNER_RETICLE_CENTER_Y_RATIO = 0.5;
+export const SCANNER_RETICLE_ASPECT_RATIO = SCANNER_RETICLE_MAX_WIDTH_PX / SCANNER_RETICLE_MAX_HEIGHT_PX;
+export const SCANNER_RETICLE_VERTICAL_CHROME_PX = 210;
+export const SCANNER_RETICLE_MIN_HEIGHT_PX = 120;
 
 const MIN_TARGET_OVERLAP_RATIO = 0.55;
 
 export function getScannerReticleBounds(viewportWidth: number, viewportHeight: number): RectLike {
-  const width = Math.min(viewportWidth * SCANNER_RETICLE_WIDTH_RATIO, SCANNER_RETICLE_MAX_WIDTH_PX);
-  const height = width / SCANNER_RETICLE_ASPECT_RATIO;
+  const unconstrainedWidth = Math.min(viewportWidth * SCANNER_RETICLE_WIDTH_RATIO, SCANNER_RETICLE_MAX_WIDTH_PX);
+  const unconstrainedHeight = Math.min(viewportWidth * SCANNER_RETICLE_HEIGHT_RATIO, SCANNER_RETICLE_MAX_HEIGHT_PX);
+  const availableHeight = Math.max(SCANNER_RETICLE_MIN_HEIGHT_PX, viewportHeight - SCANNER_RETICLE_VERTICAL_CHROME_PX);
+  const height = Math.min(unconstrainedHeight, availableHeight);
+  const width = height < unconstrainedHeight
+    ? Math.min(unconstrainedWidth, height * SCANNER_RETICLE_ASPECT_RATIO)
+    : unconstrainedWidth;
 
   return {
     height,
-    left: viewportWidth / 2 - width / 2,
+    left: viewportWidth * SCANNER_RETICLE_CENTER_X_RATIO - width / 2,
     top: viewportHeight * SCANNER_RETICLE_CENTER_Y_RATIO - height / 2,
     width,
   };

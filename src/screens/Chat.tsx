@@ -1,7 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import Button from "../components/ui/Button";
-import HistoryDockButton from "../components/ui/HistoryDockButton";
 import ScanThumb from "../components/ui/ScanThumb";
 import { AIServiceError, getAIErrorDetails, getAIErrorMessage, sendFollowUp } from "../services/aiService";
 import { appendChatMessages, createChatMessage, getLookup } from "../services/storage";
@@ -18,7 +17,8 @@ export default function Chat() {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView?.({ behavior: "smooth", block: "end" });
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    messagesEndRef.current?.scrollIntoView?.({ behavior: reduceMotion ? "auto" : "smooth", block: "end" });
   }, [lookup?.chatHistory.length, isSending]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -106,7 +106,7 @@ export default function Chat() {
 
   if (!lookup) {
     return (
-      <main className="grid min-h-dvh place-items-center bg-[var(--ds-page)] px-5 text-center text-slate-950">
+      <main className="grid min-h-dvh place-items-center bg-[var(--ds-page)] pb-[max(1.25rem,env(safe-area-inset-bottom))] pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] pt-[max(1.25rem,env(safe-area-inset-top))] text-center text-slate-950">
         <section className="w-full max-w-sm rounded-[24px] border border-slate-200 bg-white p-6 shadow-sm">
           <p className="text-sm font-bold text-[var(--ds-accent)]">Scan not found</p>
           <h1 className="mt-2 text-2xl font-extrabold tracking-tight">Open a saved scan first</h1>
@@ -115,7 +115,6 @@ export default function Chat() {
             Saved scans
           </Link>
         </section>
-        <HistoryDockButton />
       </main>
     );
   }
@@ -128,22 +127,27 @@ export default function Chat() {
   const canRetryLastQuestion = Boolean(error && lastUnansweredUserMessage && canChat && !isSending);
 
   return (
-    <main className="min-h-dvh bg-[var(--ds-page)] px-4 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-slate-950">
-      <div className="mx-auto flex min-h-[calc(100dvh-36px)] w-full max-w-md flex-col">
-        <header className="flex items-center justify-between gap-3">
+    <main className="chat-page h-dvh overflow-hidden bg-[var(--ds-page)] pb-[max(18px,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-[max(18px,env(safe-area-inset-top))] text-slate-950">
+      <div className="chat-shell mx-auto flex h-full min-h-0 w-full max-w-2xl flex-col">
+        <header className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-2 text-white">
           <div className="min-w-0">
-            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-12 w-36 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-[var(--ds-accent-line)]" />
-            <h1 className="mt-2 truncate text-2xl font-extrabold tracking-tight">Ask about this scan</h1>
+            <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-12 w-32 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-[var(--ds-accent-line)] sm:w-36" />
           </div>
-          <Link to={`/result/${lookup.id}`} className="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200">
-            Back
-          </Link>
+          <nav aria-label="Chat navigation" className="flex shrink-0 items-center gap-2">
+            <Link to="/history" className="inline-flex min-h-11 items-center rounded-full bg-white px-3 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200 sm:px-4">
+              History
+            </Link>
+            <Link to={`/result/${lookup.id}`} className="inline-flex min-h-11 items-center rounded-full bg-white px-3 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200 sm:px-4">
+              Back
+            </Link>
+          </nav>
+          <h1 className="col-span-2 line-clamp-2 text-2xl font-extrabold tracking-tight">Ask about this scan</h1>
         </header>
 
-        <section className="mt-5 grid grid-cols-[76px_1fr] gap-3 rounded-[24px] border border-slate-200 bg-white p-3 shadow-sm">
+        <section className="mt-4 grid shrink-0 grid-cols-[64px_1fr] gap-3 rounded-[24px] border border-slate-200 bg-white p-3 shadow-sm sm:mt-5 sm:grid-cols-[76px_1fr]">
           <ScanThumb alt="" className="aspect-square w-full rounded-[18px] border border-neutral-200 bg-neutral-100 object-cover" src={lookup.frame.imageBase64} />
           <div className="min-w-0 py-1">
-            <h2 className="truncate text-base font-extrabold tracking-tight">{partName}</h2>
+            <h2 className="line-clamp-2 break-words text-base font-extrabold tracking-tight">{partName}</h2>
             <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-neutral-400">{lookup.scanCategory}</p>
             <p className="mt-2 text-sm leading-6 text-neutral-500">
               {canChat ? "Short follow-ups. Safety rules still apply." : "This scan needs an AI result before chat can help."}
@@ -152,22 +156,22 @@ export default function Chat() {
         </section>
 
         {showSafetyWarning ? (
-          <section className="mt-4 rounded-[24px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-4">
+          <section className="mt-3 shrink-0 rounded-[24px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-3 sm:mt-4 sm:p-4">
             <p className="text-sm font-extrabold text-[var(--ds-warn-ink)]">Professional verification needed</p>
             <p className="mt-2 text-sm leading-6 text-neutral-700">I can explain the scan, but risky repairs need a mechanic.</p>
           </section>
         ) : null}
 
-        <section className="mt-4 flex flex-1 flex-col rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="flex-1 space-y-3 overflow-y-auto">
+        <section className="chat-message-panel mt-3 flex min-h-0 flex-1 flex-col rounded-[24px] border border-slate-200 bg-white p-3 shadow-sm sm:mt-4 sm:p-4">
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain">
             {lookup.chatHistory.length > 0 ? (
               lookup.chatHistory.map((message) => (
                 <article
                   key={message.id}
                   className={
                     message.role === "user"
-                      ? "ml-auto max-w-[84%] rounded-[22px] bg-[var(--ds-accent)] px-4 py-3 text-sm leading-6 text-white"
-                      : "mr-auto max-w-[90%] rounded-[22px] border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm leading-6 text-neutral-800"
+                      ? "ml-auto max-w-[84%] break-words rounded-[22px] bg-[var(--ds-accent)] px-4 py-3 text-sm leading-6 text-white [overflow-wrap:anywhere]"
+                      : "mr-auto max-w-[90%] break-words rounded-[22px] border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm leading-6 text-neutral-800 [overflow-wrap:anywhere]"
                   }
                 >
                   {message.content}
@@ -204,11 +208,11 @@ export default function Chat() {
             </section>
           ) : null}
 
-          <form className="mt-4 space-y-3" onSubmit={handleSubmit}>
+          <form className="mt-3 shrink-0 space-y-3 sm:mt-4" onSubmit={handleSubmit}>
             <label className="block">
               <span className="sr-only">Ask a follow-up question</span>
               <textarea
-                className="min-h-20 w-full resize-none rounded-2xl border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
+                className="min-h-20 w-full resize-none rounded-2xl border border-slate-200 bg-white p-3 text-base leading-6 text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
                 disabled={!canChat || isSending}
                 maxLength={500}
                 onChange={(event) => setQuestion(event.target.value)}
@@ -225,7 +229,6 @@ export default function Chat() {
           </form>
         </section>
       </div>
-      <HistoryDockButton />
     </main>
   );
 }

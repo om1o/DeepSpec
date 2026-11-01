@@ -272,7 +272,7 @@ export default function Auth() {
 
   if (isCheckingSession) {
     return (
-      <main className="flex min-h-dvh items-center justify-center bg-[var(--ds-bg)] px-4 text-center text-sm font-bold text-[var(--ds-fg-3)]">
+      <main className="flex min-h-dvh items-center justify-center bg-[var(--ds-bg)] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] text-center text-sm font-bold text-[var(--ds-fg-3)]">
         <div className="rounded-[8px] border border-white/10 bg-white/10 px-5 py-3 shadow-sm backdrop-blur-md">
           Checking your session...
         </div>
@@ -281,8 +281,8 @@ export default function Auth() {
   }
 
   return (
-    <main className="min-h-dvh overflow-hidden bg-[var(--ds-bg)] px-4 pb-8 pt-[max(20px,env(safe-area-inset-top))] text-white">
-      <section className="mx-auto grid min-h-[calc(100dvh-48px)] w-full max-w-6xl items-center gap-5 lg:grid-cols-[1.02fr_0.98fr] lg:gap-8">
+    <main className="flex min-h-dvh items-center overflow-x-hidden bg-[var(--ds-bg)] pb-[max(2rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-[max(20px,env(safe-area-inset-top))] text-white">
+      <section className="mx-auto grid w-full max-w-6xl items-center gap-5 lg:grid-cols-[1.02fr_0.98fr] lg:gap-8">
         <div className="relative hidden min-h-[640px] overflow-hidden rounded-[8px] border border-white/10 bg-slate-950 shadow-[0_24px_90px_rgba(0,0,0,0.36)] lg:block">
           <img src="/test-fixtures/engine-scan-test.jpg" alt="" className="absolute inset-0 h-full w-full object-cover opacity-70" />
           <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(6,21,34,0.30),rgba(6,21,34,0.82)),linear-gradient(90deg,rgba(6,21,34,0.92),rgba(6,21,34,0.24))]" />
@@ -312,7 +312,7 @@ export default function Auth() {
           </div>
         </div>
 
-        <section className="mx-auto flex w-full max-w-[540px] flex-col rounded-[8px] border border-white/12 bg-white/[0.07] p-5 shadow-[0_20px_70px_rgba(0,0,0,0.26)] backdrop-blur-xl sm:p-7">
+        <section className="mx-auto flex w-full max-w-[540px] flex-col rounded-[8px] border border-white/12 bg-white/[0.07] p-4 shadow-[0_20px_70px_rgba(0,0,0,0.26)] backdrop-blur-xl sm:p-7">
           <div className="flex items-center justify-between gap-4">
             <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-14 w-44 rounded-[8px] bg-white object-contain p-1 shadow-sm ring-1 ring-white/20" />
             <span className={supabaseConfigured ? "rounded-[8px] border border-[var(--ds-ok-line)] bg-[var(--ds-ok-soft)] px-3 py-1.5 text-xs font-black text-sky-100" : "rounded-[8px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] px-3 py-1.5 text-xs font-black text-amber-100"}>
@@ -391,7 +391,7 @@ export default function Auth() {
                 <label className="block">
                   <span className="mb-2 block text-sm font-black text-white/84">Email address</span>
                   <input
-                    className="h-14 w-full rounded-[8px] border border-white/12 bg-white/10 px-4 text-base font-semibold text-white shadow-sm outline-none placeholder:text-white/38 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)] disabled:bg-white/5 disabled:text-white/64"
+                    className="h-14 w-full scroll-mb-[40dvh] rounded-[8px] border border-white/12 bg-white/10 px-4 text-base font-semibold text-white shadow-sm outline-none placeholder:text-white/38 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)] disabled:bg-white/5 disabled:text-white/64"
                     autoCapitalize="none"
                     autoComplete="email"
                     disabled={(authMode === "link" && step !== "email") || isSubmitting}
@@ -414,21 +414,21 @@ export default function Auth() {
                     <button
                       type="button"
                       onClick={() => setPasswordMode("signin")}
-                      className={passwordMode === "signin" ? "h-11 rounded-[8px] border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] text-sm font-black text-white" : "h-11 rounded-[8px] border border-white/12 bg-white/5 text-sm font-black text-white/62"}
+                      className={passwordMode === "signin" ? "min-h-11 rounded-[8px] border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] px-1 py-2 text-xs font-black leading-4 text-white sm:text-sm" : "min-h-11 rounded-[8px] border border-white/12 bg-white/5 px-1 py-2 text-xs font-black leading-4 text-white/62 sm:text-sm"}
                     >
                       Sign in
                     </button>
                     <button
                       type="button"
                       onClick={() => setPasswordMode("signup")}
-                      className={passwordMode === "signup" ? "h-11 rounded-[8px] border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] text-sm font-black text-white" : "h-11 rounded-[8px] border border-white/12 bg-white/5 text-sm font-black text-white/62"}
+                      className={passwordMode === "signup" ? "min-h-11 rounded-[8px] border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] px-1 py-2 text-xs font-black leading-4 text-white sm:text-sm" : "min-h-11 rounded-[8px] border border-white/12 bg-white/5 px-1 py-2 text-xs font-black leading-4 text-white/62 sm:text-sm"}
                     >
                       Create
                     </button>
                     <button
                       type="button"
                       onClick={() => setPasswordMode("anonymous")}
-                      className={passwordMode === "anonymous" ? "h-11 rounded-[8px] border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] text-sm font-black text-white" : "h-11 rounded-[8px] border border-white/12 bg-white/5 text-sm font-black text-white/62"}
+                      className={passwordMode === "anonymous" ? "min-h-11 rounded-[8px] border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] px-1 py-2 text-xs font-black leading-4 text-white sm:text-sm" : "min-h-11 rounded-[8px] border border-white/12 bg-white/5 px-1 py-2 text-xs font-black leading-4 text-white/62 sm:text-sm"}
                     >
                       No email
                     </button>
@@ -437,7 +437,7 @@ export default function Auth() {
                     <label className="block">
                       <span className="mb-2 block text-sm font-black text-white/84">Password</span>
                       <input
-                        className="h-14 w-full rounded-[8px] border border-white/12 bg-white/10 px-4 text-base font-semibold text-white shadow-sm outline-none placeholder:text-white/38 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)]"
+                        className="h-14 w-full scroll-mb-[40dvh] rounded-[8px] border border-white/12 bg-white/10 px-4 text-base font-semibold text-white shadow-sm outline-none placeholder:text-white/38 focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)]"
                         autoComplete={passwordMode === "signup" ? "new-password" : "current-password"}
                         disabled={isSubmitting}
                         minLength={8}
@@ -462,7 +462,7 @@ export default function Auth() {
                   <span className="mb-2 block text-sm font-black text-white/84">Verification code</span>
                   <input
                     ref={codeInputRef}
-                    className="h-14 w-full rounded-[8px] border border-white/12 bg-white/10 px-4 text-center text-xl font-black tracking-[0.4em] text-white shadow-sm outline-none placeholder:text-white/38 placeholder:tracking-normal focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)]"
+                    className="h-14 w-full scroll-mb-[40dvh] rounded-[8px] border border-white/12 bg-white/10 px-4 text-center text-xl font-black tracking-[0.4em] text-white shadow-sm outline-none placeholder:text-white/38 placeholder:tracking-normal focus:border-[var(--ds-accent)] focus:ring-4 focus:ring-[var(--ds-accent-soft)]"
                     autoComplete="one-time-code"
                     enterKeyHint="done"
                     inputMode="numeric"
@@ -529,7 +529,7 @@ export default function Auth() {
                   <button
                     type="button"
                     onClick={handleShowCodeEntry}
-                    className="text-sm font-black text-sky-100 underline decoration-white/30 underline-offset-4"
+                    className="inline-flex min-h-11 items-center px-2 text-sm font-black text-sky-100 underline decoration-white/30 underline-offset-4"
                   >
                     I have a code
                   </button>

@@ -9,6 +9,7 @@ import { useStillness } from "../hooks/useStillness";
 import { assessImageQuality, type ImageQualityIssue, type ImageQualityResult } from "../lib/imageQuality";
 import { createFocusedScanCrop } from "../lib/focusCrop";
 import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
+import { getScannerReticleBounds } from "../lib/scannerReticle";
 import { getScanCardPreferences, type ScanCardPreferences, updateScanCardPreferences } from "../lib/scanResultCardSettings";
 import { compressImageDataUrl, saveLatestScanState } from "../lib/utils";
 import { AIServiceError, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
@@ -803,7 +804,7 @@ export default function Scanner() {
   }
 
   return (
-    <main className="relative min-h-dvh overflow-hidden bg-[var(--ds-bg)] text-white">
+    <main className="relative h-dvh min-h-dvh overflow-hidden bg-[var(--ds-bg)] text-white">
       {cameraState !== "blocked" ? (
         <Webcam
           key={cameraRequestId}
@@ -829,49 +830,51 @@ export default function Scanner() {
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(4,7,14,0.72),rgba(4,7,14,0)_28%,rgba(4,7,14,0)_55%,rgba(4,7,14,0.78))]" />
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[46dvh] bg-[radial-gradient(ellipse_at_50%_80%,rgba(0,170,255,0.12),rgba(4,7,14,0)_42%),linear-gradient(to_top,rgba(4,7,14,0.90),rgba(4,7,14,0))]" />
 
-      <header className="fixed left-0 right-0 top-0 z-20 flex items-center justify-between px-4 pb-3 pt-[max(16px,env(safe-area-inset-top))]">
-        <Link
-          to="/history"
-          aria-label="Open saved scan history"
-          className="grid size-10 place-items-center rounded-full text-white"
-          style={{
-            background: "rgba(7,16,30,0.58)",
-            border: "1px solid rgba(255,255,255,0.14)",
-            backdropFilter: "blur(16px)",
-          }}
-        >
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden>
-            <rect x="2" y="2" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.85" />
-            <rect x="10" y="2" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.85" />
-            <rect x="2" y="10" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.85" />
-            <rect x="10" y="10" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.85" />
-          </svg>
-        </Link>
-        <div className="flex flex-col items-center">
-          <span
-            className="text-[15px] font-black tracking-[-0.02em] text-white"
-            style={{ textShadow: "0 1px 8px rgba(0,0,0,0.5)" }}
+      {cameraState !== "blocked" && !isAnalyzing && !qualityCoach && !captureError ? (
+        <header className="fixed left-0 right-0 top-0 z-20 flex items-center justify-between pb-3 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-[max(16px,env(safe-area-inset-top))]">
+          <Link
+            to="/history"
+            aria-label="Open saved scan history"
+            className="grid size-11 place-items-center rounded-full text-white"
+            style={{
+              background: "rgba(7,16,30,0.58)",
+              border: "1px solid rgba(255,255,255,0.14)",
+              backdropFilter: "blur(16px)",
+            }}
           >
-            Deep Spec
-          </span>
-        </div>
-        <button
-          type="button"
-          aria-label="Switch camera"
-          onClick={handleFlipCamera}
-          className="grid size-10 place-items-center rounded-full text-white"
-          style={{
-            background: "rgba(7,16,30,0.58)",
-            border: "1px solid rgba(255,255,255,0.14)",
-            backdropFilter: "blur(16px)",
-          }}
-        >
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden>
-            <path d="M6 4H14M14 4L11 1M14 4L11 7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-            <path d="M14 16H6M6 16L9 19M6 16L9 13" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
-      </header>
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden>
+              <rect x="2" y="2" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.85" />
+              <rect x="10" y="2" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.85" />
+              <rect x="2" y="10" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.85" />
+              <rect x="10" y="10" width="6" height="6" rx="1.5" fill="currentColor" opacity="0.85" />
+            </svg>
+          </Link>
+          <div className="flex flex-col items-center">
+            <span
+              className="text-[15px] font-black tracking-[-0.02em] text-white"
+              style={{ textShadow: "0 1px 8px rgba(0,0,0,0.5)" }}
+            >
+              Deep Spec
+            </span>
+          </div>
+          <button
+            type="button"
+            aria-label="Switch camera"
+            onClick={handleFlipCamera}
+            className="grid size-11 place-items-center rounded-full text-white"
+            style={{
+              background: "rgba(7,16,30,0.58)",
+              border: "1px solid rgba(255,255,255,0.14)",
+              backdropFilter: "blur(16px)",
+            }}
+          >
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden>
+              <path d="M6 4H14M14 4L11 1M14 4L11 7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M14 16H6M6 16L9 19M6 16L9 13" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </header>
+      ) : null}
 
       {cameraState === "loading" && !scanReview ? <CameraLoading /> : null}
       {cameraState === "blocked" && !scanReview ? (
@@ -888,8 +891,8 @@ export default function Scanner() {
 
       {cameraState !== "blocked" ? (
         <>
-          {cameraState === "ready" && !scanReview ? <ScannerHUD isAnalyzing={isAnalyzing} /> : null}
-          {cameraState === "ready" && !scanReview ? (
+          {cameraState === "ready" && !scanReview && !qualityCoach && !captureError ? <ScannerHUD isAnalyzing={isAnalyzing} /> : null}
+          {cameraState === "ready" && !scanReview && !qualityCoach && !captureError ? (
             <>
               <LensViewfinderBrackets isAnalyzing={isAnalyzing} label={getReticleLabel({
                 autoScanGuide,
@@ -902,7 +905,7 @@ export default function Scanner() {
               <ScannerTargetStatus status={scannerStatus} />
             </>
           ) : null}
-          {cameraState === "ready" && objectTarget && !scanReview && !isAnalyzing ? (
+          {cameraState === "ready" && objectTarget && !scanReview && !isAnalyzing && !qualityCoach && !captureError ? (
             <TapTargetButton
               isLocked={isAutoScanReady}
               isTooSmall={isTargetTooSmallNow}
@@ -973,7 +976,7 @@ export default function Scanner() {
         }}
         type="file"
       />
-      {!scanReview ? (
+      {!scanReview && cameraState !== "blocked" && !isAnalyzing && !qualityCoach && !captureError ? (
         <LensBottomBar
           isAnalyzing={isAnalyzing}
           isShutterDisabled={cameraState !== "ready" || isAnalyzing || isTargetTooSmallNow}
@@ -1250,7 +1253,7 @@ function roundRatio(value: number) {
 
 function CameraLoading() {
   return (
-    <div className="fixed inset-0 z-10 grid place-items-center bg-[var(--ds-bg)] px-6 text-center">
+    <div className="fixed inset-0 z-10 grid place-items-center overflow-y-auto bg-[var(--ds-bg)] pb-[max(1.5rem,env(safe-area-inset-bottom))] pl-[max(1.5rem,env(safe-area-inset-left))] pr-[max(1.5rem,env(safe-area-inset-right))] pt-[max(1.5rem,env(safe-area-inset-top))] text-center">
       <div className="rounded-[24px] border border-white/10 bg-white/8 p-5 shadow-2xl backdrop-blur-md" style={{ borderColor: "rgba(0,194,255,0.18)" }}>
         <div
           className="mx-auto size-12 animate-spin rounded-full border-2"
@@ -1284,12 +1287,12 @@ function CameraBlocked({
   const hasCameraChoices = devices.length > 1;
 
   return (
-    <div className="fixed inset-0 z-30 grid place-items-center bg-[var(--ds-bg)] px-6 text-center">
-      <div className="max-w-sm">
+    <div aria-labelledby="scanner-camera-blocked-title" aria-modal="true" className="fixed inset-0 z-30 overflow-y-auto bg-[var(--ds-bg)] pl-[max(1.5rem,env(safe-area-inset-left))] pr-[max(1.5rem,env(safe-area-inset-right))] text-center" role="dialog">
+      <div className="mx-auto flex min-h-full w-full max-w-sm flex-col justify-center pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1.5rem,env(safe-area-inset-top))]">
         <div className="mx-auto mb-5 grid size-14 place-items-center rounded-2xl border border-[var(--ds-danger-line)] bg-[var(--ds-danger-soft)] text-[var(--ds-danger)]">
           !
         </div>
-        <h1 className="text-2xl font-extrabold tracking-tight">Camera access needed</h1>
+        <h1 className="text-2xl font-extrabold tracking-tight" id="scanner-camera-blocked-title">Camera access needed</h1>
         <p className="mt-3 text-sm leading-6 text-[#A1A1AA]">
           Deep Spec needs your camera to scan parts. {denied || waiting ? "Allow camera access for this site, then try again." : "Check camera access, then try again."}
         </p>
@@ -1305,7 +1308,7 @@ function CameraBlocked({
           <label className="mx-auto mt-5 block max-w-xs text-left">
             <span className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-white/54">Camera</span>
             <select
-              className="h-11 w-full rounded-[8px] border border-white/12 bg-slate-950 px-3 text-sm font-bold text-white outline-none focus:border-[var(--ds-accent)]"
+              className="h-11 w-full rounded-[8px] border border-white/12 bg-slate-950 px-3 text-base font-bold text-white outline-none focus:border-[var(--ds-accent)]"
               onChange={(event) => onSelectCamera(event.target.value)}
               value={selectedCameraId}
             >
@@ -1326,7 +1329,7 @@ function CameraBlocked({
             Try camera again
           </Button>
         </div>
-        <button className="mx-auto mt-4 block text-xs font-bold text-white/48 underline underline-offset-4" onClick={() => window.location.reload()}>
+        <button className="mx-auto mt-2 min-h-11 px-3 text-xs font-bold text-white/48 underline underline-offset-4" onClick={() => window.location.reload()}>
           Reload app
         </button>
       </div>
@@ -1357,8 +1360,9 @@ export function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; ste
         : step ?? "Matching the scan against vehicle data.";
 
   return (
-    <div className="fixed inset-0 z-40 grid place-items-center px-6 text-center" style={{ background: "rgba(4,7,14,0.82)", backdropFilter: "blur(16px)" }}>
-      <div className="w-full max-w-xs overflow-hidden rounded-[24px] p-6 shadow-2xl" style={{ background: "rgba(7,16,30,0.96)", border: "1px solid rgba(0,194,255,0.18)" }}>
+    <div aria-describedby="scanner-analyzing-message" aria-labelledby="scanner-analyzing-title" aria-modal="true" className="fixed inset-0 z-40 overflow-y-auto pl-[max(1.5rem,env(safe-area-inset-left))] pr-[max(1.5rem,env(safe-area-inset-right))] text-center" role="dialog" style={{ background: "rgba(4,7,14,0.82)", backdropFilter: "blur(16px)" }}>
+      <div className="flex min-h-full items-center justify-center py-[max(1.5rem,env(safe-area-inset-top),env(safe-area-inset-bottom))]">
+        <div className="scanner-analyzing-card w-full max-w-xs overflow-hidden rounded-[24px] p-6 shadow-2xl" style={{ background: "rgba(7,16,30,0.96)", border: "1px solid rgba(0,194,255,0.18)" }}>
         <div className="relative mx-auto grid size-24 place-items-center">
           <div className="absolute inset-0 rounded-full" style={{ border: "1px solid rgba(0,194,255,0.12)" }} />
           <div
@@ -1368,14 +1372,15 @@ export function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; ste
           <div className="absolute inset-7 rounded-full" style={{ background: "rgba(0,194,255,0.12)", boxShadow: "0 0 28px rgba(0,170,255,0.40)" }} />
           <div className="scanner-analysis-sweep absolute inset-x-3 top-1/2 h-0.5 rounded-full" style={{ background: "var(--electric-500)" }} />
         </div>
-        <p className="mt-5 text-lg font-extrabold tracking-tight text-white">Analyzing photo</p>
-        <p className="mt-2 text-sm leading-6" style={{ color: "var(--slate-300)" }}>
+        <h2 className="mt-5 text-lg font-extrabold tracking-tight text-white" id="scanner-analyzing-title">Analyzing photo</h2>
+        <p aria-live="polite" className="mt-2 text-sm leading-6" id="scanner-analyzing-message" style={{ color: "var(--slate-300)" }}>
           {message}
         </p>
         <p className="mt-2 text-xs font-semibold tabular-nums" style={{ fontFamily: "var(--font-data)", color: "var(--slate-500)" }}>{elapsedSeconds}s elapsed</p>
-        <Button className="mt-5 w-full" variant="ghost" onClick={onCancel}>
+        <Button autoFocus className="mt-5 w-full" variant="ghost" onClick={onCancel}>
           Cancel scan
         </Button>
+        </div>
       </div>
     </div>
   );
@@ -1390,7 +1395,10 @@ function ScanQualityCoachNotice({
 }) {
   return (
     <div
-      className="fixed bottom-[210px] left-1/2 z-30 w-[calc(100%-28px)] max-w-sm -translate-x-1/2 overflow-hidden rounded-[22px] text-center text-white"
+      aria-labelledby="scanner-quality-title"
+      aria-modal="true"
+      className="scanner-floating-notice fixed bottom-[210px] left-1/2 z-30 w-[calc(100%-28px)] max-w-sm -translate-x-1/2 overflow-hidden rounded-[22px] text-center text-white"
+      role="alertdialog"
       style={{
         background: "rgba(7,16,30,0.96)",
         border: "1px solid rgba(0,194,255,0.18)",
@@ -1402,7 +1410,7 @@ function ScanQualityCoachNotice({
         <p style={{ fontFamily: "var(--font-data)", fontSize: 10, fontWeight: 600, letterSpacing: "0.14em", color: "#55C8FF", textTransform: "uppercase" }}>
           {coach.progress}
         </p>
-        <h2 className="mt-1 text-[22px] font-black tracking-tight">{coach.title}</h2>
+        <h2 className="mt-1 text-[22px] font-black tracking-tight" id="scanner-quality-title">{coach.title}</h2>
       </div>
       <div className="px-5 py-4">
         <p className="text-base font-black leading-6 text-white">{coach.action}</p>
@@ -1410,7 +1418,8 @@ function ScanQualityCoachNotice({
           Try this exact fix, then scan again.
         </p>
         <button
-          className="mt-4 w-full rounded-[12px] py-3 text-[13px] font-bold text-white"
+          autoFocus
+          className="mt-4 min-h-11 w-full rounded-[12px] px-3 py-3 text-[13px] font-bold text-white"
           style={{ background: "var(--blue-500)", boxShadow: "0 4px 18px rgba(20,105,236,0.30)" }}
           onClick={onTryAgain}
           type="button"
@@ -1425,7 +1434,7 @@ function ScanQualityCoachNotice({
 function RetakeGuideNotice() {
   return (
     <div
-      className="fixed bottom-[198px] left-1/2 z-20 w-[calc(100%-28px)] max-w-sm -translate-x-1/2 rounded-[18px] px-4 py-3 text-center text-white"
+      className="scanner-retake-notice fixed bottom-[198px] left-1/2 z-20 w-[calc(100%-28px)] max-w-sm -translate-x-1/2 rounded-[18px] px-4 py-3 text-center text-white"
       style={{
         background: "rgba(7,16,30,0.90)",
         border: "1px solid rgba(0,194,255,0.16)",
@@ -1672,7 +1681,7 @@ function ScanResultCard({
     <section
       aria-live="polite"
       data-anchor-side={placement.anchorSide}
-      className="scanner-result-panel no-scrollbar pointer-events-auto z-50 mx-auto flex max-h-[min(62dvh,560px)] max-w-[520px] flex-col overflow-y-auto px-4 pb-[max(20px,env(safe-area-inset-bottom))] pt-3 text-white"
+      className="scanner-result-panel no-scrollbar pointer-events-auto z-50 mx-auto flex max-h-[min(62dvh,560px)] max-w-[520px] flex-col overflow-y-auto pb-[max(20px,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-3 text-white"
     >
       {/* Drag handle */}
       <div className="mx-auto mb-3 h-1 w-10 shrink-0 rounded-full bg-white/18" />
@@ -1718,7 +1727,7 @@ function ScanResultCard({
           ) : null}
         </div>
         <button
-          className="grid size-8 shrink-0 place-items-center rounded-full text-white/50 transition-colors hover:text-white/80"
+          className="grid size-11 shrink-0 place-items-center rounded-full text-white/50 transition-colors hover:text-white/80"
           style={{ border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.05)" }}
           onClick={onClose}
           type="button"
@@ -1759,7 +1768,7 @@ function ScanResultCard({
               The current object moved away from the saved scan point.
             </p>
             <button
-              className="mt-2 rounded-full px-3 py-1.5 text-[11px] font-extrabold text-white"
+              className="mt-2 min-h-11 rounded-full px-3 py-1.5 text-[11px] font-extrabold text-white"
               style={{ background: "var(--red-500)" }}
               onClick={onRetryMismatch}
               type="button"
@@ -1862,7 +1871,7 @@ function ScanResultCard({
       {/* Actions */}
       <div className="mt-3 space-y-2">
         <button
-          className="w-full rounded-[12px] py-3 text-[13px] font-bold text-white"
+          className="min-h-11 w-full rounded-[12px] px-3 py-3 text-[13px] font-bold text-white"
           style={{ background: "var(--blue-500)", boxShadow: "0 4px 20px rgba(20,105,236,0.32)" }}
           onClick={onOpenDetails}
           type="button"
@@ -1881,7 +1890,7 @@ function ScanResultCard({
               </span>
               <select
                 aria-label="Size reference preset"
-                className="h-10 w-full rounded-[10px] px-3 text-[11px] font-bold text-white outline-none"
+                className="h-11 w-full rounded-[10px] px-3 text-base font-bold text-white outline-none"
                 style={{ border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.05)" }}
                 onChange={(event) => onSizeReferencePresetChange(event.target.value as SizeReferencePreset)}
                 value={sizeReferencePreset}
@@ -1894,7 +1903,7 @@ function ScanResultCard({
             </label>
             <div className="grid grid-cols-2 gap-2">
               <button
-                className="h-10 rounded-[10px] text-xs font-bold text-white/90"
+                className="min-h-11 rounded-[10px] text-xs font-bold text-white/90"
                 style={{ border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.05)" }}
                 onClick={onSetSizeReference}
                 type="button"
@@ -1902,7 +1911,7 @@ function ScanResultCard({
                 Set reference
               </button>
               <button
-                className="h-10 rounded-[10px] text-xs font-bold text-white/90"
+                className="min-h-11 rounded-[10px] text-xs font-bold text-white/90"
                 style={{ border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.05)" }}
                 onClick={onMeasure}
                 type="button"
@@ -1916,7 +1925,7 @@ function ScanResultCard({
 
         {isExpanded ? (
           <button
-            className="h-10 w-full rounded-[10px] text-xs font-bold text-white/90"
+            className="min-h-11 w-full rounded-[10px] text-xs font-bold text-white/90"
             style={{ border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.05)" }}
             onClick={onCopyValue}
             type="button"
@@ -1927,7 +1936,7 @@ function ScanResultCard({
 
         {isExpanded && review.scanState.result ? (
           <a
-            className="flex h-10 items-center justify-center rounded-[10px] text-xs font-bold text-white/78"
+            className="flex min-h-11 items-center justify-center rounded-[10px] px-3 text-center text-xs font-bold text-white/78"
             style={{ border: "1px solid rgba(20,105,236,0.26)", background: "rgba(20,105,236,0.08)" }}
             href={threeDSearchUrl}
             rel="noreferrer"
@@ -1941,7 +1950,7 @@ function ScanResultCard({
           <div className="space-y-2">
             <input
               aria-label="replacement label"
-              className="w-full rounded-[10px] px-3 py-2.5 text-sm text-white outline-none placeholder:text-white/38"
+              className="min-h-11 w-full rounded-[10px] px-3 py-2.5 text-base text-white outline-none placeholder:text-white/38"
               style={{ border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.05)" }}
               maxLength={80}
               onChange={(event) => onReplacementLabelChange(event.target.value)}
@@ -1950,7 +1959,7 @@ function ScanResultCard({
             />
             <div className="grid grid-cols-2 gap-2">
               <button
-                className="h-10 rounded-[10px] text-xs font-bold text-slate-900"
+                className="min-h-11 rounded-[10px] text-xs font-bold text-slate-900"
                 style={{ background: "rgba(255,255,255,0.90)" }}
                 onClick={onReportReplace}
                 type="button"
@@ -1958,7 +1967,7 @@ function ScanResultCard({
                 Save correction
               </button>
               <button
-                className="h-10 rounded-[10px] text-xs font-bold text-white/80"
+                className="min-h-11 rounded-[10px] text-xs font-bold text-white/80"
                 style={{ border: "1px solid rgba(255,255,255,0.14)" }}
                 onClick={onCancelReplace}
                 type="button"
@@ -1969,7 +1978,7 @@ function ScanResultCard({
           </div>
         ) : (
           <button
-            className="h-10 w-full rounded-[10px] text-xs font-bold text-white/90"
+            className="min-h-11 w-full rounded-[10px] text-xs font-bold text-white/90"
             style={{ border: "1px solid rgba(0,194,255,0.22)", background: "rgba(0,194,255,0.06)" }}
             onClick={onWrongLabel}
             type="button"
@@ -1984,7 +1993,7 @@ function ScanResultCard({
             style={{ border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.04)" }}
           >
             <span className="font-bold text-white/90">Correction: {review.correction}</span>
-            <button className="font-bold text-white/50 underline underline-offset-2" onClick={onUndoCorrection} type="button">
+            <button className="min-h-11 px-2 font-bold text-white/50 underline underline-offset-2" onClick={onUndoCorrection} type="button">
               Undo
             </button>
           </div>
@@ -1996,14 +2005,14 @@ function ScanResultCard({
         className="mt-3 flex items-center justify-between gap-3 pt-3 text-[11px]"
         style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}
       >
-        <button className="text-white/40 underline underline-offset-2 hover:text-white/70" onClick={onToggleExpand} type="button">
+        <button className="min-h-11 px-1 text-white/40 underline underline-offset-2 hover:text-white/70" onClick={onToggleExpand} type="button">
           {isExpanded ? "Show less" : "Show more"}
         </button>
         <div className="flex flex-wrap items-center justify-end gap-3">
-          <button className="text-white/40 underline underline-offset-2 hover:text-white/70" onClick={onToggleCompactMode} type="button">
+          <button className="min-h-11 px-1 text-white/40 underline underline-offset-2 hover:text-white/70" onClick={onToggleCompactMode} type="button">
             {prefs.compactCardsByDefault ? "Compact cards on" : "Compact cards off"}
           </button>
-          <button className="text-white/40 underline underline-offset-2 hover:text-white/70" onClick={onToggleHideConfidence} type="button">
+          <button className="min-h-11 px-1 text-white/40 underline underline-offset-2 hover:text-white/70" onClick={onToggleHideConfidence} type="button">
             {prefs.hideConfidence ? "Show confidence" : "Hide confidence"}
           </button>
         </div>
@@ -2049,7 +2058,11 @@ function FactList({ emptyText, facts }: { emptyText?: string; facts: string[] })
 function CaptureErrorNotice({ message, onTryAgain }: { message: string; onTryAgain: () => void }) {
   return (
     <div
-      className="fixed bottom-[220px] left-1/2 z-20 w-[calc(100%-28px)] max-w-sm -translate-x-1/2 rounded-[18px] p-4 text-center"
+      aria-describedby="scanner-capture-error-message"
+      aria-label="Capture failed"
+      aria-modal="true"
+      className="scanner-floating-notice fixed bottom-[220px] left-1/2 z-20 w-[calc(100%-28px)] max-w-sm -translate-x-1/2 rounded-[18px] p-4 text-center"
+      role="alertdialog"
       style={{
         background: "rgba(30,8,10,0.94)",
         border: "1px solid rgba(239,68,68,0.28)",
@@ -2057,9 +2070,10 @@ function CaptureErrorNotice({ message, onTryAgain }: { message: string; onTryAga
         boxShadow: "0 16px 44px rgba(0,0,0,0.50)",
       }}
     >
-      <p className="text-sm font-bold" style={{ color: "var(--red-400)" }}>{message}</p>
+      <p className="text-sm font-bold" id="scanner-capture-error-message" style={{ color: "var(--red-400)" }}>{message}</p>
       <button
-        className="mt-3 w-full rounded-[10px] py-2.5 text-[13px] font-bold text-white"
+        autoFocus
+        className="mt-3 min-h-11 w-full rounded-[10px] px-3 py-2.5 text-[13px] font-bold text-white"
         style={{ background: "rgba(239,68,68,0.18)", border: "1px solid rgba(239,68,68,0.30)" }}
         onClick={onTryAgain}
         type="button"
@@ -2543,8 +2557,8 @@ function ScannerHUD({ isAnalyzing }: { isAnalyzing: boolean }) {
 
 function ScannerTargetStatus({ status }: { status: string }) {
   return (
-    <div className="pointer-events-none fixed left-1/2 top-[max(112px,calc(env(safe-area-inset-top)+88px))] z-20 -translate-x-1/2">
-      <p className="scanner-status-pill">{status}</p>
+    <div className="scanner-target-status pointer-events-none fixed left-1/2 top-[max(112px,calc(env(safe-area-inset-top)+88px))] z-20 -translate-x-1/2">
+      <p aria-atomic="true" aria-live="polite" className="scanner-status-pill" role="status">{status}</p>
     </div>
   );
 }
@@ -2559,18 +2573,38 @@ function LensViewfinderBrackets({
   progress: number;
 }) {
   const progressPercent = `${Math.round(clampNumber(progress, 0, 1) * 100)}%`;
+  const [bounds, setBounds] = useState(() => getScannerReticleBounds(window.innerWidth, window.innerHeight));
+
+  useEffect(() => {
+    const updateBounds = () => setBounds(getScannerReticleBounds(window.innerWidth, window.innerHeight));
+    window.addEventListener("resize", updateBounds);
+    window.addEventListener("orientationchange", updateBounds);
+    return () => {
+      window.removeEventListener("resize", updateBounds);
+      window.removeEventListener("orientationchange", updateBounds);
+    };
+  }, []);
+
   return (
-    <div className="pointer-events-none fixed inset-0 z-10 flex items-center justify-center" data-testid="object-reticle">
+    <div
+      className="pointer-events-none fixed z-10 -translate-x-1/2 -translate-y-1/2"
+      data-testid="object-reticle"
+      style={{
+        height: bounds.height,
+        left: bounds.left + bounds.width / 2,
+        top: bounds.top + bounds.height / 2,
+        width: bounds.width,
+      }}
+    >
       <div
-        style={{ width: "min(72vw, 320px)", height: "min(52vw, 240px)" }}
-        className={`relative${isAnalyzing ? " scanner-bracket-pulse" : ""}`}
+        className={`relative h-full w-full${isAnalyzing ? " scanner-bracket-pulse" : ""}`}
       >
         <span className="scanner-corner scanner-corner-tl" />
         <span className="scanner-corner scanner-corner-tr" />
         <span className="scanner-corner scanner-corner-bl" />
         <span className="scanner-corner scanner-corner-br" />
         {isAnalyzing ? <div className="scanner-sweep-line" /> : null}
-        <div className="absolute -bottom-9 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full bg-black/35 px-3 py-1.5 text-[11px] font-bold text-white backdrop-blur-md">
+        <div className="scanner-reticle-label absolute -bottom-9 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full bg-black/35 px-3 py-1.5 text-[11px] font-bold text-white backdrop-blur-md">
           <span>{label}</span>
           <span className="scanner-progress-track" aria-hidden>
             <span className="scanner-progress-fill block" style={{ width: progressPercent }} />
@@ -2631,7 +2665,7 @@ function LensBottomBar({
   onShutter: () => void;
 }) {
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-between px-8 pb-[max(28px,env(safe-area-inset-bottom))] pt-4">
+    <div className="scanner-bottom-bar fixed bottom-0 left-0 right-0 z-40 mx-auto flex w-full max-w-2xl items-center justify-between pb-[max(28px,env(safe-area-inset-bottom))] pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] pt-4 sm:pl-[max(2rem,env(safe-area-inset-left))] sm:pr-[max(2rem,env(safe-area-inset-right))]">
       <button
         type="button"
         aria-label="Open gallery"
@@ -2653,14 +2687,14 @@ function LensBottomBar({
         </svg>
       </button>
 
-      <div className="flex items-center justify-center" style={{ width: 86, height: 86 }}>
-        <div className="flex items-center justify-center rounded-full" style={{ width: 86, height: 86, background: "rgba(0,194,255,0.06)", border: "1px solid rgba(0,194,255,0.22)" }}>
+      <div className="scanner-shutter-frame flex items-center justify-center" style={{ width: 86, height: 86 }}>
+        <div className="scanner-shutter-frame flex items-center justify-center rounded-full" style={{ width: 86, height: 86, background: "rgba(0,194,255,0.06)", border: "1px solid rgba(0,194,255,0.22)" }}>
           <button
             type="button"
             aria-label="Scan now"
             onClick={onShutter}
             disabled={isShutterDisabled}
-            className="grid place-items-center rounded-full disabled:opacity-40"
+            className="scanner-shutter-button grid place-items-center rounded-full disabled:opacity-40"
             style={{
               width: 68,
               height: 68,

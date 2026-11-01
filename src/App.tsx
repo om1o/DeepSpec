@@ -63,7 +63,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
 
   if (status === "checking") {
     return (
-      <main className="flex min-h-dvh items-center justify-center bg-[var(--ds-bg)] px-4 text-center text-sm font-bold text-[var(--ds-fg-3)]">
+      <main className="flex min-h-dvh items-center justify-center bg-[var(--ds-bg)] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] text-center text-sm font-bold text-[var(--ds-fg-3)]">
         Checking your session...
       </main>
     );
@@ -78,7 +78,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
 
 function ScannerRouteFallback() {
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-[var(--ds-bg)] px-4 text-center text-sm font-bold text-[var(--ds-fg-3)]">
+    <main className="flex min-h-dvh items-center justify-center bg-[var(--ds-bg)] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] text-center text-sm font-bold text-[var(--ds-fg-3)]">
       Opening camera...
     </main>
   );

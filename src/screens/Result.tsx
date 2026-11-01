@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from "react";
 import { getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
 import CloudHealthCard from "../components/CloudHealthCard";
 import Button from "../components/ui/Button";
-import HistoryDockButton from "../components/ui/HistoryDockButton";
 import ScanThumb from "../components/ui/ScanThumb";
 import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } from "../lib/utils";
 import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
@@ -138,7 +137,7 @@ export default function Result() {
   return (
     <main className="min-h-dvh bg-[var(--ds-bg)] text-slate-950">
       <div className="mx-auto grid min-h-dvh w-full max-w-6xl lg:grid-cols-[minmax(0,1fr)_430px] lg:p-4">
-        <section className="relative min-h-[48dvh] overflow-hidden bg-[#020617] text-white lg:sticky lg:top-4 lg:min-h-[calc(100dvh-32px)] lg:rounded-[30px]">
+        <section className="relative min-h-[clamp(280px,48dvh,560px)] overflow-hidden bg-[#020617] text-white lg:sticky lg:top-4 lg:min-h-[calc(100dvh-32px)] lg:rounded-[30px]">
           {frame?.imageBase64 ? (
             <ScanThumb
               alt="Captured car part"
@@ -153,13 +152,18 @@ export default function Result() {
           <FocusFrame isVisible={Boolean(frame?.imageBase64)} />
           <ImageEvidenceCallouts regions={scanState?.result?.evidenceRegions} />
           <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(2,6,23,0.68),rgba(2,6,23,0.04)_38%,rgba(2,6,23,0.82))]" />
-          <header className="absolute left-0 right-0 top-0 z-10 flex items-center justify-between px-4 pt-[max(18px,env(safe-area-inset-top))]">
+          <header className="absolute left-0 right-0 top-0 z-10 flex items-center justify-between pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-[max(18px,env(safe-area-inset-top))]">
             <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-11 w-32 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-white/30" />
-            <Link to="/scan" className="rounded-full bg-white/90 px-4 py-2 text-sm font-bold text-slate-800 shadow-sm ring-1 ring-white/40 backdrop-blur-md">
-              Back
-            </Link>
+            <nav aria-label="Result navigation" className="flex items-center gap-2">
+              <Link to="/history" className="inline-flex min-h-11 items-center rounded-full bg-white/90 px-3 text-sm font-bold text-slate-800 shadow-sm ring-1 ring-white/40 backdrop-blur-md sm:px-4">
+                History
+              </Link>
+              <Link to="/scan" className="inline-flex min-h-11 items-center rounded-full bg-white/90 px-3 text-sm font-bold text-slate-800 shadow-sm ring-1 ring-white/40 backdrop-blur-md sm:px-4">
+                Back
+              </Link>
+            </nav>
           </header>
-          <div className="absolute bottom-8 left-0 right-0 z-10 px-4">
+          <div className="absolute bottom-[max(2rem,env(safe-area-inset-bottom))] left-0 right-0 z-10 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]">
             <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Scanned photo</p>
             <h1 className="mt-2 truncate text-3xl font-extrabold tracking-tight text-white">
               {scanState?.result ? scanState.result.partName : "Captured frame"}
@@ -172,7 +176,7 @@ export default function Result() {
           </div>
         </section>
 
-        <div className="relative z-10 -mt-7 rounded-t-[30px] bg-[var(--ds-page)] px-4 pb-8 pt-4 shadow-[0_-18px_48px_rgba(2,6,23,0.18)] lg:my-8 lg:-ml-10 lg:max-h-[calc(100dvh-64px)] lg:overflow-y-auto lg:rounded-[30px] lg:border lg:border-white/60 lg:shadow-[0_24px_70px_rgba(2,6,23,0.28)]">
+        <div className="relative z-10 -mt-7 rounded-t-[30px] bg-[var(--ds-page)] pb-[max(2rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-4 shadow-[0_-18px_48px_rgba(2,6,23,0.18)] lg:my-8 lg:-ml-10 lg:max-h-[calc(100dvh-64px)] lg:overflow-y-auto lg:rounded-[30px] lg:border lg:border-white/60 lg:px-4 lg:shadow-[0_24px_70px_rgba(2,6,23,0.28)]">
           <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-300 lg:hidden" />
           <div className="space-y-3">
           {storageWarning ? <StorageWarning message={storageWarning} /> : null}
@@ -222,7 +226,6 @@ export default function Result() {
         </Button>
         </div>
       </div>
-      <HistoryDockButton />
     </main>
   );
 }
@@ -409,7 +412,7 @@ function SavedScanControls({
         </p>
         <input
           aria-label="User trust score"
-          className="mt-3 h-2 w-full accent-[var(--ds-accent)]"
+          className="mt-3 h-11 w-full accent-[var(--ds-accent)]"
           max={5}
           min={1}
           onChange={(event) => handleTrustScore(Number(event.target.value))}
@@ -425,7 +428,7 @@ function SavedScanControls({
         <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Correct label</span>
         <textarea
           aria-label="What was it actually?"
-          className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[var(--ds-accent)]"
+          className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-base leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[var(--ds-accent)]"
           maxLength={240}
           onChange={(event) => onCorrectionChange(event.target.value)}
           placeholder="Example: coolant reservoir cap, not brake fluid cap"
@@ -436,7 +439,7 @@ function SavedScanControls({
       <label className="mt-4 block">
         <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Private notes</span>
         <textarea
-          className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[var(--ds-accent)]"
+          className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-neutral-200 bg-white p-3 text-base leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-[var(--ds-accent)]"
           maxLength={500}
           onChange={(event) => onNotesChange(event.target.value)}
           placeholder="Optional: where the part was, symptoms, what you checked next"
@@ -543,7 +546,7 @@ function AnalysisResult({
 
   return (
     <>
-      <section className="sticky top-2 z-10 rounded-[24px] border border-neutral-200 bg-white p-4 shadow-[0_12px_34px_rgba(15,23,42,0.08)]">
+      <section className="rounded-[24px] border border-neutral-200 bg-white p-4 shadow-[0_12px_34px_rgba(15,23,42,0.08)] lg:sticky lg:top-2 lg:z-10">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Best match</p>
@@ -774,8 +777,8 @@ function ResultPanelButton({
       aria-selected={active}
       className={
         active
-          ? "min-h-10 rounded-[16px] bg-[var(--ds-accent)] px-2 text-xs font-extrabold text-white"
-          : "min-h-10 rounded-[16px] px-2 text-xs font-extrabold text-neutral-500"
+          ? "min-h-11 rounded-[16px] bg-[var(--ds-accent)] px-2 text-xs font-extrabold text-white"
+          : "min-h-11 rounded-[16px] px-2 text-xs font-extrabold text-neutral-500"
       }
       onClick={onClick}
       role="tab"
@@ -840,13 +843,13 @@ function QuickActions({
   let askAction = null;
   if (lookupId) {
     askAction = (
-      <Link className="rounded-full bg-[var(--ds-accent)] px-3 py-2 text-center text-xs font-extrabold text-white" to={`/result/${lookupId}/chat`}>
+      <Link className="inline-flex min-h-11 items-center justify-center rounded-full bg-[var(--ds-accent)] px-3 text-center text-xs font-extrabold text-white" to={`/result/${lookupId}/chat`}>
         Ask
       </Link>
     );
   } else if (canSaveForChat) {
     askAction = (
-      <button className="rounded-full bg-[var(--ds-accent)] px-3 py-2 text-center text-xs font-extrabold text-white" type="button" onClick={onSaveAndAsk}>
+      <button className="min-h-11 rounded-full bg-[var(--ds-accent)] px-3 text-center text-xs font-extrabold text-white" type="button" onClick={onSaveAndAsk}>
         Ask
       </button>
     );
@@ -855,12 +858,12 @@ function QuickActions({
 
   return (
     <div className={`mt-4 grid ${canAsk ? "grid-cols-3" : "grid-cols-2"} gap-2`}>
-      <Link className="rounded-full bg-neutral-100 px-3 py-2 text-center text-xs font-extrabold text-neutral-900" to="/scan">
+      <Link className="inline-flex min-h-11 items-center justify-center rounded-full bg-neutral-100 px-3 text-center text-xs font-extrabold text-neutral-900" to="/scan">
         Refine
       </Link>
       {askAction}
       <a
-        className="rounded-full bg-neutral-100 px-3 py-2 text-center text-xs font-extrabold text-neutral-900"
+        className="inline-flex min-h-11 items-center justify-center rounded-full bg-neutral-100 px-3 text-center text-xs font-extrabold text-neutral-900"
         href={nearbyUrl}
         rel="noreferrer"
         target="_blank"

@@ -2,6 +2,7 @@ import { act, cleanup, render, screen, waitFor, within } from "@testing-library/
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, expect, vi } from "vitest";
+import { getScannerReticleBounds } from "../lib/scannerReticle";
 import Scanner from "./Scanner";
 
 const captureFrame = vi.fn(async () => "data:image/jpeg;base64,compressed-frame");
@@ -87,6 +88,10 @@ const cameraHookState = vi.hoisted(() => ({
     cameraState: "ready" as "loading" | "ready" | "blocked",
   },
 }));
+const initialViewport = {
+  height: window.innerHeight,
+  width: window.innerWidth,
+};
 
 vi.mock("../hooks/useCamera", () => ({
   useCamera: () => ({
@@ -159,6 +164,8 @@ describe("Scanner", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: initialViewport.width });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: initialViewport.height });
     window.history.pushState({}, "", "/");
   });
 
@@ -228,6 +235,50 @@ describe("Scanner", () => {
       trainingStatus: "raw_unreviewed",
     });
   }, 10000);
+
+  it("renders the viewfinder from the shared target-lock geometry", () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 844 });
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const bounds = getScannerReticleBounds(390, 844);
+    expect(screen.getByTestId("object-reticle")).toHaveStyle({
+      height: `${bounds.height}px`,
+      left: `${bounds.left + bounds.width / 2}px`,
+      top: `${bounds.top + bounds.height / 2}px`,
+      width: `${bounds.width}px`,
+    });
+  });
+
+  it("updates the shared viewfinder geometry after phone rotation", () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 844 });
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<Scanner />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 667 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 375 });
+    act(() => window.dispatchEvent(new Event("orientationchange")));
+
+    const bounds = getScannerReticleBounds(667, 375);
+    expect(screen.getByTestId("object-reticle")).toHaveStyle({
+      height: `${bounds.height}px`,
+      left: `${bounds.left + bounds.width / 2}px`,
+      top: `${bounds.top + bounds.height / 2}px`,
+      width: `${bounds.width}px`,
+    });
+  });
 
   it("auto captures only after a held, centered target is ready", async () => {
     objectTargetState.current = makeObjectTarget({
@@ -636,8 +687,11 @@ describe("Scanner", () => {
     );
 
     expect(screen.getByRole("heading", { level: 1, name: "Camera access needed" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Camera access needed" })).toBeInTheDocument();
     expect(screen.getByText(/Allow camera access for this site/)).toBeInTheDocument();
     expect(screen.queryByTestId("webcam-preview")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Scan now" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Switch camera" })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Try camera again" }));
 
@@ -699,6 +753,9 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
 
     expect(await screen.findByText("No camera frame was available.")).toBeInTheDocument();
+    expect(screen.getByRole("alertdialog", { name: "Capture failed" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toHaveFocus();
+    expect(screen.queryByRole("button", { name: "Scan now" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 1, name: "Camera access needed" })).not.toBeInTheDocument();
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
   }, 10000);
@@ -733,7 +790,12 @@ describe("Scanner", () => {
     );
 
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
-    await userEvent.click(await screen.findByRole("button", { name: "Cancel scan" }));
+    const cancelButton = await screen.findByRole("button", { name: "Cancel scan" });
+    expect(screen.getByRole("dialog", { name: "Analyzing photo" })).toBeInTheDocument();
+    expect(cancelButton).toHaveFocus();
+    expect(screen.queryByRole("button", { name: "Scan now" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open gallery" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel scan" }));
 
     expect(await screen.findByText("Scan canceled. Hold the right item steady to try again.")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 1, name: "Alternator" })).not.toBeInTheDocument();
@@ -784,9 +846,13 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
 
     expect(await screen.findByRole("heading", { level: 2, name: "Too blurry" })).toBeInTheDocument();
+    expect(screen.getByRole("alertdialog", { name: "Too blurry" })).toBeInTheDocument();
     expect(screen.getAllByText("Hold still 2s").length).toBeGreaterThan(0);
     expect(screen.getByText("Try this exact fix, then scan again.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Scan again" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Scan again" })).toHaveFocus();
+    expect(screen.queryByRole("button", { name: "Scan now" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open gallery" })).not.toBeInTheDocument();
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
   }, 10000);
 });

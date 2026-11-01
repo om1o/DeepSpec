@@ -63,26 +63,26 @@ export default function History() {
   );
 
   return (
-    <main className="min-h-dvh bg-[var(--ds-page)] px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-slate-950">
-      <div className="mx-auto w-full max-w-md">
+    <main className="min-h-dvh bg-[var(--ds-page)] pb-[max(2rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-[max(18px,env(safe-area-inset-top))] text-slate-950">
+      <div className="mx-auto w-full max-w-md md:max-w-4xl">
         <header className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <img src="/brand/deepspec-logo.webp" alt="Deep Spec" className="h-12 w-36 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-[var(--ds-accent-line)]" />
-            <h1 className="mt-2 text-2xl font-extrabold tracking-tight">Saved scans</h1>
+            <h1 className="mt-2 text-2xl font-extrabold tracking-tight text-white">Saved scans</h1>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <button
               type="button"
               onClick={handleSignOut}
               disabled={isSigningOut}
-              className="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200 disabled:opacity-60"
+              className="inline-flex min-h-11 items-center justify-center rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200 disabled:opacity-60"
             >
               {isSigningOut ? "Signing out..." : "Sign out"}
             </button>
-            <Link to="/early-access" className="rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200">
+            <Link to="/early-access" className="inline-flex min-h-11 items-center justify-center rounded-full bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-slate-200">
               Join
             </Link>
-            <Link to="/scan" className="rounded-full bg-[var(--ds-accent)] px-4 py-2 text-sm font-bold text-white shadow-sm">
+            <Link to="/scan" className="inline-flex min-h-11 items-center justify-center rounded-full bg-[var(--ds-accent)] px-4 py-2 text-sm font-bold text-white shadow-sm">
               Scan
             </Link>
           </div>
@@ -95,7 +95,7 @@ export default function History() {
             <label className="block">
               <span className="sr-only">Search saved scans</span>
               <input
-                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
+                className="min-h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-base font-semibold text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search saved scans"
                 value={query}
@@ -141,7 +141,7 @@ export default function History() {
         ) : null}
 
         {filteredLookups.length > 0 ? (
-          <div className="mt-6 space-y-3">
+          <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-2">
             {filteredLookups.map((lookup) => (
               <LookupCard key={lookup.id} lookup={lookup} />
             ))}
@@ -195,7 +195,7 @@ function ScanQualityMetricsPanel({ metrics }: { metrics: ScanQualityMetrics }) {
           {metrics.attempts} attempts
         </span>
       </div>
-      <div className="mt-4 grid grid-cols-2 gap-2">
+      <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-3">
         <MetricTile label="First-pass success" value={firstPassRate} />
         <MetricTile label="Avg. acceptable time" value={avgAcceptableSeconds} />
         <MetricTile label="Retakes" value={`${retakeCount}`} />
@@ -250,7 +250,7 @@ function FilterSelect({
       <span className="sr-only">{label}</span>
       <select
         aria-label={label}
-        className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-[var(--ds-accent)]"
+        className="min-h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-base font-bold text-slate-700 outline-none focus:border-[var(--ds-accent)]"
         onChange={(event) => onChange(event.target.value)}
         value={value}
       >

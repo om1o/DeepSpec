@@ -12,10 +12,18 @@ describe("production browser QA matrix", () => {
     expect(docs).toContain("Unknown route");
   });
 
-  it("requires desktop and mobile viewport evidence", () => {
+  it("requires desktop, phone, and iPad viewport evidence", () => {
     expect(docs).toContain("390 x 844");
+    expect(docs).toContain("430 x 932");
     expect(docs).toContain("375 x 667");
+    expect(docs).toContain("667 x 375");
+    expect(docs).toContain("768 x 1024");
+    expect(docs).toContain("820 x 1180");
+    expect(docs).toContain("1024 x 768");
     expect(docs).toContain("1440 x 900");
+    expect(docs).toContain("Chromium and WebKit");
+    expect(docs).toContain("44 x 44");
+    expect(docs).toContain("at least `16px`");
     expect(docs).toContain("accessibility snapshot");
     expect(docs).toContain("browser console");
     expect(docs).toContain("network requests");

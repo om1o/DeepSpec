@@ -74,7 +74,7 @@ export default defineConfig(async ({ mode }) => {
           theme_color: "#04070E",
           background_color: "#04070E",
           display: "standalone",
-          orientation: "portrait",
+          orientation: "any",
           start_url: "/",
           scope: "/",
           icons: [

@@ -37,9 +37,11 @@ describe("SEO assets", () => {
 
   it("keeps the install manifest mobile-friendly", () => {
     const viteConfig = read("vite.config.ts");
+    const publicManifest = JSON.parse(read("public/manifest.webmanifest")) as { orientation?: string };
 
     expect(viteConfig).toContain('display: "standalone"');
-    expect(viteConfig).toContain('orientation: "portrait"');
+    expect(viteConfig).toContain('orientation: "any"');
+    expect(publicManifest.orientation).toBe("any");
     expect(viteConfig).toContain('theme_color: "#04070E"');
     expect(viteConfig).toContain('background_color: "#04070E"');
     expect(viteConfig).toContain('purpose: "any maskable"');
