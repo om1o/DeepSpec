@@ -3,6 +3,7 @@ import { identifyOnDevice, isOnDeviceFallbackEnabled } from "./onDeviceIdentify"
 import { getAuthClient } from "./auth";
 import { getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import { prepareRetryFrame } from "../lib/retryFrame";
+import { compressImageDataUrl } from "../lib/utils";
 import {
   SCAN_CATEGORIES,
   type AIInput,
@@ -65,6 +66,16 @@ type AIApiFailure = {
 const ON_DEVICE_PROVIDER_FALLBACK_TIMEOUT_MS = 90_000;
 const DEFAULT_IDENTIFY_CLIENT_TIMEOUT_MS = 60_000;
 const DEFAULT_CHAT_CLIENT_TIMEOUT_MS = 30_000;
+const MAX_AI_REQUEST_BYTES = 4_000_000;
+const MAX_SINGLE_IDENTIFY_IMAGE_CHARS = 3_800_000;
+const MAX_DUAL_IDENTIFY_IMAGE_CHARS = 1_850_000;
+const IDENTIFY_COMPRESSION_STEPS = [
+  { maxLongestEdge: 1792, quality: 0.78 },
+  { maxLongestEdge: 1536, quality: 0.74 },
+  { maxLongestEdge: 1280, quality: 0.7 },
+  { maxLongestEdge: 1024, quality: 0.66 },
+  { maxLongestEdge: 768, quality: 0.62 },
+] as const;
 
 export class AIServiceError extends Error {
   code: AIErrorCode | string;
@@ -101,11 +112,21 @@ export async function runAI(input: AIInput): Promise<string | object> {
       throw new AIServiceError("invalid_input", "No captured image was provided.");
     }
 
+    const imageLimit = input.imageBase64_2
+      ? MAX_DUAL_IDENTIFY_IMAGE_CHARS
+      : MAX_SINGLE_IDENTIFY_IMAGE_CHARS;
+    const [imageBase64, imageBase64_2] = await Promise.all([
+      fitIdentifyImageToRequest(input.imageBase64, imageLimit),
+      input.imageBase64_2
+        ? fitIdentifyImageToRequest(input.imageBase64_2, imageLimit)
+        : Promise.resolve(undefined),
+    ]);
+
     const body = await postAI<IdentifyApiSuccess>(
       "/api/identify",
       {
-        imageBase64: input.imageBase64,
-        ...(input.imageBase64_2 ? { imageBase64_2: input.imageBase64_2 } : {}),
+        imageBase64,
+        ...(imageBase64_2 ? { imageBase64_2 } : {}),
         ...(input.labelRescueTrigger ? { labelRescueTrigger: input.labelRescueTrigger } : {}),
         ...(input.vehicleContext ? { vehicleContext: input.vehicleContext } : {}),
         ...(input.measurementContext ? { measurementContext: input.measurementContext } : {}),
@@ -130,6 +151,10 @@ async function postAI<TSuccess extends object>(
   options: { timeoutMs: number; scope?: AccountScope },
 ): Promise<TSuccess> {
   if (options.scope && !isAccountScopeCurrent(options.scope)) throw new AIServiceError("invalid_input", "Account changed. Reopen this scan before asking a question.");
+  const requestBody = JSON.stringify(payload);
+  if (new TextEncoder().encode(requestBody).byteLength > MAX_AI_REQUEST_BYTES) {
+    throw new AIServiceError("image_too_large", "The photo request is too large. Try a lower-resolution photo.");
+  }
   const authHeader = await getAuthHeader();
   if (options.scope && !isAccountScopeCurrent(options.scope)) throw new AIServiceError("invalid_input", "Account changed. Reopen this scan before asking a question.");
   const controller = new AbortController();
@@ -141,7 +166,7 @@ async function postAI<TSuccess extends object>(
       ...(authHeader ? { Authorization: authHeader } : {}),
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(payload),
+    body: requestBody,
   }).catch((error: unknown) => {
     if (isAbortError(error)) {
       throw new AIServiceError("network", "Scan took too long. Try again.");
@@ -160,6 +185,25 @@ async function postAI<TSuccess extends object>(
   }
 
   return body;
+}
+
+async function fitIdentifyImageToRequest(dataUrl: string, maxChars: number) {
+  if (dataUrl.length <= maxChars) {
+    return dataUrl;
+  }
+
+  try {
+    for (const step of IDENTIFY_COMPRESSION_STEPS) {
+      const compressed = await compressImageDataUrl(dataUrl, step.maxLongestEdge, step.quality);
+      if (compressed.length <= maxChars) {
+        return compressed;
+      }
+    }
+  } catch {
+    throw new AIServiceError("invalid_input", "The captured photo could not be prepared for scanning.");
+  }
+
+  throw new AIServiceError("image_too_large", "The captured photo is too large. Try a lower-resolution photo.");
 }
 
 export async function identifyCapturedFrame(

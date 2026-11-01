@@ -79,6 +79,9 @@ const DEFAULT_HF_AUTOMOTIVE_SOURCE_INDEX_PATH = "datasets/verified/hf-automotive
 const RETRYABLE_PROVIDER_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 const DEFAULT_BACKUP_RATE_LIMIT_RETRIES = 1;
 const DEFAULT_BACKUP_RETRY_BACKOFF_MS = 800;
+// Vercel rejects request bodies above 4.5 MB before the function runs. Keep
+// image data below that platform boundary with room for JSON and scan context.
+const MAX_IDENTIFY_IMAGE_PAYLOAD_CHARS = 4_000_000;
 
 // Credentialed image requests are restricted to exact, supported provider hosts.
 // Subdomains, lookalike suffixes, custom ports, embedded credentials, and HTTP are rejected.
@@ -1295,8 +1298,12 @@ function parseIdentifyRequest(body: unknown): ParsedIdentifyRequest | { error: I
     return { error: errorResponse(400, "invalid_input", "A captured image is required.") };
   }
 
-  // ~10 MB decoded; check length before running the regex on a giant string
-  if (body.imageBase64.length > 14_000_000) {
+  if (body.imageBase64_2 !== undefined && typeof body.imageBase64_2 !== "string") {
+    return { error: errorResponse(400, "invalid_input", "The second captured image must be a JPEG, PNG, or WebP data URL.") };
+  }
+
+  const secondImageLength = typeof body.imageBase64_2 === "string" ? body.imageBase64_2.length : 0;
+  if (body.imageBase64.length + secondImageLength > MAX_IDENTIFY_IMAGE_PAYLOAD_CHARS) {
     return { error: errorResponse(400, "image_too_large", "The captured image is too large. Try a lower-resolution photo.") };
   }
 
@@ -1305,15 +1312,15 @@ function parseIdentifyRequest(body: unknown): ParsedIdentifyRequest | { error: I
     return { error: errorResponse(400, "invalid_input", "The captured image must be a JPEG, PNG, or WebP data URL.") };
   }
 
-  // Optional second image — silently ignored if invalid or oversized
   let base64_2: string | null = null;
   let mimeType_2: string | null = null;
-  if (typeof body.imageBase64_2 === "string" && body.imageBase64_2.length <= 14_000_000) {
+  if (typeof body.imageBase64_2 === "string") {
     const parsed2 = parseDataUrl(body.imageBase64_2);
-    if (parsed2) {
-      base64_2 = parsed2.base64;
-      mimeType_2 = parsed2.mimeType;
+    if (!parsed2) {
+      return { error: errorResponse(400, "invalid_input", "The second captured image must be a JPEG, PNG, or WebP data URL.") };
     }
+    base64_2 = parsed2.base64;
+    mimeType_2 = parsed2.mimeType;
   }
 
   const hasSecond = base64_2 !== null;
@@ -1467,8 +1474,16 @@ function clampRatio(value: number) {
 }
 
 function parseDataUrl(dataUrl: string) {
-  const match = dataUrl.match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/);
-  if (!match) {
+  const match = dataUrl.match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/);
+  if (!match || match[2].length % 4 !== 0) {
+    return null;
+  }
+
+  try {
+    if (Buffer.from(match[2], "base64").toString("base64") !== match[2]) {
+      return null;
+    }
+  } catch {
     return null;
   }
 

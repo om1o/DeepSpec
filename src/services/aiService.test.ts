@@ -1,10 +1,16 @@
 import { getAIErrorDetails, identifyCapturedFrame, runAI, sendFollowUp, sendFollowUpDetails } from "./aiService";
 import { identifyOnDevice } from "./onDeviceIdentify";
 import { setActiveAccount } from "../lib/accountScope";
+import { compressImageDataUrl } from "../lib/utils";
 
 vi.mock("./onDeviceIdentify", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./onDeviceIdentify")>();
   return { ...actual, identifyOnDevice: vi.fn() };
+});
+
+vi.mock("../lib/utils", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/utils")>();
+  return { ...actual, compressImageDataUrl: vi.fn(async (value: string) => value) };
 });
 
 const result = {
@@ -46,6 +52,7 @@ const result = {
 describe("aiService", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.mocked(compressImageDataUrl).mockReset().mockImplementation(async (value) => value);
     setActiveAccount("chat-test-owner");
   });
 
@@ -171,6 +178,39 @@ describe("aiService", () => {
         method: "POST",
       }),
     );
+  });
+
+  it("compresses an oversized scan before sending it to the identify API", async () => {
+    const compressed = "data:image/jpeg;base64,dGVzdA==";
+    vi.mocked(compressImageDataUrl).mockResolvedValue(compressed);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ result }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await identifyCapturedFrame({
+      imageBase64: `data:image/jpeg;base64,${"A".repeat(3_800_001)}`,
+      capturedAt: "2026-05-16T00:00:00.000Z",
+    });
+
+    expect(compressImageDataUrl).toHaveBeenCalledOnce();
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toHaveProperty("imageBase64", compressed);
+  });
+
+  it("rejects an image that cannot fit the request budget before network access", async () => {
+    const oversized = `data:image/jpeg;base64,${"A".repeat(3_800_001)}`;
+    vi.mocked(compressImageDataUrl).mockResolvedValue(oversized);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    await expect(identifyCapturedFrame({
+      imageBase64: oversized,
+      capturedAt: "2026-05-16T00:00:00.000Z",
+    })).rejects.toMatchObject({ code: "image_too_large" });
+
+    expect(compressImageDataUrl).toHaveBeenCalledTimes(5);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("times out a hung identify request instead of leaving the scan loading", async () => {

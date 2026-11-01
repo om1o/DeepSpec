@@ -2577,9 +2577,9 @@ describe("createIdentifyResponse", () => {
     });
   });
 
-  it("rejects images over 10 MB before calling Gemini", async () => {
+  it("rejects image payloads above the Vercel request budget before calling Gemini", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
-    const bigImage = `data:image/jpeg;base64,${"A".repeat(14_000_001)}`;
+    const bigImage = `data:image/jpeg;base64,${"A".repeat(4_000_001)}`;
 
     await expect(createIdentifyResponse({ imageBase64: bigImage }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
       status: 400,
@@ -2609,25 +2609,44 @@ describe("createIdentifyResponse", () => {
     expect(imageParts).toHaveLength(2);
   });
 
-  it("proceeds with one image when imageBase64_2 is invalid", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    );
+  it("rejects an invalid second image instead of silently dropping it", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
 
-    await createIdentifyResponse(
+    await expect(createIdentifyResponse(
       { imageBase64, imageBase64_2: "not-a-valid-data-url" },
       { GEMINI_API_KEY: "test-key" },
-    );
+    )).resolves.toMatchObject({
+      status: 400,
+      body: { error: { code: "invalid_input" } },
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 
-    const callBody = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
-    const parts = callBody.contents[0].parts;
-    const imageParts = parts.filter((p: { inline_data?: unknown }) => "inline_data" in p);
-    expect(imageParts).toHaveLength(1);
+  it("rejects malformed base64 before calling a provider", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    await expect(createIdentifyResponse(
+      { imageBase64: "data:image/jpeg;base64,=" },
+      { GEMINI_API_KEY: "test-key" },
+    )).resolves.toMatchObject({
+      status: 400,
+      body: { error: { code: "invalid_input" } },
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects two images whose combined payload exceeds the Vercel request budget", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const largeImage = `data:image/jpeg;base64,${"A".repeat(2_100_000)}`;
+
+    await expect(createIdentifyResponse(
+      { imageBase64: largeImage, imageBase64_2: largeImage },
+      { GEMINI_API_KEY: "test-key" },
+    )).resolves.toMatchObject({
+      status: 400,
+      body: { error: { code: "image_too_large" } },
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("normalizes better-photo model output", async () => {
