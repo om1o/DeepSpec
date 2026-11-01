@@ -69,6 +69,22 @@ describe("identify reservation finalization", () => {
     expect(JSON.stringify(response.json.mock.calls)).not.toContain("private provider detail");
   });
 
+  it("authenticates before consuming a shared IP rate-limit slot", async () => {
+    vi.mocked(requireSession).mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      body: { error: { code: "missing_session", message: "Sign in to use DeepSpec." } },
+    });
+    const response = createResponse();
+
+    await handler({ method: "POST", body: request.body }, response);
+
+    expect(response.status).toHaveBeenCalledWith(401);
+    expect(enforceRateLimit).not.toHaveBeenCalled();
+    expect(reserveScanCredit).not.toHaveBeenCalled();
+    expect(createIdentifyResponse).not.toHaveBeenCalled();
+  });
+
   it("preserves the safe provider response when finalization throws", async () => {
     const providerFailure = {
       status: 502,

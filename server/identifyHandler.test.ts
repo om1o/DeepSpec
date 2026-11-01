@@ -129,8 +129,8 @@ describe("identify HTTP credit gate", () => {
     vi.mocked(requireSession).mockResolvedValueOnce({ ok: false, status: 401, body: { error: { code: "missing_session", message: "Sign in" } } });
     const res = response();
     await handler({ method: "POST", body }, res);
-    expect(enforceRateLimit).toHaveBeenCalledWith("identify", {}, process.env);
     expect(requireSession).toHaveBeenCalledWith({}, process.env);
+    expect(enforceRateLimit).not.toHaveBeenCalled();
     expect(mocks.createClient).not.toHaveBeenCalled();
     expect(mocks.identify).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(401);
@@ -157,7 +157,7 @@ describe("identify HTTP credit gate", () => {
     expect(res.json).toHaveBeenCalledWith(failure);
     expect(res.setHeader).toHaveBeenCalledWith("Retry-After", "60");
     expect(mocks.identify).not.toHaveBeenCalled();
-    expect(requireSession).not.toHaveBeenCalled();
+    expect(requireSession).toHaveBeenCalledOnce();
   });
 
   it("still validates uploads with obsolete guest flags before invoking a provider", async () => {
