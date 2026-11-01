@@ -7,11 +7,12 @@ const foundationMigrationPath = join(migrationsDir, "20260518000100_deepspec_sec
 const durableDatasetMigrationPath = join(migrationsDir, "20260528000309_durable_dataset_tables.sql");
 const mechanicShopMigrationPath = join(migrationsDir, "20260618000100_mechanic_shop_mode.sql");
 const membershipHardeningMigrationPath = join(migrationsDir, "20261010171030_harden_organization_member_identity.sql");
-const shopJobIdentityMigrationPath = join(migrationsDir, "20261031101500_harden_shop_job_identity.sql");
-const billingIdempotencyMigrationPath = join(migrationsDir, "20261031142108_billing_webhook_idempotency.sql");
+const shopJobIdentityMigrationPath = join(migrationsDir, "20261101121022_harden_shop_job_identity.sql");
+const billingIdempotencyMigrationPath = join(migrationsDir, "20261101121024_billing_webhook_idempotency.sql");
 const billingIdempotencySqlTestPath = join(process.cwd(), "supabase", "tests", "billing_webhook_idempotency.sql");
-const publicWriteHardeningMigrationPath = join(migrationsDir, "20261031153000_harden_public_write_surfaces.sql");
+const publicWriteHardeningMigrationPath = join(migrationsDir, "20261101121028_harden_public_write_surfaces.sql");
 const publicWriteHardeningSqlTestPath = join(process.cwd(), "supabase", "tests", "public_write_hardening.sql");
+const releaseSecurityOptimizationMigrationPath = join(migrationsDir, "20261101121627_optimize_release_security.sql");
 const srcPath = join(process.cwd(), "src");
 
 describe("Supabase secure foundation migration", () => {
@@ -69,7 +70,8 @@ describe("Supabase form-write hardening migration", () => {
     expect(sql).toContain("grant insert (category, message, contact_email, issue_code, scan_local_id, reported_prediction)");
     expect(sql).toContain("to authenticated");
     expect(sql).not.toMatch(/to anon\b/);
-    expect(sql).toContain("auth.jwt() ->> 'is_anonymous'");
+    expect(sql).toContain("(select auth.jwt()) ->> 'is_anonymous'");
+    expect(sql).not.toContain("select auth.jwt() ->> 'is_anonymous'");
   });
 
   it("caps user-controlled text and includes a rollback-only privilege regression", () => {
@@ -93,6 +95,24 @@ describe("Supabase form-write hardening migration", () => {
     expect(regression).toContain("Twenty-first daily feedback should fail");
     expect(regression).toContain("Fourth daily signup should fail");
     expect(regression).toContain("rollback;");
+  });
+});
+
+describe("Supabase release security optimization migration", () => {
+  const sql = readFileSync(releaseSecurityOptimizationMigrationPath, "utf8");
+
+  it("keeps form ownership checks planner-safe", () => {
+    expect(sql).toContain("drop policy if exists waitlist_signups_insert_authenticated");
+    expect(sql).toContain("drop policy if exists feedback_submissions_insert_authenticated");
+    expect(sql.match(/\(select auth\.jwt\(\)\) ->> 'is_anonymous'/g)).toHaveLength(2);
+    expect(sql).not.toContain("select auth.jwt() ->> 'is_anonymous'");
+  });
+
+  it("covers the release foreign keys", () => {
+    expect(sql).toContain("billing_purchase_events_user_idx");
+    expect(sql).toContain("on public.billing_purchase_events (user_id)");
+    expect(sql).toContain("job_scans_job_org_cover_idx");
+    expect(sql).toContain("on public.job_scans (job_id, org_id)");
   });
 });
 

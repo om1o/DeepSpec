@@ -1,4 +1,4 @@
--- Run after 20261031153000_harden_public_write_surfaces.sql. Fixtures roll back.
+-- Run after 20261101121028_harden_public_write_surfaces.sql. Fixtures roll back.
 begin;
 do $$
 declare

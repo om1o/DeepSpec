@@ -1,4 +1,4 @@
--- Run after 20261031142108_billing_webhook_idempotency.sql. Fixtures roll back.
+-- Run after 20261101121024_billing_webhook_idempotency.sql. Fixtures roll back.
 begin;
 do $$
 declare

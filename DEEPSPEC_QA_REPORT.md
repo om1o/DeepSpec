@@ -2,7 +2,7 @@
 
 ## Hosted API and scan release gate - 2026-11-01 (America/New_York)
 
-**Decision: do not promote either current Vercel deployment.** Runtime head `66178bf3` is the first local candidate in this audit to pass the complete code gate, a real `vercel build`, emitted-function smoke checks, signed-out browser checks with the real public Supabase configuration, and signed-in browser checks with a synthetic intercepted session. It has not been pushed or deployed, and no hosted revision yet combines these repairs with the required server credential, production schema, provider configuration, and real authenticated scan journey.
+**Decision: do not promote Production yet.** Repair head `59dc6fcf` is pushed and its immutable Vercel Preview is Ready. Exact-head CI passed the complete code gate, the release migrations are now applied in production Supabase, and existing identify-provider credentials are staged only for this Preview branch. Promotion remains blocked until a new server-only Supabase secret is installed, the Preview is rebuilt, and the real authenticated scan/save/reopen journey passes.
 
 ### Revision and live endpoint evidence
 
@@ -10,15 +10,18 @@
 | --- | --- | --- |
 | Production [`https://deepspec.vercel.app`](https://deepspec.vercel.app) | `/` = `200`; `/auth` = `404`; `/scan` = `404`; safe `GET /api/identify` = `500 FUNCTION_INVOCATION_FAILED`; bounded synthetic POST also failed before returning a DeepSpec error code | Production is an obsolete deployment and is not a usable authenticated app or scan API. |
 | PR [#124](https://github.com/om1o/DeepSpec/pull/124) immutable Preview at [`f9ba5cc3`](https://github.com/om1o/DeepSpec/commit/f9ba5cc3736b3b16fd1836f8ec4b655cb29d2ec3) | `/`, `/auth` and `/scan` = `200`; safe `GET /api/identify` = `405`; bounded synthetic POST = `500 not_configured` | SPA routing and function loading work, but the Preview has no usable identify-provider configuration. No inference was attempted. |
-| Local branch `codex/hosted-v1-repair-20261031` | Runtime head `66178bf3`, 31 repair commits beyond PR #124; this report commit is evidence-only | Current API, auth, scan, history, package and resilience repairs remain local. The branch contains PR #119 and PR #124, but neither PR contains these repairs. |
+| Repair Preview [`https://deepspec-neqdqmjeq-deep-spec-team.vercel.app`](https://deepspec-neqdqmjeq-deep-spec-team.vercel.app) | Ready at pushed head `59dc6fcf`; `/`, `/auth` and `/scan` = `200`; safe API guards return `405`/`401` | This is the only current hosted release candidate. Existing provider credentials and fallback configuration are staged for its branch, but a rebuild and `SUPABASE_SECRET_KEY` are still required before live inference. |
+| Branch `codex/hosted-v1-repair-20261031` | Remote head `59dc6fcf`, 32 commits beyond PR #124 | The branch contains the current API, auth, scan, history, packaging and resilience repairs. The migration-ledger alignment in this report's successor commit must pass the same gate before its push. |
 
-PR #119 remains open with a successful historical Quality gate but an unstable merge state. PR #124 remains an open draft with a clean merge state and successful historical Quality gates. Those checks do not cover this local candidate. Provider and Supabase variables were inventoried by name only; no secret value was copied into source, artifacts or this report.
+PR #119 remains historical input. PR #124 is the exact merge base for this stacked repair branch; no PR was merged and Production was not promoted. Provider and Supabase variables were inventoried by name only; no secret value was copied into source, artifacts or this report.
 
 ### Exact-head local verification
 
 | Check | Result |
 | --- | --- |
 | Full repository gate | **PASS on `66178bf3`:** `npm run check`; ESLint, **113 files / 1,644 tests**, TypeScript, Vite production build and public/brand integrity all passed. The optional Transformers chunk and approximately 26.9 MB WASM asset remain performance debt. |
+| GitHub Quality gate | **PASS on pushed `59dc6fcf`:** run `41304562118`; ESLint, **113 files / 1,644 tests**, TypeScript, Vite production build and asset checks passed. |
+| Migration-aligned repository gate | **PASS on the successor tree:** `npm run check`; ESLint, **113 files / 1,646 tests**, TypeScript, Vite production build and public/brand integrity all passed. The two added tests cover planner-safe auth expressions and release foreign-key indexes. |
 | Vercel package | **PASS on `66178bf3`:** `npx vercel build --environment preview`; exactly six emitted functions, all `nodejs22.x`, with explicit durations `30/30/30/30/60/90` seconds. Every emitted handler imported and returned its expected `405` method guard. The identify dataset is present in its function trace. See [Vercel build](https://vercel.com/docs/cli/build), [Node runtimes](https://vercel.com/docs/functions/runtimes/node-js/node-js-versions), and [function limits](https://vercel.com/docs/functions/limitations). |
 | Provider route access | **PARTIAL:** local no-inference metadata probes returned `200` for the configured Gemini, Groq and third OpenAI-compatible/HF route model endpoints. This proves local credential/model access only. It does not prove image inference, fallback reliability, Vercel environment installation or uptime. Artifacts: `C:/Users/omiol/deepspec/artifacts/release-gates/identify-provider-access-final.{json,md}`. |
 | Signed-out browser | **PASS:** a served production build using only the real public Supabase URL and publishable key passed desktop `1365x900` and phone-emulated `390x844` checks. Root opened the intro; the intro opened the original account/email-link sign-in screen; `/scan`, `/history`, `/result/:id`, chat and account routes required auth; no horizontal overflow, same-origin request failure, page error or console error. Evidence: `artifacts/qa/2026-11-01-signed-out-browser-final/`. |
@@ -35,20 +38,20 @@ PR #119 remains open with a successful historical Quality gate but an unstable m
 
 ### Supabase readiness
 
-- Project `deepspec` is `ACTIVE_HEALTHY`; the production migration ledger still ends at `20261013224258 harden_organization_member_identity`.
-- Production is missing `20261031101500_harden_shop_job_identity.sql`, `20261031142108_billing_webhook_idempotency.sql`, and `20261031153000_harden_public_write_surfaces.sql`. No remote migration was applied.
+- Project `deepspec` is `ACTIVE_HEALTHY`. The three reviewed release migrations were applied in order and recorded as `20261101121022 harden_shop_job_identity`, `20261101121024 billing_webhook_idempotency`, and `20261101121028 harden_public_write_surfaces`.
+- Follow-up `20261101121627 optimize_release_security` replaced the two new authenticated form policies with planner-safe auth expressions and added covering indexes for `billing_purchase_events.user_id` and `job_scans.(job_id, org_id)`. Postflight catalog probes confirmed both policies and indexes.
 - Security Advisor reports leaked-password protection disabled. This remains a dashboard hardening blocker: [Supabase password security](https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection).
-- Seven RLS-with-no-policy tables were catalog-verified as `service_role`-only with no `anon` or `authenticated` grants. They are intentional server tables; adding broad client policies would reduce security. Eight unindexed foreign keys, thirteen unused indexes and one multiple-permissive-policy notice are performance/maintenance debt, not immediate confidentiality findings.
+- Eight RLS-with-no-policy tables, including the new `billing_purchase_events`, are service-only with no client grants. They are intentional server tables; adding broad client policies would reduce security. The two migration-introduced `auth_rls_initplan` warnings are gone, and unindexed-foreign-key findings fell from nine to seven. Remaining advisor items are pre-existing performance/maintenance debt, not immediate confidentiality findings.
 
 ### Required closed-loop acceptance
 
-1. Approve and perform staged rotation of the previously exposed legacy Supabase server credential. Install a new `SUPABASE_SECRET_KEY` in Vercel Preview, verify every server consumer, retain rollback only until verification succeeds, then deactivate the legacy key.
-2. Review and apply the three missing migrations to the intended Supabase environment, then rerun migration, security and performance checks.
-3. Push this isolated branch and create a new immutable Preview. Install one existing provider credential in Preview, without recreating keys unnecessarily, and verify the emitted function configuration there.
-4. Use the authorized account in a user-controlled login step, then run one approved known-image identification and complete session restore -> scan -> save -> refresh -> history -> logout/login -> exact photo/result/chat reopen. Preserve the immutable deployment, provider/model/run metadata and recovery evidence.
-5. Rerun CI and build on the pushed head, then add external checks for `/`, `/auth`, method guards and controlled API failure. No provider can honestly be guaranteed to work "at all times"; production reliability requires monitored health, bounded failure, and separately proven fallbacks.
+1. Create a new named `sb_secret_...` key in Supabase, install it as branch-scoped `SUPABASE_SECRET_KEY`, rebuild the Preview, and verify every server consumer before deactivating the exposed legacy credential.
+2. Push the exact migration-ledger alignment after the full local gate passes; require green exact-head CI and a Ready immutable Preview.
+3. Repeat route/API probes and confirm unauthenticated identify returns the controlled `401` guard, not a packaging or configuration failure.
+4. Use the authorized account in a user-controlled login step, then run the one approved known-image identification and complete session restore -> scan -> save -> refresh -> history -> logout/login -> exact photo/result reopen. Preserve the immutable deployment, provider/model/run metadata and recovery evidence. AI follow-up chat is a separate provider request and remains outside this one-scan approval.
+5. Rerun Supabase advisors and make a separate Production promotion decision. No provider can honestly be guaranteed to work "at all times"; production reliability requires monitored health, bounded failure, and separately proven fallbacks.
 
-No deployment, push, merge, provider inference, account creation, auth email, credential change, remote migration or paid action was performed during this gate.
+The repair branch was pushed, a branch Preview was created, four reviewed migrations were applied, and existing provider credentials were staged without exposing values. No merge, Production promotion, provider inference, account creation, auth email, paid action, new Supabase secret creation, or legacy-key deactivation has occurred.
 
 ## Current evidence reconciliation — 2026-10-22 (America/New_York)
 

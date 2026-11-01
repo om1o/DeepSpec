@@ -24,7 +24,7 @@ create policy waitlist_signups_insert_authenticated
   to authenticated
   with check (
     (select auth.uid()) is not null
-    and coalesce((select auth.jwt() ->> 'is_anonymous')::boolean, false) = false
+    and coalesce(((select auth.jwt()) ->> 'is_anonymous')::boolean, false) = false
     and user_id = (select auth.uid())
     and source = 'pwa'
     and length(trim(email)) between 5 and 160
@@ -42,7 +42,7 @@ create policy feedback_submissions_insert_authenticated
   to authenticated
   with check (
     (select auth.uid()) is not null
-    and coalesce((select auth.jwt() ->> 'is_anonymous')::boolean, false) = false
+    and coalesce(((select auth.jwt()) ->> 'is_anonymous')::boolean, false) = false
     and user_id = (select auth.uid())
     and source = 'pwa'
     and length(trim(message)) between 8 and 800

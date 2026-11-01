@@ -1,4 +1,4 @@
--- Run after 20261031101500_harden_shop_job_identity.sql.
+-- Run after 20261101121022_harden_shop_job_identity.sql.
 begin;
 do $$
 begin
