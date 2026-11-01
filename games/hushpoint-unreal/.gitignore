@@ -1,0 +1,18 @@
+# Unreal-generated state. SourceAssets, Config, Content, and project files stay tracked.
+Binaries/
+Build/
+DerivedDataCache/
+Intermediate/
+Saved/
+.vs/
+*.sln
+*.VC.db
+*.VC.opendb
+
+# Local IDE state.
+.idea/
+.vscode/
+
+# Imported asset source remains in SourceAssets; only transient Blender backups are ignored.
+*.blend1
+*.blend2
