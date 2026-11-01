@@ -3,7 +3,7 @@ import { createLookup, getLookups, LOOKUPS_STORAGE_KEY, MAX_SAVED_LOOKUPS } from
 import { hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, expect, vi } from "vitest";
 import Scanner from "./Scanner";
 
@@ -141,10 +141,17 @@ vi.mock("react-webcam", () => ({
 
 vi.mock("../services/aiService", () => ({
   AIServiceError: class AIServiceError extends Error {
-    code = "test";
+    code: string;
+
+    constructor(code: string, message: string) {
+      super(message);
+      this.name = "AIServiceError";
+      this.code = code;
+    }
   },
   getAIErrorMessage: (error: unknown) => (error instanceof Error ? error.message : "AI failed"),
   identifyCapturedFrame: (...args: unknown[]) => identifyCapturedFrame(...args),
+  isAIRequestCanceled: (error: unknown) => error instanceof DOMException && error.name === "AbortError",
 }));
 
 vi.mock("../services/cloudSync", () => ({
@@ -185,6 +192,11 @@ vi.mock("../lib/scanCache", () => ({
   getCachedScanResult: vi.fn(() => null),
   setCachedScanResult: vi.fn(),
 }));
+
+function AuthReturnProbe() {
+  const state = useLocation().state as { from?: string } | null;
+  return <p>Auth return: {state?.from ?? "missing"}</p>;
+}
 
 describe("Scanner", () => {
   afterEach(() => {
@@ -1241,6 +1253,111 @@ describe("Scanner", () => {
     expect(await screen.findByText("Scan canceled. Ready when you are.")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 1, name: "Alternator" })).not.toBeInTheDocument();
   }, 10000);
+
+  it("aborts the real identify signal, blocks an overlapping upload, and preserves the captured photo", async () => {
+    let activeSignal: AbortSignal | null = null;
+    let rejectCanceled!: (error: Error) => void;
+    identifyCapturedFrame
+      .mockImplementationOnce((...args: unknown[]) => new Promise((_resolve, reject) => {
+        activeSignal = (args[3] as { signal?: AbortSignal } | undefined)?.signal ?? null;
+        rejectCanceled = reject;
+      }))
+      .mockResolvedValueOnce(makeScanResult("Water pump"));
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await waitFor(() => expect(activeSignal).not.toBeNull());
+    expect(screen.getByRole("button", { name: "Switch camera" })).toBeDisabled();
+    expect(screen.getByTestId("scan-analyzing-overlay")).toHaveClass("z-[80]");
+
+    await userEvent.click(screen.getByRole("button", { name: "Cancel scan" }));
+    expect(activeSignal?.aborted).toBe(true);
+    expect(sessionStorage.getItem(accountStorageKey("deep-spec:latest-scan-state"))).toContain("compressed-frame");
+
+    fireEvent.change(screen.getByLabelText("Upload photo"), {
+      target: { files: [new File(["first retry"], "retry.jpg", { type: "image/jpeg" })] },
+    });
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      rejectCanceled(new DOMException("Aborted", "AbortError"));
+      await Promise.resolve();
+    });
+    fireEvent.change(screen.getByLabelText("Upload photo"), {
+      target: { files: [new File(["second retry"], "retry.jpg", { type: "image/jpeg" })] },
+    });
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(2), { timeout: 6000 });
+    expect(await screen.findByRole("heading", { level: 3, name: "Water pump" }, { timeout: 6000 })).toBeInTheDocument();
+    expect(screen.queryByText("The photo is saved. Try again.")).not.toBeInTheDocument();
+  }, 15000);
+
+  it("aborts the active identify request when the scanner unmounts", async () => {
+    let activeSignal: AbortSignal | null = null;
+    identifyCapturedFrame.mockImplementationOnce((...args: unknown[]) => new Promise((_resolve, reject) => {
+      activeSignal = (args[3] as { signal?: AbortSignal } | undefined)?.signal ?? null;
+      activeSignal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+    }));
+    const { unmount } = render(<MemoryRouter><Scanner /></MemoryRouter>);
+
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await waitFor(() => expect(activeSignal).not.toBeNull());
+    unmount();
+
+    expect(activeSignal?.aborted).toBe(true);
+  });
+
+  it("aborts the active identify request when the account scope changes", async () => {
+    let activeSignal: AbortSignal | null = null;
+    identifyCapturedFrame.mockImplementationOnce((...args: unknown[]) => new Promise((_resolve, reject) => {
+      activeSignal = (args[3] as { signal?: AbortSignal } | undefined)?.signal ?? null;
+      activeSignal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+    }));
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await waitFor(() => expect(activeSignal).not.toBeNull());
+    setActiveAccount("replacement-user");
+
+    await waitFor(() => expect(activeSignal?.aborted).toBe(true));
+    expect(screen.queryByRole("heading", { level: 3, name: "Item captured" })).not.toBeInTheDocument();
+  });
+
+  it.each(["missing_session", "invalid_session"])("saves the photo and offers a /scan sign-in return for %s", async (code) => {
+    const { AIServiceError } = await import("../services/aiService");
+    identifyCapturedFrame.mockRejectedValueOnce(new AIServiceError(code, "Server auth details must not be shown."));
+    render(
+      <MemoryRouter initialEntries={["/scan"]}>
+        <Routes>
+          <Route path="/scan" element={<Scanner />} />
+          <Route path="/auth" element={<AuthReturnProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    const signIn = await screen.findByRole("link", { name: "Sign in to continue" });
+    expect(screen.getByText("The photo is saved. Sign in again to continue.")).toBeInTheDocument();
+    expect(getLookups()[0]).toMatchObject({ errorCode: code, frame: { imageBase64: expect.stringContaining("compressed-frame") } });
+
+    await userEvent.click(signIn);
+    expect(await screen.findByText("Auth return: /scan")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["rate_limit_unavailable", "Request limits could not be verified"],
+    ["scan_limit_reached", "No scan credits are available"],
+    ["entitlement_unavailable", "Scan credits could not be verified"],
+    ["session_unavailable", "Your session could not be verified right now"],
+  ])("shows a specific saved-photo recovery for %s", async (code, expectedMessage) => {
+    const { AIServiceError } = await import("../services/aiService");
+    identifyCapturedFrame.mockRejectedValueOnce(new AIServiceError(code, "Raw server detail"));
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+
+    expect(await screen.findByText(new RegExp(expectedMessage))).toBeInTheDocument();
+    expect(screen.queryByText("Raw server detail")).not.toBeInTheDocument();
+  });
 
   it.each(["other-user", "test-user"])("discards a pending scan after account change ending at %s", async (finalAccount) => {
     vi.mocked(hashImageDataUrl).mockResolvedValueOnce("private-image-hash");

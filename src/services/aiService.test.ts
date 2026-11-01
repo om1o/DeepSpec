@@ -1,4 +1,4 @@
-import { getAIErrorDetails, identifyCapturedFrame, runAI, sendFollowUp, sendFollowUpDetails } from "./aiService";
+import { getAIErrorDetails, identifyCapturedFrame, isAIRequestCanceled, runAI, sendFollowUp, sendFollowUpDetails } from "./aiService";
 import { identifyOnDevice } from "./onDeviceIdentify";
 import { setActiveAccount } from "../lib/accountScope";
 import { compressImageDataUrl } from "../lib/utils";
@@ -231,6 +231,57 @@ describe("aiService", () => {
       code: "network",
       message: "Scan took too long. Try again.",
     });
+  });
+
+  it("aborts the active fetch without starting the on-device fallback when the caller cancels", async () => {
+    vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "true");
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    vi.mocked(identifyOnDevice).mockReset();
+    let fetchSignal: AbortSignal | null = null;
+    let markFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => { markFetchStarted = resolve; });
+    vi.spyOn(globalThis, "fetch").mockImplementation((_path, options) => new Promise((_resolve, reject) => {
+      fetchSignal = options?.signal ?? null;
+      markFetchStarted();
+      fetchSignal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+    }) as never);
+    const controller = new AbortController();
+
+    const scan = identifyCapturedFrame(
+      { imageBase64: "data:image/jpeg;base64,test", capturedAt: "2026-05-16T00:00:00.000Z" },
+      undefined,
+      undefined,
+      { signal: controller.signal },
+    ).catch((error: unknown) => error);
+    await fetchStarted;
+    controller.abort();
+
+    const error = await scan;
+    expect(isAIRequestCanceled(error)).toBe(true);
+    expect(fetchSignal?.aborted).toBe(true);
+    expect(identifyOnDevice).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [undefined, 80_000],
+    ["85000", 85_000],
+    ["85001", 80_000],
+  ])("uses the hosted identify client deadline %s within the 85-second ceiling", async (configured, expected) => {
+    if (configured) vi.stubEnv("VITE_DEEPSPEC_IDENTIFY_CLIENT_TIMEOUT_MS", configured);
+    const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ result }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await identifyCapturedFrame({
+      imageBase64: "data:image/jpeg;base64,test",
+      capturedAt: "2026-05-16T00:00:00.000Z",
+    });
+
+    expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), expected);
   });
 
   it("preserves identify provider metadata from the API response", async () => {

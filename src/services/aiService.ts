@@ -23,14 +23,20 @@ import {
 } from "../types";
 
 type AIErrorCode =
+  | "entitlement_unavailable"
   | "feature_disabled"
   | "image_too_large"
   | "invalid_input"
+  | "invalid_session"
   | "invalid_response"
+  | "missing_session"
   | "network"
   | "not_configured"
   | "provider_error"
   | "rate_limited"
+  | "rate_limit_unavailable"
+  | "scan_limit_reached"
+  | "session_unavailable"
   | "unsupported";
 
 export type AIErrorCategory = "input" | "model_response" | "provider_unavailable" | "setup" | "unknown";
@@ -63,8 +69,12 @@ type AIApiFailure = {
   };
 };
 
+type AIRequestOptions = {
+  signal?: AbortSignal;
+};
+
 const ON_DEVICE_PROVIDER_FALLBACK_TIMEOUT_MS = 90_000;
-const DEFAULT_IDENTIFY_CLIENT_TIMEOUT_MS = 60_000;
+const DEFAULT_IDENTIFY_CLIENT_TIMEOUT_MS = 80_000;
 const DEFAULT_CHAT_CLIENT_TIMEOUT_MS = 30_000;
 const MAX_AI_REQUEST_BYTES = 4_000_000;
 const MAX_SINGLE_IDENTIFY_IMAGE_CHARS = 3_800_000;
@@ -87,7 +97,8 @@ export class AIServiceError extends Error {
   }
 }
 
-export async function runAI(input: AIInput): Promise<string | object> {
+export async function runAI(input: AIInput, options: AIRequestOptions = {}): Promise<string | object> {
+  throwIfAborted(options.signal);
   if (input.type === "text") {
     if (!input.userMessage.trim()) {
       throw new AIServiceError("invalid_input", "Ask a question first.");
@@ -101,7 +112,7 @@ export async function runAI(input: AIInput): Promise<string | object> {
         systemPrompt: input.systemPrompt,
         responseAsJson: input.responseAsJson ?? false,
       },
-      { timeoutMs: DEFAULT_CHAT_CLIENT_TIMEOUT_MS },
+      { signal: options.signal, timeoutMs: DEFAULT_CHAT_CLIENT_TIMEOUT_MS },
     );
 
     return body.message;
@@ -116,11 +127,12 @@ export async function runAI(input: AIInput): Promise<string | object> {
       ? MAX_DUAL_IDENTIFY_IMAGE_CHARS
       : MAX_SINGLE_IDENTIFY_IMAGE_CHARS;
     const [imageBase64, imageBase64_2] = await Promise.all([
-      fitIdentifyImageToRequest(input.imageBase64, imageLimit),
+      fitIdentifyImageToRequest(input.imageBase64, imageLimit, options.signal),
       input.imageBase64_2
-        ? fitIdentifyImageToRequest(input.imageBase64_2, imageLimit)
+        ? fitIdentifyImageToRequest(input.imageBase64_2, imageLimit, options.signal)
         : Promise.resolve(undefined),
     ]);
+    throwIfAborted(options.signal);
 
     const body = await postAI<IdentifyApiSuccess>(
       "/api/identify",
@@ -133,7 +145,7 @@ export async function runAI(input: AIInput): Promise<string | object> {
         userMessage: input.userMessage,
         responseAsJson: input.responseAsJson ?? true,
       },
-      { timeoutMs: getIdentifyClientTimeoutMs() },
+      { signal: options.signal, timeoutMs: getIdentifyClientTimeoutMs() },
     );
 
     return {
@@ -148,16 +160,20 @@ export async function runAI(input: AIInput): Promise<string | object> {
 async function postAI<TSuccess extends object>(
   path: string,
   payload: object,
-  options: { timeoutMs: number; scope?: AccountScope },
+  options: { signal?: AbortSignal; timeoutMs: number; scope?: AccountScope },
 ): Promise<TSuccess> {
+  throwIfAborted(options.signal);
   if (options.scope && !isAccountScopeCurrent(options.scope)) throw new AIServiceError("invalid_input", "Account changed. Reopen this scan before asking a question.");
   const requestBody = JSON.stringify(payload);
   if (new TextEncoder().encode(requestBody).byteLength > MAX_AI_REQUEST_BYTES) {
     throw new AIServiceError("image_too_large", "The photo request is too large. Try a lower-resolution photo.");
   }
   const authHeader = await getAuthHeader();
+  throwIfAborted(options.signal);
   if (options.scope && !isAccountScopeCurrent(options.scope)) throw new AIServiceError("invalid_input", "Account changed. Reopen this scan before asking a question.");
   const controller = new AbortController();
+  const abortFromCaller = () => controller.abort();
+  options.signal?.addEventListener("abort", abortFromCaller, { once: true });
   const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs);
   const response = await fetch(path, {
     method: "POST",
@@ -168,6 +184,9 @@ async function postAI<TSuccess extends object>(
     },
     body: requestBody,
   }).catch((error: unknown) => {
+    if (options.signal?.aborted) {
+      throw createAbortError();
+    }
     if (isAbortError(error)) {
       throw new AIServiceError("network", "Scan took too long. Try again.");
     }
@@ -175,7 +194,10 @@ async function postAI<TSuccess extends object>(
     throw new AIServiceError("network", "Could not reach the Deep Spec AI service.");
   }).finally(() => {
     clearTimeout(timeoutId);
+    options.signal?.removeEventListener("abort", abortFromCaller);
   });
+
+  throwIfAborted(options.signal);
 
   const body = (await response.json().catch(() => null)) as TSuccess | AIApiFailure | null;
 
@@ -187,19 +209,23 @@ async function postAI<TSuccess extends object>(
   return body;
 }
 
-async function fitIdentifyImageToRequest(dataUrl: string, maxChars: number) {
+async function fitIdentifyImageToRequest(dataUrl: string, maxChars: number, signal?: AbortSignal) {
+  throwIfAborted(signal);
   if (dataUrl.length <= maxChars) {
     return dataUrl;
   }
 
   try {
     for (const step of IDENTIFY_COMPRESSION_STEPS) {
+      throwIfAborted(signal);
       const compressed = await compressImageDataUrl(dataUrl, step.maxLongestEdge, step.quality);
+      throwIfAborted(signal);
       if (compressed.length <= maxChars) {
         return compressed;
       }
     }
-  } catch {
+  } catch (error) {
+    if (isAbortError(error)) throw error;
     throw new AIServiceError("invalid_input", "The captured photo could not be prepared for scanning.");
   }
 
@@ -212,16 +238,21 @@ export async function identifyCapturedFrame(
   labelRescueTrigger?: LabelRescueTrigger,
   options: {
     measurementContext?: MeasurementContext;
+    signal?: AbortSignal;
     vehicleContext?: VehicleContext;
   } = {},
 ): Promise<IdentificationResult> {
+  throwIfAborted(options.signal);
   if (isOnDeviceFallbackEnabled() && typeof navigator !== "undefined" && navigator.onLine === false) {
-    return identifyOnDevice(frame);
+    const offlineResult = await identifyOnDevice(frame);
+    throwIfAborted(options.signal);
+    return assertIdentificationResult(offlineResult);
   }
 
   const result = await runCloudIdentify(frame, secondFrame, labelRescueTrigger, options).catch((error: unknown) => {
+    throwIfAborted(options.signal);
     if (shouldUseOnDeviceAfterCloudError(error)) {
-      return identifyOnDeviceWithTimeout(frame, error);
+      return identifyOnDeviceWithTimeout(frame, error, options.signal);
     }
 
     throw error;
@@ -234,7 +265,7 @@ function getIdentifyClientTimeoutMs() {
   const raw = import.meta.env.VITE_DEEPSPEC_IDENTIFY_CLIENT_TIMEOUT_MS
     || (typeof process !== "undefined" ? process.env.VITE_DEEPSPEC_IDENTIFY_CLIENT_TIMEOUT_MS : undefined);
   const timeoutMs = Number(raw);
-  return Number.isInteger(timeoutMs) && timeoutMs >= 1_000 && timeoutMs <= 75_000
+  return Number.isInteger(timeoutMs) && timeoutMs >= 1_000 && timeoutMs <= 85_000
     ? timeoutMs
     : DEFAULT_IDENTIFY_CLIENT_TIMEOUT_MS;
 }
@@ -242,6 +273,20 @@ function getIdentifyClientTimeoutMs() {
 function isAbortError(error: unknown) {
   return error instanceof DOMException && error.name === "AbortError"
     || (typeof error === "object" && error !== null && "name" in error && error.name === "AbortError");
+}
+
+export function isAIRequestCanceled(error: unknown) {
+  return isAbortError(error);
+}
+
+function createAbortError() {
+  return new DOMException("The scan was canceled.", "AbortError");
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) {
+    throw createAbortError();
+  }
 }
 
 async function getAuthHeader() {
@@ -261,6 +306,7 @@ function runCloudIdentify(
   labelRescueTrigger: LabelRescueTrigger | undefined,
   options: {
     measurementContext?: MeasurementContext;
+    signal?: AbortSignal;
     vehicleContext?: VehicleContext;
   },
 ) {
@@ -274,7 +320,7 @@ function runCloudIdentify(
     vehicleContext: options.vehicleContext,
     systemPrompt: IDENTIFY_PROMPT,
     responseAsJson: true,
-  });
+  }, { signal: options.signal });
 }
 
 function shouldUseOnDeviceAfterCloudError(error: unknown) {
@@ -285,17 +331,27 @@ function shouldUseOnDeviceAfterCloudError(error: unknown) {
   return getAIErrorDetails(error.code).category === "provider_unavailable";
 }
 
-async function identifyOnDeviceWithTimeout(frame: CapturedFrame, cloudError: unknown) {
+async function identifyOnDeviceWithTimeout(frame: CapturedFrame, cloudError: unknown, signal?: AbortSignal) {
+  throwIfAborted(signal);
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let abortListener: (() => void) | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timeoutId = setTimeout(() => reject(cloudError), ON_DEVICE_PROVIDER_FALLBACK_TIMEOUT_MS);
   });
+  const canceled = new Promise<never>((_resolve, reject) => {
+    if (!signal) return;
+    abortListener = () => reject(createAbortError());
+    signal.addEventListener("abort", abortListener, { once: true });
+  });
 
   try {
-    return await Promise.race([identifyOnDevice(frame), timeout]);
+    return await Promise.race([identifyOnDevice(frame), timeout, canceled]);
   } finally {
     if (timeoutId) {
       clearTimeout(timeoutId);
+    }
+    if (abortListener) {
+      signal?.removeEventListener("abort", abortListener);
     }
   }
 }

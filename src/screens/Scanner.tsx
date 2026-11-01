@@ -29,7 +29,7 @@ import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../l
 import { getScanCardPreferences, type ScanCardPreferences } from "../lib/scanResultCardSettings";
 import { detectObjectTargetFromImageData, type ObjectTargetBox } from "../lib/objectTargeting";
 import { CAPTURE_MAX_EDGE, compressImageDataUrl, saveLatestScanState } from "../lib/utils";
-import { AIServiceError, identifyCapturedFrame } from "../services/aiService";
+import { AIServiceError, identifyCapturedFrame, isAIRequestCanceled } from "../services/aiService";
 import { onOnDeviceModelProgress } from "../services/onDeviceIdentify";
 import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
 import { attachScanToJob, buildCustomerVisibleReport, getShopJob, getVehicleContextForJob } from "../services/shop";
@@ -48,7 +48,7 @@ import type { IdentificationResult, CapturedFrame, IsolatedObject, Lookup, ScanA
 // Item view panel all live in THIS module. If after a reload you see the SAM chunk's "v5" log but
 // NOT this line, the render bundle is stale (service-worker precache) even though the SAM chunk
 // updated — which means UI fixes never actually reached the screen. Bump the tag on each UI change.
-const SCANNER_UI_TRACE = "ui-trace-v2 (photo + AI workspace)";
+const SCANNER_UI_TRACE = "ui-trace-v3 (abortable scan recovery)";
 console.info(`[DeepSpec UI] Scanner chunk ${SCANNER_UI_TRACE} loaded`);
 
 const SECOND_FRAME_DELAY_MS = 120;
@@ -57,7 +57,7 @@ const VISUAL_PREPARATION_BUDGET_MS = 3000;
 const SCENE_VISUAL_BUDGET_MS = 1000;
 // Last-resort safety: if a scan ever stalls (a hung image decode, a wedged network),
 // force the loading overlay to clear and let the user try again. Generous so it never
-// trips a normal scan (identify caps at ~45s; optional visual work has short budgets).
+// trips a normal scan (hosted identify is capped at 80s; optional visual work has short budgets).
 const SCAN_WATCHDOG_TIMEOUT_MS = 90000;
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
 const UPLOAD_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
@@ -66,6 +66,7 @@ const MIN_TARGET_WIDTH_PX = 96;
 const MIN_TARGET_HEIGHT_PX = 72;
 const MIN_TARGET_AREA_RATIO = 0.018;
 const FOCUS_CROP_PADDING = 0.03;
+const ACCOUNT_SCOPE_CHECK_MS = 50;
 
 const DEFAULT_VIDEO_CONSTRAINTS: MediaTrackConstraints = {
   facingMode: { ideal: "environment" },
@@ -94,6 +95,12 @@ type ScanReviewState = {
   source: ScanReviewResultSource;
   sourceUpdatedAt: string;
   reviewTarget: ScanReviewTarget | null;
+};
+
+type ActiveScanRequest = {
+  accountCheckId: number | null;
+  controller: AbortController;
+  requestId: number;
 };
 
 type ScanQualityCoachIssue = ImageQualityIssue | "object_too_small" | "needs_better_photo";
@@ -161,7 +168,7 @@ export default function Scanner() {
   const pendingGuidedRetakeRef = useRef(false);
   const cancelScanRef = useRef(false);
   const galleryInputRef = useRef<HTMLInputElement>(null);
-  const activeIdentifyRef = useRef(false);
+  const activeIdentifyRef = useRef<ActiveScanRequest | null>(null);
   const qualityFailureInAttemptRef = useRef(false);
   const lastQualityFailureRef = useRef<ScanQualityCoachIssue | null>(null);
   const activeScanStartedAtRef = useRef(0);
@@ -245,8 +252,52 @@ export default function Scanner() {
     qualityFailureInAttemptRef.current = Boolean(previousQualityIssue);
     activeScanStartedAtRef.current = Date.now();
     scanRequestIdRef.current += 1;
-    return scanRequestIdRef.current;
+    const controller = new AbortController();
+    const activeRequest: ActiveScanRequest = {
+      accountCheckId: null,
+      controller,
+      requestId: scanRequestIdRef.current,
+    };
+    activeRequest.accountCheckId = window.setInterval(() => {
+      if (activeIdentifyRef.current !== activeRequest || isAccountScopeCurrent(accountScopeRef.current)) {
+        return;
+      }
+      cancelScanRef.current = true;
+      scanRequestIdRef.current += 1;
+      if (activeRequest.accountCheckId !== null) {
+        window.clearInterval(activeRequest.accountCheckId);
+        activeRequest.accountCheckId = null;
+      }
+      controller.abort();
+    }, ACCOUNT_SCOPE_CHECK_MS);
+    activeIdentifyRef.current = activeRequest;
+    return activeRequest;
   }, [qualityCoach]);
+
+  const abortActiveIdentify = useCallback(() => {
+    const activeRequest = activeIdentifyRef.current;
+    if (!activeRequest) return;
+    if (activeRequest.accountCheckId !== null) {
+      window.clearInterval(activeRequest.accountCheckId);
+      activeRequest.accountCheckId = null;
+    }
+    activeRequest.controller.abort();
+  }, []);
+
+  const finishScanRequest = useCallback((activeRequest: ActiveScanRequest) => {
+    if (activeIdentifyRef.current !== activeRequest) return;
+    if (activeRequest.accountCheckId !== null) {
+      window.clearInterval(activeRequest.accountCheckId);
+      activeRequest.accountCheckId = null;
+    }
+    activeIdentifyRef.current = null;
+  }, []);
+
+  useEffect(() => () => {
+    cancelScanRef.current = true;
+    scanRequestIdRef.current += 1;
+    abortActiveIdentify();
+  }, [abortActiveIdentify]);
 
   const recordScanOutcome = useCallback((result: IdentificationResult) => {
     if (result.needsBetterPhoto || result.safetyTriage === "needs_better_photo") {
@@ -289,9 +340,9 @@ export default function Scanner() {
     scanRequestIdRef.current += 1;
     setIsAnalyzing(false);
     setAnalysisStep(null);
-    activeIdentifyRef.current = false;
+    abortActiveIdentify();
     pauseAutoScan("That scan stalled. Tap Scan to try again.");
-  }, SCAN_WATCHDOG_TIMEOUT_MS), [pauseAutoScan]);
+  }, SCAN_WATCHDOG_TIMEOUT_MS), [abortActiveIdentify, pauseAutoScan]);
 
   const persistAndShowReview = useCallback((
     scanState: ScanAnalysisState,
@@ -368,6 +419,7 @@ export default function Scanner() {
     imageBase64: string,
     requestId: number,
     captureMode: ScanCaptureMode,
+    signal: AbortSignal,
     secondFrameProvider?: () => Promise<string>,
     reviewTargetOverride?: CameraObjectTarget,
   ) => {
@@ -538,6 +590,7 @@ export default function Scanner() {
       const identifyStartedAt = performance.now();
       const result = applyShopFitmentContext(
         await identifyCapturedFrame(frame, focusedFrame ?? secondFrame, undefined, {
+          signal,
           vehicleContext: activeShopVehicleContext,
         }),
         activeShopVehicleContext,
@@ -610,6 +663,7 @@ export default function Scanner() {
         },
       );
     } catch (analysisError) {
+      if (isAIRequestCanceled(analysisError)) return;
       if (!isScanRequestActive(requestId)) return;
       await persistAndShowReview(
         {
@@ -648,9 +702,9 @@ export default function Scanner() {
       return;
     }
 
-    activeIdentifyRef.current = true;
     const reviewTarget = reviewTargetOverride;
-    const requestId = beginScanRequest();
+    const activeRequest = beginScanRequest();
+    const { requestId } = activeRequest;
     const watchdog = startScanWatchdog(requestId);
     try {
       setIsAnalyzing(true);
@@ -659,7 +713,7 @@ export default function Scanner() {
       const imageBase64 = await captureFrame();
       if (!isScanRequestActive(requestId)) return;
 
-      await analyzeImageBase64(imageBase64, requestId, "camera", captureFrame, reviewTarget);
+      await analyzeImageBase64(imageBase64, requestId, "camera", activeRequest.controller.signal, captureFrame, reviewTarget);
     } catch (error) {
       if (isScanRequestActive(requestId)) {
         pauseAutoScan(error instanceof Error ? error.message : "Capture failed. Try again.");
@@ -670,16 +724,17 @@ export default function Scanner() {
         setIsAnalyzing(false);
         setAnalysisStep(null);
       }
-      activeIdentifyRef.current = false;
+      finishScanRequest(activeRequest);
     }
-  }, [analyzeImageBase64, beginScanRequest, captureFrame, isAnalyzing, isScanRequestActive, pauseAutoScan, startScanWatchdog]);
+  }, [analyzeImageBase64, beginScanRequest, captureFrame, finishScanRequest, isAnalyzing, isScanRequestActive, pauseAutoScan, startScanWatchdog]);
 
   const handleGalleryFile = useCallback(async (file: File) => {
-    if (!isAccountScopeCurrent(accountScopeRef.current) || isAnalyzing) {
+    if (!isAccountScopeCurrent(accountScopeRef.current) || isAnalyzing || activeIdentifyRef.current) {
       return;
     }
 
-    const requestId = beginScanRequest();
+    const activeRequest = beginScanRequest();
+    const { requestId } = activeRequest;
     const watchdog = startScanWatchdog(requestId);
     try {
       setIsAnalyzing(true);
@@ -691,7 +746,7 @@ export default function Scanner() {
         ? await compressImageDataUrl(rawImageBase64, CAPTURE_MAX_EDGE, 0.85)
         : rawImageBase64;
       if (!isScanRequestActive(requestId)) return;
-      await analyzeImageBase64(imageBase64, requestId, "upload");
+      await analyzeImageBase64(imageBase64, requestId, "upload", activeRequest.controller.signal);
     } catch (error) {
       if (isScanRequestActive(requestId)) {
         pauseAutoScan(error instanceof Error ? error.message : "Could not read that photo.");
@@ -702,8 +757,9 @@ export default function Scanner() {
         setIsAnalyzing(false);
         setAnalysisStep(null);
       }
+      finishScanRequest(activeRequest);
     }
-  }, [analyzeImageBase64, beginScanRequest, isAnalyzing, isScanRequestActive, pauseAutoScan, startScanWatchdog]);
+  }, [analyzeImageBase64, beginScanRequest, finishScanRequest, isAnalyzing, isScanRequestActive, pauseAutoScan, startScanWatchdog]);
 
   const retryReviewScan = useCallback(async () => {
     if (!scanReview?.reviewTarget) {
@@ -716,8 +772,9 @@ export default function Scanner() {
   }, [handleIdentify, scanReview]);
 
   const handleFlipCamera = useCallback(() => {
+    if (isAnalyzing || activeIdentifyRef.current) return;
     switchCamera();
-  }, [switchCamera]);
+  }, [isAnalyzing, switchCamera]);
 
   const handleUndoCorrection = useCallback(() => {
     if (!scanReview) {
@@ -759,6 +816,7 @@ export default function Scanner() {
   function cancelCurrentScan() {
     cancelScanRef.current = true;
     scanRequestIdRef.current += 1;
+    abortActiveIdentify();
     setIsAnalyzing(false);
     setAnalysisStep(null);
     pauseAutoScan("Scan canceled. Ready when you are.");
@@ -1234,7 +1292,7 @@ export function AnalyzingOverlay({ onCancel, step }: { onCancel: () => void; ste
         : step ?? "Reading photo";
 
   return (
-    <div className="fixed inset-0 z-40 grid place-items-center px-6 text-center" style={{ background: "rgba(4,7,14,0.82)", backdropFilter: "blur(16px)" }}>
+    <div data-testid="scan-analyzing-overlay" className="fixed inset-0 z-[80] grid place-items-center px-6 text-center" style={{ background: "rgba(4,7,14,0.82)", backdropFilter: "blur(16px)" }}>
       <div className="w-full max-w-xs overflow-hidden rounded-[24px] p-6 shadow-2xl" style={{ background: "rgba(7,16,30,0.96)", border: "1px solid rgba(94,147,166,0.18)" }}>
         <div data-testid="scan-brand-animation" className="ds-scan-brand-animation mx-auto" aria-hidden="true">
           <img className="ds-scan-glass-badge" src="/brand/deepspec-scan-badge-glass.webp" alt="" width="336" height="336" />
@@ -1328,6 +1386,7 @@ function ScanResultCard({
   const intakeReview = getIntakeReview(review.lookup ?? review.scanState);
   const summary = result ? getSimpleResultSummary(result) : null;
   const isError = Boolean(review.scanState.errorMessage);
+  const needsSignIn = review.scanState.errorCode === "missing_session" || review.scanState.errorCode === "invalid_session";
   const label = isError ? "Item captured" : summary?.title ?? getReviewDisplayLabel(review);
   const isCompact = prefs.compactCardsByDefault && !isExpanded;
   // Collapse hides only this card's body so the AR overlay behind it (outlines, labels, chips) and
@@ -1453,6 +1512,15 @@ function ScanResultCard({
           >
             <p className="mb-1 text-[10px] font-extrabold uppercase tracking-[0.14em] text-white/48">Saved photo</p>
             <p className="text-xs font-semibold leading-5 text-white/78">{review.scanState.errorMessage}</p>
+            {needsSignIn ? (
+              <Link
+                className="mt-3 inline-flex rounded-full bg-white px-4 py-2 text-xs font-extrabold text-[#0b1520]"
+                state={{ from: "/scan" }}
+                to="/auth"
+              >
+                Sign in to continue
+              </Link>
+            ) : null}
           </div>
         ) : result ? (
           <>
@@ -1952,6 +2020,17 @@ function getSimpleScanErrorMessage(error: unknown) {
     switch (error.code) {
       case "rate_limited":
         return "The photo is saved. Try again in a few minutes.";
+      case "rate_limit_unavailable":
+        return "The photo is saved. Request limits could not be verified. Try again in a minute.";
+      case "scan_limit_reached":
+        return "The photo is saved. No scan credits are available for this account.";
+      case "entitlement_unavailable":
+        return "The photo is saved. Scan credits could not be verified. Try again shortly.";
+      case "missing_session":
+      case "invalid_session":
+        return "The photo is saved. Sign in again to continue.";
+      case "session_unavailable":
+        return "The photo is saved. Your session could not be verified right now. Try again shortly.";
       case "network":
       case "provider_error":
         return "The photo is saved. Try again.";
@@ -2049,7 +2128,8 @@ function LensBottomBar({
         type="button"
         aria-label="Switch camera"
         onClick={onFlip}
-        className="grid size-12 place-items-center rounded-full text-white"
+        disabled={isAnalyzing}
+        className="grid size-12 place-items-center rounded-full text-white disabled:opacity-40"
         style={{
           background: "rgba(7,16,30,0.62)",
           border: "1px solid rgba(255,255,255,0.16)",
