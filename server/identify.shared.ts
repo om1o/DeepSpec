@@ -148,8 +148,8 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
   }
 
   if (!apiKey) {
-    if (hasHfFallback && lastRetryableError) {
-      const reason = getIdentifyErrorCode(lastRetryableError) ?? "provider_unavailable";
+    if (hasHfFallback) {
+      const reason = lastRetryableError ? getIdentifyErrorCode(lastRetryableError) ?? "provider_unavailable" : "gemini_not_configured";
       const response = await withBackupRateLimitRetry(env, () =>
         createHfIdentifyResponse(parsed, ocr, sourceContext, env, reason),
       );
@@ -160,6 +160,7 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
       if ("error" in response.body && response.body.error.code === "invalid_response") {
         return response;
       }
+      lastRetryableError = response;
     }
 
     return hasOllamaFallback
@@ -2972,7 +2973,7 @@ function appendOcrEvidence(evidence: string[], ocrText: string | null) {
     return evidence;
   }
 
-  return [...evidence, ocrEvidence].slice(0, 6);
+  return [ocrEvidence, ...evidence].slice(0, 6);
 }
 
 function shouldRunOcr(parsed: { userMessage: string; labelRescueTrigger: LabelRescueTrigger | null }) {

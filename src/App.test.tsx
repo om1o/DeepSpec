@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { getAccountScope, setActiveAccount } from "./lib/accountScope";
 import { createLookup } from "./services/storage";
@@ -32,6 +32,25 @@ describe("App auth guard", () => {
     authMock.identifyCapturedFrame.mockReset();
 
     authMock.subscribeToAuthChanges.mockResolvedValue(() => undefined);
+  });
+
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each([
+    ["/scan", "Scanner screen"], ["/history", "History screen"],
+    ["/result/scan-id", "Result screen"], ["/result/scan-id/chat", "Chat screen"],
+    ["/shop", "Shop screen"], ["/account", "Account screen"],
+    ["/auth", "Scanner screen"], ["/demo", "Scanner screen"],
+  ])("opens the real %s route without code sign-in in the explicit preview", async (path, label) => {
+    vi.stubEnv("VITE_DEEPSPEC_GUEST_PREVIEW", "true");
+    setActiveAccount("existing-account");
+    renderApp(path);
+    expect(await screen.findByText(label)).toBeInTheDocument();
+    expect(authMock.getVerifiedAuthUser).not.toHaveBeenCalled();
+    expect(authMock.subscribeToAuthChanges).not.toHaveBeenCalled();
+    expect(getAccountScope().userId).toBeNull();
+    expect(getAccountScope().kind).toBe("guest");
+    expect(authMock.identifyCapturedFrame).not.toHaveBeenCalled();
   });
 
   it("does not spend scan requests on app mount or reconnect with pending offline estimates", async () => {

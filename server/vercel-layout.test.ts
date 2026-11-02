@@ -22,6 +22,7 @@ describe("Vercel Hobby deployment layout", () => {
     const config = JSON.parse(readFileSync(resolve(process.cwd(), "vercel.json"), "utf8"));
 
     expect(config.rewrites).toEqual([
+      { source: "/", destination: "/intro/index.html" },
       { source: "/((?!api/).*)", destination: "/index.html" },
     ]);
   });
@@ -31,6 +32,15 @@ describe("Vercel Hobby deployment layout", () => {
     const files = readdirSync(resolve(process.cwd(), "api"), { recursive: true });
     expect(files.sort()).toEqual(endpoints.map(({ name }) => `${name}.ts`).sort());
     expect(files.length).toBeLessThanOrEqual(12);
+  });
+
+  it("ships the existing verified source index with identification", () => {
+    const config = JSON.parse(readFileSync(resolve(process.cwd(), "vercel.json"), "utf8"));
+    const indexPath = config.functions["api/identify.ts"].includeFiles;
+    expect(indexPath).toBe("datasets/verified/hf-automotive-sources-v1/records.jsonl");
+    const records = readFileSync(resolve(process.cwd(), indexPath), "utf8")
+      .trim().split(/\r?\n/).map((line) => JSON.parse(line));
+    expect(records.length).toBeGreaterThan(0);
   });
 
   it("uses Node ESM-resolvable extensions in every runtime-relative import", () => {

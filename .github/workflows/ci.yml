@@ -41,6 +41,17 @@ jobs:
       - name: Run lint, tests, and build
         run: npm run check
 
+  auth:
+    name: Auth verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
       - name: Verify Supabase auth providers when configuration is available
         env:
           DEEPSPEC_AUTH_TEST_EMAIL: ${{ secrets.DEEPSPEC_AUTH_TEST_EMAIL }}
@@ -66,8 +77,23 @@ jobs:
             exit 0
           fi
 
-          npm run verify:auth
+          if [ "$GITHUB_REF_NAME" = "main" ] || [ "$GITHUB_BASE_REF" = "main" ] || [[ "$branch" == codex/production-readiness-release* ]]; then
+            npm run verify:auth -- --require-password
+          else
+            npm run verify:auth
+          fi
 
+  cloud:
+    name: Cloud isolation verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
       - name: Verify Supabase cloud sync when configuration is available
         env:
           DEEPSPEC_AUTH_TEST_EMAIL: ${{ secrets.DEEPSPEC_AUTH_TEST_EMAIL }}
@@ -95,3 +121,27 @@ jobs:
           fi
 
           npm run verify:supabase
+
+  browser:
+    name: Browser smoke (synthetic data)
+    # Playwright 1.60 supports Ubuntu 24.04, but not the 26.04 latest image.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-smoke
+          path: |
+            artifacts/browser-smoke/report.json
+            artifacts/browser-smoke/*.png
+          if-no-files-found: warn

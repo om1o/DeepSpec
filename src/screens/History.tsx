@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { isGuestPreview } from "../lib/guestPreview";
 import { BrandLockup } from "../components/BrandLockup";
 import Button from "../components/ui/Button";
 import ScanThumb from "../components/ui/ScanThumb";
@@ -25,6 +26,9 @@ export default function History() {
   const [deviceRead, setDeviceRead] = useState(readLookups);
   const deviceLookups = deviceRead.value;
   const [cloudLookups, setCloudLookups] = useState<Lookup[]>([]);
+  const [cloudLoadState, setCloudLoadState] = useState<"loading" | "ready" | "error">("loading");
+  const [cloudLoadError, setCloudLoadError] = useState<string | null>(null);
+  const [cloudLoadRetry, setCloudLoadRetry] = useState(0);
   const lookups = useMemo(() => mergeLookups(deviceLookups, cloudLookups), [deviceLookups, cloudLookups]);
   const retryPending = useRef(false);
   const [retryingId, setRetryingId] = useState<string | null>(null);
@@ -38,20 +42,25 @@ export default function History() {
 
     void readCloudLookups()
       .then((result) => {
-        if (!isMounted || !isAccountScopeCurrent(mountedScope) || !result.ok) {
+        if (!isMounted || !isAccountScopeCurrent(mountedScope)) return;
+        if (!result.ok) {
+          setCloudLoadError(result.message);
+          setCloudLoadState("error");
           return;
         }
-
         setCloudLookups(result.value);
+        setCloudLoadState("ready");
       })
       .catch(() => {
-        // Keep local history if cloud history fails to load.
+        if (!isMounted || !isAccountScopeCurrent(mountedScope)) return;
+        setCloudLoadError("Cloud history could not be loaded. Check your connection and try again.");
+        setCloudLoadState("error");
       });
 
     return () => {
       isMounted = false;
     };
-  }, [mountedScope]);
+  }, [cloudLoadRetry, mountedScope]);
 
   useEffect(() => {
     if (!isAccountScopeCurrent(mountedScope)) return;
@@ -146,16 +155,16 @@ export default function History() {
             <p className="mt-2 text-sm leading-6 text-[var(--ds-fg-3)]">A place for every capture, correction, and inspection.</p>
           </div>
           <nav className="ds-history-nav" aria-label="Saved scans navigation">
-            <button
+            {isGuestPreview() ? <a href="/" className="ds-workbench-back">Intro</a> : <button
               type="button"
               onClick={handleSignOut}
               disabled={isSigningOut}
               className="rounded-full bg-[var(--ds-elevated)] px-4 py-2 text-sm font-bold text-[var(--ds-fg-2)] shadow-sm ring-1 ring-[var(--ds-border)] disabled:opacity-60"
             >
               {isSigningOut ? "Signing out..." : "Sign out"}
-            </button>
+            </button>}
             <Link to="/early-access" className="rounded-full bg-[var(--ds-elevated)] px-4 py-2 text-sm font-bold text-[var(--ds-fg-2)] shadow-sm ring-1 ring-[var(--ds-border)]">
-              Join
+              {isGuestPreview() ? "Feedback" : "Join"}
             </Link>
             <Link to="/shop" className="rounded-full bg-[var(--ds-elevated)] px-4 py-2 text-sm font-bold text-[var(--ds-fg-2)] shadow-sm ring-1 ring-[var(--ds-border)]">
               Shop
@@ -170,6 +179,21 @@ export default function History() {
           <summary>Scan quality insights <span>{qualityMetrics.attempts} attempts</span></summary>
           <ScanQualityMetricsPanel metrics={qualityMetrics} />
         </details>
+        {cloudLoadState === "loading" ? (
+          <p role="status" className="mt-4 rounded-2xl bg-[var(--ds-elevated)] p-4 text-sm text-[var(--ds-fg-2)]">Loading cloud saved scans…</p>
+        ) : null}
+        {cloudLoadState === "error" ? (
+          <section role="alert" className="mt-4 rounded-2xl border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-4 text-sm text-[var(--ds-fg-2)]">
+            <p className="font-bold text-[var(--ds-warn-ink)]">Cloud saved scans are unavailable</p>
+            <p className="mt-2">{cloudLoadError}</p>
+            <button type="button" className="mt-3 rounded-full px-3 py-2 font-bold underline" onClick={() => {
+              if (!isAccountScopeCurrent(mountedScope)) return;
+              setCloudLoadError(null);
+              setCloudLoadState("loading");
+              setCloudLoadRetry((value) => value + 1);
+            }}>Retry cloud history</button>
+          </section>
+        ) : null}
         {storageMessage ? <p role="status" className="mt-4 rounded-2xl bg-[var(--ds-elevated)] p-4 text-sm text-[var(--ds-fg-2)]">{storageMessage}</p> : null}
         {!deviceRead.ok ? (
           <section role="alert" className="mt-4 rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 text-sm">
@@ -298,7 +322,7 @@ export default function History() {
             <p className="text-sm font-bold">No scans match</p>
             <p className="mt-2 text-sm leading-6 text-[var(--ds-fg-3)]">Clear the filters to see every saved scan.</p>
           </section>
-        ) : deviceRead.ok ? (
+        ) : deviceRead.ok && cloudLoadState === "ready" ? (
           <section className="ds-history-empty">
             <div className="ds-empty-symbol" aria-hidden="true">
               <svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M10 4H4v6m18-6h6v6M4 22v6h6m18-6v6h-6" /><rect x="10" y="10" width="12" height="12" rx="3" /><path d="M14 16h4m-2-2v4" /></svg>

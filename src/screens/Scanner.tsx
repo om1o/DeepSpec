@@ -9,16 +9,15 @@ import { Link, useLocation } from "react-router-dom";
 import { IsolatedPartView } from "../components/result/IsolatedPartView";
 import { orderSceneObjects } from "../components/result/isolatedPartViewGeometry";
 import { ScanDebugOverlay } from "../components/result/ScanDebugOverlay";
+import { ScanSources } from "../components/result/ScanSources";
 import { CropBox } from "../components/scanner/CropBox";
 import { isCropBoxEnabled } from "../components/scanner/cropBoxGeometry";
 import { IssueLine, ResultDetailSections, SceneCategoryList } from "../components/result/PositiveAnswerCard";
 import Button from "../components/ui/Button";
 import { useCamera, type CameraDevice } from "../hooks/useCamera";
-import { useViewportSize } from "../hooks/useViewportSize";
 import type { CameraObjectTarget } from "../hooks/useObjectTarget";
 import { assessImageQuality, type ImageQualityIssue, type ImageQualityResult } from "../lib/imageQuality";
 import { createFocusedScanCrop } from "../lib/focusCrop";
-import { getDisplayedFocusRect, getReviewCardPlacement, SCAN_CARD_WIDTH_PX, type ReviewCardPlacement } from "../lib/reviewCardPlacement";
 import { createSegmentedProductIsolation, warmProductSegmentation } from "../lib/productSegmentation";
 import { createPromptedProductIsolation, isolateSceneObjects, isPromptableSegmentationEnabled, warmPromptableSegmentation, type SceneObjectInput } from "../lib/promptableSegmentation";
 import { supportsWebGpu } from "../lib/webgpu";
@@ -49,7 +48,7 @@ import type { IdentificationResult, CapturedFrame, IsolatedObject, Lookup, ScanA
 // Item view panel all live in THIS module. If after a reload you see the SAM chunk's "v5" log but
 // NOT this line, the render bundle is stale (service-worker precache) even though the SAM chunk
 // updated — which means UI fixes never actually reached the screen. Bump the tag on each UI change.
-const SCANNER_UI_TRACE = "ui-trace-v1 (scan-completion + tier trace)";
+const SCANNER_UI_TRACE = "ui-trace-v2 (photo + AI workspace)";
 console.info(`[DeepSpec UI] Scanner chunk ${SCANNER_UI_TRACE} loaded`);
 
 const SECOND_FRAME_DELAY_MS = 120;
@@ -209,19 +208,6 @@ export default function Scanner() {
       warmProductSegmentation();
     }
   }, []);
-
-  const anchoredReviewTarget = useMemo(
-    () => (scanReview?.reviewTarget ? clampReviewTarget(scanReview.reviewTarget) : null),
-    [scanReview],
-  );
-  const reviewFrameSize = useFrameSize(scanReview?.scanState.frame.imageBase64);
-  // Anchor the result card to where the part is actually drawn (the letterboxed review stage),
-  // not the live-camera/upload target, which is in cropped object-cover coordinates.
-  const viewport = useViewportSize();
-  const displayedFocusRect = scanReview?.scanState.focusBox && reviewFrameSize
-    ? getDisplayedFocusRect(scanReview.scanState.focusBox, reviewFrameSize, viewport)
-    : null;
-  const reviewCardPlacement = getReviewCardPlacement(displayedFocusRect ?? anchoredReviewTarget, viewport);
 
   const pauseAutoScan = useCallback((message?: string) => {
     setCaptureError(message ?? null);
@@ -947,49 +933,54 @@ export default function Scanner() {
       ) : null}
 
       {scanReview ? (
-        <IsolatedPartView
-          frameBase64={scanReview.scanState.frame.imageBase64}
-          isolatedImageBase64={scanReview.scanState.isolatedImageBase64}
-          focusBox={scanReview.scanState.focusBox}
-          focusMode={scanReview.scanState.focusMode ?? (scanReview.isolatedFrame ? "crop" : "full_frame")}
-          label={scanReview.scanState.result ? getSimpleResultSummary(scanReview.scanState.result).title : "Item captured"}
-          issue={scanReview.scanState.result ? deriveIssue(scanReview.scanState.result) : null}
-          sceneChips={scanReview.scanState.result ? getSceneChips(scanReview.scanState.result) : undefined}
-          objects={scanReview.scanState.isolatedObjects}
-          variant="scanner"
-          focusedObjectIndex={focusedObjectIndex}
-          onFocusObject={handleFocusObject}
-        />
+        <section aria-label="Scan analysis workspace" data-testid="scan-analysis-workspace" className="fixed inset-0 z-40 flex min-h-0 flex-col bg-[var(--ds-bg)]">
+          <header className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4 pb-3 pt-[max(16px,env(safe-area-inset-top))]">
+            <BrandLockup size="sm" />
+            <Link to="/history" className="rounded-full border border-white/15 px-3 py-2 text-xs font-bold">Saved scans</Link>
+          </header>
+          <div className="grid min-h-0 flex-1 grid-rows-[minmax(200px,42dvh)_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_420px] lg:grid-rows-1">
+            <div aria-label="Scan photo" data-testid="scan-workspace-photo" className="relative min-h-0 overflow-hidden bg-[#020617] [&>div]:absolute">
+              <IsolatedPartView
+                frameBase64={scanReview.scanState.frame.imageBase64}
+                isolatedImageBase64={scanReview.scanState.isolatedImageBase64}
+                focusBox={scanReview.scanState.focusBox}
+                focusMode={scanReview.scanState.focusMode ?? (scanReview.isolatedFrame ? "crop" : "full_frame")}
+                label={scanReview.scanState.result ? getSimpleResultSummary(scanReview.scanState.result).title : "Item captured"}
+                issue={scanReview.scanState.result ? deriveIssue(scanReview.scanState.result) : null}
+                sceneChips={scanReview.scanState.result ? getSceneChips(scanReview.scanState.result) : undefined}
+                objects={scanReview.scanState.isolatedObjects}
+                variant="scanner"
+                focusedObjectIndex={focusedObjectIndex}
+                onFocusObject={handleFocusObject}
+              />
+            </div>
+            <div data-testid="scan-workspace-overview" className="min-h-0 overflow-y-auto border-t border-white/10 bg-[var(--ds-page)] lg:border-l lg:border-t-0">
+              {focusedObject ? <FocusedObjectCard
+                object={focusedObject}
+                analysis={focusedObjectIndex !== null ? objectAnalyses[focusedObjectIndex] : undefined}
+                primaryLabel={primaryObjectLabel}
+                prefs={scanCardPrefs}
+                onBack={() => handleFocusObject(null)}
+                onRetry={retryFocusedObject}
+              /> : <ScanResultCard
+                isExpanded={false}
+                isMismatch={false}
+                onClose={closeScanReview}
+                onRetryMismatch={retryReviewScan}
+                onUndoCorrection={handleUndoCorrection}
+                prefs={scanCardPrefs}
+                review={scanReview}
+                retakeCoach={getReviewRetakeCoach(scanReview.scanState)}
+                retakeUsed={scanReview.guidedRetakeUsed}
+                onPrepareRetake={prepareGuidedRetake}
+                retakeUsesUpload={scanReview.scanState.provenance?.captureMode === "upload" || cameraState !== "ready"}
+                scanCardStatusMessage={scanCardStatusMessage}
+              />}
+            </div>
+          </div>
+        </section>
       ) : null}
       {isAnalyzing ? <AnalyzingOverlay onCancel={cancelCurrentScan} step={analysisStep} /> : null}
-      {scanReview && focusedObject ? (
-        <FocusedObjectCard
-          object={focusedObject}
-          analysis={focusedObjectIndex !== null ? objectAnalyses[focusedObjectIndex] : undefined}
-          primaryLabel={primaryObjectLabel}
-          placement={reviewCardPlacement}
-          prefs={scanCardPrefs}
-          onBack={() => handleFocusObject(null)}
-          onRetry={retryFocusedObject}
-        />
-      ) : scanReview ? (
-        <ScanResultCard
-          isExpanded={false}
-          isMismatch={false}
-          target={anchoredReviewTarget}
-          onClose={closeScanReview}
-          onRetryMismatch={retryReviewScan}
-          onUndoCorrection={handleUndoCorrection}
-          placement={reviewCardPlacement}
-          prefs={scanCardPrefs}
-          review={scanReview}
-          retakeCoach={getReviewRetakeCoach(scanReview.scanState)}
-          retakeUsed={scanReview.guidedRetakeUsed}
-          onPrepareRetake={prepareGuidedRetake}
-          retakeUsesUpload={scanReview.scanState.provenance?.captureMode === "upload" || cameraState !== "ready"}
-          scanCardStatusMessage={scanCardStatusMessage}
-        />
-      ) : null}
       <ScanDebugOverlay info={scanReview?.scanState.debug} />
       {scanReview && ((scanReview.lookup && scanSave?.lookupId === scanReview.lookup.id) || scanReview.scanState.storageWarning) ? (
         <aside data-testid="scan-save-status" role="status" className="fixed right-3 top-[calc(max(12px,env(safe-area-inset-top))+56px)] z-[60] max-w-[min(70vw,320px)] rounded-xl border border-white/20 bg-slate-950/90 px-3 py-2 text-xs text-white shadow-lg">
@@ -1316,8 +1307,6 @@ function ScanResultCard({
   onClose,
   onRetryMismatch,
   onUndoCorrection,
-  target,
-  placement,
   prefs,
   review,
   scanCardStatusMessage,
@@ -1331,8 +1320,6 @@ function ScanResultCard({
   onClose: () => void;
   onRetryMismatch: () => void;
   onUndoCorrection: () => void;
-  target: ScanReviewTarget | null;
-  placement: ReviewCardPlacement;
   prefs: ScanCardPreferences;
   review: ScanReviewState;
   scanCardStatusMessage: string | null;
@@ -1343,8 +1330,6 @@ function ScanResultCard({
   const isError = Boolean(review.scanState.errorMessage);
   const label = isError ? "Item captured" : summary?.title ?? getReviewDisplayLabel(review);
   const isCompact = prefs.compactCardsByDefault && !isExpanded;
-  const itemViewFrame = review.isolatedFrame ?? review.scanState.frame;
-  const itemViewBadge = getItemViewBadge(review.scanState.focusMode ?? (review.isolatedFrame ? "crop" : "full_frame"), Boolean(review.scanState.isolatedImageBase64));
   // Collapse hides only this card's body so the AR overlay behind it (outlines, labels, chips) and
   // the debug overlay — both rendered as siblings, not children — stay visible. onClose still tears
   // the whole review down; collapsing does not touch review state.
@@ -1353,21 +1338,14 @@ function ScanResultCard({
   return (
     <section
       aria-live="polite"
-      data-anchor-side={placement.anchorSide}
-      className="scanner-result-panel no-scrollbar pointer-events-auto z-50 mx-auto flex max-h-[min(62dvh,560px)] max-w-[520px] flex-col overflow-y-auto px-4 pb-[max(20px,env(safe-area-inset-bottom))] pt-3 text-white"
-      style={{
-        bottom: "auto",
-        left: placement.left,
-        maxHeight: target && window.innerWidth < 520 ? "min(38dvh, 320px)" : target ? "min(62dvh, 560px)" : "min(42dvh, 420px)",
-        right: "auto",
-        top: placement.top,
-        width: `min(calc(100vw - 28px), ${SCAN_CARD_WIDTH_PX}px)`,
-      }}
+      data-testid="scan-overview-card"
+      className="relative flex min-w-0 flex-col px-4 pb-[max(20px,env(safe-area-inset-bottom))] pt-4 text-white"
     >
       {/* Drag handle */}
       <div className="mx-auto mb-3 h-1 w-10 shrink-0 rounded-full bg-white/18" />
 
       {/* Header */}
+      <p className="mb-3 text-xs font-extrabold uppercase tracking-[0.14em] text-white/55">AI overview</p>
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
           {result && !isError ? (
@@ -1432,13 +1410,6 @@ function ScanResultCard({
         </div>
       </div>
 
-      {!collapsed && itemViewFrame.imageBase64 ? (
-        <ItemViewPanel
-          badge={itemViewBadge}
-          imageBase64={itemViewFrame.imageBase64}
-          label={label}
-        />
-      ) : null}
 
       {/* Content body */}
       {!collapsed ? (
@@ -1494,7 +1465,12 @@ function ScanResultCard({
 
       {/* Actions */}
       {!collapsed ? (
-      <div className="mt-3 space-y-2">
+      <div className="mt-4 space-y-3">
+        {review.lookup ? <div className="grid grid-cols-2 gap-2">
+          <Link to={`/result/${review.lookup.id}`} state={withAccountRouteState({ ...review.scanState, savedLookup: review.lookup })} className="rounded-full border border-white/20 bg-white/5 px-3 py-3 text-center text-xs font-extrabold">Open AI view</Link>
+          {result ? <Link to={`/result/${review.lookup.id}/chat`} className="rounded-full border border-white/70 bg-[linear-gradient(180deg,#fff,#dce4eb)] px-3 py-3 text-center text-xs font-extrabold text-[#0b1520] shadow-[inset_0_1px_0_#fff,0_6px_18px_rgba(0,0,0,.18)]">Ask DeepSpec</Link> : <button type="button" onClick={onRetryMismatch} className="rounded-full bg-white px-3 py-3 text-center text-xs font-extrabold text-[#0b1520]">Retry analysis</button>}
+        </div> : null}
+        {result ? <ScanSources sources={result.sourceLinks} researchTerm={`${result.partName} car part`} variant="scanner" /> : null}
         {review.correction ? (
           <div
             className="flex items-center justify-between gap-2 rounded-[10px] px-3 py-2 text-xs"
@@ -1529,7 +1505,6 @@ function FocusedObjectCard({
   object,
   analysis,
   primaryLabel,
-  placement,
   prefs,
   onBack,
   onRetry,
@@ -1537,7 +1512,6 @@ function FocusedObjectCard({
   object: IsolatedObject;
   analysis: ObjectAnalysis | undefined;
   primaryLabel: string;
-  placement: ReviewCardPlacement;
   prefs: ScanCardPreferences;
   onBack: () => void;
   onRetry: () => void;
@@ -1549,17 +1523,8 @@ function FocusedObjectCard({
   return (
     <section
       aria-live="polite"
-      data-anchor-side={placement.anchorSide}
       data-testid="focused-object-card"
-      className="scanner-result-panel no-scrollbar pointer-events-auto z-50 mx-auto flex max-h-[min(62dvh,560px)] max-w-[520px] flex-col overflow-y-auto px-4 pb-[max(20px,env(safe-area-inset-bottom))] pt-3 text-white"
-      style={{
-        bottom: "auto",
-        left: placement.left,
-        maxHeight: "min(62dvh, 560px)",
-        right: "auto",
-        top: placement.top,
-        width: `min(calc(100vw - 28px), ${SCAN_CARD_WIDTH_PX}px)`,
-      }}
+      className="relative flex min-w-0 flex-col px-4 pb-[max(20px,env(safe-area-inset-bottom))] pt-4 text-white"
     >
       <div className="mx-auto mb-3 h-1 w-10 shrink-0 rounded-full bg-white/18" />
 
@@ -1779,6 +1744,7 @@ function isTargetBoxTooSmall(width: number, height: number) {
   );
 }
 
+
 function clampReviewTarget(target: ScanReviewTarget): ScanReviewTarget {
   const viewportWidth = Math.max(1, window.innerWidth);
   const viewportHeight = Math.max(1, window.innerHeight);
@@ -1794,6 +1760,7 @@ function clampReviewTarget(target: ScanReviewTarget): ScanReviewTarget {
     confidence: clampNumber(target.confidence, 0, 1),
   };
 }
+
 
 function getReviewTargetFromObject(target: CameraObjectTarget): ScanReviewTarget {
   return {
@@ -2001,41 +1968,9 @@ function getSimpleScanErrorMessage(error: unknown) {
   return "The photo is saved. Try again.";
 }
 
-function getItemViewBadge(source: VisualFocusMode, hasIsolatedOutput: boolean) {
-  if (source === "mask" && hasIsolatedOutput) {
-    return "Isolated";
-  }
-
-  if (source === "crop") {
-    return "Focused";
-  }
-
-  return "Full scan";
-}
 
 function clampNumber(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
-}
-
-/** Natural size of a captured frame, once decoded (null until then, or if it fails to decode). */
-function useFrameSize(imageBase64: string | undefined) {
-  const [frameSize, setFrameSize] = useState<{ source: string; width: number; height: number } | null>(null);
-  useEffect(() => {
-    if (!imageBase64 || typeof Image === "undefined") {
-      return;
-    }
-    const image = new Image();
-    image.onload = () => {
-      if (image.naturalWidth > 0 && image.naturalHeight > 0) {
-        setFrameSize({ source: imageBase64, width: image.naturalWidth, height: image.naturalHeight });
-      }
-    };
-    image.src = imageBase64;
-    return () => {
-      image.onload = null;
-    };
-  }, [imageBase64]);
-  return frameSize && frameSize.source === imageBase64 ? frameSize : null;
 }
 
 function ScannerHUD({ isAnalyzing }: { isAnalyzing: boolean }) {

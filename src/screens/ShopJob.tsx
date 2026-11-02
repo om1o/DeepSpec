@@ -62,9 +62,9 @@ export default function ShopJob() {
       <div className="mx-auto w-full max-w-6xl">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Shop job</p>
-            <h1 className="mt-1 truncate text-3xl font-black tracking-tight">{job.title}</h1>
-            <p className="mt-2 text-sm font-semibold text-slate-500">
+            <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--electric-300)]">Shop job</p>
+            <h1 className="mt-1 truncate text-3xl font-black tracking-tight text-white">{job.title}</h1>
+            <p className="mt-2 text-sm font-semibold text-slate-300">
               {job.year} {job.make} {job.model} / {job.technicianName}
             </p>
           </div>
@@ -97,7 +97,7 @@ export default function ShopJob() {
                 <Detail label="Bay / RO" value={job.bayOrRo || "Not provided"} />
               </div>
               <div className="mt-4 rounded-[8px] bg-slate-50 px-3 py-3">
-                <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-400">Complaint</p>
+                <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-500">Complaint</p>
                 <p className="mt-1 text-sm leading-6 text-slate-700">{job.symptom}</p>
               </div>
             </section>
@@ -170,7 +170,7 @@ export default function ShopJob() {
 
             {metrics ? (
               <section className="rounded-[8px] border border-slate-200 bg-white p-5 shadow-sm">
-                <h2 className="text-lg font-black tracking-tight">Job accuracy</h2>
+                <h2 className="text-lg font-black tracking-tight">Scan review</h2>
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <Metric label="Needs review" value={String(metrics.needsReviewScans)} />
                   <Metric label="Confirmed" value={String(metrics.confirmedScans)} />
@@ -189,7 +189,7 @@ export default function ShopJob() {
 function Detail({ label, value, warn = false }: { label: string; value: string; warn?: boolean }) {
   return (
     <div className={`rounded-[8px] px-3 py-3 ${warn ? "bg-[var(--ds-warn-soft)]" : "bg-slate-50"}`}>
-      <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-400">{label}</p>
+      <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-500">{label}</p>
       <p className={`mt-1 text-sm font-bold ${warn ? "text-[var(--ds-warn-ink)]" : "text-slate-800"}`}>{value}</p>
     </div>
   );
@@ -198,7 +198,7 @@ function Detail({ label, value, warn = false }: { label: string; value: string; 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[8px] bg-slate-50 p-3">
-      <p className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-slate-400">{label}</p>
+      <p className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-slate-500">{label}</p>
       <p className="mt-1 text-lg font-black">{value}</p>
     </div>
   );
@@ -221,7 +221,7 @@ function ScanRow({ scan }: { scan: Lookup }) {
           </span>
         </div>
         <p className="mt-1 text-xs font-semibold text-slate-500">
-          Fitment: {scan.result?.fitmentConfidence ?? "needs_vehicle_context"}
+          Fitment: {(scan.result?.fitmentConfidence ?? "needs_vehicle_context").replaceAll("_", " ")}
         </p>
         <p className="mt-2 line-clamp-2 text-sm leading-5 text-slate-600">
           {scan.result?.whatItDoes ?? scan.errorMessage ?? "Open to review this scan."}

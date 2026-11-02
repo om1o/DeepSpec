@@ -371,7 +371,7 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
 
     expect(await screen.findByRole("heading", { level: 3, name: "Item captured" })).toBeInTheDocument();
-    expect(screen.getByTestId("scan-item-view")).toBeInTheDocument();
+    expect(screen.getByTestId("scan-workspace-photo")).toContainElement(screen.getByTestId("focused-part-overlay"));
     expect(screen.getByText("Saved photo")).toBeInTheDocument();
     expect(screen.getByText("The photo is saved. Try again.")).toBeInTheDocument();
     expect(screen.queryByText("Reading photo")).not.toBeInTheDocument();
@@ -406,8 +406,8 @@ describe("Scanner", () => {
     expect(screen.queryByTestId("product-isolation-mask")).not.toBeInTheDocument();
     expect(screen.getByTestId("focused-part-overlay")).toHaveAttribute("data-focus-mode", "crop");
     expect(screen.getByTestId("focused-part-label")).toHaveTextContent("Alternator");
-    expect(screen.getByTestId("scan-item-view")).toHaveTextContent("Focused");
-    expect(screen.getByAltText("Item view for Alternator")).toHaveAttribute("src", "data:image/jpeg;base64,target-crop");
+    expect(screen.getByTestId("scan-workspace-photo")).toContainElement(screen.getByTestId("focused-part-window"));
+    expect(screen.getByTestId("focused-part-label")).toHaveTextContent("Focused");
     const focusedWindow = screen.getByTestId("focused-part-window");
     expect(focusedWindow.style.width).toMatch(/%$/);
     expect(focusedWindow.style.height).toMatch(/%$/);
@@ -448,8 +448,8 @@ describe("Scanner", () => {
       imageBase64: "data:image/jpeg;base64,target-crop",
     });
     expect(screen.getByTestId("focused-part-overlay")).toHaveAttribute("data-focus-mode", "mask");
-    expect(screen.getByTestId("scan-item-view")).toHaveTextContent("Isolated");
-    expect(screen.getByAltText("Item view for Alternator")).toHaveAttribute("src", "data:image/png;base64,segmented-product");
+    expect(screen.getByTestId("focused-part-label")).toHaveTextContent("Isolated");
+    expect(screen.getByTestId("scan-workspace-photo")).toContainElement(screen.getByTestId("isolated-part-image"));
     expect(screen.getByTestId("isolated-part-image")).toHaveAttribute("src", "data:image/png;base64,segmented-product");
     const savedLookups = JSON.parse(localStorage.getItem(accountStorageKey("deep-spec:lookups")) ?? "[]");
     expect(savedLookups[0]).toMatchObject({
@@ -823,7 +823,7 @@ describe("Scanner", () => {
     });
   }, 10000);
 
-  it("keeps the bottom-sheet result card usable in a mobile viewport", async () => {
+  it("keeps the photo and AI overview in separate mobile workspace panes", async () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
     Object.defineProperty(window, "innerHeight", { configurable: true, value: 667 });
 
@@ -839,16 +839,20 @@ describe("Scanner", () => {
     const reviewHeading = await screen.findByRole("heading", { level: 3, name: "Alternator" });
     const reviewCard = reviewHeading.closest("section") as HTMLElement | null;
     expect(reviewCard).toBeTruthy();
-    expect(reviewCard).toHaveAttribute("data-anchor-side");
-    expect(reviewCard?.className).toContain("scanner-result-panel");
-    expect(reviewCard?.className).toContain("max-h-[min(62dvh,560px)]");
+    expect(screen.getByTestId("scan-workspace-overview")).toContainElement(reviewCard);
+    expect(screen.getByTestId("scan-workspace-photo")).not.toContainElement(reviewCard);
+    expect(reviewCard?.style.position).toBe("");
+    expect(reviewCard?.style.top).toBe("");
+    expect(screen.getByText("AI overview")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open AI view" })).toHaveAttribute("href", `/result/${getLookups()[0].id}`);
+    expect(screen.getByRole("link", { name: "Ask DeepSpec" })).toHaveAttribute("href", `/result/${getLookups()[0].id}/chat`);
     expect(within(reviewCard as HTMLElement).queryByRole("button", { name: "Open details" })).not.toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).queryByRole("button", { name: "Correct label" })).not.toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).queryByRole("button", { name: "Set reference" })).not.toBeInTheDocument();
     expect(within(reviewCard as HTMLElement).queryByRole("button", { name: "Estimate size" })).not.toBeInTheDocument();
   }, 10000);
 
-  it("re-anchors the result card when the device is rotated or the window is resized", async () => {
+  it("keeps the AI pane independent from the photo after rotation or resize", async () => {
     const originalWidth = window.innerWidth;
     const originalHeight = window.innerHeight;
     const setViewport = (width: number, height: number) => {
@@ -869,16 +873,18 @@ describe("Scanner", () => {
       await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
       const reviewHeading = await screen.findByRole("heading", { level: 3, name: "Alternator" });
       const reviewCard = reviewHeading.closest("section") as HTMLElement;
-      // Docked low on the portrait phone: viewport height minus the card's reserved room.
-      expect(reviewCard.style.top).toBe("247px");
+      expect(reviewCard.style.top).toBe("");
+      expect(screen.getByTestId("scan-workspace-photo")).not.toContainElement(reviewCard);
 
       act(() => {
         setViewport(1024, 768);
         window.dispatchEvent(new Event("resize"));
       });
 
-      // Same card, re-placed for the landscape viewport instead of keeping its portrait position.
-      expect((screen.getByRole("heading", { level: 3, name: "Alternator" }).closest("section") as HTMLElement).style.top).toBe("348px");
+      const resizedCard = screen.getByRole("heading", { level: 3, name: "Alternator" }).closest("section") as HTMLElement;
+      expect(resizedCard.style.top).toBe("");
+      expect(screen.getByTestId("scan-workspace-overview")).toContainElement(resizedCard);
+      expect(screen.getByTestId("scan-workspace-photo")).not.toContainElement(resizedCard);
     } finally {
       setViewport(originalWidth, originalHeight);
     }

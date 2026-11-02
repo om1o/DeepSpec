@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 
 const SITE_ORIGIN = "https://deepspec.app";
 const DEFAULT_DIST_DIR = "dist";
+// These public links are served by the app entrypoint, rather than asset files.
+const APP_ROUTES = new Set(["/scan"]);
 
 export async function findMissingPublicTargets(distDir = DEFAULT_DIST_DIR) {
   const root = path.resolve(distDir);
@@ -111,7 +113,7 @@ function resolveInternalTarget(root, source, reference) {
   if (url.origin !== SITE_ORIGIN) return null;
 
   const pathname = decodeURIComponent(url.pathname);
-  const relative = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
+  const relative = pathname === "/" || APP_ROUTES.has(pathname) ? "index.html" : pathname.replace(/^\/+/, "");
   const target = path.resolve(root, relative);
   if (target !== root && !target.startsWith(`${root}${path.sep}`)) {
     throw new Error(`Public reference escapes the build directory: ${reference}`);

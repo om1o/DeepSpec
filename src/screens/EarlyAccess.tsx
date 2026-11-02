@@ -1,16 +1,17 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { BrandLockup } from "../components/BrandLockup";
-import CloudHealthCard from "../components/CloudHealthCard";
 import Button from "../components/ui/Button";
 import { getCloudSyncStatus, syncFeedbackToCloud, syncWaitlistSignupToCloud } from "../services/cloudSync";
-import { getEngagementData, saveFeedbackSubmission, saveWaitlistSignup } from "../services/engagement";
+import { saveFeedbackSubmission, saveWaitlistSignup } from "../services/engagement";
 import type { FeedbackSubmission, WaitlistSignup } from "../types";
 import { FEEDBACK_ISSUES, getFeedbackIssue, type FeedbackIssue } from "../services/feedbackDetails";
 import { getLookup } from "../services/storage";
 import { getAccountScope, isAccountScopeCurrent } from "../lib/accountScope";
+import { isGuestPreview } from "../lib/guestPreview";
 
 export default function EarlyAccess() {
+  const guest = isGuestPreview();
   const [mountedScope] = useState(getAccountScope);
   const [searchParams] = useSearchParams();
   const scanId = searchParams.get("scan");
@@ -23,7 +24,6 @@ export default function EarlyAccess() {
   useEffect(() => {
     if (scanId) reportForm.current?.scrollIntoView?.({ block: "start" });
   }, [scanId]);
-  const [stats, setStats] = useState(() => getEngagementData());
   const [email, setEmail] = useState("");
   const [userType, setUserType] = useState<WaitlistSignup["userType"]>("car_owner");
   const [mainProblem, setMainProblem] = useState("");
@@ -32,16 +32,9 @@ export default function EarlyAccess() {
   const [contactEmail, setContactEmail] = useState("");
   const [waitlistStatus, setWaitlistStatus] = useState<string | null>(null);
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
-  const cloudSync = getCloudSyncStatus();
-  const cloudStatusMessage = cloudSync.message;
-  const demandSignals = useMemo(
-    () => [
-      { label: "Local waitlist entries", value: String(stats.waitlist.length) },
-      { label: "Feedback notes", value: String(stats.feedback.length) },
-      { label: "Cloud sync", value: cloudSync.configured ? "On" : "Off" },
-    ],
-    [cloudSync.configured, stats],
-  );
+  const cloudSync = guest
+    ? { configured: false }
+    : getCloudSyncStatus();
 
   async function handleWaitlistSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -54,7 +47,6 @@ export default function EarlyAccess() {
 
     setEmail("");
     setMainProblem("");
-    setStats(getEngagementData());
 
     if (!result.value) {
       setWaitlistStatus("Saved on this device. Cloud sync skipped this entry.");
@@ -88,7 +80,6 @@ export default function EarlyAccess() {
     }
 
     setFeedbackMessage("");
-    setStats(getEngagementData());
 
     if (!result.value) {
       setFeedbackStatus("Feedback saved on this device. Cloud sync skipped it.");
@@ -96,7 +87,7 @@ export default function EarlyAccess() {
     }
 
     if (!cloudSync.configured) {
-      setFeedbackStatus("Feedback saved on this device. Cloud sync is off for this build.");
+      setFeedbackStatus(guest ? "Feedback saved in this browser." : "Feedback saved on this device. Cloud sync is off for this build.");
       return;
     }
 
@@ -119,10 +110,10 @@ export default function EarlyAccess() {
   return (
     <main className="min-h-dvh bg-[var(--ds-page)] px-4 pb-8 pt-[max(18px,env(safe-area-inset-top))] text-slate-950">
       <div className="mx-auto w-full max-w-md">
-        <header className="flex items-center justify-between gap-3">
+        <header className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <BrandLockup />
-            <h1 className="mt-2 text-2xl font-extrabold tracking-tight">Early access</h1>
+            <h1 className="mt-2 text-2xl font-extrabold tracking-tight text-white">Early access</h1>
           </div>
           <Link to="/scan" className="rounded-full bg-[var(--ds-accent)] px-4 py-2 text-sm font-bold text-white shadow-sm">
             Scan
@@ -136,30 +127,20 @@ export default function EarlyAccess() {
           <p className="text-sm font-bold text-[var(--ds-accent)]">The visual layer for parts</p>
           <h2 className="mt-2 text-2xl font-extrabold tracking-tight">Point, isolate, identify.</h2>
           <p className="mt-3 text-sm leading-6 text-neutral-500">
-            Deep Spec reads the part through your camera and returns the answer. Join the waitlist and shape
-            what ships first.
+            {guest ? "Use the camera to inspect a part, then save a note about what worked or what could be better." : "Use a part photo to review likely matches and visible details. Join the waitlist and help shape what ships next."}
           </p>
           <p className="mt-3 rounded-2xl border border-neutral-100 bg-neutral-50 p-3 text-sm leading-6 text-neutral-500">
-            {cloudStatusMessage}
+            {guest ? "Your scans and feedback stay in this browser. No account is needed." : "Try the scanner, review its suggestions, and tell us what helped or what needs improving."}
           </p>
-          <div className="mt-4 grid grid-cols-1 gap-3">
-            {demandSignals.map((item) => (
-              <div key={item.label} className="rounded-2xl border border-neutral-100 bg-neutral-50 p-3">
-                <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-neutral-400">{item.label}</p>
-                <p className="mt-1 text-lg font-extrabold text-neutral-900">{item.value}</p>
-              </div>
-            ))}
-          </div>
-          <CloudHealthCard className="mt-4" />
         </section>
 
-        <form className="mt-4 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm" onSubmit={handleWaitlistSubmit}>
+        {guest ? null : <form className="mt-4 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm" onSubmit={handleWaitlistSubmit}>
           <h2 className="text-lg font-extrabold tracking-tight">Join the waitlist</h2>
           <p className="mt-2 text-sm leading-6 text-neutral-500">
-            Saved on this device first. With cloud sync on, the entry goes to the private waitlist too.
+            {cloudSync.configured ? "Your entry is saved on this device first. We will confirm here when it reaches the waitlist." : "Waitlist delivery is unavailable in this preview. You can save your interest on this device, but it will not reach the team yet."}
           </p>
           <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Email</span>
+            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-600">Email</span>
             <input
               className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
               inputMode="email"
@@ -170,7 +151,7 @@ export default function EarlyAccess() {
             />
           </label>
           <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">I am a</span>
+            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-600">I am a</span>
             <select
               className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none focus:border-[var(--ds-accent)]"
               onChange={(event) => setUserType(event.target.value as WaitlistSignup["userType"])}
@@ -184,7 +165,7 @@ export default function EarlyAccess() {
             </select>
           </label>
           <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">What should Deep Spec solve?</span>
+            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-600">What should Deep Spec solve?</span>
             <textarea
               className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
               maxLength={240}
@@ -193,16 +174,16 @@ export default function EarlyAccess() {
               value={mainProblem}
             />
           </label>
-          {waitlistStatus ? <p className="mt-3 text-sm font-semibold text-[var(--ds-accent)]">{waitlistStatus}</p> : null}
+          {waitlistStatus ? <p role="status" className="mt-3 text-sm font-semibold text-[var(--ds-accent)]">{waitlistStatus}</p> : null}
           <Button className="mt-4 w-full" type="submit">
             Save waitlist entry
           </Button>
-        </form>
+        </form>}
 
         <form ref={reportForm} id="feedback" className="mt-4 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm" onSubmit={handleFeedbackSubmit}>
-          <h2 className="text-lg font-extrabold tracking-tight">Send product feedback</h2>
+          <h2 className="text-lg font-extrabold tracking-tight">{guest ? "Product feedback" : "Send product feedback"}</h2>
           <p className="mt-2 text-sm leading-6 text-neutral-500">
-            Tell us what would make Deep Spec worth keeping in the bay. Saved on this device first, synced when cloud is on.
+            {guest ? "Keep your feedback with this browser's workspace. These notes stay on this device." : cloudSync.configured ? "Tell us what worked and what got in the way. Feedback is saved here first; we will confirm when it is delivered." : "Feedback delivery is unavailable in this preview. Your notes will stay on this device and will not reach the team yet."}
           </p>
           <label className="mt-4 block">
             <span className="text-sm font-bold">What went wrong?</span>
@@ -223,7 +204,7 @@ export default function EarlyAccess() {
           ) : null}
           <p className="mt-2 text-xs leading-5 text-neutral-500">Choose a problem for a quick report. Details are optional when a problem is selected. Reporting does not give permission to train on your photos.</p>
           <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Topic</span>
+            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-600">Topic</span>
             <select
               className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none focus:border-[var(--ds-accent)]"
               onChange={(event) => setFeedbackCategory(event.target.value as FeedbackSubmission["category"])}
@@ -238,7 +219,7 @@ export default function EarlyAccess() {
             </select>
           </label>
           <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Feedback</span>
+            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-600">Feedback</span>
             <textarea
               className="mt-2 min-h-28 w-full resize-none rounded-2xl border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
               maxLength={feedbackIssue || includeContext ? 450 : 800}
@@ -248,7 +229,7 @@ export default function EarlyAccess() {
             />
           </label>
           <label className="mt-4 block">
-            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">Contact email optional</span>
+            <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-600">Contact email optional</span>
             <input
               className="mt-2 h-12 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none placeholder:text-slate-400 focus:border-[var(--ds-accent)]"
               inputMode="email"

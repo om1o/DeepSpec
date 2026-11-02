@@ -332,6 +332,7 @@ export type ChatMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  sources?: SourceLink[];
   timestamp: string;
 };
 

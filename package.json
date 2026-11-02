@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --configLoader native",
-    "build": "tsc -b && vite build --configLoader native && npm run verify:public",
+    "build": "node scripts/package-intro.mjs && tsc -b && vite build --configLoader native && npm run verify:public",
     "check": "npm run lint && npm test && npm run build",
     "dataset:sort": "node scripts/sort-drbimmer-dataset.mjs",
     "dataset:hf-auto-sources": "node scripts/build-hf-automotive-sources.mjs",
@@ -26,6 +26,7 @@
     "qa:serve-production": "node scripts/qa/serve-production.mjs",
     "qa:web-ar": "node scripts/qa/web-ar-tester.mjs",
     "test": "vitest run --configLoader native --pool threads --maxWorkers=1 --no-file-parallelism",
+    "test:browser": "node scripts/qa/browser-smoke.mjs",
     "test:website": "node scripts/qa/test-website.mjs",
     "supabase:print-migration": "node scripts/print-supabase-migration.mjs",
     "supabase:print-auth-diagnostics": "node scripts/print-supabase-auth-diagnostics.mjs",

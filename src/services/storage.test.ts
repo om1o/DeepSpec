@@ -1,4 +1,4 @@
-import { accountStorageKey, setActiveAccount } from "../lib/accountScope";
+import { accountStorageKey, setActiveAccount, setActiveGuestPreview } from "../lib/accountScope";
 import {
   detectLegacyScans,
   importLegacyScans,
@@ -101,9 +101,38 @@ const scanState: ScanAnalysisState = {
 };
 
 describe("storage", () => {
+  afterEach(() => vi.unstubAllEnvs());
   beforeEach(() => {
     localStorage.clear();
     vi.restoreAllMocks();
+  });
+
+  it("uses the real scan/chat storage for guests without exposing account or unassigned records", () => {
+    setActiveAccount("private-owner");
+    const ownerScan = createLookup(scanState).value;
+    const ownerKey = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    const ownerBytes = localStorage.getItem(ownerKey);
+    const legacyBytes = JSON.stringify([{ id: "unknown-owner" }]);
+    localStorage.setItem(LOOKUPS_STORAGE_KEY, legacyBytes);
+    localStorage.setItem("sb-existing-auth-token", "existing session");
+    vi.stubEnv("VITE_DEEPSPEC_GUEST_PREVIEW", "true");
+    setActiveGuestPreview();
+    expect(readLookups()).toEqual({ ok: true, value: [] });
+    expect(getLookup(ownerScan.id)).toBeNull();
+    expect(detectLegacyScans()).toEqual({ ok: true, value: null });
+    const guestScan = createLookup(scanState);
+    expect(guestScan.ok).toBe(true);
+    expect(appendChatMessages(guestScan.value.id, [createChatMessage("assistant", "Live answer kept for this guest")]).ok).toBe(true);
+    setActiveAccount(null);
+    setActiveGuestPreview();
+    expect(getLookup(guestScan.value.id)?.chatHistory[0].content).toBe("Live answer kept for this guest");
+    expect(localStorage.getItem(ownerKey)).toBe(ownerBytes);
+    expect(localStorage.getItem(LOOKUPS_STORAGE_KEY)).toBe(legacyBytes);
+    expect(localStorage.getItem("sb-existing-auth-token")).toBe("existing session");
+    vi.stubEnv("VITE_DEEPSPEC_GUEST_PREVIEW", "false");
+    setActiveAccount("private-owner");
+    expect(getLookup(guestScan.value.id)).toBeNull();
+    expect(getLookup(ownerScan.id)).not.toBeNull();
   });
 
   it("isolates scans and chat while preserving another account and unassigned records", () => {
@@ -470,6 +499,18 @@ describe("storage", () => {
 
     expect(getLookups()[0].chatHistory).toHaveLength(2);
     expect(getLookup(lookup.id)?.chatHistory).toHaveLength(2);
+  });
+
+  it("preserves detailed assistant paragraphs and real research references when reopening a scan", () => {
+    const lookup = createLookup(scanState).value;
+    const answer = "Visible observations\n\n" + "The belt has visible edge wear. ".repeat(45).trimEnd() + "\n\nNext checks\n- Read the marking.\n- Compare the tensioner position.";
+    const source = { label: "Belt reference", url: "https://example.com/reference?token=" + "a".repeat(400), sourceType: "reference" as const };
+    const message = { ...createChatMessage("assistant", answer), sources: [source], searchSuggestions: "<script>must not persist</script>" };
+    expect(appendChatMessages(lookup.id, [message]).ok).toBe(true);
+    const saved = getLookup(lookup.id)?.chatHistory[0];
+    expect(saved).toMatchObject({ content: answer, sources: [source] });
+    expect(saved).not.toHaveProperty("searchSuggestions");
+    expect(JSON.stringify(getLookups())).not.toContain("must not persist");
   });
 
   it.each([false, true])("repairs a partially persisted exchange idempotently (stale auxiliary retained: %s)", (retainStale) => {

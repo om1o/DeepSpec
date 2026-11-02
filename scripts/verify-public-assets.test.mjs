@@ -11,6 +11,17 @@ afterEach(async () => {
 });
 
 describe("findMissingPublicTargets", () => {
+  it("resolves the real scanner route to the app entrypoint without exempting unknown assets", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "deepspec-public-routes-"));
+    temporaryDirectories.push(root);
+    await writeFile(path.join(root, "index.html"), '<a href="/scan">Open scanner</a><img src="/scan/missing.webp"><a href="/not-a-route">Missing</a>');
+
+    await expect(findMissingPublicTargets(root)).resolves.toEqual([
+      { source: "index.html", reference: "/not-a-route", target: "not-a-route" },
+      { source: "index.html", reference: "/scan/missing.webp", target: "scan/missing.webp" },
+    ]);
+  });
+
   it("reports missing same-origin assets referenced by built public documents", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "deepspec-public-assets-"));
     temporaryDirectories.push(root);

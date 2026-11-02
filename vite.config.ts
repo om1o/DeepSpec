@@ -17,6 +17,11 @@ export default defineConfig(async ({ mode }) => {
   };
 
   return {
+    define: mode === "test" ? {} : {
+      "import.meta.env.VITE_DEEPSPEC_GUEST_PREVIEW": JSON.stringify(
+        serverEnv.DEEPSPEC_GUEST_PREVIEW === "true" && serverEnv.VERCEL_ENV === "preview" ? "true" : "false",
+      ),
+    },
     plugins: [
       react(),
       tailwindcss(),
@@ -43,6 +48,8 @@ export default defineConfig(async ({ mode }) => {
 
             const { enforceRateLimit } = (await server.ssrLoadModule("/server/rateLimit.shared.ts")) as typeof import("./server/rateLimit.shared");
             const { requireSession } = (await server.ssrLoadModule("/server/requireSession.shared.ts")) as typeof import("./server/requireSession.shared");
+            const { isGuestPreviewRequest } = (await server.ssrLoadModule("/server/guestPreview.shared.ts")) as typeof import("./server/guestPreview.shared");
+            const guestPreview = isGuestPreviewRequest(request.headers, serverEnv);
             const identifyRateLimit = await enforceRateLimit("identify", request.headers, serverEnv);
             if (!identifyRateLimit.ok) {
               response.statusCode = identifyRateLimit.status;
@@ -51,7 +58,7 @@ export default defineConfig(async ({ mode }) => {
               response.end(JSON.stringify(identifyRateLimit.body));
               return;
             }
-            const identifySession = await requireSession(request.headers, serverEnv);
+            const identifySession = guestPreview ? { ok: true as const } : await requireSession(request.headers, serverEnv);
             if (!identifySession.ok) {
               response.statusCode = identifySession.status;
               response.setHeader("Content-Type", "application/json");
@@ -69,15 +76,15 @@ export default defineConfig(async ({ mode }) => {
               response.end(JSON.stringify(invalid.body));
               return;
             }
-            const reservation = await reserveScanCredit(request.headers, serverEnv);
-            if (!reservation.ok) {
+            const reservation = guestPreview ? undefined : await reserveScanCredit(request.headers, serverEnv);
+            if (reservation?.ok === false) {
               response.statusCode = reservation.error.status;
               response.setHeader("Content-Type", "application/json");
               response.end(JSON.stringify(reservation.error.body));
               return;
             }
             const result = await createIdentifyResponse(body, serverEnv);
-            await consumeReservedScanCredit(reservation, serverEnv, result.status === 200);
+            if (reservation) await consumeReservedScanCredit(reservation, serverEnv, result.status === 200);
             response.statusCode = result.status;
             response.setHeader("Content-Type", "application/json");
             response.end(JSON.stringify(result.body));
@@ -94,8 +101,11 @@ export default defineConfig(async ({ mode }) => {
             }
 
             const { createChatResponse, isChatEnabled } = (await server.ssrLoadModule("/server/chat.shared.ts")) as typeof import("./server/chat.shared");
-            if (!isChatEnabled(serverEnv)) {
-              const result = await createChatResponse(undefined, serverEnv);
+            const { isGuestPreviewRequest } = (await server.ssrLoadModule("/server/guestPreview.shared.ts")) as typeof import("./server/guestPreview.shared");
+            const guestPreview = isGuestPreviewRequest(request.headers, serverEnv);
+            const chatEnv = guestPreview ? { ...serverEnv, DEEPSPEC_ENABLE_CHAT: "true" } : serverEnv;
+            if (!isChatEnabled(chatEnv)) {
+              const result = await createChatResponse(undefined, chatEnv);
               response.statusCode = result.status;
               response.setHeader("Content-Type", "application/json");
               response.end(JSON.stringify(result.body));
@@ -112,7 +122,7 @@ export default defineConfig(async ({ mode }) => {
               response.end(JSON.stringify(chatRateLimit.body));
               return;
             }
-            const chatSession = await requireSession(request.headers, serverEnv);
+            const chatSession = guestPreview ? { ok: true as const } : await requireSession(request.headers, serverEnv);
             if (!chatSession.ok) {
               response.statusCode = chatSession.status;
               response.setHeader("Content-Type", "application/json");
@@ -121,7 +131,7 @@ export default defineConfig(async ({ mode }) => {
             }
 
             const body = await readJsonBody(request).catch(() => null);
-            const result = await createChatResponse(body, serverEnv);
+            const result = await createChatResponse(body, chatEnv);
             response.statusCode = result.status;
             response.setHeader("Content-Type", "application/json");
             response.end(JSON.stringify(result.body));

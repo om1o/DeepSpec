@@ -579,7 +579,7 @@ export function listConfiguredPlans(env: BillingEnv) {
 }
 
 async function handleStripeEvent(
-  event: { data?: { object?: unknown }; livemode?: boolean; type: string },
+  event: { data?: { object?: unknown }; id: string; livemode?: boolean; type: string },
   supabase: BillingSupabaseClient,
   env: BillingEnv,
 ): Promise<{ handled: boolean } | { error: BillingErrorResponse }> {
@@ -589,7 +589,7 @@ async function handleStripeEvent(
   }
 
   if (event.type === "checkout.session.completed") {
-    return writeCheckoutEntitlement(stripeObject, supabase);
+    return writeCheckoutEntitlement(event.id, event.type, stripeObject, supabase);
   }
 
   if (event.type === "customer.subscription.updated" || event.type === "customer.subscription.deleted") {
@@ -600,7 +600,7 @@ async function handleStripeEvent(
 }
 
 async function handlePolarEvent(
-  event: { data?: unknown; type: string },
+  event: { data?: unknown; id: string; type: string },
   supabase: BillingSupabaseClient,
   env: BillingEnv,
 ): Promise<{ handled: boolean } | { error: BillingErrorResponse }> {
@@ -610,7 +610,7 @@ async function handlePolarEvent(
   }
 
   if (event.type === "order.paid") {
-    return writePolarOrderEntitlement(polarObject, supabase, env);
+    return writePolarOrderEntitlement(event.id, event.type, polarObject, supabase, env);
   }
 
   if (
@@ -627,6 +627,8 @@ async function handlePolarEvent(
 }
 
 async function writeCheckoutEntitlement(
+  eventId: string,
+  eventType: string,
   session: SupabaseRow,
   supabase: BillingSupabaseClient,
 ): Promise<{ handled: boolean } | { error: BillingErrorResponse }> {
@@ -646,33 +648,27 @@ async function writeCheckoutEntitlement(
     return { error: errorResponse(400, "missing_customer", "Billing checkout session has no customer id.") };
   }
 
-  const existing = await readExistingEntitlement(supabase, userId);
-  if ("error" in existing) {
-    return existing;
+  const providerObjectId = getStringValue(session.id);
+  if (!providerObjectId) {
+    return { error: errorResponse(400, "missing_checkout", "Billing checkout session has no checkout id.") };
   }
 
-  const currentAllowance = Math.max(0, Number(existing.row?.scan_allowance ?? 0));
-  const scanAllowance = plan.billingMode === "payment" && Number.isFinite(currentAllowance)
-    ? currentAllowance + plan.scanAllowance
-    : plan.scanAllowance;
-
-  const { error } = await supabase
-    .from("billing_entitlements")
-    .upsert({
-      current_period_end: getStripeTimestampIso(session.current_period_end),
-      billing_provider: "stripe",
-      plan_id: plan.id,
-      provider_checkout_id: getStringValue(session.id) || null,
-      provider_customer_id: customerId,
-      provider_subscription_id: getStringValue(session.subscription) || null,
-      scan_allowance: scanAllowance,
-      status: getCheckoutStatus(session),
-      stripe_checkout_session_id: getStringValue(session.id) || null,
-      stripe_customer_id: customerId,
-      stripe_subscription_id: getStringValue(session.subscription) || null,
-      updated_at: new Date().toISOString(),
-      user_id: userId,
-    }, { onConflict: "user_id" });
+  const subscriptionId = getStringValue(session.subscription) || null;
+  const { error } = await supabase.rpc("apply_billing_checkout_webhook_event", {
+    p_add_scan_allowance: plan.billingMode === "payment",
+    p_checkout_id: providerObjectId,
+    p_current_period_end: getStripeTimestampIso(session.current_period_end) || null,
+    p_customer_id: customerId,
+    p_event_id: eventId,
+    p_event_type: eventType,
+    p_plan_id: plan.id,
+    p_provider: "stripe",
+    p_provider_object_id: providerObjectId,
+    p_scan_allowance: plan.scanAllowance,
+    p_status: getCheckoutStatus(session),
+    p_subscription_id: subscriptionId,
+    p_user_id: userId,
+  });
 
   if (error) {
     return { error: errorResponse(502, "entitlement_write_failed", "DeepSpec could not activate paid access.") };
@@ -682,6 +678,8 @@ async function writeCheckoutEntitlement(
 }
 
 async function writePolarOrderEntitlement(
+  eventId: string,
+  eventType: string,
   order: SupabaseRow,
   supabase: BillingSupabaseClient,
   env: BillingEnv,
@@ -708,31 +706,27 @@ async function writePolarOrderEntitlement(
     return { error: errorResponse(400, "missing_customer", "Billing order has no customer id.") };
   }
 
-  const existing = await readExistingEntitlement(supabase, userId);
-  if ("error" in existing) {
-    return existing;
+  const providerObjectId = getStringValue(order.id);
+  if (!providerObjectId) {
+    return { error: errorResponse(400, "missing_order", "Billing order has no order id.") };
   }
 
-  const currentAllowance = Math.max(0, Number(existing.row?.scan_allowance ?? 0));
-  const scanAllowance = plan.billingMode === "payment" && Number.isFinite(currentAllowance)
-    ? currentAllowance + plan.scanAllowance
-    : plan.scanAllowance;
   const subscriptionId = getStringValue(order.subscription_id) || getStringValue(subscription?.id);
-
-  const { error } = await supabase
-    .from("billing_entitlements")
-    .upsert({
-      billing_provider: "polar",
-      current_period_end: getIsoString(subscription?.current_period_end),
-      plan_id: plan.id,
-      provider_checkout_id: getStringValue(order.checkout_id) || null,
-      provider_customer_id: customerId,
-      provider_subscription_id: subscriptionId || null,
-      scan_allowance: scanAllowance,
-      status: "active",
-      updated_at: new Date().toISOString(),
-      user_id: userId,
-    }, { onConflict: "user_id" });
+  const { error } = await supabase.rpc("apply_billing_checkout_webhook_event", {
+    p_add_scan_allowance: plan.billingMode === "payment",
+    p_checkout_id: getStringValue(order.checkout_id) || null,
+    p_current_period_end: getIsoString(subscription?.current_period_end) || null,
+    p_customer_id: customerId,
+    p_event_id: eventId,
+    p_event_type: eventType,
+    p_plan_id: plan.id,
+    p_provider: "polar",
+    p_provider_object_id: providerObjectId,
+    p_scan_allowance: plan.scanAllowance,
+    p_status: "active",
+    p_subscription_id: subscriptionId || null,
+    p_user_id: userId,
+  });
 
   if (error) {
     return { error: errorResponse(502, "entitlement_write_failed", "DeepSpec could not activate paid access.") };
@@ -919,7 +913,7 @@ function parseSignedStripeEvent(
   rawBody: string,
   headers: Record<string, string | string[] | undefined>,
   webhookSecret: string,
-): { event: { data?: { object?: unknown }; livemode?: boolean; type: string } } | { error: BillingErrorResponse } {
+): { event: { data?: { object?: unknown }; id: string; livemode?: boolean; type: string } } | { error: BillingErrorResponse } {
   const signatureHeader = getHeaderValue(headers["stripe-signature"] ?? headers["Stripe-Signature"]);
   if (!signatureHeader) {
     return { error: errorResponse(400, "missing_signature", "Billing provider webhook signature is missing.") };
@@ -930,13 +924,14 @@ function parseSignedStripeEvent(
   }
 
   const payload = parseJson(rawBody);
-  if (!isRecord(payload) || typeof payload.type !== "string") {
+  if (!isRecord(payload) || typeof payload.id !== "string" || !payload.id.trim() || typeof payload.type !== "string") {
     return { error: errorResponse(400, "invalid_payload", "Billing provider webhook payload is invalid.") };
   }
 
   return {
     event: {
       data: isRecord(payload.data) ? { object: payload.data.object } : undefined,
+      id: payload.id,
       livemode: typeof payload.livemode === "boolean" ? payload.livemode : undefined,
       type: payload.type,
     },
@@ -947,7 +942,7 @@ function parseSignedStandardWebhookEvent(
   rawBody: string,
   headers: Record<string, string | string[] | undefined>,
   webhookSecret: string,
-): { event: { data?: unknown; type: string } } | { error: BillingErrorResponse } {
+): { event: { data?: unknown; id: string; type: string } } | { error: BillingErrorResponse } {
   const webhookId = getHeaderValue(headers["webhook-id"] ?? headers["Webhook-Id"]);
   const webhookTimestamp = getHeaderValue(headers["webhook-timestamp"] ?? headers["Webhook-Timestamp"]);
   const webhookSignature = getHeaderValue(headers["webhook-signature"] ?? headers["Webhook-Signature"]);
@@ -967,6 +962,7 @@ function parseSignedStandardWebhookEvent(
   return {
     event: {
       data: payload.data,
+      id: webhookId,
       type: payload.type,
     },
   };

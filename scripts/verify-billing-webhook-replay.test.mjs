@@ -75,6 +75,7 @@ describe("billing webhook replay helpers", () => {
 
     expect(payload).toMatchObject({
       created: 1782000000,
+      id: "evt_test_test-123",
       data: {
         object: {
           client_reference_id: "00000000-0000-4000-8000-000000000001",

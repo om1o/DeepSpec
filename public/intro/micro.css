@@ -1,0 +1,122 @@
+/* Small material responses; logo artwork and the intro keep their own timelines. */
+.glass-button .ui-icon,
+.header-sign-in .ui-icon,
+.hero-demo-link .ui-icon,
+.text-link .ui-icon,
+.explore-card .ui-icon,
+.site-footer .ui-icon,
+.explore-link > span {
+  transition: transform .28s cubic-bezier(.2,.75,.2,1);
+}
+
+.glass-button::before,
+.header-sign-in::before {
+  transition: opacity .25s ease;
+}
+
+.glass-button:focus-visible,
+.header-sign-in:focus-visible {
+  border-color: #fff;
+  box-shadow: inset 0 1px 0 #fff, 0 0 0 4px #b8def51a, 0 12px 28px #00050c38;
+}
+
+.visual-panel > img,
+.saved-photo > img,
+.explore-card > img {
+  transition: transform .7s cubic-bezier(.2,.75,.2,1);
+  transform-origin: center;
+}
+
+.visual-panel {
+  transition: border-color .35s ease, box-shadow .35s ease;
+}
+
+.image-callout,
+.evidence-note,
+.saved-label,
+.share-note {
+  transition: border-color .35s ease, box-shadow .35s ease;
+}
+
+.text-link:focus-visible,
+.explore-card:focus-visible {
+  border-color: #b7d8ee;
+}
+
+.explore-card:active {
+  transform: translateY(-1px);
+}
+
+.intro-controls button:focus-visible {
+  border-color: #dcefff;
+  box-shadow: inset 0 1px 0 #f4fcff38, 0 0 0 3px #bfddf21f;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .glass-button:hover .ui-icon,
+  .header-sign-in:hover .ui-icon,
+  .hero-demo-link:hover .ui-icon,
+  .text-link:hover .ui-icon,
+  .explore-card:hover .ui-icon,
+  .site-footer a:hover .ui-icon {
+    transform: translate(2px,-2px);
+  }
+
+  .explore-link:hover > span {
+    transform: translateY(3px);
+  }
+
+  .glass-button:hover::before,
+  .header-sign-in:hover::before {
+    opacity: .78;
+  }
+
+  .visual-panel:hover > img,
+  .visual-panel:hover .saved-photo > img,
+  .explore-card:hover > img {
+    transform: scale(1.025);
+  }
+
+  .visual-panel:hover {
+    border-color: #bdd8ea4d;
+    box-shadow: 0 20px 42px #00071038, inset 0 1px 0 #e6f4ff12;
+  }
+
+  .visual-panel:hover .image-callout,
+  .visual-panel:hover .evidence-note,
+  .visual-panel:hover .saved-label,
+  .visual-panel:hover .share-note {
+    border-color: #d1e8f86b;
+    box-shadow: inset 0 1px 0 #ffffff36, 0 10px 24px #00071147;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .explore-card:active {
+    transform: none;
+  }
+
+  .glass-button .ui-icon,
+  .header-sign-in .ui-icon,
+  .hero-demo-link .ui-icon,
+  .text-link .ui-icon,
+  .explore-card .ui-icon,
+  .site-footer .ui-icon,
+  .explore-link > span,
+  .visual-panel > img,
+  .saved-photo > img,
+  .explore-card > img {
+    transform: none !important;
+    transition: none;
+  }
+
+  .glass-button::before,
+  .header-sign-in::before,
+  .visual-panel,
+  .image-callout,
+  .evidence-note,
+  .saved-label,
+  .share-note {
+    transition: none;
+  }
+}

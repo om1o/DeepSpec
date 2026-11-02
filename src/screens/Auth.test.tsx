@@ -71,9 +71,9 @@ describe("Auth", () => {
   it("uses Deep Spec branding and defaults to account sign-in without unconfigured OAuth providers", async () => {
     await renderAuth();
 
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sign in to DeepSpec" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "DeepSpec" })).toBeInTheDocument();
-    expect(document.querySelector('img[src="/brand/deepspec-symbol.webp"]')).toHaveAttribute("alt", "");
+    expect(document.querySelector('img[src="/brand/deepspec-logo-horizontal.svg"]')).toHaveAttribute("alt", "");
     expect(screen.queryByRole("button", { name: "Continue with Google" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Continue with GitHub" })).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText("you@example.com")).toBeInTheDocument();

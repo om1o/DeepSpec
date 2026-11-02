@@ -1,4 +1,6 @@
 import { createSupabaseAdminClient, getSupabaseAdminKey } from "./supabaseAdmin.shared.js";
+import { isGuestPreviewRequest } from "./guestPreview.shared.js";
+import { enforceGuestQuota } from "./guestQuota.shared.js";
 
 // Server-side rate limiting for the paid AI endpoints. Keyed by client IP only:
 // IP-based limits remain independent of account identity and complement scan credits.
@@ -41,9 +43,11 @@ export async function enforceRateLimit(
   headers: Record<string, string | string[] | undefined>,
   env: RateLimitEnv,
 ): Promise<RateLimitDecision> {
+  const clientIp = getClientIp(headers);
+  if (isGuestPreviewRequest(headers, env)) return enforceGuestQuota(scope, clientIp, env);
+
   const supabaseUrl = env.SUPABASE_URL?.trim() || env.VITE_SUPABASE_URL?.trim();
   const serviceRoleKey = getSupabaseAdminKey(env);
-  const clientIp = getClientIp(headers);
 
   // Local development remains usable without a backing store. Production must
   // verify the limit before starting a paid provider request.

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 type SelectResult = { data: unknown; error: { message?: string } | null };
 
 const mocks = vi.hoisted(() => ({
+  eq: vi.fn<(column: string, value: string) => void>(),
   select: vi.fn<(columns: string) => SelectResult>(),
 }));
 
@@ -12,9 +13,14 @@ vi.mock("./auth", () => ({
   getAuthClient: async () => ({
     auth: { getUser: async () => ({ data: { user: { id: "user-1" } }, error: null }) },
     from: () => ({
-      select: (columns: string) => ({
-        eq: () => ({ order: () => ({ limit: async () => mocks.select(columns) }) }),
-      }),
+      select: (columns: string) => {
+        const query = {
+          eq: (column: string, value: string) => { mocks.eq(column, value); return query; },
+          order: () => query,
+          limit: async () => mocks.select(columns),
+        };
+        return query;
+      },
     }),
     storage: { from: () => ({ createSignedUrls: async () => ({ data: [], error: null }) }) },
   }),
@@ -43,7 +49,21 @@ const inspection = {
 describe("readCloudLookups", () => {
   beforeEach(() => {
     setActiveAccount("user-1");
+    mocks.eq.mockReset();
     mocks.select.mockReset();
+  });
+
+  it("loads one saved scan by exact account-scoped id", async () => {
+    mocks.select.mockReturnValue({ data: [shopRow], error: null });
+    const { readCloudLookup } = await import("./cloudHistory");
+
+    const result = await readCloudLookup("scan-1");
+
+    expect(result.ok && result.value?.id).toBe("scan-1");
+    expect(mocks.eq.mock.calls).toEqual([
+      ["user_id", "user-1"],
+      ["local_id", "scan-1"],
+    ]);
   });
 
   it("loads the cloud revision with the snapshot, including through optional-column fallback", async () => {
@@ -72,6 +92,14 @@ describe("readCloudLookups", () => {
     const result = await readCloudLookups();
     expect(result.ok && result.value[0]).toMatchObject({ inspection, trainingStatus: "raw_unreviewed" });
     expect(result.ok && result.value[0].result).toBeUndefined();
+  });
+
+  it("retains grounded chat references and paragraphs in an account's saved cloud scan", async () => {
+    const message = { id: "reply-1", role: "assistant", content: "Visible wear\n\nCompare the marking.", timestamp: "2026-09-18T12:00:00.000Z", sources: [{ label: "Reference", url: "https://example.com/reference", sourceType: "reference" }] };
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, chat_history: [message] }], error: null });
+    const { readCloudLookups } = await import("./cloudHistory");
+    const result = await readCloudLookups();
+    expect(result.ok && result.value[0].chatHistory).toEqual([message]);
   });
 
   it("retains shop columns when only the inspection migration is missing", async () => {

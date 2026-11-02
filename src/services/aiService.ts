@@ -1,6 +1,9 @@
-import { CHAT_USER_MESSAGE_MAX_CHARS, FOLLOWUP_PROMPT, IDENTIFY_PROMPT } from "./systemPrompts";
+import { CHAT_USER_MESSAGE_MAX_CHARS, IDENTIFY_PROMPT } from "./systemPrompts";
 import { identifyOnDevice, isOnDeviceFallbackEnabled } from "./onDeviceIdentify";
 import { getAuthClient } from "./auth";
+import { isGuestPreview } from "../lib/guestPreview";
+import { getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
+import { prepareRetryFrame } from "../lib/retryFrame";
 import {
   SCAN_CATEGORIES,
   type AIInput,
@@ -46,7 +49,12 @@ type IdentifyApiSuccess = {
 
 type ChatApiSuccess = {
   message: string;
+  sources?: SourceLink[];
+  searchSuggestions?: string;
 };
+
+export type FollowUpOptions = { research?: boolean; sourceUrls?: string[] };
+export type FollowUpDetails = ChatApiSuccess;
 
 type AIApiFailure = {
   error: {
@@ -79,6 +87,7 @@ export async function runAI(input: AIInput): Promise<string | object> {
       "/api/chat",
       {
         userMessage: input.userMessage,
+        ...(input.imageBase64 ? { imageBase64: input.imageBase64 } : {}),
         systemPrompt: input.systemPrompt,
         responseAsJson: input.responseAsJson ?? false,
       },
@@ -119,9 +128,11 @@ export async function runAI(input: AIInput): Promise<string | object> {
 async function postAI<TSuccess extends object>(
   path: string,
   payload: object,
-  options: { timeoutMs: number },
+  options: { timeoutMs: number; scope?: AccountScope },
 ): Promise<TSuccess> {
+  if (options.scope && !isAccountScopeCurrent(options.scope)) throw new AIServiceError("invalid_input", "Account changed. Reopen this scan before asking a question.");
   const authHeader = await getAuthHeader();
+  if (options.scope && !isAccountScopeCurrent(options.scope)) throw new AIServiceError("invalid_input", "Account changed. Reopen this scan before asking a question.");
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs);
   const response = await fetch(path, {
@@ -191,6 +202,7 @@ function isAbortError(error: unknown) {
 }
 
 async function getAuthHeader() {
+  if (isGuestPreview()) return "";
   const client = await getAuthClient().catch(() => null);
   if (!client) {
     return "";
@@ -247,23 +259,40 @@ async function identifyOnDeviceWithTimeout(frame: CapturedFrame, cloudError: unk
 }
 
 export async function sendFollowUp(lookup: Lookup, question: string): Promise<string> {
+  return (await sendFollowUpDetails(lookup, question)).message;
+}
+
+export async function sendFollowUpDetails(lookup: Lookup, question: string, options: FollowUpOptions = {}): Promise<FollowUpDetails> {
   const trimmedQuestion = question.trim().slice(0, 500);
   if (!trimmedQuestion) {
     throw new AIServiceError("invalid_input", "Ask a question first.");
   }
 
-  const result = await runAI({
-    type: "text",
+  const scope = getAccountScope();
+  if (!isAccountScopeCurrent(scope)) throw new AIServiceError("invalid_input", "Reopen this scan before asking a question.");
+  let imageBase64: string;
+  try {
+    imageBase64 = (await prepareRetryFrame(lookup.frame)).imageBase64;
+  } catch (error) {
+    throw new AIServiceError("invalid_input", error instanceof Error ? error.message : "The saved photo could not be loaded. Reopen this scan to refresh its link.");
+  }
+  const attachPhoto = imageBase64.length <= 4_000_000 && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(imageBase64) && imageBase64.split(",")[1].length % 4 === 0;
+  if (!attachPhoto) throw new AIServiceError("invalid_input", "The saved photo must be a JPEG, PNG, or WebP image small enough for chat. Reopen the scan or use a smaller photo.");
+  const result = await postAI<ChatApiSuccess>("/api/chat", {
     userMessage: buildFollowUpContext(lookup, trimmedQuestion),
-    systemPrompt: FOLLOWUP_PROMPT,
-    responseAsJson: false,
-  });
+    imageBase64,
+    ...(options.research ? { research: true, ...(options.sourceUrls?.length ? { sourceUrls: options.sourceUrls } : {}) } : {}),
+  }, { timeoutMs: options.research ? 60_000 : DEFAULT_CHAT_CLIENT_TIMEOUT_MS, scope });
 
-  if (typeof result !== "string" || !result.trim()) {
+  if (typeof result.message !== "string" || !result.message.trim()) {
     throw new AIServiceError("invalid_response", "Deep Spec received an unreadable chat response.");
   }
 
-  return result.trim();
+  return {
+    message: result.message.trim(),
+    ...(isSourceLinkArray(result.sources) ? { sources: result.sources.filter((source) => /^https:\/\//.test(source.url)).slice(0, 8) } : {}),
+    ...(typeof result.searchSuggestions === "string" && result.searchSuggestions.length <= 50_000 ? { searchSuggestions: result.searchSuggestions } : {}),
+  };
 }
 
 export function getAIErrorMessage(error: unknown) {

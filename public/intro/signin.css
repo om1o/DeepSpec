@@ -1,0 +1,58 @@
+#signin-transition[hidden] { display: none; }
+#signin-transition {
+  position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center;
+  padding: 28px; isolation: isolate; color: #f4f9ff; font-family: var(--font, Arial, sans-serif);
+}
+#signin-transition .signin-veil {
+  position: absolute; inset: 0; z-index: -3;
+  background: rgba(2, 10, 20, .74); backdrop-filter: blur(24px) saturate(1.2); -webkit-backdrop-filter: blur(24px) saturate(1.2);
+}
+#signin-transition .signin-halo {
+  position: absolute; z-index: -2; left: 50%; top: 50%; width: min(740px, 135vw); aspect-ratio: 1;
+  transform: translate(-50%, -50%); pointer-events: none;
+  background: radial-gradient(ellipse, rgba(33, 139, 228, .21), rgba(24, 84, 153, .08) 47%, transparent 70%);
+}
+#signin-transition .signin-glass-card {
+  position: relative; isolation: isolate; overflow: hidden; width: min(414px, 100%); padding: 35px 36px 29px;
+  border: 1px solid rgba(201, 233, 255, .42); border-radius: 36px; text-align: center;
+  background: linear-gradient(145deg, rgba(42, 90, 132, .55), rgba(7, 37, 68, .8) 45%, rgba(4, 25, 48, .91));
+  box-shadow: inset 0 1px 0 rgba(245, 252, 255, .45), inset 0 -1px 0 rgba(121, 172, 214, .18), 0 30px 100px rgba(0, 4, 14, .48), 0 8px 24px rgba(0, 6, 18, .3);
+  backdrop-filter: blur(32px) saturate(1.3); -webkit-backdrop-filter: blur(32px) saturate(1.3);
+  transform-origin: 50% 55%;
+}
+#signin-transition .signin-glass-card:focus { outline: none; }
+#signin-transition .signin-glass-edge { position: absolute; inset: 4px; border: 1px solid rgba(222, 243, 255, .11); border-radius: 31px; pointer-events: none; }
+#signin-transition .signin-glass-sheen {
+  position: absolute; z-index: -1; top: -45%; left: -10%; width: 65%; height: 190%; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(237, 250, 255, .18) 45%, rgba(241, 252, 255, .33) 50%, transparent 78%);
+  opacity: 0; transform: translateX(-145%) rotate(-24deg);
+}
+#signin-transition .signin-close {
+  position: absolute; top: 15px; right: 15px; display: grid; place-items: center; width: 34px; height: 34px;
+  border: 1px solid rgba(211, 234, 250, .19); border-radius: 50%; color: #cbdfef; background: rgba(140, 185, 219, .07);
+  padding: 8px; cursor: pointer;
+}
+#signin-transition .signin-close:hover { background: rgba(173, 213, 242, .16); color: white; }
+#signin-transition .signin-close svg, #signin-transition .signin-continue svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
+#signin-transition .signin-brand-surface { width: 108px; max-width: 100%; margin: 1px auto 25px; border-radius: 25px; overflow: hidden; }
+#signin-transition .signin-blue-glass-logo { display: block; width: 100%; height: auto;  animation: none !important; transition: none !important; transform: none !important; }
+#signin-transition h2 { margin: 0; font-size: 28px; line-height: 1.15; letter-spacing: -.035em; font-weight: 500; }
+#signin-transition #signin-transition-description { margin: 13px 0 0; font-size: 15px; line-height: 1.5; color: #b5cde0; }
+#signin-transition .signin-progress { width: 104px; height: 3px; margin: 25px auto 21px; border-radius: 8px; overflow: hidden; background: rgba(174, 211, 239, .16); }
+#signin-transition .signin-progress span { display: block; height: 100%; width: 100%; border-radius: inherit; background: linear-gradient(90deg, #4fa9ef, #bee8ff); transform-origin: left; }
+#signin-transition .signin-continue { display: inline-flex; align-items: center; gap: 9px; color: #b9d8ee; font-size: 12px; line-height: 1.5; text-decoration: none; padding: 5px 0; }
+#signin-transition .signin-continue svg { width: 13px; height: 13px; }
+#signin-transition .signin-continue:hover { color: white; text-decoration: underline; text-underline-offset: 4px; }
+#signin-transition .signin-close:focus-visible, #signin-transition .signin-continue:focus-visible { outline: 2px solid #c9eaff; outline-offset: 4px; }
+#signin-transition .signin-live-status { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+@media (max-width: 600px) {
+  #signin-transition { padding: 24px; }
+  #signin-transition .signin-glass-card { max-width: 350px; padding: 32px 26px 25px; border-radius: 31px; }
+  #signin-transition .signin-glass-edge { border-radius: 26px; }
+  #signin-transition .signin-brand-surface { width: 96px; }
+  #signin-transition h2 { font-size: 26px; }
+  #signin-transition #signin-transition-description { font-size: 14px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #signin-transition .signin-glass-sheen, #signin-transition .signin-halo, #signin-transition .signin-progress { display: none; }
+}

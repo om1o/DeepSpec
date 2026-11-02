@@ -70,10 +70,7 @@ describe("History", () => {
     localStorage.clear();
     readCloudLookupsMock.mockReset();
     vi.mocked(syncLookupToCloud).mockReset();
-    readCloudLookupsMock.mockResolvedValue({
-      ok: false,
-      message: "No verified Supabase session was found.",
-    });
+    readCloudLookupsMock.mockResolvedValue({ ok: true, value: [] });
   });
 
   afterEach(() => vi.restoreAllMocks());
@@ -293,11 +290,28 @@ describe("History", () => {
     expect(getLookups()).toHaveLength(1);
   });
 
-  it("shows an empty saved scan state", () => {
+  it("shows an empty saved scan state only after cloud history finishes", async () => {
     renderHistory();
 
     expect(screen.getByRole("heading", { name: "Saved scans" })).toBeInTheDocument();
-    expect(screen.getByText("No saved scans yet")).toBeInTheDocument();
+    expect(await screen.findByText("No saved scans yet")).toBeInTheDocument();
+  });
+
+  it("shows cloud loading and error states and retries history", async () => {
+    let finishFirst!: (value: Awaited<ReturnType<typeof readCloudLookups>>) => void;
+    readCloudLookupsMock
+      .mockImplementationOnce(() => new Promise((resolve) => { finishFirst = resolve; }))
+      .mockResolvedValueOnce({ ok: true, value: [] });
+    renderHistory();
+
+    expect(screen.getByText("Loading cloud saved scans…")).toBeInTheDocument();
+    expect(screen.queryByText("No saved scans yet")).not.toBeInTheDocument();
+    await act(async () => { finishFirst({ ok: false, message: "Cloud unavailable." }); });
+    expect(screen.getByRole("alert")).toHaveTextContent("Cloud unavailable.");
+    expect(screen.queryByText("No saved scans yet")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Retry cloud history" }));
+    expect(await screen.findByText("No saved scans yet")).toBeInTheDocument();
+    expect(readCloudLookupsMock).toHaveBeenCalledTimes(2);
   });
 
   it("lists saved scans with dataset category", () => {

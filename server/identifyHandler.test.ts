@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import handler from "../api/identify";
 import { enforceRateLimit } from "./rateLimit.shared";
+import { requireSession } from "./requireSession.shared";
 const mocks = vi.hoisted(() => ({ createClient: vi.fn(), identify: vi.fn() }));
 vi.mock("@supabase/supabase-js", () => ({ createClient: mocks.createClient }));
 vi.mock("./identify.shared", async (original) => ({ ...await original<typeof import("./identify.shared")>(), createIdentifyResponse: mocks.identify }));
@@ -18,6 +19,8 @@ describe("identify HTTP credit gate", () => {
     vi.stubEnv("SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "service-role");
     vi.stubEnv("DEEPSPEC_ENFORCE_SCAN_CREDITS", "true");
+    vi.stubEnv("DEEPSPEC_GUEST_PREVIEW", "false");
+    vi.stubEnv("VERCEL_ENV", "production");
     mocks.identify.mockResolvedValue({ status: 200, body: { result: {} } });
   });
   afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); });
@@ -113,5 +116,75 @@ describe("identify HTTP credit gate", () => {
     await handler({ method: "POST", body }, res);
     expect(res.status).toHaveBeenCalledWith(401);
     expect(mocks.identify).not.toHaveBeenCalled();
+  });
+
+  function configureGuestPreview() {
+    vi.stubEnv("DEEPSPEC_GUEST_PREVIEW", "true");
+    vi.stubEnv("VERCEL_ENV", "preview");
+    vi.stubEnv("NODE_ENV", "production");
+  }
+
+  it("runs the real provider path for an account-free preview after IP limits pass", async () => {
+    configureGuestPreview();
+    const res = response();
+    await handler({ method: "POST", body }, res);
+    expect(enforceRateLimit).toHaveBeenCalledWith("identify", {}, process.env);
+    expect(requireSession).not.toHaveBeenCalled();
+    expect(mocks.createClient).not.toHaveBeenCalled();
+    expect(mocks.identify).toHaveBeenCalledWith(body, process.env);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({ result: {} });
+  });
+
+  it.each([429, 503] as const)("keeps guest preview closed when its IP quota cannot pass (%i)", async (status) => {
+    configureGuestPreview();
+    const failure = { error: { code: status === 429 ? "rate_limited" : "rate_limit_unavailable", message: "Wait" } };
+    vi.mocked(enforceRateLimit).mockResolvedValueOnce({ ok: false, status, retryAfterSeconds: 60, body: failure });
+    const res = response();
+    await handler({ method: "POST", body }, res);
+    expect(res.status).toHaveBeenCalledWith(status);
+    expect(res.json).toHaveBeenCalledWith(failure);
+    expect(res.setHeader).toHaveBeenCalledWith("Retry-After", "60");
+    expect(mocks.identify).not.toHaveBeenCalled();
+    expect(requireSession).not.toHaveBeenCalled();
+  });
+
+  it("still validates preview uploads before invoking a provider", async () => {
+    configureGuestPreview();
+    const res = response();
+    await handler({ method: "POST", body: { imageBase64: "https://example.com/sample.jpg" } }, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(mocks.identify).not.toHaveBeenCalled();
+    expect(mocks.createClient).not.toHaveBeenCalled();
+  });
+
+  it("does not relax production credit checks when the preview flag is enabled", async () => {
+    configureGuestPreview();
+    vi.stubEnv("VERCEL_ENV", "production");
+    const res = response();
+    await handler({ method: "POST", body, headers: { "x-deepspec-guest-preview": "true" } }, res);
+    expect(requireSession).toHaveBeenCalledOnce();
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(mocks.identify).not.toHaveBeenCalled();
+  });
+
+  it("preserves paid credit reservations for authenticated preview requests", async () => {
+    configureGuestPreview();
+    const rpc = client({ ok: true, reservation_id: "paid-hold" });
+    await handler({ method: "POST", body, headers: { Authorization: "Bearer token" } }, response());
+    expect(requireSession).toHaveBeenCalledOnce();
+    expect(rpc).toHaveBeenCalledWith("reserve_scan_credit", { p_user_id: "verified-user", p_free_eligible: true });
+    expect(rpc).toHaveBeenLastCalledWith("finalize_scan_credit", { p_user_id: "verified-user", p_reservation_id: "paid-hold", p_succeeded: true });
+    expect(mocks.identify).toHaveBeenCalledOnce();
+  });
+
+  it("does not treat an invalid supplied preview session as a guest", async () => {
+    configureGuestPreview();
+    vi.mocked(requireSession).mockResolvedValueOnce({ ok: false, status: 401, body: { error: { code: "invalid_session", message: "Invalid" } } });
+    const res = response();
+    await handler({ method: "POST", body, headers: { authorization: "Bearer invalid" } }, res);
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(mocks.identify).not.toHaveBeenCalled();
+    expect(mocks.createClient).not.toHaveBeenCalled();
   });
 });
