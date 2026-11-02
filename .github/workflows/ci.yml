@@ -124,7 +124,8 @@ jobs:
 
   browser:
     name: Browser smoke (synthetic data)
-    runs-on: ubuntu-latest
+    # Playwright 1.60 supports Ubuntu 24.04, but not the 26.04 latest image.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5

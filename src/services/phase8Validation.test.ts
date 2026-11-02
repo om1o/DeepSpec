@@ -117,5 +117,6 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(ciWorkflow).toMatch(/\n {2}cloud:\r?\n/);
     expect(ciWorkflow).toContain("npm run test:browser");
     expect(ciWorkflow).toContain("actions/upload-artifact@v4");
+    expect(ciWorkflow).toMatch(/browser:[\s\S]*?runs-on: ubuntu-24\.04/);
   });
 });
