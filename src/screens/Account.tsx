@@ -149,7 +149,7 @@ function AccountAccess() {
           <h1 className="mt-3 text-3xl font-black tracking-tight">Your DeepSpec access</h1>
           {checkoutState === "success" ? (
             <p className="mt-3 rounded-[8px] bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-900">
-              Checkout complete. Paid scans unlock once entitlement verification confirms an active plan.
+              Checkout complete. Any added scans appear below once your account access is confirmed.
             </p>
           ) : null}
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
@@ -171,14 +171,14 @@ function AccountAccess() {
             Manage billing
           </button>
           {portalStatus ? (
-            <p className="mt-3 text-sm font-semibold text-slate-600">{portalStatus}</p>
+            <p role="status" className="mt-3 text-sm font-semibold text-slate-600">{portalStatus}</p>
           ) : null}
         </section>
 
         <section className="mt-4 rounded-[8px] border border-slate-200 bg-white p-6 text-sm leading-6 text-slate-600 shadow-sm">
           <h2 className="text-lg font-black tracking-tight text-slate-950">How access works</h2>
           <p className="mt-2">
-            Free and paid scan usage must come from the server account record tied to your verified session. Saved scans in this browser do not determine your allowance.
+            Your scan allowance belongs to your signed-in account. Saving or deleting scans in this browser does not change how many scans you have left.
           </p>
         </section>
       </div>
@@ -192,11 +192,11 @@ function getVerificationMessage(verification: EntitlementVerification, entitleme
   }
 
   if (verification.status === "verified" && entitlementStatus === "active") {
-    return "Entitlement verified.";
+    return "Your plan and remaining scans are confirmed.";
   }
 
   if (verification.status === "verified" && entitlementStatus === "free") {
-    return "The server verified this account and its free-scan usage.";
+    return "Your account is using the free preview.";
   }
 
   if (verification.status === "verified" && entitlementStatus === "verification_required") {
@@ -221,7 +221,7 @@ function formatMetric(value: number | null) {
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[8px] border border-slate-100 bg-slate-50 p-3">
-      <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-400">{label}</p>
+      <p className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-slate-500">{label}</p>
       <p className="mt-1 text-lg font-black text-slate-950">{value}</p>
     </div>
   );

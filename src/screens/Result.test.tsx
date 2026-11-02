@@ -1,15 +1,20 @@
 import { accountStorageKey, setActiveAccount, withAccountRouteState } from "../lib/accountScope";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
+import { StrictMode } from "react";
 import { afterEach, vi } from "vitest";
 import Result from "./Result";
 import Chat from "./Chat";
 import * as aiService from "../services/aiService";
 import * as reportService from "../services/report";
+import { readCloudLookup } from "../services/cloudHistory";
 import { getLookup, getLookups, LOOKUPS_STORAGE_KEY, updateLookup } from "../services/storage";
 import { emptyPartInspection } from "../lib/partInspection";
 import type { Lookup, ScanAnalysisState } from "../types";
+
+vi.mock("../services/cloudHistory", () => ({ readCloudLookup: vi.fn() }));
+const readCloudLookupMock = vi.mocked(readCloudLookup);
 
 const frame = {
   imageBase64: "data:image/jpeg;base64,test-image",
@@ -67,6 +72,8 @@ describe("Result", () => {
     sessionStorage.clear();
     vi.stubEnv("VITE_SUPABASE_URL", "");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "");
+    readCloudLookupMock.mockReset();
+    readCloudLookupMock.mockResolvedValue({ ok: true, value: null });
   });
 
   afterEach(() => {
@@ -124,7 +131,7 @@ describe("Result", () => {
     localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
     renderResult({ ...successfulScan, savedLookup: cloudLookup }, `/result/${local.id}`);
     expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute("src", expectedImage);
-    await userEvent.click(screen.getByRole("button", { name: "Yes", exact: true }));
+    await userEvent.click(screen.getByRole("button", { name: "Correct", exact: true }));
     expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute("src", expectedImage);
     await userEvent.click(screen.getByText("Human inspection — saved"));
     expect(screen.getByLabelText("Inspector name (self-reported)")).toHaveValue("Local inspector");
@@ -423,14 +430,64 @@ describe("Result", () => {
     expect(screen.getByText("No frame captured.")).toBeInTheDocument();
   });
 
+  it("does not use the latest scan or image for a missing saved-result id", async () => {
+    sessionStorage.setItem(accountStorageKey("deep-spec:latest-scan-state"), JSON.stringify(successfulScan));
+
+    renderResult(null, "/result/missing-id");
+
+    expect(await screen.findByRole("heading", { name: "Saved scan not found" })).toBeInTheDocument();
+    expect(readCloudLookupMock).toHaveBeenCalledWith("missing-id");
+    expect(screen.queryByRole("heading", { name: "Alternator" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "Captured car part" })).not.toBeInTheDocument();
+  });
+
+  it("loads a cloud-only direct result by exact id and keeps neutral notes unrated", async () => {
+    const cloudLookup = makeLookup({ id: "cloud-only", notes: "" });
+    readCloudLookupMock.mockResolvedValue({ ok: true, value: cloudLookup });
+
+    renderResult(null, "/result/cloud-only");
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Why or why not" }));
+    await userEvent.type(screen.getByLabelText("Why or why not"), "Useful receiving context");
+    expect(getLookup(cloudLookup.id)).toMatchObject({ rating: null, notes: "Useful receiving context" });
+    expect(getLookup(cloudLookup.id)?.correction).toBeNull();
+  });
+
+  it("clears the previous scan while an in-place saved route change loads", async () => {
+    const localLookup = makeLookup({ id: "device-scan" });
+    const cloudLookup = makeLookup({
+      id: "cloud-scan",
+      result: { ...successfulScan.result!, partName: "Starter motor", whatItDoes: "It cranks the engine." },
+      trainingLabel: "Starter motor",
+    });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([localLookup]));
+    let finishCloudLoad!: (value: Awaited<ReturnType<typeof readCloudLookup>>) => void;
+    readCloudLookupMock.mockImplementation(() => new Promise((resolve) => { finishCloudLoad = resolve; }));
+    render(
+      <MemoryRouter initialEntries={["/result/device-scan"]}>
+        <Link to="/result/cloud-scan">Open next saved scan</Link>
+        <Routes><Route path="/result/:id" element={<Result />} /></Routes>
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("link", { name: "Open next saved scan" }));
+
+    expect(screen.getByRole("heading", { name: "Loading saved scan" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 1, name: "Alternator" })).not.toBeInTheDocument();
+    await act(async () => { finishCloudLoad({ ok: true, value: cloudLookup }); });
+    expect(await screen.findByRole("heading", { level: 1, name: "Starter motor" })).toBeInTheDocument();
+  });
+
   it("captures distrust and a reason for a saved scan", async () => {
     const lookup = makeLookup();
     localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
 
     renderResult(null, `/result/${lookup.id}`);
 
-    await userEvent.click(screen.getByRole("button", { name: "Why or why not" }));
-    await userEvent.type(screen.getByLabelText("Why or why not"), "It was the starter.");
+    await userEvent.click(screen.getByRole("button", { name: "Incorrect" }));
+    await userEvent.type(screen.getByLabelText("Correction"), "It was the starter.");
 
     const savedLookup = JSON.parse(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY)) ?? "[]")[0] as Lookup;
     expect(savedLookup.rating).toBe("down");
@@ -445,8 +502,8 @@ describe("Result", () => {
 
     renderResult(null, `/result/${lookup.id}`);
 
-    expect(screen.getByTestId("trust-control")).toHaveTextContent("Do you trust this scan?");
-    await userEvent.click(screen.getByRole("button", { name: "Yes" }));
+    expect(screen.getByTestId("trust-control")).toHaveTextContent("Was this result correct?");
+    await userEvent.click(screen.getByRole("button", { name: "Correct" }));
 
     const savedLookup = JSON.parse(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY)) ?? "[]")[0] as Lookup;
     expect(savedLookup.rating).toBe("up");
@@ -463,9 +520,9 @@ describe("Result", () => {
       originalSetItem.call(this, name, value);
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Why or why not" }));
-    fireEvent.change(screen.getByLabelText("Why or why not"), { target: { value: "Actually a starter" } });
-    expect(screen.getByLabelText("Why or why not")).toHaveValue("Actually a starter");
+    fireEvent.click(screen.getByRole("button", { name: "Incorrect" }));
+    fireEvent.change(screen.getByLabelText("Correction"), { target: { value: "Actually a starter" } });
+    expect(screen.getByLabelText("Correction")).toHaveValue("Actually a starter");
     expect(screen.getByText("Not saved locally")).toBeInTheDocument();
     expect(screen.getByText(/Your device storage is full/)).toBeInTheDocument();
     expect(screen.getByTestId("trust-control")).toHaveTextContent("Feedback is not saved.");
@@ -480,6 +537,46 @@ describe("Result", () => {
     expect(screen.getByTestId("trust-control")).toHaveTextContent("Feedback is saved with this scan.");
   });
 
+  it("merges a failed neutral note into the next successful rating write", () => {
+    const lookup = makeLookup();
+    const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    localStorage.setItem(key, JSON.stringify([lookup]));
+    renderResult(null, `/result/${lookup.id}`);
+    fireEvent.click(screen.getByRole("button", { name: "Why or why not" }));
+    const originalSetItem = Storage.prototype.setItem;
+    const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, name, value) {
+      if (name === key) throw new DOMException("Full", "QuotaExceededError");
+      originalSetItem.call(this, name, value);
+    });
+    fireEvent.change(screen.getByLabelText("Why or why not"), { target: { value: "Keep this receiving note" } });
+    write.mockRestore();
+
+    fireEvent.click(screen.getByRole("button", { name: "Correct" }));
+
+    expect(getLookup(lookup.id)).toMatchObject({ rating: "up", notes: "Keep this receiving note" });
+    expect(screen.queryByRole("button", { name: "Retry saving feedback" })).not.toBeInTheDocument();
+  });
+
+  it("does not overwrite another tab's correction when retrying only a failed note", () => {
+    const lookup = makeLookup();
+    const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    localStorage.setItem(key, JSON.stringify([lookup]));
+    renderResult(null, `/result/${lookup.id}`);
+    fireEvent.click(screen.getByRole("button", { name: "Why or why not" }));
+    const originalSetItem = Storage.prototype.setItem;
+    const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, name, value) {
+      if (name === key) throw new DOMException("Full", "QuotaExceededError");
+      originalSetItem.call(this, name, value);
+    });
+    fireEvent.change(screen.getByLabelText("Why or why not"), { target: { value: "Pending note" } });
+    write.mockRestore();
+    expect(updateLookup(lookup.id, { correction: "Newer correction from another tab" }).ok).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry saving feedback" }));
+
+    expect(getLookup(lookup.id)).toMatchObject({ correction: "Newer correction from another tab", notes: "Pending note" });
+  });
+
   it("preserves a failed rating when a later correction write succeeds", () => {
     const lookup = makeLookup();
     const key = accountStorageKey(LOOKUPS_STORAGE_KEY);
@@ -490,10 +587,10 @@ describe("Result", () => {
       if (name === key) throw new DOMException("Full", "QuotaExceededError");
       originalSetItem.call(this, name, value);
     });
-    fireEvent.click(screen.getByRole("button", { name: "Why or why not" }));
+    fireEvent.click(screen.getByRole("button", { name: "Incorrect" }));
     expect(getLookup(lookup.id)?.rating).toBeNull();
     write.mockRestore();
-    fireEvent.change(screen.getByLabelText("Why or why not"), { target: { value: "Starter label visible" } });
+    fireEvent.change(screen.getByLabelText("Correction"), { target: { value: "Starter label visible" } });
     expect(getLookup(lookup.id)).toMatchObject({ rating: "down", correction: "Starter label visible" });
     expect(screen.queryByText("Not saved locally")).not.toBeInTheDocument();
   });
@@ -504,7 +601,7 @@ describe("Result", () => {
     renderResult(null, `/result/${lookup.id}`);
     expect(updateLookup(lookup.id, { rating: "up" }).ok).toBe(true);
 
-    fireEvent.change(screen.getByLabelText("Why or why not"), { target: { value: "New detail from this tab" } });
+    fireEvent.change(screen.getByLabelText("Correction"), { target: { value: "New detail from this tab" } });
 
     expect(getLookup(lookup.id)).toMatchObject({ rating: "up", correction: "New detail from this tab" });
   });
@@ -519,7 +616,7 @@ describe("Result", () => {
       if (name === key) throw new DOMException("Full", "QuotaExceededError");
       originalSetItem.call(this, name, value);
     });
-    fireEvent.change(screen.getByLabelText("Why or why not"), { target: { value: "Keep my correction" } });
+    fireEvent.change(screen.getByLabelText("Correction"), { target: { value: "Keep my correction" } });
     write.mockRestore();
     expect(updateLookup(lookup.id, { rating: "up" }).ok).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Retry saving feedback" }));
@@ -537,8 +634,8 @@ describe("Result", () => {
       if (name === key) throw new DOMException("Full", "QuotaExceededError");
       originalSetItem.call(this, name, value);
     });
-    fireEvent.click(screen.getByRole("button", { name: "Why or why not" }));
-    fireEvent.change(screen.getByLabelText("Why or why not"), { target: { value: "Pending correction" } });
+    fireEvent.click(screen.getByRole("button", { name: "Incorrect" }));
+    fireEvent.change(screen.getByLabelText("Correction"), { target: { value: "Pending correction" } });
     write.mockRestore();
 
     fireEvent.click(screen.getByText("Human inspection — optional"));
@@ -546,7 +643,7 @@ describe("Result", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save inspection" }));
     expect(getLookup(lookup.id)?.inspection?.inspectorName).toBe("Test inspector");
     expect(getLookup(lookup.id)?.correction).toBeNull();
-    expect(screen.getByLabelText("Why or why not")).toHaveValue("Pending correction");
+    expect(screen.getByLabelText("Correction")).toHaveValue("Pending correction");
     expect(screen.getByTestId("trust-control")).toHaveTextContent("Feedback is not saved.");
 
     fireEvent.click(screen.getByRole("button", { name: "Retry saving feedback" }));
@@ -718,12 +815,12 @@ describe("Result", () => {
     await userEvent.click(ask);
     expect(screen.queryByLabelText("Ask a follow-up question")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Why or why not" }));
-    fireEvent.change(screen.getByLabelText("Why or why not"), { target: { value: "Starter label is visible" } });
-    expect(screen.getByLabelText("Why or why not")).toHaveValue("Starter label is visible");
+    fireEvent.click(screen.getByRole("button", { name: "Incorrect" }));
+    fireEvent.change(screen.getByLabelText("Correction"), { target: { value: "Starter label is visible" } });
+    expect(screen.getByLabelText("Correction")).toHaveValue("Starter label is visible");
 
     await userEvent.click(screen.getByRole("button", { name: "Retry saving scan result" }));
-    expect(screen.getByLabelText("Why or why not")).toHaveValue("Starter label is visible");
+    expect(screen.getByLabelText("Correction")).toHaveValue("Starter label is visible");
     expect(screen.getByRole("button", { name: "Retry saving scan result" })).toBeInTheDocument();
 
     expect(screen.getByRole("button", { name: "Ask DeepSpec", exact: true })).toBeDisabled();
@@ -781,6 +878,33 @@ describe("Result", () => {
     expect(getLookups()).toEqual([]);
   });
 
+  it("does not apply a pending analysis retry after the saved route changes", async () => {
+    const failedLookup = makeLookup({ id: "failed-route", result: undefined, errorCode: "network", errorMessage: "Network error" });
+    const nextLookup = makeLookup({
+      id: "next-route",
+      result: { ...successfulScan.result!, partName: "Starter motor", whatItDoes: "It cranks the engine." },
+      trainingLabel: "Starter motor",
+    });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([failedLookup, nextLookup]));
+    let finishRetry!: (value: NonNullable<ScanAnalysisState["result"]>) => void;
+    const identifySpy = vi.spyOn(aiService, "identifyCapturedFrame").mockImplementation(() => new Promise((resolve) => { finishRetry = resolve; }));
+    render(
+      <MemoryRouter initialEntries={["/result/failed-route"]}>
+        <Link to="/result/next-route">Open another result</Link>
+        <Routes><Route path="/result/:id" element={<Result />} /></Routes>
+      </MemoryRouter>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(identifySpy).toHaveBeenCalledTimes(1));
+    await userEvent.click(screen.getByRole("link", { name: "Open another result" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Starter motor" })).toBeInTheDocument();
+
+    await act(async () => { finishRetry(successfulScan.result!); });
+
+    expect(getLookup(failedLookup.id)?.result).toBeUndefined();
+    expect(screen.getByRole("heading", { level: 1, name: "Starter motor" })).toBeInTheDocument();
+  });
+
   it("allows retrying a saved failed scan when online", async () => {
     const failedLookup = makeLookup({
       result: undefined,
@@ -815,6 +939,24 @@ describe("Result", () => {
     expect(screen.getAllByText("It charges the battery while the engine runs.").length).toBeGreaterThan(0);
 
     onlineSpy.mockRestore();
+  });
+
+  it("keeps saved-scan retry active through StrictMode effect replay", async () => {
+    const failedLookup = makeLookup({ result: undefined, errorMessage: "Network error", errorCode: "network", analyzedAt: undefined });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([failedLookup]));
+    const identifySpy = vi.spyOn(aiService, "identifyCapturedFrame").mockResolvedValue(successfulScan.result!);
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={[`/result/${failedLookup.id}`]}>
+          <Routes><Route path="/result/:id" element={<Result />} /></Routes>
+        </MemoryRouter>
+      </StrictMode>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(identifySpy).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
   });
 
   it("disables retry button when offline", () => {

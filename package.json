@@ -26,6 +26,7 @@
     "qa:serve-production": "node scripts/qa/serve-production.mjs",
     "qa:web-ar": "node scripts/qa/web-ar-tester.mjs",
     "test": "vitest run --configLoader native --pool threads --maxWorkers=1 --no-file-parallelism",
+    "test:browser": "node scripts/qa/browser-smoke.mjs",
     "test:website": "node scripts/qa/test-website.mjs",
     "supabase:print-migration": "node scripts/print-supabase-migration.mjs",
     "supabase:print-auth-diagnostics": "node scripts/print-supabase-auth-diagnostics.mjs",

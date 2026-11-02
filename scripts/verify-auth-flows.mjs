@@ -18,6 +18,8 @@ const testOtpCode = process.env.DEEPSPEC_AUTH_TEST_EMAIL_CODE?.trim();
 const args = new Set(process.argv.slice(2));
 const shouldSendOtp = process.env.DEEPSPEC_AUTH_SEND_CODE === "true" || args.has("--send-code");
 const requireCredentials = process.env.DEEPSPEC_AUTH_REQUIRE_CREDENTIALS === "true" || args.has("--require-credentials");
+// CI can require a real password session without storing an expiring email OTP.
+const requirePassword = requireCredentials || process.env.DEEPSPEC_AUTH_REQUIRE_PASSWORD === "true" || args.has("--require-password");
 const enabledOAuthProviders = [
   ["google", process.env.VITE_ENABLE_GOOGLE_AUTH],
   ["github", process.env.VITE_ENABLE_GITHUB_AUTH],
@@ -78,7 +80,7 @@ try {
   if (testEmail && testPassword) {
     await assertPasswordSignIn(supabase, testEmail, testPassword);
     console.log("      Email/password sign-in verified with a real Supabase session.");
-  } else if (requireCredentials) {
+  } else if (requirePassword) {
     throw new Error("Set DEEPSPEC_AUTH_TEST_EMAIL and DEEPSPEC_AUTH_TEST_PASSWORD to verify live password login.");
   } else {
     console.log("      Skipped. Set DEEPSPEC_AUTH_TEST_EMAIL and DEEPSPEC_AUTH_TEST_PASSWORD for a live password check.");

@@ -102,7 +102,7 @@ describe("Phase 8 Supabase validation tooling", () => {
   });
 
   it("does not let production-readiness CI silently skip Supabase verification", () => {
-    expect(ciWorkflow.match(/\[ "\$GITHUB_BASE_REF" = "main" \]/g)).toHaveLength(2);
+    expect(ciWorkflow.match(/\[ "\$GITHUB_BASE_REF" = "main" \]/g)).toHaveLength(3);
     expect(ciWorkflow).toContain("npm run verify:auth");
     expect(ciWorkflow).toContain("Supabase public settings are not configured; auth verifier did not run.");
     expect(ciWorkflow).toContain("Production-readiness branches and main must prove Supabase auth provider readiness.");
@@ -112,5 +112,10 @@ describe("Phase 8 Supabase validation tooling", () => {
     expect(ciWorkflow).toContain("GITHUB_STEP_SUMMARY");
     expect(ciWorkflow).toContain("codex/production-readiness-release*");
     expect(ciWorkflow).toContain("Production-readiness branches and main must prove Supabase cloud sync.");
+    expect(ciWorkflow).toContain("npm run verify:auth -- --require-password");
+    expect(ciWorkflow).toMatch(/\n {2}auth:\r?\n/);
+    expect(ciWorkflow).toMatch(/\n {2}cloud:\r?\n/);
+    expect(ciWorkflow).toContain("npm run test:browser");
+    expect(ciWorkflow).toContain("actions/upload-artifact@v4");
   });
 });

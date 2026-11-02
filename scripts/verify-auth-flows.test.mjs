@@ -8,7 +8,7 @@ vi.mock("@supabase/supabase-js", () => ({ createClient: mocks.createClient }));
 const keys = [
   "VITE_SUPABASE_URL", "VITE_SUPABASE_PUBLISHABLE_KEY", "DEEPSPEC_AUTH_TEST_EMAIL",
   "DEEPSPEC_AUTH_TEST_PASSWORD", "DEEPSPEC_AUTH_TEST_EMAIL_CODE", "DEEPSPEC_AUTH_SEND_CODE",
-  "DEEPSPEC_AUTH_REQUIRE_CREDENTIALS", "VITE_ENABLE_GOOGLE_AUTH", "VITE_ENABLE_GITHUB_AUTH",
+  "DEEPSPEC_AUTH_REQUIRE_CREDENTIALS", "DEEPSPEC_AUTH_REQUIRE_PASSWORD", "VITE_ENABLE_GOOGLE_AUTH", "VITE_ENABLE_GITHUB_AUTH",
 ];
 let auth;
 let errors;
@@ -115,6 +115,26 @@ describe("auth verifier credential fidelity and coverage", () => {
     await run();
     expect(process.exitCode).toBe(1);
     expect(log()).not.toContain("Auth verification coverage:");
+  });
+
+  it("fails unattended password verification when credentials are absent", async () => {
+    vi.stubEnv("DEEPSPEC_AUTH_REQUIRE_PASSWORD", "true");
+    await run();
+    expect(process.exitCode).toBe(1);
+    expect(errorLog()).toContain("verify live password login");
+    expect(log()).not.toContain("Auth verification coverage:");
+  });
+
+  it("verifies unattended password login without pretending an email code was tested", async () => {
+    vi.stubEnv("DEEPSPEC_AUTH_REQUIRE_PASSWORD", "true");
+    vi.stubEnv("DEEPSPEC_AUTH_TEST_EMAIL", "tester@example.test");
+    vi.stubEnv("DEEPSPEC_AUTH_TEST_PASSWORD", "fictional-secret");
+    await run();
+    expect(process.exitCode).not.toBe(1);
+    expect(auth.signInWithPassword).toHaveBeenCalledOnce();
+    expect(auth.verifyOtp).not.toHaveBeenCalled();
+    expect(log()).toContain("Password sign-in: verified.");
+    expect(log()).toContain("Email code sign-in: skipped");
   });
 });
 

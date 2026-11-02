@@ -6,7 +6,8 @@ import { ScanSources } from "../components/result/ScanSources";
 import Button from "../components/ui/Button";
 import ScanThumb from "../components/ui/ScanThumb";
 import { AIServiceError, getAIErrorDetails, getAIErrorMessage, sendFollowUp, sendFollowUpDetails } from "../services/aiService";
-import { appendChatMessages, createChatMessage, getLookup } from "../services/storage";
+import { readCloudLookup } from "../services/cloudHistory";
+import { appendChatMessages, createChatMessage, getLookup, saveExistingLookup } from "../services/storage";
 import type { ChatMessage, Lookup } from "../types";
 import "./chatWorkspace.css";
 
@@ -22,7 +23,13 @@ function ChatConversation({ id }: { id: string | undefined }) {
   const accountScopeRef = useRef(getAccountScope());
   const isMountedRef = useRef(true);
   const [searchParams] = useSearchParams();
-  const [lookup, setLookup] = useState<Lookup | null>(() => (id ? getLookup(id) : null));
+  const [initialLookup] = useState(() => id ? getLookup(id) : null);
+  const [lookup, setLookup] = useState<Lookup | null>(initialLookup);
+  const [lookupLoadState, setLookupLoadState] = useState<"loading" | "ready" | "not_found" | "error">(
+    initialLookup ? "ready" : id ? "loading" : "not_found",
+  );
+  const [lookupLoadError, setLookupLoadError] = useState<string | null>(null);
+  const [lookupLoadRetry, setLookupLoadRetry] = useState(0);
   const [question, setQuestion] = useState(() => searchParams.get("q")?.trim().slice(0, 500) ?? "");
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
@@ -44,6 +51,41 @@ function ChatConversation({ id }: { id: string | undefined }) {
   function isCurrentConversation() {
     return isMountedRef.current && isAccountScopeCurrent(accountScopeRef.current);
   }
+
+  useEffect(() => {
+    if (!id || initialLookup) return;
+    let isActive = true;
+    const isCurrentLoad = () => isMountedRef.current && isAccountScopeCurrent(accountScopeRef.current);
+    void readCloudLookup(id)
+      .then((result) => {
+        if (!isActive || !isCurrentLoad()) return;
+        if (!result.ok) {
+          setLookupLoadError(result.message);
+          setLookupLoadState("error");
+          return;
+        }
+        if (!result.value || result.value.id !== id) {
+          setLookupLoadState("not_found");
+          return;
+        }
+        const saved = saveExistingLookup(result.value);
+        if (!isActive || !isCurrentLoad()) return;
+        if (!saved.ok) {
+          setLookupLoadError(`This cloud scan could not be prepared for chat. ${saved.message}`);
+          setLookupLoadState("error");
+          return;
+        }
+        setLookup(saved.value);
+        setLookupLoadState("ready");
+      })
+      .catch(() => {
+        if (!isActive || !isCurrentLoad()) return;
+        setLookupLoadError("The saved scan could not be loaded. Check your connection and try again.");
+        setLookupLoadState("error");
+      });
+
+    return () => { isActive = false; };
+  }, [id, initialLookup, lookupLoadRetry]);
 
   useEffect(() => {
     const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -141,13 +183,31 @@ function ChatConversation({ id }: { id: string | undefined }) {
     pendingOptionsRef.current = null;
   }
 
-  if (!lookup) {
+  if (lookupLoadState === "loading") {
+    return <ChatLookupState heading="Loading saved scan" message="Checking this device and your cloud history…" />;
+  }
+
+  if (lookupLoadState === "error") {
+    return (
+      <ChatLookupState
+        heading="Could not load scan"
+        message={lookupLoadError ?? "Check your connection and try again."}
+        onRetry={() => {
+          setLookupLoadError(null);
+          setLookupLoadState("loading");
+          setLookupLoadRetry((value) => value + 1);
+        }}
+      />
+    );
+  }
+
+  if (!lookup || lookupLoadState === "not_found") {
     return (
       <main className="grid min-h-dvh place-items-center bg-[var(--ds-page)] px-5 text-center text-[var(--ds-fg-1)]">
         <section className="w-full max-w-sm rounded-[24px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-6 shadow-sm">
           <p className="text-sm font-bold text-[#a7cbd4]">Scan not found</p>
           <h1 className="mt-2 text-2xl font-extrabold tracking-tight">Open a saved scan first</h1>
-          <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-3)]">Follow-up chat only works from a scan saved on this device.</p>
+          <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-3)]">This exact saved scan is not available for the current account.</p>
           <Link className="mt-5 block rounded-full bg-[var(--ds-accent)] px-5 py-3 text-sm font-bold text-white" to="/history">
             Saved scans
           </Link>
@@ -311,6 +371,20 @@ function ChatConversation({ id }: { id: string | undefined }) {
           </section>
         </div>
       </div>
+    </main>
+  );
+}
+
+function ChatLookupState({ heading, message, onRetry }: { heading: string; message: string; onRetry?: () => void }) {
+  return (
+    <main className="grid min-h-dvh place-items-center bg-[var(--ds-page)] px-5 text-center text-[var(--ds-fg-1)]">
+      <section className="w-full max-w-sm rounded-[24px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-6 shadow-sm" role={onRetry ? "alert" : "status"}>
+        <p className="text-sm font-bold text-[#a7cbd4]">Saved scan</p>
+        <h1 className="mt-2 text-2xl font-extrabold tracking-tight">{heading}</h1>
+        <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-3)]">{message}</p>
+        {onRetry ? <Button className="mt-5 w-full" type="button" onClick={onRetry}>Retry loading scan</Button> : null}
+        <Link className="mt-4 block text-sm font-bold underline" to="/history">Saved scans</Link>
+      </section>
     </main>
   );
 }

@@ -122,6 +122,10 @@ npm run verify:billing-provider -- --provider polar --network
 
 This verifier does not make a real payment. It checks server-only key placement, required product IDs, webhook-secret format, sandbox-vs-production safety, and optional read-only provider product lookup. Live production checks require an explicit `--allow-production` flag.
 
+### Required billing deployment order
+
+Apply the reviewed Supabase migrations through `20261102020143_billing_webhook_idempotency.sql` before deploying server code that calls the billing webhook RPC. Confirm the service-role-only `apply_billing_checkout_webhook_event` function and `billing_webhook_events` table exist, then deploy the app server and run the sandbox webhook replay. Deploying the server first fails checkout/order webhook writes with a retryable 502 instead of falling back to a non-atomic credit grant. Keep `DEEPSPEC_ENABLE_LIVE_BILLING=false` throughout this rollout.
+
 After the app server is running with `BILLING_PROVIDER=polar`, verify checkout URL creation:
 
 ```bash
@@ -136,7 +140,7 @@ Then replay one signed synthetic sandbox webhook through the real API route:
 npm run verify:billing-webhook-replay -- --url http://127.0.0.1:5175 --plan scan_pack
 ```
 
-This replay creates a fresh anonymous Supabase user, posts a signed synthetic Polar `order.paid` event to `/api/billing-webhook`, verifies `/api/account-entitlement` returns an active Polar-backed entitlement, verifies `/api/billing-portal` returns an HTTPS Polar customer portal URL from the server-owned entitlement record, and then deletes only that synthetic billing entitlement row. It still does not make a payment.
+This replay creates a confirmed disposable Supabase user, posts a signed synthetic Polar `order.paid` event to `/api/billing-webhook`, verifies `/api/account-entitlement` returns an active Polar-backed entitlement, verifies `/api/billing-portal` returns an HTTPS Polar customer portal URL from the server-owned entitlement record, and then deletes the synthetic entitlement and disposable user. The non-sensitive service-only webhook receipt remains so replay protection cannot be undone. It still does not make a payment.
 
 Then verify provider-only sandbox readiness:
 

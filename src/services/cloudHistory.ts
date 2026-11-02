@@ -74,11 +74,22 @@ type CloudHistoryQueryResult = {
   error: { message?: string } | null;
 };
 
-type ReadCloudHistoryResult =
+export type ReadCloudHistoryResult =
   | { ok: true; value: Lookup[] }
   | { ok: false; message: string };
 
 export async function readCloudLookups(limit = DEFAULT_HISTORY_LIMIT): Promise<ReadCloudHistoryResult> {
+  return readCloudHistory(limit);
+}
+
+export async function readCloudLookup(id: string): Promise<{ ok: true; value: Lookup | null } | { ok: false; message: string }> {
+  const normalizedId = id.trim();
+  if (!normalizedId) return { ok: true, value: null };
+  const result = await readCloudHistory(1, normalizedId);
+  return result.ok ? { ok: true, value: result.value[0] ?? null } : result;
+}
+
+async function readCloudHistory(limit: number, localId?: string): Promise<ReadCloudHistoryResult> {
   if (isGuestPreview()) return { ok: true, value: [] };
   const scope = getAccountScope();
   const changed = () => ({ ok: false as const, message: "Account changed. Reload your saved scans." });
@@ -99,12 +110,14 @@ export async function readCloudLookups(limit = DEFAULT_HISTORY_LIMIT): Promise<R
     return { ok: false, message: "No verified Supabase session was found." };
   }
 
-  const selectRows = (columns: string): PromiseLike<CloudHistoryQueryResult> => supabase
-    .from("scan_lookups")
-    .select(columns)
-    .eq("user_id", scope.userId)
-    .order("created_at", { ascending: false })
-    .limit(limit);
+  const selectRows = (columns: string): PromiseLike<CloudHistoryQueryResult> => {
+    let query = supabase
+      .from("scan_lookups")
+      .select(columns)
+      .eq("user_id", scope.userId);
+    if (localId) query = query.eq("local_id", localId);
+    return query.order("created_at", { ascending: false }).limit(limit);
+  };
   let optionalColumns = [...CLOUD_HISTORY_SHOP_COLUMNS, "inspection_json", "analysis_attempt_id"];
   let rowsResult = await selectRows(`${CLOUD_HISTORY_CORE_SELECT},${optionalColumns.join(",")}`);
   if (!isAccountScopeCurrent(scope)) return changed();

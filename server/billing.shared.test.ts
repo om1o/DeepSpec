@@ -577,6 +577,7 @@ describe("billing shared", () => {
 
   it("blocks signed live Stripe webhooks unless live billing is explicitly enabled", async () => {
     const body = JSON.stringify({
+      id: "evt_live_checkout",
       data: {
         object: {
           id: "cs_live",
@@ -603,8 +604,10 @@ describe("billing shared", () => {
 
   it("activates entitlement rows from completed Checkout sessions", async () => {
     const table = createBillingTableMock({ existingRow: { scan_allowance: 100, scans_used: 4 } });
-    supabaseMock.createClient.mockReturnValue({ from: table.from });
+    const rpc = vi.fn(async () => ({ data: true, error: null }));
+    supabaseMock.createClient.mockReturnValue({ from: table.from, rpc });
     const body = JSON.stringify({
+      id: "evt_checkout_123",
       data: {
         object: {
           customer: "cus_123",
@@ -633,18 +636,23 @@ describe("billing shared", () => {
       },
     });
 
-    expect(table.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      plan_id: "plus_monthly",
-      scan_allowance: 100,
-      status: "active",
-      stripe_checkout_session_id: "cs_123",
-      stripe_customer_id: "cus_123",
-      stripe_subscription_id: "sub_123",
-      provider_checkout_id: "cs_123",
-      provider_customer_id: "cus_123",
-      provider_subscription_id: "sub_123",
-      user_id: "user-1",
-    }), { onConflict: "user_id" });
+    expect(rpc).toHaveBeenCalledWith("apply_billing_checkout_webhook_event", {
+      p_add_scan_allowance: false,
+      p_checkout_id: "cs_123",
+      p_current_period_end: null,
+      p_customer_id: "cus_123",
+      p_event_id: "evt_checkout_123",
+      p_event_type: "checkout.session.completed",
+      p_plan_id: "plus_monthly",
+      p_provider: "stripe",
+      p_provider_object_id: "cs_123",
+      p_scan_allowance: 100,
+      p_status: "active",
+      p_subscription_id: "sub_123",
+      p_user_id: "user-1",
+    });
+    expect(table.select).not.toHaveBeenCalled();
+    expect(table.upsert).not.toHaveBeenCalled();
   });
 
   it("rejects Polar webhooks with an invalid signature before writing entitlements", async () => {
@@ -704,7 +712,8 @@ describe("billing shared", () => {
 
   it("activates entitlement rows from paid Polar orders", async () => {
     const table = createBillingTableMock({ existingRow: { scan_allowance: 5, scans_used: 2 } });
-    supabaseMock.createClient.mockReturnValue({ from: table.from });
+    const rpc = vi.fn(async () => ({ data: true, error: null }));
+    supabaseMock.createClient.mockReturnValue({ from: table.from, rpc });
     const body = JSON.stringify({
       data: {
         checkout_id: "polar-checkout-1",
@@ -737,16 +746,23 @@ describe("billing shared", () => {
       },
     });
 
-    expect(table.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      billing_provider: "polar",
-      plan_id: "scan_pack",
-      provider_checkout_id: "polar-checkout-1",
-      provider_customer_id: "polar-customer-1",
-      provider_subscription_id: null,
-      scan_allowance: 25,
-      status: "active",
-      user_id: "user-1",
-    }), { onConflict: "user_id" });
+    expect(rpc).toHaveBeenCalledWith("apply_billing_checkout_webhook_event", {
+      p_add_scan_allowance: true,
+      p_checkout_id: "polar-checkout-1",
+      p_current_period_end: null,
+      p_customer_id: "polar-customer-1",
+      p_event_id: "msg_test",
+      p_event_type: "order.paid",
+      p_plan_id: "scan_pack",
+      p_provider: "polar",
+      p_provider_object_id: "polar-order-1",
+      p_scan_allowance: 20,
+      p_status: "active",
+      p_subscription_id: null,
+      p_user_id: "user-1",
+    });
+    expect(table.select).not.toHaveBeenCalled();
+    expect(table.upsert).not.toHaveBeenCalled();
   });
 
   it("updates entitlement rows from Polar subscription lifecycle events", async () => {
@@ -793,8 +809,10 @@ describe("billing shared", () => {
 
   it("adds one-time scan pack credits to an existing entitlement", async () => {
     const table = createBillingTableMock({ existingRow: { scan_allowance: 5, scans_used: 2 } });
-    supabaseMock.createClient.mockReturnValue({ from: table.from });
+    const rpc = vi.fn(async () => ({ data: true, error: null }));
+    supabaseMock.createClient.mockReturnValue({ from: table.from, rpc });
     const body = JSON.stringify({
+      id: "evt_scan_pack_existing",
       data: {
         object: {
           client_reference_id: "user-1",
@@ -811,18 +829,118 @@ describe("billing shared", () => {
 
     await createWebhookResponse(body, { "stripe-signature": signStripeBody(body) }, webhookEnv());
 
-    expect(table.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      plan_id: "scan_pack",
-      scan_allowance: 25,
-      status: "active",
-      user_id: "user-1",
-    }), { onConflict: "user_id" });
+    expect(rpc).toHaveBeenCalledWith("apply_billing_checkout_webhook_event", expect.objectContaining({
+      p_add_scan_allowance: true,
+      p_event_id: "evt_scan_pack_existing",
+      p_plan_id: "scan_pack",
+      p_scan_allowance: 20,
+      p_user_id: "user-1",
+    }));
+    expect(table.select).not.toHaveBeenCalled();
+    expect(table.upsert).not.toHaveBeenCalled();
+  });
+
+  it("requires a stable signed Stripe event id before mutating entitlements", async () => {
+    const table = createBillingTableMock();
+    const rpc = vi.fn(async () => ({ data: true, error: null }));
+    supabaseMock.createClient.mockReturnValue({ from: table.from, rpc });
+    const body = JSON.stringify({
+      data: {
+        object: {
+          client_reference_id: "user-1",
+          customer: "cus_123",
+          id: "cs_missing_event_id",
+          metadata: { deepspec_plan_id: "scan_pack" },
+          payment_status: "paid",
+        },
+      },
+      type: "checkout.session.completed",
+    });
+
+    await expect(createWebhookResponse(
+      body,
+      { "stripe-signature": signStripeBody(body) },
+      webhookEnv(),
+    )).resolves.toMatchObject({
+      status: 400,
+      body: { error: { code: "invalid_payload" } },
+    });
+    expect(supabaseMock.createClient).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("passes the signed Stripe event id to one atomic RPC and acknowledges duplicates", async () => {
+    const table = createBillingTableMock({ existingRow: { scan_allowance: 5, scans_used: 2 } });
+    const rpc = vi.fn(async () => ({ data: false, error: null }));
+    supabaseMock.createClient.mockReturnValue({ from: table.from, rpc });
+    const body = JSON.stringify({
+      id: "evt_scan_pack_1",
+      data: {
+        object: {
+          client_reference_id: "user-1",
+          customer: "cus_123",
+          id: "cs_pack",
+          metadata: { deepspec_plan_id: "scan_pack" },
+          payment_status: "paid",
+        },
+      },
+      type: "checkout.session.completed",
+    });
+
+    await expect(createWebhookResponse(
+      body,
+      { "stripe-signature": signStripeBody(body) },
+      webhookEnv(),
+    )).resolves.toMatchObject({
+      status: 200,
+      body: { eventType: "checkout.session.completed", handled: true, received: true },
+    });
+    expect(rpc).toHaveBeenCalledWith("apply_billing_checkout_webhook_event", expect.objectContaining({
+      p_add_scan_allowance: true,
+      p_event_id: "evt_scan_pack_1",
+      p_event_type: "checkout.session.completed",
+      p_provider: "stripe",
+      p_scan_allowance: 20,
+      p_user_id: "user-1",
+    }));
+    expect(table.select).not.toHaveBeenCalled();
+    expect(table.upsert).not.toHaveBeenCalled();
+  });
+
+  it("returns a retryable error when the atomic entitlement transaction fails", async () => {
+    const table = createBillingTableMock();
+    const rpc = vi.fn(async () => ({ data: null, error: { message: "transaction failed" } }));
+    supabaseMock.createClient.mockReturnValue({ from: table.from, rpc });
+    const body = JSON.stringify({
+      id: "evt_retry_after_failure",
+      data: {
+        object: {
+          client_reference_id: "user-1",
+          customer: "cus_123",
+          id: "cs_retry_after_failure",
+          metadata: { deepspec_plan_id: "scan_pack" },
+          payment_status: "paid",
+        },
+      },
+      type: "checkout.session.completed",
+    });
+
+    await expect(createWebhookResponse(
+      body,
+      { "stripe-signature": signStripeBody(body) },
+      webhookEnv(),
+    )).resolves.toMatchObject({
+      status: 502,
+      body: { error: { code: "entitlement_write_failed" } },
+    });
+    expect(rpc).toHaveBeenCalledOnce();
   });
 
   it("updates entitlement status from later subscription events without trusting the browser", async () => {
     const table = createBillingTableMock();
     supabaseMock.createClient.mockReturnValue({ from: table.from });
     const body = JSON.stringify({
+      id: "evt_subscription_deleted",
       data: {
         object: {
           customer: "cus_123",

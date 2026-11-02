@@ -41,4 +41,31 @@ describe("Pricing", () => {
     expect(await screen.findByText("Sign in again before checkout. Paid access stays locked without a verified session.")).toBeInTheDocument();
     expect(getAuthClient).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps the server's billing unavailable reason visible", async () => {
+    vi.mocked(getAuthClient).mockResolvedValue({ auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "verified-token" } } })) } } as never);
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ error: {
+      code: "billing_disabled", message: "Checkout is unavailable while billing is paused.",
+    } }), { status: 503, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetch);
+    render(<MemoryRouter><Pricing /></MemoryRouter>);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Start sandbox checkout" })[0]);
+
+    expect(await screen.findByText("Checkout is unavailable while billing is paused.")).toHaveAttribute("role", "status");
+    expect(fetch).toHaveBeenCalledWith("/api/billing-checkout", expect.objectContaining({ method: "POST" }));
+    expect(screen.getAllByRole("button", { name: "Start sandbox checkout" })[0]).toBeEnabled();
+  });
+
+  it("does not promise free scans when checkout cannot be reached", async () => {
+    vi.mocked(getAuthClient).mockResolvedValue({ auth: { getSession: vi.fn(async () => ({ data: { session: { access_token: "verified-token" } } })) } } as never);
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("network unavailable"); }));
+    render(<MemoryRouter><Pricing /></MemoryRouter>);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Start sandbox checkout" })[0]);
+
+    expect(await screen.findByText("Checkout is unreachable. Try again later; your current scan allowance is unchanged.")).toHaveAttribute("role", "status");
+    expect(screen.queryByText(/Keep scanning free/)).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Start sandbox checkout" })[0]).toBeEnabled();
+  });
 });

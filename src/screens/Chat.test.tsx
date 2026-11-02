@@ -7,6 +7,7 @@ import { vi } from "vitest";
 import Chat from "./Chat";
 import { AIServiceError, sendFollowUp, sendFollowUpDetails } from "../services/aiService";
 import { LOOKUPS_STORAGE_KEY } from "../services/storage";
+import { readCloudLookup } from "../services/cloudHistory";
 import type { ChatMessage } from "../types";
 import type { Lookup } from "../types";
 
@@ -18,9 +19,11 @@ vi.mock("../services/aiService", async () => {
     sendFollowUpDetails: vi.fn(),
   };
 });
+vi.mock("../services/cloudHistory", () => ({ readCloudLookup: vi.fn() }));
 
 const sendFollowUpMock = vi.mocked(sendFollowUp);
 const sendFollowUpDetailsMock = vi.mocked(sendFollowUpDetails);
+const readCloudLookupMock = vi.mocked(readCloudLookup);
 
 const lookup: Lookup = {
   id: "lookup-1",
@@ -60,13 +63,38 @@ describe("Chat", () => {
     localStorage.clear();
     sendFollowUpMock.mockReset();
     sendFollowUpDetailsMock.mockReset();
+    readCloudLookupMock.mockReset();
+    readCloudLookupMock.mockResolvedValue({ ok: true, value: null });
   });
 
-  it("shows a saved scan not found state", () => {
+  it("shows a saved scan not found state", async () => {
     renderChat("/result/missing/chat");
 
-    expect(screen.getByText("Scan not found")).toBeInTheDocument();
+    expect(await screen.findByText("Scan not found")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Saved scans" })).toHaveAttribute("href", "/history");
+  });
+
+  it("loads a cloud-only chat by exact saved id and prepares it for durable messages", async () => {
+    const cloudLookup = { ...lookup, id: "cloud-only" };
+    readCloudLookupMock.mockResolvedValue({ ok: true, value: cloudLookup });
+
+    renderChat("/result/cloud-only/chat");
+
+    expect(await screen.findByRole("heading", { name: "Ask DeepSpec" })).toBeInTheDocument();
+    expect(readCloudLookupMock).toHaveBeenCalledWith("cloud-only");
+    expect(getLookup("cloud-only")).toMatchObject({ id: "cloud-only", result: { partName: "Alternator" } });
+  });
+
+  it("shows a cloud-load error and retries the same saved id", async () => {
+    readCloudLookupMock
+      .mockResolvedValueOnce({ ok: false, message: "Cloud unavailable." })
+      .mockResolvedValueOnce({ ok: true, value: { ...lookup, id: "retry-cloud" } });
+    renderChat("/result/retry-cloud/chat");
+
+    expect(await screen.findByRole("heading", { name: "Could not load scan" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Retry loading scan" }));
+    expect(await screen.findByRole("heading", { name: "Ask DeepSpec" })).toBeInTheDocument();
+    expect(readCloudLookupMock).toHaveBeenCalledTimes(2);
   });
 
   it("sends a follow-up and saves the chat history", async () => {

@@ -49,7 +49,7 @@ export default function Pricing() {
 
     if (!response) {
       setActivePlanId(null);
-      setCheckoutStatus("Checkout is unreachable. Keep scanning free until billing is configured.");
+      setCheckoutStatus("Checkout is unreachable. Try again later; your current scan allowance is unchanged.");
       return;
     }
 
@@ -105,7 +105,7 @@ export default function Pricing() {
         </section>
 
         {checkoutStatus ? (
-          <div className="mt-6 rounded-[10px] border border-[var(--ds-accent-line)] bg-[var(--ds-accent-soft)] px-4 py-3 text-sm font-semibold text-[var(--slate-050)]">
+          <div role="status" className="mt-6 rounded-[10px] border border-[var(--ds-accent-line)] bg-[var(--ds-accent-soft)] px-4 py-3 text-sm font-semibold text-[var(--slate-050)]">
             {checkoutStatus}
           </div>
         ) : null}

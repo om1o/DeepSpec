@@ -50,8 +50,8 @@ export default function ShopNewJob() {
       <div className="mx-auto w-full max-w-4xl">
         <header className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--ds-accent)]">Shop intake</p>
-            <h1 className="mt-1 text-3xl font-black tracking-tight">New job</h1>
+            <p className="text-xs font-extrabold uppercase tracking-[0.16em] text-[var(--electric-300)]">Shop intake</p>
+            <h1 className="mt-1 text-3xl font-black tracking-tight text-white">New job</h1>
           </div>
           <Link to="/shop" className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-900">
             Queue
@@ -78,8 +78,8 @@ export default function ShopNewJob() {
           </section>
 
           <section className="mt-7 border-t border-slate-100 pt-5">
-            <h2 className="text-lg font-black tracking-tight">Promoted context</h2>
-            <p className="mt-1 text-sm font-semibold text-slate-500">VIN is optional, but missing context keeps fitment confidence in a needs-vehicle-context state.</p>
+            <h2 className="text-lg font-black tracking-tight">Optional vehicle details</h2>
+            <p className="mt-1 text-sm font-semibold text-slate-500">Add a VIN or engine details to give the scan more context. Confirm fitment independently before choosing a replacement.</p>
             <div className="mt-4 grid gap-4 md:grid-cols-2">
               <TextField label="VIN" value={form.vin} onChange={(value) => updateField("vin", value)} />
               <TextField label="Mileage" value={form.mileage} onChange={(value) => updateField("mileage", value)} />

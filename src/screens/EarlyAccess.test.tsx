@@ -25,13 +25,27 @@ describe("EarlyAccess", () => {
     vi.unstubAllEnvs();
   });
 
-  it("shows the business experiment page", () => {
+  it("explains local-only delivery without exposing developer diagnostics", () => {
     renderEarlyAccess();
 
     expect(screen.getByRole("heading", { name: "Early access" })).toBeInTheDocument();
     expect(screen.getByText("The visual layer for parts")).toBeInTheDocument();
-    expect(screen.getByText("Off")).toBeInTheDocument();
-    expect(screen.getByText("Your scans are saved on this device. Cloud sync is off for this build.")).toBeInTheDocument();
+    expect(screen.getByText(/Waitlist delivery is unavailable in this preview/)).toBeInTheDocument();
+    expect(screen.getByText(/Feedback delivery is unavailable in this preview/)).toBeInTheDocument();
+    expect(screen.queryByText("Local waitlist entries")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Check cloud sync" })).not.toBeInTheDocument();
+  });
+
+  it("keeps configured feedback delivery separate from cloud health diagnostics", () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const health = vi.spyOn(cloudSync, "verifyCloudHealth");
+    renderEarlyAccess();
+
+    expect(screen.getByText(/we will confirm when it is delivered/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Check cloud sync" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Local waitlist entries")).not.toBeInTheDocument();
+    expect(health).not.toHaveBeenCalled();
   });
 
   it("saves guest feedback locally and hides account cloud actions even with cloud configured", async () => {

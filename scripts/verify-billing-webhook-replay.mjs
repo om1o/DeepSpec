@@ -81,6 +81,7 @@ export function buildStripeCheckoutCompletedPayload({
 
   return {
     created: timestamp,
+    id: `evt_test_${safeTestId}`,
     data: {
       object: {
         client_reference_id: userId,

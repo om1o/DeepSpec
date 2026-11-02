@@ -6,6 +6,7 @@ import { isGuestPreview } from "../lib/guestPreview";
 import { BrandLockup } from "../components/BrandLockup";
 import { useEffect, useRef, useState } from "react";
 import { AIServiceError, getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
+import { readCloudLookup } from "../services/cloudHistory";
 import { syncAnalysisFailuresToCloud } from "../services/cloudSync";
 import Button from "../components/ui/Button";
 import { IsolatedPartView } from "../components/result/IsolatedPartView";
@@ -28,29 +29,49 @@ import { createLookup, getLookup, normalizeLookup, recordLookupAnalysisFailure, 
 import type { CapturedFrame, IdentificationResult, Lookup, Rating, ScanAnalysisState, ShopJob as ShopJobRecord } from "../types";
 
 export default function Result() {
+  const location = useLocation();
+  const { id } = useParams();
+  const scope = getAccountScope();
+  return <ResultScreen key={JSON.stringify([location.key, id, scope.userId, scope.generation])} />;
+}
+
+function ResultScreen() {
   const [mountedScope] = useState(getAccountScope);
   const location = useLocation();
   const routeState = isCurrentAccountRouteState(location.state) ? location.state : null;
   const navigate = useNavigate();
   const { id } = useParams();
   const historyLookup = normalizeLookup(routeState?.savedLookup);
-  const [lookup, setLookup] = useState<Lookup | null>(() => {
-    if (!id) return null;
-    const local = getLookup(id);
-    const fromHistory = normalizeLookup(routeState?.savedLookup);
-    if (local && fromHistory?.id === id) return withLatestInspection(local, fromHistory);
-    return local;
+  const [initialLookup] = useState(() => {
+    const local = id ? getLookup(id) : null;
+    const fromHistory = historyLookup?.id === id ? historyLookup : null;
+    return {
+      isLocal: Boolean(local),
+      value: local && fromHistory ? withLatestInspection(local, fromHistory) : local ?? fromHistory,
+    };
   });
+  const [lookup, setLookup] = useState<Lookup | null>(initialLookup.value);
+  const [lookupIsLocal, setLookupIsLocal] = useState(initialLookup.isLocal);
+  const [lookupLoadState, setLookupLoadState] = useState<"loading" | "ready" | "not_found" | "error">(
+    id && !initialLookup.value ? "loading" : "ready",
+  );
+  const [lookupLoadError, setLookupLoadError] = useState<string | null>(null);
+  const [lookupLoadRetry, setLookupLoadRetry] = useState(0);
   const [liveScanState, setLiveScanState] = useState<ScanAnalysisState | null>(null);
+  const routeLookup = lookup;
   const inspectionBase = historyLookup && historyLookup.id === id
-    ? (lookup ? mergeCloudLookup(lookup, historyLookup) : historyLookup)
-    : lookup;
+    ? (routeLookup ? mergeCloudLookup(routeLookup, historyLookup) : historyLookup)
+    : routeLookup;
   const inspectionLookup = inspectionBase ? withRetriedLookupResult(inspectionBase, liveScanState) : null;
   const [hasPendingRetryResult, setHasPendingRetryResult] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [retrySaveLabel, setRetrySaveLabel] = useState("Retry saving feedback");
-  const scanState = lookup ? scanStateFromLookup(inspectionBase ?? lookup) : liveScanState ?? getScanState(routeState);
-  const frame = scanState?.frame ?? readLatestCapturedFrame();
+  const scanState = routeLookup
+    ? scanStateFromLookup(inspectionBase ?? routeLookup)
+    : id
+      ? null
+      : liveScanState ?? getScanState(routeState);
+  const frame = scanState?.frame ?? (id ? null : readLatestCapturedFrame());
   const capturedAt = frame?.capturedAt ? new Date(frame.capturedAt).toLocaleString() : null;
   const storageWarning = scanState?.storageWarning;
   const shopJob = scanState?.jobId ? getShopJob(scanState.jobId) : null;
@@ -60,7 +81,49 @@ export default function Result() {
   const manualCorrectionTrackedRef = useRef(false);
   const pendingRatingRef = useRef<Rating | undefined>(undefined);
   const pendingCorrectionRef = useRef<string | null | undefined>(undefined);
+  const pendingNotesRef = useRef<string | undefined>(undefined);
   const pendingRetryLookupRef = useRef<Lookup | null>(null);
+
+  useEffect(() => {
+    if (!id || initialLookup.value) return;
+    let isActive = true;
+    void readCloudLookup(id)
+      .then((result) => {
+        if (!isActive || !isAccountScopeCurrent(mountedScope)) return;
+        if (!result.ok) {
+          setLookupLoadError(result.message);
+          setLookupLoadState("error");
+          return;
+        }
+        if (!result.value || result.value.id !== id) {
+          setLookupLoadState("not_found");
+          return;
+        }
+        setLookup(result.value);
+        setLookupLoadState("ready");
+      })
+      .catch(() => {
+        if (!isActive || !isAccountScopeCurrent(mountedScope)) return;
+        setLookupLoadError("The saved scan could not be loaded. Check your connection and try again.");
+        setLookupLoadState("error");
+      });
+
+    return () => { isActive = false; };
+  }, [id, initialLookup.value, lookupLoadRetry, mountedScope]);
+
+  if (id && lookupLoadState !== "ready") {
+    return (
+      <SavedLookupRouteState
+        state={lookupLoadState}
+        message={lookupLoadError}
+        onRetry={() => {
+          setLookupLoadError(null);
+          setLookupLoadState("loading");
+          setLookupLoadRetry((value) => value + 1);
+        }}
+      />
+    );
+  }
 
   function trackManualCorrectionOnce() {
     if (manualCorrectionTrackedRef.current) {
@@ -69,6 +132,25 @@ export default function Result() {
 
     manualCorrectionTrackedRef.current = true;
     recordManualCorrection();
+  }
+
+  function updateSavedFeedback(patch: Partial<Pick<Lookup, "rating" | "correction" | "notes">>): ReturnType<typeof updateLookup> {
+    if (!lookup) return { ok: false, message: "This saved scan was not found.", value: null };
+    if (!getLookup(lookup.id)) {
+      const saved = saveExistingLookup(lookup);
+      if (!saved.ok) return { ok: false, message: saved.message, value: { ...lookup, ...patch } };
+      setLookupIsLocal(true);
+    }
+    return updateLookup(lookup.id, patch);
+  }
+
+  function withPendingFeedback(patch: Partial<Pick<Lookup, "rating" | "correction" | "notes">>) {
+    return {
+      ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
+      ...(pendingCorrectionRef.current !== undefined ? { correction: pendingCorrectionRef.current } : {}),
+      ...(pendingNotesRef.current !== undefined ? { notes: pendingNotesRef.current } : {}),
+      ...patch,
+    };
   }
 
   function handleRating(rating: Rating) {
@@ -90,11 +172,15 @@ export default function Result() {
       return;
     }
 
-    const result = updateLookup(lookup.id, {
+    const correction = rating === "down"
+      ? pendingCorrectionRef.current !== undefined ? pendingCorrectionRef.current : lookup.correction
+      : null;
+    const result = updateSavedFeedback(withPendingFeedback({
       rating,
-      correction: rating === "down" ? lookup.correction : null,
-    });
+      correction,
+    }));
     pendingRatingRef.current = result.ok ? undefined : rating;
+    pendingCorrectionRef.current = result.ok ? undefined : correction;
     handleLookupUpdate(result);
   }
 
@@ -115,10 +201,24 @@ export default function Result() {
       return;
     }
 
-    handleLookupUpdate(updateLookup(lookup.id, {
-      ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
+    const result = updateSavedFeedback(withPendingFeedback({
       correction,
     }));
+    pendingCorrectionRef.current = result.ok ? undefined : correction;
+    handleLookupUpdate(result);
+  }
+
+  function handleNotes(notes: string) {
+    if (!isAccountScopeCurrent(mountedScope) || !lookup) return;
+    if (pendingRetryLookupRef.current) {
+      pendingNotesRef.current = notes;
+      pendingRetryLookupRef.current = { ...pendingRetryLookupRef.current, notes };
+      setLookup({ ...lookup, notes });
+      return;
+    }
+    const result = updateSavedFeedback(withPendingFeedback({ notes }));
+    pendingNotesRef.current = result.ok ? undefined : notes;
+    handleLookupUpdate(result);
   }
 
   function retryFeedbackSave() {
@@ -136,6 +236,7 @@ export default function Result() {
           ...(resultWrite.value ?? pendingRetry),
           ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
           ...(pendingCorrectionRef.current !== undefined ? { correction: pendingCorrectionRef.current } : {}),
+          ...(pendingNotesRef.current !== undefined ? { notes: pendingNotesRef.current } : {}),
         };
         pendingRetryLookupRef.current = retryLookup;
         handleLookupUpdate({ ...resultWrite, value: retryLookup }, "result");
@@ -144,20 +245,18 @@ export default function Result() {
 
       pendingRetryLookupRef.current = null;
       setHasPendingRetryResult(false);
-      if (pendingRatingRef.current !== undefined || pendingCorrectionRef.current !== undefined) {
+      if (pendingRatingRef.current !== undefined || pendingCorrectionRef.current !== undefined || pendingNotesRef.current !== undefined) {
         handleLookupUpdate(updateLookup(pendingRetry.id, {
           ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
           ...(pendingCorrectionRef.current !== undefined ? { correction: pendingCorrectionRef.current } : {}),
+          ...(pendingNotesRef.current !== undefined ? { notes: pendingNotesRef.current } : {}),
         }));
       } else {
         handleLookupUpdate(resultWrite);
       }
       return;
     }
-    handleLookupUpdate(updateLookup(lookup.id, {
-      ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
-      correction: lookup.correction,
-    }));
+    handleLookupUpdate(updateSavedFeedback(withPendingFeedback({})));
   }
 
 
@@ -190,6 +289,7 @@ export default function Result() {
     }
 
     setLookup(saved.value);
+    setLookupIsLocal(true);
     setSaveError(null);
     return saved.value;
   }
@@ -200,7 +300,7 @@ export default function Result() {
 
   function handleSaveAndAsk(question?: string) {
     if (!isAccountScopeCurrent(mountedScope) || pendingRetryLookupRef.current) return;
-    const saved = lookup ?? saveCurrentScan();
+    const saved = lookup && lookupIsLocal ? lookup : saveCurrentScan();
     if (!saved) {
       return;
     }
@@ -213,6 +313,7 @@ export default function Result() {
     if (result.ok) {
       pendingRatingRef.current = undefined;
       pendingCorrectionRef.current = undefined;
+      pendingNotesRef.current = undefined;
       setLookup(result.value);
       setSaveError(null);
       setRetrySaveLabel("Retry saving feedback");
@@ -222,7 +323,6 @@ export default function Result() {
     setSaveError(result.message);
     setRetrySaveLabel(failureKind === "result" ? "Retry saving scan result" : "Retry saving feedback");
     if (result.value) {
-      pendingCorrectionRef.current = result.value.correction;
       setLookup(result.value);
     }
   }
@@ -268,7 +368,7 @@ export default function Result() {
               capturedAt={capturedAt}
               canSaveForChat={canSaveForChat}
               askDisabled={hasPendingRetryResult}
-              lookupId={lookup?.id ?? null}
+              lookupId={lookup && lookupIsLocal ? lookup.id : null}
               onSaveAndAsk={handleSaveAndAsk}
               onSaveOnly={handleSaveOnly}
             />
@@ -299,19 +399,25 @@ export default function Result() {
           {inspectionLookup ? <IntakeDraft lookup={inspectionLookup} /> : null}
           {lookup ? (
             <TrustControl
+              key={`trust:${lookup.id}`}
               lookup={lookup}
               onCorrectionChange={handleCorrection}
+              onNotesChange={handleNotes}
               onRating={handleRating}
               saveFailed={Boolean(saveError)}
               retrySaveLabel={retrySaveLabel}
               onRetrySave={retryFeedbackSave}
             />
           ) : null}
-          {inspectionLookup ? <PartInspectionForm key={inspectionLookup.id} lookup={inspectionLookup} onSaved={(saved) => setLookup({
-            ...saved,
-            ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
-            ...(pendingCorrectionRef.current !== undefined ? { correction: pendingCorrectionRef.current } : {}),
-          })} /> : null}
+          {inspectionLookup ? <PartInspectionForm key={inspectionLookup.id} lookup={inspectionLookup} onSaved={(saved) => {
+            setLookupIsLocal(true);
+            setLookup({
+              ...saved,
+              ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
+              ...(pendingCorrectionRef.current !== undefined ? { correction: pendingCorrectionRef.current } : {}),
+              ...(pendingNotesRef.current !== undefined ? { notes: pendingNotesRef.current } : {}),
+            });
+          }} /> : null}
           {inspectionLookup ? <ReportActions lookup={inspectionLookup} /> : null}
           {inspectionLookup && !isGuestPreview() ? <TrainingConsentPanel key={`consent:${inspectionLookup.id}`} scanId={inspectionLookup.id} /> : null}
           {datasetSourceUrls.length > 0 ? <SourceFinePrint urls={datasetSourceUrls} /> : null}
@@ -329,6 +435,43 @@ export default function Result() {
         </div>
       </div>
       <ScanDebugOverlay info={scanState?.debug} />
+    </main>
+  );
+}
+
+function SavedLookupRouteState({
+  message,
+  onRetry,
+  state,
+}: {
+  message: string | null;
+  onRetry: () => void;
+  state: "loading" | "not_found" | "error";
+}) {
+  const isLoading = state === "loading";
+  const isMissing = state === "not_found";
+  return (
+    <main className="grid min-h-dvh place-items-center bg-[var(--ds-page)] px-5 text-center text-[var(--ds-fg-1)]">
+      <section
+        className="w-full max-w-sm rounded-[24px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-6 shadow-sm"
+        role={state === "error" ? "alert" : "status"}
+      >
+        <p className="text-sm font-bold text-[#a7cbd4]">
+          {isLoading ? "Saved scan" : isMissing ? "Not found" : "Cloud history"}
+        </p>
+        <h1 className="mt-2 text-2xl font-extrabold tracking-tight">
+          {isLoading ? "Loading saved scan" : isMissing ? "Saved scan not found" : "Could not load saved scan"}
+        </h1>
+        <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-3)]">
+          {isLoading
+            ? "Checking this device and your cloud history…"
+            : isMissing
+              ? "This exact saved scan is not available for the current account."
+              : message ?? "Check your connection and try again."}
+        </p>
+        {state === "error" ? <Button className="mt-5 w-full" type="button" onClick={onRetry}>Retry loading scan</Button> : null}
+        {!isLoading ? <Link className="mt-4 block text-sm font-bold underline" to="/history">Back to saved scans</Link> : null}
+      </section>
     </main>
   );
 }
@@ -364,6 +507,7 @@ function StorageWarning({ message }: { message: string }) {
 function TrustControl({
   lookup,
   onCorrectionChange,
+  onNotesChange,
   onRating,
   saveFailed,
   retrySaveLabel,
@@ -371,44 +515,69 @@ function TrustControl({
 }: {
   lookup: Lookup;
   onCorrectionChange: (correction: string) => void;
+  onNotesChange: (notes: string) => void;
   onRating: (rating: Rating) => void;
   saveFailed: boolean;
   retrySaveLabel: string;
   onRetrySave: () => void;
 }) {
-  const [showWhy, setShowWhy] = useState(false);
+  const [showCorrection, setShowCorrection] = useState(false);
+  const [showNotes, setShowNotes] = useState(Boolean(lookup.notes));
   const trusted = lookup.rating === "up";
   const flagged = lookup.rating === "down";
 
   return (
     <section className="rounded-[22px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 shadow-sm" data-testid="trust-control">
-      <p className="text-sm font-extrabold text-[var(--ds-fg-1)]">Do you trust this scan?</p>
+      <p className="text-sm font-extrabold text-[var(--ds-fg-1)]">Was this result correct?</p>
       <div className="mt-3 flex flex-wrap gap-2">
         <button
           type="button"
+          aria-pressed={trusted}
           className={`rounded-full px-4 py-2 text-sm font-extrabold ${trusted ? "bg-[var(--ds-ok)] text-white" : "bg-[var(--ds-surface)] text-[var(--ds-fg-1)]"}`}
-          onClick={() => { onRating("up"); setShowWhy(false); }}
+          onClick={() => { onRating("up"); setShowCorrection(false); }}
         >
-          Yes
+          Correct
         </button>
         <button
           type="button"
-          className={`rounded-full px-4 py-2 text-sm font-extrabold ${flagged || showWhy ? "bg-[var(--ds-danger)] text-white" : "bg-[var(--ds-surface)] text-[var(--ds-fg-1)]"}`}
-          onClick={() => { onRating("down"); setShowWhy(true); }}
+          aria-pressed={flagged}
+          className={`rounded-full px-4 py-2 text-sm font-extrabold ${flagged || showCorrection ? "bg-[var(--ds-danger)] text-white" : "bg-[var(--ds-surface)] text-[var(--ds-fg-1)]"}`}
+          onClick={() => { onRating("down"); setShowCorrection(true); }}
+        >
+          Incorrect
+        </button>
+        <button
+          type="button"
+          aria-expanded={showNotes}
+          className={`rounded-full px-4 py-2 text-sm font-extrabold ${showNotes ? "bg-[var(--ds-accent)] text-white" : "bg-[var(--ds-surface)] text-[var(--ds-fg-1)]"}`}
+          onClick={() => setShowNotes((value) => !value)}
         >
           Why or why not
         </button>
       </div>
-      {showWhy || flagged ? (
+      {showCorrection || flagged ? (
         <label className="mt-3 block">
-          <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-[var(--ds-fg-3)]">Tell us what&apos;s off (or right)</span>
+          <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-[var(--ds-fg-3)]">What is incorrect?</span>
           <textarea
-            aria-label="Why or why not"
+            aria-label="Correction"
             className="mt-2 min-h-20 w-full resize-none rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-3 text-sm leading-6 text-[var(--ds-fg-1)] outline-none placeholder:text-[var(--ds-fg-3)] focus:border-[var(--ds-accent)]"
             maxLength={240}
             onChange={(event) => onCorrectionChange(event.target.value)}
             placeholder="Example: it's actually a coolant cap, not a brake fluid cap"
             value={lookup.correction ?? ""}
+          />
+        </label>
+      ) : null}
+      {showNotes ? (
+        <label className="mt-3 block">
+          <span className="text-xs font-extrabold uppercase tracking-[0.14em] text-[var(--ds-fg-3)]">Notes</span>
+          <textarea
+            aria-label="Why or why not"
+            className="mt-2 min-h-20 w-full resize-none rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-3 text-sm leading-6 text-[var(--ds-fg-1)] outline-none placeholder:text-[var(--ds-fg-3)] focus:border-[var(--ds-accent)]"
+            maxLength={500}
+            onChange={(event) => onNotesChange(event.target.value)}
+            placeholder="Add context without marking the result correct or incorrect"
+            value={lookup.notes}
           />
         </label>
       ) : null}
@@ -700,8 +869,14 @@ function AnalysisError({
   const [isOnline, setIsOnline] = useState(() => typeof navigator !== "undefined" ? navigator.onLine : true);
   const [isRetrying, setIsRetrying] = useState(false);
   const [mountedScope] = useState(getAccountScope);
+  const isMountedRef = useRef(true);
   const [retryError, setRetryError] = useState<string | null>(null);
   const errorDetails = getAIErrorDetails(code);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -720,17 +895,31 @@ function AnalysisError({
   async function handleRetry() {
     const scope = mountedScope;
     const retryFrame = lookup?.frame ?? frame;
-    if (!retryFrame || isRetrying || !isAccountScopeCurrent(scope)) return;
+    const isCurrentRetry = () => isMountedRef.current && isAccountScopeCurrent(scope);
+    if (!retryFrame || isRetrying || !isCurrentRetry()) return;
     setIsRetrying(true);
     setRetryError(null);
     const attemptId = createAnalysisAttemptId();
 
     try {
       const identificationFrame = await prepareRetryFrame(retryFrame);
-      if (!isAccountScopeCurrent(scope)) return;
+      if (!isCurrentRetry()) return;
       const result = applyShopFitmentContext(await identifyCapturedFrame(identificationFrame, undefined, undefined, { vehicleContext }), vehicleContext);
-      if (!isAccountScopeCurrent(scope)) return;
+      if (!isCurrentRetry()) return;
       if (lookup) {
+        if (!getLookup(lookup.id)) {
+          onLookupRetrySuccess(withRetriedLookupResult(lookup, {
+            frame: identificationFrame,
+            result,
+            analyzedAt: new Date().toISOString(),
+            provenance: {
+              analysisSource: "manual_retry",
+              captureMode,
+              savedAt: new Date().toISOString(),
+            },
+          }));
+          return;
+        }
         const updateResult = updateLookupResult(lookup.id, result, {
           analysisSource: "manual_retry",
           savedAt: new Date().toISOString(),
@@ -755,7 +944,7 @@ function AnalysisError({
         });
       }
     } catch (err) {
-      if (isAccountScopeCurrent(scope)) {
+      if (isCurrentRetry()) {
         const message = getAIErrorMessage(err);
         setRetryError(message);
         if (lookup) {
@@ -767,7 +956,7 @@ function AnalysisError({
         }
       }
     } finally {
-      setIsRetrying(false);
+      if (isMountedRef.current) setIsRetrying(false);
     }
   }
 

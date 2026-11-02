@@ -61,6 +61,9 @@ This layout uses six of Hobby's 12 function slots. It does not require a root
 `vercel.json` or a Pro upgrade to address the function-count limit. Use the Vite
 project preset, repository-root directory, `npm run build`, and `dist` output.
 Keep the existing Preview environment variables configured in Vercel.
+For billing handler changes, apply Supabase migrations through
+`20261102020143_billing_webhook_idempotency.sql` before deploying the server;
+see [the billing provider runbook](docs/BILLING_PROVIDER_DECISION.md#required-billing-deployment-order).
 
 Before pushing, run `npm test -- server scripts/eval-identify.test.mjs` and
 `npm run check`. The layout regression test rejects helpers/tests added under
