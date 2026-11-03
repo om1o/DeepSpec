@@ -1,8 +1,41 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { checkAuthSessionAndDatabase, checkPlaywrightInstalled, checkPublicAuthConfiguration } from "./qa-doctor.mjs";
 
 const config = { url: "https://example.supabase.co/", key: "sb_publishable_test_only" };
+
+it("writes a diagnostic report when invoked directly without configuration", () => {
+  const directory = mkdtempSync(join(tmpdir(), "deepspec-doctor-cli-"));
+  try {
+    const result = spawnSync(process.execPath, [resolve("scripts/qa/qa-doctor.mjs")], {
+      cwd: directory,
+      encoding: "utf8",
+      timeout: 10_000,
+      env: {
+        ...process.env,
+        DEEPSPEC_QA_BASE_URL: "http://127.0.0.1:1",
+        QA_ARTIFACT_DIR: directory,
+        VITE_SUPABASE_URL: "",
+        VITE_SUPABASE_PUBLISHABLE_KEY: "",
+        DEEPSPEC_AUTH_TEST_EMAIL: "",
+        DEEPSPEC_AUTH_TEST_PASSWORD: "",
+        PLAYWRIGHT_BROWSERS_PATH: join(directory, "no-browser"),
+      },
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).not.toContain("ReferenceError");
+    expect(result.stdout).toContain("QA doctor: failed (missing env)");
+    const report = JSON.parse(readFileSync(join(directory, "qa-doctor.json"), "utf8"));
+    expect(report.checks.some((check) => check.name === "Playwright installed")).toBe(true);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();

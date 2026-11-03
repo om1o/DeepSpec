@@ -267,7 +267,9 @@ export async function checkAuthSessionAndDatabase(config, {
   return checks;
 }
 
-const importOptionalModule = (specifier) => import(/* @vite-ignore */ specifier);
+function importOptionalModule(specifier) {
+  return import(/* @vite-ignore */ specifier);
+}
 
 export async function checkPlaywrightInstalled(state, importModule = importOptionalModule) {
   try {
