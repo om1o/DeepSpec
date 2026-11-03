@@ -143,7 +143,7 @@ function checkRequiredEnv(config) {
   );
 }
 
-async function checkDatabaseReachable(config) {
+export async function checkDatabaseReachable(config) {
   if (!config.url || !config.key) {
     return checkResult(
       "database reachable",
@@ -157,15 +157,21 @@ async function checkDatabaseReachable(config) {
     const response = await fetchWithTimeout(`${config.url.replace(/\/$/, "")}/rest/v1/`, {
       headers: {
         apikey: config.key,
-        Authorization: `Bearer ${config.key}`,
       },
     });
+    await response.body?.cancel();
+
+    const classification = response.status === 401 || response.status === 403
+      ? "auth/session issue"
+      : response.status === 429
+        ? "network/transient issue"
+        : "stale environment";
 
     return checkResult(
       "database reachable",
-      response.status < 500,
-      `Supabase REST endpoint returned HTTP ${response.status}.`,
-      response.status >= 500 ? "stale environment" : "auth/session issue",
+      response.ok,
+      `Supabase REST endpoint returned HTTP ${response.status}.${response.ok ? "" : " Public REST access was not accepted; check the project/key, REST access rules, and service availability."}`,
+      classification,
     );
   } catch (error) {
     return checkResult(
