@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { IsolatedPartView } from "./IsolatedPartView";
 import { edgeSafeShift, getContainedStageStyle, getFocusLabelPlacement } from "./isolatedPartViewGeometry";
@@ -15,6 +15,27 @@ const sceneObjects: IsolatedObject[] = [
 ];
 
 describe("IsolatedPartView", () => {
+  it("falls back to the aligned crop when a cutout fails and recovers for a new cutout", () => {
+    const props = { variant: "result" as const, frameBase64: frame, focusBox: box, focusMode: "mask" as const, label: "Engine" };
+    const { rerender } = render(<IsolatedPartView {...props} isolatedImageBase64={cutout} />);
+    fireEvent.error(screen.getByTestId("isolated-part-image"));
+    expect(screen.queryByTestId("isolated-part-image")).not.toBeInTheDocument();
+    expect(screen.getByTestId("focused-part-label")).toHaveTextContent("Focused");
+    expect(screen.getByTestId("focused-part-window")).toHaveStyle({ left: "20%", top: "20%", width: "50%", height: "50%" });
+
+    rerender(<IsolatedPartView {...props} isolatedImageBase64="data:image/png;base64,replacement" />);
+    expect(screen.getByTestId("isolated-part-image")).toHaveAttribute("src", "data:image/png;base64,replacement");
+    expect(screen.getByTestId("focused-part-label")).toHaveTextContent("Isolated");
+  });
+
+  it("keeps the full photo readable when a failed cutout has no focus box", () => {
+    render(<IsolatedPartView variant="result" frameBase64={frame} isolatedImageBase64={cutout} focusMode="mask" label="Engine" />);
+    fireEvent.error(screen.getByTestId("isolated-part-image"));
+    expect(screen.queryByTestId("isolated-part-image")).not.toBeInTheDocument();
+    expect(screen.getByTestId("focused-part-label")).toHaveTextContent("In view");
+    expect(screen.getByAltText("Captured car part").className).not.toContain("blur-[14px]");
+  });
+
   it("Tier A renders the real cutout over a blurred frame", () => {
     render(
       <IsolatedPartView
