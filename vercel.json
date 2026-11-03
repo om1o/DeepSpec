@@ -1,4 +1,9 @@
 {
+  "git": {
+    "deploymentEnabled": {
+      "codex/pilot-assembled-20261103": false
+    }
+  },
   "functions": {
     "api/identify.ts": {
       "includeFiles": "datasets/verified/hf-automotive-sources-v1/records.jsonl",

@@ -837,8 +837,14 @@ function AnalysisError({
   const [isOnline, setIsOnline] = useState(() => typeof navigator !== "undefined" ? navigator.onLine : true);
   const [isRetrying, setIsRetrying] = useState(false);
   const [mountedScope] = useState(getAccountScope);
+  const isMountedRef = useRef(true);
   const [retryError, setRetryError] = useState<string | null>(null);
   const errorDetails = getAIErrorDetails(code);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -857,16 +863,17 @@ function AnalysisError({
   async function handleRetry() {
     const scope = mountedScope;
     const retryFrame = lookup?.frame ?? frame;
-    if (!retryFrame || isRetrying || !isAccountScopeCurrent(scope)) return;
+    const isCurrentRetry = () => isMountedRef.current && isAccountScopeCurrent(scope);
+    if (!retryFrame || isRetrying || !isCurrentRetry()) return;
     setIsRetrying(true);
     setRetryError(null);
     const attemptId = createAnalysisAttemptId();
 
     try {
       const identificationFrame = await prepareRetryFrame(retryFrame);
-      if (!isAccountScopeCurrent(scope)) return;
+      if (!isCurrentRetry()) return;
       const result = applyShopFitmentContext(await identifyCapturedFrame(identificationFrame, undefined, undefined, { vehicleContext }), vehicleContext);
-      if (!isAccountScopeCurrent(scope)) return;
+      if (!isCurrentRetry()) return;
       if (lookup) {
         const updateResult = updateLookupResult(lookup.id, result, {
           analysisSource: "manual_retry",
@@ -892,7 +899,7 @@ function AnalysisError({
         });
       }
     } catch (err) {
-      if (isAccountScopeCurrent(scope)) {
+      if (isCurrentRetry()) {
         const message = getAIErrorMessage(err);
         setRetryError(message);
         if (lookup) {
@@ -904,7 +911,7 @@ function AnalysisError({
         }
       }
     } finally {
-      setIsRetrying(false);
+      if (isMountedRef.current) setIsRetrying(false);
     }
   }
 

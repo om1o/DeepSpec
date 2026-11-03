@@ -172,7 +172,7 @@ describe("Supabase organization membership hardening migration", () => {
 });
 
 describe("Supabase shop job identity hardening migration", () => {
-  const sql = readFileSync(shopJobIdentityMigrationPath, "utf8");
+  const sql = readFileSync(shopJobIdentityMigrationPath, "utf8").replace(/\r\n/g, "\n");
 
   it("binds every job scan to a job in the same organization", () => {
     expect(sql).toContain("constraint shop_jobs_id_org_key unique (id, org_id)");

@@ -48,11 +48,12 @@ async function readRawBody(request: VercelRequest) {
   }
 
   if (isAsyncIterable(request)) {
-    let rawBody = "";
+    const chunks: Buffer[] = [];
     for await (const chunk of request) {
-      rawBody += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf8"));
     }
-    return rawBody;
+    // Decode once: HTTP chunk boundaries can split a signed UTF-8 character.
+    return Buffer.concat(chunks).toString("utf8");
   }
 
   return "";

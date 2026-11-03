@@ -1,12 +1,13 @@
 import { accountStorageKey, setActiveAccount } from "../lib/accountScope";
 import { appendChatMessages, createChatMessage, createLookup, deleteLookup, getLookup } from "../services/storage";
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { vi } from "vitest";
 import Chat from "./Chat";
 import { AIServiceError, sendFollowUp, sendFollowUpDetails } from "../services/aiService";
 import { syncLookupChatToCloud } from "../services/cloudSync";
+import { readCloudLookup } from "../services/cloudHistory";
 import { LOOKUPS_STORAGE_KEY } from "../services/storage";
 import type { ChatMessage } from "../types";
 import type { Lookup } from "../types";
@@ -27,6 +28,8 @@ vi.mock("../services/cloudSync", () => ({
 const sendFollowUpMock = vi.mocked(sendFollowUp);
 const sendFollowUpDetailsMock = vi.mocked(sendFollowUpDetails);
 const syncLookupChatToCloudMock = vi.mocked(syncLookupChatToCloud);
+vi.mock("../services/cloudHistory", () => ({ readCloudLookup: vi.fn() }));
+const readCloudLookupMock = vi.mocked(readCloudLookup);
 
 const lookup: Lookup = {
   id: "lookup-1",
@@ -64,17 +67,117 @@ const lookup: Lookup = {
 describe("Chat", () => {
   beforeEach(() => {
     localStorage.clear();
+    readCloudLookupMock.mockReset();
+    readCloudLookupMock.mockResolvedValue({ ok: true, value: null });
     sendFollowUpMock.mockReset();
     sendFollowUpDetailsMock.mockReset();
     syncLookupChatToCloudMock.mockReset();
     syncLookupChatToCloudMock.mockResolvedValue({ ok: true, message: "Scan synced." });
   });
 
-  it("shows a saved scan not found state", () => {
+  it("shows a saved scan not found state", async () => {
     renderChat("/result/missing/chat");
 
-    expect(screen.getByText("Scan not found")).toBeInTheDocument();
+    expect(await screen.findByText("Scan not found")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Saved scans" })).toHaveAttribute("href", "/history");
+  });
+
+  it("restores an exact cloud scan before sending and syncing its chat", async () => {
+    readCloudLookupMock.mockResolvedValue({ ok: true, value: lookup });
+    sendFollowUpMock.mockResolvedValue("Restored answer.");
+    renderChat(`/result/${lookup.id}/chat`);
+    expect(screen.getByRole("heading", { name: "Loading saved scan" })).toBeInTheDocument();
+    await userEvent.type(await screen.findByLabelText("Ask a follow-up question"), "What is this?");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("Restored answer.")).toBeInTheDocument();
+    expect(readCloudLookupMock).toHaveBeenCalledWith(lookup.id);
+    expect(getLookup(lookup.id)?.chatHistory).toHaveLength(2);
+    expect(syncLookupChatToCloudMock).toHaveBeenCalledWith(expect.objectContaining({ id: lookup.id }));
+  });
+
+  it("retries a cloud lookup failure for the same scan", async () => {
+    readCloudLookupMock.mockRejectedValueOnce(new Error("Offline")).mockResolvedValueOnce({ ok: true, value: lookup });
+    renderChat(`/result/${lookup.id}/chat`);
+    await userEvent.click(await screen.findByRole("button", { name: "Retry loading scan" }));
+    expect(await screen.findByLabelText("Ask a follow-up question")).toBeEnabled();
+    expect(readCloudLookupMock.mock.calls).toEqual([[lookup.id], [lookup.id]]);
+  });
+
+  it("rejects a cloud response for a different scan", async () => {
+    readCloudLookupMock.mockResolvedValue({ ok: true, value: { ...lookup, id: "different" } });
+    renderChat(`/result/${lookup.id}/chat`);
+    expect(await screen.findByText("Scan not found")).toBeInTheDocument();
+    expect(getLookup("different")).toBeNull();
+  });
+
+  it("times out a pending cloud load, retries, and ignores the late original response", async () => {
+    vi.useFakeTimers();
+    try {
+      let finishOld!: (value: Awaited<ReturnType<typeof readCloudLookup>>) => void;
+      let finishRetry!: (value: Awaited<ReturnType<typeof readCloudLookup>>) => void;
+      readCloudLookupMock
+        .mockImplementationOnce(() => new Promise((resolve) => { finishOld = resolve; }))
+        .mockImplementationOnce(() => new Promise((resolve) => { finishRetry = resolve; }));
+      renderChat(`/result/${lookup.id}/chat`);
+      expect(screen.getByRole("heading", { name: "Loading saved scan" })).toBeInTheDocument();
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+      expect(screen.getByRole("alert")).toHaveTextContent("timed out");
+      fireEvent.click(screen.getByRole("button", { name: "Retry loading scan" }));
+      await act(async () => { finishOld({ ok: true, value: { ...lookup, notes: "Stale cloud response" } }); });
+      expect(getLookup(lookup.id)).toBeNull();
+      expect(screen.getByRole("heading", { name: "Loading saved scan" })).toBeInTheDocument();
+      await act(async () => { finishRetry({ ok: true, value: { ...lookup, notes: "Current cloud response" } }); });
+      expect(screen.getByLabelText("Ask a follow-up question")).toBeEnabled();
+      expect(getLookup(lookup.id)?.notes).toBe("Current cloud response");
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(readCloudLookupMock.mock.calls).toEqual([[lookup.id], [lookup.id]]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves a local scan created while cloud restoration is pending", async () => {
+    let finish!: (value: Awaited<ReturnType<typeof readCloudLookup>>) => void;
+    readCloudLookupMock.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    renderChat(`/result/${lookup.id}/chat`);
+    const local = {
+      ...lookup,
+      notes: "New receiving note",
+      correction: "Local correction",
+      chatHistory: [{ id: "local-answer", role: "assistant" as const, content: "Keep this local conversation.", timestamp: lookup.createdAt }],
+    };
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
+    await act(async () => { finish({ ok: true, value: lookup }); });
+    expect(await screen.findByText("Keep this local conversation.")).toBeInTheDocument();
+    expect(getLookup(lookup.id)).toMatchObject({ notes: local.notes, correction: local.correction, chatHistory: local.chatHistory });
+    expect(sendFollowUpMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["account", "unmount"])("does not materialize a cloud scan after %s changes", async (change) => {
+    let finish!: (value: Awaited<ReturnType<typeof readCloudLookup>>) => void;
+    readCloudLookupMock.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const view = renderChat(`/result/${lookup.id}/chat`);
+    if (change === "account") setActiveAccount("other-user");
+    else view.unmount();
+    await act(async () => { finish({ ok: true, value: lookup }); });
+    expect(getLookup(lookup.id)).toBeNull();
+    setActiveAccount("test-user");
+    expect(getLookup(lookup.id)).toBeNull();
+    expect(sendFollowUpMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks chat while local preparation fails and recovers without an AI call", async () => {
+    readCloudLookupMock.mockResolvedValue({ ok: true, value: lookup });
+    const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("Full", "QuotaExceededError"); });
+    renderChat(`/result/${lookup.id}/chat`);
+    expect(await screen.findByRole("alert")).toHaveTextContent("could not be prepared for chat");
+    expect(screen.queryByLabelText("Ask a follow-up question")).not.toBeInTheDocument();
+    write.mockRestore();
+    await userEvent.click(screen.getByRole("button", { name: "Retry loading scan" }));
+    expect(await screen.findByLabelText("Ask a follow-up question")).toBeEnabled();
+    expect(getLookup(lookup.id)?.id).toBe(lookup.id);
+    expect(sendFollowUpMock).not.toHaveBeenCalled();
   });
 
   it("sends a follow-up and saves the chat history", async () => {
@@ -124,6 +227,118 @@ describe("Chat", () => {
     expect(sendFollowUpMock).toHaveBeenCalledTimes(1);
     expect(await screen.findByLabelText("Ask a follow-up question")).toBeEnabled();
     expect(screen.queryByRole("button", { name: "Retry cloud save" })).not.toBeInTheDocument();
+  });
+
+  it.each([true, false])("serializes a failed-question retry behind cloud retry (cloud success: %s)", async (cloudRetrySucceeds) => {
+    let finishCloudRetry!: (value: Awaited<ReturnType<typeof syncLookupChatToCloud>>) => void;
+    syncLookupChatToCloudMock
+      .mockResolvedValueOnce({ ok: false, message: "First cloud failure." })
+      .mockImplementationOnce(() => new Promise((resolve) => { finishCloudRetry = resolve; }));
+    sendFollowUpMock
+      .mockResolvedValueOnce("First answer.")
+      .mockRejectedValueOnce(new AIServiceError("provider_error", "Second request failed."))
+      .mockResolvedValueOnce("Second answer.");
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    renderChat(`/result/${lookup.id}/chat`);
+    fireEvent.change(screen.getByLabelText("Ask a follow-up question"), { target: { value: "First question" } });
+    await userEvent.click(screen.getByText("Send", { selector: "button" }));
+    await screen.findByText("First cloud failure.");
+    const firstHistory = getLookup(lookup.id)!.chatHistory;
+    fireEvent.change(screen.getByLabelText("Ask a follow-up question"), { target: { value: "Second question" } });
+    await userEvent.click(screen.getByText("Send", { selector: "button" }));
+    await screen.findByText("Second request failed.");
+    await userEvent.click(screen.getByText("Retry cloud save", { selector: "button" }));
+    const questionRetry = screen.getByText("Retry last question", { selector: "button" });
+    await userEvent.click(questionRetry);
+    expect(sendFollowUpMock).toHaveBeenCalledTimes(2);
+    expect(questionRetry).toBeDisabled();
+    expect(getLookup(lookup.id)!.chatHistory).toEqual(firstHistory);
+    expect(syncLookupChatToCloudMock).toHaveBeenCalledTimes(2);
+    await act(async () => { finishCloudRetry({ ok: cloudRetrySucceeds, message: "Cloud retry settled." }); });
+    await userEvent.click(screen.getByText("Retry last question", { selector: "button" }));
+    const finalHistory = getLookup(lookup.id)!.chatHistory;
+    expect(finalHistory.map((message) => message.content)).toEqual(["First question", "First answer.", "Second question", "Second answer."]);
+    expect(finalHistory.slice(0, 2)).toEqual(firstHistory);
+    expect(sendFollowUpMock).toHaveBeenCalledTimes(3);
+    expect(syncLookupChatToCloudMock).toHaveBeenCalledTimes(3);
+    expect(syncLookupChatToCloudMock.mock.calls[2][0].chatHistory).toEqual(finalHistory);
+    expect(screen.queryByText("Retry cloud save", { selector: "button" })).not.toBeInTheDocument();
+  });
+
+  it.each([true, false])("retains an answered exchange while cloud retry is pending (cloud success: %s)", async (cloudRetrySucceeds) => {
+    let finishCloudRetry!: (value: Awaited<ReturnType<typeof syncLookupChatToCloud>>) => void;
+    syncLookupChatToCloudMock
+      .mockResolvedValueOnce({ ok: false, message: "First cloud failure." })
+      .mockImplementationOnce(() => new Promise((resolve) => { finishCloudRetry = resolve; }));
+    sendFollowUpMock.mockResolvedValueOnce("First answer.").mockResolvedValueOnce("Retained second answer.");
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    renderChat(`/result/${lookup.id}/chat`);
+    fireEvent.change(screen.getByLabelText("Ask a follow-up question"), { target: { value: "First question" } });
+    await userEvent.click(screen.getByText("Send", { selector: "button" }));
+    await screen.findByText("First cloud failure.");
+    const firstHistory = getLookup(lookup.id)!.chatHistory;
+    fireEvent.change(screen.getByLabelText("Ask a follow-up question"), { target: { value: "Second question" } });
+    const failedKey = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    const originalWrite = Storage.prototype.setItem;
+    const writeSpy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (key, value) {
+      if (key === failedKey) throw new DOMException("Full", "QuotaExceededError");
+      originalWrite.call(this, key, value);
+    });
+    try {
+      await userEvent.click(screen.getByText("Send", { selector: "button" }));
+      expect(screen.getByText("Retry saving answer", { selector: "button" })).toBeEnabled();
+    } finally {
+      writeSpy.mockRestore();
+    }
+    expect(getLookup(lookup.id)!.chatHistory).toEqual(firstHistory);
+    await userEvent.click(screen.getByText("Retry cloud save", { selector: "button" }));
+    const localRetry = screen.getByText("Retry saving answer", { selector: "button" });
+    await userEvent.click(localRetry);
+    expect(getLookup(lookup.id)!.chatHistory).toEqual(firstHistory);
+    expect(localRetry).toBeDisabled();
+    expect(screen.getByText("Retained second answer.")).toBeInTheDocument();
+    expect(sendFollowUpMock).toHaveBeenCalledTimes(2);
+    expect(syncLookupChatToCloudMock).toHaveBeenCalledTimes(2);
+    await act(async () => { finishCloudRetry({ ok: cloudRetrySucceeds, message: "Cloud retry settled." }); });
+    await userEvent.click(screen.getByText("Retry saving answer", { selector: "button" }));
+    const finalHistory = getLookup(lookup.id)!.chatHistory;
+    expect(finalHistory.map((message) => message.content)).toEqual(["First question", "First answer.", "Second question", "Retained second answer."]);
+    expect(finalHistory.slice(0, 2)).toEqual(firstHistory);
+    expect(new Set(finalHistory.map((message) => message.id)).size).toBe(4);
+    expect(sendFollowUpMock).toHaveBeenCalledTimes(2);
+    expect(syncLookupChatToCloudMock).toHaveBeenCalledTimes(3);
+    expect(syncLookupChatToCloudMock.mock.calls[2][0].chatHistory).toEqual(finalHistory);
+    expect(screen.queryByText("Retry saving answer", { selector: "button" })).not.toBeInTheDocument();
+  });
+
+  it("keeps cloud retry unavailable while a question retry awaits its answer", async () => {
+    let finishAnswer!: (value: string) => void;
+    syncLookupChatToCloudMock.mockResolvedValueOnce({ ok: false, message: "First cloud failure." });
+    sendFollowUpMock
+      .mockResolvedValueOnce("First answer.")
+      .mockRejectedValueOnce(new AIServiceError("provider_error", "Second request failed."))
+      .mockImplementationOnce(() => new Promise((resolve) => { finishAnswer = resolve; }));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    renderChat(`/result/${lookup.id}/chat`);
+    fireEvent.change(screen.getByLabelText("Ask a follow-up question"), { target: { value: "First question" } });
+    await userEvent.click(screen.getByText("Send", { selector: "button" }));
+    await screen.findByText("First cloud failure.");
+    const firstHistory = getLookup(lookup.id)!.chatHistory;
+    fireEvent.change(screen.getByLabelText("Ask a follow-up question"), { target: { value: "Second question" } });
+    await userEvent.click(screen.getByText("Send", { selector: "button" }));
+    await screen.findByText("Second request failed.");
+    await userEvent.click(screen.getByText("Retry last question", { selector: "button" }));
+    expect(screen.queryByText("Retry cloud save", { selector: "button" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Ask a follow-up question")).toBeDisabled();
+    expect(syncLookupChatToCloudMock).toHaveBeenCalledTimes(1);
+    expect(getLookup(lookup.id)!.chatHistory).toEqual(firstHistory);
+    await act(async () => { finishAnswer("Second answer."); });
+    const finalHistory = getLookup(lookup.id)!.chatHistory;
+    expect(finalHistory.map((message) => message.content)).toEqual(["First question", "First answer.", "Second question", "Second answer."]);
+    expect(finalHistory.slice(0, 2)).toEqual(firstHistory);
+    expect(syncLookupChatToCloudMock).toHaveBeenCalledTimes(2);
+    expect(syncLookupChatToCloudMock.mock.calls[1][0].chatHistory).toEqual(finalHistory);
+    expect(sendFollowUpMock).toHaveBeenCalledTimes(3);
   });
 
   it("does not retry a failed cloud save after the account changes", async () => {

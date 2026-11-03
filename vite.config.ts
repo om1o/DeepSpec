@@ -297,13 +297,13 @@ async function readJsonBody(request: IncomingMessage) {
 }
 
 async function readRawBody(request: IncomingMessage) {
-  let rawBody = "";
+  const chunks: Buffer[] = [];
 
   for await (const chunk of request) {
-    rawBody += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), "utf8"));
   }
 
-  return rawBody;
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 function registerPreviewMethodGuard(server: PreviewServer, path: string, message: string, allowedMethod = "POST") {

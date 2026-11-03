@@ -1,7 +1,8 @@
 import { accountStorageKey, setActiveAccount, withAccountRouteState } from "../lib/accountScope";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
+import { StrictMode } from "react";
 import { afterEach, vi } from "vitest";
 import Result from "./Result";
 import Chat from "./Chat";
@@ -111,8 +112,8 @@ describe("Result", () => {
     await user.click(screen.getByText("Human inspection — saved"));
     expect(screen.getByLabelText("Inspector name (self-reported)")).toHaveValue("Original inspector");
     await user.clear(screen.getByLabelText("Inspector name (self-reported)"));
-    await user.type(screen.getByLabelText("Inspector name (self-reported)"), "New inspector");
-    await user.click(screen.getByRole("button", { name: "Save inspection" }));
+    await user.paste("New inspector");
+    await user.click(screen.getByText("Save inspection", { selector: "button" }));
     expect(getLookup(cloudLookup.id)?.inspection?.inspectorName).toBe("New inspector");
     expect(getLookup(cloudLookup.id)?.frame.imageBase64).toBe("https://example.com/signed-image.jpg");
   });
@@ -885,6 +886,44 @@ describe("Result", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled());
     expect(identifySpy).not.toHaveBeenCalled();
     expect(getLookups()).toEqual([]);
+  });
+
+  it.each(["resolve", "reject"])("ignores a pending retry after navigation when it will %s", async (outcome) => {
+    const failedLookup = makeLookup({ id: "failed-route", result: undefined, errorCode: "network", errorMessage: "Network error" });
+    const nextLookup = makeLookup({ id: "next-route", result: { ...successfulScan.result!, partName: "Starter motor" } });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([failedLookup, nextLookup]));
+    const original = getLookup(failedLookup.id);
+    let finish!: (value: NonNullable<ScanAnalysisState["result"]>) => void;
+    let fail!: (reason: Error) => void;
+    const identify = vi.spyOn(aiService, "identifyCapturedFrame").mockImplementation(() => new Promise((resolve, reject) => { finish = resolve; fail = reject; }));
+    render(
+      <MemoryRouter initialEntries={["/result/failed-route"]}>
+        <Link to="/result/next-route">Open another result</Link>
+        <Routes><Route path="/result/:id" element={<Result />} /></Routes>
+      </MemoryRouter>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(identify).toHaveBeenCalledTimes(1));
+    await userEvent.click(screen.getByRole("link", { name: "Open another result" }));
+    await act(async () => { if (outcome === "resolve") finish(successfulScan.result!); else fail(new Error("Offline")); });
+    expect(getLookup(failedLookup.id)).toEqual(original);
+    expect(screen.getByRole("heading", { level: 1, name: "Starter motor" })).toBeInTheDocument();
+  });
+
+  it("keeps saved-scan retry active through StrictMode effect replay", async () => {
+    const failedLookup = makeLookup({ result: undefined, errorMessage: "Network error", errorCode: "network", analyzedAt: undefined });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([failedLookup]));
+    const identify = vi.spyOn(aiService, "identifyCapturedFrame").mockResolvedValue(successfulScan.result!);
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={[`/result/${failedLookup.id}`]}>
+          <Routes><Route path="/result/:id" element={<Result />} /></Routes>
+        </MemoryRouter>
+      </StrictMode>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(identify).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
   });
 
   it("allows retrying a saved failed scan when online", async () => {
