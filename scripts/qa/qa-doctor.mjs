@@ -59,9 +59,9 @@ export async function runDoctor(options = {}) {
 
   checks.push(await checkAppServer(base.baseUrl));
   checks.push(checkRequiredEnv(supabase));
-  checks.push(await checkDatabaseReachable(supabase));
+  checks.push(await checkPublicAuthConfiguration(supabase));
   checks.push(checkTestAccountConfigured());
-  checks.push(await checkAuthSession(supabase));
+  checks.push(...await checkAuthSessionAndDatabase(supabase));
   checks.push(await checkPlaywrightInstalled(browserState));
   checks.push(await checkBrowserLaunch(browserState));
   checks.push(await checkPageLoad(browserState, base.baseUrl));
@@ -143,10 +143,10 @@ function checkRequiredEnv(config) {
   );
 }
 
-export async function checkDatabaseReachable(config) {
+export async function checkPublicAuthConfiguration(config) {
   if (!config.url || !config.key) {
     return checkResult(
-      "database reachable",
+      "public Auth configuration accepted",
       false,
       "Skipped because Supabase env vars are missing.",
       "missing env",
@@ -154,7 +154,7 @@ export async function checkDatabaseReachable(config) {
   }
 
   try {
-    const response = await fetchWithTimeout(`${config.url.replace(/\/$/, "")}/rest/v1/`, {
+    const response = await fetchWithTimeout(`${config.url.replace(/\/$/, "")}/auth/v1/settings`, {
       headers: {
         apikey: config.key,
       },
@@ -168,16 +168,16 @@ export async function checkDatabaseReachable(config) {
         : "stale environment";
 
     return checkResult(
-      "database reachable",
+      "public Auth configuration accepted",
       response.ok,
-      `Supabase REST endpoint returned HTTP ${response.status}.${response.ok ? "" : " Public REST access was not accepted; check the project/key, REST access rules, and service availability."}`,
+      `Supabase public Auth settings returned HTTP ${response.status}.${response.ok ? "" : " Public Auth settings were not accepted; check the project/key and Auth service availability."}`,
       classification,
     );
   } catch (error) {
     return checkResult(
-      "database reachable",
+      "public Auth configuration accepted",
       false,
-      `Supabase REST endpoint could not be reached: ${formatError(error)}.`,
+      `Supabase public Auth settings could not be reached: ${formatError(error)}.`,
       "network/transient issue",
     );
   }
@@ -197,59 +197,85 @@ function checkTestAccountConfigured() {
   );
 }
 
-async function checkAuthSession(config) {
+export async function checkAuthSessionAndDatabase(config, {
+  credentials = getQaPasswordCredentials(),
+  createClientImpl = createClient,
+} = {}) {
   if (!config.url || !config.key) {
-    return checkResult(
-      "auth/session is valid",
-      false,
-      "Skipped because Supabase env vars are missing.",
-      "missing env",
-    );
+    return [
+      checkResult("auth/session is valid", false, "Skipped because Supabase env vars are missing.", "missing env"),
+      checkResult("authenticated database access", false, "Not verified because Supabase env vars are missing.", "missing env"),
+    ];
+  }
+  if (!credentials) {
+    return [
+      checkResult("auth/session is valid", false, "No QA password credentials configured.", "missing env"),
+      checkResult("authenticated database access", false, "Not verified: dedicated QA password credentials are required for an authenticated zero-row check.", "missing env"),
+    ];
   }
 
-  const client = createClient(config.url, config.key, {
-    auth: {
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-      persistSession: false,
-    },
-  });
-
-  const credentials = getQaPasswordCredentials();
-
+  let client;
+  let hasSession = false;
+  let checks;
   try {
-    const result = credentials
-      ? await client.auth.signInWithPassword(credentials)
-      : { error: new Error("No QA password credentials configured."), data: null };
-
+    client = createClientImpl(config.url, config.key, {
+      auth: { autoRefreshToken: false, detectSessionInUrl: false, persistSession: false },
+    });
+    const result = await client.auth.signInWithPassword(credentials);
+    hasSession = Boolean(result.data?.session);
     if (result.error || !result.data?.user || !result.data?.session) {
-      return checkResult(
-        "auth/session is valid",
-        false,
-        result.error?.message || "Supabase did not return a user session.",
-        result.error?.message?.includes("configured") ? "missing env" : "auth/session issue",
-      );
+      checks = [
+        checkResult("auth/session is valid", false, "QA password sign-in did not return a valid user session.", "auth/session issue"),
+        checkResult("authenticated database access", false, "Not verified because QA sign-in failed.", "auth/session issue"),
+      ];
+    } else {
+      checks = [checkResult("auth/session is valid", true, "Verified password-authenticated Supabase session.", "auth/session issue")];
+      try {
+        const probe = await client.from("scan_lookups")
+          .select("local_id", { head: true })
+          .eq("user_id", result.data.user.id)
+          .limit(0);
+        checks.push(checkResult(
+          "authenticated database access",
+          !probe.error,
+          probe.error ? "Authenticated zero-row database probe was rejected." : "Authenticated HEAD of scan_lookups was accepted; no rows or count requested. This does not verify writes or cross-account isolation.",
+          probe.status >= 500 ? "stale environment" : "auth/session issue",
+        ));
+      } catch {
+        checks.push(checkResult("authenticated database access", false, "Authenticated zero-row database probe could not complete.", "network/transient issue"));
+      }
     }
-
-    await client.auth.signOut({ scope: "local" });
-    return checkResult("auth/session is valid", true, "Verified password-authenticated Supabase session.", "auth/session issue");
-  } catch (error) {
-    return checkResult(
-      "auth/session is valid",
-      false,
-      `Auth check failed: ${formatError(error)}.`,
-      "auth/session issue",
-    );
+  } catch {
+    checks = [
+      checkResult("auth/session is valid", false, "QA password sign-in could not complete.", "network/transient issue"),
+      checkResult("authenticated database access", false, "Not verified because QA sign-in could not complete.", "auth/session issue"),
+    ];
+  } finally {
+    if (client && hasSession) {
+      let cleanupFailed;
+      try {
+        const { error } = await client.auth.signOut({ scope: "local" });
+        cleanupFailed = Boolean(error);
+      } catch {
+        cleanupFailed = true;
+      }
+      if (cleanupFailed) {
+        checks[0] = checkResult("auth/session is valid", false, "QA session was created but local sign-out failed.", "auth/session issue");
+      }
+    }
   }
+  return checks;
 }
 
-async function checkPlaywrightInstalled(state) {
+const importOptionalModule = (specifier) => import(/* @vite-ignore */ specifier);
+
+export async function checkPlaywrightInstalled(state, importModule = importOptionalModule) {
   try {
-    state.playwright = await import("@playwright/test");
+    state.playwright = await importModule("@playwright/test");
     return checkResult("Playwright installed", true, "@playwright/test is importable.", "test bug");
   } catch {
     try {
-      state.playwright = await import("playwright");
+      state.playwright = await importModule("playwright");
       return checkResult("Playwright installed", true, "playwright is importable.", "test bug");
     } catch (error) {
       return checkResult(
