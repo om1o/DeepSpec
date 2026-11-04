@@ -68,13 +68,13 @@ describe("Auth", () => {
     vi.unstubAllEnvs();
   });
 
-  it("uses the electric D identity and defaults to account sign-in without unconfigured OAuth providers", async () => {
+  it("uses the white identity and defaults to account sign-in without unconfigured OAuth providers", async () => {
     await renderAuth();
 
     expect(await screen.findByRole("heading", { name: "Sign in to DeepSpec" })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "DeepSpec" })).toBeInTheDocument();
-    expect(document.querySelector('img[src="/brand/deepspec-symbol.webp"]')).toHaveAttribute("alt", "");
-    expect(document.querySelector('img[src="/brand/auth-workshop.webp"]')).not.toBeInTheDocument();
+    expect(document.querySelector('img[src="/brand/deepspec-logo-horizontal.svg"]')).toHaveAttribute("alt", "");
+    expect(screen.getByAltText("Car parts arranged on a mechanic’s workbench")).toBeInTheDocument();
     expect(screen.getByText("Account workspace")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Back to intro" })).toHaveAttribute("href", "/intro/index.html");
     expect(screen.queryByRole("button", { name: "Continue with Google" })).not.toBeInTheDocument();

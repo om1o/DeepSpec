@@ -334,17 +334,14 @@ export default function Auth() {
   return (
     <main className="ds-auth-page min-h-dvh px-4 pb-8 pt-[max(20px,env(safe-area-inset-top))] text-white">
       <section className="ds-auth-layout">
-        <div className="ds-auth-story" aria-hidden="true">
-          <div className="ds-auth-signal">
-            <span className="ds-auth-signal-frame" />
-            <img src="/brand/deepspec-symbol.webp" alt="" width="168" height="168" className="ds-auth-hero-mark" />
-            <span className="ds-auth-scan-beam" />
-          </div>
+        <div className="ds-auth-story">
+          <img src="/brand/auth-workshop.webp" alt="Car parts arranged on a mechanic’s workbench" width="1254" height="1254" className="ds-auth-art" />
           <div className="ds-auth-story-copy">
-            <p className="ds-auth-eyebrow">DEEPSPEC VISUAL INTELLIGENCE</p>
-            <h2>See the part.<br /><span>Keep the context.</span></h2>
-            <p>Sign in and pick up where you left off.</p>
+            <p className="ds-auth-eyebrow">FROM CAMERA TO CONTEXT</p>
+            <h2>A closer look.<br />A clearer starting point.</h2>
+            <p>Identify a part, keep the useful details, and bring a better question to the workshop.</p>
           </div>
+          <p className="ds-auth-art-caption">DeepSpec. From the car park to the workshop.</p>
         </div>
 
         <section className="ds-auth-card mx-auto flex w-full max-w-[540px] flex-col p-5 sm:p-8">
@@ -601,7 +598,7 @@ function OAuthButton({
       className="ds-auth-oauth grid h-14 w-full grid-cols-[44px_1fr_44px] items-center px-4 text-base font-semibold disabled:pointer-events-none disabled:opacity-50"
       disabled={disabled}
     >
-      <span className="text-lg font-medium text-white" aria-hidden="true">
+      <span className="text-lg font-medium text-[#24292F]" aria-hidden="true">
         {brand}
       </span>
       <span>{isLoading ? loadingLabel : label}</span>
