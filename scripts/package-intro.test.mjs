@@ -56,10 +56,15 @@ describe("intro packaging", () => {
     expect(await readdir(path.join(root, "public/intro"))).not.toContain("signin.000000000000.js");
     await run(process.execPath, [path.join(root, "scripts/package-intro.mjs")]);
     expect(await readFile(path.join(root, "public/intro/index.html"), "utf8")).toBe(html);
-    expect(await readFile(path.join(root, "public/intro/assets/blue-glass-mark.svg"))).toEqual(await readFile("marketing/deepspec-visual-search/dist/assets/blue-glass-mark.svg"));
-    expect(await readFile(path.join(root, "public/intro/assets/electric-d.webp"))).toEqual(await readFile("marketing/deepspec-visual-search/dist/assets/electric-d.webp"));
-    expect(html).toContain('/intro/assets/electric-d.webp');
-    expect(html).not.toContain('white-logo-horizontal.svg');
+    for (const asset of ["white-logo-horizontal.svg", "blue-glass-logo.svg", "blue-glass-mark.svg", "electric-d.webp"]) {
+      expect(await readFile(path.join(root, "public/intro/assets", asset))).toEqual(await readFile(path.join("marketing/deepspec-visual-search/dist/assets", asset)));
+    }
+    const packaged = new JSDOM(html);
+    for (const selector of [".site-header .brand-logo", "#anywhere .anywhere-logo", ".site-footer .brand-logo"]) {
+      expect(packaged.window.document.querySelector(selector)?.getAttribute("src")).toBe("/intro/assets/white-logo-horizontal.svg");
+    }
+    expect(packaged.window.document.querySelector(".phone-top .brand-logo")?.getAttribute("src")).toBe("/intro/assets/blue-glass-logo.svg");
+    packaged.window.close();
   });
 
   it.each([{ reduced: false, duration: 980 }, { reduced: true, duration: 160 }])("preserves the accessible handoff and cancellation with reduced motion=$reduced", ({ reduced, duration }) => {
