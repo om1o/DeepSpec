@@ -53,8 +53,8 @@ export type IdentifyResponse =
       };
     };
 
-const DEFAULT_MODEL = "gemini-2.5-flash";
-const DEFAULT_FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
+const DEFAULT_MODEL = "gemini-3.5-flash-lite";
+const LEGACY_FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
 const DEFAULT_HF_IDENTIFY_MODEL = "Qwen/Qwen2.5-VL-7B-Instruct";
 const DEFAULT_HF_ROUTER_CHAT_COMPLETIONS_URL = "https://router.huggingface.co/v1/chat/completions";
 const DEFAULT_GROQ_IDENTIFY_MODEL = "qwen/qwen3.8-27b";
@@ -544,10 +544,11 @@ async function createGeminiRescueIdentifyResponse(
 }
 
 function getIdentifyModels(env: Record<string, string | undefined>) {
+  const primaryModel = env.GEMINI_MODEL?.trim() || DEFAULT_MODEL;
   return uniqueStrings([
-    env.GEMINI_MODEL || DEFAULT_MODEL,
+    primaryModel,
     ...splitModelList(env.GEMINI_FALLBACK_MODELS),
-    ...DEFAULT_FALLBACK_MODELS,
+    ...(/^gemini-2\.5-flash(?:-lite)?(?:-|$)/.test(primaryModel) ? LEGACY_FALLBACK_MODELS : []),
   ]);
 }
 
@@ -1186,12 +1187,11 @@ function fetchGeminiIdentify(
         },
       ],
       generationConfig: {
-        temperature: 0.1,
         maxOutputTokens: IDENTIFY_MAX_OUTPUT_TOKENS,
         responseMimeType: "application/json",
-        thinkingConfig: {
-          thinkingBudget: getGeminiIdentifyThinkingBudget(env),
-        },
+        ...(/^gemini-3\.5-flash-lite(?:-|$)/.test(model)
+          ? { thinkingConfig: { thinkingLevel: "MINIMAL" } }
+          : { temperature: 0.1, thinkingConfig: { thinkingBudget: getGeminiIdentifyThinkingBudget(env) } }),
       },
     }),
   }).catch(() => null);
@@ -1244,11 +1244,10 @@ function fetchGeminiRescueIdentify(
         },
       ],
       generationConfig: {
-        temperature: 0,
         maxOutputTokens: 700,
-        thinkingConfig: {
-          thinkingBudget: 0,
-        },
+        ...(/^gemini-3\.5-flash-lite(?:-|$)/.test(model)
+          ? { thinkingConfig: { thinkingLevel: "MINIMAL" } }
+          : { temperature: 0, thinkingConfig: { thinkingBudget: 0 } }),
       },
     }),
   }).catch(() => null);

@@ -315,14 +315,14 @@ describe("createIdentifyResponse", () => {
         result,
         modelRun: {
           provider: "gemini",
-          model: "gemini-2.5-flash",
+          model: "gemini-3.5-flash-lite",
           ocrUsed: false,
         },
       },
     });
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      expect.stringContaining("/models/gemini-2.5-flash:generateContent"),
+      expect.stringContaining("/models/gemini-3.5-flash-lite:generateContent"),
       expect.objectContaining({
         method: "POST",
       }),
@@ -608,7 +608,7 @@ describe("createIdentifyResponse", () => {
     });
   });
 
-  it("falls back to flash lite when the default Gemini model is quota limited", async () => {
+  it("falls back to flash lite when the explicit legacy Gemini model is quota limited", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(
@@ -629,7 +629,7 @@ describe("createIdentifyResponse", () => {
         ),
       );
 
-    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_MODEL: "gemini-2.5-flash", GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
       status: 200,
       body: {
         result,
@@ -641,7 +641,7 @@ describe("createIdentifyResponse", () => {
     expect(fetchSpy.mock.calls[1][0]).toEqual(expect.stringContaining("/models/gemini-2.5-flash-lite:generateContent"));
   });
 
-  it("falls back when the default Gemini model has a transient provider failure", async () => {
+  it("falls back when the explicit legacy Gemini model has a transient provider failure", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(
@@ -662,7 +662,7 @@ describe("createIdentifyResponse", () => {
         ),
       );
 
-    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_MODEL: "gemini-2.5-flash", GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
       status: 200,
       body: {
         result,
@@ -707,7 +707,7 @@ describe("createIdentifyResponse", () => {
       createIdentifyResponse(
         { imageBase64 },
         {
-          GEMINI_API_KEY: "test-key",
+          GEMINI_MODEL: "gemini-2.5-flash", GEMINI_API_KEY: "test-key",
           DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK: "true",
         },
       ),
@@ -800,7 +800,7 @@ describe("createIdentifyResponse", () => {
     });
   });
 
-  it("uses comma-separated identify fallback models before the built-in fallback", async () => {
+  it("uses comma-separated identify fallback models in the configured order", async () => {
     const log = vi.spyOn(console, "info").mockImplementation(() => {});
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
@@ -831,7 +831,7 @@ describe("createIdentifyResponse", () => {
       },
     );
 
-    expect(fetchSpy.mock.calls[0][0]).toEqual(expect.stringContaining("/models/gemini-2.5-flash:generateContent"));
+    expect(fetchSpy.mock.calls[0][0]).toEqual(expect.stringContaining("/models/gemini-3.5-flash-lite:generateContent"));
     expect(fetchSpy.mock.calls[1][0]).toEqual(expect.stringContaining("/models/gemini-custom-fast:generateContent"));
     const diagnostics = log.mock.calls.filter(([message]) => typeof message === "string" && message.startsWith("[DeepSpec diagnostics] "));
     expect(diagnostics).toHaveLength(1);
@@ -934,7 +934,7 @@ describe("createIdentifyResponse", () => {
       },
     });
 
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it("can force Hugging Face identify for provider health checks", async () => {
@@ -1075,7 +1075,7 @@ describe("createIdentifyResponse", () => {
         { imageBase64 },
         {
           DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true",
-          GEMINI_API_KEY: "test-key",
+          GEMINI_MODEL: "gemini-2.5-flash", GEMINI_API_KEY: "test-key",
           HF_TOKEN: "hf-test",
           DEEPSPEC_BACKUP_RETRY_BACKOFF_MS: "0",
         },
@@ -1326,7 +1326,7 @@ describe("createIdentifyResponse", () => {
     });
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(fetchSpy.mock.calls[0][0]).toEqual(expect.stringContaining("/models/gemini-2.5-flash:generateContent"));
+    expect(fetchSpy.mock.calls[0][0]).toEqual(expect.stringContaining("/models/gemini-3.5-flash-lite:generateContent"));
   });
 
   it("falls back to Gemini when the configured Groq provider is unavailable", async () => {
@@ -1376,7 +1376,7 @@ describe("createIdentifyResponse", () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(fetchSpy.mock.calls[0][0]).toBe("https://api.groq.com/openai/v1/chat/completions");
-    expect(fetchSpy.mock.calls[1][0]).toEqual(expect.stringContaining("/models/gemini-2.5-flash:generateContent"));
+    expect(fetchSpy.mock.calls[1][0]).toEqual(expect.stringContaining("/models/gemini-3.5-flash-lite:generateContent"));
   });
 
   it("reaches the third online route when Groq and Gemini are unavailable", async () => {
@@ -1404,7 +1404,7 @@ describe("createIdentifyResponse", () => {
       DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK: "true",
       DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true",
       DEEPSPEC_GEMINI_IDENTIFY_HEDGE_DELAY_MS: "0",
-      GEMINI_API_KEY: "gemini-test",
+      GEMINI_MODEL: "gemini-2.5-flash", GEMINI_API_KEY: "gemini-test",
       GROQ_API_KEY: "groq-test",
       HF_TOKEN: "hf-test",
     })).resolves.toMatchObject({
@@ -1455,7 +1455,7 @@ describe("createIdentifyResponse", () => {
         { imageBase64 },
         {
           DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK: "true",
-          GEMINI_API_KEY: "test-key",
+          GEMINI_MODEL: "gemini-2.5-flash", GEMINI_API_KEY: "test-key",
         },
       ),
     ).resolves.toMatchObject({
@@ -1498,7 +1498,7 @@ describe("createIdentifyResponse", () => {
         }),
       );
 
-    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_MODEL: "gemini-2.5-flash", GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
       status: 429,
       body: {
         error: {
@@ -1536,7 +1536,7 @@ describe("createIdentifyResponse", () => {
         { imageBase64 },
         {
           DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK: "true",
-          GEMINI_API_KEY: "test-key",
+          GEMINI_MODEL: "gemini-2.5-flash", GEMINI_API_KEY: "test-key",
         },
       ),
     ).resolves.toMatchObject({
@@ -1571,7 +1571,7 @@ describe("createIdentifyResponse", () => {
 
     const geminiCalls = fetchSpy.mock.calls.filter((call) => String(call[0]).includes("generativelanguage.googleapis.com"));
     expect(geminiCalls).toHaveLength(1);
-    expect(geminiCalls[0][0]).toEqual(expect.stringContaining("/models/gemini-2.5-flash:generateContent"));
+    expect(geminiCalls[0][0]).toEqual(expect.stringContaining("/models/gemini-3.5-flash-lite:generateContent"));
   });
 
   it("runs OCR on the real blurry-label fixture before Gemini and saves extracted text as evidence", async () => {
@@ -1655,7 +1655,7 @@ describe("createIdentifyResponse", () => {
 
     const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
     expect(body.generationConfig.maxOutputTokens).toBeGreaterThanOrEqual(2048);
-    expect(body.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
+    expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: "MINIMAL" });
     expect(body.generationConfig.responseSchema).toBeUndefined();
     expect(body.generationConfig.responseJsonSchema).toBeUndefined();
     expect(JSON.stringify(body)).toContain("Do not say no visible damage");

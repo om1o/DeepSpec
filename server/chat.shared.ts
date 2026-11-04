@@ -22,8 +22,8 @@ export type ChatResponse =
       };
     };
 
-const DEFAULT_MODEL = "gemini-2.5-flash";
-const DEFAULT_FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
+const DEFAULT_MODEL = "gemini-3.5-flash-lite";
+const LEGACY_FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
 const RETRYABLE_PROVIDER_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 const MAX_IMAGE_CHARS = 4_000_000;
 type ChatRequest = { userMessage: string; image?: { mimeType: string; data: string }; research: boolean; sourceUrls: string[] };
@@ -121,11 +121,12 @@ export function isChatEnabled(env: Record<string, string | undefined>) {
 }
 
 function getChatModels(env: Record<string, string | undefined>) {
+  const primaryModel = env.GEMINI_CHAT_MODEL?.trim() || env.GEMINI_TEXT_MODEL?.trim() || DEFAULT_MODEL;
   return uniqueStrings([
-    env.GEMINI_CHAT_MODEL || env.GEMINI_TEXT_MODEL || DEFAULT_MODEL,
+    primaryModel,
     ...splitModelList(env.GEMINI_CHAT_FALLBACK_MODELS),
     ...splitModelList(env.GEMINI_FALLBACK_MODELS),
-    ...DEFAULT_FALLBACK_MODELS,
+    ...(/^gemini-2\.5-flash(?:-lite)?(?:-|$)/.test(primaryModel) ? LEGACY_FALLBACK_MODELS : []),
   ]);
 }
 
@@ -182,9 +183,10 @@ function fetchGeminiChat(model: string, request: ChatRequest, apiKey: string) {
       ],
       ...(request.research ? { tools: [{ googleSearch: {} }, { urlContext: {} }] } : {}),
       generationConfig: {
-        temperature: 0.3,
         maxOutputTokens: 1800,
-        ...(/^gemini-2\.5-flash(?:-lite)?(?:-|$)/.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+        ...(/^gemini-3\.5-flash-lite(?:-|$)/.test(model)
+          ? { thinkingConfig: { thinkingLevel: "MINIMAL" } }
+          : { temperature: 0.3, ...(/^gemini-2\.5-flash(?:-lite)?(?:-|$)/.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : {}) }),
       },
     }),
   }).catch(() => null);

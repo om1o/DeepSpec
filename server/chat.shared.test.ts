@@ -80,14 +80,14 @@ describe("createChatResponse", () => {
     });
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      expect.stringContaining("/models/gemini-2.5-flash:generateContent"),
+      expect.stringContaining("/models/gemini-3.5-flash-lite:generateContent"),
       expect.objectContaining({
         method: "POST",
       }),
     );
   });
 
-  it("falls back when the default chat model is transiently unavailable", async () => {
+  it("falls back when the explicit legacy chat model is transiently unavailable", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(
@@ -118,7 +118,7 @@ describe("createChatResponse", () => {
         ),
       );
 
-    await expect(createChatResponse({ userMessage: "What does it do?" }, { GEMINI_API_KEY: "test-key" })).resolves.toEqual({
+    await expect(createChatResponse({ userMessage: "What does it do?" }, { GEMINI_CHAT_MODEL: "gemini-2.5-flash", GEMINI_API_KEY: "test-key" })).resolves.toEqual({
       status: 200,
       body: {
         message: "The alternator charges the battery while the engine runs.",

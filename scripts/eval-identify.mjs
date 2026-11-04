@@ -385,8 +385,7 @@ async function main() {
     metrics: summarizeEvalMetrics(results, selectedSamples.length),
     modelConfig: {
       providerMode: options.provider,
-      identifyModel: env.GEMINI_MODEL || "gemini-2.5-flash",
-      fallbackModels: env.GEMINI_FALLBACK_MODELS || "gemini-2.5-flash-lite",
+      ...getGeminiIdentifyModelConfig(env),
       hfIdentifyModel: env.HF_IDENTIFY_MODEL || "Qwen/Qwen2.5-VL-7B-Instruct",
       providerTimeoutMs: env.DEEPSPEC_IDENTIFY_PROVIDER_TIMEOUT_MS || "25000",
       hfProviderTimeoutMs: env.DEEPSPEC_HF_IDENTIFY_TIMEOUT_MS || "45000",
@@ -411,6 +410,16 @@ async function main() {
     console.error("Identify eval did not meet the release gate. Inspect the summary before shipping.");
     process.exitCode = exitCode;
   }
+}
+
+export function getGeminiIdentifyModelConfig(env = {}) {
+  const identifyModel = env.GEMINI_MODEL?.trim() || "gemini-3.5-flash-lite";
+  const models = [
+    identifyModel,
+    ...(env.GEMINI_FALLBACK_MODELS || "").split(",").map((model) => model.trim()).filter(Boolean),
+    ...(/^gemini-2\.5-flash(?:-lite)?(?:-|$)/.test(identifyModel) ? ["gemini-2.5-flash-lite"] : []),
+  ];
+  return { identifyModel, fallbackModels: [...new Set(models)].slice(1).join(",") };
 }
 
 export function buildEvaluatedRoutes(results, env) {
