@@ -1261,6 +1261,31 @@ describe("Scanner", () => {
     await screen.findByRole("heading", { level: 3, name: "Alternator" });
   }, 10000);
 
+  it("keeps the first-photo issue pointer off another angle and restores it on return", async () => {
+    const issue = "Rust is visible along the lower left edge.";
+    const photos: ScanPhoto[] = [
+      { id: "overview-photo", label: "overview", imageBase64: "data:image/jpeg;base64,b3ZlcnZpZXc=", capturedAt: "2026-11-05T00:00:00Z" },
+      { id: "detail-photo", label: "close_up", imageBase64: "data:image/jpeg;base64,ZGV0YWls", capturedAt: "2026-11-05T00:01:00Z" },
+    ];
+    draftStore.set("test-user:upload", photos);
+    identifyCapturedFrame.mockResolvedValueOnce({ ...makeScanResult("Alternator"), visibleObservations: [issue],
+      evidenceRegions: [{ label: "Rusted edge", observation: issue, regionLabel: "lower left" }] });
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(await screen.findByRole("button", { name: "Resume 2-photo draft" }));
+    await analyzeReviewedPhotos();
+
+    expect(await screen.findByTestId("issue-callout")).toHaveTextContent(issue);
+    expect(screen.getByAltText("Reviewed scan photo")).toHaveAttribute("src", photos[0].imageBase64);
+    await userEvent.click(screen.getByRole("button", { name: "2. Close-up" }));
+    expect(screen.getByAltText("Reviewed scan photo")).toHaveAttribute("src", photos[1].imageBase64);
+    expect(screen.getByTestId("focused-part-overlay")).toHaveAttribute("data-focus-mode", "full_frame");
+    expect(screen.queryByTestId("issue-callout")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "1. Overview" }));
+    expect(screen.getByAltText("Reviewed scan photo")).toHaveAttribute("src", photos[0].imageBase64);
+    expect(screen.getByTestId("issue-callout")).toHaveTextContent(issue);
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
+  });
+
   it("does not run analysis when saving an uploaded photo fails", async () => {
     savePhotoDraft.mockRejectedValueOnce(new Error("Photo storage is full. Free space and retry."));
     render(<MemoryRouter><Scanner /></MemoryRouter>);

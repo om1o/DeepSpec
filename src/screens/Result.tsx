@@ -356,7 +356,7 @@ function ResultView({ id }: { id: string | undefined }) {
                 focusBox={isOverviewPhoto ? scanState?.focusBox : undefined}
                 focusMode={isOverviewPhoto ? (scanState?.focusMode ?? "full_frame") : "full_frame"}
                 label={simpleSummary?.title ?? "Captured frame"}
-                issue={scanState?.result ? deriveIssue(scanState.result) : null}
+                issue={isOverviewPhoto && scanState?.result ? deriveIssue(scanState.result) : null}
                 sceneChips={isOverviewPhoto && scanState?.result ? getSceneChips(scanState.result) : undefined}
                 objects={isOverviewPhoto ? scanState?.isolatedObjects : undefined}
                 onCorrectFocus={isOverviewPhoto && !hasPendingRetryResult ? handleCorrectFocus : undefined}

@@ -136,6 +136,31 @@ describe("Result", () => {
     expect(screen.getByText("Selection saved on this device. Cloud sync is off.")).toBeInTheDocument();
   });
 
+  it("shows a first-photo issue pointer only on that photo when browsing a saved group", async () => {
+    const user = userEvent.setup();
+    const issue = "Rust is visible along the lower left edge.";
+    const detailImage = "data:image/jpeg;base64,ZGV0YWls";
+    const local = makeLookup({
+      photos: [{ ...frame, id: "overview-photo", label: "overview" },
+        { ...frame, id: "detail-photo", label: "close_up", imageBase64: detailImage }],
+      result: { ...successfulScan.result!, visibleObservations: [issue],
+        evidenceRegions: [{ label: "Rusted edge", observation: issue, regionLabel: "lower left" }] },
+    });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
+    renderResult({ ...successfulScan, savedLookup: local }, `/result/${local.id}`);
+
+    expect(screen.getByAltText("Captured car part")).toHaveAttribute("src", frame.imageBase64);
+    expect(screen.getByTestId("issue-callout")).toHaveTextContent(issue);
+    await user.click(screen.getByRole("button", { name: "2. Close-up" }));
+    expect(screen.getByAltText("Captured car part")).toHaveAttribute("src", detailImage);
+    expect(screen.getByTestId("result-focus-frame")).toHaveAttribute("data-focus-mode", "full_frame");
+    expect(screen.queryByTestId("issue-callout")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "1. Overview" }));
+    expect(screen.getByAltText("Captured car part")).toHaveAttribute("src", frame.imageBase64);
+    expect(screen.getByTestId("issue-callout")).toHaveTextContent(issue);
+    expect(getLookup(local.id)?.result?.evidenceRegions).toEqual(local.result?.evidenceRegions);
+  });
+
   it("keeps the latest correction retry when an earlier cloud save finishes", async () => {
     const user = userEvent.setup();
     const local = makeLookup({

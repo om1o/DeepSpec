@@ -1177,7 +1177,7 @@ export default function Scanner() {
                 focusBox={isOverviewPhoto ? scanReview.scanState.focusBox : undefined}
                 focusMode={isOverviewPhoto ? (scanReview.scanState.focusMode ?? (scanReview.isolatedFrame ? "crop" : "full_frame")) : "full_frame"}
                 label={scanReview.scanState.result ? getSimpleResultSummary(scanReview.scanState.result).title : "Item captured"}
-                issue={scanReview.scanState.result ? deriveIssue(scanReview.scanState.result) : null}
+                issue={isOverviewPhoto && scanReview.scanState.result ? deriveIssue(scanReview.scanState.result) : null}
                 sceneChips={isOverviewPhoto && scanReview.scanState.result ? getSceneChips(scanReview.scanState.result) : undefined}
                 objects={isOverviewPhoto ? scanReview.scanState.isolatedObjects : undefined}
                 variant="scanner"
