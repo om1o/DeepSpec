@@ -153,10 +153,17 @@ export function photoGroupsMatch(left: ScanPhoto[], right: ScanPhoto[]) {
   });
 }
 
-// Compare the exact reviewed group and mutate in one transaction. Passing the same
-// group as previous/next verifies durability without rewriting another tab's work.
+// Photo-only callers may edit only unassigned, unknown-relationship drafts. Read
+// the full versioned envelope, then atomically compare that exact observed state;
+// photo equality alone never authorizes discarding context or a declaration.
 export async function replacePhotoDraftIfMatches(previous: ScanPhoto[] | null, next: ScanPhoto[] | null, scope = getAccountScope(), kind: PhotoDraftKind = "upload"): Promise<boolean> {
-  return replacePhotoDraftEnvelopeIfMatches(previous ? { version: 2, photos: previous } : null, next ? { version: 2, photos: next } : null, scope, kind);
+  const replacement: ModernPhotoDraftEnvelope | null = next ? { version: 5, photos: next, photoRelationship: "unknown" } : null;
+  if (previous === null) return replacePhotoDraftEnvelopeIfMatches(null, replacement, scope, kind);
+  const observed = await readPhotoDraftEnvelope(scope, kind);
+  if (!observed || (observed.version !== 2 && observed.version !== 5) || observed.target
+    || photoRelationshipOrUnknown(observed.photoRelationship) !== "unknown"
+    || !validatePhotoGroup(previous) || !photoGroupsMatch(previous, observed.photos)) return false;
+  return replacePhotoDraftEnvelopeIfMatches(observed, replacement, scope, kind);
 }
 
 // Compare the target as well as the evidence. An old tab cannot relabel, retarget,

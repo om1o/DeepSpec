@@ -164,6 +164,24 @@ describe("aiService", () => {
     else expect(body.imageBase64).toBe(photos[0].imageBase64);
   });
 
+  it.each([
+    { photoCount: 1, expected: "first_photo" },
+    { photoCount: 2, expected: "unrecorded" },
+  ])("does not retroactively assign a current same-part group identity to Photo 1 ($photoCount photos)", async ({ photoCount, expected }) => {
+    const photos: ScanPhoto[] = ["overview", "detail"].slice(0, photoCount).map((id) => ({ id, label: id === "overview" ? "overview" : "close_up",
+      imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" }));
+    const lookup = { frame: photos[0], photos, photoRelationship: "same_part_or_area", result: { ...result,
+      modelRun: { provider: "gemini", model: "gemini-3.5-flash-lite", latencyMs: 1, ocrUsed: false, pipelineVersion: IDENTIFY_PIPELINE_VERSION } },
+      scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "The saved identity does not establish which view supports it." }), { status: 200 }));
+    await sendFollowUpDetails(lookup, "Which view supports the saved identity?");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.savedIdentityScope).toBe(expected);
+    expect(body.photoRelationship).toBe("same_part_or_area");
+    expect(body.photos).toHaveLength(photoCount);
+  });
+
   it("uses the on-device model when offline and the fallback is enabled", async () => {
     vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "true");
     const onlineSpy = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);

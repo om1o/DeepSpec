@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setActiveAccount } from "../lib/accountScope";
-import { normalizePhotoDraft, readPhotoDraftEnvelope, replacePhotoDraftEnvelopeIfMatches, upgradePhotoDraft, type PhotoDraftEnvelope } from "./photoDraft";
+import { normalizePhotoDraft, readPhotoDraftEnvelope, removePhotoDraftIfMatches, replacePhotoDraftEnvelopeIfMatches, replacePhotoDraftIfMatches, savePhotoDraftIfEmpty, upgradePhotoDraft, type PhotoDraftEnvelope } from "./photoDraft";
 
 const mocks = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock("./evidenceDb", () => ({ openEvidenceDatabase: mocks.open }));
@@ -47,10 +47,60 @@ describe("photo relationship draft compare-and-swap", () => {
   });
   afterEach(() => { vi.unstubAllGlobals(); setActiveAccount(null); });
 
+  it("round trips a photo-only save, exact edit and remove through the protected version-five format", async () => {
+    expect(await savePhotoDraftIfEmpty(draft.photos)).toBe(true);
+    expect(await readPhotoDraftEnvelope()).toEqual({ version: 5, photos: draft.photos, photoRelationship: "unknown" });
+    const edited = draft.photos.map((photo, index) => index === 1 ? { ...photo, label: "close_up" as const } : photo);
+    expect(await replacePhotoDraftIfMatches(draft.photos, edited)).toBe(true);
+    expect(await removePhotoDraftIfMatches(draft.photos)).toBe(false);
+    expect((await readPhotoDraftEnvelope())?.photos).toEqual(edited);
+    expect(await removePhotoDraftIfMatches(edited)).toBe(true);
+    expect(await readPhotoDraftEnvelope()).toBeNull();
+  });
+
+  it("upgrades an unassigned legacy photo-only draft without accepting mismatched source bytes", async () => {
+    const key = "relationship-test:upload";
+    const legacy: PhotoDraftEnvelope = { version: 2, photos: draft.photos };
+    db.rows.set(key, legacy);
+    const changedSource = [{ ...draft.photos[0], imageBase64: "data:image/png;base64,Yw==" }, draft.photos[1]];
+    expect(await replacePhotoDraftIfMatches(changedSource, null)).toBe(false);
+    expect(db.rows.get(key)).toEqual(legacy);
+    expect(await replacePhotoDraftIfMatches(draft.photos, draft.photos)).toBe(true);
+    expect(await readPhotoDraftEnvelope()).toEqual({ ...legacy, version: 5, photoRelationship: "unknown" });
+    expect(await removePhotoDraftIfMatches(draft.photos)).toBe(true);
+  });
+
+  it.each(["same_part_or_area", "independent", "vehicle", "component", "legacy-component", "comparison"] as const)("never lets a photo-only caller edit or remove %s metadata", async (kind) => {
+    const target = { mapId: "overview", componentId: "00000000-0000-4000-8000-000000000001", linkAttemptId: "00000000-0000-4000-8000-000000000002", lookupId: "detail" };
+    const comparisonTarget = { version: 1 as const, comparisonId: "00000000-0000-4000-8000-000000000003", lookupId: "detail", subject: "Bracket",
+      earlier: { lookupId: "previous", photoId: "first", photoLabel: "overview" as const, photoAddedAt: "2026-11-04T12:00:00Z", scanSavedAt: "2026-11-04T12:00:00Z", observedOn: null, vehicleContext: null, sha256: "a".repeat(64), width: 640, height: 480 } };
+    const protectedDraft: PhotoDraftEnvelope = kind === "vehicle" ? { ...draft, vehicleContext: { model: "Saved car" }, jobId: "job-a" }
+      : kind === "comparison" ? { ...draft, version: 7, comparisonTarget }
+        : kind === "legacy-component" ? { version: 2, photos: draft.photos, target }
+          : { version: 5, photos: draft.photos, photoRelationship: kind === "component" ? "unknown" : kind,
+            ...(kind === "component" ? { target } : {}) };
+    const key = "relationship-test:upload";
+    db.rows.set(key, structuredClone(protectedDraft));
+    expect(await replacePhotoDraftIfMatches(draft.photos, [{ ...draft.photos[0], label: "marking" }, draft.photos[1]])).toBe(false);
+    expect(await removePhotoDraftIfMatches(draft.photos)).toBe(false);
+    expect(db.rows.get(key)).toEqual(protectedDraft);
+  });
+
+  it("does not delete a declaration added after the wrapper reads its permitted draft", async () => {
+    expect(await savePhotoDraftIfEmpty(draft.photos)).toBe(true);
+    const declared: PhotoDraftEnvelope = { version: 5, photos: draft.photos, photoRelationship: "independent" };
+    mocks.open.mockResolvedValueOnce(db.database).mockImplementationOnce(async () => {
+      db.rows.set("relationship-test:upload", structuredClone(declared));
+      return db.database;
+    });
+    expect(await removePhotoDraftIfMatches(draft.photos)).toBe(false);
+    expect(await readPhotoDraftEnvelope()).toEqual(declared);
+  });
+
   it.each([2, 3, 4] as const)("upgrades legacy version %s before analysis and prevents old-format writes or discard", async (version) => {
     const common = { photos: draft.photos, target: { mapId: "overview", componentId: "00000000-0000-4000-8000-000000000001", linkAttemptId: "00000000-0000-4000-8000-000000000002", lookupId: "detail" } };
     const comparisonTarget = { version: 1 as const, comparisonId: "00000000-0000-4000-8000-000000000003", lookupId: "detail", subject: "Bracket",
-      earlier: { lookupId: "previous", photoId: "first", photoLabel: "overview" as const, photoAddedAt: "2026-11-04T12:00:00Z", scanSavedAt: "2026-11-04T12:00:00Z", observedOn: null, sha256: "a".repeat(64), width: 640, height: 480 } };
+      earlier: { lookupId: "previous", photoId: "first", photoLabel: "overview" as const, photoAddedAt: "2026-11-04T12:00:00Z", scanSavedAt: "2026-11-04T12:00:00Z", observedOn: null, vehicleContext: null, sha256: "a".repeat(64), width: 640, height: 480 } };
     const legacy: PhotoDraftEnvelope = version === 2 ? { version, ...common }
       : version === 3 ? { version, ...common, vehicleContext: { model: "Original car" }, jobId: "job-a" }
         : { version, ...common, vehicleContext: { model: "Original car" }, jobId: "job-a", comparisonTarget };

@@ -420,8 +420,10 @@ export async function sendFollowUp(lookup: Lookup, question: string): Promise<st
 
 export async function sendFollowUpDetails(lookup: Lookup, question: string, options: FollowUpOptions = {}): Promise<FollowUpDetails> {
   const photoRelationship = validatePhotoRelationship(lookup.photoRelationship);
+  const hasFirstPhotoIdentityScope = lookup.result?.modelRun?.pipelineVersion === IDENTIFY_PIPELINE_VERSION
+    && ((lookup.photos?.length ?? 1) <= 1 || photoRelationship !== "same_part_or_area");
   const savedIdentityScope = !lookup.result ? "none"
-    : lookup.result.modelRun?.pipelineVersion === IDENTIFY_PIPELINE_VERSION ? "first_photo" : "unrecorded";
+    : hasFirstPhotoIdentityScope ? "first_photo" : "unrecorded";
   const trimmedQuestion = question.trim().slice(0, 500);
   if (!trimmedQuestion) {
     throw new AIServiceError("invalid_input", "Ask a question first.");
