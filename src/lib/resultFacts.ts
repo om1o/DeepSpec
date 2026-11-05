@@ -58,6 +58,7 @@ export function getEvidenceFacts(result: IdentificationResult | undefined, compa
 
 /** Plain-language body line that names what the part does, without repeating the issue line. */
 export function getAnswerBody(result: IdentificationResult, summary: SimpleResultSummary): string {
+  if (summary.eyebrow === "Identity unresolved") return summary.body;
   if (findVisibleIssue(result)) {
     const what = result.whatItDoes?.trim();
     return what ? summarize(what, 150) : summary.body;
@@ -178,46 +179,51 @@ export function deriveIssue(result: IdentificationResult): DerivedIssue | null {
 
   return {
     text: summarize(text, 96),
-    anchor: anchorFromDamageRegion(result),
+    anchor: anchorForObservation(result, text),
   };
 }
 
-function anchorFromDamageRegion(result: IdentificationResult): VisualFocusBox | null {
-  const region = result.evidenceRegions.find((item) => describesVisibleDamage(item.observation));
-  return region ? regionLabelToBox(region.regionLabel) : null;
+function anchorForObservation(result: IdentificationResult, text: string): VisualFocusBox | null {
+  const normalized = (value: string) => value.trim().replace(/\s+/g, " ").toLowerCase();
+  // Text and place must belong to the same evidence. Similar damage words or a
+  // paraphrase are not enough to locate this particular observation safely.
+  const matches = result.evidenceRegions.filter((item) => normalized(item.observation) === normalized(text));
+  if (!matches.length) return null;
+  const boxes = matches.map((item) => regionLabelToBox(item.regionLabel));
+  const first = boxes[0];
+  if (!first || boxes.some((box) => !box || box.x !== first.x || box.y !== first.y || box.width !== first.width || box.height !== first.height)) return null;
+  return first;
 }
 
 /**
- * Map the model's coarse region vocabulary ("upper left", "center", "right side", ...)
- * to a normalized box centered on the matching 3x3 cell. Unknown labels return null so
- * callers can fall back to the focus box center.
+ * Recognize only an unambiguous coarse image area. A single direction spans the
+ * unknown axis; it never invents a point there. Descriptions, alternatives and
+ * conflicting directions remain unlocated. This is not a measured damage boundary.
  */
 export function regionLabelToBox(regionLabel: string): VisualFocusBox | null {
-  const label = regionLabel.toLowerCase();
-  if (!/\b(left|right|upper|lower|top|bottom|center|centre|middle)\b/.test(label)) {
+  const label = regionLabel.trim().toLowerCase().replace(/-/g, " ").replace(/\s+/g, " ");
+  const rows: Record<string, number> = { upper: 0, top: 0, middle: 1, center: 1, centre: 1, lower: 2, bottom: 2 };
+  const columns: Record<string, number> = { left: 0, center: 1, centre: 1, right: 2 };
+  let row: number | undefined, col: number | undefined;
+  const corner = label.match(/^(upper|top|lower|bottom) (left|right) corner$/);
+  const pair = label.match(/^(upper|top|middle|center|centre|lower|bottom) (left|center|centre|right)$/);
+  if (corner || pair) {
+    const match = (corner ?? pair)!;
+    row = rows[match[1]]; col = columns[match[2]];
+  } else if (/^(left|right)( side)?$/.test(label)) {
+    col = columns[label.split(" ")[0]];
+  } else if (/^(upper|top|lower|bottom)( side)?$/.test(label)) {
+    row = rows[label.split(" ")[0]];
+  } else if (/^(center|centre|middle)$/.test(label)) {
+    row = 1; col = 1;
+  } else {
     return null;
   }
-
-  const col = label.includes("left") ? 0 : label.includes("right") ? 2 : 1;
-  const row = label.includes("upper") || label.includes("top")
-    ? 0
-    : label.includes("lower") || label.includes("bottom")
-      ? 2
-      : 1;
-
-  const size = 0.32;
-  const centerX = col * (1 / 3) + 1 / 6;
-  const centerY = row * (1 / 3) + 1 / 6;
-
   return {
     confidence: 0.5,
-    height: size,
-    width: size,
-    x: clamp01(centerX - size / 2),
-    y: clamp01(centerY - size / 2),
+    height: row === undefined ? 1 : 1 / 3,
+    width: col === undefined ? 1 : 1 / 3,
+    x: col === undefined ? 0 : col / 3,
+    y: row === undefined ? 0 : row / 3,
   };
-}
-
-function clamp01(value: number) {
-  return Math.max(0, Math.min(1, value));
 }

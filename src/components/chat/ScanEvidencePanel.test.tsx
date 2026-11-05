@@ -40,6 +40,25 @@ const lookup: Lookup = {
 };
 
 describe("ScanEvidencePanel", () => {
+  it.each([91, 100, undefined])("does not turn the stored model score %s into a probability", (confidenceScore) => {
+    const result = { ...lookup.result!, confidenceScore };
+    renderPanel({ ...lookup, result });
+    const identity = screen.getByRole("button", { name: /Identity/ });
+    expect(identity).toHaveTextContent("Alternator · AI estimate: high");
+    expect(identity).not.toHaveTextContent(/\d+%/);
+    expect(screen.getByText(/does not represent a measured chance of a correct identification/)).toBeInTheDocument();
+    expect(screen.getByText("The vented housing and pulley support the result.")).toBeInTheDocument();
+    expect(result.confidenceScore).toBe(confidenceScore);
+  });
+
+  it("keeps the estimate limitation visible when identity evidence is absent", () => {
+    renderPanel({ ...lookup, result: { ...lookup.result!, evidence: [], confidence: "low", confidenceScore: 28 } });
+    expect(screen.getByRole("button", { name: /Identity/ })).toHaveTextContent("AI estimate: low");
+    expect(screen.getByText("DeepSpec suggests Alternator; verify using visible evidence.")).toBeInTheDocument();
+    expect(screen.getByText(/does not represent a measured chance/)).toBeInTheDocument();
+    expect(screen.queryByText(/28%/)).not.toBeInTheDocument();
+  });
+
   it("draws only a sufficiently confident saved focus box", () => {
     const { rerender } = renderPanel(lookup);
     expect(screen.getByTestId("chat-focus-target")).toHaveStyle({ left: "20%", top: "25%", width: "50%", height: "40%" });

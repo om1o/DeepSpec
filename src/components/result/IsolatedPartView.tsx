@@ -30,10 +30,6 @@ type IsolatedPartViewProps = {
 
 const DEFAULT_BOX: VisualFocusBox = { confidence: 0, height: 0.4, width: 0.68, x: 0.16, y: 0.28 };
 
-// Light, GPU-cheap clean-up so soft / low-light captures read crisper. Not a deblur —
-// it lifts contrast and brightness a touch so the part pops.
-const ENHANCE = "contrast-[1.08] saturate-[1.05] brightness-[1.04]";
-
 /**
  * The AR isolation layer. Blurs the captured frame and lifts the identified part out of it:
  * - Tier A ("mask" + cutout): the real transparent cutout, sharp, over a blurred frame.
@@ -122,7 +118,7 @@ function IsolatedPartViewContent({
   const busyScene = chips.length > 0;
   const blurBackground = showCutout || showCropWindow;
   const backgroundEffect = !blurBackground
-    ? view === "cutout" && !editing ? ENHANCE : ""
+    ? ""
     : busyScene
       ? "brightness-[0.82] saturate-[0.92]"
       : "scale-105 blur-[14px] brightness-[0.55]";
@@ -156,7 +152,7 @@ function IsolatedPartViewContent({
       {showCutout ? (
         <img
           alt={`Isolated ${label}`}
-          className={`absolute object-contain drop-shadow-[0_18px_40px_rgba(2,6,23,0.55)] ${ENHANCE}`}
+          className="absolute object-contain drop-shadow-[0_18px_40px_rgba(2,6,23,0.55)]"
           data-testid="isolated-part-image"
           src={isolatedImageBase64}
           style={percentBox(box)}
@@ -169,7 +165,8 @@ function IsolatedPartViewContent({
         <img
           aria-hidden
           alt=""
-          className={`absolute inset-0 h-full w-full object-cover ${ENHANCE}`}
+          className="absolute inset-0 h-full w-full object-cover"
+          data-testid="focused-part-crop"
           src={frameBase64}
           style={{ clipPath: clipFor(box) }}
         />
@@ -200,7 +197,7 @@ function IsolatedPartViewContent({
       )) : null}
 
       {/* One calm callout pointing at the visible issue, when there is one */}
-      {view !== "original" && !editing && issue && anchor ? <IssuePointer anchor={anchor} text={issue.text} /> : null}
+      {view !== "original" && !editing && issue && anchor ? <ApproximateIssueArea anchor={anchor} text={issue.text} /> : null}
       {editing && onCorrectFocus ? <FocusAreaEditor key={frameBase64} box={box}
         onCancel={() => setEditingFrame(null)}
         onApply={(corrected) => { onCorrectFocus(corrected, null); setEditingFrame(null); setView("outline"); }} /> : null}
@@ -382,7 +379,7 @@ function LensOverview({
       {view !== "original" && !editing ? ordered.map((object, index) => {
         const isFocused = focusedIndex === index;
         const isOverview = focusedIndex === null;
-        const opacity = isFocused ? 1 : isOverview ? (object.primary ? 0.96 : 0.6) : 0.18;
+        const opacity = isFocused || isOverview ? 1 : 0.18;
         const pulse = object.primary && (isFocused || isOverview);
         const glow = object.primary
           ? "drop-shadow(0 0 4px rgba(0,170,255,0.85))"
@@ -411,7 +408,7 @@ function LensOverview({
           >
             {view === "cutout" && hasCutout(object) ? <img
               alt={`Isolated ${object.name}`}
-              className={`h-full w-full object-contain transition-opacity duration-300 ${ENHANCE}`}
+              className="h-full w-full object-contain transition-opacity duration-300"
               src={object.isolatedImageBase64}
               style={{ opacity }}
               onError={() => setFailedCutouts((previous) => [...previous, object.isolatedImageBase64])}
@@ -447,7 +444,7 @@ function LensOverview({
           ))
         : null}
 
-      {view !== "original" && !editing && issue && anchor ? <IssuePointer anchor={anchor} text={issue.text} /> : null}
+      {view !== "original" && !editing && issue && anchor ? <ApproximateIssueArea anchor={anchor} text={issue.text} /> : null}
       {editing && focusedObject && onCorrectFocus ? <FocusAreaEditor key={`${frameBase64}-${focusedIndex}`} box={focusedObject.focusBox}
         onCancel={() => setEditTarget(null)}
         onApply={(corrected) => { onCorrectFocus(corrected, focusedIndex); setEditTarget(null); setView("outline"); }} /> : null}
@@ -526,25 +523,13 @@ function SceneChipLabel({ chip }: { chip: SceneChip }) {
   );
 }
 
-function IssuePointer({ anchor, text }: { anchor: VisualFocusBox; text: string }) {
-  const cx = clamp01(anchor.x + anchor.width / 2);
-  const cy = clamp01(anchor.y + anchor.height / 2);
-  const position: CSSProperties = { left: `${cx * 100}%`, top: `${cy * 100}%` };
-
+function ApproximateIssueArea({ anchor, text }: { anchor: VisualFocusBox; text: string }) {
   return (
     <>
-      <span
-        aria-hidden
-        className="absolute block size-3.5 rounded-full bg-white shadow-[0_0_0_4px_rgba(78,110,146,0.45)]"
-        style={{ ...position, transform: "translate(-50%,-50%)" }}
-      />
-      <div className="absolute w-max max-w-[min(260px,68%)]" style={{ ...position, transform: `translate(${edgeSafeShift(cx)},calc(-50% - 30px))` }}>
-        <p
-          className="rounded-full bg-[var(--ds-accent)] px-3 py-1.5 text-center text-xs font-bold leading-snug text-white shadow-[0_14px_30px_rgba(2,6,23,0.45)]"
-          data-testid="issue-callout"
-        >
-          {text}
-        </p>
+      <div className="pointer-events-none absolute z-40 border-2 border-dashed border-amber-200" style={percentBox(anchor)} data-testid="approximate-issue-area" aria-label="Approximate evidence area" />
+      <div className="pointer-events-none absolute inset-x-2 bottom-2 z-40 w-fit max-w-[calc(100%_-_16px)] rounded-lg bg-slate-950/95 px-3 py-2 text-xs leading-snug text-white">
+        <p className="font-semibold">Approximate area — not an exact damage boundary</p>
+        <p data-testid="issue-callout">{text}</p>
       </div>
     </>
   );

@@ -121,15 +121,16 @@ function percentBox(box: VisualFocusBox) {
 
 function buildEvidenceItems(result: IdentificationResult): EvidenceItem[] {
   const visible = [...result.visibleObservations, ...result.evidenceRegions.map((region) => region.observation)];
-  const confidence = result.confidenceScore === undefined
-    ? `${result.confidence} confidence`
-    : `${Math.round(result.confidenceScore)}% confidence`;
+  const estimate = `AI estimate: ${result.confidence}`;
   return [
     {
       id: "identity",
       label: "Identity",
-      summary: `${result.partName} · ${confidence}`,
-      details: result.evidence.length ? result.evidence : [`DeepSpec returned ${result.partName} with ${confidence}.`],
+      summary: `${result.partName} · ${estimate}`,
+      details: [
+        ...(result.evidence.length ? result.evidence : [`DeepSpec suggests ${result.partName}; verify using visible evidence.`]),
+        "The confidence label is the model's own estimate. It does not represent a measured chance of a correct identification.",
+      ],
       question: `What visual details support the ${result.partName} identification?`,
     },
     {
