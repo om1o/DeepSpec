@@ -58,7 +58,7 @@ export function JobInspectionHandoff({ context, disabled = false }: Props) {
     {disabled ? <p className="mt-3 text-sm">Save or review the pending job changes before preparing the handoff.</p> : null}
     {message ? <p role="alert" className="mt-3 text-sm">{message}</p> : null}
     {selected ? <div className="mt-4 space-y-3" aria-label="Selected overview inspection">
-      <div className="flex flex-wrap gap-4">
+      <div className="flex flex-col gap-4 sm:flex-row">
         <ScanThumb src={firstOriginal(selected)} alt={`First original of ${scanTitle(selected)}`} className="h-32 w-40 max-w-full rounded-lg border border-slate-200 object-contain" />
         <div className="min-w-0 flex-1 text-sm">
           <h3 className="font-bold">{scanTitle(selected)}</h3>
