@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Lookup } from "../types";
 import type { ComponentCaptureTarget, ComponentMap, ComponentMapRecord } from "../types/componentMap";
-import { componentCaptureTargetsMatch, createMapComponent, linkComponentMapDocument, normalizeComponentCaptureTarget, normalizeComponentMap, normalizeComponentMapRecord, reviewMapComponent, seedMapFromLookup } from "./componentMap";
+import { MAX_SUGGESTED_LOCATION_LENGTH, componentCaptureTargetsMatch, createMapComponent, linkComponentMapDocument, normalizeComponentCaptureTarget, normalizeComponentMap, normalizeComponentMapRecord, reviewMapComponent, seedMapFromLookup } from "./componentMap";
 
 const componentId = "10000000-0000-4000-8000-000000000001";
 const linkId = "20000000-0000-4000-8000-000000000001";
@@ -32,6 +32,42 @@ describe("component map validation", () => {
     expect(normalizeComponentMap(input)).toBeUndefined();
     expect(input.components).toHaveLength(101);
     expect(normalizeComponentMap({ ...map(), components: [] })?.components).toEqual([]);
+  });
+
+  it("retains v2 AI location provenance separately from human notes and review", () => {
+    const input = { ...map(), version: 2, components: [{ ...reviewMapComponent(map().components[0], "inspected", "I checked the bolt", now),
+      suggestedLocation: { source: "ai_scene", text: "  behind the left bracket  " } }] };
+    const normalized = normalizeComponentMap(input)!;
+    expect(normalized.version).toBe(2);
+    expect(normalized.components[0]).toMatchObject({ id: componentId, notes: "I checked the bolt", status: "inspected", reviewedAt: now,
+      suggestedLocation: { source: "ai_scene", text: "behind the left bracket" } });
+    expect(normalized.components[0].region).toBeUndefined();
+    expect(input.components[0].suggestedLocation.text).toBe("  behind the left bracket  ");
+    expect(normalizeComponentMap(map())?.version).toBe(1);
+    expect(normalizeComponentMap({ ...map(), version: 2 })?.version).toBe(2);
+    expect(normalizeComponentMap({ ...map(), version: 3 })).toBeUndefined();
+  });
+
+  it.each([undefined, null, { source: "ai_scene", text: "left" }])("rejects v1 location metadata presence, even %#", (suggestedLocation) => {
+    expect(normalizeComponentMap({ ...map(), components: [{ ...map().components[0], suggestedLocation }] })).toBeUndefined();
+  });
+
+  it.each([
+    null, [], "left", { source: "human", text: "left" }, { source: "ai_scene", text: "  " },
+    { source: "ai_scene", text: 12 }, { source: "ai_scene", text: "left", confidence: 0.9 },
+    { source: "ai_scene", text: "x".repeat(241) },
+  ])("rejects the whole v2 map for malformed suggested location %#", (suggestedLocation) => {
+    const input = { ...map(), version: 2, components: [{ ...map().components[0], suggestedLocation }] };
+    expect(normalizeComponentMap(input)).toBeUndefined();
+    expect(input.components).toHaveLength(1);
+  });
+
+  it("uses the agreed 240 Unicode-code-point limit without truncation", () => {
+    expect(MAX_SUGGESTED_LOCATION_LENGTH).toBe(240);
+    const withText = (text: string) => ({ ...map(), version: 2, components: [{ ...map().components[0], suggestedLocation: { source: "ai_scene", text } }] });
+    const text = "🔧".repeat(240);
+    expect(normalizeComponentMap(withText(` ${text} `))?.components[0].suggestedLocation?.text).toBe(text);
+    expect(normalizeComponentMap(withText(`${text}🔧`))).toBeUndefined();
   });
 
   it.each([
@@ -76,7 +112,7 @@ describe("seeding and explicit review", () => {
     expect(component.status).toBe("needs_view");
   });
 
-  it("merges more than four scene suggestions without treating a text region as a measured box", () => {
+  it("preserves nonprimary scene occurrences beyond four without guessing their existing boxes", () => {
     const input = lookup();
     input.photos = [{ id: "actual-overview", label: "overview", ...input.frame }];
     input.isolatedObjects = [
@@ -87,10 +123,85 @@ describe("seeding and explicit review", () => {
     input.result = { partName: "Alternator", sceneObjects: ["Alternator", "Hose", "Battery", "Oil cap", "Radiator", "Air box"].map((name) => ({ name, category: "engine", regionLabel: "upper left", primary: false })) } as Lookup["result"];
     const seeded = seedMapFromLookup(input);
     expect(seeded.overview.photoId).toBe("actual-overview");
-    expect(seeded.components.map((item) => item.label)).toEqual(["Alternator", "Hose", "Battery", "Oil cap", "Radiator", "Air box"]);
+    expect(seeded.version).toBe(2);
+    expect(seeded.components.map((item) => item.label)).toEqual(["Alternator", "Hose", "Alternator", "Hose", "Battery", "Oil cap", "Radiator", "Air box"]);
     expect(seeded.components.every((item) => item.status === "needs_view" && item.reviewedAt === undefined)).toBe(true);
     expect(seeded.components[0].region).toEqual({ sourcePhotoId: "actual-overview", box });
     expect(seeded.components.slice(2).every((item) => item.region === undefined)).toBe(true);
+    expect(seeded.components.slice(0, 2).every((item) => item.suggestedLocation === undefined)).toBe(true);
+    expect(seeded.components.slice(2).every((item) => item.suggestedLocation?.text === "upper left" && item.notes === "")).toBe(true);
+  });
+
+  it("aliases only the uniquely proven primary and retains same-name or same-location scene occurrences", () => {
+    const input = lookup();
+    input.isolatedObjects = [
+      { name: "Alternator", category: "electrical", primary: true, focusBox: box, isolatedImageBase64: "" },
+      { name: "Hose", category: "engine", primary: false, focusBox: { ...box, x: 0.5 }, isolatedImageBase64: "" },
+    ];
+    input.focusBox = { ...box, confidence: 0.9 };
+    input.result = { partName: " alternator ", sceneObjects: [
+      { name: "Alternator", primary: true, regionLabel: " front center ", category: "engine" },
+      { name: "Hose", primary: false, regionLabel: "left", category: "engine" },
+      { name: "Hose", primary: false, regionLabel: "right", category: "engine" },
+      ...Array.from({ length: 2 }, () => ({ name: "Connector", primary: false, regionLabel: "behind bracket", category: "engine" })),
+    ] } as Lookup["result"];
+    const before = structuredClone(input);
+    const seeded = seedMapFromLookup(input);
+    expect(seeded.components.map((item) => item.label)).toEqual(["Alternator", "Hose", "Hose", "Hose", "Connector", "Connector"]);
+    expect(new Set(seeded.components.map((item) => item.id)).size).toBe(6);
+    expect(seeded.components[0]).toMatchObject({ region: { sourcePhotoId: "photo-1", box }, suggestedLocation: { source: "ai_scene", text: "front center" } });
+    expect(seeded.components[1].suggestedLocation).toBeUndefined();
+    expect(seeded.components.slice(2).map((item) => item.suggestedLocation?.text)).toEqual(["left", "right", "behind bracket", "behind bracket"]);
+    expect(seeded.components.slice(2).every((item) => !item.region)).toBe(true);
+    expect(seeded.components.every((item) => item.status === "needs_view" && item.notes === "" && !item.reviewedAt)).toBe(true);
+    expect(input).toEqual(before);
+  });
+
+  it.each(["missing result box", "different result box", "not explicitly primary", "multiple primary boxes", "different name"])("keeps the result unboxed when primary alias evidence is %s", (scenario) => {
+    const input = lookup();
+    input.focusBox = scenario === "missing result box" ? undefined : { ...box, ...(scenario === "different result box" ? { x: 0.2 } : {}) };
+    input.isolatedObjects = [{ name: scenario === "different name" ? "Compressor" : "Alternator", category: "engine", primary: scenario !== "not explicitly primary", focusBox: box, isolatedImageBase64: "" }];
+    if (scenario === "multiple primary boxes") input.isolatedObjects.push({ ...input.isolatedObjects[0] });
+    input.result = { partName: "Alternator", sceneObjects: [] } as Lookup["result"];
+    const seeded = seedMapFromLookup(input);
+    expect(seeded.components).toHaveLength(input.isolatedObjects.length + 1);
+    expect(seeded.components.at(-1)).toMatchObject({ label: "Alternator", status: "needs_view" });
+    expect(seeded.components.at(-1)?.region).toBeUndefined();
+    expect(seeded.components.slice(0, -1).every((item) => JSON.stringify(item.region?.box) === JSON.stringify(box))).toBe(true);
+  });
+
+  it("retains ambiguous primary scene entries and never attaches their hints to the result box", () => {
+    const input = lookup();
+    input.focusBox = box;
+    input.result = { partName: "Hose", sceneObjects: ["left", "right"].map((regionLabel) => ({ name: "Hose", primary: true, category: "engine", regionLabel })) } as Lookup["result"];
+    const seeded = seedMapFromLookup(input);
+    expect(seeded.components).toHaveLength(3);
+    expect(seeded.components[0].region?.box).toEqual(box);
+    expect(seeded.components[0].suggestedLocation).toBeUndefined();
+    expect(seeded.components.slice(1).map((item) => item.suggestedLocation?.text)).toEqual(["left", "right"]);
+    expect(seeded.components.slice(1).every((item) => !item.region)).toBe(true);
+  });
+
+  it("preserves identical isolated occurrences and allows an empty unanalysed overview", () => {
+    const input = lookup();
+    input.isolatedObjects = Array.from({ length: 2 }, () => ({ name: "Hose", category: "engine", primary: false, focusBox: box, isolatedImageBase64: "" }));
+    const seeded = seedMapFromLookup(input);
+    expect(seeded.components).toHaveLength(2);
+    expect(new Set(seeded.components.map((item) => item.id)).size).toBe(2);
+    expect(seeded.components.map((item) => item.region?.box)).toEqual([box, box]);
+    expect(seedMapFromLookup(lookup())).toMatchObject({ version: 2, components: [] });
+  });
+
+  it("refuses excess occurrences or overlong location text without saving a partial seed", () => {
+    const input = lookup();
+    input.result = { partName: "Connector", sceneObjects: Array.from({ length: 99 }, () => ({ name: "Connector", primary: false, category: "engine", regionLabel: "left" })) } as Lookup["result"];
+    expect(seedMapFromLookup(input).components).toHaveLength(100);
+    input.result!.sceneObjects!.push({ name: "Connector", primary: false, category: "engine", regionLabel: "left" });
+    expect(() => seedMapFromLookup(input)).toThrow(/no partial map was saved/);
+    expect(input.result?.sceneObjects).toHaveLength(100);
+    input.result!.sceneObjects = [{ name: "Connector", primary: false, category: "engine", regionLabel: "x".repeat(241) }];
+    expect(() => seedMapFromLookup(input)).toThrow(/location exceeds/);
+    expect(input.result!.sceneObjects[0].regionLabel).toHaveLength(241);
   });
 
   it("keeps different existing boxes for same-named parts and uses photo-1 only for a legacy original", () => {
@@ -123,8 +234,13 @@ describe("capture linking", () => {
 
   it("retains human review and notes when another photo group is linked", () => {
     const original = map();
+    original.version = 2;
+    original.components[0].suggestedLocation = { source: "ai_scene", text: "left bracket" };
     original.components[0] = reviewMapComponent(original.components[0], "inspected", "I checked the mounting bolt", now);
-    expect(linkComponentMapDocument(original, target(), ["photo-1"]).components[0]).toMatchObject({ status: "inspected", reviewedAt: now, notes: "I checked the mounting bolt" });
+    const linked = linkComponentMapDocument(original, target(), ["photo-1"]);
+    expect(linked.version).toBe(2);
+    expect(linked.components[0]).toMatchObject({ id: componentId, status: "inspected", reviewedAt: now, notes: "I checked the mounting bolt", suggestedLocation: { source: "ai_scene", text: "left bracket" } });
+    expect(linkComponentMapDocument(linked, target(), ["photo-1"])).toEqual(linked);
   });
 
   it("validates and compares the entire capture target without accepting a partial target", () => {

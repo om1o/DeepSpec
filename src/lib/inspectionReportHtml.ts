@@ -161,7 +161,7 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
   const map = mapRecord?.document;
   const componentStatus = (component: ComponentMapComponent) => ({ needs_view: "Needs a view", inspected: "Inspected — user review, not a safety certification", not_visible: "Not visible" })[component.status];
   const mapHtml = map && mapRecord ? `<section id="component-map"><h2>Component map</h2>
-    <p>Saved component labels, notes and statuses are user-maintained. AI suggestions are starting points; no component is automatically inspected. This is not a complete engine inspection.</p>
+    <p>Saved component labels, notes and statuses are user-maintained. AI suggestions are starting points; no component is automatically inspected. Suggestions may repeat the same part when their identity is uncertain. This is not a complete engine inspection.</p>
     ${details([["Components", map.components.length], ["Local revision", mapRecord.localRevision], ["Acknowledged cloud revision", mapRecord.cloudRevision ?? "None"], ["Last acknowledged local revision", mapRecord.syncedLocalRevision]])}
     ${mapRecord.cloudRevision === null || mapRecord.syncedLocalRevision !== mapRecord.localRevision || mapRecord.syncAttempt ? prose("Local map changes are not acknowledged as saved to the cloud.") : prose("This local map revision is acknowledged as saved to the cloud.")}
     ${mapRecord.syncAttempt ? prose(`A cloud save attempt for local revision ${mapRecord.syncAttempt.localRevision} is unacknowledged (started ${mapRecord.syncAttempt.startedAt}).`) : ""}
@@ -171,6 +171,7 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
       // Distinct link IDs are distinct saved associations, even with identical photos.
       const groups = component.scanGroups;
       return `<li id="component-${index + 1}"><h3>${escape(component.label)}</h3><span class="badge">${escape(componentStatus(component))}</span>
+        ${component.suggestedLocation ? prose(`AI-suggested location — unverified: ${component.suggestedLocation.text}. This text does not establish an outline or confirm the component's identity. User notes and marked areas are separate.`) : ""}
         ${component.reviewedAt ? prose(`User review recorded: ${component.reviewedAt}`) : prose("No explicit user review recorded.")}
         ${component.notes ? prose(component.notes) : prose("No component notes recorded.")}
         ${component.region ? `<p>Saved region source: ${photoLink(map.overview.lookupId, component.region.sourcePhotoId)}${component.status === "not_visible" ? "; outline hidden because the component is marked not visible." : validBox(component.region.box) ? "." : "; invalid outline omitted."}</p>` : prose("No region outline saved.")}

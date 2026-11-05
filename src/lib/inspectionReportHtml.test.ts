@@ -63,6 +63,25 @@ function visualComparison(): InspectionComparison {
 }
 
 describe("self-contained mechanic HTML report", () => {
+  it("keeps same-name map occurrences and unverified AI locations separate from human notes and outlines", () => {
+    const input = snapshot();
+    input.map = { document: { version: 2, id: "overview", overview: { lookupId: "overview", photoId: "overview-front" }, components: [
+      { ...component(0), label: "Hose", notes: "Owner checked this connection.", suggestedLocation: { source: "ai_scene", text: "upper left <script>fixture</script>" } },
+      { ...component(1), label: "Hose", notes: "", suggestedLocation: { source: "ai_scene", text: "lower right" } },
+    ] }, localRevision: 2, cloudRevision: null, syncedLocalRevision: 0 };
+    const doc = parsed(input);
+    expect(doc.querySelectorAll(".component-list > li")).toHaveLength(2);
+    expect(doc.querySelector("#component-1")?.textContent).toContain("AI-suggested location — unverified: upper left <script>fixture</script>");
+    expect(doc.querySelector("#component-1")?.textContent).toContain("Owner checked this connection.");
+    expect(doc.querySelector("#component-2")?.textContent).toContain("AI-suggested location — unverified: lower right");
+    expect(doc.querySelector("#component-2")?.textContent).toContain("No component notes recorded.");
+    expect(doc.querySelector("#component-2")?.textContent).not.toContain("Owner checked");
+    expect(doc.querySelectorAll("#component-map script, #component-map img")).toHaveLength(0);
+    expect(doc.querySelector("#component-map")?.textContent).toContain("Suggestions may repeat the same part");
+    expect(doc.querySelectorAll('a[href="#component-1"], a[href="#component-2"]')).toHaveLength(0);
+    expect(input.map.document.components.every((part) => part.status === "needs_view" && !part.region && !part.reviewedAt)).toBe(true);
+  });
+
   it("links each saved image's review status and targeted disagreements without asserting separate capture angles", () => {
     const record = lookup(); delete record.result!.conditionAssessment;
     record.photos!.push({ id: "overview-mounting", label: "mounting", ...record.frame }, { id: "overview-other", label: "other", ...record.frame });

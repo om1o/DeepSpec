@@ -11,11 +11,12 @@ export type ComponentMapComponent = {
   notes: string;
   reviewedAt?: string;
   region?: { sourcePhotoId: string; box: VisualFocusBox };
+  suggestedLocation?: { source: "ai_scene"; text: string };
   scanGroups: ComponentMapScanGroup[];
 };
 
 export type ComponentMap = {
-  version: 1;
+  version: 1 | 2;
   id: string;
   overview: { lookupId: string; photoId: string };
   components: ComponentMapComponent[];

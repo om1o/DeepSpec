@@ -194,7 +194,7 @@ export function ComponentMapReview({ lookup }: { lookup: Lookup }) {
   return <section aria-label="Component map" className="rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 text-sm text-[var(--ds-fg-2)]">
     <h2 className="font-bold">Component map</h2>
     {!cloudEnabled ? <p className="mt-2 text-sm">Cloud sync is off. Map edits and available photo groups stay on this device.</p> : null}
-    <p className="mt-1 text-xs text-[var(--ds-fg-3)]">Organize component photos and your review. Suggested labels and areas can be wrong. Inspected is your recorded status, not a statement that a part is safe or working. This is not a complete engine inspection.</p>
+    <p className="mt-1 text-xs text-[var(--ds-fg-3)]">Organize component photos and your review. Suggested labels and areas can be wrong. Suggestions may repeat the same part when their identity is uncertain; check each against the overview. Inspected is your recorded status, not a statement that a part is safe or working. This is not a complete engine inspection.</p>
     {message ? <p role="status" className="mt-3 rounded-lg border p-2">{message}</p> : null}
     {loading ? <p className="mt-3">Loading component map…</p> : !draft ? <div className="mt-3">
       <p>{loadFailed ? "The saved component map could not be loaded." : "No component map is saved on this device."}</p>
@@ -234,12 +234,18 @@ export function ComponentMapReview({ lookup }: { lookup: Lookup }) {
       <ol className="mt-3 max-h-64 space-y-1 overflow-y-auto" aria-label="Mapped components">
         {draft.components.map((component, index) => <li key={component.id}><button type="button" aria-pressed={selectedId === component.id} className={`${BUTTON} w-full text-left aria-pressed:bg-[var(--ds-surface)]`} onClick={() => { setSelectedId(component.id); setEditingArea(false); }}>
           {index + 1}. {component.label} — {STATUS_TEXT[component.status]}{component.region ? "" : " · No overview area"}
+          {component.suggestedLocation ? <span className="mt-1 block text-xs">AI-suggested location — unverified: {component.suggestedLocation.text}</span> : null}
         </button></li>)}
       </ol>
       {!draft.components.length ? <p className="mt-2">Add a component to start your review.</p> : null}
       {selected ? <fieldset disabled={busy} className="mt-4 space-y-3 rounded-xl border border-[var(--ds-border)] p-3">
         <legend className="px-1 font-semibold">Selected component</legend>
         <label className="block">Component label<input className={FIELD} maxLength={120} value={selected.label} onChange={(event) => changeComponent((component) => ({ ...component, label: event.target.value }))} /></label>
+        {selected.suggestedLocation ? <div className="rounded-lg border border-[var(--ds-border)] p-2 text-xs" aria-label="AI-suggested location">
+          <p className="font-semibold">AI-suggested location — unverified</p>
+          <p className="mt-1">{selected.suggestedLocation.text}</p>
+          <p className="mt-1 text-[var(--ds-fg-3)]">This text came from the scan. It does not establish an outline or confirm the component's identity. Your notes and marked area are separate.</p>
+        </div> : null}
         <label className="block">Your review status<select className={FIELD} value={selected.status} onChange={(event) => { const status = event.target.value as ComponentMapStatus; changeComponent((component) => reviewMapComponent(component, status)); setEditingArea(false); }}>
           <option value="needs_view">Needs view</option><option value="inspected">Inspected</option><option value="not_visible">Not visible</option>
         </select></label>
@@ -265,6 +271,7 @@ export function ComponentMapReview({ lookup }: { lookup: Lookup }) {
 function MapVersionPreview({ document }: { document: ComponentMap }) {
   return <ol className="mt-2 max-h-48 space-y-2 overflow-auto text-xs">{document.components.map((component, index) => <li key={component.id}>
     <p className="font-semibold">{index + 1}. {component.label} — {STATUS_TEXT[component.status]}</p>
+    {component.suggestedLocation ? <p>AI-suggested location — unverified: {component.suggestedLocation.text}</p> : null}
     <p>{component.notes || "No notes."}</p>
     <p>{component.region ? component.status === "not_visible" ? "Previous overview area retained; marker hidden." : "Overview area marked." : "No overview area."} {component.scanGroups.length} linked photo groups.</p>
   </li>)}</ol>;

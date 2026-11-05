@@ -5,6 +5,7 @@ export const MAX_MAP_COMPONENTS = 100;
 export const MAX_COMPONENT_SCAN_GROUPS = 100;
 export const MAX_COMPONENT_LABEL_LENGTH = 120;
 export const MAX_COMPONENT_NOTES_LENGTH = 2000;
+export const MAX_SUGGESTED_LOCATION_LENGTH = 240;
 const UUID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
 const RECORD_ID = /^[a-zA-Z0-9._:-]{1,160}$/;
 const PHOTO_ID = /^[a-zA-Z0-9._:-]{1,80}$/;
@@ -33,9 +34,16 @@ function normalizeBox(value: unknown): VisualFocusBox | undefined {
   return box;
 }
 
+function normalizeSuggestedLocation(value: unknown): ComponentMapComponent["suggestedLocation"] {
+  if (!object(value) || Object.keys(value).length !== 2 || value.source !== "ai_scene" || typeof value.text !== "string") return undefined;
+  const text = value.text.trim();
+  if (!text || Array.from(text).length > MAX_SUGGESTED_LOCATION_LENGTH) return undefined;
+  return { source: "ai_scene", text };
+}
+
 // Reject an invalid document as a whole. Never silently lose a component or its evidence links.
 export function normalizeComponentMap(value: unknown): ComponentMap | undefined {
-  if (!object(value) || value.version !== 1 || !id(value.id) || !object(value.overview)
+  if (!object(value) || (value.version !== 1 && value.version !== 2) || !id(value.id) || !object(value.overview)
     || value.overview.lookupId !== value.id || !id(value.overview.photoId, PHOTO_ID)
     || !Array.isArray(value.components) || value.components.length > MAX_MAP_COMPONENTS) return undefined;
   const components: ComponentMapComponent[] = [];
@@ -50,6 +58,12 @@ export function normalizeComponentMap(value: unknown): ComponentMap | undefined 
       || (raw.reviewedAt !== undefined && !timestamp(raw.reviewedAt))
       || (raw.status !== "needs_view" && !timestamp(raw.reviewedAt))) return undefined;
     componentIds.add(raw.id.toLowerCase());
+    let suggestedLocation: ComponentMapComponent["suggestedLocation"];
+    if (Object.prototype.hasOwnProperty.call(raw, "suggestedLocation")) {
+      if (value.version !== 2) return undefined;
+      suggestedLocation = normalizeSuggestedLocation(raw.suggestedLocation);
+      if (!suggestedLocation) return undefined;
+    }
     let region: ComponentMapComponent["region"];
     if (raw.region !== undefined) {
       if (!object(raw.region) || raw.region.sourcePhotoId !== value.overview.photoId) return undefined;
@@ -66,9 +80,10 @@ export function normalizeComponentMap(value: unknown): ComponentMap | undefined 
       scanGroups.push({ linkId: group.linkId, lookupId: group.lookupId, photoIds: [...group.photoIds] as string[] });
     }
     components.push({ id: raw.id, label: raw.label.trim(), status: raw.status as ComponentMapStatus, notes: raw.notes,
-      ...(raw.reviewedAt === undefined ? {} : { reviewedAt: raw.reviewedAt as string }), ...(region ? { region } : {}), scanGroups });
+      ...(raw.reviewedAt === undefined ? {} : { reviewedAt: raw.reviewedAt as string }), ...(region ? { region } : {}),
+      ...(suggestedLocation ? { suggestedLocation } : {}), scanGroups });
   }
-  return { version: 1, id: value.id, overview: { lookupId: value.id, photoId: value.overview.photoId }, components };
+  return { version: value.version, id: value.id, overview: { lookupId: value.id, photoId: value.overview.photoId }, components };
 }
 
 export function normalizeComponentCaptureTarget(value: unknown): ComponentCaptureTarget | null {
@@ -124,27 +139,47 @@ export function reviewMapComponent(component: ComponentMapComponent, status: Com
 
 export function seedMapFromLookup(lookup: Lookup): ComponentMap {
   const overview = { lookupId: lookup.id, photoId: lookup.photos?.[0]?.id ?? "photo-1" };
-  const suggestions = [
-    ...(lookup.isolatedObjects ?? []).map((item) => ({ label: item.name, box: item.focusBox })),
-    ...(lookup.result?.partName ? [{ label: lookup.result.partName, box: lookup.focusBox }] : []),
-    ...(lookup.result?.sceneObjects ?? []).map((item) => ({ label: item.name, box: undefined })),
-  ];
   const components: ComponentMapComponent[] = [];
-  for (const item of suggestions) {
-    const label = item.label.trim().slice(0, MAX_COMPONENT_LABEL_LENGTH);
-    if (!label) continue;
-    const box = normalizeBox(item.box);
-    const sameLabel = components.filter((part) => part.label.toLowerCase() === label.toLowerCase());
-    if (sameLabel.some((part) => !box || (part.region?.box.x === box.x && part.region.box.y === box.y
-      && part.region.box.width === box.width && part.region.box.height === box.height))) continue;
-    // Keep distinct existing boxes with the same name, but do not duplicate a label-only suggestion.
-    const unboxed = sameLabel.find((part) => !part.region);
-    if (box && unboxed) { unboxed.region = { sourcePhotoId: overview.photoId, box }; continue; }
-    if (components.length >= MAX_MAP_COMPONENTS) break;
+  const add = (label: string, box?: VisualFocusBox) => {
+    if (components.length >= MAX_MAP_COMPONENTS) throw new ComponentMapError("invalid_map", "This scan has more than 100 component suggestions. The original scan was preserved; no partial map was saved.");
     const component = createMapComponent(label);
-    components.push(box ? { ...component, region: { sourcePhotoId: overview.photoId, box } } : component);
+    if (box) component.region = { sourcePhotoId: overview.photoId, box };
+    components.push(component);
+    return component;
+  };
+  const nameKey = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
+  const isolated = (lookup.isolatedObjects ?? []).map((item) => ({
+    item, component: add(item.name, normalizeBox(item.focusBox)),
+  }));
+  const primaryIsolations = isolated.filter(({ item }) => item.primary);
+  const primaryName = lookup.result?.partName?.trim();
+  let primaryResult: ComponentMapComponent | undefined;
+  if (primaryName) {
+    const mainBox = normalizeBox(lookup.focusBox);
+    const candidate = primaryIsolations.length === 1 ? primaryIsolations[0] : undefined;
+    const candidateBox = candidate?.component.region?.box;
+    // Names alone cannot bind a result to one of several same-named selections.
+    // Confidence is not geometry; all four coordinates must agree exactly.
+    const samePrimary = candidate && nameKey(candidate.item.name) === nameKey(primaryName)
+      && mainBox && candidateBox && mainBox.x === candidateBox.x && mainBox.y === candidateBox.y
+      && mainBox.width === candidateBox.width && mainBox.height === candidateBox.height;
+    primaryResult = samePrimary && candidate ? candidate.component : add(primaryName, isolated.length === 0 ? mainBox : undefined);
   }
-  const document = normalizeComponentMap({ version: 1, id: lookup.id, overview, components });
+  const scenes = lookup.result?.sceneObjects ?? [];
+  const primaryScenes = scenes.filter((item) => item.primary);
+  for (const item of scenes) {
+    // Preserve every occurrence, even identical names/locations. A text location
+    // does not prove which existing box (if any) belongs to this scene entry.
+    const aliasesPrimary = primaryResult && primaryName && item.primary && primaryScenes.length === 1
+      && nameKey(item.name) === nameKey(primaryName);
+    const component = aliasesPrimary && primaryResult ? primaryResult : add(item.name);
+    if (item.regionLabel.trim()) {
+      const suggestedLocation = normalizeSuggestedLocation({ source: "ai_scene", text: item.regionLabel });
+      if (!suggestedLocation) throw new ComponentMapError("invalid_map", "An AI-suggested location exceeds the supported length. The original scan was preserved; no partial map was saved.");
+      component.suggestedLocation = suggestedLocation;
+    }
+  }
+  const document = normalizeComponentMap({ version: 2, id: lookup.id, overview, components });
   if (!document) throw new ComponentMapError("invalid_map", "This scan does not have a usable overview reference.");
   return document;
 }

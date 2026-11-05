@@ -13,6 +13,8 @@ const billingIdempotencySqlTestPath = join(process.cwd(), "supabase", "tests", "
 const publicWriteHardeningMigrationPath = join(migrationsDir, "20261101121028_harden_public_write_surfaces.sql");
 const publicWriteHardeningSqlTestPath = join(process.cwd(), "supabase", "tests", "public_write_hardening.sql");
 const releaseSecurityOptimizationMigrationPath = join(migrationsDir, "20261101121627_optimize_release_security.sql");
+const componentMapMigrationPath = join(migrationsDir, "20261105091323_component_maps.sql");
+const componentMapOccurrencesMigrationPath = join(migrationsDir, "20261105211101_component_map_occurrences.sql");
 const srcPath = join(process.cwd(), "src");
 
 describe("Supabase secure foundation migration", () => {
@@ -223,6 +225,58 @@ describe("Supabase billing webhook idempotency migration", () => {
     expect(regression).toContain("if event_count <> 1");
     expect(regression).toContain("'public.billing_purchase_events', 'truncate'");
     expect(regression).toContain("rollback;");
+  });
+});
+
+describe("Supabase component-map occurrence compatibility migration", () => {
+  const sql = readFileSync(componentMapOccurrencesMigrationPath, "utf8").replace(/\r\n/g, "\n");
+  const previous = readFileSync(componentMapMigrationPath, "utf8").replace(/\r\n/g, "\n");
+
+  it("extends the existing trigger without rewriting rows or changing ownership privileges", () => {
+    expect(sql).toContain("create or replace function private.guard_component_map()");
+    expect(sql).toContain("security invoker set search_path = ''");
+    expect(sql).toContain("revoke all on function private.guard_component_map() from public, anon, authenticated");
+    expect(sql).not.toMatch(/(?:^|\n)\s*(?:alter table|drop|grant|insert into|update public|delete from|create trigger)\b/i);
+  });
+
+  it("accepts both document versions but forbids downgrading an existing occurrence map", () => {
+    expect(sql).toContain("doc->'version' is distinct from '1'::jsonb and doc->'version' is distinct from '2'::jsonb");
+    expect(sql).toContain("old.document_json->'version' = '2'::jsonb and doc->'version' is distinct from '2'::jsonb");
+    expect(sql).toContain("raise exception 'component_map_version_downgrade'");
+  });
+
+  it("requires exact version-2 AI-location metadata with canonical text bounded to 240 characters", () => {
+    expect(sql).toContain("if component ? 'suggestedLocation' then");
+    expect(sql).toContain("doc->'version' is distinct from '2'::jsonb or jsonb_typeof(suggested_location) is distinct from 'object'");
+    expect(sql).toContain("suggested_location->'source' is distinct from '\"ai_scene\"'::jsonb");
+    expect(sql).toContain("jsonb_typeof(suggested_location->'text') is distinct from 'string'");
+    expect(sql).toContain("(suggested_location - array['source', 'text']) <> '{}'::jsonb");
+    expect(sql).toContain("length(suggested_location->>'text') not between 1 and 240");
+    expect(sql).toContain("btrim(suggested_location->>'text', location_trim_characters)");
+    expect(sql).toContain("\\00A0");
+    expect(sql).toContain("\\FEFF");
+  });
+
+  it("retains every existing trigger protection for identity, revisions, review, geometry and owned photos", () => {
+    const previousErrors = [...previous.matchAll(/raise exception '([^']+)' using errcode = '([^']+)'/g)];
+    expect(previousErrors.length).toBeGreaterThan(10);
+    for (const [, message, code] of previousErrors) {
+      expect(sql).toContain(`raise exception '${message}' using errcode = '${code}'`);
+    }
+    for (const guard of [
+      "new.user_id is distinct from old.user_id or new.map_id is distinct from old.map_id",
+      "doc#>>'{overview,photoId}' is distinct from old.document_json#>>'{overview,photoId}'",
+      "new.revision is distinct from old.revision + 1",
+      "jsonb_array_length(doc->'components') > 100",
+      "lower(component->>'id') = any(component_ids)",
+      "component ? 'reviewedAt' or component->>'status' <> 'needs_view'",
+      "region->>'sourcePhotoId' is distinct from doc#>>'{overview,photoId}'",
+      "(box->>'x')::numeric + (box->>'width')::numeric > 1",
+      "lower(link->>'linkId') = any(link_ids)",
+      "jsonb_array_length(link->'photoIds') not between 1 and 4",
+      "s.user_id = new.user_id and s.local_id = link->>'lookupId'",
+      "if (photo#>>'{}' = any(photo_ids)) is not true then",
+    ]) expect(sql).toContain(guard);
   });
 });
 
