@@ -1,6 +1,7 @@
 import { useId } from "react";
 import type { ShopVehicleContext, VehicleContextField } from "../../types";
 import { confirmVehicleContextField, isVehicleFieldConfirmed, updateVehicleContextField } from "../../lib/vehicleContext";
+import { VehicleReferenceReview } from "./VehicleReferenceReview";
 
 type Props = {
   value: ShopVehicleContext | undefined;
@@ -71,5 +72,6 @@ export function VehicleContextEditor({ value, onChange, disabled = false, hideSy
         onChange={(event) => onChange(updateVehicleContextField(value, "symptom", event.target.value))} />
       <span id={`${id}-symptom-help`} className="mt-1 block text-xs font-normal text-[var(--ds-fg-3)]">Describe what you noticed. A reported symptom is separate from what a photo shows.</span>
     </div> : null}
+    <VehicleReferenceReview value={value} onChange={onChange} disabled={disabled} />
   </fieldset>;
 }

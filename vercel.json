@@ -9,7 +9,8 @@
       "codex/car-mechanic-handoff-20261105": false,
       "codex/car-inspection-followup-20261105": false,
       "codex/car-dated-comparisons-20261105": false,
-      "codex/car-diagnostic-imports-20261105": false
+      "codex/car-diagnostic-imports-20261105": false,
+      "codex/car-vehicle-references-20261105": false
     }
   },
   "functions": {
@@ -19,6 +20,9 @@
     },
     "api/chat.ts": {
       "maxDuration": 60
+    },
+    "api/vehicle-reference.ts": {
+      "maxDuration": 30
     },
     "api/account-entitlement.ts": {
       "maxDuration": 30
