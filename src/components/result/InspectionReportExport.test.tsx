@@ -41,8 +41,20 @@ describe("InspectionReportExport", () => {
     expect(screen.getByText("Review included photos")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("checkbox", { name: "Include saved VIN" }));
     fireEvent.click(screen.getByRole("button", { name: "Download inspection HTML" }));
-    expect(buildInspectionReportHtml).toHaveBeenCalledWith(expect.objectContaining({ rootLookupId: "saved-root" }), { includeVin: true, includePrivateNotes: false });
+    expect(buildInspectionReportHtml).toHaveBeenCalledWith(expect.objectContaining({ rootLookupId: "saved-root" }), { includeVin: true, includePrivateNotes: false, includeDiagnosticOriginals: false });
     expect(downloadHtmlFile).toHaveBeenCalledWith("inspection.html", expect.stringContaining("<!doctype html>"));
+  });
+
+  it("requires a separate opt-in for unredacted diagnostic originals", async () => {
+    render(<InspectionReportExport lookupId="saved-root" />); open();
+    const original = screen.getByRole("checkbox", { name: "Include original diagnostic files, unredacted" });
+    expect(original).not.toBeChecked();
+    fireEvent.click(original);
+    expect(screen.getByText(/Original diagnostic files may contain VINs/)).toHaveTextContent("even when Include saved VIN is off");
+    expect(screen.getByRole("checkbox", { name: "Include saved VIN" })).not.toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Prepare report" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Download inspection HTML" }));
+    expect(buildInspectionReportHtml).toHaveBeenCalledWith(expect.anything(), { includeVin: false, includePrivateNotes: false, includeDiagnosticOriginals: true });
   });
 
   it("lists missing evidence and labels the incomplete download explicitly", async () => {

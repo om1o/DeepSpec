@@ -2,9 +2,10 @@ import type { Lookup } from "./index";
 import type { ComponentMapRecord } from "./componentMap";
 import type { ServiceRecord } from "./serviceRecord";
 import type { InspectionComparison } from "./inspectionComparison";
+import type { DiagnosticBundle, ParsedDiagnosticReport } from "./diagnosticReport";
 
 export type InspectionReportIssue = {
-  kind: "map" | "lookup" | "photo" | "cutout" | "service_records" | "comparisons";
+  kind: "map" | "lookup" | "photo" | "cutout" | "service_records" | "comparisons" | "diagnostics";
   lookupId: string;
   photoId?: string;
   selectionName?: string;
@@ -22,6 +23,8 @@ export type InspectionReportSnapshot = {
   embeddedBytes: number;
   serviceLogs?: { lookupId: string; records: ServiceRecord[]; cloudChecked: boolean }[];
   comparisonLogs?: { lookupId: string; records: InspectionComparison[]; cloudChecked: boolean }[];
+  diagnosticLogs?: { lookupId: string; bundle: DiagnosticBundle; parsed: { id: string; report: ParsedDiagnosticReport }[]; cloudChecked: boolean }[];
+  diagnosticEvidence?: { lookupId: string; recordId: string; photoId: string; status: "unchanged" | "source_changed" | "missing_photo" | "verification_unavailable" }[];
   comparisonEvidence?: {
     lookupId: string;
     recordId: string;
@@ -33,6 +36,7 @@ export type InspectionReportSnapshot = {
 export type InspectionReportOptions = {
   includeVin: boolean;
   includePrivateNotes: boolean;
+  includeDiagnosticOriginals?: boolean;
 };
 
-export const DEFAULT_INSPECTION_REPORT_OPTIONS: InspectionReportOptions = { includeVin: false, includePrivateNotes: false };
+export const DEFAULT_INSPECTION_REPORT_OPTIONS: InspectionReportOptions = { includeVin: false, includePrivateNotes: false, includeDiagnosticOriginals: false };

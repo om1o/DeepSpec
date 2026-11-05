@@ -78,14 +78,16 @@ export function InspectionReportExport({ lookupId, disabled = false }: { lookupI
       setOpen(!open);
     }}>Inspection report with photos</button>
     {open ? <div className="mt-3 space-y-3 text-sm text-[var(--ds-fg-2)]">
-      <p>Export this saved scan, its component map, linked photo groups, dated comparisons and saved human measurement, repair and follow-up history. Only saved changes are included.</p>
+      <p>Export this saved scan, its component map, linked photo groups, dated comparisons, diagnostic reports and saved human measurement, repair and follow-up history. Only saved changes are included.</p>
       <p className="text-xs text-[var(--ds-fg-3)]">The file includes photos, component notes, corrections and inspection findings. Photos may show identifiers or retain image metadata. Anyone you give the file to can open it.</p>
       <fieldset className="space-y-2" disabled={working}>
         <legend className="mb-2 font-semibold">Optional details</legend>
         <label className="flex min-h-10 items-center gap-3"><input type="checkbox" checked={options.includeVin} onChange={(event) => setOptions({ ...options, includeVin: event.target.checked })} />Include saved VIN</label>
         <label className="flex min-h-10 items-center gap-3"><input type="checkbox" checked={options.includePrivateNotes} onChange={(event) => setOptions({ ...options, includePrivateNotes: event.target.checked })} />Include private scan and vehicle notes</label>
+        <label className="flex min-h-10 items-center gap-3"><input type="checkbox" checked={options.includeDiagnosticOriginals ?? false} onChange={(event) => setOptions({ ...options, includeDiagnosticOriginals: event.target.checked })} />Include original diagnostic files, unredacted</label>
       </fieldset>
-      <p className="text-xs text-[var(--ds-fg-3)]">Customer details, registration plate fields and chat messages are excluded. Check the photos and inspection notes before sharing.</p>
+      {options.includeDiagnosticOriginals ? <p className="text-xs font-semibold">Original diagnostic files may contain VINs, registration plates, names and other identifiers even when Include saved VIN is off. The exported originals keep their exact bytes.</p> : null}
+      <p className="text-xs text-[var(--ds-fg-3)]">Saved customer and registration plate fields and chat messages are excluded. Photos, extracted diagnostic text and free-text notes can still contain identifiers. Review them before sharing.</p>
       {disabled ? <p role="alert">Save the pending changes before preparing or downloading this report.</p> : null}
       <div className="flex flex-wrap gap-2">
         <Button type="button" disabled={working || disabled} onClick={prepare}>{snapshot ? "Refresh saved snapshot" : "Prepare report"}</Button>
@@ -93,7 +95,7 @@ export function InspectionReportExport({ lookupId, disabled = false }: { lookupI
       </div>
       {snapshot ? <div className="space-y-3 rounded-xl border border-[var(--ds-border)] p-3" aria-label="Prepared report contents">
         <h3 className="font-bold">Review this snapshot</h3>
-        <p>{snapshot.map?.document.components.length ?? 0} mapped components · {snapshot.scans.length} saved scan groups · {photoCount} photo references · {snapshot.serviceLogs?.reduce((count, log) => count + log.records.length, 0) ?? 0} human-service entries · {snapshot.comparisonLogs?.reduce((count, log) => count + log.records.length, 0) ?? 0} comparison entries</p>
+        <p>{snapshot.map?.document.components.length ?? 0} mapped components · {snapshot.scans.length} saved scan groups · {photoCount} photo references · {snapshot.serviceLogs?.reduce((count, log) => count + log.records.length, 0) ?? 0} human-service entries · {snapshot.comparisonLogs?.reduce((count, log) => count + log.records.length, 0) ?? 0} comparison entries · {snapshot.diagnosticLogs?.reduce((count, log) => count + log.bundle.documents.length, 0) ?? 0} diagnostic reports · {snapshot.diagnosticLogs?.reduce((count, log) => count + log.bundle.associations.length, 0) ?? 0} diagnostic photo associations</p>
         <p className="text-xs">Prepared {new Date(snapshot.createdAt).toLocaleString()}. Later edits require a refreshed snapshot.</p>
         {snapshot.map?.conflict ? <p className="font-semibold">The map has an unresolved cloud conflict. This report uses the saved device version and records the conflict.</p> : null}
         <details>

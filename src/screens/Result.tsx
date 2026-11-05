@@ -18,6 +18,7 @@ import { ComponentMapReview } from "../components/result/ComponentMapReview";
 import { InspectionReportExport } from "../components/result/InspectionReportExport";
 import { ServiceRecordLog } from "../components/result/ServiceRecordLog";
 import { ScanComparisonReview } from "../components/result/ScanComparisonReview";
+import { DiagnosticReportReview } from "../components/result/DiagnosticReportReview";
 import { TrainingConsentPanel } from "../components/result/TrainingConsentPanel";
 import { IntakeDraft } from "../components/result/IntakeDraft";
 import { ScanDebugOverlay } from "../components/result/ScanDebugOverlay";
@@ -462,6 +463,7 @@ function ResultView({ id }: { id: string | undefined }) {
           })} /> : null}
           {inspectionLookup ? <ServiceRecordLog key={`service-log:${inspectionLookup.id}`} lookup={inspectionLookup} disabled={hasPendingRetryResult || Boolean(saveError || selectionRetry)} /> : null}
           {inspectionLookup ? <ScanComparisonReview key={`comparison:${inspectionLookup.id}`} lookup={inspectionLookup} disabled={hasPendingRetryResult || Boolean(saveError || selectionRetry)} /> : null}
+          {inspectionLookup ? <DiagnosticReportReview key={`diagnostics:${inspectionLookup.id}`} lookup={inspectionLookup} disabled={hasPendingRetryResult || Boolean(saveError || selectionRetry)} /> : null}
           {inspectionLookup ? <ReportActions lookup={inspectionLookup} /> : null}
           {inspectionLookup ? <InspectionReportExport key={`report:${inspectionLookup.id}`} lookupId={inspectionLookup.id} disabled={hasPendingRetryResult || Boolean(saveError || selectionRetry)} /> : null}
           {inspectionLookup ? <TrainingConsentPanel key={`consent:${inspectionLookup.id}`} scanId={inspectionLookup.id} /> : null}

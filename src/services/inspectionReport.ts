@@ -15,6 +15,10 @@ import { mergeInspectionComparisons, normalizeInspectionComparisons, comparisonS
 import { readInspectionComparisons } from "./inspectionComparisonStore";
 import { readCloudInspectionComparisons } from "./inspectionComparisonCloud";
 import { comparisonSideForLookup, comparisonPhotos } from "./comparisonEvidence";
+import { mergeDiagnosticBundles, normalizeDiagnosticBundle } from "../lib/diagnosticAssociation";
+import { verifyDiagnosticDocument } from "../lib/diagnosticReport";
+import { readDiagnosticBundle } from "./diagnosticReportStore";
+import { readCloudDiagnosticBundle } from "./diagnosticReportCloud";
 
 export const INSPECTION_REPORT_MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 export const INSPECTION_REPORT_MAX_TOTAL_BYTES = 32 * 1024 * 1024;
@@ -118,13 +122,16 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
       remoteCache.set(id, value); return value;
     } catch (error) { rethrowFatal(error); remoteCache.set(id, null); return null; }
   };
-  let embeddedBytes = 0, imageSlots = 0;
+  let embeddedBytes = 0, imageSlots = 0, diagnosticBytes = 0;
   const scans: Lookup[] = [];
   const serviceLogs: NonNullable<InspectionReportSnapshot["serviceLogs"]> = [];
   const serviceSignatures = new Map<string, string | null>();
   const comparisonLogs: NonNullable<InspectionReportSnapshot["comparisonLogs"]> = [];
   const comparisonEvidence: NonNullable<InspectionReportSnapshot["comparisonEvidence"]> = [];
   const comparisonSignatures = new Map<string, string | null>();
+  const diagnosticLogs: NonNullable<InspectionReportSnapshot["diagnosticLogs"]> = [];
+  const diagnosticEvidence: NonNullable<InspectionReportSnapshot["diagnosticEvidence"]> = [];
+  const diagnosticSignatures = new Map<string, string | null>();
   const embedded = new Map<string, { data: string; size: number }>();
   const embed = async (source: string, lookupId: string) => {
     let image = embedded.get(source);
@@ -152,7 +159,7 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
               if (signal.aborted) throw new Error();
               if (chunk.done) break;
               size += chunk.value.byteLength;
-              if (size > INSPECTION_REPORT_MAX_IMAGE_BYTES || embeddedBytes + size > INSPECTION_REPORT_MAX_TOTAL_BYTES) throw limitError();
+              if (size > INSPECTION_REPORT_MAX_IMAGE_BYTES || embeddedBytes + diagnosticBytes + size > INSPECTION_REPORT_MAX_TOTAL_BYTES) throw limitError();
               chunks.push(chunk.value);
             }
           } catch (error) { void reader.cancel().catch(() => undefined); throw error; }
@@ -168,7 +175,7 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
       await wait((signal) => verifyDecodedRaster(image!.data, signal));
       embedded.set(source, image);
     }
-    if (embeddedBytes + image.size > INSPECTION_REPORT_MAX_TOTAL_BYTES) throw limitError();
+    if (embeddedBytes + diagnosticBytes + image.size > INSPECTION_REPORT_MAX_TOTAL_BYTES) throw limitError();
     // Count every embedded field, including a repeated cover, to bound the snapshot.
     embeddedBytes += image.size;
     return image.data;
@@ -176,6 +183,29 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
 
   for (const [id, expectedPhotos] of references) {
     check(); progress(`Preparing saved scan ${scans.length + 1} of ${references.size}…`);
+    let diagnostics = { documents: [], associations: [] } as NonNullable<InspectionReportSnapshot["diagnosticLogs"]>[number]["bundle"];
+    let diagnosticCloudChecked = false;
+    try {
+      diagnostics = await wait(() => readDiagnosticBundle(id, scope));
+      diagnosticSignatures.set(id, JSON.stringify(diagnostics));
+    } catch (error) {
+      rethrowFatal(error); diagnosticSignatures.set(id, null);
+      missing.push({ kind: "diagnostics", lookupId: id, message: "Device diagnostic reports could not be read or verified. Their absence does not mean this vehicle has no codes." });
+    }
+    if (configuredOrigin) {
+      try {
+        diagnostics = mergeDiagnosticBundles(diagnostics, await wait((signal) => readCloudDiagnosticBundle(id, scope, signal)), id);
+        diagnosticCloudChecked = true;
+      } catch (error) {
+        rethrowFatal(error);
+        missing.push({ kind: "diagnostics", lookupId: id, message: "Cloud diagnostic evidence could not be verified or combined. Available device originals and associations remain included." });
+      }
+    }
+    const diagnosticLog: NonNullable<InspectionReportSnapshot["diagnosticLogs"]>[number] = { lookupId: id, bundle: structuredClone(diagnostics), parsed: [], cloudChecked: diagnosticCloudChecked };
+    for (const document of diagnostics.documents) diagnosticLog.parsed.push({ id: document.id, report: await wait(() => verifyDiagnosticDocument(document)) });
+    diagnosticBytes += new TextEncoder().encode(JSON.stringify(diagnosticLog)).byteLength;
+    if (embeddedBytes + diagnosticBytes > INSPECTION_REPORT_MAX_TOTAL_BYTES) throw limitError();
+    diagnosticLogs.push(diagnosticLog);
     let comparisons: NonNullable<InspectionReportSnapshot["comparisonLogs"]>[number]["records"] = [];
     let comparisonsCloudChecked = false;
     try {
@@ -296,6 +326,18 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
       message: status === "source_changed" ? "This photo or its saved context differs from the dated comparison. The historical record remains, but the current photo is not presented as its original evidence."
         : "The original referenced by a dated comparison could not be verified. Its recorded observation is retained without substituting another photo." });
   }
+  for (const log of diagnosticLogs) for (const record of log.bundle.associations) for (const side of record.photos) {
+    const scan = scans.find((entry) => entry.id === side.lookupId);
+    const photo = scan && comparisonPhotos(scan).find((entry) => entry.id === side.photoId);
+    let status: NonNullable<InspectionReportSnapshot["diagnosticEvidence"]>[number]["status"] = "missing_photo";
+    if (scan && photo?.imageBase64) {
+      try { status = comparisonSideMatches(side, await wait(() => comparisonSideForLookup(scan, side.photoId, scope))) ? "unchanged" : "source_changed"; }
+      catch (error) { rethrowFatal(error); status = "verification_unavailable"; }
+    }
+    diagnosticEvidence.push({ lookupId: record.lookupId, recordId: record.id, photoId: side.photoId, status });
+    if (status !== "unchanged") missing.push({ kind: "diagnostics", lookupId: side.lookupId, photoId: side.photoId,
+      message: "A diagnostic association's original photo or saved context could not be verified. Its human notes are retained; the current photo is not substituted as original evidence." });
+  }
   progress("Checking that saved records have not changed…");
   let finalSnapshot: FinalInspectionSnapshot;
   try { finalSnapshot = await wait(() => readFinalInspectionSnapshot(rootLookupId, [...references.keys()], scope)); }
@@ -311,13 +353,19 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
     const current = finalSnapshot.comparisons.get(id);
     if ((current === null ? null : JSON.stringify(current)) !== before) throw staleError();
   }
+  for (const [id, before] of diagnosticSignatures) {
+    if (!finalSnapshot.diagnostics.has(id)) throw staleError();
+    const current = finalSnapshot.diagnostics.get(id);
+    const normalized = current === null ? null : normalizeDiagnosticBundle(current, id);
+    if ((normalized === null ? null : JSON.stringify(normalized)) !== before) throw staleError();
+  }
   // No more asynchronous reads after the joint IDB snapshot. Read localStorage
   // synchronously so it cannot change while awaiting another history/map check.
   const finalRead = readLookups(); check();
   if (!finalRead.ok) throw staleError();
   for (const [id, before] of localSignatures) if (JSON.stringify(getLookup(id, finalRead.value)) !== before) throw staleError();
   check();
-  return { version: 1, createdAt: new Date().toISOString(), rootLookupId, map: map ? structuredClone(map) : null, scans, missing, embeddedBytes, serviceLogs, comparisonLogs, comparisonEvidence };
+  return { version: 1, createdAt: new Date().toISOString(), rootLookupId, map: map ? structuredClone(map) : null, scans, missing, embeddedBytes, serviceLogs, comparisonLogs, comparisonEvidence, diagnosticLogs, diagnosticEvidence };
 }
 
 function storageOrigin(): string | null {
