@@ -103,6 +103,46 @@ describe("Result", () => {
     expect(getLookups()).toEqual([]);
   });
 
+  it.each(["bay", "detail"])("opens observation evidence %s as the untouched original and moves focus to the photo", async (photoId) => {
+    const local = makeLookup({
+      focusBox: { x: 0.1, y: 0.15, width: 0.3, height: 0.4, confidence: 0.9 }, focusMode: "mask", isolatedImageBase64: "data:image/png;base64,cutout",
+      photos: [{ ...frame, id: "bay", label: "overview" }, { ...frame, id: "detail", label: "close_up", imageBase64: "data:image/jpeg;base64,detail" }],
+      result: { ...successfulScan.result!, conditionAssessment: {
+        version: 1, observations: [{ id: "o1", text: "Brown material is visible.", photoIds: [photoId] }],
+        possibleCauses: [], unknowns: ["Depth is unknown."],
+      } },
+    });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
+    renderResult({ ...successfulScan, savedLookup: local }, `/result/${local.id}`);
+    const canvas = screen.getByTestId("result-photo-canvas");
+    const scroll = vi.fn();
+    canvas.scrollIntoView = scroll;
+    await userEvent.click(screen.getByRole("button", { name: /for observation o1/ }));
+    expect(screen.getByRole("button", { name: "Original", exact: true })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute("src", local.photos!.find((photo) => photo.id === photoId)!.imageBase64);
+    expect(screen.queryByTestId("isolated-part-image")).not.toBeInTheDocument();
+    expect(canvas).toHaveFocus();
+    expect(scroll).toHaveBeenCalledExactlyOnceWith({ behavior: "smooth", block: "center" });
+  });
+
+  it("shows the complete safety action separately from a request for another photo", async () => {
+    const safetyAction = "Do not drive until the brake mounting bracket has been checked. A qualified technician should inspect the apparent crack and mounting points before deciding whether the assembly can be reused.";
+    const local = makeLookup({ result: { ...successfulScan.result!, partName: "Brake mounting bracket", isSafetyCritical: true,
+      safetyTriage: "needs_professional", needsBetterPhoto: false, nextAction: safetyAction,
+      conditionAssessment: {
+        version: 1, observations: [{ id: "o1", text: "A crack-like line is visible.", photoIds: ["photo-1"] }],
+        possibleCauses: [], unknowns: ["Depth is unknown."],
+        nextEvidence: { kind: "photo", request: "Photograph the reverse side.", purpose: "Show the other end of the visible line." },
+      },
+    } });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
+    renderResult({ ...successfulScan, savedLookup: local }, `/result/${local.id}`);
+    expect(screen.getByRole("region", { name: "Safety action" })).toHaveTextContent(safetyAction);
+    expect(screen.getByRole("region", { name: "Condition evidence" })).toHaveTextContent("Photograph the reverse side.");
+    await userEvent.click(screen.getByRole("tab", { name: "Sources", exact: true }));
+    expect(screen.getByRole("region", { name: "Safety action" })).toHaveTextContent(safetyAction);
+  });
+
   it("persists a corrected area on an existing device scan and clears its stale cutout", async () => {
     const user = userEvent.setup();
     const local = makeLookup({

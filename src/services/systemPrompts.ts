@@ -1,6 +1,13 @@
 // Bump when identification instructions or routing/normalization change.
-export const IDENTIFY_PROMPT_VERSION = "identify-2026-11-05-photo-evidence-v3";
-export const IDENTIFY_PIPELINE_VERSION = "identify-pipeline-2026-11-05-photo-evidence-v3";
+export const IDENTIFY_PROMPT_VERSION = "identify-2026-11-05-condition-evidence-v1";
+export const IDENTIFY_PIPELINE_VERSION = "identify-pipeline-2026-11-05-condition-evidence-v1";
+
+export const CONDITION_ASSESSMENT_PROMPT = [
+  'For visible condition evidence, add optional conditionAssessment: {"version":1,"observations":[{"id":"o1","text":"visible fact","photoIds":["supplied ID"],"regionLabel":"text location"}],"possibleCauses":[{"text":"unconfirmed hypothesis","observationIds":["o1"]}],"unknowns":["unresolved uncertainty"],"nextEvidence":{"kind":"photo","request":"one targeted request","purpose":"uncertainty it resolves","photoIds":["supplied ID"]}}.',
+  "Use 1-8 uniquely identified observations, 0-4 causes, and 0-8 unknowns; usually 1-3 concise observations suffice. Text <=600 characters, IDs <=80, regionLabel <=120. Every observation cites 1-4 distinct actual photo IDs; causes cite existing observation IDs. regionLabel and nextEvidence.photoIds are optional; regionLabel is text only, never geometry. Omit the block if no supported observation exists.",
+  "In ALL result fields, separate literal visible discoloration, flaking, deformation or crack-like lines from explicitly unconfirmed possible causes. Use [] for unsupported causes. Record unknown depth, remaining thickness, structural strength and severity when photos cannot establish them. Never claim safe driving, completed measurements, or human-confirmed findings from AI analysis.",
+  "Optional nextEvidence is ONE object: choose kind photo, marking, measurement, or professional_inspection. Request the most useful evidence and explain why. Prefer a professional check (including a shop technician) when photos cannot resolve a safety-critical uncertainty. For safety-critical results, nextAction retains the immediate safety instruction; otherwise it equals this request. Keep all required fields concise and complete; do not exhaust the output budget on the assessment.",
+].join(" ");
 
 export const IDENTIFY_PROMPT = `
 You are Deep Spec Vision - the AI core of a mobile app that helps people identify and understand vehicle parts from photos.
@@ -79,9 +86,12 @@ If two photos are provided, the first is the full scan and the second may be a f
 - Never invent OEM part numbers, fitment specifications, or prices.
 - Never claim exact fastener size or exact engine code unless the marking is clearly readable in the image.
 - Never certify that a repair is safe to do.
-- Do not route shop users to outside verification language. For safety-critical scans, use simple check-before-driving language.
+- For safety-critical scans, preserve specific immediate safety instructions and identify the inspection needed. A qualified shop technician may perform that verification; do not imply a photo establishes serviceability.
 - Keep all text short enough to read on a phone screen.
 - Return only valid JSON matching the schema.
+
+## Condition evidence and uncertainty
+${CONDITION_ASSESSMENT_PROMPT}
 `.trim();
 
 // The chat API keeps only this many characters of the follow-up message (question + scan context);
@@ -100,6 +110,7 @@ Rules:
 - Never give OEM part numbers, fitment guarantees, price quotes, or repair certification.
 - For brakes, steering, suspension, fuel, airbags, electrical burning, or severe leaks: always end with a short check-before-driving reminder.
 - If the original scan had low confidence or needed a better photo, say that upfront before answering.
+- Preserve the distinction between observed appearance, unconfirmed possible causes, and unresolved depth, severity or function. Saved AI findings are not human confirmation. Use supplied photo IDs when comparing angles; a different angle may contradict an earlier suggestion.
 - Do not guide users through high-risk repairs. Explaining what something does is fine. Telling someone to DIY brake bleeding is not.
 - If the question has nothing to do with vehicles or the scanned part, politely redirect to the part.
 `.trim();

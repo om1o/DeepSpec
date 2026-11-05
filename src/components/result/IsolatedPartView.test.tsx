@@ -15,6 +15,18 @@ const sceneObjects: IsolatedObject[] = [
 ];
 
 describe("IsolatedPartView", () => {
+  it.each([false, true])("can open evidence in Original view with puzzle=%s while keeping other views available", async (puzzle) => {
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusBox={box} focusMode="mask" isolatedImageBase64={cutout} label="Engine" objects={puzzle ? sceneObjects : undefined} initialView="original" issue={{ text: "Crack", anchor: box }} />);
+    expect(screen.getByRole("button", { name: "Original", exact: true })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByAltText("Captured car part").className).not.toMatch(/blur|brightness|contrast|saturate/);
+    expect(screen.queryByTestId("issue-callout")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("isolated-part-image")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("lens-object")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Cutout", exact: true }));
+    expect(screen.getByRole("button", { name: "Cutout", exact: true })).toHaveAttribute("aria-pressed", "true");
+    expect(puzzle ? screen.getAllByTestId("lens-object").length : screen.getAllByTestId("isolated-part-image").length).toBeGreaterThan(0);
+  });
+
   it("falls back to the aligned crop when a cutout fails and recovers for a new cutout", () => {
     const props = { variant: "result" as const, frameBase64: frame, focusBox: box, focusMode: "mask" as const, label: "Engine" };
     const { rerender } = render(<IsolatedPartView {...props} isolatedImageBase64={cutout} />);

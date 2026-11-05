@@ -208,6 +208,34 @@ export type EvidenceRegion = {
   regionLabel: string;
 };
 
+export type ConditionObservation = {
+  id: string;
+  text: string;
+  photoIds: string[];
+  regionLabel?: string;
+};
+
+export type ConditionHypothesis = {
+  text: string;
+  observationIds: string[];
+};
+
+export type NextConditionEvidence = {
+  kind: "photo" | "marking" | "measurement" | "professional_inspection";
+  request: string;
+  purpose: string;
+  photoIds?: string[];
+};
+
+/** AI-reported visual evidence. Human checks remain in PartInspection. */
+export type ConditionAssessment = {
+  version: 1;
+  observations: ConditionObservation[];
+  possibleCauses: ConditionHypothesis[];
+  unknowns: string[];
+  nextEvidence?: NextConditionEvidence;
+};
+
 export type SceneObject = {
   name: string;
   category: ScanCategory | string;
@@ -286,6 +314,7 @@ export type IdentificationResult = {
   whatItDoes: string;
   visibleObservations: string[];
   evidenceRegions: EvidenceRegion[];
+  conditionAssessment?: ConditionAssessment;
   sceneObjects?: SceneObject[];
   concerns: string[];
   safetyTriage: SafetyTriage;

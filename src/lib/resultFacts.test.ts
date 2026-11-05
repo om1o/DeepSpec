@@ -31,7 +31,7 @@ describe("resultFacts", () => {
   it("deriveIssue surfaces a damage sentence with an upper-left anchor from the region label", () => {
     const issue = deriveIssue(
       makeResult({
-        concerns: ["A dent is visible on the housing."],
+        visibleObservations: ["A dent is visible on the housing."],
         evidenceRegions: [{ label: "Housing", observation: "Dent on the housing.", regionLabel: "upper left" }],
       }),
     );
@@ -41,9 +41,17 @@ describe("resultFacts", () => {
   });
 
   it("deriveIssue yields a null anchor when no region matches the damage", () => {
-    const issue = deriveIssue(makeResult({ concerns: ["Surface rust on the bracket."] }));
+    const issue = deriveIssue(makeResult({ visibleObservations: ["Surface rust on the bracket."] }));
     expect(issue?.text).toContain("rust");
     expect(issue?.anchor).toBeNull();
+  });
+
+  it("does not turn a hypothetical concern into an observed damage headline", () => {
+    expect(deriveIssue(makeResult({ concerns: ["Possible overheating damage or hidden corrosion."] }))).toBeNull();
+    expect(deriveIssue(makeResult({
+      concerns: ["Possible overheating caused a crack."],
+      visibleObservations: ["Surface rust is visible on the bracket."],
+    }))?.text).toBe("Surface rust is visible on the bracket.");
   });
 
   it("regionLabelToBox maps coarse labels and rejects unknown ones", () => {

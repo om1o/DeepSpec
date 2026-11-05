@@ -5,6 +5,8 @@ import { getAccountScope, isAccountScopeCurrent, type AccountScope } from "../li
 import { prepareRetryFrame } from "../lib/retryFrame";
 import { compressImageDataUrl } from "../lib/utils";
 import { validatePhotoGroup } from "./photoDraft";
+import { normalizeConditionAssessment } from "../lib/conditionAssessment";
+import { buildConditionHandoff } from "../lib/conditionHandoff";
 import {
   SCAN_CATEGORIES,
   type AIInput,
@@ -131,7 +133,10 @@ export async function runAI(input: AIInput, options: AIRequestOptions = {}): Pro
         userMessage: input.userMessage,
         responseAsJson: true,
       }, { signal: options.signal, timeoutMs: getIdentifyClientTimeoutMs(), scope });
-      return { ...body.result, ...(body.modelRun ? { modelRun: body.modelRun } : {}) };
+      return withValidatedConditionAssessment(
+        { ...body.result, ...(body.modelRun ? { modelRun: body.modelRun } : {}) },
+        photos.map((photo) => photo.id),
+      );
     }
     if (!input.imageBase64) {
       throw new AIServiceError("invalid_input", "No captured image was provided.");
@@ -162,10 +167,10 @@ export async function runAI(input: AIInput, options: AIRequestOptions = {}): Pro
       { signal: options.signal, timeoutMs: getIdentifyClientTimeoutMs() },
     );
 
-    return {
+    return withValidatedConditionAssessment({
       ...body.result,
       ...(body.modelRun ? { modelRun: body.modelRun } : {}),
-    };
+    }, imageBase64_2 ? ["photo-1", "photo-2"] : ["photo-1"]);
   }
 
   throw new AIServiceError("unsupported", "Deep Spec does not support that AI request yet.");
@@ -276,19 +281,21 @@ export async function identifyCapturedFrame(
   if (!options.photos && isOnDeviceFallbackEnabled() && typeof navigator !== "undefined" && navigator.onLine === false) {
     const offlineResult = await identifyOnDevice(frame);
     throwIfAborted(options.signal);
-    return assertIdentificationResult(offlineResult);
+    return assertIdentificationResult(offlineResult, ["photo-1"]);
   }
 
   const result = await runCloudIdentify(frame, secondFrame, labelRescueTrigger, options).catch((error: unknown) => {
     throwIfAborted(options.signal);
     if (!options.photos && shouldUseOnDeviceAfterCloudError(error)) {
-      return identifyOnDeviceWithTimeout(frame, error, options.signal);
+      return identifyOnDeviceWithTimeout(frame, error, options.signal)
+        .then((offlineResult) => assertIdentificationResult(offlineResult, ["photo-1"]));
     }
 
     throw error;
   });
 
-  return assertIdentificationResult(result);
+  return assertIdentificationResult(result, options.photos?.map((photo) => photo.id)
+    ?? (secondFrame ? ["photo-1", "photo-2"] : ["photo-1"]));
 }
 
 function getIdentifyClientTimeoutMs() {
@@ -513,12 +520,18 @@ export function getAIErrorDetails(code: string | undefined | null): AIErrorDetai
   }
 }
 
-function assertIdentificationResult(value: unknown): IdentificationResult {
+function withValidatedConditionAssessment(value: IdentificationResult, allowedPhotoIds: readonly string[]): IdentificationResult {
+  const { conditionAssessment: rawAssessment, ...result } = value;
+  const conditionAssessment = normalizeConditionAssessment(rawAssessment, allowedPhotoIds);
+  return { ...result, ...(conditionAssessment ? { conditionAssessment } : {}) };
+}
+
+function assertIdentificationResult(value: unknown, allowedPhotoIds: readonly string[]): IdentificationResult {
   if (!isIdentificationResult(value)) {
     throw new AIServiceError("invalid_response", "Deep Spec received an unreadable AI response.");
   }
 
-  return value;
+  return withValidatedConditionAssessment(value, allowedPhotoIds);
 }
 
 function isIdentificationResult(value: unknown): value is IdentificationResult {
@@ -688,6 +701,7 @@ function collapseWhitespace(value: string) {
 
 function buildFollowUpContext(lookup: Lookup, question: string) {
   const result = lookup.result;
+  const condition = buildConditionHandoff(lookup);
   const questionLine = `User question: ${question}`;
   const facts = [
     `Saved scan category: ${lookup.scanCategory}`,
@@ -696,11 +710,19 @@ function buildFollowUpContext(lookup: Lookup, question: string) {
     result ? `Confidence: ${result.confidence}` : "Confidence: unknown",
     result ? `Safety triage: ${result.safetyTriage}` : "Safety triage: unknown",
     result ? `Safety-critical: ${result.isSafetyCritical ? "yes" : "no"}` : "Safety-critical: unknown",
+    result ? `Next action: ${result.nextAction}` : "",
+    lookup.correction ? `User correction: ${lookup.correction}` : "",
+    ...(condition.assessment ? [
+      "Condition evidence is AI-reported, not human confirmation. Causes are hypotheses; photos do not establish hidden damage or serviceability.",
+      `Functional checks: ${condition.functionStatus}`,
+      `Still unknown: ${condition.unknowns.join("; ") || "No unknowns listed; condition and function are not established."}`,
+      ...(condition.nextEvidence ? [`Priority evidence: ${condition.nextEvidence.request} Why: ${condition.nextEvidence.purpose}`] : []),
+      ...condition.observations.map((item) => `Observed appearance [${item.id}] in photos [${item.photoIds.join(", ")}]: ${item.text}`),
+      ...condition.possibleCauses.map((item) => `Unconfirmed possible cause, based on [${item.observationIds.join(", ")}]: ${item.text}`),
+    ] : []),
     result ? `What it does: ${result.whatItDoes}` : "",
     result ? `Visible observations: ${result.visibleObservations.join("; ") || "none"}` : "",
     result ? `Concerns: ${result.concerns.join("; ") || "none"}` : "",
-    result ? `Next action: ${result.nextAction}` : "",
-    lookup.correction ? `User correction: ${lookup.correction}` : "",
   ]
     .filter(Boolean)
     .join("\n")
