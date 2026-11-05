@@ -7,6 +7,7 @@ import billingPortal from "../api/billing-portal";
 import billingWebhook from "../api/billing-webhook";
 import chat from "../api/chat";
 import identify from "../api/identify";
+import qaAiCheck from "../api/qa-ai-check";
 
 const endpoints = [
   { name: "account-entitlement", handler: accountEntitlement },
@@ -15,6 +16,7 @@ const endpoints = [
   { name: "billing-webhook", handler: billingWebhook },
   { name: "chat", handler: chat },
   { name: "identify", handler: identify },
+  { name: "qa-ai-check", handler: qaAiCheck },
 ];
 
 describe("Vercel Hobby deployment layout", () => {
