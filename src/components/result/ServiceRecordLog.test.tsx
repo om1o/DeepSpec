@@ -1,9 +1,9 @@
 import { webcrypto } from "node:crypto";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ServiceRecordLog } from "./ServiceRecordLog";
-import { getAccountScope, setActiveAccount } from "../../lib/accountScope";
+import { accountStorageKey, getAccountScope, setActiveAccount } from "../../lib/accountScope";
 import { mergeServiceRecords, normalizeServiceRecord } from "../../lib/serviceRecord";
-import { createLookup, deleteLookup, getLookup, updateLookup } from "../../services/storage";
+import { createLookup, deleteLookup, getLookup, LOOKUPS_STORAGE_KEY } from "../../services/storage";
 import * as store from "../../services/serviceRecordStore";
 import * as cloud from "../../services/serviceRecordCloud";
 import { downloadTextFile } from "../../services/report";
@@ -186,7 +186,11 @@ it("allows a cloud-only saved scan but rejects deletion of an originally present
 });
 
 it("rejects a changed saved vehicle context before append", async () => {
-  await open(); measurement(); updateLookup(lookup.id, { vehicleContext: { model: "Different car" } });
+  await open(); measurement();
+  // Simulate another writer replacing the saved record. updateLookup deliberately
+  // accepts only rating/correction/notes, so it cannot create this precondition.
+  localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([{ ...getLookup(lookup.id)!, vehicleContext: { model: "Different car" } }]));
+  expect(getLookup(lookup.id)?.vehicleContext?.model).toBe("Different car");
   fireEvent.click(screen.getByRole("button", { name: "Save service record on this device" }));
   expect(await screen.findByText(/saved scan photos or vehicle context changed/)).toBeInTheDocument();
   expect(store.appendServiceRecord).not.toHaveBeenCalled(); expect(screen.getByLabelText("Reading (exact numeric text)")).toHaveValue(" 12.500 ");
