@@ -41,10 +41,10 @@ function assertAccount(scope: AccountScope) {
 
 async function verifiedClient(scope: AccountScope): Promise<SupabaseClient> {
   assertAccount(scope);
-  const client = await getAuthClient();
+  const client = await boundedRequest(() => getAuthClient());
   assertAccount(scope);
   if (!client) throw new Error("Cloud component maps are not configured for this build. Your device map is preserved.");
-  const session = await client.auth.getSession();
+  const session = await boundedRequest(() => client.auth.getSession());
   assertAccount(scope);
   const user = session.data.session?.user;
   if (session.error || !user || user.id !== scope.userId || user.is_anonymous === true
@@ -105,7 +105,7 @@ export async function readComponentMapLookup(lookupId: string, scope = getAccoun
     const local = getLookup(lookupId);
     const originals = local ? originalPhotos(local).map((photo) => photo.imageBase64) : [];
     if (local && originals.every((image) => /^data:image\//i.test(image))) return { ok: true, value: local };
-    const remote = await readCloudLookup(lookupId);
+    const remote = await boundedRequest(() => readCloudLookup(lookupId));
     assertAccount(scope);
     if (local && remote.ok) {
       const photoIds = new Set(local.photos?.length ? local.photos.map((photo) => photo.id) : ["photo-1"]);
@@ -144,7 +144,7 @@ async function ensureReferencedEvidence(document: ComponentMap, scope: AccountSc
   }
   for (const [lookupId, photoIds] of references) {
     assertAccount(scope);
-    let cloud = await readCloudLookup(lookupId);
+    let cloud = await boundedRequest(() => readCloudLookup(lookupId));
     assertAccount(scope);
     if (!cloud.ok) throw new Error(`Linked scan ${lookupId} is unavailable: ${cloud.message}`);
     if (cloud.value && hasPhotos(cloud.value, photoIds)) continue;
@@ -153,7 +153,7 @@ async function ensureReferencedEvidence(document: ComponentMap, scope: AccountSc
     const saved = await syncLookupToCloud(local);
     assertAccount(scope);
     if (!saved.ok) throw new Error(`Linked scan ${lookupId} is not cloud-saved: ${saved.message}`);
-    cloud = await readCloudLookup(lookupId);
+    cloud = await boundedRequest(() => readCloudLookup(lookupId));
     assertAccount(scope);
     if (!cloud.ok || !cloud.value || !hasPhotos(cloud.value, photoIds)) {
       throw new Error(`The original photos for linked scan ${lookupId} could not be verified in the cloud. The map remains saved on this device.`);

@@ -177,6 +177,47 @@ describe("component-map cloud concurrency and evidence", () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it("bounds a stalled referenced-photo read, clears its claim and ignores a late result", async () => {
+    vi.useFakeTimers();
+    try {
+      let finishRead!: (result: { ok: true; value: Lookup }) => void;
+      mocks.cloudLookup.mockImplementation(() => new Promise((resolve) => { finishRead = resolve; }));
+      const pending = syncComponentMapToCloud("overview", 1);
+      await vi.advanceTimersByTimeAsync(20_001);
+      expect(await pending).toMatchObject({ ok: false, message: expect.stringContaining("timed out") });
+      expect(current?.cloudRevision).toBeNull();
+      expect(current?.syncAttempt).toBeUndefined();
+      expect(insert).not.toHaveBeenCalled();
+      expect(update).not.toHaveBeenCalled();
+      finishRead({ ok: true, value: lookup() });
+      await vi.advanceTimersByTimeAsync(1);
+      expect(insert).not.toHaveBeenCalled();
+      expect(update).not.toHaveBeenCalled();
+      expect(mocks.syncLookup).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("bounds a stalled session read without claiming the map or starting a write", async () => {
+    vi.useFakeTimers();
+    try {
+      const client = await mocks.client();
+      let finishSession!: (result: unknown) => void;
+      client.auth.getSession = vi.fn(() => new Promise((resolve) => { finishSession = resolve; }));
+      const pending = syncComponentMapToCloud("overview", 1);
+      await vi.advanceTimersByTimeAsync(20_001);
+      expect(await pending).toMatchObject({ ok: false, message: expect.stringContaining("timed out") });
+      expect(current?.syncAttempt).toBeUndefined();
+      expect(mocks.transaction).not.toHaveBeenCalled();
+      expect(mocks.cloudLookup).not.toHaveBeenCalled();
+      expect(insert).not.toHaveBeenCalled();
+      expect(update).not.toHaveBeenCalled();
+      finishSession({ error: null, data: { session: { user: { id: "owner", email_confirmed_at: "confirmed" } } } });
+      await vi.advanceTimersByTimeAsync(1);
+      expect(mocks.transaction).not.toHaveBeenCalled();
+      expect(write).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+
   it("imports only if no device map appeared during the remote read", async () => {
     current = null;
     remoteRead.mockImplementation(async () => {

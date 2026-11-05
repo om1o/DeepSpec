@@ -47,6 +47,7 @@ const savePhotoDraftIfEmpty = vi.fn<(photos: ScanPhoto[], scope?: AccountScope, 
 const removePhotoDraftIfMatches = vi.fn<(photos: ScanPhoto[], scope?: AccountScope, kind?: "upload" | "capture") => Promise<boolean>>();
 const draftStore = new Map<string, ScanPhoto[]>();
 const draftTargets = new Map<string, ComponentCaptureTarget>();
+const observeEnvelopeCompare = vi.fn<(previous: PhotoDraftEnvelope | null, next: PhotoDraftEnvelope | null) => void>();
 const readComponentMap = vi.fn();
 const linkComponentMap = vi.fn();
 const readComponentMapLookup = vi.fn();
@@ -194,6 +195,7 @@ vi.mock("../services/photoDraft", async (importOriginal) => {
     return photos ? { version: 2, photos, ...(target ? { target } : {}) } : null;
   },
   replacePhotoDraftEnvelopeIfMatches: async (previous: PhotoDraftEnvelope | null, next: PhotoDraftEnvelope | null, scope?: AccountScope, kind?: "upload" | "capture") => {
+    observeEnvelopeCompare(previous, next);
     const key = draftKey(scope, kind);
     if (!original.componentCaptureTargetsMatch(previous?.target, draftTargets.get(key))) return false;
     const matched = kind === "capture" && previous === null && next
@@ -269,6 +271,7 @@ describe("Scanner", () => {
     vi.mocked(setCachedScanResult).mockReset();
     draftStore.clear();
     draftTargets.clear();
+    observeEnvelopeCompare.mockClear();
     readComponentMap.mockReset();
     linkComponentMap.mockReset().mockResolvedValue({});
     readComponentMapLookup.mockReset().mockResolvedValue({ ok: true, value: { id: "bay-overview", vehicleContext: { year: "2015", make: "Honda", model: "Civic", engine: "1.8L" } } });
@@ -1589,7 +1592,7 @@ describe("Scanner", () => {
     expect(await screen.findByText("Saved photos changed in another tab. Your change was not applied. Review the current draft before continuing.")).toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Photo 1: Mounting points" })).toHaveAttribute("src", newer.imageBase64);
     expect(draftStore.get(`test-user:${kind}`)).toEqual([newer]);
-    expect(replacePhotoDraftIfMatches.mock.calls[0][0]).toEqual([old]);
+    expect(observeEnvelopeCompare.mock.calls[0][0]).toEqual({ version: 2, photos: [old] });
     expect(savePhotoDraft).not.toHaveBeenCalled();
     expect(removePhotoDraft).not.toHaveBeenCalled();
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
