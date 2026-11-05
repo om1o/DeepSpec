@@ -32,7 +32,7 @@ This optional field uses existing JSON persistence without a schema migration or
 
 Reviewed November 5, 2026:
 
-- [Google image understanding](https://ai.google.dev/gemini-api/docs/generate-content/image-understanding): multiple image parts can be supplied in one request. Explicit application IDs/captions keep references aligned; this is not evidence that the model assesses every part correctly.
+- [Google image understanding](https://ai.google.dev/gemini-api/docs/generate-content/image-understanding): multiple images can be supplied in one request. The current redirected guide uses Interactions examples. The separate [generateContent API reference](https://ai.google.dev/api/generate-content) documents the existing Content.parts/inlineData shape used here. Explicit application IDs/captions keep references aligned; this is not evidence that the model assesses every part correctly.
 - [Google structured output guidance](https://ai.google.dev/gemini-api/docs/generate-content/structured-output): structured syntax does not guarantee semantically correct values. This implementation retains JSON MIME plus local validation; it does not adopt a new provider schema or endpoint.
 - [Supabase JSON documentation](https://supabase.com/docs/guides/database/json): JSON can carry nested metadata. Existing authenticated result persistence is reused; serializer tests are not proof of a hosted round trip.
 

@@ -32,7 +32,7 @@ This branch is a separate draft source change. Automatic Vercel deployment is di
 
 ## Sources and validation
 
-- [Google's multiple-image guidance](https://ai.google.dev/gemini-api/docs/generate-content/image-understanding) describes supplying multiple image parts in one request. DeepSpec retains explicit captions/IDs beside the images. The relationship contract and safeguards here are application design decisions, not an accuracy guarantee from that documentation.
+- [Google's multiple-image guidance](https://ai.google.dev/gemini-api/docs/generate-content/image-understanding) describes supplying multiple images in one request; its current redirected examples use Interactions. The [generateContent API reference](https://ai.google.dev/api/generate-content) documents the Content.parts/inlineData shape retained here. DeepSpec keeps explicit captions/IDs beside the images. The relationship contract and safeguards are application design decisions, not an accuracy guarantee from that documentation.
 - [Supabase JSON documentation](https://supabase.com/docs/guides/database/json) describes storing and validating JSON metadata. This patch extends the application's existing evidence object and validates its enum before use; it adds no database/API convention.
 - [Supabase changelog](https://supabase.com/changelog) was checked on November 5, 2026. No CLI, authentication, table exposure, SDK version or hosted schema is changed by this slice.
 
