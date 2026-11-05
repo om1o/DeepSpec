@@ -1,6 +1,7 @@
 import { accountStorageKey, setActiveAccount, type AccountScope } from "../lib/accountScope";
 import { createLookup, getLookups, LOOKUPS_STORAGE_KEY, MAX_SAVED_LOOKUPS } from "../services/storage";
-import { photoGroupsMatch } from "../services/photoDraft";
+import { photoGroupsMatch, type PhotoDraftEnvelope } from "../services/photoDraft";
+import type { ComponentCaptureTarget } from "../types/componentMap";
 import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -45,6 +46,10 @@ const replacePhotoDraftIfMatches = vi.fn<(previous: ScanPhoto[] | null, next: Sc
 const savePhotoDraftIfEmpty = vi.fn<(photos: ScanPhoto[], scope?: AccountScope, kind?: "upload" | "capture") => Promise<boolean>>();
 const removePhotoDraftIfMatches = vi.fn<(photos: ScanPhoto[], scope?: AccountScope, kind?: "upload" | "capture") => Promise<boolean>>();
 const draftStore = new Map<string, ScanPhoto[]>();
+const draftTargets = new Map<string, ComponentCaptureTarget>();
+const readComponentMap = vi.fn();
+const linkComponentMap = vi.fn();
+const readComponentMapLookup = vi.fn();
 const draftKey = (scope?: AccountScope, kind: "upload" | "capture" = "upload") => `${scope?.userId ?? "test-user"}:${kind}`;
 const identifyCapturedFrame = vi.fn(async () => ({
   partName: "Alternator",
@@ -170,14 +175,40 @@ vi.mock("../services/cloudSync", () => ({
   syncLookupToCloud: (...args: unknown[]) => syncLookupToCloud(...args),
 }));
 
-vi.mock("../services/photoDraft", async (importOriginal) => ({
+vi.mock("../services/componentMapStore", () => ({
+  readComponentMap: (...args: unknown[]) => readComponentMap(...args),
+  linkComponentMap: (...args: unknown[]) => linkComponentMap(...args),
+}));
+vi.mock("../services/componentMapCloud", () => ({ readComponentMapLookup: (...args: unknown[]) => readComponentMapLookup(...args) }));
+
+vi.mock("../services/photoDraft", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../services/photoDraft")>();
+  return {
   // Storage normalizes property order; use production evidence equality rather than JSON bytes.
-  photoGroupsMatch: (await importOriginal<typeof import("../services/photoDraft")>()).photoGroupsMatch,
+  photoGroupsMatch: original.photoGroupsMatch,
+  photoDraftsMatch: original.photoDraftsMatch,
+  componentCaptureTargetsMatch: original.componentCaptureTargetsMatch,
+  readPhotoDraftEnvelope: async (scope?: AccountScope, kind?: "upload" | "capture") => {
+    const photos = await readPhotoDraft(scope, kind);
+    const target = draftTargets.get(draftKey(scope, kind));
+    return photos ? { version: 2, photos, ...(target ? { target } : {}) } : null;
+  },
+  replacePhotoDraftEnvelopeIfMatches: async (previous: PhotoDraftEnvelope | null, next: PhotoDraftEnvelope | null, scope?: AccountScope, kind?: "upload" | "capture") => {
+    const key = draftKey(scope, kind);
+    if (!original.componentCaptureTargetsMatch(previous?.target, draftTargets.get(key))) return false;
+    const matched = kind === "capture" && previous === null && next
+      ? await savePhotoDraftIfEmpty(next.photos, scope, kind)
+      : kind === "capture" && previous && next === null
+        ? await removePhotoDraftIfMatches(previous.photos, scope, kind)
+        : await replacePhotoDraftIfMatches(previous?.photos ?? null, next?.photos ?? null, scope, kind);
+    if (matched) { if (next?.target) draftTargets.set(key, next.target); else draftTargets.delete(key); }
+    return matched;
+  },
   readPhotoDraft: (scope?: AccountScope, kind?: "upload" | "capture") => readPhotoDraft(scope, kind),
   replacePhotoDraftIfMatches: (previous: ScanPhoto[] | null, next: ScanPhoto[] | null, scope?: AccountScope, kind?: "upload" | "capture") => replacePhotoDraftIfMatches(previous, next, scope, kind),
   savePhotoDraftIfEmpty: (photos: ScanPhoto[], scope?: AccountScope, kind?: "upload" | "capture") => savePhotoDraftIfEmpty(photos, scope, kind),
   removePhotoDraftIfMatches: (photos: ScanPhoto[], scope?: AccountScope, kind?: "upload" | "capture") => removePhotoDraftIfMatches(photos, scope, kind),
-}));
+}; });
 
 // Pass all images as ok - quality logic is tested separately in imageQuality.test.ts
 vi.mock("../lib/imageQuality", () => ({
@@ -237,6 +268,10 @@ describe("Scanner", () => {
     vi.mocked(getCachedScanResult).mockReset().mockReturnValue(null);
     vi.mocked(setCachedScanResult).mockReset();
     draftStore.clear();
+    draftTargets.clear();
+    readComponentMap.mockReset();
+    linkComponentMap.mockReset().mockResolvedValue({});
+    readComponentMapLookup.mockReset().mockResolvedValue({ ok: true, value: { id: "bay-overview", vehicleContext: { year: "2015", make: "Honda", model: "Civic", engine: "1.8L" } } });
     readPhotoDraft.mockReset();
     readPhotoDraft.mockImplementation(async (scope, kind) => structuredClone(draftStore.get(draftKey(scope, kind)) ?? null));
     savePhotoDraft.mockReset();
@@ -1435,6 +1470,58 @@ describe("Scanner", () => {
     expect(identifyCapturedFrame.mock.calls[0][0]).toMatchObject({ imageBase64: reviewed[0].imageBase64 });
     await screen.findByRole("heading", { level: 3, name: "Alternator" });
   }, 10000);
+
+  it("saves a component target with its camera photos and waits for reviewed angles before analysis", async () => {
+    const target: ComponentCaptureTarget = { mapId: "bay-overview", componentId: "00000000-0000-4000-8000-000000000001", linkAttemptId: "00000000-0000-4000-8000-000000000002", lookupId: "component-scan" };
+    readComponentMap.mockResolvedValue({ document: { components: [{ id: target.componentId }] } });
+    render(<MemoryRouter initialEntries={[{ pathname: "/scan", state: { accountId: "test-user", componentCaptureTarget: target } }]}><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await screen.findByRole("dialog", { name: "Review inspection photos" });
+    expect(draftTargets.get("test-user:capture")).toEqual(target);
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Photo 1 view" }), "close_up");
+    await analyzeReviewedPhotos();
+    await waitFor(() => expect(linkComponentMap).toHaveBeenCalledWith(target, ["photo-1"], expect.objectContaining({ userId: "test-user" })));
+    expect(getLookups().find((lookup) => lookup.id === target.lookupId)?.photos?.[0].label).toBe("close_up");
+    expect(getLookups().find((lookup) => lookup.id === target.lookupId)?.vehicleContext).toMatchObject({ year: "2015", make: "Honda", model: "Civic", engine: "1.8L" });
+    await waitFor(() => expect(draftStore.has("test-user:capture")).toBe(false));
+  });
+
+  it("recovers a saved scan whose component link failed without paying for another analysis", async () => {
+    const target: ComponentCaptureTarget = { mapId: "bay-overview", componentId: "00000000-0000-4000-8000-000000000001", linkAttemptId: "00000000-0000-4000-8000-000000000002", lookupId: "component-scan" };
+    const photos: ScanPhoto[] = [{ id: "close-up", label: "close_up", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,cGFydA==" }];
+    draftStore.set("test-user:upload", photos);
+    draftTargets.set("test-user:upload", target);
+    readComponentMap.mockResolvedValue({ document: { components: [{ id: target.componentId }] } });
+    linkComponentMap.mockRejectedValueOnce(new Error("Component map storage was interrupted."));
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(await screen.findByRole("button", { name: "Resume 1-photo draft" }));
+    await analyzeReviewedPhotos();
+    await screen.findByRole("button", { name: "Finish component link" });
+    expect(getLookups().find((lookup) => lookup.id === target.lookupId)?.photos).toEqual(photos);
+    expect(draftTargets.get("test-user:upload")).toEqual(target);
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
+    cleanup();
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(await screen.findByRole("button", { name: "Resume 1-photo draft" }));
+    await userEvent.click(screen.getByRole("button", { name: "Finish component link" }));
+    await waitFor(() => expect(draftStore.has("test-user:upload")).toBe(false));
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
+    expect(linkComponentMap).toHaveBeenCalledTimes(2);
+    expect(getLookups()).toHaveLength(1);
+  });
+
+  it("does not append component photos to an older unrelated draft or silently retarget it", async () => {
+    const target: ComponentCaptureTarget = { mapId: "bay-overview", componentId: "00000000-0000-4000-8000-000000000001", linkAttemptId: "00000000-0000-4000-8000-000000000002", lookupId: "component-scan" };
+    const kept: ScanPhoto[] = [{ id: "prior", label: "overview", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,cHJpb3I=" }];
+    draftStore.set("test-user:upload", kept);
+    render(<MemoryRouter initialEntries={[{ pathname: "/scan", state: { accountId: "test-user", componentCaptureTarget: target } }]}><Scanner /></MemoryRouter>);
+    await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["new component"], "new.jpg", { type: "image/jpeg" }));
+    await screen.findByText(/An earlier draft belongs to a different inspection/);
+    expect(draftStore.get("test-user:upload")).toEqual(kept);
+    expect(draftTargets.has("test-user:upload")).toBe(false);
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+  });
 
   it("keeps the first-photo issue pointer off another angle and restores it on return", async () => {
     const issue = "Rust is visible along the lower left edge.";

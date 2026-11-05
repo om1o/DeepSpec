@@ -1,10 +1,32 @@
 import { getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import { SCAN_PHOTO_LABELS, type ScanPhoto } from "../types";
+import type { ComponentCaptureTarget } from "../types/componentMap";
+import { normalizeComponentCaptureTarget } from "../lib/componentMap";
+import { openEvidenceDatabase } from "./evidenceDb";
 
-const DATABASE = "deep-spec-evidence";
 const STORE = "photo-drafts";
 export const MAX_INSPECTION_PHOTOS = 4;
 export type PhotoDraftKind = "upload" | "capture";
+export type PhotoDraftEnvelope = { version: 2; photos: ScanPhoto[]; target?: ComponentCaptureTarget };
+
+export function normalizePhotoDraft(value: unknown): PhotoDraftEnvelope | null {
+  if (validatePhotoGroup(value)) return { version: 2, photos: value };
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const draft = value as Partial<PhotoDraftEnvelope>;
+  if (draft.version !== 2 || !validatePhotoGroup(draft.photos)) return null;
+  const target = draft.target === undefined ? undefined : normalizeComponentCaptureTarget(draft.target);
+  return target === null ? null : { version: 2, photos: draft.photos, ...(target ? { target } : {}) };
+}
+
+export function componentCaptureTargetsMatch(left?: ComponentCaptureTarget, right?: ComponentCaptureTarget): boolean {
+  if (!left || !right) return left === right;
+  return left.mapId === right.mapId && left.componentId === right.componentId
+    && left.linkAttemptId === right.linkAttemptId && left.lookupId === right.lookupId;
+}
+
+export function photoDraftsMatch(left: PhotoDraftEnvelope, right: PhotoDraftEnvelope): boolean {
+  return componentCaptureTargetsMatch(left.target, right.target) && photoGroupsMatch(left.photos, right.photos);
+}
 
 export function validatePhotoGroup(photos: unknown): photos is ScanPhoto[] {
   return Array.isArray(photos) && photos.length > 0 && photos.length <= MAX_INSPECTION_PHOTOS
@@ -20,8 +42,8 @@ export function validatePhotoGroup(photos: unknown): photos is ScanPhoto[] {
 async function draftRequest<T>(mode: IDBTransactionMode, operation: (store: IDBObjectStore, owner: string) => IDBRequest<T>, scope: AccountScope): Promise<T> {
   if (!isAccountScopeCurrent(scope)) throw new Error("Sign in to the account that owns these photos.");
   if (typeof indexedDB === "undefined") throw new Error("This browser cannot save a photo draft. Enable site storage and retry.");
+  const database = await openEvidenceDatabase();
   return new Promise<T>((resolve, reject) => {
-    let database: IDBDatabase | undefined;
     let transaction: IDBTransaction | undefined;
     let done = false;
     const finish = (error?: Error, value?: T) => {
@@ -35,15 +57,7 @@ async function draftRequest<T>(mode: IDBTransactionMode, operation: (store: IDBO
       try { transaction?.abort(); } catch { /* A completed transaction cannot be aborted. */ }
       finish(new Error("Saving photos stalled. Your previous draft is preserved. Retry after reopening DeepSpec."));
     }, 15_000);
-    const open = indexedDB.open(DATABASE, 1);
-    open.onupgradeneeded = () => {
-      if (!open.result.objectStoreNames.contains(STORE)) open.result.createObjectStore(STORE);
-    };
-    open.onerror = () => finish(new Error("Photo storage could not be opened. Free device space or allow site storage, then retry."));
-    open.onblocked = () => finish(new Error("Another DeepSpec tab is blocking photo storage. Close that tab and retry."));
-    open.onsuccess = () => {
-      database = open.result;
-      if (done) { database.close(); return; }
+    {
       if (!isAccountScopeCurrent(scope)) { finish(new Error("Account changed. Photos were not saved to another account.")); return; }
       try {
         transaction = database.transaction(STORE, mode);
@@ -57,15 +71,20 @@ async function draftRequest<T>(mode: IDBTransactionMode, operation: (store: IDBO
         try { transaction?.abort(); } catch { /* Already closed. */ }
         finish(new Error("Photo storage could not complete this operation. Your previous draft is preserved."));
       }
-    };
+    }
   });
 }
 
 export async function readPhotoDraft(scope = getAccountScope(), kind: PhotoDraftKind = "upload"): Promise<ScanPhoto[] | null> {
-  const photos = await draftRequest<unknown>("readonly", (store, owner) => store.get(`${owner}:${kind}`), scope);
-  if (photos === undefined) return null;
-  if (!validatePhotoGroup(photos)) throw new Error("The saved photo draft could not be read safely. It has been kept for recovery.");
-  return photos;
+  return (await readPhotoDraftEnvelope(scope, kind))?.photos ?? null;
+}
+
+export async function readPhotoDraftEnvelope(scope = getAccountScope(), kind: PhotoDraftKind = "upload"): Promise<PhotoDraftEnvelope | null> {
+  const raw = await draftRequest<unknown>("readonly", (store, owner) => store.get(`${owner}:${kind}`), scope);
+  if (raw === undefined) return null;
+  const draft = normalizePhotoDraft(raw);
+  if (!draft) throw new Error("The saved photo draft could not be read safely. It has been kept for recovery.");
+  return draft;
 }
 
 export function photoGroupsMatch(left: ScanPhoto[], right: ScanPhoto[]) {
@@ -79,7 +98,13 @@ export function photoGroupsMatch(left: ScanPhoto[], right: ScanPhoto[]) {
 // Compare the exact reviewed group and mutate in one transaction. Passing the same
 // group as previous/next verifies durability without rewriting another tab's work.
 export async function replacePhotoDraftIfMatches(previous: ScanPhoto[] | null, next: ScanPhoto[] | null, scope = getAccountScope(), kind: PhotoDraftKind = "upload"): Promise<boolean> {
-  if ((previous !== null && !validatePhotoGroup(previous)) || (next !== null && !validatePhotoGroup(next))) {
+  return replacePhotoDraftEnvelopeIfMatches(previous ? { version: 2, photos: previous } : null, next ? { version: 2, photos: next } : null, scope, kind);
+}
+
+// Compare the target as well as the evidence. An old tab cannot relabel, retarget,
+// or delete a newer component draft merely because its photo bytes are identical.
+export async function replacePhotoDraftEnvelopeIfMatches(previous: PhotoDraftEnvelope | null, next: PhotoDraftEnvelope | null, scope = getAccountScope(), kind: PhotoDraftKind = "upload"): Promise<boolean> {
+  if ((previous !== null && !normalizePhotoDraft(previous)) || (next !== null && !normalizePhotoDraft(next))) {
     throw new Error("Choose one to four valid, labeled photos of the same part or area.");
   }
   let matched = false;
@@ -88,12 +113,12 @@ export async function replacePhotoDraftIfMatches(previous: ScanPhoto[] | null, n
     const request = store.get(key);
     request.onsuccess = () => {
       if (!isAccountScopeCurrent(scope)) { store.transaction.abort(); return; }
-      const current = request.result;
-      matched = previous === null ? current === undefined : validatePhotoGroup(current) && photoGroupsMatch(previous, current);
+      const current = normalizePhotoDraft(request.result);
+      matched = previous === null ? request.result === undefined : current !== null && photoDraftsMatch(previous, current);
       if (matched) {
         if (next === null) {
-          if (current !== undefined) store.delete(key);
-        } else if (previous === null || !photoGroupsMatch(previous, next)) {
+          if (request.result !== undefined) store.delete(key);
+        } else if (previous === null || !photoDraftsMatch(previous, next)) {
           store.put(next, key);
         }
       }

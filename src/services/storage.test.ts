@@ -23,6 +23,19 @@ import {
 import type { ScanAnalysisState } from "../types";
 import { emptyPartInspection } from "../lib/partInspection";
 
+describe("reserved component scan identities", () => {
+  it("recovers the same saved evidence without duplicating or replacing the original analysis", () => {
+    const photos = [{ id: "one", label: "overview" as const, capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,b25l" }];
+    const first = createLookup({ frame: photos[0], photos }, "reserved-component-scan");
+    expect(first.ok).toBe(true);
+    expect(createLookup({ frame: photos[0], photos }, "reserved-component-scan")).toEqual(first);
+    expect(getLookups().filter((lookup) => lookup.id === "reserved-component-scan")).toHaveLength(1);
+    const changed = [{ ...photos[0], imageBase64: "data:image/jpeg;base64,dHdv" }];
+    expect(createLookup({ frame: changed[0], photos: changed }, "reserved-component-scan").ok).toBe(false);
+    expect(getLookup("reserved-component-scan")?.photos).toEqual(photos);
+  });
+});
+
 const scanState: ScanAnalysisState = {
   frame: {
     imageBase64: "data:image/jpeg;base64,test",
