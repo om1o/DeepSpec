@@ -1,5 +1,5 @@
 import { SCAN_PHOTO_LABELS, type VehicleContext } from "../types";
-import type { ComparisonCaptureTarget, ComparisonSide, InspectionComparison } from "../types/inspectionComparison";
+import type { ComparisonCaptureTarget, ComparisonSide, InspectionComparison, RequestedEvidenceGuide } from "../types/inspectionComparison";
 import { providerVehicleContext } from "./vehicleContext";
 
 export const MAX_INSPECTION_COMPARISONS = 100;
@@ -68,11 +68,27 @@ export function comparisonSideMatches(left: ComparisonSide, right: ComparisonSid
   return Boolean(a && b && JSON.stringify(instant(a)) === JSON.stringify(instant(b)));
 }
 
+export function normalizeRequestedEvidenceGuide(value: unknown): RequestedEvidenceGuide | undefined {
+  if (!object(value) || value.version !== 1 || Object.keys(value).some((key) => !["version", "kind", "request", "purpose", "photoIds", "analysisAttemptId"].includes(key))
+    || !member(value.kind, ["photo", "marking"]) || !text(value.request, 600, true) || !text(value.purpose, 600, true)
+    || value.request !== value.request.trim() || value.purpose !== value.purpose.trim()
+    || !Array.isArray(value.photoIds) || value.photoIds.length > 4 || !value.photoIds.every((photoId) => id(photoId, 80))
+    || new Set(value.photoIds).size !== value.photoIds.length || (value.analysisAttemptId !== undefined && !id(value.analysisAttemptId))) return undefined;
+  return { version: 1, kind: value.kind, request: value.request, purpose: value.purpose, photoIds: [...value.photoIds],
+    ...(value.analysisAttemptId === undefined ? {} : { analysisAttemptId: value.analysisAttemptId }) };
+}
+
 export function normalizeComparisonCaptureTarget(value: unknown): ComparisonCaptureTarget | undefined {
-  if (!object(value) || value.version !== 1 || !uuid(value.comparisonId) || !id(value.lookupId) || !text(value.subject, 200, true)) return undefined;
+  if (!object(value) || !fits(value) || (value.version !== 1 && value.version !== 2) || !uuid(value.comparisonId) || !id(value.lookupId) || !text(value.subject, 200, true)) return undefined;
   const earlier = normalizeComparisonSide(value.earlier);
   if (!earlier || earlier.lookupId === value.lookupId) return undefined;
-  return { version: 1, comparisonId: value.comparisonId.toLowerCase(), lookupId: value.lookupId, earlier, subject: value.subject };
+  const common = { comparisonId: value.comparisonId.toLowerCase(), lookupId: value.lookupId, earlier, subject: value.subject };
+  if (value.version === 1) return "requestedEvidence" in value || "analysisSha256" in value ? undefined : { version: 1, ...common };
+  const requestedEvidence = normalizeRequestedEvidenceGuide(value.requestedEvidence);
+  if (!requestedEvidence || typeof value.analysisSha256 !== "string" || !/^[a-f0-9]{64}$/.test(value.analysisSha256)
+    || requestedEvidence.analysisAttemptId !== earlier.analysisAttemptId
+    || (requestedEvidence.photoIds.length && !requestedEvidence.photoIds.includes(earlier.photoId))) return undefined;
+  return { version: 2, ...common, requestedEvidence, analysisSha256: value.analysisSha256 };
 }
 
 export function normalizeInspectionComparison(value: unknown): InspectionComparison | undefined {

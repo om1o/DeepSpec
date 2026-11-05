@@ -4,13 +4,25 @@ import { vehicleContextDetails } from "../../lib/vehicleContext";
 import { PHOTO_LABEL_TEXT } from "../../lib/photoLabels";
 import { Link } from "react-router-dom";
 import type { ReactNode } from "react";
+import type { RequestedEvidenceGuide } from "../../types/inspectionComparison";
 
-export function PhotoGroupReview({ photos, photoRelationship, busy, message, componentMapId, savedForComponent, vehicleContext, referenceNode, savedActionLabel, onChange, onRelationshipChange, onAdd, onAnalyze, onClose, onDiscard }: {
+export function RequestedEvidenceCaptureGuide({ guide }: { guide: RequestedEvidenceGuide }) {
+  return <section aria-label="AI-suggested next photo" className="space-y-2 rounded border border-white/20 p-3">
+    <h3 className="font-semibold">AI-suggested next photo{guide.kind === "marking" ? ": label or marking" : ""}</h3>
+    <p className="whitespace-pre-wrap break-words">{guide.request}</p>
+    <p className="font-semibold">Why this was requested</p>
+    <p className="whitespace-pre-wrap break-words">{guide.purpose}</p>
+    <p className="text-sm text-slate-300">Only your new photos will be analyzed. The earlier original stays a separate reference. Collecting a photo does not mean the request has been resolved.</p>
+  </section>;
+}
+
+export function PhotoGroupReview({ photos, photoRelationship, busy, message, componentMapId, savedForComponent, vehicleContext, referenceNode, requestedEvidence, savedActionLabel, onChange, onRelationshipChange, onAdd, onAnalyze, onClose, onDiscard }: {
   photos: ScanPhoto[]; busy: boolean; message: string | null;
   photoRelationship?: PhotoRelationship;
   componentMapId?: string; savedForComponent?: boolean;
   vehicleContext?: ShopVehicleContext | null;
   referenceNode?: ReactNode; savedActionLabel?: string;
+  requestedEvidence?: RequestedEvidenceGuide;
   onChange: (photos: ScanPhoto[]) => void; onAdd: () => void; onAnalyze: () => void;
   onRelationshipChange: (relationship: PhotoRelationship) => void;
   onClose: () => void; onDiscard: () => void;
@@ -18,7 +30,8 @@ export function PhotoGroupReview({ photos, photoRelationship, busy, message, com
   return <section role="dialog" aria-modal="true" aria-label="Review inspection photos" className="fixed inset-0 z-[75] overflow-y-auto bg-slate-950 p-5 text-white">
     <div className="mx-auto max-w-3xl space-y-5">
       <div className="flex items-center justify-between gap-3"><h2 className="text-xl font-semibold">Inspection photos</h2><button type="button" disabled={busy} onClick={onClose} className="rounded border px-3 py-2">Keep draft and close</button></div>
-      <p>For several views of one part, start with an overview, then add a close-up, a readable marking and mounting points. Label each photo and state whether the photos belong together.</p>
+      {requestedEvidence ? <RequestedEvidenceCaptureGuide guide={requestedEvidence} /> : null}
+      <p>{requestedEvidence ? "Label each new photo and state whether the photos belong together." : "For several views of one part, start with an overview, then add a close-up, a readable marking and mounting points. Label each photo and state whether the photos belong together."}</p>
       {photos.length > 1 ? <fieldset className="rounded border border-white/20 p-3">
         <legend className="px-1 font-semibold">How are these photos related?</legend>
         <select aria-label="Photo relationship" value={photoRelationshipOrUnknown(photoRelationship)} disabled={busy || savedForComponent || Boolean(savedActionLabel)} onChange={(event) => onRelationshipChange(event.target.value as PhotoRelationship)} className="mt-1 block w-full rounded bg-slate-800 p-2">

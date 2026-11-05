@@ -44,11 +44,24 @@ export type InspectionComparison = {
   correctionReason?: string;
 };
 
+/** A saved AI suggestion, not an instruction or evidence that it was resolved. */
+export type RequestedEvidenceGuide = {
+  version: 1;
+  kind: "photo" | "marking";
+  request: string;
+  purpose: string;
+  /** Empty means the saved request did not cite particular originals. */
+  photoIds: string[];
+  analysisAttemptId?: string;
+};
+
 /** Stored with the actual photo draft, including the reserved destination IDs. */
 export type ComparisonCaptureTarget = {
-  version: 1;
   comparisonId: string;
   lookupId: string;
   earlier: ComparisonSide;
   subject: string;
-};
+} & (
+  | { version: 1; requestedEvidence?: never; analysisSha256?: never }
+  | { version: 2; requestedEvidence: RequestedEvidenceGuide; analysisSha256: string }
+);

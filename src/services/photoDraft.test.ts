@@ -17,6 +17,18 @@ const comparisonTarget: ComparisonCaptureTarget = { version: 1, comparisonId: "0
     observedOn: null, sha256: "a".repeat(64), width: 640, height: 360, vehicleContext: { model: "Original car" } } };
 
 describe("photo draft envelopes", () => {
+  it("preserves a requested-photo guide only in version eight, including its analysis fingerprint", () => {
+    const requested: Extract<ComparisonCaptureTarget, { version: 2 }> = { ...comparisonTarget, version: 2, analysisSha256: "b".repeat(64),
+      requestedEvidence: { version: 1, kind: "photo", request: "Show the edge.", purpose: "Check the hidden face.", photoIds: ["source"] } };
+    const next: PhotoDraftEnvelope = { version: 8, photos, photoRelationship: "unknown", vehicleContext: null, comparisonTarget: requested };
+    expect(normalizePhotoDraft(JSON.parse(JSON.stringify(next)))).toEqual(next);
+    expect(upgradePhotoDraft(next)).toEqual(next);
+    expect(hasPhotoDraftContext(next)).toBe(true); expect(hasPhotoDraftComparison(next)).toBe(true);
+    expect(normalizePhotoDraft({ ...next, version: 7 })).toBeNull();
+    expect(normalizePhotoDraft({ ...next, comparisonTarget })).toBeNull();
+    expect(photoDraftsMatch(next, { ...next, comparisonTarget: { ...requested, requestedEvidence: { ...requested.requestedEvidence, purpose: "Different reason." } } })).toBe(false);
+    expect(photoDraftsMatch(next, { ...next, comparisonTarget: { ...requested, analysisSha256: "c".repeat(64) } })).toBe(false);
+  });
   it.each(["same_part_or_area", "independent", "unknown"] as const)("preserves explicit %s relationships through draft serialization", (photoRelationship) => {
     const related = { ...upgradePhotoDraft(draft), photoRelationship };
     expect(normalizePhotoDraft(JSON.parse(JSON.stringify(related)))).toEqual(related);
@@ -53,7 +65,7 @@ describe("photo draft envelopes", () => {
     expect(modernRepeat).toEqual({ ...repeat, version: 7, photoRelationship: "unknown" });
     expect(hasPhotoDraftContext(modernRepeat)).toBe(true);
     expect(hasPhotoDraftComparison(modernRepeat)).toBe(true);
-    if (!hasPhotoDraftComparison(modernRepeat)) throw new Error("Expected preserved comparison");
+    if (modernRepeat.version !== 7) throw new Error("Expected preserved legacy comparison");
     expect(photoDraftsMatch(modernRepeat, { ...modernRepeat, jobId: "other" })).toBe(false);
     expect(photoDraftsMatch(modernRepeat, { ...modernRepeat, vehicleContext: { model: "Other car" } })).toBe(false);
     expect(photoDraftsMatch(modernRepeat, { ...modernRepeat, comparisonTarget: { ...comparisonTarget, comparisonId: "00000000-0000-4000-8000-000000000009" } })).toBe(false);

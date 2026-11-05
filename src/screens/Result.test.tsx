@@ -16,6 +16,8 @@ import type { Lookup, ScanAnalysisState } from "../types";
 const cloudHistoryMocks = vi.hoisted(() => ({
   readCloudLookup: vi.fn(),
 }));
+const requestedCaptureMocks = vi.hoisted(() => ({ prepare: vi.fn() }));
+vi.mock("../services/requestedEvidenceCapture", async (original) => ({ ...await original<typeof import("../services/requestedEvidenceCapture")>(), prepareRequestedEvidenceCapture: requestedCaptureMocks.prepare }));
 
 vi.mock("../services/cloudHistory", () => ({
   readCloudLookup: cloudHistoryMocks.readCloudLookup,
@@ -79,6 +81,7 @@ describe("Result", () => {
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "");
     cloudHistoryMocks.readCloudLookup.mockReset();
     cloudHistoryMocks.readCloudLookup.mockResolvedValue({ ok: true, value: null });
+    requestedCaptureMocks.prepare.mockReset();
   });
 
   afterEach(() => {
@@ -139,8 +142,71 @@ describe("Result", () => {
     renderResult({ ...successfulScan, savedLookup: local }, `/result/${local.id}`);
     expect(screen.getByRole("region", { name: "Safety action" })).toHaveTextContent(safetyAction);
     expect(screen.getByRole("region", { name: "Condition evidence" })).toHaveTextContent("Photograph the reverse side.");
+    await userEvent.click(screen.getByRole("button", { name: "Collect requested photo" }));
+    expect(screen.getByRole("region", { name: "Safety action" })).toHaveTextContent(safetyAction);
+    expect(screen.getByRole("button", { name: "Start requested photo capture" })).toBeDisabled();
     await userEvent.click(screen.getByRole("tab", { name: "Sources", exact: true }));
     expect(screen.getByRole("region", { name: "Safety action" })).toHaveTextContent(safetyAction);
+  });
+
+  it("previews the requested earlier photo as Original and opens a separate capture without AI", async () => {
+    const local = makeLookup({ focusMode: "mask", focusBox: { x: 0.1, y: 0.2, width: 0.4, height: 0.4, confidence: 0.9 }, isolatedImageBase64: "data:image/png;base64,cutout",
+      photos: [{ ...frame, id: "bay", label: "overview" }, { ...frame, id: "detail", label: "close_up", imageBase64: "data:image/jpeg;base64,detail" }],
+      result: requestedResult("detail"),
+    });
+    const prepared = { version: 2, lookupId: "new-requested-scan", comparisonId: "new-comparison", earlier: { lookupId: local.id, photoId: "detail" }, requestedEvidence: { kind: "photo", request: "Photograph the reverse side.", purpose: "Show the far side of the mounting edge." }, analysisSha256: "a".repeat(64) };
+    requestedCaptureMocks.prepare.mockResolvedValue(prepared);
+    const identify = vi.spyOn(aiService, "identifyCapturedFrame");
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
+    renderResult(null, `/result/${local.id}`);
+    const before = localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY));
+    screen.getByTestId("result-photo-canvas").scrollIntoView = vi.fn();
+    await userEvent.click(screen.getByRole("button", { name: "Collect requested photo" }));
+    await userEvent.click(screen.getByRole("button", { name: "View selected source image" }));
+    expect(screen.getByRole("button", { name: "Original", exact: true })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute("src", local.photos![1].imageBase64);
+    expect(screen.queryByTestId("isolated-part-image")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Start requested photo capture" }));
+    expect(await screen.findByText("Requested capture scanner")).toBeInTheDocument();
+    expect(requestedCaptureMocks.prepare).toHaveBeenCalledWith(expect.objectContaining({ id: local.id, photos: local.photos }), expect.objectContaining({ kind: "photo", photoIds: ["detail"] }), "detail", expect.any(Object), expect.any(AbortSignal));
+    expect(identify).not.toHaveBeenCalled();
+    expect(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY))).toBe(before);
+  });
+
+  it("keeps capture disabled for a result that is not saved on this device", () => {
+    const local = makeLookup({ result: requestedResult("photo-1") });
+    renderResult({ ...successfulScan, savedLookup: local }, `/result/${local.id}`);
+    expect(screen.getByRole("button", { name: "Collect requested photo" })).toBeDisabled();
+    expect(requestedCaptureMocks.prepare).not.toHaveBeenCalled();
+  });
+
+  it("disables requested capture throughout an active retry", async () => {
+    const local = makeLookup({ result: requestedResult("photo-1"), errorCode: "network", errorMessage: "Network error" });
+    let finish!: (result: NonNullable<Lookup["result"]>) => void;
+    vi.spyOn(aiService, "identifyCapturedFrame").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
+    renderResult(null, `/result/${local.id}`);
+    expect(screen.getByRole("button", { name: "Collect requested photo" })).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(screen.getByRole("button", { name: "Collect requested photo" })).toBeDisabled();
+    expect(requestedCaptureMocks.prepare).not.toHaveBeenCalled();
+    await act(async () => { finish(requestedResult("photo-1")); });
+    expect(screen.getByRole("button", { name: "Collect requested photo" })).toBeEnabled();
+  });
+
+  it("keeps capture disabled after feedback saving fails", async () => {
+    const local = makeLookup({ result: requestedResult("photo-1") });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
+    renderResult(null, `/result/${local.id}`);
+    const key = accountStorageKey(LOOKUPS_STORAGE_KEY), write = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, name, value) {
+      if (name === key) throw new DOMException("Full", "QuotaExceededError");
+      write.call(this, name, value);
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Why or why not" }));
+    expect(screen.getByRole("button", { name: "Collect requested photo" })).toBeDisabled();
+    expect(requestedCaptureMocks.prepare).not.toHaveBeenCalled();
   });
 
   it.each(["bay", "detail"])("opens photo-review disagreement %s as an untouched original without a condition assessment", async (photoId) => {
@@ -1334,9 +1400,17 @@ function renderResult(state: (ScanAnalysisState & { savedLookup?: Lookup }) | nu
         <Route path="/result/:id" element={<Result />} />
         <Route path="/result/:id/chat" element={<Chat />} />
         <Route path="/history" element={<p>Saved scans page</p>} />
+        <Route path="/scan" element={<p>Requested capture scanner</p>} />
       </Routes>
     </MemoryRouter>,
   );
+}
+
+function requestedResult(photoId: string): NonNullable<Lookup["result"]> {
+  return { ...successfulScan.result!, conditionAssessment: {
+    version: 1, observations: [{ id: "edge", text: "The mounting edge is partly hidden.", photoIds: [photoId] }], possibleCauses: [], unknowns: ["The far side is not visible."],
+    nextEvidence: { kind: "photo", request: "Photograph the reverse side.", purpose: "Show the far side of the mounting edge.", photoIds: [photoId] },
+  } };
 }
 
 function makeLookup(patch: Partial<Lookup> = {}): Lookup {

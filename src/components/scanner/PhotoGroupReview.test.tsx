@@ -2,14 +2,51 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ScanPhoto } from "../../types";
+import type { RequestedEvidenceGuide } from "../../types/inspectionComparison";
 import { PhotoGroupReview } from "./PhotoGroupReview";
 
 const photos: ScanPhoto[] = ["overview", "close_up", "marking", "mounting"].map((label, index) => ({
   id: `photo-${index}`, label: label as ScanPhoto["label"], capturedAt: "2026-11-05T00:00:00Z", imageBase64: `data:image/jpeg;base64,photo${index}`,
 }));
 const callbacks = () => ({ onChange: vi.fn(), onRelationshipChange: vi.fn(), onAdd: vi.fn(), onAnalyze: vi.fn(), onClose: vi.fn(), onDiscard: vi.fn() });
+const guide: RequestedEvidenceGuide = { version: 1, kind: "marking", request: "Photograph the stamped number beside the lower bolt.", purpose: "A readable marking may distinguish the two candidate housings.", photoIds: ["earlier-photo"] };
 
 describe("PhotoGroupReview", () => {
+  it("shows the exact AI request separately from the reference and waits for explicit analysis", async () => {
+    const actions = callbacks();
+    render(<PhotoGroupReview photos={[photos[0]]} requestedEvidence={guide} busy={false} message={null}
+      referenceNode={<img src="data:image/png;base64,earlier" alt="Selected earlier original" />} {...actions} />);
+    expect(screen.getByRole("region", { name: "AI-suggested next photo" })).toHaveTextContent(guide.request);
+    expect(screen.getByText(guide.purpose)).toBeInTheDocument();
+    expect(screen.getByText(/Collecting a photo does not mean the request has been resolved/)).toBeInTheDocument();
+    expect(screen.getByText(/Only your new photos will be analyzed/)).toBeInTheDocument();
+    expect(screen.getByText("Label each new photo and state whether the photos belong together.")).toBeInTheDocument();
+    expect(screen.queryByText(/start with an overview/)).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Selected earlier original" })).toBeInTheDocument();
+    expect(screen.getAllByRole("combobox")).toHaveLength(1);
+    expect(actions.onAnalyze).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Keep draft and close" }));
+    expect(actions.onClose).toHaveBeenCalledTimes(1);
+    expect(actions.onAnalyze).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Analyze 1 photo" }));
+    expect(actions.onAnalyze).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the guide visible during a failed save and never interprets its text as markup", () => {
+    const request = { ...guide, request: "<img src=x onerror=alert(1)> Read the label." };
+    const { rerender } = render(<PhotoGroupReview photos={[photos[0]]} requestedEvidence={request} busy message="Saving photos…" {...callbacks()} />);
+    expect(screen.getByText(request.request)).toBeInTheDocument();
+    expect(screen.getAllByRole("img")).toHaveLength(1);
+    rerender(<PhotoGroupReview photos={[photos[0]]} requestedEvidence={request} busy={false} message="Save failed; draft kept." {...callbacks()} />);
+    expect(screen.getByText(request.request)).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Save failed; draft kept.");
+  });
+
+  it("does not invent an AI request for an ordinary dated capture", () => {
+    render(<PhotoGroupReview photos={[photos[0]]} busy={false} message={null} {...callbacks()} />);
+    expect(screen.queryByRole("region", { name: "AI-suggested next photo" })).not.toBeInTheDocument();
+  });
+
   it("leaves a legacy group unconfirmed and changes its relationship without changing photos or running AI", async () => {
     const actions = callbacks();
     const { rerender } = render(<PhotoGroupReview photos={photos} busy={false} message={null} {...actions} />);

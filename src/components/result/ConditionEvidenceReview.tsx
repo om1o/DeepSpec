@@ -1,7 +1,8 @@
 import type { Lookup } from "../../types";
 import { buildConditionHandoff } from "../../lib/conditionHandoff";
+import { RequestedEvidenceCapture } from "./RequestedEvidenceCapture";
 
-export function ConditionEvidenceReview({ lookup, onSelectPhoto }: { lookup: Lookup; onSelectPhoto: (id: string) => void }) {
+export function ConditionEvidenceReview({ lookup, onSelectPhoto, disabled = false }: { lookup: Lookup; onSelectPhoto: (id: string) => void; disabled?: boolean }) {
   const review = buildConditionHandoff(lookup);
   if (!review.assessment) return null;
   return <section aria-label="Condition evidence" className="rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 text-sm text-[var(--ds-fg-2)]">
@@ -23,6 +24,7 @@ export function ConditionEvidenceReview({ lookup, onSelectPhoto }: { lookup: Loo
       <h3 className="font-semibold">Priority next evidence</h3>
       <p className="mt-1">{review.nextEvidence.request}</p>
       <p className="mt-1 text-xs text-[var(--ds-fg-3)]">Why: {review.nextEvidence.purpose}</p>
+      <RequestedEvidenceCapture lookup={lookup} disabled={disabled} onSelectPhoto={onSelectPhoto} />
     </div> : null}
     <p className="mt-4 text-xs text-[var(--ds-fg-3)]">Functional checks: {review.functionStatus}</p>
   </section>;

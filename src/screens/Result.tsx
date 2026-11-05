@@ -71,6 +71,7 @@ function ResultView({ id }: { id: string | undefined }) {
     : lookup;
   const inspectionLookup = inspectionBase ? withRetriedLookupResult(inspectionBase, liveScanState) : null;
   const [hasPendingRetryResult, setHasPendingRetryResult] = useState(false);
+  const [retryInProgress, setRetryInProgress] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [retrySaveLabel, setRetrySaveLabel] = useState("Retry saving feedback");
   const scanState = liveScanState ?? (lookup ? scanStateFromLookup(inspectionBase ?? lookup) : (id ? null : getScanState(routeState)));
@@ -440,6 +441,7 @@ function ResultView({ id }: { id: string | undefined }) {
               photoRelationship={scanState.photoRelationship}
               lookup={locallySavedLookup ? lookup : null}
               vehicleContext={lookup?.vehicleContext ?? scanState.vehicleContext}
+              onRetryBusyChange={setRetryInProgress}
               onLookupRetrySuccess={(updatedLookup, warning) => {
                 pendingRetryLookupRef.current = warning ? updatedLookup : null;
                 setHasPendingRetryResult(Boolean(warning));
@@ -480,7 +482,7 @@ function ResultView({ id }: { id: string | undefined }) {
             photoCanvasRef.current?.focus({ preventScroll: true });
             photoCanvasRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
           }} /> : null}
-          {inspectionLookup ? <ConditionEvidenceReview lookup={inspectionLookup} onSelectPhoto={(photoId) => {
+          {inspectionLookup ? <ConditionEvidenceReview lookup={inspectionLookup} disabled={!locallySavedLookup || retryInProgress || hasPendingRetryResult || Boolean(saveError || selectionRetry)} onSelectPhoto={(photoId) => {
             setSelectedPhotoId(photoId);
             setEvidenceViewRequest((request) => request + 1);
             photoCanvasRef.current?.focus({ preventScroll: true });
@@ -940,6 +942,7 @@ function AnalysisError({
   vehicleContext,
   onLookupRetrySuccess,
   onScanRetrySuccess,
+  onRetryBusyChange,
 }: {
   capturedAt: string | null;
   captureMode: "camera" | "upload";
@@ -952,6 +955,7 @@ function AnalysisError({
   message: string;
   onLookupRetrySuccess: (updatedLookup: Lookup, warning?: string) => void;
   onScanRetrySuccess: (scanState: ScanAnalysisState, sourceFrame: CapturedFrame) => void;
+  onRetryBusyChange: (busy: boolean) => void;
 }) {
   const [isOnline, setIsOnline] = useState(() => typeof navigator !== "undefined" ? navigator.onLine : true);
   const [isRetrying, setIsRetrying] = useState(false);
@@ -985,6 +989,7 @@ function AnalysisError({
     const isCurrentRetry = () => isMountedRef.current && isAccountScopeCurrent(scope);
     if (!retryFrame || isRetrying || !isCurrentRetry()) return;
     setIsRetrying(true);
+    onRetryBusyChange(true);
     setRetryError(null);
     const attemptId = createAnalysisAttemptId();
 
@@ -1034,6 +1039,7 @@ function AnalysisError({
         }
       }
     } finally {
+      onRetryBusyChange(false);
       if (isMountedRef.current) setIsRetrying(false);
     }
   }

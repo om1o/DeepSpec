@@ -1,9 +1,35 @@
 import { describe, expect, it } from "vitest";
 import type { ComparisonSide, InspectionComparison } from "../types/inspectionComparison";
-import { comparisonSideMatches, inspectionComparisonStatus, mergeInspectionComparisons, normalizeComparisonCaptureTarget, normalizeComparisonSide, normalizeComparisonTimestamp, normalizeInspectionComparison, normalizeInspectionComparisons } from "./inspectionComparison";
+import { comparisonSideMatches, inspectionComparisonStatus, mergeInspectionComparisons, normalizeComparisonCaptureTarget, normalizeComparisonSide, normalizeComparisonTimestamp, normalizeInspectionComparison, normalizeInspectionComparisons, normalizeRequestedEvidenceGuide } from "./inspectionComparison";
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const side = (lookupId: string): ComparisonSide => ({ lookupId, photoId: "photo-1", photoLabel: "overview", photoAddedAt: "2026-11-05T00:00:00Z", scanSavedAt: "2026-11-05T00:00:00Z", sha256: "a".repeat(64), width: 2, height: 3, observedOn: null, vehicleContext: null });
+const guide = () => ({ version: 1 as const, kind: "photo" as const, request: "Show the mounting face.", purpose: "Check the obscured edge.", photoIds: ["photo-1"] });
+describe("requested-evidence capture protocol", () => {
+  const target = () => ({ version: 2, comparisonId: id(1), lookupId: "new-scan", earlier: side("earlier"), subject: "Requested evidence photo", requestedEvidence: guide(), analysisSha256: "b".repeat(64) });
+  it("round trips the exact request, chosen original and analysis fingerprint without altering history records", () => {
+    expect(normalizeComparisonCaptureTarget(JSON.parse(JSON.stringify(target())))).toEqual(target());
+    expect(normalizeRequestedEvidenceGuide({ ...guide(), photoIds: [], kind: "marking" })).toEqual({ ...guide(), photoIds: [], kind: "marking" });
+    expect(normalizeInspectionComparison({ ...record(), version: 2 })).toBeUndefined();
+  });
+  it.each([undefined, null, guide()])("rejects guide presence on a version-one target instead of silently stripping %j", (requestedEvidence) => {
+    expect(normalizeComparisonCaptureTarget({ version: 1, comparisonId: id(1), lookupId: "new-scan", earlier: side("earlier"), subject: "Bracket", requestedEvidence })).toBeUndefined();
+  });
+  it.each([
+    { requestedEvidence: undefined }, { analysisSha256: "B".repeat(64) }, { analysisSha256: "bad" },
+    { requestedEvidence: { ...guide(), photoIds: ["other"] } },
+    { requestedEvidence: { ...guide(), analysisAttemptId: "other-attempt" } },
+  ])("rejects partial or mismatched target metadata: %j", (change) => {
+    expect(normalizeComparisonCaptureTarget({ ...target(), ...change })).toBeUndefined();
+  });
+  it.each([
+    { version: 2 }, { kind: "measurement" }, { kind: "professional_inspection" }, { request: " " }, { purpose: "x".repeat(601) },
+    { request: " padded " }, { photoIds: ["photo-1", "photo-1"] }, { photoIds: ["../photo"] }, { photoIds: ["a", "b", "c", "d", "e"] },
+    { analysisAttemptId: "../attempt" }, { extra: true },
+  ])("rejects malformed guides rather than truncating or weakening them: %j", (change) => {
+    expect(normalizeRequestedEvidenceGuide({ ...guide(), ...change })).toBeUndefined();
+  });
+});
 function record(n = 1): InspectionComparison {
   return { version: 1, id: id(n), lookupId: "scan", recordedAt: "2026-11-05T00:00:00Z", subject: "Bracket", earlier: side("earlier"), current: side("scan"), relationship: { sameVehicle: false, component: "unconfirmed", basis: "" }, conditions: { angle: "unknown", lighting: "unknown", surfaceNotes: "" }, observation: { outcome: "not_reviewed", notes: "" }, alignment: { rotation: 0, scale: 1, offsetX: 0, offsetY: 0 } };
 }
