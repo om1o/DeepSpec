@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { accountStorageKey, setActiveAccount } from "../lib/accountScope";
-import { createLookup, getLookup, LOOKUPS_STORAGE_KEY, normalizeLookup, readLookups, saveExistingLookup, scanStateFromLookup, updateLookupResult, updateLookupVisualSelection, withRetriedLookupResult } from "./storage";
+import { createLookup, getLookup, LOOKUPS_STORAGE_KEY, normalizeLookup, readLookups, saveExistingLookup, scanStateFromLookup, updateLookup, updateLookupResult, updateLookupVisualSelection, withRetriedLookupResult } from "./storage";
 import type { ConditionAssessment, IdentificationResult, PartInspection, ScanAnalysisState } from "../types";
 const image = "data:image/jpeg;base64,YQ==";
 const box = { x: 0.1, y: 0.1, width: 0.3, height: 0.4, confidence: 0.8 };
@@ -46,7 +46,7 @@ describe("durable visual evidence", () => {
   it("corrects the displayed secondary index without changing original pixels or primary cutout", () => {
     const saved = createLookup(state).value;
     const nextBox = { ...box, x: 0.5 };
-    expect(updateLookupVisualSelection(saved.id, nextBox, 1).ok).toBe(true);
+    expect(updateLookupVisualSelection(saved.id, nextBox, 1, saved).ok).toBe(true);
     const reopened = getLookup(saved.id)!;
     expect(reopened.isolatedObjects?.[0]).toMatchObject({ name: "Secondary", focusBox: nextBox, focusMode: "crop", isolatedImageBase64: "", correctedAt: expect.any(String) });
     expect(reopened.isolatedObjects?.[1]).toEqual(state.isolatedObjects?.[1]);
@@ -56,14 +56,37 @@ describe("durable visual evidence", () => {
   });
   it("primary correction clears both stale cutouts and survives reopen", () => {
     const saved = createLookup(state).value;
-    expect(updateLookupVisualSelection(saved.id, box, 0).ok).toBe(true);
+    expect(updateLookupVisualSelection(saved.id, box, 0, saved).ok).toBe(true);
     const reopened = getLookup(saved.id)!;
     expect(reopened.isolatedImageBase64).toBe("");
     expect(reopened.focusMode).toBe("crop");
     expect(reopened.isolatedObjects?.[1]).toMatchObject({ focusMode: "crop", isolatedImageBase64: "" });
-    expect(updateLookupVisualSelection(saved.id, box, 9)).toMatchObject({ ok: false });
+    expect(updateLookupVisualSelection(saved.id, box, 9, reopened)).toMatchObject({ ok: false });
     setActiveAccount("other");
-    expect(updateLookupVisualSelection(saved.id, box, null)).toMatchObject({ ok: false, value: null });
+    expect(updateLookupVisualSelection(saved.id, box, null, reopened)).toMatchObject({ ok: false, value: null });
+  });
+  it.each(["object order", "object replacement", "original", "photo group", "selection", "analysis"])("rejects a correction after the saved %s changes", (change) => {
+    const saved = createLookup({ ...state, isolatedObjects: [...state.isolatedObjects!, {
+      name: "Third", category: "body", primary: false, focusBox: { ...box, x: 0.6 }, isolatedImageBase64: image,
+    }] }).value;
+    const newer = structuredClone(saved);
+    if (change === "object order") newer.isolatedObjects = [newer.isolatedObjects![2], newer.isolatedObjects![1], newer.isolatedObjects![0]];
+    if (change === "object replacement") newer.isolatedObjects![0].name = "Different component";
+    if (change === "original") newer.frame.imageBase64 = "data:image/jpeg;base64,Yg==";
+    if (change === "photo group") newer.photos![1].id = "replacement-angle";
+    if (change === "selection") newer.isolatedObjects![0].focusBox.x = 0.4;
+    if (change === "analysis") newer.analysisAttemptId = "replacement-analysis";
+    const latestRaw = JSON.stringify([newer]);
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), latestRaw);
+    expect(updateLookupVisualSelection(saved.id, { ...box, x: 0.5 }, 1, saved)).toMatchObject({ ok: false, message: expect.stringContaining("changed while you were editing") });
+    expect(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY))).toBe(latestRaw);
+  });
+  it("preserves unrelated newer notes and accepts equivalent box property order", () => {
+    const saved = createLookup(state).value;
+    updateLookup(saved.id, { notes: "Mechanic note entered while the area editor was open" });
+    const displayed = { ...saved, focusBox: { confidence: box.confidence, height: box.height, width: box.width, y: box.y, x: box.x } };
+    expect(updateLookupVisualSelection(saved.id, { ...box, x: 0.4 }, 1, displayed).ok).toBe(true);
+    expect(getLookup(saved.id)?.notes).toBe("Mechanic note entered while the area editor was open");
   });
   it("refuses a malformed extra photo instead of silently discarding it on the next write", () => {
     const saved = createLookup(state).value;

@@ -7,7 +7,7 @@ import { normalizeVehicleContext, vehicleContextsMatch } from "../lib/vehicleCon
 import { accountStorageKey, getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import { inspectionDraftKey } from "./inspectionDraft";
 import { isEvidenceImage, normalizeVisualEvidence } from "./visualEvidence";
-import { correctScanSelection } from "../lib/visualSelection";
+import { correctScanSelection, visualSelectionSourceMatches } from "../lib/visualSelection";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
 export const MAX_SAVED_LOOKUPS = 50;
@@ -149,11 +149,14 @@ export function saveLookupInspection(id: string, draft: PartInspectionDraft, clo
   return write.ok ? { ok: true, value: updated } : { ok: false, value: existing, message: write.message };
 }
 
-export function updateLookupVisualSelection(id: string, focusBox: VisualFocusBox, objectIndex: number | null): StorageResult<Lookup | null> {
+export function updateLookupVisualSelection(id: string, focusBox: VisualFocusBox, objectIndex: number | null, expected: ScanAnalysisState): StorageResult<Lookup | null> {
   const read = readLookups();
   if (!read.ok) return { ok: false, value: null, message: read.message };
   const existing = read.value.find((lookup) => lookup.id === id);
   if (!existing) return { ok: false, value: null, message: "Saved scan not found." };
+  if (!visualSelectionSourceMatches(existing, expected, { lookupId: id })) {
+    return { ok: false, value: existing, message: "The saved photo or selected parts changed while you were editing. Reopen the scan before correcting the area. The newer version was kept." };
+  }
   let updated: Lookup;
   try { updated = { ...correctScanSelection(existing, focusBox, objectIndex), cloudSave: undefined }; }
   catch (error) { return { ok: false, value: existing, message: error instanceof Error ? error.message : "Selection could not be saved." }; }

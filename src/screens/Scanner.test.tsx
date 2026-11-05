@@ -4,6 +4,7 @@ import { photoGroupsMatch, type PhotoDraftEnvelope } from "../services/photoDraf
 import type { ComponentCaptureTarget } from "../types/componentMap";
 import type { ComparisonCaptureTarget } from "../types/inspectionComparison";
 import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
+import { createSceneCropFallbacks, type SceneObjectInput } from "../lib/promptableSegmentation";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -249,7 +250,8 @@ vi.mock("../lib/productSegmentation", () => ({
   warmProductSegmentation: () => {},
 }));
 
-vi.mock("../lib/promptableSegmentation", () => ({
+vi.mock("../lib/promptableSegmentation", async (importOriginal) => ({
+  createSceneCropFallbacks: (await importOriginal<typeof import("../lib/promptableSegmentation")>()).createSceneCropFallbacks,
   createPromptedProductIsolation: (...args: unknown[]) => createPromptedProductIsolation(...args),
   isolateSceneObjects: (...args: unknown[]) => isolateSceneObjects(...args),
   isPromptableSegmentationEnabled: () => isPromptableSegmentationEnabled(),
@@ -431,7 +433,7 @@ describe("Scanner", () => {
 
   it.each(["SAM", "MVANet", "scene", "debug GPU"])("shows and saves a valid result when optional %s never settles, ignoring its late result", async (stage) => {
     mockStillImageTarget({ confidence: 0.9, x: 0.2, y: 0.2, width: 0.3, height: 0.3 });
-    const focusBox = { x: 0.2, y: 0.2, width: 0.3, height: 0.3 };
+    const focusBox = { x: 0.2, y: 0.2, width: 0.3, height: 0.3, confidence: 0.9 };
     const cutout = { focusBox, frame: { imageBase64: "data:image/png;base64,isolated", capturedAt: new Date().toISOString() }, isolatedImageBase64: "data:image/png;base64,isolated" };
     let settle!: (value: unknown) => void;
     const pending = new Promise((resolve) => { settle = resolve; });
@@ -453,12 +455,38 @@ describe("Scanner", () => {
     expect(getLookups()).toHaveLength(1);
     expect(getLookups()[0].result?.partName).toBe("Alternator");
     expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
+    if (stage === "scene") {
+      expect(getLookups()[0].isolatedObjects).toMatchObject([
+        { name: "Alternator", primary: true, focusMode: "mask" },
+        { name: "Wrench", primary: false, focusMode: "crop", isolatedImageBase64: "" },
+      ]);
+      expect(screen.getByRole("button", { name: "Select Wrench" })).toBeInTheDocument();
+    }
     const snapshot = JSON.stringify(getLookups());
     await act(async () => { settle(stage === "debug GPU" ? true : stage === "scene" ? [{ ...cutout, name: "Late object" }] : cutout); await pending; });
     expect(JSON.stringify(getLookups())).toBe(snapshot);
     expect(screen.queryByRole("button", { name: "Select Late object" })).not.toBeInTheDocument();
     vi.unstubAllEnvs();
   }, 10000);
+
+  it("keeps the complete scene when the primary mask and on-device segmentation are unavailable", async () => {
+    const originalImage = mockStillImageTarget({ confidence: 0.9, x: 0.2, y: 0.2, width: 0.3, height: 0.3 });
+    isPromptableSegmentationEnabled.mockReturnValue(false);
+    isolateSceneObjects.mockImplementation(async (_frame: unknown, inputs: SceneObjectInput[]) => createSceneCropFallbacks(inputs));
+    identifyCapturedFrame.mockResolvedValueOnce({ ...makeScanResult("Alternator"), sceneObjects: [
+      { name: "Wrench", category: "tools", regionLabel: "right", confidence: "high" },
+      { name: "Reservoir", category: "engine", regionLabel: "left", confidence: "medium" },
+    ] });
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await screen.findByRole("button", { name: "Select Wrench" });
+    expect(screen.getByRole("button", { name: "Select Reservoir" })).toBeInTheDocument();
+    expect(isolateSceneObjects).toHaveBeenCalledTimes(1);
+    expect(getLookups()[0].isolatedObjects).toHaveLength(3);
+    expect(getLookups()[0].isolatedObjects?.every((object) => object.focusMode === "crop" && object.isolatedImageBase64 === "")).toBe(true);
+    expect(getLookups()[0].frame.imageBase64).toBe(originalImage);
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
+  });
 
   it.each(["success", "failure"])("ignores a previous scan's late object-analysis %s", async (outcome) => {
     mockStillImageTarget({ confidence: 0.9, x: 0.2, y: 0.2, width: 0.3, height: 0.3 });
@@ -491,6 +519,8 @@ describe("Scanner", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     await userEvent.click(await screen.findByRole("button", { name: "Select Wrench" }));
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole("button", { name: "Analyze selected area" }));
     expect(screen.getByTestId("focused-object-card")).toHaveTextContent("Analyzing");
     expect(getLookups()).toHaveLength(1);
     expect(getLookups()[0].isolatedObjects).toHaveLength(2);
@@ -501,6 +531,7 @@ describe("Scanner", () => {
     captureFrame.mockResolvedValue(`data:image/jpeg;base64,${"b".repeat(240)}`);
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     await userEvent.click(await screen.findByRole("button", { name: "Select Wrench" }));
+    await userEvent.click(screen.getByRole("button", { name: "Analyze selected area" }));
     await waitFor(() => expect(screen.getByTestId("focused-object-card")).toHaveTextContent("Socket wrench"));
 
     await act(async () => {
@@ -539,6 +570,8 @@ describe("Scanner", () => {
     let finishCrop!: (image: string | null) => void;
     createFocusedScanCrop.mockImplementationOnce(() => new Promise((resolve) => { finishCrop = resolve; }));
     await userEvent.click(screen.getByRole("button", { name: "Select Wrench" }));
+    expect(createFocusedScanCrop).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Analyze selected area" }));
     expect(createFocusedScanCrop).toHaveBeenCalledExactlyOnceWith(originalImage, correctedBox);
     expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
     await act(async () => {
@@ -572,6 +605,7 @@ describe("Scanner", () => {
     render(<MemoryRouter><Scanner /></MemoryRouter>);
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     await userEvent.click(await screen.findByRole("button", { name: "Select Wrench" }));
+    await userEvent.click(screen.getByRole("button", { name: "Analyze selected area" }));
     await userEvent.click(screen.getByRole("button", { name: "Correct area" }));
     fireEvent.change(screen.getByRole("slider", { name: "Selection x" }), { target: { value: "40" } });
     await userEvent.click(screen.getByRole("button", { name: "Apply area" }));
@@ -580,6 +614,8 @@ describe("Scanner", () => {
     createFocusedScanCrop.mockClear();
     await userEvent.click(screen.getByTestId("focused-object-back"));
     await userEvent.click(screen.getByRole("button", { name: "Select Wrench" }));
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(2);
+    await userEvent.click(screen.getByRole("button", { name: "Analyze selected area" }));
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(3));
     expect(createFocusedScanCrop).toHaveBeenCalledWith(originalImage, { ...focusBox, x: 0.4, confidence: 0 });
     expect(identifyCapturedFrame.mock.calls[2][0]).toMatchObject({ imageBase64: "data:image/jpeg;base64,target-crop" });
@@ -927,7 +963,8 @@ describe("Scanner", () => {
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole("heading", { level: 3, name: "Alternator" })).toBeInTheDocument();
     expect(screen.getByTestId("focused-part-overlay")).toHaveAttribute("data-focus-mode", "full_frame");
-    expect(screen.getByTestId("focused-part-window")).toBeInTheDocument();
+    expect(screen.queryByTestId("focused-part-window")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Original", exact: true })).toHaveAttribute("aria-pressed", "true");
   }, 10000);
 
   it("does not wait for a prominent live target before a manual scan", async () => {
@@ -1789,7 +1826,8 @@ describe("Scanner", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Resume 2-photo draft" }));
     await analyzeReviewedPhotos();
 
-    expect(await screen.findByTestId("issue-callout")).toHaveTextContent(issue);
+    await userEvent.click(await screen.findByRole("button", { name: "Outline", exact: true }));
+    expect(screen.getByTestId("issue-callout")).toHaveTextContent(issue);
     expect(screen.getByAltText("Reviewed scan photo")).toHaveAttribute("src", photos[0].imageBase64);
     await userEvent.click(screen.getByRole("button", { name: "2. Close-up" }));
     expect(screen.getByAltText("Reviewed scan photo")).toHaveAttribute("src", photos[1].imageBase64);
@@ -1797,6 +1835,7 @@ describe("Scanner", () => {
     expect(screen.queryByTestId("issue-callout")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "1. Overview" }));
     expect(screen.getByAltText("Reviewed scan photo")).toHaveAttribute("src", photos[0].imageBase64);
+    await userEvent.click(screen.getByRole("button", { name: "Outline", exact: true }));
     expect(screen.getByTestId("issue-callout")).toHaveTextContent(issue);
     expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
   });

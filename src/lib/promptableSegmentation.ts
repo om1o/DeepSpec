@@ -3,11 +3,12 @@ import { configureSameOriginOnnxRuntime } from "./browserTransformers";
 import type { ProductIsolationResult } from "./productSegmentation";
 import { supportsWebGpu } from "./webgpu";
 import { recordScanDebug } from "./scanDebug";
+import { validFocusBox } from "../services/visualEvidence";
 
 // Bump on every change to this module. Logged once at module load so the console confirms the
 // browser is actually running the latest build — not a stale Vite/HMR bundle or a cached
 // service-worker asset. If you don't see this exact version after a reload, the code is stale.
-const PROMPTABLE_SEG_VERSION = "7 (five-point prompts + best-fit mask selection)";
+const PROMPTABLE_SEG_VERSION = "8 (preserve scene selections with explicit crop fallback)";
 try {
   console.info(`[DeepSpec SAM] promptableSegmentation v${PROMPTABLE_SEG_VERSION} loaded`);
 } catch {
@@ -19,8 +20,8 @@ try {
 // segmenter (SlimSAM) takes a prompt per object and returns just that object. We seed five
 // positive points spread across each detector box — SlimSAM's exported ONNX decoder only accepts
 // point prompts, not input_boxes. SAM embeds the image once, then decodes each prompt cheaply,
-// so multiple objects are one inference. Fully gated; returns null/[] on any failure so the
-// pipeline can never get worse.
+// so multiple objects are one inference. Single-object failure returns null; scene isolation
+// retains each valid selection as an explicit crop when its mask is unavailable.
 
 type SamTensor = { data: ArrayLike<number>; dims: number[] };
 type SamModelLike = (inputs: Record<string, unknown>) => Promise<{ pred_masks: SamTensor; iou_scores: SamTensor }>;
@@ -136,47 +137,54 @@ export async function createPromptedProductIsolation(
   };
 }
 
-/** Multi-object isolation: segment up to 4 scene objects in one inference pass. */
+/** The same bounded selection snapshot is used by SAM and its caller's shorter timeout. */
+export function createSceneCropFallbacks(inputs: SceneObjectInput[]): IsolatedObject[] {
+  return inputs.filter((input) => validFocusBox(input.box)).slice(0, MAX_SCENE_OBJECTS).map((input) => ({
+    name: input.name,
+    category: input.category,
+    primary: input.primary,
+    focusBox: { ...input.box },
+    isolatedImageBase64: "",
+    focusMode: "crop",
+  }));
+}
+
+/** Segment up to 4 valid scene selections, retaining their original boxes when masks fail. */
 export async function isolateSceneObjects(frame: CapturedFrame, inputs: SceneObjectInput[]): Promise<IsolatedObject[]> {
-  if (!isPromptableSegmentationEnabled() || !canUseBrowserSegmentation() || inputs.length === 0) {
-    return [];
+  const fallbacks = createSceneCropFallbacks(inputs);
+  if (!isPromptableSegmentationEnabled() || !canUseBrowserSegmentation() || fallbacks.length === 0) {
+    return fallbacks;
   }
-  if (!(await supportsWebGpu())) {
-    return [];
+  if (!(await supportsWebGpu().catch(() => false))) {
+    return fallbacks;
   }
 
-  const capped = inputs.slice(0, MAX_SCENE_OBJECTS);
   const pipeline = await withTimeout(getSamPipeline(getPromptableSegmentationModel()), PROMPTABLE_LOAD_TIMEOUT_MS);
   if (!pipeline) {
-    return [];
+    return fallbacks;
   }
 
   const inferStart = clock();
   const cutouts = await withTimeout(
-    isolateBoxes(pipeline, frame.imageBase64, capped.map((input) => input.box)),
+    isolateBoxes(pipeline, frame.imageBase64, fallbacks.map((input) => input.focusBox)),
     PROMPTABLE_MULTI_TIMEOUT_MS,
     () => samLog({ stage: "inference-timeout", ms: PROMPTABLE_MULTI_TIMEOUT_MS }),
     (error) => samLog({ stage: "inference-error", message: error instanceof Error ? `${error.name}: ${error.message}` : String(error) }),
   );
-  samLog({ stage: "inference-multi", boxes: capped.length, ms: Math.round(clock() - inferStart), ok: Boolean(cutouts) });
+  samLog({ stage: "inference-multi", boxes: fallbacks.length, ms: Math.round(clock() - inferStart), ok: Boolean(cutouts) });
   if (!cutouts) {
-    return [];
+    return fallbacks;
   }
 
-  const objects: IsolatedObject[] = [];
-  capped.forEach((input, index) => {
+  return fallbacks.map((fallback, index) => {
     const cutout = cutouts[index];
-    if (cutout) {
-      objects.push({
-        name: input.name,
-        category: input.category,
-        primary: input.primary,
-        focusBox: cutout.focusBox,
-        isolatedImageBase64: cutout.imageBase64,
-      });
-    }
+    return cutout ? {
+      ...fallback,
+      focusBox: cutout.focusBox,
+      isolatedImageBase64: cutout.imageBase64,
+      focusMode: "mask",
+    } : fallback;
   });
-  return objects;
 }
 
 async function isolateBoxes(

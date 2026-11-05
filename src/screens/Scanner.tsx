@@ -34,7 +34,7 @@ import type { CameraObjectTarget } from "../hooks/useObjectTarget";
 import { assessImageQuality, type ImageQualityIssue, type ImageQualityResult } from "../lib/imageQuality";
 import { createFocusedScanCrop } from "../lib/focusCrop";
 import { createSegmentedProductIsolation, warmProductSegmentation } from "../lib/productSegmentation";
-import { createPromptedProductIsolation, isolateSceneObjects, isPromptableSegmentationEnabled, warmPromptableSegmentation, type SceneObjectInput } from "../lib/promptableSegmentation";
+import { createPromptedProductIsolation, createSceneCropFallbacks, isolateSceneObjects, isPromptableSegmentationEnabled, warmPromptableSegmentation, type SceneObjectInput } from "../lib/promptableSegmentation";
 import { supportsWebGpu } from "../lib/webgpu";
 import { getScanDebug, isScanDebugEnabled, recordScanDebug, resetScanDebug } from "../lib/scanDebug";
 import { getSimpleResultSummary } from "../lib/simpleResultSummary";
@@ -68,6 +68,20 @@ const SCANNER_UI_TRACE = "ui-trace-v3 (abortable scan recovery)";
 console.info(`[DeepSpec UI] Scanner chunk ${SCANNER_UI_TRACE} loaded`);
 
 const SECOND_FRAME_DELAY_MS = 120;
+
+function sceneSelectionInputs(result: IdentificationResult, focusBox: VisualFocusBox | undefined): SceneObjectInput[] {
+  const chips = getSceneChips(result);
+  return focusBox && chips.length ? [
+    { name: getSimpleResultSummary(result).title, category: String(result.scanCategory), box: focusBox, primary: true },
+    ...chips.map((chip) => ({ name: chip.object.name, category: String(chip.object.category), box: chip.box, primary: false })),
+  ] : [];
+}
+
+function keepPrimaryCutout(objects: IsolatedObject[], focusBox: VisualFocusBox | undefined, focusMode: VisualFocusMode, image: string | undefined): IsolatedObject[] {
+  return objects.map((object) => object.primary && object.focusMode === "crop" && focusBox && focusMode === "mask" && image
+    ? { ...object, focusBox, focusMode: "mask" as const, isolatedImageBase64: image } : object);
+}
+
 const IDENTIFY_BUDGET_WARN_MS = 15000;
 const VISUAL_PREPARATION_BUDGET_MS = 3000;
 const SCENE_VISUAL_BUDGET_MS = 1000;
@@ -669,6 +683,7 @@ export default function Scanner() {
       const cached = getCachedScanResult(imageHash);
       if (cached) {
         const contextualResult = applyShopFitmentContext(cached, scanVehicleContext);
+        const cachedSelections = keepPrimaryCutout(createSceneCropFallbacks(sceneSelectionInputs(contextualResult, focusBox)), focusBox, focusMode, isolatedImageBase64);
         const shopScanContext = buildShopScanContext(scanShopJob, scanVehicleContext, contextualResult);
         setAnalysisStep("Opening result");
         recordScanOutcome(contextualResult);
@@ -681,6 +696,7 @@ export default function Scanner() {
             focusBox,
             focusMode,
             isolatedImageBase64,
+            ...(cachedSelections.length ? { isolatedObjects: cachedSelections } : {}),
             scanQuality,
             ...shopScanContext,
             provenance: {
@@ -724,23 +740,16 @@ export default function Scanner() {
       if (imageHash && !scanShopJob && !scanVehicleContext && !photos && !identifySecondFrame) setCachedScanResult(imageHash, result);
       recordScanOutcome(result);
 
-      // Step 6: when the scene has several objects, cut each out (SlimSAM, one pass) for the
-      // Lens-style multi-object overview. In-memory only; falls back to single-object cleanly.
+      // Keep every selected component even if segmentation is unavailable or times out.
+      // A crop is retained as a crop, with the original photo and selection coordinates.
       let isolatedObjects: IsolatedObject[] | undefined;
-      if (focusMode === "mask" && focusBox && isPromptableSegmentationEnabled()) {
-        const sceneChips = getSceneChips(result);
-        if (sceneChips.length > 0) {
+      const inputs = sceneSelectionInputs(result, focusBox);
+      if (inputs.length) {
           setAnalysisStep("Mapping the scene");
-          const inputs: SceneObjectInput[] = [
-            { name: getSimpleResultSummary(result).title, category: String(result.scanCategory), box: focusBox, primary: true },
-            ...sceneChips.map((chip) => ({ name: chip.object.name, category: String(chip.object.category), box: chip.box, primary: false })),
-          ];
-          const objects = await optionalVisual(isolateSceneObjects(frame, inputs), SCENE_VISUAL_BUDGET_MS, []);
+          const fallback = createSceneCropFallbacks(inputs);
+          const objects = await optionalVisual(isolateSceneObjects(frame, inputs), SCENE_VISUAL_BUDGET_MS, fallback);
           if (!isScanRequestActive(requestId)) return;
-          if (objects.length >= 2) {
-            isolatedObjects = objects;
-          }
-        }
+          isolatedObjects = keepPrimaryCutout(objects, focusBox, focusMode, isolatedImageBase64);
       }
 
       recordScanDebug({ segmenter: isolationSource, focusMode });
@@ -1206,9 +1215,8 @@ export default function Scanner() {
     }
   }
 
-  // Multi-object Lens: tapping a secondary object promotes it to the isolated treatment and lazily
-  // runs identify on ITS cutout (cached) so it gets a real detail card. Focus + analyses are reset at
-  // the start of each scan (beginScanRequest) and on close, so stale indices never leak across scans.
+  // Selecting or correcting a component is local. A separate explicit action analyzes its area.
+  // Focus + analyses reset on each scan and close so stale indices cannot cross scans.
   const orderedObjects = scanReview?.scanState.isolatedObjects
     ? orderSceneObjects(scanReview.scanState.isolatedObjects)
     : [];
@@ -1254,11 +1262,7 @@ export default function Scanner() {
 
   const handleFocusObject = useCallback((index: number | null) => {
     setFocusedObjectIndex(index);
-    if (index !== null) {
-      const objects = scanReview?.scanState.isolatedObjects;
-      runObjectAnalysis(index, objects ? orderSceneObjects(objects)[index] : undefined);
-    }
-  }, [scanReview, runObjectAnalysis]);
+  }, []);
 
   const retryFocusedObject = useCallback(() => {
     if (focusedObjectIndex === null) {
@@ -1413,10 +1417,11 @@ export default function Scanner() {
                 onCorrectFocus={isOverviewPhoto ? (box, objectIndex) => {
                   if (!isAccountScopeCurrent(accountScopeRef.current)) return;
                   try {
-                    const corrected = correctScanSelection(scanReview.scanState, box, objectIndex);
+                    let corrected = correctScanSelection(scanReview.scanState, box, objectIndex);
                     if (scanReview.lookup) {
-                      const saved = updateLookupVisualSelection(scanReview.lookup.id, box, objectIndex);
+                      const saved = updateLookupVisualSelection(scanReview.lookup.id, box, objectIndex, scanReview.scanState);
                       if (!saved.ok || !saved.value) { setScanCardStatusMessage(saved.ok ? "Saved scan not found." : saved.message); return; }
+                      corrected = scanStateFromLookup(saved.value);
                       setScanReview({ ...scanReview, scanState: corrected, lookup: saved.value });
                       syncSavedLookup(saved.value);
                     } else {
@@ -2073,7 +2078,10 @@ function FocusedObjectCard({
         : <p className="mt-2 text-xs text-white/70">Selected area shown on the original photo above.</p>}
 
       <div className="mt-3">
-        {!analysis || analysis.status === "loading" ? (
+        {!analysis ? <div className="space-y-2 text-sm text-white/80">
+          <p>Inspect or correct the selected area above. Another AI analysis uses your normal scan allowance and is shown only in this view.</p>
+          <button type="button" className="min-h-11 rounded-lg bg-[var(--ds-accent)] px-3 font-bold text-white" onClick={onRetry}>Analyze selected area</button>
+        </div> : analysis.status === "loading" ? (
           <div
             className="flex items-center gap-3 rounded-xl px-3 py-4"
             data-testid="focused-object-loading"

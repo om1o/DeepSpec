@@ -190,15 +190,65 @@ describe("Result", () => {
     renderResult({ ...successfulScan, savedLookup: local }, `/result/${local.id}`);
 
     expect(screen.getByAltText("Captured car part")).toHaveAttribute("src", frame.imageBase64);
+    expect(screen.queryByTestId("issue-callout")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Outline", exact: true }));
     expect(screen.getByTestId("issue-callout")).toHaveTextContent(issue);
     await user.click(screen.getByRole("button", { name: "2. Close-up" }));
     expect(screen.getByAltText("Captured car part")).toHaveAttribute("src", detailImage);
     expect(screen.getByTestId("result-focus-frame")).toHaveAttribute("data-focus-mode", "full_frame");
     expect(screen.queryByTestId("issue-callout")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("focused-part-window")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Original", exact: true })).toHaveAttribute("aria-pressed", "true");
     await user.click(screen.getByRole("button", { name: "1. Overview" }));
     expect(screen.getByAltText("Captured car part")).toHaveAttribute("src", frame.imageBase64);
+    await user.click(screen.getByRole("button", { name: "Outline", exact: true }));
     expect(screen.getByTestId("issue-callout")).toHaveTextContent(issue);
     expect(getLookup(local.id)?.result?.evidenceRegions).toEqual(local.result?.evidenceRegions);
+  });
+
+  it("rejects an open area editor after another tab replaces the saved component", async () => {
+    const user = userEvent.setup();
+    const box = { x: 0.1, y: 0.15, width: 0.3, height: 0.4, confidence: 0.9 };
+    const local = makeLookup({ focusBox: box, focusMode: "crop", isolatedObjects: [
+      { name: "Alternator", category: "electrical", primary: true, focusBox: box, focusMode: "crop", isolatedImageBase64: "" },
+      { name: "Bracket", category: "engine", primary: false, focusBox: { ...box, x: 0.55 }, focusMode: "crop", isolatedImageBase64: "" },
+    ] });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
+    const sync = vi.spyOn(cloudSync, "syncLookupToCloud");
+    renderResult({ ...successfulScan, savedLookup: local }, `/result/${local.id}`);
+    await user.click(screen.getByRole("button", { name: "Select Bracket" }));
+    await user.click(screen.getByRole("button", { name: "Correct area" }));
+    fireEvent.change(screen.getByRole("slider", { name: "Selection x" }), { target: { value: "35" } });
+    const newer = { ...local, isolatedObjects: [local.isolatedObjects![0], { ...local.isolatedObjects![1], name: "Reservoir", focusBox: { ...box, x: 0.4 } }] };
+    const newerRaw = JSON.stringify([newer]);
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), newerRaw);
+    await user.click(screen.getByRole("button", { name: "Apply area" }));
+    expect(screen.getByText(/changed while you were editing/)).toBeInTheDocument();
+    expect(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY))).toBe(newerRaw);
+    expect(sync).not.toHaveBeenCalled();
+  });
+
+  it("does not recreate a device scan removed while its area editor was open", async () => {
+    const local = makeLookup({ focusBox: { x: 0.1, y: 0.1, width: 0.3, height: 0.4, confidence: 0 }, focusMode: "crop" });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
+    renderResult({ ...successfulScan, savedLookup: local }, `/result/${local.id}`);
+    await userEvent.click(screen.getByRole("button", { name: "Correct area" }));
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), "[]");
+    await userEvent.click(screen.getByRole("button", { name: "Apply area" }));
+    expect(screen.getByText(/removed while you were editing/)).toBeInTheDocument();
+    expect(getLookups()).toHaveLength(0);
+  });
+
+  it("applies an open unsaved editor to the same scan after Save without duplicating it", async () => {
+    renderResult({ ...successfulScan, focusBox: { x: 0.1, y: 0.1, width: 0.3, height: 0.4, confidence: 0 }, focusMode: "crop" });
+    await userEvent.click(screen.getByRole("button", { name: "Correct area" }));
+    fireEvent.change(screen.getByRole("slider", { name: "Selection x" }), { target: { value: "30" } });
+    await userEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+    expect(getLookups()).toHaveLength(1);
+    const id = getLookups()[0].id;
+    await userEvent.click(screen.getByRole("button", { name: "Apply area" }));
+    expect(getLookups()).toHaveLength(1);
+    expect(getLookups()[0]).toMatchObject({ id, focusBox: { x: 0.3 }, frame: successfulScan.frame });
   });
 
   it("keeps the latest correction retry when an earlier cloud save finishes", async () => {
@@ -369,7 +419,8 @@ describe("Result", () => {
     await act(async () => finish(successfulScan.result!));
     expect(screen.getByAltText("Captured car part")).toHaveAttribute("src", replacement.frame.imageBase64);
     expect(screen.getByTestId("result-focus-frame")).toHaveAttribute("data-focus-mode", "full_frame");
-    expect(screen.getByTestId("focused-part-window")).not.toHaveStyle({ left: "10%", top: "20%", width: "30%", height: "40%" });
+    expect(screen.queryByTestId("focused-part-window")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Original", exact: true })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("heading", { level: 1, name: "Alternator" })).not.toBeInTheDocument();
     expect(screen.getByText("Replacement photo is not analyzed.")).toBeInTheDocument();
     expect(getLookups()).toHaveLength(0);
