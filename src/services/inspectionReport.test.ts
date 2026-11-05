@@ -4,9 +4,11 @@ import type { Lookup, ScanPhoto } from "../types";
 import type { ComponentMapRecord } from "../types/componentMap";
 import type { ServiceRecord } from "../types/serviceRecord";
 import { normalizeServiceRecords } from "../lib/serviceRecord";
+import { normalizeInspectionComparisons } from "../lib/inspectionComparison";
+import type { InspectionComparison, ComparisonSide } from "../types/inspectionComparison";
 import { collectInspectionReport, INSPECTION_REPORT_MAX_IMAGE_BYTES, INSPECTION_REPORT_MAX_TOTAL_BYTES } from "./inspectionReport";
 
-const mocks = vi.hoisted(() => ({ lookups: vi.fn(), lookup: vi.fn(), map: vi.fn(), cloud: vi.fn(), auth: vi.fn(), service: vi.fn(), serviceCloud: vi.fn(), snapshot: vi.fn() }));
+const mocks = vi.hoisted(() => ({ lookups: vi.fn(), lookup: vi.fn(), map: vi.fn(), cloud: vi.fn(), auth: vi.fn(), service: vi.fn(), serviceCloud: vi.fn(), snapshot: vi.fn(), comparisons: vi.fn(), comparisonsCloud: vi.fn(), comparisonSide: vi.fn() }));
 vi.mock("./storage", () => ({ readLookups: mocks.lookups, getLookup: mocks.lookup }));
 vi.mock("./componentMapStore", () => ({ readComponentMap: mocks.map }));
 vi.mock("./cloudHistory", () => ({ readCloudLookupForReport: mocks.cloud }));
@@ -14,10 +16,21 @@ vi.mock("./auth", () => ({ getAuthClient: mocks.auth }));
 vi.mock("./serviceRecordStore", () => ({ readServiceRecords: mocks.service }));
 vi.mock("./serviceRecordCloud", () => ({ readCloudServiceRecords: mocks.serviceCloud }));
 vi.mock("./inspectionReportSnapshot", () => ({ readFinalInspectionSnapshot: mocks.snapshot }));
+vi.mock("./inspectionComparisonStore", () => ({ readInspectionComparisons: mocks.comparisons }));
+vi.mock("./inspectionComparisonCloud", () => ({ readCloudInspectionComparisons: mocks.comparisonsCloud }));
+vi.mock("./comparisonEvidence", () => ({ comparisonSideForLookup: mocks.comparisonSide, comparisonPhotos: (lookup: Lookup) => lookup.photos?.length ? lookup.photos : [{ ...lookup.frame, id: "photo-1", label: "overview" }] }));
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
 const image = `data:image/png;base64,${PNG}`;
 const bytes = Uint8Array.from(atob(PNG), (part) => part.charCodeAt(0));
 const capturedAt = "2026-11-05T15:00:00.000Z";
+function comparisonSide(lookupId: string, photoId = "photo-1"): ComparisonSide {
+  return { lookupId, photoId, photoLabel: "overview", photoAddedAt: capturedAt, scanSavedAt: capturedAt, sha256: "a".repeat(64), width: 1, height: 1, observedOn: null, vehicleContext: null };
+}
+function comparison(lookupId = "root", earlier = "previous"): InspectionComparison {
+  return { version: 1, id: "30000000-0000-4000-8000-000000000001", lookupId, recordedAt: capturedAt, subject: "Bracket", earlier: comparisonSide(earlier), current: comparisonSide(lookupId),
+    relationship: { sameVehicle: false, component: "unconfirmed", basis: "" }, conditions: { angle: "unknown", lighting: "unknown", surfaceNotes: "" },
+    observation: { outcome: "not_reviewed", notes: "" }, alignment: { rotation: 0, scale: 1, offsetX: 0, offsetY: 0 } };
+}
 function measurement(): ServiceRecord {
   return { version: 1, id: "20000000-0000-4000-8000-000000000001", lookupId: "root", recordedAt: capturedAt, occurredOn: "2026-11-04",
     recordedBy: "PRIVATE_RECORDER", basis: "personally_performed", subject: "Lower bracket edge", photoIds: ["photo-1"], notes: "Measure again with the specified method",
@@ -55,12 +68,18 @@ describe("saved inspection report collection", () => {
     mocks.map.mockImplementation(async () => structuredClone(map));
     mocks.cloud.mockResolvedValue({ ok: true, value: null });
     mocks.service.mockResolvedValue([]); mocks.serviceCloud.mockResolvedValue([]);
+    mocks.comparisons.mockResolvedValue([]); mocks.comparisonsCloud.mockResolvedValue([]);
+    mocks.comparisonSide.mockImplementation(async (lookup: Lookup, photoId: string) => comparisonSide(lookup.id, photoId));
     // Collector fixture only. The real single-transaction implementation has its
     // own request/transaction tests and is exercised by native report export.
     mocks.snapshot.mockImplementation(async (root: string, ids: string[], scope: ReturnType<typeof getAccountScope>) => ({
       map: await mocks.map(root, scope),
       serviceRecords: new Map(await Promise.all(ids.map(async (id) => {
         try { return [id, normalizeServiceRecords(await mocks.service(id, scope), id) ?? null] as const; }
+        catch { return [id, null] as const; }
+      }))),
+      comparisons: new Map(await Promise.all(ids.map(async (id) => {
+        try { return [id, normalizeInspectionComparisons(await mocks.comparisons(id, scope), id) ?? null] as const; }
         catch { return [id, null] as const; }
       }))),
     }));
@@ -75,6 +94,40 @@ describe("saved inspection report collection", () => {
     });
   });
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+  it("follows comparison photo references and verifies the embedded frozen originals", async () => {
+    local.push(scan("previous", [photo("other"), photo("chosen")]));
+    const record = comparison(); record.earlier.photoId = "chosen";
+    mocks.comparisons.mockImplementation(async (id) => id === "root" ? [record] : []);
+    const report = await collectInspectionReport("root");
+    expect(report.scans.map((entry) => entry.id)).toEqual(["root", "previous"]);
+    expect(report.comparisonEvidence).toEqual(["earlier", "current"].map((side) => ({ lookupId: "root", recordId: record.id, side, status: "unchanged" })));
+    expect(mocks.comparisonSide.mock.calls.find((call) => call[0].id === "previous")?.[1]).toBe("chosen");
+    expect(report.comparisonLogs?.[0].records).toEqual([record]);
+  });
+
+  it("keeps comparison history when its reference scan is missing without substituting another photo", async () => {
+    const record = comparison(); mocks.comparisons.mockImplementation(async (id) => id === "root" ? [record] : []);
+    const report = await collectInspectionReport("root");
+    expect(report.comparisonLogs?.[0].records).toEqual([record]);
+    expect(report.comparisonEvidence?.find((item) => item.side === "earlier")?.status).toBe("missing_photo");
+    expect(mocks.comparisonSide).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks a changed comparison source instead of passing it off as the saved original", async () => {
+    local.push(scan("previous")); const record = comparison();
+    mocks.comparisons.mockImplementation(async (id) => id === "root" ? [record] : []);
+    mocks.comparisonSide.mockImplementation(async (lookup: Lookup, photoId: string) => ({ ...comparisonSide(lookup.id, photoId), ...(lookup.id === "previous" ? { sha256: "b".repeat(64) } : {}) }));
+    const report = await collectInspectionReport("root");
+    expect(report.comparisonEvidence?.find((item) => item.side === "earlier")?.status).toBe("source_changed");
+    expect(report.missing.some((issue) => issue.kind === "comparisons" && issue.message.includes("differs"))).toBe(true);
+  });
+
+  it("rejects a comparison history change during report preparation", async () => {
+    const record = comparison();
+    mocks.comparisons.mockResolvedValueOnce([]).mockResolvedValue([record]);
+    await expect(collectInspectionReport("root")).rejects.toThrow("changed while preparing");
+  });
 
   it("includes immutable device and cloud human history without importing or changing a scan", async () => {
     const first = measurement();
@@ -134,7 +187,7 @@ describe("saved inspection report collection", () => {
     mocks.snapshot.mockImplementationOnce(async () => {
       await Promise.resolve();
       local[0].notes = "Edited while the final IDB snapshot was pending";
-      return { map: null, serviceRecords: new Map([["root", []]]) };
+      return { map: null, serviceRecords: new Map([["root", []]]), comparisons: new Map([["root", []]]) };
     });
     await expect(collectInspectionReport("root")).rejects.toThrow(/records changed/);
     expect(mocks.lookups).toHaveBeenCalledTimes(2);
@@ -147,7 +200,7 @@ describe("saved inspection report collection", () => {
       const logs = new Map<string, ServiceRecord[] | null>([["root", []], ["missing", []]]);
       if (kind === "map") finalMap.localRevision += 1;
       else { const id = kind === "first-history" ? "root" : "missing"; logs.set(id, [{ ...measurement(), lookupId: id }]); }
-      return { map: finalMap, serviceRecords: logs };
+      return { map: finalMap, serviceRecords: logs, comparisons: new Map([["root", []], ["missing", []]]) };
     });
     await expect(collectInspectionReport("root")).rejects.toThrow(/records changed/);
   });
@@ -267,12 +320,29 @@ describe("saved inspection report collection", () => {
     }
   });
 
-  it.each(["path", "capturedAt", "photoId", "geometry"] as const)("does not refresh mismatched %s metadata into reviewed evidence", async (kind) => {
+  it("refreshes the same originals when cloud timestamps use equivalent UTC offsets", async () => {
+    local[0] = scan("root", [{ ...photo("one"), imageBase64: signed("root", "group.png") }]);
+    local[0].frame.imageBase64 = signed("root");
+    const remote = structuredClone(local[0]);
+    remote.frame = { imageBase64: signed("root", "original.png", "fresh"), capturedAt: "2026-11-05T15:00:00+00:00" };
+    remote.photos![0] = { ...remote.photos![0], imageBase64: signed("root", "group.png", "fresh"), capturedAt: "2026-11-05T10:00:00-05:00" };
+    mocks.cloud.mockResolvedValue({ ok: true, value: remote });
+    const report = await collectInspectionReport("root");
+    expect(report.missing).toEqual([]);
+    expect(report.scans[0].frame.imageBase64).toBe(image);
+    expect(report.scans[0].photos![0].imageBase64).toBe(image);
+    expect(report.scans[0].photos![0].capturedAt).toBe(capturedAt);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    for (const [url] of fetchSpy.mock.calls) expect(url).toContain("token=fresh");
+  });
+
+  it.each(["path", "capturedAt", "invalidTime", "photoId", "geometry"] as const)("does not refresh mismatched %s metadata into reviewed evidence", async (kind) => {
     const photos = [{ ...photo("one"), imageBase64: signed("root", "group.png") }]; local[0] = scan("root", photos);
     local[0].focusBox = box; local[0].isolatedImageBase64 = signed("root", "mask.png");
     const remote = structuredClone(local[0]); remote.photos![0].imageBase64 = signed("root", "group.png", "fresh"); remote.isolatedImageBase64 = signed("root", "mask.png", "fresh");
     if (kind === "path") remote.photos![0].imageBase64 = signed("root", "different.png", "fresh");
     if (kind === "capturedAt") remote.photos![0].capturedAt = "2026-11-06T00:00:00.000Z";
+    if (kind === "invalidTime") local[0].photos![0].capturedAt = remote.photos![0].capturedAt = "2026-02-30T15:00:00+00:00";
     if (kind === "photoId") remote.photos![0].id = "different";
     if (kind === "geometry") remote.focusBox = { ...box, x: .2 };
     mocks.cloud.mockResolvedValue({ ok: true, value: remote });

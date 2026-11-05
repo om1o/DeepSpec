@@ -11,6 +11,10 @@ import { mergeServiceRecords, normalizeServiceRecords } from "../lib/serviceReco
 import { readServiceRecords } from "./serviceRecordStore";
 import { readCloudServiceRecords } from "./serviceRecordCloud";
 import { readFinalInspectionSnapshot, type FinalInspectionSnapshot } from "./inspectionReportSnapshot";
+import { mergeInspectionComparisons, normalizeInspectionComparisons, comparisonSideMatches, normalizeComparisonTimestamp } from "../lib/inspectionComparison";
+import { readInspectionComparisons } from "./inspectionComparisonStore";
+import { readCloudInspectionComparisons } from "./inspectionComparisonCloud";
+import { comparisonSideForLookup, comparisonPhotos } from "./comparisonEvidence";
 
 export const INSPECTION_REPORT_MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 export const INSPECTION_REPORT_MAX_TOTAL_BYTES = 32 * 1024 * 1024;
@@ -118,6 +122,9 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
   const scans: Lookup[] = [];
   const serviceLogs: NonNullable<InspectionReportSnapshot["serviceLogs"]> = [];
   const serviceSignatures = new Map<string, string | null>();
+  const comparisonLogs: NonNullable<InspectionReportSnapshot["comparisonLogs"]> = [];
+  const comparisonEvidence: NonNullable<InspectionReportSnapshot["comparisonEvidence"]> = [];
+  const comparisonSignatures = new Map<string, string | null>();
   const embedded = new Map<string, { data: string; size: number }>();
   const embed = async (source: string, lookupId: string) => {
     let image = embedded.get(source);
@@ -169,6 +176,34 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
 
   for (const [id, expectedPhotos] of references) {
     check(); progress(`Preparing saved scan ${scans.length + 1} of ${references.size}…`);
+    let comparisons: NonNullable<InspectionReportSnapshot["comparisonLogs"]>[number]["records"] = [];
+    let comparisonsCloudChecked = false;
+    try {
+      const records = normalizeInspectionComparisons(await wait(() => readInspectionComparisons(id, scope)), id);
+      if (!records) throw new Error();
+      comparisons = structuredClone(records);
+      comparisonSignatures.set(id, JSON.stringify(records));
+    } catch (error) {
+      rethrowFatal(error); comparisonSignatures.set(id, null);
+      missing.push({ kind: "comparisons", lookupId: id, message: "Dated comparisons on this device could not be read. Their absence from this report does not mean none exist." });
+    }
+    if (configuredOrigin) {
+      try {
+        comparisons = mergeInspectionComparisons(comparisons, await wait((signal) => readCloudInspectionComparisons(id, scope, signal)), id);
+        comparisonsCloudChecked = true;
+      } catch (error) {
+        rethrowFatal(error);
+        missing.push({ kind: "comparisons", lookupId: id, message: "Cloud comparison history could not be checked or combined safely. Available device records are included; additional entries or conflicting copies may be missing." });
+      }
+    }
+    comparisonLogs.push({ lookupId: id, records: structuredClone(comparisons), cloudChecked: comparisonsCloudChecked });
+    // Map iteration visits newly discovered reference scans once, including a
+    // comparison's older history. A cycle cannot loop and the same report limits apply.
+    for (const record of comparisons) for (const side of [record.earlier, record.current]) {
+      const ids = references.get(side.lookupId) ?? new Set<string>();
+      ids.add(side.photoId); references.set(side.lookupId, ids);
+      if (references.size > INSPECTION_REPORT_MAX_SCANS) throw limitError();
+    }
     const local = id === rootLookupId ? rootLocal : localLookup(id);
     const source = local ?? await remoteLookup(id); check();
     let serviceRecords: NonNullable<InspectionReportSnapshot["serviceLogs"]>[number]["records"] = [];
@@ -243,6 +278,24 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
     }
     scans.push(scan);
   }
+  progress("Checking originals used by dated comparisons…");
+  for (const log of comparisonLogs) for (const record of log.records) for (const sideName of ["earlier", "current"] as const) {
+    const side = record[sideName];
+    const scan = scans.find((entry) => entry.id === side.lookupId);
+    const photo = scan && comparisonPhotos(scan).find((entry) => entry.id === side.photoId);
+    let status: NonNullable<InspectionReportSnapshot["comparisonEvidence"]>[number]["status"] = "missing_photo";
+    if (scan && photo?.imageBase64) {
+      try {
+        // Verify the frozen embedded source, not a fresh asynchronous lookup.
+        const actual = await wait(() => comparisonSideForLookup(scan, side.photoId, scope));
+        status = comparisonSideMatches(side, actual) ? "unchanged" : "source_changed";
+      } catch (error) { rethrowFatal(error); status = "verification_unavailable"; }
+    }
+    comparisonEvidence.push({ lookupId: record.lookupId, recordId: record.id, side: sideName, status });
+    if (status !== "unchanged") missing.push({ kind: "comparisons", lookupId: side.lookupId, photoId: side.photoId,
+      message: status === "source_changed" ? "This photo or its saved context differs from the dated comparison. The historical record remains, but the current photo is not presented as its original evidence."
+        : "The original referenced by a dated comparison could not be verified. Its recorded observation is retained without substituting another photo." });
+  }
   progress("Checking that saved records have not changed…");
   let finalSnapshot: FinalInspectionSnapshot;
   try { finalSnapshot = await wait(() => readFinalInspectionSnapshot(rootLookupId, [...references.keys()], scope)); }
@@ -253,13 +306,18 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
     const current = finalSnapshot.serviceRecords.get(id);
     if ((current === null ? null : JSON.stringify(current)) !== before) throw staleError();
   }
+  for (const [id, before] of comparisonSignatures) {
+    if (!finalSnapshot.comparisons.has(id)) throw staleError();
+    const current = finalSnapshot.comparisons.get(id);
+    if ((current === null ? null : JSON.stringify(current)) !== before) throw staleError();
+  }
   // No more asynchronous reads after the joint IDB snapshot. Read localStorage
   // synchronously so it cannot change while awaiting another history/map check.
   const finalRead = readLookups(); check();
   if (!finalRead.ok) throw staleError();
   for (const [id, before] of localSignatures) if (JSON.stringify(getLookup(id, finalRead.value)) !== before) throw staleError();
   check();
-  return { version: 1, createdAt: new Date().toISOString(), rootLookupId, map: map ? structuredClone(map) : null, scans, missing, embeddedBytes, serviceLogs };
+  return { version: 1, createdAt: new Date().toISOString(), rootLookupId, map: map ? structuredClone(map) : null, scans, missing, embeddedBytes, serviceLogs, comparisonLogs, comparisonEvidence };
 }
 
 function storageOrigin(): string | null {
@@ -286,14 +344,19 @@ function sameSelection(a: Pick<Lookup, "focusBox" | "focusMode">, b: Pick<Lookup
   return JSON.stringify(a.focusBox) === JSON.stringify(b.focusBox) && a.focusMode === b.focusMode;
 }
 
+function samePhotoTime(a: string, b: string) {
+  const normalized = normalizeComparisonTimestamp(a);
+  return normalized !== undefined && normalized === normalizeComparisonTimestamp(b);
+}
+
 function imageReferences(scan: Lookup): ImageSlot[] {
   const id = scan.id;
   const slots: ImageSlot[] = [{ source: scan.frame.imageBase64, issue: { kind: "photo", lookupId: id, photoId: scan.photos?.[0]?.id ?? "photo-1" },
     replace: (imageBase64) => { scan.frame.imageBase64 = imageBase64; },
-    refreshed: (remote) => remote.frame.capturedAt === scan.frame.capturedAt ? remote.frame.imageBase64 : undefined }];
+    refreshed: (remote) => samePhotoTime(remote.frame.capturedAt, scan.frame.capturedAt) ? remote.frame.imageBase64 : undefined }];
   for (const photo of scan.photos ?? []) slots.push({ source: photo.imageBase64, issue: { kind: "photo", lookupId: id, photoId: photo.id },
     replace: (imageBase64) => { photo.imageBase64 = imageBase64; },
-    refreshed: (remote) => remote.photos?.find((candidate) => candidate.id === photo.id && candidate.capturedAt === photo.capturedAt)?.imageBase64 });
+    refreshed: (remote) => remote.photos?.find((candidate) => candidate.id === photo.id && samePhotoTime(candidate.capturedAt, photo.capturedAt))?.imageBase64 });
   if (scan.isolatedImageBase64 !== undefined) slots.push({ source: scan.isolatedImageBase64, issue: { kind: "cutout", lookupId: id },
     replace: (image) => { scan.isolatedImageBase64 = image; },
     refreshed: (remote) => sameSelection(scan, remote) ? remote.isolatedImageBase64 : undefined });

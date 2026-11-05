@@ -4,7 +4,7 @@ import type { ComponentMapRecord } from "../types/componentMap";
 import type { ServiceRecord } from "../types/serviceRecord";
 
 const mocks = vi.hoisted(() => ({ open: vi.fn() }));
-vi.mock("./evidenceDb", () => ({ openEvidenceDatabase: mocks.open, COMPONENT_MAP_STORE: "component-maps", SERVICE_RECORD_STORE: "service-records", EVIDENCE_STORAGE_TIMEOUT_MS: 15_000 }));
+vi.mock("./evidenceDb", () => ({ openEvidenceDatabase: mocks.open, COMPONENT_MAP_STORE: "component-maps", SERVICE_RECORD_STORE: "service-records", INSPECTION_COMPARISON_STORE: "inspection-comparisons", EVIDENCE_STORAGE_TIMEOUT_MS: 15_000 }));
 const map: ComponentMapRecord = { document: { version: 1, id: "root", overview: { lookupId: "root", photoId: "photo-1" }, components: [] }, localRevision: 1, cloudRevision: null, syncedLocalRevision: 0 };
 const record = (lookupId = "root"): ServiceRecord => ({ version: 1, id: "20000000-0000-4000-8000-000000000001", lookupId, recordedAt: "2026-11-05T12:00:00Z", occurredOn: null, recordedBy: "Recorder", basis: "personally_performed", subject: "Hose", photoIds: [], notes: "Record remains without image", kind: "repair", action: "Inspect clamps", status: "planned", parts: "" });
 
@@ -42,11 +42,12 @@ it("queues map and every history get in one readonly transaction before processi
   db.rows.set(db.key("component-maps", "root"), map); db.rows.set(db.key("service-records", "missing"), [record("missing")]);
   const pending = readFinalInspectionSnapshot("root", ["root", "missing", "missing"]);
   await Promise.resolve();
-  expect(db.database.transaction).toHaveBeenCalledExactlyOnceWith(["component-maps", "service-records"], "readonly");
-  expect(db.requests.map((request) => request.key)).toEqual([db.key("component-maps", "root"), db.key("service-records", "root"), db.key("service-records", "missing")]);
+  expect(db.database.transaction).toHaveBeenCalledExactlyOnceWith(["component-maps", "service-records", "inspection-comparisons"], "readonly");
+  expect(db.requests.map((request) => request.key)).toEqual([db.key("component-maps", "root"), db.key("service-records", "root"), db.key("service-records", "missing"), db.key("inspection-comparisons", "root"), db.key("inspection-comparisons", "missing")]);
   db.drain(); const result = await pending;
   expect(result.map).toEqual(map); expect(result.serviceRecords.get("root")).toEqual([]);
   expect(result.serviceRecords.get("missing")).toEqual([record("missing")]); expect(db.database.close).toHaveBeenCalledOnce();
+  expect(result.comparisons.get("root")).toEqual([]); expect(result.comparisons.get("missing")).toEqual([]);
 });
 
 it("returns one transaction snapshot when map and an earlier history are edited during later callbacks", async () => {
@@ -62,9 +63,11 @@ it("returns one transaction snapshot when map and an earlier history are edited 
 it("distinguishes corrupt service history from an absent empty history", async () => {
   const db = fixture(); mocks.open.mockResolvedValue(db.database);
   db.rows.set(db.key("service-records", "corrupt"), null);
+  db.rows.set(db.key("inspection-comparisons", "corrupt"), null);
   const pending = readFinalInspectionSnapshot("root", ["corrupt", "absent"]); await Promise.resolve(); db.drain();
   const result = await pending; expect(result.map).toBeNull();
   expect(result.serviceRecords.get("corrupt")).toBeNull(); expect(result.serviceRecords.get("absent")).toEqual([]);
+  expect(result.comparisons.get("corrupt")).toBeNull(); expect(result.comparisons.get("absent")).toEqual([]);
 });
 
 it("rejects corrupt map data and closes the connection", async () => {

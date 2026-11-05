@@ -5,6 +5,7 @@ import type { InspectionReportSnapshot } from "../types/inspectionReport";
 import { buildInspectionReportHtml, getInspectionReportFilename, MAX_INSPECTION_REPORT_HTML_BYTES } from "./inspectionReportHtml";
 import { confirmVehicleContextField } from "./vehicleContext";
 import type { ServiceRecord } from "../types/serviceRecord";
+import type { InspectionComparison, ComparisonSide } from "../types/inspectionComparison";
 
 const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/bKkAAAAASUVORK5CYII=";
 const WHEN = "2026-11-05T12:00:00Z";
@@ -52,7 +53,44 @@ function humanMeasurement(): Extract<ServiceRecord, { kind: "measurement" }> {
     kind: "measurement", quantity: "Thickness", reading: "2.00", unit: "mm", method: "Caliper across marked location", instrument: "Unverified caliper", conditions: "Dry", noReadingReason: "" };
 }
 
+function visualComparison(): InspectionComparison {
+  const side = (lookupId: string): ComparisonSide => ({ lookupId, photoId: `${lookupId}-label`, photoLabel: "marking", photoAddedAt: WHEN, scanSavedAt: WHEN,
+    sha256: "a".repeat(64), width: 1, height: 1, observedOn: null, vehicleContext: { vin: "PRIVATE_COMPARISON_VIN", model: "Historical model" } });
+  return { version: 1, id: "30000000-0000-4000-8000-000000000001", lookupId: "overview", recordedAt: WHEN, subject: "Bracket comparison <original>",
+    earlier: side("previous"), current: side("overview"), relationship: { sameVehicle: true, component: "same_part", basis: "Owner identified location" },
+    conditions: { angle: "different", lighting: "unknown", surfaceNotes: "Wet in second photograph" }, observation: { outcome: "inconclusive", notes: "Could be lighting <script>" },
+    alignment: { rotation: 15, scale: 1.2, offsetX: .1, offsetY: -.1 } };
+}
+
 describe("self-contained mechanic HTML report", () => {
+  it("exports two verified originals, historical context, honest dates and reversible display alignment", () => {
+    const record = visualComparison(); const input = snapshot([lookup(), lookup("previous")]);
+    input.comparisonLogs = [{ lookupId: "overview", records: [record], cloudChecked: false }];
+    input.comparisonEvidence = ["earlier", "current"].map((side) => ({ lookupId: record.lookupId, recordId: record.id, side: side as "earlier" | "current", status: "unchanged" }));
+    const doc = parsed(input); const section = doc.querySelector("#dated-comparisons")!;
+    expect(section.querySelectorAll("img")).toHaveLength(2);
+    expect(section.textContent).toContain("Observation date — user reported"); expect(section.textContent).toContain("Unknown");
+    expect(section.textContent).toContain("Wet in second photograph"); expect(section.textContent).toContain("Historical model");
+    expect(section.textContent).toContain("Could be lighting <script>"); expect(doc.querySelectorAll("script")).toHaveLength(0);
+    expect(doc.body.textContent).not.toContain("PRIVATE_COMPARISON_VIN"); expect(doc.body.textContent).toContain("Do not drive until the brake fault is inspected.");
+    expect(section.querySelectorAll("img")[1].getAttribute("style")).toContain("rotate(15deg) scale(1.2)");
+    expect(section.querySelectorAll("img")[1].getAttribute("style")).toContain("height:100%;object-fit:contain");
+    expect(section.querySelector(".comparison-viewport")?.getAttribute("style")).toContain("aspect-ratio:4/3");
+    for (const link of section.querySelectorAll<HTMLAnchorElement>('a[href^="#"]')) expect(doc.querySelector(link.getAttribute("href")!)).not.toBeNull();
+    expect(parsed(input, { includeVin: true, includePrivateNotes: false }).body.textContent).toContain("PRIVATE_COMPARISON_VIN");
+  });
+
+  it("retains corrections and unavailable comparison observations without substituting another original", () => {
+    const record = visualComparison(); const corrected = { ...record, id: "30000000-0000-4000-8000-000000000002", supersedesId: record.id, correctionReason: "Misread lighting", observation: { outcome: "inconclusive" as const, notes: "Need same view" } };
+    const input = snapshot(); input.comparisonLogs = [{ lookupId: "overview", records: [record, corrected], cloudChecked: true }];
+    input.comparisonEvidence = [record, corrected].flatMap((entry) => (["earlier", "current"] as const).map((side) => ({ lookupId: entry.lookupId, recordId: entry.id, side, status: side === "earlier" ? "missing_photo" as const : "source_changed" as const })));
+    const doc = parsed(input); const section = doc.querySelector("#dated-comparisons")!;
+    expect(section.querySelectorAll(".comparison-record")).toHaveLength(2); expect(section.querySelectorAll("img")).toHaveLength(0);
+    expect(section.textContent).toContain("superseded"); expect(section.textContent).toContain("Need same view");
+    expect(section.textContent).toContain("Historical original unavailable or unverified");
+    expect(section.querySelector('a[href="#comparison-1-1"]')).not.toBeNull();
+    expect(doc.querySelector("#missing-evidence")?.textContent).toContain("historical evidence was not verified");
+  });
   it("preserves exact human readings, corrections, original photo links and private identity boundaries", () => {
     const first = humanMeasurement();
     const correction = { ...first, id: "10000000-0000-4000-8000-000000000002", recordedAt: "2026-11-05T13:00:00.000Z", reading: "2.10", supersedesId: first.id, correctionReason: "Transcription correction <keep original>" };

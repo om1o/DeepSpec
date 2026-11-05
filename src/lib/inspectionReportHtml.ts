@@ -5,6 +5,7 @@ import { normalizeConditionAssessment } from "./conditionAssessment";
 import { buildIntakeDraft } from "./intakeDraft";
 import { vehicleContextDetails } from "./vehicleContext";
 import { normalizeServiceRecords, serviceRecordRows, serviceRecordStatus } from "./serviceRecord";
+import { normalizeInspectionComparisons, inspectionComparisonStatus } from "./inspectionComparison";
 
 export const MAX_INSPECTION_REPORT_HTML_BYTES = 64 * 1024 * 1024;
 
@@ -50,7 +51,10 @@ type ScanEntry = { scan: Lookup; anchor: string; number: number; photos: ScanPho
 type Outline = { box: VisualFocusBox; label: string; target?: string; map?: boolean };
 
 function vehicleRows(scan: Lookup, options: InspectionReportOptions): [string, string][] {
-  const context = scan.vehicleContext;
+  return contextRows(scan.vehicleContext, options);
+}
+
+function contextRows(context: VehicleContext | undefined, options: InspectionReportOptions): [string, string][] {
   // An allowlist prevents the display helper's optional shop fields from leaking into an export.
   const safe: VehicleContext = {
     year: context?.year, make: context?.make, model: context?.model, engine: context?.engine,
@@ -231,13 +235,53 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
   const unavailableServiceHtml = unavailableServiceIds.length ? `<section id="unavailable-service-history"><h2>Retained human history for unavailable scans</h2>
     ${prose("These entries were saved independently of scan images. Their original scan metadata and photos are unavailable in this snapshot. The recorded statements and references remain intact; no other image or AI result has been substituted.")}
     ${unavailableServiceIds.map((id, index) => `<section id="unavailable-service-${index + 1}"><h3>Unavailable scan: ${escape(id)}</h3>${serviceHistory(id, `unavailable-service-${index + 1}`)}</section>`).join("")}</section>` : "";
+  const comparisonIds = new Set<string>();
+  const comparisonsHtml = `<section id="dated-comparisons"><h2>Dated visual comparisons</h2>
+    ${prose("Comparisons preserve human observations and both photo references. They do not measure rust growth, establish remaining material thickness, confirm a cause or repair outcome, or clear an existing safety instruction. Added/saved dates do not establish when an imported photo was taken.")}
+    ${snapshot.comparisonLogs ? snapshot.comparisonLogs.map((log, logIndex) => {
+      if (comparisonIds.has(log.lookupId)) throw new Error("This report contains duplicate comparison histories. Prepare it again.");
+      comparisonIds.add(log.lookupId);
+      const records = normalizeInspectionComparisons(log.records, log.lookupId);
+      if (!records) throw new Error("Dated comparisons could not be read safely. Prepare the report again.");
+      if (!records.length) return "";
+      const anchor = (id: string) => `comparison-${logIndex + 1}-${records.findIndex((record) => record.id === id) + 1}`;
+      return `${prose(log.cloudChecked ? "Cloud comparison history was checked; unavailable sources are listed under Missing evidence." : "Cloud comparison history was not verified. Additional entries may exist.")}${records.map((record) => {
+        const status = inspectionComparisonStatus(record, records);
+        const views = (["earlier", "current"] as const).map((sideName) => {
+          const side = record[sideName];
+          const entry = byId.get(side.lookupId);
+          const photo = entry?.photos.find((candidate) => candidate.id === side.photoId);
+          const checks = snapshot.comparisonEvidence?.filter((item) => item.lookupId === record.lookupId && item.recordId === record.id && item.side === sideName);
+          const verified = checks?.length === 1 && checks[0].status === "unchanged";
+          const label = sideName === "earlier" ? "Reference" : "Follow-up";
+          let picture = prose("Historical original unavailable or unverified. Another image has not been substituted.");
+          if (verified && photo && rasterImage(photo.imageBase64)) {
+            imageCharacters += photo.imageBase64.length;
+            if (imageCharacters > MAX_INSPECTION_REPORT_HTML_BYTES) throw new Error("The HTML report exceeds the 64 MiB limit. Export fewer comparisons or smaller photos.");
+            const a = record.alignment;
+            const transform = sideName === "current" ? `transform:translate(${a.offsetX * 100}%,${a.offsetY * 100}%) rotate(${a.rotation}deg) scale(${a.scale});` : "";
+            picture = `<div class="comparison-viewport" style="aspect-ratio:4/3;overflow:hidden;background:#eef2f4"><img src="${escape(photo.imageBase64)}" alt="${escape(`${label} original for ${record.subject}`)}" style="${transform}width:100%;height:100%;object-fit:contain"></div><p>Unaligned original: ${photoLink(side.lookupId, side.photoId)}.</p>`;
+          } else noteMissing(`Comparison ${record.id}, ${label.toLowerCase()} photo ${side.photoId}: historical evidence was not verified.`);
+          return `<figure style="min-width:0"><h4>${label}</h4>${picture}${details([["Photo", `${side.photoId} — ${words(side.photoLabel)}`], ["Observation date — user reported", side.observedOn ?? "Unknown"], ["Photo added", side.photoAddedAt], ["Scan saved", side.scanSavedAt], ["Saved analysis reference", side.analysisAttemptId ?? "Not recorded"]])}
+            <h4>Vehicle context saved with this comparison</h4>${details(contextRows(side.vehicleContext ?? undefined, options))}</figure>`;
+        }).join("");
+        return `<article id="${anchor(record.id)}" class="comparison-record"><h3>${escape(record.subject)} <span class="badge">${escape(words(status))}</span></h3>
+          ${status === "conflicting_correction" ? prose("Conflicting corrections are retained. No alternative was chosen automatically.") : ""}
+          ${details([["Recorded", record.recordedAt], ["Same vehicle — human confirmation", record.relationship.sameVehicle ? "Yes, self-reported" : "Unconfirmed"], ["Component relationship — human statement", words(record.relationship.component)], ["Identity basis", record.relationship.basis || "Not recorded"], ["Viewpoint", words(record.conditions.angle)], ["Lighting", words(record.conditions.lighting)], ["Surface, cleaning and intervening work", record.conditions.surfaceNotes || "Not recorded"], ["Human observation", words(record.observation.outcome)], ["Observation notes", record.observation.notes || "None recorded"]])}
+          ${record.conditions.angle !== "similar" || record.conditions.lighting !== "similar" ? '<p class="warning">Viewing conditions differ or are unknown. An apparent difference may come from the photographs.</p>' : ""}
+          ${!record.earlier.observedOn || !record.current.observedOn ? prose("At least one observation date is unknown. Added/saved timestamps cannot establish the chronology of a visual change.") : ""}
+          ${record.supersedesId ? `<p>Corrects <a href="#${anchor(record.supersedesId)}">the retained earlier entry</a>: ${escape(record.correctionReason)}.</p>` : ""}
+          ${prose(`Follow-up display alignment: rotation ${record.alignment.rotation}°, proportional scale ${record.alignment.scale}, horizontal offset ${record.alignment.offsetX * 100}%, vertical offset ${record.alignment.offsetY * 100}%. Display alignment is not a measurement or proof that views are comparable; unaligned originals remain linked.`)}
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:20px">${views}</div></article>`;
+      }).join("")}`;
+    }).join("") || prose("No comparison entries were found in the sources successfully read for this snapshot.") : prose("Comparison history was not collected in this snapshot.")}</section>`;
   if (!byId.has(snapshot.rootLookupId)) noteMissing("The requested overview scan is unavailable in this snapshot.");
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; object-src 'none'"><title>DeepSpec mechanic handoff</title><style>${CSS}</style></head><body><main>
     <header><h1>Mechanic handoff</h1>${prose(`Snapshot created: ${snapshot.createdAt}`)}${prose(`${entries.length} saved scan${entries.length === 1 ? "" : "s"}; ${map?.components.length ?? 0} mapped components. This is a saved evidence report, not a diagnosis or certification of condition, fitment, function or safety.`)}
     <p>AI observations, possible causes and human records are labeled separately. Linked photos are not assumed to show the same part or vehicle unless that relationship was established by the user. Original images may contain identifying details or embedded metadata.</p>
     ${prose(`VIN ${options.includeVin ? "included where saved" : "excluded"}; private scan and vehicle notes ${options.includePrivateNotes ? "included where saved" : "excluded"}. Component notes, human inspection notes and service-record notes are included as inspection evidence and may contain identifiers. Customer, plate, job, inspector and service-recorder identity fields and chat transcripts are excluded.`)}
     <nav aria-label="Report navigation"><ul><li><a href="#component-map">Component map</a></li>${entries.map((entry) => `<li><a href="#${entry.anchor}">Scan ${entry.number}</a></li>`).join("")}${unavailableServiceIds.length ? '<li><a href="#unavailable-service-history">Retained history for unavailable scans</a></li>' : ""}<li><a href="#missing-evidence">Missing evidence</a></li></ul></nav></header>
-    ${mapHtml}${scansHtml}${unavailableServiceHtml}<section id="missing-evidence"><h2>Missing or unavailable evidence</h2>${list(missing, "No missing evidence was reported for this snapshot. This does not establish completeness of an inspection.")}</section>
+    ${mapHtml}${scansHtml}${unavailableServiceHtml}${comparisonsHtml}<section id="missing-evidence"><h2>Missing or unavailable evidence</h2>${list(missing, "No missing evidence was reported for this snapshot. This does not establish completeness of an inspection.")}</section>
     <footer>Static report with embedded raster images. No scripts or remote assets. Saved outlines are display overlays, not changes to original pixels. Human-service entries retain corrections and retractions; they are self-reported records, not independently verified repairs or measurements.</footer></main></body></html>`;
   if (html.length > MAX_INSPECTION_REPORT_HTML_BYTES || new TextEncoder().encode(html).byteLength > MAX_INSPECTION_REPORT_HTML_BYTES) throw new Error("The HTML report exceeds the 64 MiB limit. Export fewer scans or smaller photos.");
   return html;
