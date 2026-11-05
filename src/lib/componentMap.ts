@@ -1,5 +1,5 @@
-import type { Lookup, VisualFocusBox } from "../types";
-import type { ComponentCaptureTarget, ComponentMap, ComponentMapComponent, ComponentMapRecord, ComponentMapStatus, MapOverviewSource } from "../types/componentMap";
+import { PHOTO_RELATIONSHIPS, SCAN_PHOTO_LABELS, type Lookup, type VisualFocusBox } from "../types";
+import type { ComponentCaptureTarget, ComponentMap, ComponentMapComponent, ComponentMapGroupBinding, ComponentMapRecord, ComponentMapStatus, MapOverviewSource } from "../types/componentMap";
 
 export const MAX_MAP_COMPONENTS = 100;
 export const MAX_COMPONENT_SCAN_GROUPS = 100;
@@ -45,6 +45,40 @@ export function mapOverviewSourcesMatch(left: unknown, right: unknown): boolean 
     && a.photoAddedAt === b.photoAddedAt && a.scanSavedAt === b.scanSavedAt);
 }
 
+export function normalizeComponentMapGroupBinding(value: unknown, photoIds?: readonly string[]): ComponentMapGroupBinding | undefined {
+  if (!object(value) || Object.keys(value).length !== 3 || value.version !== 1
+    || !PHOTO_RELATIONSHIPS.includes(value.photoRelationship as ComponentMapGroupBinding["photoRelationship"])
+    || !Array.isArray(value.photos) || value.photos.length < 1 || value.photos.length > 4
+    || (photoIds !== undefined && photoIds.length !== value.photos.length)) return undefined;
+  const photos: ComponentMapGroupBinding["photos"] = [];
+  for (const [index, photo] of value.photos.entries()) {
+    if (!object(photo) || Object.keys(photo).length !== 3 || !id(photo.photoId, PHOTO_ID)
+      || !SCAN_PHOTO_LABELS.includes(photo.label as ComponentMapGroupBinding["photos"][number]["label"])
+      || photos.some((prior) => prior.photoId === photo.photoId) || (photoIds !== undefined && photo.photoId !== photoIds[index])) return undefined;
+    const source = normalizeMapOverviewSource(photo.source);
+    if (!source) return undefined;
+    photos.push({ photoId: photo.photoId, label: photo.label as ComponentMapGroupBinding["photos"][number]["label"], source });
+  }
+  return { version: 1, photoRelationship: value.photoRelationship as ComponentMapGroupBinding["photoRelationship"], photos };
+}
+
+export function componentMapGroupBindingsMatch(left: unknown, right: unknown): boolean {
+  const a = normalizeComponentMapGroupBinding(left), b = normalizeComponentMapGroupBinding(right);
+  return Boolean(a && b && JSON.stringify(a) === JSON.stringify(b));
+}
+
+/** Existing historical links cannot be rebound, moved or silently retrofitted. */
+export function componentMapBindingsPreserved(before: ComponentMap, after: ComponentMap): boolean {
+  return before.components.every((component) => component.scanGroups.every((group) => {
+    if (!group.binding) return !after.components.some((item) => item.scanGroups.some((candidate) => candidate.linkId.toLowerCase() === group.linkId.toLowerCase() && candidate.binding !== undefined));
+    const nextComponent = after.components.find((item) => item.id === component.id);
+    const next = nextComponent?.scanGroups.find((item) => item.linkId === group.linkId);
+    return nextComponent?.id === component.id && next?.linkId === group.linkId && next.lookupId === group.lookupId
+      && next.photoIds.length === group.photoIds.length && next.photoIds.every((photoId, index) => photoId === group.photoIds[index])
+      && componentMapGroupBindingsMatch(group.binding, next.binding);
+  }));
+}
+
 function normalizeBox(value: unknown): VisualFocusBox | undefined {
   if (!object(value)) return undefined;
   const { x, y, width, height, confidence } = value;
@@ -64,11 +98,11 @@ function normalizeSuggestedLocation(value: unknown): ComponentMapComponent["sugg
 
 // Reject an invalid document as a whole. Never silently lose a component or its evidence links.
 export function normalizeComponentMap(value: unknown): ComponentMap | undefined {
-  if (!object(value) || (value.version !== 1 && value.version !== 2 && value.version !== 3) || !id(value.id) || !object(value.overview)
+  if (!object(value) || ![1, 2, 3, 4].includes(value.version as number) || !id(value.id) || !object(value.overview)
     || value.overview.lookupId !== value.id || !id(value.overview.photoId, PHOTO_ID)
     || !Array.isArray(value.components) || value.components.length > MAX_MAP_COMPONENTS) return undefined;
   const source = normalizeMapOverviewSource(value.overview.source);
-  if (value.version === 3 ? !source : Object.prototype.hasOwnProperty.call(value.overview, "source")) return undefined;
+  if ((value.version as number) >= 3 ? !source : Object.prototype.hasOwnProperty.call(value.overview, "source")) return undefined;
   const components: ComponentMapComponent[] = [];
   const componentIds = new Set<string>();
   const linkIds = new Set<string>();
@@ -99,14 +133,20 @@ export function normalizeComponentMap(value: unknown): ComponentMap | undefined 
       if (!object(group) || !id(group.linkId, UUID) || linkIds.has(group.linkId.toLowerCase()) || !id(group.lookupId)
         || !Array.isArray(group.photoIds) || group.photoIds.length < 1 || group.photoIds.length > 4
         || !group.photoIds.every((photoId) => id(photoId, PHOTO_ID)) || new Set(group.photoIds).size !== group.photoIds.length) return undefined;
+      let binding: ComponentMapGroupBinding | undefined;
+      if (Object.prototype.hasOwnProperty.call(group, "binding")) {
+        if (value.version !== 4) return undefined;
+        binding = normalizeComponentMapGroupBinding(group.binding, group.photoIds as string[]);
+        if (!binding) return undefined;
+      }
       linkIds.add(group.linkId.toLowerCase());
-      scanGroups.push({ linkId: group.linkId, lookupId: group.lookupId, photoIds: [...group.photoIds] as string[] });
+      scanGroups.push({ linkId: group.linkId, lookupId: group.lookupId, photoIds: [...group.photoIds] as string[], ...(binding ? { binding } : {}) });
     }
     components.push({ id: raw.id, label: raw.label.trim(), status: raw.status as ComponentMapStatus, notes: raw.notes,
       ...(raw.reviewedAt === undefined ? {} : { reviewedAt: raw.reviewedAt as string }), ...(region ? { region } : {}),
       ...(suggestedLocation ? { suggestedLocation } : {}), scanGroups });
   }
-  return { version: value.version, id: value.id, overview: { lookupId: value.id, photoId: value.overview.photoId, ...(source ? { source } : {}) }, components };
+  return { version: value.version as ComponentMap["version"], id: value.id, overview: { lookupId: value.id, photoId: value.overview.photoId, ...(source ? { source } : {}) }, components };
 }
 
 export function normalizeComponentCaptureTarget(value: unknown): ComponentCaptureTarget | null {
@@ -209,11 +249,12 @@ export function seedMapFromLookup(lookup: Lookup, source?: MapOverviewSource): C
   return document;
 }
 
-export function linkComponentMapDocument(document: ComponentMap, target: ComponentCaptureTarget, photoIds: readonly string[]): ComponentMap {
+export function linkComponentMapDocument(document: ComponentMap, target: ComponentCaptureTarget, photoIds: readonly string[], binding?: ComponentMapGroupBinding): ComponentMap {
   const checked = normalizeComponentMap(document);
   const capture = normalizeComponentCaptureTarget(target);
+  const checkedBinding = binding === undefined ? undefined : normalizeComponentMapGroupBinding(binding, photoIds);
   if (!checked || !capture || checked.id !== capture.mapId || photoIds.length < 1 || photoIds.length > 4
-    || !photoIds.every((photoId) => id(photoId, PHOTO_ID)) || new Set(photoIds).size !== photoIds.length) {
+    || !photoIds.every((photoId) => id(photoId, PHOTO_ID)) || new Set(photoIds).size !== photoIds.length || (binding !== undefined && !checkedBinding)) {
     throw new ComponentMapError("invalid_map", "The saved photo group cannot be linked to this component map.");
   }
   const component = checked.components.find((item) => item.id === capture.componentId);
@@ -222,12 +263,16 @@ export function linkComponentMapDocument(document: ComponentMap, target: Compone
     const prior = item.scanGroups.find((group) => group.linkId.toLowerCase() === capture.linkAttemptId.toLowerCase());
     if (!prior) continue;
     if (item.id !== component.id || prior.lookupId !== capture.lookupId || prior.photoIds.length !== photoIds.length
-      || prior.photoIds.some((photoId, index) => photoId !== photoIds[index])) {
+      || prior.photoIds.some((photoId, index) => photoId !== photoIds[index])
+      || (prior.binding && !componentMapGroupBindingsMatch(prior.binding, checkedBinding))) {
       throw new ComponentMapError("link_conflict", "This capture was already linked to different evidence. The existing link was preserved.");
     }
     return checked;
   }
+  if (checked.version >= 3 && !checkedBinding) throw new ComponentMapError("invalid_map", "Verify the saved linked photos before attaching this group. Its scan and draft were preserved.");
+  if (checked.version < 3 && checkedBinding) throw new ComponentMapError("invalid_map", "This legacy map cannot accept bound photo groups without an explicit overview upgrade.");
   if (component.scanGroups.length >= MAX_COMPONENT_SCAN_GROUPS) throw new ComponentMapError("invalid_map", "This component already has 100 linked photo groups. Its new scan remains in history.");
-  component.scanGroups.push({ linkId: capture.linkAttemptId, lookupId: capture.lookupId, photoIds: [...photoIds] });
+  if (checkedBinding) checked.version = 4;
+  component.scanGroups.push({ linkId: capture.linkAttemptId, lookupId: capture.lookupId, photoIds: [...photoIds], ...(checkedBinding ? { binding: checkedBinding } : {}) });
   return checked;
 }

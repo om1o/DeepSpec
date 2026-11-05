@@ -66,6 +66,84 @@ function visualComparison(): InspectionComparison {
 }
 
 describe("self-contained mechanic HTML report", () => {
+  function linkedSnapshot(): InspectionReportSnapshot {
+    const input = snapshot(), first = component(0);
+    first.notes = "Human link note <script>not executable</script>";
+    first.region = { sourcePhotoId: "overview-front", box: BOX };
+    first.scanGroups = [{ linkId: "bound-link", lookupId: "overview", photoIds: ["overview-front", "overview-label"],
+      binding: { version: 1, photoRelationship: "independent", photos: [
+        { photoId: "overview-front", label: "overview", source: { ...OVERVIEW_SOURCE } },
+        { photoId: "overview-label", label: "marking", source: { ...OVERVIEW_SOURCE } },
+      ] } }];
+    input.map = { document: { version: 4, id: "overview", overview: { lookupId: "overview", photoId: "overview-front", source: { ...OVERVIEW_SOURCE } }, components: [first] },
+      localRevision: 2, cloudRevision: null, syncedLocalRevision: 0 };
+    input.mapOverviewEvidence = { status: "unchanged", message: "Verified overview." };
+    input.linkedPhotoEvidence = first.scanGroups[0].photoIds.map((photoId) => ({ componentId: first.id, linkId: "bound-link", lookupId: "overview", photoId, status: "unchanged", message: "Verified photo." }));
+    return input;
+  }
+
+  it("renders verified v4 linked files with historical labels/relationship separate from changed current metadata", () => {
+    const input = linkedSnapshot(); input.scans[0].photoRelationship = "same_part_or_area"; input.scans[0].photos![1].label = "close_up";
+    input.linkedPhotoEvidence!.forEach((row) => { row.currentMetadataChanged = true; });
+    const before = JSON.stringify(input), doc = parsed(input);
+    expect(doc.querySelectorAll(".outline.map")).toHaveLength(1);
+    const group = doc.querySelector(".linked-photo-group")!;
+    expect(group.textContent).toContain("User-reported relationship at linking");
+    expect(group.textContent).toContain("Independent examples");
+    expect(group.textContent).toContain("Current user-reported relationship");
+    expect(group.textContent).toContain("Label at linkingmarking");
+    expect(group.textContent).toContain("Current saved labelclose up");
+    expect(group.textContent).toContain("scoped to Photo 1");
+    expect(group.querySelectorAll(".linked-photo-evidence")).toHaveLength(2);
+    expect(group.textContent?.match(/Verified linked photo/g)).toHaveLength(2);
+    expect(group.querySelector('a[href="#scan-1-photo-1"]')).not.toBeNull();
+    expect(group.querySelector('a[href="#scan-1-photo-2"]')).not.toBeNull();
+    expect(doc.querySelector("#component-1")?.textContent).toContain("Human link note <script>not executable</script>");
+    expect(doc.querySelectorAll("script")).toHaveLength(0);
+    expect(doc.querySelector("#scan-1-photo-1 img")?.getAttribute("src")).toBe(PNG);
+    expect(JSON.stringify(input)).toBe(before);
+  });
+
+  it.each(["source_changed", "missing_photo", "verification_unavailable", "absent", "duplicate"] as const)("does not label a current image as historical evidence when a bound check is %s", (status) => {
+    const input = linkedSnapshot();
+    if (status === "absent") input.linkedPhotoEvidence!.pop();
+    else if (status === "duplicate") input.linkedPhotoEvidence!.push({ ...input.linkedPhotoEvidence![1] });
+    else input.linkedPhotoEvidence![1].status = status;
+    const doc = parsed(input), rows = doc.querySelectorAll(".linked-photo-evidence");
+    expect(rows[0].textContent).toContain("Verified linked photo");
+    expect(rows[1].textContent).not.toContain("Verified linked photo");
+    expect(rows[1].textContent).toContain("Current saved image reference — not verified as historical evidence");
+    expect(rows[1].textContent).toContain("Label at linkingmarking");
+    expect(rows[1].querySelector('a[href="#scan-1-photo-2"]')).not.toBeNull();
+    expect(doc.querySelector("#missing-evidence")?.textContent).toContain("Component 1, photo group 1, photo overview-label");
+    expect(doc.querySelector("#component-1")?.textContent).toContain("Human link note");
+    expect(doc.querySelectorAll(".outline.map")).toHaveLength(1);
+  });
+
+  it("retains every distinct link and keeps ID-only groups explicitly unverified inside a v4 map", () => {
+    const input = linkedSnapshot(), groups = input.map!.document.components[0].scanGroups;
+    groups.push({ ...structuredClone(groups[0]), linkId: "second-bound-link" }, { linkId: "legacy-link", lookupId: "overview", photoIds: ["overview-label"] });
+    input.linkedPhotoEvidence!.push(...input.linkedPhotoEvidence!.map((row) => ({ ...row, linkId: "second-bound-link" })),
+      { ...input.linkedPhotoEvidence![1], linkId: "legacy-link" });
+    const doc = parsed(input), rendered = doc.querySelectorAll(".linked-photo-group");
+    expect(rendered).toHaveLength(3);
+    expect(rendered[0].querySelectorAll(".linked-photo-evidence")).toHaveLength(2);
+    expect(rendered[1].querySelectorAll(".linked-photo-evidence")).toHaveLength(2);
+    expect(rendered[2].textContent).toContain("Legacy linked group");
+    expect(rendered[2].textContent).not.toContain("Verified linked photo");
+    expect(rendered[2].textContent).not.toContain("Label at linking");
+  });
+
+  it("does not invent a legacy frame photo when an explicitly empty saved photo list is linked", () => {
+    const input = linkedSnapshot(); input.scans[0].photos = [];
+    input.linkedPhotoEvidence!.forEach((row) => { row.status = "missing_photo"; });
+    const doc = parsed(input);
+    expect(doc.querySelectorAll("#scan-1 figure img")).toHaveLength(0);
+    expect(doc.querySelector("#scan-1-photo-1")).toBeNull();
+    expect(doc.querySelector(".linked-photo-group")?.textContent).not.toContain("Verified linked photo");
+    expect(doc.querySelectorAll(".linked-photo-evidence")).toHaveLength(2);
+    expect(doc.querySelector("#component-1")?.textContent).toContain("Human link note");
+  });
   it.each([
     ["source_changed", "differs from the map's recorded source"],
     ["missing_photo", "bound overview image is missing"],
@@ -376,7 +454,7 @@ describe("self-contained mechanic HTML report", () => {
     expect(document.querySelectorAll(".component-list > li")).toHaveLength(12);
     expect(document.querySelectorAll("section[id^='scan-']")).toHaveLength(2);
     expect(document.querySelector("#component-12")?.textContent).toContain("Component note 12");
-    expect(document.querySelectorAll("#component-12 li")).toHaveLength(2);
+    expect(document.querySelectorAll("#component-12 .linked-photo-group")).toHaveLength(2);
     expect(document.querySelectorAll("#component-12 a[href='#scan-2-photo-1']")).toHaveLength(2);
     expect(document.querySelectorAll("#component-12 a[href='#scan-2-photo-2']")).toHaveLength(2);
     expect(document.querySelectorAll("#component-1 a[href='#scan-2-photo-2']")).toHaveLength(1);

@@ -1,4 +1,4 @@
-import type { VisualFocusBox } from "./index";
+import type { PhotoRelationship, ScanPhotoLabel, VisualFocusBox } from "./index";
 
 export type ComponentMapStatus = "needs_view" | "inspected" | "not_visible";
 
@@ -11,7 +11,9 @@ export type MapOverviewSource = {
   scanSavedAt: string;
 };
 
-export type ComponentMapScanGroup = { linkId: string; lookupId: string; photoIds: string[] };
+export type ComponentMapPhotoBinding = { photoId: string; label: ScanPhotoLabel; source: MapOverviewSource };
+export type ComponentMapGroupBinding = { version: 1; photoRelationship: PhotoRelationship; photos: ComponentMapPhotoBinding[] };
+export type ComponentMapScanGroup = { linkId: string; lookupId: string; photoIds: string[]; binding?: ComponentMapGroupBinding };
 
 export type ComponentMapComponent = {
   id: string;
@@ -25,7 +27,7 @@ export type ComponentMapComponent = {
 };
 
 export type ComponentMap = {
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
   id: string;
   overview: { lookupId: string; photoId: string; source?: MapOverviewSource };
   components: ComponentMapComponent[];
