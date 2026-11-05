@@ -4,6 +4,7 @@ import type { Lookup, IsolatedObject } from "../types";
 import type { ComponentMapRecord } from "../types/componentMap";
 import type { InspectionReportIssue, InspectionReportSnapshot } from "../types/inspectionReport";
 import { getAuthClient } from "./auth";
+import { isCloudSyncEnabled } from "./cloudSyncPolicy";
 import { readCloudLookupForReport, type ReportUnavailableImage } from "./cloudHistory";
 import { readComponentMap } from "./componentMapStore";
 import { getLookup, readLookups } from "./storage";
@@ -80,6 +81,7 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
   const missing: InspectionReportIssue[] = [];
   let map = initialMap;
   const configuredOrigin = storageOrigin();
+  if (!map && !isCloudSyncEnabled()) missing.push({ kind: "map", lookupId: rootLookupId, message: "Cloud history is off for this build. Any cloud-only component map and links are not included." });
   if (!map && configuredOrigin) {
     try {
       const client = await wait(() => getAuthClient());
@@ -114,6 +116,7 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
   const remoteCache = new Map<string, Lookup | null>();
   const unavailableRemoteImages = new Map<string, ReportUnavailableImage[]>();
   const remoteLookup = async (id: string) => {
+    if (!isCloudSyncEnabled()) return null;
     if (remoteCache.has(id)) return remoteCache.get(id)!;
     try {
       const result = await wait(() => readCloudLookupForReport(id));
@@ -369,6 +372,7 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
 }
 
 function storageOrigin(): string | null {
+  if (!isCloudSyncEnabled()) return null;
   try {
     const url = new URL(import.meta.env.VITE_SUPABASE_URL ?? "");
     return url.protocol === "https:" && !url.username && !url.password ? url.origin : null;

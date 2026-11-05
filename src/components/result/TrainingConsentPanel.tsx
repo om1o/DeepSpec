@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { getAccountScope, isAccountScopeCurrent } from "../../lib/accountScope";
 import { loadTrainingConsent, saveTrainingConsent, type TrainingConsent } from "../../services/trainingConsent";
+import { isCloudSyncEnabled } from "../../services/cloudSyncPolicy";
 
 export function TrainingConsentPanel({ scanId }: { scanId: string }) {
+  const cloudEnabled = isCloudSyncEnabled();
   const [scope] = useState(getAccountScope);
   const [consent, setConsent] = useState<TrainingConsent | null>(null);
   const [choice, setChoice] = useState(false);
-  const [pending, setPending] = useState(true);
+  const [pending, setPending] = useState(isCloudSyncEnabled);
   const [message, setMessage] = useState("Loading cloud consent…");
   const [reload, setReload] = useState(0);
   const request = useRef(0);
@@ -14,6 +16,7 @@ export function TrainingConsentPanel({ scanId }: { scanId: string }) {
   useEffect(() => {
     const requestRef = request;
     const generation = ++request.current;
+    if (!cloudEnabled) return () => { requestRef.current++; };
     loadTrainingConsent(scanId, scope).then((value) => {
       if (request.current !== generation || !isAccountScopeCurrent(scope)) return;
       setConsent(value);
@@ -25,9 +28,10 @@ export function TrainingConsentPanel({ scanId }: { scanId: string }) {
       if (request.current === generation && isAccountScopeCurrent(scope)) setPending(false);
     });
     return () => { requestRef.current++; };
-  }, [scanId, scope, reload]);
+  }, [scanId, scope, reload, cloudEnabled]);
 
   function reloadStatus() {
+    if (!isCloudSyncEnabled()) return;
     setPending(true);
     setConsent(null);
     setChoice(false);
@@ -36,7 +40,7 @@ export function TrainingConsentPanel({ scanId }: { scanId: string }) {
   }
 
   async function save() {
-    if (pending || !consent || !isAccountScopeCurrent(scope)) return;
+    if (!isCloudSyncEnabled() || pending || !consent || !isAccountScopeCurrent(scope)) return;
     const generation = ++request.current;
     setPending(true);
     setMessage("Saving consent to the cloud…");
@@ -60,14 +64,14 @@ export function TrainingConsentPanel({ scanId }: { scanId: string }) {
     <h2 className="text-sm font-bold">Help improve DeepSpec — optional</h2>
     <p className="text-sm text-[var(--ds-fg-2)]">Allow this scan’s photo, analysis and corrections to be reviewed for future model improvement. This does not start automatic training. Your choice does not affect scanning.</p>
     <label className="flex items-start gap-3 text-sm">
-      <input type="checkbox" className="mt-1" checked={choice} disabled={pending || !consent || !isAccountScopeCurrent(scope)} onChange={(event) => setChoice(event.target.checked)} />
+      <input type="checkbox" className="mt-1" checked={choice} disabled={!cloudEnabled || pending || !consent || !isAccountScopeCurrent(scope)} onChange={(event) => setChoice(event.target.checked)} />
       Allow this scan to be considered for training
     </label>
-    <p className="text-xs text-[var(--ds-fg-2)]">Off by default. You can withdraw consent here. Withdrawal excludes this scan from future datasets; it cannot promise to reverse any training already completed.</p>
+    <p className="text-xs text-[var(--ds-fg-2)]">{cloudEnabled ? "Off by default. You can withdraw consent here. Withdrawal excludes this scan from future datasets; it cannot promise to reverse any training already completed." : "Existing consent is unchanged. Turning off cloud sync does not withdraw consent."}</p>
     <div className="flex flex-wrap gap-3">
-      <button type="button" className="rounded-lg border border-[var(--ds-border)] px-3 py-2 text-sm disabled:opacity-50" disabled={pending || !consent || choice === consent.enabled || !isAccountScopeCurrent(scope)} onClick={() => void save()}>{pending ? "Please wait…" : "Save consent choice"}</button>
-      <button type="button" className="text-sm underline disabled:opacity-50" disabled={pending || !isAccountScopeCurrent(scope)} onClick={reloadStatus}>Reload consent status</button>
+      <button type="button" className="rounded-lg border border-[var(--ds-border)] px-3 py-2 text-sm disabled:opacity-50" disabled={!cloudEnabled || pending || !consent || choice === consent.enabled || !isAccountScopeCurrent(scope)} onClick={() => void save()}>{cloudEnabled && pending ? "Please wait…" : "Save consent choice"}</button>
+      <button type="button" className="text-sm underline disabled:opacity-50" disabled={!cloudEnabled || pending || !isAccountScopeCurrent(scope)} onClick={reloadStatus}>Reload consent status</button>
     </div>
-    <p role="status" className="text-sm">{message}</p>
+    <p role="status" className="text-sm">{cloudEnabled ? message : "Cloud sync is off. You can keep using scans on this device; cloud consent cannot be checked or changed here."}</p>
   </section>;
 }

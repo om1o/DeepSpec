@@ -7,6 +7,8 @@ import { getAccountScope, isAccountScopeCurrent, withAccountRouteState } from ".
 import { createComponentMap, readComponentMap, subscribeComponentMaps, updateComponentMap } from "../../services/componentMapStore";
 import { loadComponentMapFromCloud, readComponentMapLookup, resolveComponentMapCloudConflict, syncComponentMapToCloud } from "../../services/componentMapCloud";
 import { isEvidenceImage } from "../../services/visualEvidence";
+import { isCloudSyncEnabled } from "../../services/cloudSyncPolicy";
+import { getLookup } from "../../services/storage";
 import { FocusAreaEditor } from "./FocusAreaEditor";
 
 const STATUS_TEXT: Record<ComponentMapStatus, string> = { needs_view: "Needs view", inspected: "Inspected", not_visible: "Not visible" };
@@ -14,10 +16,13 @@ const BUTTON = "min-h-11 rounded-lg border border-[var(--ds-border)] px-3 py-2 t
 const FIELD = "mt-1 block w-full rounded-lg border border-[var(--ds-border)] bg-[var(--ds-surface)] p-2";
 const DEFAULT_BOX: VisualFocusBox = { x: 0.2, y: 0.2, width: 0.3, height: 0.3, confidence: 0 };
 const errorText = (error: unknown) => error instanceof Error ? error.message : "The map could not be saved. Your edits remain here.";
+const availableImage = (value: unknown): value is string => isEvidenceImage(value)
+  && (isCloudSyncEnabled() || value.startsWith("data:"));
 
 /** A user-maintained index of evidence, separate from AI analysis and safety certification. */
 export function ComponentMapReview({ lookup }: { lookup: Lookup }) {
   const navigate = useNavigate();
+  const cloudEnabled = isCloudSyncEnabled();
   const [scope] = useState(getAccountScope);
   const [record, setRecord] = useState<ComponentMapRecord | null>(null);
   const [draft, setDraft] = useState<ComponentMap | null>(null);
@@ -43,8 +48,8 @@ export function ComponentMapReview({ lookup }: { lookup: Lookup }) {
     ? lookup.photos !== undefined ? lookup.photos.find((photo) => photo.id === draft.overview.photoId)?.imageBase64
       : draft.overview.photoId === "photo-1" ? lookup.frame.imageBase64 : undefined
     : undefined;
-  const image = isEvidenceImage(source) && source !== failedImage ? source : undefined;
-  const canSeed = isEvidenceImage(lookup.photos !== undefined ? lookup.photos[0]?.imageBase64 : lookup.frame.imageBase64);
+  const image = availableImage(source) && source !== failedImage ? source : undefined;
+  const canSeed = availableImage(lookup.photos !== undefined ? lookup.photos[0]?.imageBase64 : lookup.frame.imageBase64);
 
   const load = useCallback(async () => {
     const request = ++generation.current;
@@ -54,7 +59,7 @@ export function ComponentMapReview({ lookup }: { lookup: Lookup }) {
     try {
       let saved = await readComponentMap(lookup.id, scope);
       let notice: string | null = null;
-      if (!saved) {
+      if (!saved && isCloudSyncEnabled()) {
         const cloud = await loadComponentMapFromCloud(lookup.id, scope);
         if (!cloud.ok) notice = cloud.message;
         else saved = cloud.value;
@@ -117,7 +122,7 @@ export function ComponentMapReview({ lookup }: { lookup: Lookup }) {
   }
 
   async function cloudAction(choice?: "local" | "cloud") {
-    if (!record || !draft || !current() || busy || dirty || stale) return;
+    if (!isCloudSyncEnabled() || !record || !draft || !current() || busy || dirty || stale) return;
     writing.current = true;
     setBusy(true);
     const previous = draft;
@@ -169,11 +174,13 @@ export function ComponentMapReview({ lookup }: { lookup: Lookup }) {
     if (!current() || busy || dirty || stale) return;
     setBusy(true);
     try {
-      const loaded = await readComponentMapLookup(group.lookupId, scope);
+      const loaded = isCloudSyncEnabled()
+        ? await readComponentMapLookup(group.lookupId, scope)
+        : { ok: true as const, value: getLookup(group.lookupId) };
       if (!current()) return;
       const target = loaded.ok ? loaded.value : null;
-      const ids = target?.photos?.filter((photo) => isEvidenceImage(photo.imageBase64)).map((photo) => photo.id)
-        ?? (target && isEvidenceImage(target.frame.imageBase64) ? ["photo-1"] : []);
+      const ids = target?.photos?.filter((photo) => availableImage(photo.imageBase64)).map((photo) => photo.id)
+        ?? (target && availableImage(target.frame.imageBase64) ? ["photo-1"] : []);
       if (!target || group.photoIds.some((id) => !ids.includes(id))) {
         setLinkErrors((previous) => ({ ...previous, [group.linkId]: loaded.ok ? "Linked scan or photos unavailable. The map link has been kept." : loaded.message }));
         return;
@@ -186,6 +193,7 @@ export function ComponentMapReview({ lookup }: { lookup: Lookup }) {
 
   return <section aria-label="Component map" className="rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 text-sm text-[var(--ds-fg-2)]">
     <h2 className="font-bold">Component map</h2>
+    {!cloudEnabled ? <p className="mt-2 text-sm">Cloud sync is off. Map edits and available photo groups stay on this device.</p> : null}
     <p className="mt-1 text-xs text-[var(--ds-fg-3)]">Organize component photos and your review. Suggested labels and areas can be wrong. Inspected is your recorded status, not a statement that a part is safe or working. This is not a complete engine inspection.</p>
     {message ? <p role="status" className="mt-3 rounded-lg border p-2">{message}</p> : null}
     {loading ? <p className="mt-3">Loading component map…</p> : !draft ? <div className="mt-3">
@@ -196,10 +204,10 @@ export function ComponentMapReview({ lookup }: { lookup: Lookup }) {
     </div> : <>
       <div className="mt-3 flex flex-wrap gap-2">
         <button type="button" className={BUTTON} disabled={busy || !dirty || stale} onClick={() => void save()}>Save changes</button>
-        <button type="button" className={BUTTON} disabled={busy || dirty || stale || Boolean(record?.conflict)} onClick={() => void cloudAction()}>Save map to cloud</button>
+        <button type="button" className={BUTTON} disabled={!cloudEnabled || busy || dirty || stale || Boolean(record?.conflict)} onClick={() => void cloudAction()}>Save map to cloud</button>
         <button type="button" className={BUTTON} disabled={busy || draft.components.length >= 100} onClick={addComponent}>Add component</button>
       </div>
-      <p className="mt-2 text-xs">{dirty ? "Unsaved map changes." : record && record.syncedLocalRevision === record.localRevision ? "This map version is saved to cloud." : "Map saved on this device; cloud save is separate."} {draft.components.length}/100 components.</p>
+      <p className="mt-2 text-xs">{dirty ? "Unsaved map changes." : record && record.syncedLocalRevision === record.localRevision ? cloudEnabled ? "This map version is saved to cloud." : "This map version was previously saved to cloud." : "Map saved on this device; cloud save is separate."} {draft.components.length}/100 components.</p>
       {stale ? <button type="button" className={`${BUTTON} mt-2`} disabled={busy} onClick={() => { setPreservedDraft(draft); void load(); }}>Load saved map and keep draft</button> : null}
       {preservedDraft ? <details className="mt-3 rounded-lg border p-2">
         <summary>Preserved draft</summary>
@@ -211,8 +219,8 @@ export function ComponentMapReview({ lookup }: { lookup: Lookup }) {
         <p className="mt-1 text-xs">Both versions are retained. Review them before choosing; choosing does not upload again.</p>
         <details className="mt-2"><summary>Review cloud version</summary><MapVersionPreview document={record.conflict.document} /></details>
         <div className="mt-2 flex flex-wrap gap-2">
-          <button type="button" className={BUTTON} disabled={busy || dirty || stale} onClick={() => void cloudAction("local")}>Keep device version</button>
-          <button type="button" className={BUTTON} disabled={busy || dirty || stale} onClick={() => void cloudAction("cloud")}>Use cloud version</button>
+          <button type="button" className={BUTTON} disabled={!cloudEnabled || busy || dirty || stale} onClick={() => void cloudAction("local")}>Keep device version</button>
+          <button type="button" className={BUTTON} disabled={!cloudEnabled || busy || dirty || stale} onClick={() => void cloudAction("cloud")}>Use cloud version</button>
         </div>
       </div> : null}
       {image ? <div className="relative mt-4 overflow-hidden rounded-xl bg-black" aria-label="Original overview with component areas">

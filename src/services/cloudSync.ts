@@ -1,6 +1,7 @@
 import { accountStorageKey, getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { getAuthClient } from "./auth";
+import { assertCloudSyncEnabled, CLOUD_SYNC_DISABLED_MESSAGE, isCloudSyncEnabled } from "./cloudSyncPolicy";
 import { getLookup, readLookups, recordCloudRevision, recordCloudSaveAttempt } from "./storage";
 import type { FeedbackSubmission, Lookup, WaitlistSignup } from "../types";
 import { feedbackCloudMessage, getFeedbackIssue, normalizeFeedbackContext } from "./feedbackDetails";
@@ -77,6 +78,7 @@ export type CloudBatchSyncResult = {
 };
 
 export function getCloudSyncStatus(): CloudSyncStatus {
+  if (!isCloudSyncEnabled()) return { configured: false, message: CLOUD_SYNC_DISABLED_MESSAGE };
   const config = getCloudSyncConfig();
 
   if (!config) {
@@ -93,6 +95,7 @@ export function getCloudSyncStatus(): CloudSyncStatus {
 }
 
 export function getCloudHealthSnapshot(): CloudHealthReport {
+  if (!isCloudSyncEnabled()) return createCloudHealthReport(null, null);
   const config = getCloudSyncConfig();
   const stored = readCloudHealthReport();
   if (stored && stored.projectUrl === (config?.url ?? null)) {
@@ -103,6 +106,7 @@ export function getCloudHealthSnapshot(): CloudHealthReport {
 }
 
 export async function verifyCloudHealth(): Promise<CloudHealthReport> {
+  if (!isCloudSyncEnabled()) return createCloudHealthReport(null, null);
   const scope = getAccountScope();
   const saveReport = (report: CloudHealthReport) => isAccountScopeCurrent(scope) ? saveCloudHealthReport(report) : report;
   const config = getCloudSyncConfig();
@@ -239,6 +243,7 @@ async function syncLookupForAccount(
   scope: AccountScope,
   requestedMode: "full" | "chat" = "full",
 ): Promise<CloudSyncResult> {
+  if (!isCloudSyncEnabled()) return { ok: false, message: CLOUD_SYNC_DISABLED_MESSAGE };
   if (!getCloudSyncConfig()) {
     return {
       ok: false,
@@ -417,6 +422,7 @@ async function performLookupSync(lookup: Lookup, scope: AccountScope, guard: () 
 }
 
 export async function syncLookupsToCloud(lookups: Lookup[]): Promise<CloudBatchSyncResult> {
+  if (!isCloudSyncEnabled()) return { attempted: 0, failed: 0, failures: [], message: CLOUD_SYNC_DISABLED_MESSAGE, ok: false, synced: 0 };
   const scope = getAccountScope();
   const uniqueLookups = [...new Map(lookups.map((lookup) => [lookup.id, lookup])).values()];
   if (!uniqueLookups.length) {
@@ -591,6 +597,7 @@ async function syncDatasetDetailTables(supabase: SupabaseClient, userId: string,
 }
 
 export async function syncAnalysisFailuresToCloud(lookup: Lookup): Promise<CloudSyncResult> {
+  if (!isCloudSyncEnabled()) return { ok: false, message: CLOUD_SYNC_DISABLED_MESSAGE };
   const scope = getAccountScope();
   const guard = () => { if (!isAccountScopeCurrent(scope)) throw new Error("Account changed."); };
   try {
@@ -887,6 +894,7 @@ function hasOcrEvidence(lookup: Lookup) {
 }
 
 export async function syncWaitlistSignupToCloud(signup: WaitlistSignup): Promise<CloudSyncResult> {
+  if (!isCloudSyncEnabled()) return { ok: false, message: CLOUD_SYNC_DISABLED_MESSAGE };
   const config = getCloudSyncConfig();
   if (!config) {
     return { ok: false, message: "Cloud sync is not configured yet." };
@@ -916,6 +924,7 @@ export async function syncWaitlistSignupToCloud(signup: WaitlistSignup): Promise
 }
 
 export async function syncFeedbackToCloud(feedback: FeedbackSubmission): Promise<CloudSyncResult> {
+  if (!isCloudSyncEnabled()) return { ok: false, message: CLOUD_SYNC_DISABLED_MESSAGE };
   const scope = getAccountScope();
   function checkFeedbackAccount() {
     const current = getAccountScope();
@@ -962,6 +971,7 @@ export async function syncFeedbackToCloud(feedback: FeedbackSubmission): Promise
 }
 
 function getCloudSyncConfig(): CloudSyncConfig | null {
+  if (!isCloudSyncEnabled()) return null;
   const env = import.meta.env;
   const url = env.VITE_SUPABASE_URL?.trim();
   const key = env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim();
@@ -974,6 +984,7 @@ function getCloudSyncConfig(): CloudSyncConfig | null {
 }
 
 async function getClient() {
+  assertCloudSyncEnabled();
   // Reuse the single persistent auth client so only one GoTrueClient ever
   // owns the shared auth-token storage key. Callers have already validated
   // config (same VITE_SUPABASE_* env that getAuthClient reads), so a null
@@ -1147,13 +1158,14 @@ async function cleanupCloudHealthCheck(supabase: SupabaseClient, userId: string,
 
 function createCloudHealthReport(config: CloudSyncConfig | null, checkedAt: string | null): CloudHealthReport {
   const configured = Boolean(config);
+  const disabled = !isCloudSyncEnabled();
   return {
     checkedAt,
     checks: {
       configured: createCloudHealthCheck(
         "configured",
         "Cloud connection",
-        configured ? "Cloud sync is connected." : "Cloud sync isn't connected yet.",
+        disabled ? CLOUD_SYNC_DISABLED_MESSAGE : configured ? "Cloud sync is connected." : "Cloud sync isn't connected yet.",
         configured ? "pass" : "fail",
       ),
       verifiedAuth: createCloudHealthCheck("verifiedAuth", "Verified account", "Not checked yet.", "unknown"),
@@ -1164,7 +1176,7 @@ function createCloudHealthReport(config: CloudSyncConfig | null, checkedAt: stri
     },
     configured,
     lastVerifiedAt: null,
-    message: configured
+    message: disabled ? CLOUD_SYNC_DISABLED_MESSAGE : configured
       ? "Cloud sync is set up. Run a quick check to confirm everything's working."
       : "Cloud sync isn't set up yet.",
     overall: configured ? "unknown" : "unconfigured",

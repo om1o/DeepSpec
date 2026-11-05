@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { AIServiceError, getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
 import { readCloudLookup } from "../services/cloudHistory";
 import { getCloudSyncStatus, syncAnalysisFailuresToCloud, syncLookupToCloud } from "../services/cloudSync";
+import { isCloudSyncEnabled } from "../services/cloudSyncPolicy";
 import { correctScanSelection } from "../lib/visualSelection";
 import Button from "../components/ui/Button";
 import { IsolatedPartView } from "../components/result/IsolatedPartView";
@@ -43,6 +44,7 @@ export default function Result() {
 }
 
 function ResultView({ id }: { id: string | undefined }) {
+  const cloudSyncEnabled = isCloudSyncEnabled();
   const [mountedScope] = useState(getAccountScope);
   const location = useLocation();
   const routeState = isCurrentAccountRouteState(location.state) ? location.state : null;
@@ -106,6 +108,11 @@ function ResultView({ id }: { id: string | undefined }) {
 
       setLookup(null);
       setLiveScanState(null);
+      if (!cloudSyncEnabled) {
+        setRestoreStatus("error");
+        setRestoreError("Cloud history is off. This scan is not saved on this device. Open saved scans to choose an available device record.");
+        return;
+      }
       setRestoreStatus("loading");
       setRestoreError(null);
 
@@ -144,7 +151,7 @@ function ResultView({ id }: { id: string | undefined }) {
     void restoreResult();
 
     return () => { cancelled = true; };
-  }, [id, location.state, mountedScope, restoreAttempt]);
+  }, [id, location.state, mountedScope, restoreAttempt, cloudSyncEnabled]);
 
   function trackManualCorrectionOnce() {
     if (manualCorrectionTrackedRef.current) {
@@ -386,7 +393,7 @@ function ResultView({ id }: { id: string | undefined }) {
           {restoreStatus !== "ready" ? (
             <ResultRestoreState
               message={restoreError}
-              onRetry={() => setRestoreAttempt((attempt) => attempt + 1)}
+              onRetry={cloudSyncEnabled ? () => setRestoreAttempt((attempt) => attempt + 1) : undefined}
               status={restoreStatus}
             />
           ) : <>
@@ -513,7 +520,7 @@ function ResultRestoreState({
   status,
 }: {
   message: string | null;
-  onRetry: () => void;
+  onRetry?: () => void;
   status: Exclude<ResultRestoreStatus, "ready">;
 }) {
   if (status === "loading") {
@@ -539,7 +546,8 @@ function ResultRestoreState({
     <section className="rounded-[22px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-5" role="alert">
       <h2 className="text-xl font-extrabold tracking-tight">Saved scan unavailable</h2>
       <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-2)]">{message ?? "DeepSpec could not load this saved scan."}</p>
-      <Button className="mt-4" onClick={onRetry}>Retry loading</Button>
+      {onRetry ? <Button className="mt-4" onClick={onRetry}>Retry loading</Button>
+        : <Link className="mt-4 inline-flex min-h-11 items-center rounded-full border border-[var(--ds-border)] px-4 text-sm font-bold" to="/history">Open saved scans</Link>}
     </section>
   );
 }

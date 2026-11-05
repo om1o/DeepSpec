@@ -9,9 +9,10 @@ import { ComponentMapReview } from "./ComponentMapReview";
 
 const mocks = vi.hoisted(() => ({
   read: vi.fn(), create: vi.fn(), update: vi.fn(), subscribe: vi.fn(),
-  loadCloud: vi.fn(), syncCloud: vi.fn(), resolveCloud: vi.fn(), readLookup: vi.fn(), navigate: vi.fn(),
+  loadCloud: vi.fn(), syncCloud: vi.fn(), resolveCloud: vi.fn(), readLookup: vi.fn(), readLocalLookup: vi.fn(), navigate: vi.fn(),
 }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => mocks.navigate }));
+vi.mock("../../services/storage", () => ({ getLookup: mocks.readLocalLookup }));
 vi.mock("../../services/componentMapStore", () => ({
   readComponentMap: mocks.read, createComponentMap: mocks.create, updateComponentMap: mocks.update, subscribeComponentMaps: mocks.subscribe,
 }));
@@ -50,7 +51,9 @@ beforeEach(() => {
   mocks.create.mockImplementation(async (document: ComponentMap) => ({ document, localRevision: 1, cloudRevision: null, syncedLocalRevision: 0 }));
   mocks.update.mockImplementation(async (_id: string, revision: number, document: ComponentMap) => ({ document, localRevision: revision + 1, cloudRevision: null, syncedLocalRevision: 0 }));
   mocks.readLookup.mockResolvedValue({ ok: true, value: null });
+  mocks.readLocalLookup.mockReturnValue(null);
 });
+afterEach(() => vi.unstubAllEnvs());
 async function ready(saved = record()) {
   mocks.read.mockResolvedValue(saved);
   const rendered = render(<ComponentMapReview lookup={lookup} />);
@@ -59,6 +62,68 @@ async function ready(saved = record()) {
 }
 
 describe("ComponentMapReview", () => {
+  it("skips cloud fallback and creates and edits a local map when cloud sync is off", async () => {
+    vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
+    mocks.read.mockResolvedValue(null);
+    render(<ComponentMapReview lookup={lookup} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Create component map" }));
+    await screen.findByLabelText("Component label");
+    expect(screen.getByText(/Cloud sync is off/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save map to cloud" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Component notes"), { target: { value: "Device-only review note" } });
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledOnce());
+    expect(mocks.update.mock.calls[0][2].components[0].notes).toBe("Device-only review note");
+    expect(mocks.loadCloud).not.toHaveBeenCalled();
+    expect(mocks.syncCloud).not.toHaveBeenCalled();
+    expect(mocks.resolveCloud).not.toHaveBeenCalled();
+  });
+
+  it("opens device photo groups and preserves earlier cloud acknowledgement while sync is off", async () => {
+    vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
+    const saved = record();
+    saved.cloudRevision = 4; saved.syncedLocalRevision = saved.localRevision;
+    saved.document.components[0].scanGroups = [{ linkId: uuid(90), lookupId: "detail-scan", photoIds: ["bay"] }];
+    mocks.readLocalLookup.mockReturnValue({ ...lookup, id: "detail-scan" });
+    await ready(saved);
+    expect(screen.getByText(/This map version was previously saved to cloud/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Open photo group 1 (1 photos)" }));
+    await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith("/result/detail-scan", expect.anything()));
+    expect(mocks.readLocalLookup).toHaveBeenCalledWith("detail-scan");
+    expect(mocks.readLookup).not.toHaveBeenCalled();
+    expect(mocks.loadCloud).not.toHaveBeenCalled();
+    expect(mocks.syncCloud).not.toHaveBeenCalled();
+  });
+
+  it("retains cloud conflict evidence without resolving it while sync is off", async () => {
+    vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
+    const saved = record(); saved.conflict = { document: record(3).document, revision: 2 };
+    await ready(saved);
+    expect(screen.getByText("Cloud map differs")).toBeInTheDocument();
+    for (const name of ["Save map to cloud", "Keep device version", "Use cloud version"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toBeDisabled(); await userEvent.click(button);
+    }
+    expect(screen.getByLabelText("Component notes")).toBeEnabled();
+    expect(mocks.resolveCloud).not.toHaveBeenCalled(); expect(mocks.syncCloud).not.toHaveBeenCalled();
+  });
+
+  it("does not render signed overview URLs or open remote-only photo groups while sync is off", async () => {
+    vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
+    const saved = record();
+    saved.document.components[0].scanGroups = [{ linkId: uuid(90), lookupId: "detail-scan", photoIds: ["bay"] }];
+    mocks.read.mockResolvedValue(saved);
+    const remote = { ...lookup, photos: lookup.photos!.map((photo) => ({ ...photo, imageBase64: "https://example.com/signed-photo" })) };
+    mocks.readLocalLookup.mockReturnValue({ ...remote, id: "detail-scan" });
+    render(<ComponentMapReview lookup={remote} />);
+    await screen.findByLabelText("Component label");
+    expect(screen.queryByRole("img", { name: "Original component overview" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Component notes")).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: "Open photo group 1 (1 photos)" }));
+    expect(await screen.findByText("Linked scan or photos unavailable. The map link has been kept.")).toBeInTheDocument();
+    expect(mocks.navigate).not.toHaveBeenCalled(); expect(mocks.readLookup).not.toHaveBeenCalled();
+  });
+
   it("shows the original and all existing numbered areas without the four-mask cap or automatic review", async () => {
     const saved = record(6);
     await ready(saved);

@@ -47,6 +47,7 @@ import { CAPTURE_MAX_EDGE, compressImageDataUrl, saveLatestScanState } from "../
 import { AIServiceError, identifyCapturedFrame, isAIRequestCanceled } from "../services/aiService";
 import { onOnDeviceModelProgress } from "../services/onDeviceIdentify";
 import { getCloudSyncStatus, syncLookupToCloud } from "../services/cloudSync";
+import { isCloudSyncEnabled } from "../services/cloudSyncPolicy";
 import { attachScanToJob, buildCustomerVisibleReport, getShopJob, getVehicleContextForJob } from "../services/shop";
 import {
   recordAcceptableScan,
@@ -841,7 +842,11 @@ export default function Scanner() {
         const update = (current: PhotoDraftEnvelope | null) => current && photoDraftsMatch(current, draft) ? remaining : current;
         if (kind === "capture") setCaptureDraft(update); else setPhotoDraft(update);
         if (draft.target || draft.version === 4) {
-          setPhotoDraftMessage(draft.version === 4 ? "Dated comparison saved on this device. Review the relationship and observation dates before drawing conclusions." : "Photos linked to the component on this device. Save the map to cloud from its overview.");
+          setPhotoDraftMessage(draft.version === 4
+            ? "Dated comparison saved on this device. Review the relationship and observation dates before drawing conclusions."
+            : isCloudSyncEnabled()
+              ? "Photos linked to the component on this device. Save the map to cloud from its overview."
+              : "Photos linked to the component on this device. Cloud sync is off; reopen the map overview to review them.");
           if (removed) setShowPhotoDraft(false);
         }
       }

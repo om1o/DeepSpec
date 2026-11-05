@@ -4,6 +4,7 @@ import { MAX_DIAGNOSTIC_BUNDLE_BYTES, MAX_DIAGNOSTIC_DOCUMENTS, MAX_DIAGNOSTIC_A
 import { normalizeDiagnosticDocument } from "../lib/diagnosticReport";
 import type { DiagnosticBundle, DiagnosticDocument, DiagnosticAssociation } from "../types/diagnosticReport";
 import { getAuthClient } from "./auth";
+import { assertCloudSyncEnabled } from "./cloudSyncPolicy";
 import { importDiagnosticBundle, verifyDiagnosticBundle } from "./diagnosticReportStore";
 
 const TABLE = "diagnostic_reports";
@@ -41,6 +42,7 @@ function remoteRequest<T>(scope: AccountScope, signal: AbortSignal | undefined, 
   });
 }
 async function verifiedClient(scope: AccountScope, signal?: AbortSignal): Promise<SupabaseClient> {
+  assertCloudSyncEnabled();
   const client = await remoteRequest(scope, signal, () => getAuthClient());
   if (!client) throw new Error("Cloud diagnostic storage is not configured for this build. Your device evidence is preserved.");
   const verified = await remoteRequest(scope, signal, () => client.auth.getUser());

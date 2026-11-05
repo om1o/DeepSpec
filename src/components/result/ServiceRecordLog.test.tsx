@@ -59,7 +59,7 @@ beforeEach(() => {
   vi.mocked(cloud.readCloudServiceRecords).mockResolvedValue([]);
   vi.mocked(cloud.syncServiceRecords).mockResolvedValue({ synced: 0, message: "All 1 snapshot entries confirmed in cloud." });
 });
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 async function open(value = lookup) {
   const view = render(<ServiceRecordLog lookup={value} />);
@@ -77,6 +77,19 @@ async function originalRecord() {
   Object.assign(draft.fields, { recordedBy: "Original recorder", subject: "Alternator", quantity: "Voltage", reading: "12.50", unit: "V" });
   return normalizeServiceRecord(serviceRecordFromDraft(draft))!;
 }
+
+it("keeps local service saves available and never reads or writes cloud while sync is off", async () => {
+  vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
+  await open(); measurement();
+  for (const name of ["Read cloud service history", "Sync service history"]) {
+    const button = screen.getByRole("button", { name }); expect(button).toBeDisabled(); fireEvent.click(button);
+  }
+  await save();
+  expect(history).toHaveLength(1); expect(history[0]).toMatchObject({ reading: " 12.500 ", unit: "V" });
+  expect(screen.getByText(/Cloud sync is off/)).toBeInTheDocument();
+  expect(cloud.readCloudServiceRecords).not.toHaveBeenCalled(); expect(cloud.syncServiceRecords).not.toHaveBeenCalled();
+  expect(store.importServiceRecords).not.toHaveBeenCalled();
+});
 
 it("saves exact measurement text and selected evidence locally without changing AI/inspection or automatically syncing", async () => {
   const before = JSON.stringify(getLookup(lookup.id)); await open(); measurement();

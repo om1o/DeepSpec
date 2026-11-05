@@ -1,4 +1,5 @@
 import { getAccountScope, isAccountScopeCurrent } from "../lib/accountScope";
+import { CLOUD_SYNC_DISABLED_MESSAGE, isCloudSyncEnabled } from "./cloudSyncPolicy";
 import { getAuthClient, isSupabaseAuthConfigured } from "./auth";
 import { normalizePartInspection } from "../lib/partInspection";
 import { normalizeConditionAssessment } from "../lib/conditionAssessment";
@@ -217,6 +218,7 @@ function validReportSignedUrl(value: string, path: string): boolean {
 }
 
 async function getVerifiedCloudClient(scope: ReturnType<typeof getAccountScope>): Promise<VerifiedClientResult> {
+  if (!isCloudSyncEnabled()) return { ok: false, message: CLOUD_SYNC_DISABLED_MESSAGE };
   if (!isAccountScopeCurrent(scope)) {
     return { ok: false, message: "Account changed. Reload your saved scans." };
   }
