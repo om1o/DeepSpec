@@ -8,6 +8,16 @@ const lookup = (token: string) => ({ id: "scan", cloudRevision: 1, frame: { capt
   isolatedObjects: [{ name: "Part", category: "engine", primary: true, focusBox: box, focusMode: "mask", isolatedImageBase64: `https://images/object?${token}` }],
 } as Lookup);
 describe("cloud evidence URL refresh", () => {
+  it.each(["same_part_or_area", "independent", "unknown", undefined] as const)("keeps local relationship %s while refreshing URLs, not a remote source's declaration", (photoRelationship) => {
+    const local = { ...lookup("old"), photoRelationship };
+    const remote = { ...lookup("new"), photoRelationship: "independent" as const };
+    remote.photos![0].id = "other-source";
+    expect(mergeCloudLookup(local, remote).photoRelationship).toBe(photoRelationship);
+    expect(mergeCloudLookup(local, remote).photos).toEqual(local.photos);
+    remote.photos![0].id = local.photos![0].id;
+    expect(mergeCloudLookup(local, remote).photoRelationship).toBe(photoRelationship);
+    expect(mergeCloudLookup(local, remote).photos?.[0].imageBase64).toBe(remote.photos?.[0].imageBase64);
+  });
   it("refreshes matching URLs and keeps local revision and metadata", () => {
     const local = lookup("old");
     const remote = { ...lookup("new"), cloudRevision: 3 };

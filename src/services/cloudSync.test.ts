@@ -40,6 +40,7 @@ describe("cloudSync", () => {
       storage: { from: () => ({ upload }) },
     });
     const lookup = makeLookup();
+    lookup.photoRelationship = "independent";
     const box = { x: 0.1, y: 0.1, width: 0.3, height: 0.4, confidence: 0.8 };
     lookup.photos = [{ ...lookup.frame, id: "overview", label: "overview" }, { ...lookup.frame, id: "detail", label: "close_up", imageBase64: "data:image/jpeg;base64,Ynll" }];
     lookup.isolatedObjects = [
@@ -58,15 +59,33 @@ describe("cloudSync", () => {
     if (outcome === "failed-cutout") { expect(scanWrite).not.toHaveBeenCalled(); return; }
     const row = scanWrite.mock.calls[0][0];
     expect(row.result_json).toEqual(savedAiResult);
-    expect(row.evidence_bundle_json).toMatchObject({ version: 1, photos: [{ id: "overview" }, { id: "detail" }], isolatedObjects: [{ name: "Primary" }, { name: "Secondary" }, { name: "Corrected", imagePath: null, focusMode: "crop" }] });
+    expect(row.evidence_bundle_json).toMatchObject({ version: 1, photoRelationship: "independent", photos: [{ id: "overview" }, { id: "detail" }], isolatedObjects: [{ name: "Primary" }, { name: "Secondary" }, { name: "Corrected", imagePath: null, focusMode: "crop" }] });
     expect(JSON.stringify(row.evidence_bundle_json)).not.toContain("base64");
     expect(row.evidence_bundle_json.photos[0].imagePath).toBe(row.image_path);
     expect(row.evidence_bundle_json.isolatedObjects[0].imagePath).not.toBe(row.evidence_bundle_json.isolatedObjects[1].imagePath);
+    const { evidencePaths, parseEvidenceBundle, restoreEvidenceBundle } = await import("./visualEvidence");
+    const bundle = parseEvidenceBundle(JSON.parse(JSON.stringify(row.evidence_bundle_json)), "user-1", lookup.id);
+    expect(bundle).not.toBeNull();
+    const restored = restoreEvidenceBundle(bundle!, new Map(evidencePaths(bundle!).map((path) => [path, `https://images/${path}?token=new`])));
+    expect(restored.photoRelationship).toBe("independent");
+    expect(restored.photos?.map(({ id, label, capturedAt }) => ({ id, label, capturedAt })))
+      .toEqual(lookup.photos.map(({ id, label, capturedAt }) => ({ id, label, capturedAt })));
     if (outcome === "missing-column") {
       expect(result.message).toContain("Evidence not synced");
       expect(scanWrite).toHaveBeenCalledTimes(1);
       expect(getLookup(lookup.id)?.cloudRevision).toBeUndefined();
     }
+  });
+
+  it.each([null, "same_car", "", 2])("rejects invalid relationship %j before client creation or uploading originals", async (photoRelationship) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const lookup = { ...makeLookup(), photoRelationship } as unknown as Lookup;
+    const original = JSON.stringify(lookup);
+    const { syncLookupToCloud } = await import("./cloudSync");
+    expect(await syncLookupToCloud(lookup)).toMatchObject({ ok: false, message: expect.stringContaining("relationship metadata is invalid") });
+    expect(mocks.createClient).not.toHaveBeenCalled();
+    expect(JSON.stringify(lookup)).toBe(original);
   });
 
   it.each(["other-owner", "other-scan", "foreign-host"])("refuses an unowned signed evidence reference: %s", async (kind) => {

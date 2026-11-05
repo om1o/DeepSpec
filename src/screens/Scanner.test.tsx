@@ -1,6 +1,6 @@
 import { accountStorageKey, setActiveAccount, type AccountScope } from "../lib/accountScope";
 import { createLookup, getLookups, LOOKUPS_STORAGE_KEY, MAX_SAVED_LOOKUPS } from "../services/storage";
-import { photoGroupsMatch, type PhotoDraftEnvelope } from "../services/photoDraft";
+import { photoGroupsMatch, upgradePhotoDraft, type PhotoDraftEnvelope } from "../services/photoDraft";
 import type { ComponentCaptureTarget } from "../types/componentMap";
 import type { ComparisonCaptureTarget } from "../types/inspectionComparison";
 import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
@@ -204,6 +204,9 @@ vi.mock("../services/photoDraft", async (importOriginal) => {
   // Storage normalizes property order; use production evidence equality rather than JSON bytes.
   photoGroupsMatch: original.photoGroupsMatch,
   photoDraftsMatch: original.photoDraftsMatch,
+  hasPhotoDraftContext: original.hasPhotoDraftContext,
+  hasPhotoDraftComparison: original.hasPhotoDraftComparison,
+  upgradePhotoDraft: original.upgradePhotoDraft,
   componentCaptureTargetsMatch: original.componentCaptureTargetsMatch,
   comparisonCaptureTargetsMatch: original.comparisonCaptureTargetsMatch,
   readPhotoDraftEnvelope: async (scope?: AccountScope, kind?: "upload" | "capture") => {
@@ -226,7 +229,7 @@ vi.mock("../services/photoDraft", async (importOriginal) => {
         : await replacePhotoDraftIfMatches(previous?.photos ?? null, next?.photos ?? null, scope, kind);
     if (matched) {
       if (next?.target) draftTargets.set(key, next.target); else draftTargets.delete(key);
-      if (next) draftEnvelopes.set(key, structuredClone(next)); else draftEnvelopes.delete(key);
+      if (next) draftEnvelopes.set(key, structuredClone(original.upgradePhotoDraft(next))); else draftEnvelopes.delete(key);
     }
     return matched;
   },
@@ -1498,7 +1501,7 @@ describe("Scanner", () => {
     const newer: ScanPhoto = { id: "newer-camera", label: "marking", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,newer" };
     draftStore.set("test-user:capture", [newer]);
     await act(async () => finishIdentify(makeScanResult("Alternator")));
-    await waitFor(() => expect(observeEnvelopeCompare).toHaveBeenCalledWith(expect.objectContaining({ version: 3, photos: getLookups()[0].photos }), null));
+    await waitFor(() => expect(observeEnvelopeCompare).toHaveBeenCalledWith(expect.objectContaining({ version: 6, photos: getLookups()[0].photos }), null));
     expect(getLookups()[0].photos?.[0].imageBase64).not.toBe(newer.imageBase64);
     expect(draftStore.get("test-user:capture")).toEqual([newer]);
     await userEvent.click(await screen.findByRole("button", { name: "Resume captured photo" }));
@@ -1517,6 +1520,44 @@ describe("Scanner", () => {
     expect(removePhotoDraftIfMatches.mock.calls[0][0]).toEqual([pending]);
   });
 
+  it("rejects analysis when another tab changes only the saved photo relationship", async () => {
+    const photos: ScanPhoto[] = [
+      { id: "one", label: "overview", imageBase64: "data:image/jpeg;base64,b25l", capturedAt: "2026-11-05T00:00:00Z" },
+      { id: "two", label: "other", imageBase64: "data:image/jpeg;base64,dHdv", capturedAt: "2026-11-05T00:00:01Z" },
+    ];
+    const draft: PhotoDraftEnvelope = { version: 6, photos, vehicleContext: null, photoRelationship: "same_part_or_area" };
+    draftStore.set("test-user:upload", photos); draftEnvelopes.set("test-user:upload", draft);
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(await screen.findByRole("button", { name: "Resume 2-photo draft" }));
+    const newer: PhotoDraftEnvelope = { ...draft, photoRelationship: "independent" };
+    draftEnvelopes.set("test-user:upload", newer);
+    await analyzeReviewedPhotos();
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Photo relationship" })).toHaveValue("independent"));
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    expect(draftEnvelopes.get("test-user:upload")).toEqual(newer);
+    expect(draftStore.get("test-user:upload")).toEqual(photos);
+  });
+
+  it("keeps a relationship through relabeling but clears it when a photo is removed or added", async () => {
+    const photos: ScanPhoto[] = [1, 2, 3].map((number) => ({ id: `existing-${number}`, label: "overview", imageBase64: `data:image/jpeg;base64,${btoa(`original-${number}`)}`, capturedAt: "2026-11-05T00:00:00Z" }));
+    draftStore.set("test-user:upload", photos);
+    draftEnvelopes.set("test-user:upload", { version: 6, photos, vehicleContext: null, photoRelationship: "same_part_or_area" });
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(await screen.findByRole("button", { name: "Resume 3-photo draft" }));
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Photo 2 view" }), "marking");
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Photo relationship" })).toBeEnabled());
+    expect(draftEnvelopes.get("test-user:upload")?.photoRelationship).toBe("same_part_or_area");
+    await userEvent.click(screen.getByRole("button", { name: "Remove photo 3" }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Photo relationship" })).toHaveValue("unknown"));
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Photo relationship" }), "independent");
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Photo relationship" })).toBeEnabled());
+    await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["different example"], "third.jpg", { type: "image/jpeg" }));
+    await screen.findByRole("button", { name: "Analyze 3 photos" });
+    expect(draftEnvelopes.get("test-user:upload")?.photoRelationship).toBe("unknown");
+    expect(draftStore.get("test-user:upload")?.slice(0, 2).map((photo) => photo.imageBase64)).toEqual(photos.slice(0, 2).map((photo) => photo.imageBase64));
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+  });
+
   it("reviews both labeled photos and verifies their durable group without rewriting it before asking the provider", async () => {
     render(<MemoryRouter><Scanner /></MemoryRouter>);
     await userEvent.upload(screen.getByLabelText("Upload photo"), [
@@ -1526,6 +1567,9 @@ describe("Scanner", () => {
     const review = await screen.findByRole("dialog", { name: "Review inspection photos" });
     expect(within(review).getAllByRole("img")).toHaveLength(2);
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    expect(screen.getByRole("combobox", { name: "Photo relationship" })).toHaveValue("unknown");
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Photo relationship" }), "independent");
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Photo 2 view" })).toBeEnabled());
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "Photo 2 view" }), "marking");
     await waitFor(() => expect(screen.getByRole("button", { name: "Analyze 2 photos" })).toBeEnabled());
     const reviewed = savePhotoDraft.mock.calls.at(-1)![0];
@@ -1539,9 +1583,11 @@ describe("Scanner", () => {
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
     await act(async () => finishVerification(true));
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1), { timeout: 3000 });
-    expect(identifyCapturedFrame.mock.calls[0][3]).toMatchObject({ photos: reviewed });
+    expect(identifyCapturedFrame.mock.calls[0][3]).toMatchObject({ photos: reviewed, photoRelationship: "independent" });
     expect(identifyCapturedFrame.mock.calls[0][0]).toMatchObject({ imageBase64: reviewed[0].imageBase64 });
     await screen.findByRole("heading", { level: 3, name: "Alternator" });
+    expect(getLookups()[0].photoRelationship).toBe("independent");
+    expect(getLookups()[0].photos).toEqual(reviewed);
   }, 10000);
 
   it("keeps the repeat reference separate, freezes its vehicle and saves only newly reviewed photos", async () => {
@@ -1551,7 +1597,7 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     const review = await screen.findByRole("dialog", { name: "Review inspection photos" });
     expect(within(review).getByTestId("comparison-capture-reference")).toBeInTheDocument();
-    expect(draftEnvelopes.get("test-user:capture")).toMatchObject({ version: 4, comparisonTarget: repeatTarget, vehicleContext: repeatTarget.earlier.vehicleContext });
+    expect(draftEnvelopes.get("test-user:capture")).toMatchObject({ version: 7, comparisonTarget: repeatTarget, vehicleContext: repeatTarget.earlier.vehicleContext });
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "Photo 1 view" }), "close_up");
     await analyzeReviewedPhotos();
@@ -1579,7 +1625,7 @@ describe("Scanner", () => {
     const savedBefore = getLookups().find((lookup) => lookup.id === repeatTarget.lookupId)!;
     expect(savedBefore.errorMessage).toBeTruthy(); expect(savedBefore.result).toBeUndefined();
     expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
-    expect(draftEnvelopes.get("test-user:upload")).toEqual(envelope);
+    expect(draftEnvelopes.get("test-user:upload")).toEqual(upgradePhotoDraft(envelope));
     cleanup();
     render(<MemoryRouter><Scanner /></MemoryRouter>);
     await userEvent.click(await screen.findByRole("button", { name: "Resume 1-photo draft" }));
@@ -1600,7 +1646,7 @@ describe("Scanner", () => {
     await analyzeReviewedPhotos();
     expect(await within(screen.getByRole("dialog")).findByText("The earlier original changed; draft kept.")).toBeInTheDocument();
     expect(identifyCapturedFrame).not.toHaveBeenCalled(); expect(completeComparisonCapture).not.toHaveBeenCalled();
-    expect(draftEnvelopes.get("test-user:upload")).toEqual(envelope);
+    expect(draftEnvelopes.get("test-user:upload")).toEqual(upgradePhotoDraft(envelope));
   });
 
   it("does not overwrite an occupied repeat-capture ID with different evidence", async () => {
@@ -1615,13 +1661,13 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Finish dated comparison" }));
     expect(await within(screen.getByRole("dialog")).findByText(/This draft differs from its saved scan/)).toBeInTheDocument();
     expect(identifyCapturedFrame).not.toHaveBeenCalled(); expect(completeComparisonCapture).not.toHaveBeenCalled();
-    expect(getLookups()[0].photos).toEqual([other]); expect(draftEnvelopes.get("test-user:upload")).toEqual(envelope);
+    expect(getLookups()[0].photos).toEqual([other]); expect(draftEnvelopes.get("test-user:upload")).toEqual(upgradePhotoDraft(envelope));
   });
 
   it("keeps a newer comparison target when an older completed analysis tries to retire identical photo bytes", async () => {
     const photos: ScanPhoto[] = [{ id: "follow-up", label: "overview", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,cGFydA==" }];
     const envelope: PhotoDraftEnvelope = { version: 4, photos, comparisonTarget: repeatTarget, vehicleContext: repeatTarget.earlier.vehicleContext };
-    const newer: PhotoDraftEnvelope = { ...envelope, comparisonTarget: { ...repeatTarget, comparisonId: "00000000-0000-4000-8000-000000000012", lookupId: "newer-follow-up" } };
+    const newer: PhotoDraftEnvelope = { ...upgradePhotoDraft(envelope), comparisonTarget: { ...repeatTarget, comparisonId: "00000000-0000-4000-8000-000000000012", lookupId: "newer-follow-up" } };
     draftStore.set("test-user:upload", photos); draftEnvelopes.set("test-user:upload", envelope);
     completeComparisonCapture.mockImplementationOnce(async () => { draftEnvelopes.set("test-user:upload", newer); return {}; });
     render(<MemoryRouter><Scanner /></MemoryRouter>);
@@ -1649,7 +1695,7 @@ describe("Scanner", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Resume 1-photo draft" }));
     await analyzeReviewedPhotos();
     expect(identifyCapturedFrame).not.toHaveBeenCalled(); expect(completeComparisonCapture).not.toHaveBeenCalled();
-    expect(draftEnvelopes.get("test-user:upload")).toEqual(envelope);
+    expect(draftEnvelopes.get("test-user:upload")).toEqual(upgradePhotoDraft(envelope));
   });
 
   it("saves a component target with its camera photos and waits for reviewed angles before analysis", async () => {
@@ -1659,7 +1705,7 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     await screen.findByRole("dialog", { name: "Review inspection photos" });
     expect(draftTargets.get("test-user:capture")).toEqual(target);
-    expect(draftEnvelopes.get("test-user:capture")).toMatchObject({ version: 3, vehicleContext: { model: "Civic", engine: "1.8L" } });
+    expect(draftEnvelopes.get("test-user:capture")).toMatchObject({ version: 6, vehicleContext: { model: "Civic", engine: "1.8L" } });
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
     // A later overview edit must not relabel photographs already captured for it.
     readComponentMapLookup.mockResolvedValue({ ok: true, value: { id: "bay-overview", vehicleContext: { model: "Accord", engine: "2.4L" } } });
@@ -1682,7 +1728,7 @@ describe("Scanner", () => {
     render(<MemoryRouter><Scanner /></MemoryRouter>);
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     await screen.findByRole("heading", { level: 3, name: "Alternator" });
-    expect(contextBeforeProvider).toMatchObject({ version: 3, vehicleContext: vehicle });
+    expect(contextBeforeProvider).toMatchObject({ version: 6, vehicleContext: vehicle });
     expect(identifyCapturedFrame.mock.calls[0][3]).toMatchObject({ vehicleContext: vehicle });
     expect(getLookups()[0].vehicleContext).toEqual(vehicle);
     expect(getCachedScanResult).not.toHaveBeenCalled();
@@ -1977,7 +2023,7 @@ describe("Scanner", () => {
     readPhotoDraft.mockImplementationOnce(() => new Promise((resolve) => { finishStartupRead = resolve; }));
     render(<MemoryRouter><Scanner /></MemoryRouter>);
     await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["fifth"], "fifth.jpg", { type: "image/jpeg" }));
-    expect(await screen.findByText("Choose up to four photos of the same part or area. No photos were discarded.")).toBeInTheDocument();
+    expect(await screen.findByText("Choose up to four photos. No photos were discarded.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Resume 4-photo draft" })).toBeInTheDocument();
     expect(savePhotoDraft).not.toHaveBeenCalled();
     expect(identifyCapturedFrame).not.toHaveBeenCalled();

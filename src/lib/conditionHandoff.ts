@@ -3,6 +3,7 @@ import { normalizeConditionAssessment } from "./conditionAssessment";
 import { PHOTO_LABEL_TEXT } from "./photoLabels";
 import { isEvidenceImage, normalizeVisualEvidence } from "../services/visualEvidence";
 import { normalizeVehicleContext, vehicleContextDetails } from "./vehicleContext";
+import { photoRelationshipDescription, photoRelationshipOrUnknown, photoRelationshipScopeDescription } from "./photoRelationship";
 
 /** Derive the screen and export from the same saved evidence, never review ratings. */
 export function buildConditionHandoff(lookup: Lookup) {
@@ -15,9 +16,14 @@ export function buildConditionHandoff(lookup: Lookup) {
   const vehicleName = vehicle ? [vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" ") : "";
   const vehicleDetails: [string, string][] = vehicle
     ? [...(vehicleName ? [["Vehicle", vehicleName] as [string, string]] : []), ...vehicleContextDetails(vehicle)] : [];
+  const photoRelationship = photoRelationshipOrUnknown(lookup.photoRelationship);
   return {
     assessment,
     photos,
+    photoRelationship,
+    photoRelationshipDescription: photoRelationshipDescription(photoRelationship),
+    photoRelationshipScope: photos.length > 1
+      ? photoRelationshipScopeDescription(photoRelationship, lookup.result ? lookup.result.modelRun?.pipelineVersion : null) : undefined,
     vehicleDetails,
     observations: assessment?.observations ?? [],
     possibleCauses: assessment?.possibleCauses ?? [],
@@ -32,13 +38,19 @@ export function buildConditionHandoff(lookup: Lookup) {
 export function formatConditionHandoff(lookup: Lookup): string {
   const review = buildConditionHandoff(lookup);
   const vehicleLines = review.vehicleDetails.length
-    ? ["Vehicle details supplied for this scan:", ...review.vehicleDetails.map(([label, value]) => `${label}: ${value}`)]
+    ? [review.photos.length > 1 && review.photoRelationship !== "same_part_or_area" ? "Vehicle and complaint details supplied for Photo 1:" : "Vehicle details supplied for this scan:", ...review.vehicleDetails.map(([label, value]) => `${label}: ${value}`)]
     : [];
-  // Vehicle intake exists independently of a successful condition assessment.
-  if (!review.assessment) return vehicleLines.join("\n");
+  const relationshipLines = [
+    `${review.photoRelationship === "unknown" ? "Photo relationship" : "User-reported photo relationship"}: ${review.photoRelationshipDescription}`,
+    ...(review.photoRelationshipScope ? [review.photoRelationshipScope] : []),
+  ];
+  // Vehicle intake and photo relationships exist independently of an AI assessment.
+  if (!review.assessment) return [...vehicleLines, ...relationshipLines].join("\n");
   const photoLabel = (id: string) => `${review.photos.find((photo) => photo.id === id)!.label} [${id}]`;
   return [
     ...(vehicleLines.length ? [...vehicleLines, ""] : ["Vehicle details: not supplied.", ""]),
+    ...relationshipLines,
+    "",
     "Condition evidence (AI-reported, not human confirmation):",
     "Observed appearance:",
     ...(review.observations.length ? review.observations.map((item) => `- [${item.id}] ${item.text} — ${item.photoIds.map(photoLabel).join(", ")}${item.regionLabel ? ` — area described: ${item.regionLabel}` : ""}`) : ["No photo-linked observations returned."]),

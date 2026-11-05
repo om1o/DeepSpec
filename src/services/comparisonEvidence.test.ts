@@ -2,6 +2,8 @@ import { createHash, webcrypto } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getAccountScope, setActiveAccount } from "../lib/accountScope";
 import type { Lookup, ScanPhoto } from "../types";
+import type { DiagnosticAssociation, DiagnosticDocument } from "../types/diagnosticReport";
+import { mergeDiagnosticBundles, normalizeDiagnosticAssociation } from "../lib/diagnosticAssociation";
 const mocks = vi.hoisted(() => ({ lookups: vi.fn(), lookup: vi.fn(), cloud: vi.fn() }));
 vi.mock("./storage", () => ({ readLookups: mocks.lookups, getLookup: mocks.lookup }));
 vi.mock("./cloudHistory", () => ({ readCloudLookupForReport: mocks.cloud }));
@@ -76,11 +78,68 @@ describe("frozen comparison originals", () => {
   });
   it("retains the exact selected photo and safe vehicle context without inventing a capture date", async () => {
     const lookup = scan("scan", [photo("first"), { ...photo("chosen"), label: "marking", capturedAt: "2026-11-04T10:00:00Z" }]);
+    lookup.photoRelationship = "same_part_or_area";
     lookup.vehicleContext = { make: "Toyota", mileage: "12345", mileageUnit: "km", symptom: "Rattle", notes: "PRIVATE", customerName: "PRIVATE", plate: "PRIVATE" };
     lookup.analysisAttemptId = "analysis.original-v2";
     const side = await comparisonSideForLookup(lookup, "chosen");
     expect(side).toMatchObject({ photoId: "chosen", photoLabel: "marking", photoAddedAt: "2026-11-04T10:00:00.000Z", observedOn: null, analysisAttemptId: "analysis.original-v2", vehicleContext: { mileage: "12345", mileageUnit: "km", symptom: "Rattle" } });
     expect(JSON.stringify(side)).not.toContain("PRIVATE"); expect(side.scanSavedAt).toBe(capturedAt);
+  });
+  it.each(["same_part_or_area", "independent", "unknown", undefined] as const)("scopes new frozen photo context and verification to relationship %s", async (photoRelationship) => {
+    const lookup = scan("scan", [photo("first"), photo("second")]);
+    lookup.photoRelationship = photoRelationship;
+    lookup.vehicleContext = { make: "Toyota", model: "First car", symptom: "First-car rattle", notes: "PRIVATE", customerName: "PRIVATE" };
+    local = [lookup];
+    const first = await comparisonSideForLookup(lookup, "first"), second = await comparisonSideForLookup(lookup, "second");
+    expect(first.vehicleContext).toEqual({ make: "Toyota", model: "First car", symptom: "First-car rattle" });
+    expect(second.vehicleContext).toEqual(photoRelationship === "same_part_or_area" ? first.vehicleContext : null);
+    expect(first.photoId).toBe("first"); expect(second.photoId).toBe("second");
+    expect(await resolveComparisonSide(first)).toMatchObject({ status: "unchanged", image });
+    expect(await resolveComparisonSide(second)).toMatchObject({ status: "unchanged", image });
+    expect(JSON.stringify([first, second])).not.toContain("PRIVATE");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+  it("preserves historical secondary context but does not verify it after a relationship is withdrawn", async () => {
+    const lookup = scan("scan", [photo("first"), photo("second")]);
+    lookup.vehicleContext = { model: "First car" }; lookup.photoRelationship = "same_part_or_area"; local = [lookup];
+    const historical = await comparisonSideForLookup(lookup, "second"), before = JSON.stringify(historical);
+    for (const photoRelationship of ["independent", "unknown", undefined] as const) {
+      lookup.photoRelationship = photoRelationship;
+      expect(await resolveComparisonSide(historical)).toMatchObject({ status: "source_changed" });
+      expect(JSON.stringify(historical)).toBe(before);
+      expect((await comparisonSideForLookup(lookup, "second")).vehicleContext).toBeNull();
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+  it("detects a same-part declaration withdrawn during secondary-photo verification", async () => {
+    const lookup = scan("scan", [photo("first"), photo("second")]);
+    lookup.vehicleContext = { model: "First car" }; lookup.photoRelationship = "same_part_or_area"; local = [lookup];
+    const historical = await comparisonSideForLookup(lookup, "second");
+    decode = () => { lookup.photoRelationship = "independent"; };
+    expect(await resolveComparisonSide(historical)).toMatchObject({ status: "source_changed" });
+  });
+  it("retains distinct first/secondary context through diagnostic association import normalization without rewriting historical claims", async () => {
+    const lookup = scan("scan", [photo("first"), photo("second")]);
+    lookup.photoRelationship = "independent"; lookup.vehicleContext = { model: "First car" }; local = [lookup];
+    const first = await comparisonSideForLookup(lookup, "first"), second = await comparisonSideForLookup(lookup, "second");
+    const document: DiagnosticDocument = { version: 1, id: "00000000-0000-4000-8000-000000000001", lookupId: lookup.id,
+      importedAt: capturedAt, fileName: "synthetic.txt", mime: "text/plain", byteLength: 1, sha256: createHash("sha256").update("A").digest("hex"), encoding: "utf-8", sourceBase64: "QQ==" };
+    const record: DiagnosticAssociation = { version: 1, id: "00000000-0000-4000-8000-000000000002", lookupId: lookup.id,
+      documentId: document.id, sourceSha256: document.sha256, recordedAt: capturedAt, subject: "Compare the diagnostic report with these originals",
+      entryIds: [], photos: [first, second], vehicleRelationship: "unconfirmed", basis: "", notes: "No failed part inferred." };
+    // This is the real normalization/union used by importDiagnosticBundle; it
+    // preserves immutable claims, while original verification remains separate.
+    const imported = mergeDiagnosticBundles({ documents: [], associations: [] }, { documents: [document], associations: [record] }, lookup.id);
+    expect(imported.associations[0].photos.map((side) => side.vehicleContext)).toEqual([{ model: "First car" }, null]);
+    expect(imported.associations[0].vehicleRelationship).toBe("unconfirmed");
+    for (const side of imported.associations[0].photos) expect(await resolveComparisonSide(side)).toMatchObject({ status: "unchanged", image });
+    const historical = normalizeDiagnosticAssociation({ ...record, id: "00000000-0000-4000-8000-000000000003",
+      photos: [{ ...second, vehicleContext: { model: "First car" } }] })!;
+    const merged = mergeDiagnosticBundles(imported, { documents: [], associations: [historical] }, lookup.id);
+    expect(merged.associations.find((entry) => entry.id === historical.id)?.photos[0].vehicleContext).toEqual({ model: "First car" });
+    expect(await resolveComparisonSide(historical.photos[0])).toMatchObject({ status: "source_changed" });
+    expect(record.photos[1].vehicleContext).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
   it("supports only photo-1 for legacy originals and never substitutes another group photo", async () => {
     expect(comparisonPhotos(scan()).map((entry) => entry.id)).toEqual(["photo-1"]);

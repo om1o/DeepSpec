@@ -1061,6 +1061,26 @@ describe("Result", () => {
     expect(getLookups()[0]).toMatchObject({ vehicleContext, result: { fitmentConfidence: "needs_vehicle_context", requiredNextEvidence: expect.arrayContaining(["VIN"]) } });
   });
 
+  it.each(["device", "unsaved"])("preserves independent photo metadata on a %s retry and subsequent save", async (source) => {
+    const photos = [
+      { ...frame, id: "first", label: "overview" as const },
+      { ...frame, id: "second", label: "other" as const, imageBase64: "data:image/jpeg;base64,c2Vjb25k" },
+    ];
+    const failure: ScanAnalysisState = { frame, photos, photoRelationship: "independent", errorCode: "network", errorMessage: "Network error" };
+    const identify = vi.spyOn(aiService, "identifyCapturedFrame").mockResolvedValue(successfulScan.result!);
+    if (source === "device") {
+      const saved = makeLookup({ ...failure, result: undefined });
+      localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([saved]));
+      renderResult(null, `/result/${saved.id}`);
+    } else renderResult(failure);
+    expect(screen.getByText(/Independent examples — do not assume/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(identify).toHaveBeenCalledExactlyOnceWith(frame, undefined, undefined, expect.objectContaining({ photos, photoRelationship: "independent" }));
+    if (source === "unsaved") await userEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+    expect(getLookups()).toHaveLength(1);
+    expect(getLookups()[0]).toMatchObject({ photos, photoRelationship: "independent" });
+  });
+
   it("retries a failed cloud-only HTTPS photo with a data URL and retains vehicle context and identity", async () => {
     const vehicleContext = { year: "2012", make: "Honda", model: "Civic" };
     const cloudFrame = { ...frame, imageBase64: "https://example.test/private-photo.png?token=signed" };

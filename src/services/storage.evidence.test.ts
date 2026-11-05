@@ -32,6 +32,66 @@ const inspection: PartInspection = {
 };
 describe("durable visual evidence", () => {
   beforeEach(() => { localStorage.clear(); setActiveAccount("owner"); });
+  it.each(["same_part_or_area", "independent", "unknown"] as const)("retains %s through save, reopen, retry and result updates", (photoRelationship) => {
+    const saved = createLookup({ ...state, photoRelationship }).value;
+    expect(scanStateFromLookup(getLookup(saved.id)!).photoRelationship).toBe(photoRelationship);
+    const retried = withRetriedLookupResult(saved, { frame: state.frame, photoRelationship, result: identification });
+    expect(retried.photoRelationship).toBe(photoRelationship);
+    expect(saveExistingLookup(saved, { frame: state.frame, photoRelationship, result: identification }).ok).toBe(true);
+    expect(updateLookupResult(saved.id, identification).ok).toBe(true);
+    expect(getLookup(saved.id)).toMatchObject({ photoRelationship, photos: state.photos });
+  });
+  it.each(["same_part_or_area", "independent"] as const)("does not attribute an unknown retry to saved %s evidence", (photoRelationship) => {
+    const saved = createLookup({ ...state, photoRelationship, result: identification }).value;
+    const unknownRetry = { frame: state.frame, result: { ...identification, partName: "Unknown-relationship analysis" } };
+    const raw = localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY));
+    expect(withRetriedLookupResult(saved, unknownRetry)).toBe(saved);
+    expect(saveExistingLookup(saved, unknownRetry)).toMatchObject({ ok: false, message: expect.stringContaining("photo relationship changed") });
+    expect(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY))).toBe(raw);
+    // A screen snapshot with no new analysis is an ordinary save, not a retry.
+    expect(saveExistingLookup(saved, { frame: state.frame }).ok).toBe(true);
+    expect(getLookup(saved.id)).toMatchObject({ photoRelationship, result: { partName: identification.partName }, photos: state.photos });
+  });
+  it.each(["unknown", undefined] as const)("allows a legacy unknown retry only for unknown saved evidence: %s", (photoRelationship) => {
+    const saved = createLookup({ ...state, photoRelationship }).value;
+    expect(saveExistingLookup(saved, { frame: state.frame, result: identification }).ok).toBe(true);
+    expect(getLookup(saved.id)).toMatchObject({ result: { partName: identification.partName }, photos: state.photos });
+    expect(getLookup(saved.id)?.photoRelationship).toBe(photoRelationship);
+  });
+  it("rejects a retry from a different relationship and retains the stored exact legacy representation", () => {
+    const saved = createLookup({ ...state, photoRelationship: "independent", result: identification }).value;
+    const retry = { ...state, photoRelationship: "same_part_or_area" as const, result: { ...identification, partName: "Changed" } };
+    const raw = localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY));
+    expect(withRetriedLookupResult(saved, retry)).toBe(saved);
+    expect(saveExistingLookup(saved, retry)).toMatchObject({ ok: false, message: expect.stringContaining("photo relationship changed") });
+    expect(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY))).toBe(raw);
+    const legacy = createLookup(state).value;
+    expect(saveExistingLookup(legacy, { ...state, photoRelationship: "unknown", result: identification }).ok).toBe(true);
+    expect(getLookup(legacy.id)?.photoRelationship).toBeUndefined();
+  });
+  it("does not reuse a reserved scan ID for a changed photo relationship", () => {
+    const saved = createLookup({ ...state, photoRelationship: "same_part_or_area" }, "reserved").value;
+    expect(createLookup({ ...state, photoRelationship: "independent" }, "reserved").ok).toBe(false);
+    expect(getLookup("reserved")).toEqual(saved);
+    const legacy = createLookup(state, "legacy").value;
+    expect(createLookup({ ...state, photoRelationship: "unknown" }, "legacy")).toEqual({ ok: true, value: legacy });
+  });
+  it("rejects invalid relationships at creation, retry and restore without losing originals", () => {
+    const saved = createLookup({ ...state, photoRelationship: "independent", result: identification }).value;
+    const raw = localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY));
+    const invalid = { ...state, photoRelationship: "same_car", result: { ...identification, partName: "Changed" } } as unknown as ScanAnalysisState;
+    const failed = createLookup(invalid);
+    expect(failed.ok).toBe(false); expect(failed.value.photos).toEqual(state.photos);
+    expect(withRetriedLookupResult(saved, invalid)).toBe(saved);
+    expect(saveExistingLookup(saved, invalid).ok).toBe(false);
+    expect(saveExistingLookup({ ...saved, photoRelationship: invalid.photoRelationship }).ok).toBe(false);
+    expect(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY))).toBe(raw);
+    const damaged = JSON.stringify([{ ...saved, photoRelationship: "same_car" }]);
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), damaged);
+    expect(readLookups().ok).toBe(false);
+    expect(createLookup(state).ok).toBe(false);
+    expect(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY))).toBe(damaged);
+  });
   it("retains all photos and secondary cutouts through save, normalization and reopen", () => {
     const saved = createLookup(state);
     expect(saved.ok).toBe(true);
@@ -65,7 +125,7 @@ describe("durable visual evidence", () => {
     setActiveAccount("other");
     expect(updateLookupVisualSelection(saved.id, box, null, reopened)).toMatchObject({ ok: false, value: null });
   });
-  it.each(["object order", "object replacement", "original", "photo group", "selection", "analysis"])("rejects a correction after the saved %s changes", (change) => {
+  it.each(["object order", "object replacement", "original", "photo group", "relationship", "selection", "analysis"])("rejects a correction after the saved %s changes", (change) => {
     const saved = createLookup({ ...state, isolatedObjects: [...state.isolatedObjects!, {
       name: "Third", category: "body", primary: false, focusBox: { ...box, x: 0.6 }, isolatedImageBase64: image,
     }] }).value;
@@ -74,6 +134,7 @@ describe("durable visual evidence", () => {
     if (change === "object replacement") newer.isolatedObjects![0].name = "Different component";
     if (change === "original") newer.frame.imageBase64 = "data:image/jpeg;base64,Yg==";
     if (change === "photo group") newer.photos![1].id = "replacement-angle";
+    if (change === "relationship") newer.photoRelationship = "independent";
     if (change === "selection") newer.isolatedObjects![0].focusBox.x = 0.4;
     if (change === "analysis") newer.analysisAttemptId = "replacement-analysis";
     const latestRaw = JSON.stringify([newer]);

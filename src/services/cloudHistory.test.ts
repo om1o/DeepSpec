@@ -141,10 +141,10 @@ describe("readCloudLookups", () => {
     mocks.signedUrls.mockResolvedValue({ data: [], error: null });
   });
 
-  it("restores every photo and secondary cutout with signed URLs, keeping corrected crops empty", async () => {
+  it.each(["same_part_or_area", "independent", "unknown", undefined] as const)("restores relationship %s with every photo and cutout, keeping corrected crops empty", async (photoRelationship) => {
     const base = "user-1/scan-1/";
     const box = { x: 0.1, y: 0.1, width: 0.3, height: 0.4, confidence: 0.8 };
-    const bundle = { version: 1,
+    const bundle = { version: 1, ...(photoRelationship !== undefined ? { photoRelationship } : {}),
       photos: [{ id: "overview", label: "overview", capturedAt: "now", imagePath: `${base}original.jpg` }, { id: "detail", label: "close_up", capturedAt: "later", imagePath: `${base}detail.jpg` }],
       isolatedObjects: [{ name: "Primary", category: "engine", primary: true, focusBox: box, imagePath: `${base}primary.png` }, { name: "Secondary", category: "electrical", primary: false, focusBox: box, imagePath: `${base}secondary.png` }, { name: "Corrected", category: "engine", primary: false, focusBox: box, imagePath: null, focusMode: "crop", correctedAt: "today" }],
       focusBox: box, focusMode: "mask", isolatedImagePath: `${base}primary.png`,
@@ -156,6 +156,7 @@ describe("readCloudLookups", () => {
     expect(result.ok).toBe(true);
     if (!result.ok || !result.value) throw new Error("expected a cloud scan");
     expect(result.value.photos?.map((photo) => photo.id)).toEqual(["overview", "detail"]);
+    expect(result.value.photoRelationship).toBe(photoRelationship);
     expect(result.value.photos?.[1].imageBase64).toContain("detail.jpg?signed=new");
     expect(result.value.isolatedObjects?.[1].isolatedImageBase64).toContain("secondary.png?signed=new");
     expect(result.value.isolatedObjects?.[2]).toMatchObject({ isolatedImageBase64: "", focusMode: "crop", correctedAt: "today" });
@@ -163,6 +164,7 @@ describe("readCloudLookups", () => {
     const { normalizeLookup, scanStateFromLookup } = await import("./storage");
     const reopened = scanStateFromLookup(normalizeLookup(result.value)!);
     expect(reopened.photos).toEqual(result.value.photos);
+    expect(reopened.photoRelationship).toBe(photoRelationship);
     expect(reopened.isolatedObjects).toEqual(result.value.isolatedObjects);
     expect(mocks.signedUrls).toHaveBeenCalledWith([`${base}original.jpg`, `${base}detail.jpg`, `${base}primary.png`, `${base}secondary.png`], 3600);
   });
@@ -206,9 +208,9 @@ describe("readCloudLookups", () => {
     else expect(loaded.value.result).not.toHaveProperty("conditionAssessment");
   });
 
-  it.each(["other-owner", "other-scan", "missing-image", "malformed"])("does not partially restore unsafe evidence: %s", async (kind) => {
+  it.each(["other-owner", "other-scan", "missing-image", "malformed", "invalid-relationship"])("does not partially restore unsafe evidence: %s", async (kind) => {
     const imagePath = kind === "other-owner" ? "user-2/scan-1/photo.jpg" : kind === "other-scan" ? "user-1/scan-2/photo.jpg" : "user-1/scan-1/photo.jpg";
-    const bundle = { version: 1, photos: [{ id: "detail", label: kind === "malformed" ? "not-a-label" : "close_up", capturedAt: "now", imagePath }] };
+    const bundle = { version: 1, ...(kind === "invalid-relationship" ? { photoRelationship: "same_car" } : {}), photos: [{ id: "detail", label: kind === "malformed" ? "not-a-label" : "close_up", capturedAt: "now", imagePath }] };
     mocks.select.mockReturnValue({ data: [{ ...shopRow, evidence_bundle_json: bundle }], error: null });
     const { readCloudLookup } = await import("./cloudHistory");
     expect(await readCloudLookup("scan-1")).toMatchObject({ ok: false });

@@ -2,6 +2,7 @@ import { orderSceneObjects } from "../components/result/isolatedPartViewGeometry
 import type { ScanAnalysisState, VisualFocusBox } from "../types";
 import { normalizeVisualEvidence, validFocusBox } from "../services/visualEvidence";
 import { getAccountScope, isAccountScopeCurrent, type AccountScope } from "./accountScope";
+import { photoRelationshipOrUnknown } from "./photoRelationship";
 
 type SelectionSourceContext = { lookupId: string; scope?: AccountScope };
 
@@ -50,6 +51,7 @@ export function visualSelectionSourceMatches(current: ScanAnalysisState, expecte
   const sameList = <T,>(a: T[] | undefined, b: T[] | undefined, same: (left: T, right: T) => boolean) =>
     a === b || Boolean(a && b && a.length === b.length && a.every((entry, index) => same(entry, b[index])));
   return sameImageReference(current.frame.imageBase64, expected.frame.imageBase64, context)
+    && photoRelationshipOrUnknown(currentEvidence.photoRelationship) === photoRelationshipOrUnknown(expectedEvidence.photoRelationship)
     && current.frame.capturedAt === expected.frame.capturedAt
     && current.analysisAttemptId === expected.analysisAttemptId
     && current.analyzedAt === expected.analyzedAt

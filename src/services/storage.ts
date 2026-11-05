@@ -8,6 +8,7 @@ import { accountStorageKey, getAccountScope, isAccountScopeCurrent, type Account
 import { inspectionDraftKey } from "./inspectionDraft";
 import { isEvidenceImage, normalizeVisualEvidence } from "./visualEvidence";
 import { correctScanSelection, visualSelectionSourceMatches } from "../lib/visualSelection";
+import { photoRelationshipOrUnknown } from "../lib/photoRelationship";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
 export const MAX_SAVED_LOOKUPS = 50;
@@ -76,7 +77,7 @@ export function createLookup(scanState: ScanAnalysisState, reservedId?: string):
     ...(normalizeShopVehicleContext(scanState.vehicleContext) ? { vehicleContext: normalizeShopVehicleContext(scanState.vehicleContext) } : {}),
   };
 
-  if (!evidence) return { ok: false, value: lookup, message: "Photo evidence could not be saved safely. Keep this scan open and retry." };
+  if (!evidence) return { ok: false, value: { ...lookup, photos: scanState.photos, photoRelationship: scanState.photoRelationship, isolatedObjects: scanState.isolatedObjects }, message: "Photo evidence could not be saved safely. Keep this scan open and retry." };
   if (reservedId !== undefined && !/^[a-zA-Z0-9._:-]{1,160}$/.test(reservedId)) {
     return { ok: false, value: lookup, message: "This saved component draft has an invalid scan reference. Its photos were kept for recovery." };
   }
@@ -89,9 +90,10 @@ export function createLookup(scanState: ScanAnalysisState, reservedId?: string):
         const other = lookup.photos![index];
         return photo.id === other.id && photo.label === other.label && photo.capturedAt === other.capturedAt && photo.imageBase64 === other.imageBase64;
       }) : !existing.photos && !lookup.photos && existing.frame.imageBase64 === lookup.frame.imageBase64 && existing.frame.capturedAt === lookup.frame.capturedAt;
-    const sameContext = vehicleContextsMatch(existing.vehicleContext, lookup.vehicleContext) && existing.jobId === lookup.jobId;
+    const sameContext = vehicleContextsMatch(existing.vehicleContext, lookup.vehicleContext) && existing.jobId === lookup.jobId
+      && photoRelationshipOrUnknown(existing.photoRelationship) === photoRelationshipOrUnknown(lookup.photoRelationship);
     return samePhotos && sameContext ? { ok: true, value: existing }
-      : { ok: false, value: lookup, message: "This component draft refers to different saved photos, vehicle details or a shop job. The saved scan was preserved; reopen the component map." };
+      : { ok: false, value: lookup, message: "This component draft refers to different saved photos, their relationship, vehicle details or a shop job. The saved scan was preserved; reopen the component map." };
   }
   const lookups = [lookup, ...read.value];
   const writeResult = writeLookups(lookups);
@@ -100,11 +102,18 @@ export function createLookup(scanState: ScanAnalysisState, reservedId?: string):
 }
 
 export function saveExistingLookup(lookup: Lookup, retryState?: ScanAnalysisState | null): StorageResult<Lookup> {
+  if (!normalizeVisualEvidence(lookup) || (retryState && !normalizeVisualEvidence(retryState))) {
+    return { ok: false, value: lookup, message: "Photo evidence could not be saved safely. The existing scan and original photos were preserved." };
+  }
   const read = readLookups();
   if (!read.ok) return { ok: false, message: read.message, value: lookup };
   const lookups = read.value;
   const local = lookups.find((entry) => entry.id === lookup.id);
   const existing = local ? withLatestInspection(local, lookup) : lookup;
+  if (retryState?.result
+    && photoRelationshipOrUnknown(retryState.photoRelationship) !== photoRelationshipOrUnknown(existing.photoRelationship)) {
+    return { ok: false, value: existing, message: "The photo relationship changed since this analysis. The saved scan and original photos were preserved; reopen the scan before retrying." };
+  }
   const saved = { ...withRetriedLookupResult(existing, retryState), cloudSave: undefined };
   const write = writeLookups(local
     ? lookups.map((entry) => entry.id === saved.id ? saved : entry)
@@ -113,12 +122,16 @@ export function saveExistingLookup(lookup: Lookup, retryState?: ScanAnalysisStat
 }
 
 export function withRetriedLookupResult(existing: Lookup, retryState?: ScanAnalysisState | null): Lookup {
+  // Rendering an invalid retry must not replace retained evidence or its result.
+  // The save boundary reports the invalid metadata without writing either record.
+  if (retryState && (!normalizeVisualEvidence(retryState) || (retryState.result
+    && photoRelationshipOrUnknown(retryState.photoRelationship) !== photoRelationshipOrUnknown(existing.photoRelationship)))) return existing;
   // A cloud-only retry lives in screen state until Save; retain the original
   // record's identity and human work while replacing the failed AI attempt.
   const updated = retryState?.result ? {
     ...existing,
     frame: retryState.frame ?? existing.frame,
-    ...(normalizeVisualEvidence({ ...existing, ...retryState }) ?? {}),
+    ...(normalizeVisualEvidence({ ...existing, ...retryState, photoRelationship: existing.photoRelationship }) ?? {}),
     result: retryState.result,
     analysisAttemptId: retryState.analysisAttemptId,
     analyzedAt: retryState.analyzedAt ?? new Date().toISOString(),
@@ -471,6 +484,7 @@ export function scanStateFromLookup(lookup: Lookup): ScanAnalysisState {
     analysisAttemptId: lookup.analysisAttemptId,
     frame: lookup.frame,
     photos: lookup.photos,
+    photoRelationship: lookup.photoRelationship,
     isolatedObjects: lookup.isolatedObjects,
     focusBox: lookup.focusBox,
     focusMode: lookup.focusMode,

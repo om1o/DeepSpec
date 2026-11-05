@@ -83,7 +83,9 @@ describe("Gemini 3.5 migration", () => {
     expect(sent.generationConfig).toEqual({ maxOutputTokens: 1800, thinkingConfig: { thinkingLevel: "MINIMAL" } });
     expect(sent.contents).toHaveLength(1);
     expect(sent.contents[0].role).toBe("user");
-    expect(sent.contents[0].parts[1].inlineData).toEqual({ mimeType: "image/png", data: "aGVsbG8=" });
+    expect(sent.contents[0].parts.filter((part: Record<string, unknown>) => part.inlineData)).toEqual([
+      { inlineData: { mimeType: "image/png", data: "aGVsbG8=" } },
+    ]);
     if (research) expect(sent.tools).toEqual([{ googleSearch: {} }, { urlContext: {} }]);
     else expect(sent).not.toHaveProperty("tools");
   });

@@ -7,6 +7,8 @@ export type CapturedFrame = {
 
 export const SCAN_PHOTO_LABELS = ["overview", "close_up", "marking", "mounting", "other"] as const;
 export type ScanPhotoLabel = (typeof SCAN_PHOTO_LABELS)[number];
+export const PHOTO_RELATIONSHIPS = ["same_part_or_area", "independent", "unknown"] as const;
+export type PhotoRelationship = (typeof PHOTO_RELATIONSHIPS)[number];
 export type ScanPhoto = CapturedFrame & {
   id: string;
   label: ScanPhotoLabel;
@@ -338,6 +340,7 @@ export type ScanAnalysisState = {
   analysisAttemptId?: string;
   frame: CapturedFrame;
   photos?: ScanPhoto[];
+  photoRelationship?: PhotoRelationship;
   focusBox?: VisualFocusBox;
   focusMode?: VisualFocusMode;
   isolatedImageBase64?: string;
@@ -363,6 +366,7 @@ export type AIInput = {
   imageBase64?: string;
   imageBase64_2?: string;
   photos?: ScanPhoto[];
+  photoRelationship?: PhotoRelationship;
   labelRescueTrigger?: LabelRescueTrigger;
   measurementContext?: MeasurementContext;
   userMessage: string;
@@ -424,6 +428,7 @@ export type Lookup = {
   createdAt: string;
   frame: CapturedFrame;
   photos?: ScanPhoto[];
+  photoRelationship?: PhotoRelationship;
   isolatedObjects?: IsolatedObject[];
   focusBox?: VisualFocusBox;
   focusMode?: VisualFocusMode;

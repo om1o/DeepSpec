@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizePhotoDraft, photoDraftsMatch, type PhotoDraftEnvelope } from "./photoDraft";
+import { hasPhotoDraftComparison, hasPhotoDraftContext, normalizePhotoDraft, photoDraftsMatch, upgradePhotoDraft, type PhotoDraftEnvelope } from "./photoDraft";
 import type { ScanPhoto } from "../types";
 import type { ComparisonCaptureTarget } from "../types/inspectionComparison";
 
@@ -10,6 +10,47 @@ const comparisonTarget: ComparisonCaptureTarget = { version: 1, comparisonId: "0
     observedOn: null, sha256: "a".repeat(64), width: 640, height: 360, vehicleContext: { model: "Original car" } } };
 
 describe("photo draft envelopes", () => {
+  it.each(["same_part_or_area", "independent", "unknown"] as const)("preserves explicit %s relationships through draft serialization", (photoRelationship) => {
+    const related = { ...upgradePhotoDraft(draft), photoRelationship };
+    expect(normalizePhotoDraft(JSON.parse(JSON.stringify(related)))).toEqual(related);
+    expect(photoDraftsMatch(related, structuredClone(related))).toBe(true);
+  });
+  it("upgrades legacy unknown semantics without allowing a legacy writer to match the newer format", () => {
+    const modern = upgradePhotoDraft(draft);
+    expect(modern).toEqual({ ...draft, version: 5, photoRelationship: "unknown" });
+    expect(photoDraftsMatch(draft, modern)).toBe(false);
+    expect(photoDraftsMatch(modern, { ...modern, photoRelationship: "same_part_or_area" })).toBe(false);
+    expect(photoDraftsMatch({ ...modern, photoRelationship: "same_part_or_area" }, { ...modern, photoRelationship: "independent" })).toBe(false);
+  });
+  it.each([null, "same_car", "", 1, {}])("rejects explicit invalid relationships without accepting a stale match: %j", (photoRelationship) => {
+    const invalid = { ...upgradePhotoDraft(draft), photoRelationship } as unknown as PhotoDraftEnvelope;
+    expect(normalizePhotoDraft(invalid)).toBeNull();
+    expect(photoDraftsMatch(invalid, invalid)).toBe(false);
+    expect(invalid.photos).toEqual(photos);
+  });
+  it("requires relationship metadata in modern versions and refuses it in the legacy protocol", () => {
+    expect(normalizePhotoDraft({ ...draft, photoRelationship: "independent" })).toBeNull();
+    expect(normalizePhotoDraft({ version: 5, photos })).toBeNull();
+    expect(normalizePhotoDraft({ version: 6, photos, vehicleContext: null })).toBeNull();
+    expect(normalizePhotoDraft({ version: 7, photos, vehicleContext: null, comparisonTarget })).toBeNull();
+    expect(() => upgradePhotoDraft({ ...draft, photoRelationship: "independent" } as unknown as PhotoDraftEnvelope)).toThrow("originals were preserved");
+  });
+  it("upgrades context and comparison drafts without losing vehicle, job or reserved targets", () => {
+    const context: PhotoDraftEnvelope = { ...draft, vehicleContext: { model: "Original car" }, jobId: "job-a", version: 3 };
+    const modernContext = upgradePhotoDraft(context);
+    expect(modernContext).toEqual({ ...context, version: 6, photoRelationship: "unknown" });
+    expect(hasPhotoDraftContext(modernContext)).toBe(true);
+    expect(hasPhotoDraftComparison(modernContext)).toBe(false);
+    const repeat: PhotoDraftEnvelope = { ...context, version: 4, comparisonTarget };
+    const modernRepeat = upgradePhotoDraft(repeat);
+    expect(modernRepeat).toEqual({ ...repeat, version: 7, photoRelationship: "unknown" });
+    expect(hasPhotoDraftContext(modernRepeat)).toBe(true);
+    expect(hasPhotoDraftComparison(modernRepeat)).toBe(true);
+    if (!hasPhotoDraftComparison(modernRepeat)) throw new Error("Expected preserved comparison");
+    expect(photoDraftsMatch(modernRepeat, { ...modernRepeat, jobId: "other" })).toBe(false);
+    expect(photoDraftsMatch(modernRepeat, { ...modernRepeat, vehicleContext: { model: "Other car" } })).toBe(false);
+    expect(photoDraftsMatch(modernRepeat, { ...modernRepeat, comparisonTarget: { ...comparisonTarget, comparisonId: "00000000-0000-4000-8000-000000000009" } })).toBe(false);
+  });
   it("reads older photo arrays without assigning them to a component", () => {
     expect(normalizePhotoDraft(photos)).toEqual({ version: 2, photos });
   });

@@ -33,6 +33,31 @@ describe("labeled identify photos", () => {
     vi.spyOn(console, "info").mockImplementation(() => undefined);
   });
 
+  it.each([null, "", "same_part", true, {}])("rejects invalid relationship %j before provider access", async (photoRelationship) => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    await expect(createIdentifyResponse({ photos, photoRelationship }, { GEMINI_API_KEY: "test-key" }))
+      .resolves.toMatchObject({ status: 400, body: { error: { code: "invalid_input" } } });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [undefined, "Relationship unknown"],
+    ["unknown", "Relationship unknown"],
+    ["independent", "Independent examples"],
+    ["same_part_or_area", "reported by the user, not independently verified"],
+  ])("passes relationship %s through legacy dual-image Gemini requests", async (photoRelationship, expected) => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => geminiResponse());
+    const response = await createIdentifyResponse({ imageBase64: photos[0].imageBase64, imageBase64_2: photos[1].imageBase64, photoRelationship }, { GEMINI_API_KEY: "test-key" });
+    expect(response.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.contents[0].parts.filter((part: Record<string, unknown>) => part.inline_data)).toHaveLength(2);
+    const prompt = body.contents[0].parts.filter((part: Record<string, unknown>) => part.text).map((part: { text: string }) => part.text).join("\n");
+    expect(prompt).toContain(expected);
+    expect(prompt).toContain('"id":"photo-1"');
+    expect(prompt).toContain('"id":"photo-2"');
+  });
+
   it.each([
     ["non-array", {}],
     ["empty array", []],
@@ -103,7 +128,7 @@ describe("labeled identify photos", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch")
       .mockImplementationOnce(async () => jsonResponse({ candidates: [{ content: { parts: [{ text: "not JSON" }] } }] }))
       .mockImplementationOnce(async () => geminiResponse());
-    const response = await createIdentifyResponse({ photos }, {
+    const response = await createIdentifyResponse({ photos, photoRelationship: "independent" }, {
       GEMINI_API_KEY: "test-key",
     });
     expect(response.status).toBe(200);
@@ -112,6 +137,8 @@ describe("labeled identify photos", () => {
       const body = JSON.parse(String(call[1]?.body));
       expect(body.contents[0].parts.filter((part: Record<string, unknown>) => part.inline_data)).toHaveLength(4);
       expect(JSON.stringify(body)).toContain("photo-4");
+      expect(JSON.stringify(body)).toContain("Independent examples");
+      expect(JSON.stringify(body)).toContain("Supplied vehicle context applies only to the first photo");
     }
   });
 
@@ -124,12 +151,15 @@ describe("labeled identify photos", () => {
       : provider === "groq"
         ? { DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK: "true", GROQ_API_KEY: "test-key", GROQ_IDENTIFY_MODEL: "meta-models/muse-spark-open" }
         : { DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK: "true" };
-    const response = await createIdentifyResponse({ photos }, env);
+    const response = await createIdentifyResponse({ photos, photoRelationship: "independent" }, env);
     expect(response.status).toBe(200);
     const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
     const images = provider === "ollama" ? body.messages[0].images
       : body.messages[1].content.filter((part: Record<string, unknown>) => part.type === "image_url");
     expect(images).toHaveLength(4);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(body)).toContain("Independent examples");
+    expect(JSON.stringify(body)).toContain("Supplied vehicle context applies only to the first photo");
     photos.forEach((photo) => expect(JSON.stringify(body)).toContain(photo.id));
   });
 
@@ -165,12 +195,16 @@ describe("labeled identify photos", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch")
       .mockImplementationOnce(async () => jsonResponse({ error: { message: "quota exhausted" } }, 429))
       .mockImplementationOnce(async () => jsonResponse({ choices: [{ message: { content: JSON.stringify(result) } }] }));
-    const response = await createIdentifyResponse({ photos }, {
+    const response = await createIdentifyResponse({ photos, photoRelationship: "same_part_or_area" }, {
       GEMINI_API_KEY: "test-key", DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true", HF_TOKEN: "test-token",
     });
     expect(response.status).toBe(200);
     const body = JSON.parse(String(fetchSpy.mock.calls.at(-1)?.[1]?.body));
     expect(body.messages[1].content.filter((part: Record<string, unknown>) => part.type === "image_url")).toHaveLength(4);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    for (const call of fetchSpy.mock.calls) {
+      expect(String(call[1]?.body)).toContain("reported by the user, not independently verified");
+    }
   });
 
   it("returns an explicit error when the configured provider rejects multiple images", async () => {

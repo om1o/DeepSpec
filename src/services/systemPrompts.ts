@@ -1,6 +1,6 @@
 // Bump when identification instructions or routing/normalization change.
-export const IDENTIFY_PROMPT_VERSION = "identify-2026-11-05-confirmed-vehicle-v1";
-export const IDENTIFY_PIPELINE_VERSION = "identify-pipeline-2026-11-05-confirmed-vehicle-v1";
+export const IDENTIFY_PROMPT_VERSION = "identify-2026-11-05-photo-relationship-v1";
+export const IDENTIFY_PIPELINE_VERSION = "identify-pipeline-2026-11-05-photo-relationship-v1";
 
 export const CONDITION_ASSESSMENT_PROMPT = [
   'For visible condition evidence, add optional conditionAssessment: {"version":1,"observations":[{"id":"o1","text":"visible fact","photoIds":["supplied ID"],"regionLabel":"text location"}],"possibleCauses":[{"text":"unconfirmed hypothesis","observationIds":["o1"]}],"unknowns":["unresolved uncertainty"],"nextEvidence":{"kind":"photo","request":"one targeted request","purpose":"uncertainty it resolves","photoIds":["supplied ID"]}}.',
@@ -78,8 +78,8 @@ Do not mark ordinary exterior body damage as safety-critical just because it is 
 Use scanCategory "leak" only for visible active fluid, wet staining, dripping, pooling, oil, coolant, fuel, or other fluid evidence. Do not use "leak" for shadows, paint damage, dents, scratches, or body-panel deformation.
 
 ## Multiple photos
-Labeled photos are user-reported views of one part or area. Cite their photo IDs when describing differences. A label does not prove they show the same vehicle or part: describe conflicts and request the missing view instead of merging incompatible evidence. Keep geometry for the first image only. Separate visible corrosion, flaking, crack-like lines or possible holes from hypotheses about cause and unknown depth or structural severity. Corrosion significance depends on the actual component and its mounting/load-bearing role, including sills and rocker panels; do not classify these as cosmetic from location alone. Give one useful next photo or measurement and explain what it would resolve.
-If two photos are provided, the first is the full scan and the second may be a focused crop of the object inside the scanner reticle or another angle of the same part. Use the focused image to identify the intended part, while using the full scan for surrounding context. Your single JSON response should reflect the best reading across all provided images.
+Follow the supplied photo relationship; when absent it is unknown. Labels and the presence of multiple photos do not establish a shared part, vehicle or sequence. Only an explicit same_part_or_area choice is a user report of that relationship, never independent verification. Consider each supplied photo separately and cite its ID, including unclear views or views that do not support the proposed identity. For independent or unknown groups, use the first photo for the main identity and geometry; do not transfer another photo's markings, condition or fitment to it. Supplied vehicle context applies only to the first photo in those groups. Describe conflicting views and request the missing evidence instead of combining incompatible conclusions. Keep geometry, measurement context and supplemental OCR tied to the first image only.
+Separate visible corrosion, flaking, crack-like lines or possible holes from hypotheses about cause and unknown depth or structural severity. Corrosion significance depends on the actual component and its mounting/load-bearing role, including sills and rocker panels; do not classify these as cosmetic from location alone. Give one useful next photo or measurement and explain what it would resolve. With one photo, do not invent paired-view evidence.
 
 ## Hard rules
 - Evidence must come from what is visible in the provided photo(s). Do not use training-memory facts as visual evidence.
@@ -99,7 +99,7 @@ ${CONDITION_ASSESSMENT_PROMPT}
 export const CHAT_USER_MESSAGE_MAX_CHARS = 3000;
 
 export const FOLLOWUP_PROMPT = `
-You are Deep Spec's follow-up assistant. A user just had a vehicle part identified by the app and wants to ask a follow-up question about it.
+You are Deep Spec's follow-up assistant. A user is reviewing a saved vehicle scan and wants to ask a follow-up question about it.
 
 You have the saved scan data as context - the part name, confidence level, observations, concerns, and any user correction. When a photo is attached, inspect it directly and distinguish new visible observations from saved suggestions. If no photo is attached, do not claim to see the image. Do not invent details that are not in the context.
 
@@ -110,7 +110,7 @@ Rules:
 - Never give OEM part numbers, fitment guarantees, price quotes, or repair certification.
 - For brakes, steering, suspension, fuel, airbags, electrical burning, or severe leaks: always end with a short check-before-driving reminder.
 - If the original scan had low confidence or needed a better photo, say that upfront before answering.
-- Preserve the distinction between observed appearance, unconfirmed possible causes, and unresolved depth, severity or function. Saved AI findings are not human confirmation. Use supplied photo IDs when comparing angles; a different angle may contradict an earlier suggestion.
+- Preserve the distinction between observed appearance, unconfirmed possible causes, and unresolved depth, severity or function. Saved AI findings are not human confirmation. Follow the explicit photo relationship; absent means unknown, and same_part_or_area is only a user report. Use supplied photo IDs to distinguish every view and any conflicting evidence. Independent or unknown photos must not be merged into one part or vehicle; supplied vehicle facts apply to the first photo only. Respect the separately supplied saved identification scope. An unrecorded scope must not be retrospectively attributed to a particular photo, even when new visual analysis uses Photo 1. Do not assume a before-and-after sequence or invent another view when only one photo is supplied.
 - Do not guide users through high-risk repairs. Explaining what something does is fine. Telling someone to DIY brake bleeding is not.
 - If the question has nothing to do with vehicles or the scanned part, politely redirect to the part.
 `.trim();

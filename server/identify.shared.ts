@@ -16,6 +16,7 @@ import {
   type IdentifyProvider,
   type MeasurementContext,
   type PartMeasurement,
+  type PhotoRelationship,
   type PossibleVehicleContext,
   type ScanCategory,
   type SourceLink,
@@ -31,6 +32,7 @@ type ParsedIdentifyRequest = {
   base64: string;
   mimeType: string;
   photos: InspectionPhoto[];
+  photoRelationship: PhotoRelationship;
   userMessage: string;
   labelRescueTrigger: LabelRescueTrigger | null;
   measurementContext: MeasurementContext | null;
@@ -1292,19 +1294,20 @@ function parseIdentifyRequest(body: unknown): ParsedIdentifyRequest | { error: I
 
   const parsedPhotos = parseInspectionPhotos(body);
   if ("error" in parsedPhotos) return parsedPhotos;
-  const { photos } = parsedPhotos;
+  const { photos, photoRelationship } = parsedPhotos;
 
   const userMessage =
     typeof body.userMessage === "string" && body.userMessage.trim()
       ? body.userMessage.trim().slice(0, 500)
       : photos.length > 1
-        ? "Identify this car part from the grouped photos taken from different angles."
+        ? "Identify the car part in the first photo and assess the supplied photos according to their stated relationship."
         : "Identify this car part from the captured photo.";
 
   return {
     base64: photos[0].base64,
     mimeType: photos[0].mimeType,
     photos,
+    photoRelationship,
     userMessage,
     labelRescueTrigger: body.labelRescueTrigger === "too_blurry" ? "too_blurry" : null,
     measurementContext: parseMeasurementContext(body.measurementContext),
@@ -1313,7 +1316,7 @@ function parseIdentifyRequest(body: unknown): ParsedIdentifyRequest | { error: I
 }
 
 function buildIdentifyContextPrompt(parsed: ParsedIdentifyRequest) {
-  const sections = [buildPhotoEvidencePrompt(parsed.photos), formatVehicleContext(parsed.vehicleContext ?? undefined)];
+  const sections = [buildPhotoEvidencePrompt(parsed.photos, parsed.photoRelationship), formatVehicleContext(parsed.vehicleContext ?? undefined)];
 
   if (parsed.measurementContext) {
     const context = parsed.measurementContext;

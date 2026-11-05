@@ -49,7 +49,59 @@ describe("vehicle context in condition handoff", () => {
     expect(formatConditionHandoff(record)).not.toContain("Surface discoloration");
   });
 
-  it("keeps older records without context or an assessment empty", () => {
-    expect(formatConditionHandoff(lookup())).toBe("");
+  it("keeps the missing relationship explicitly unknown without inventing a legacy assessment", () => {
+    const text = formatConditionHandoff(lookup());
+    expect(text).toBe("Photo relationship: Relationship unknown — a shared part, vehicle or sequence has not been established.");
+    expect(text).not.toContain("Condition evidence");
+    expect(text).not.toContain("refer to Photo 1");
+  });
+
+  it.each([
+    ["same_part_or_area", "Same part or area of one car — reported by the user, not independently verified."],
+    ["independent", "Independent examples — do not assume the same part, vehicle or before-and-after sequence."],
+    [undefined, "Relationship unknown — a shared part, vehicle or sequence has not been established."],
+  ] as const)("retains relationship %s in handoff and full text export without an assessment", (photoRelationship, description) => {
+    const record = lookup(); record.photoRelationship = photoRelationship;
+    record.photos = [{ id: "photo-a", label: "overview", ...record.frame }, { id: "photo-b", label: "other", ...record.frame, imageBase64: "data:image/png;base64,different" }];
+    const before = JSON.stringify(record);
+    const review = buildConditionHandoff(record), text = formatConditionHandoff(record), full = buildScanReport(record);
+    expect(review.photoRelationship).toBe(photoRelationship ?? "unknown");
+    expect(review.assessment).toBeUndefined();
+    expect(text).toContain(description); expect(full).toContain(description);
+    expect(full).not.toContain("Condition evidence (AI-reported");
+    expect(full).toContain("Safety: not assessed; no AI result saved.");
+    expect(text).toContain("No main identification is recorded.");
+    if (photoRelationship !== "same_part_or_area") expect(text).toContain("Saved selection and supplied vehicle or complaint details, when present, refer to Photo 1.");
+    else expect(text).toContain("User-reported photo relationship:");
+    expect(JSON.stringify(record)).toBe(before);
+  });
+
+  it.each(["independent", undefined] as const)("scopes supplied car and complaint details to the first original for %s groups", (photoRelationship) => {
+    const record = lookup(); record.photoRelationship = photoRelationship;
+    record.photos = [{ id: "car-a-overview", label: "overview", ...record.frame }, { id: "separate-car-b", label: "other", ...record.frame, imageBase64: "data:image/png;base64,another-car" }];
+    record.vehicleContext = { make: "Toyota", model: "Corolla", symptom: "First car shakes at idle" };
+    const before = JSON.stringify(record), review = buildConditionHandoff(record), text = formatConditionHandoff(record);
+    expect(review.photoRelationshipScope).toBe("No main identification is recorded. Saved selection and supplied vehicle or complaint details, when present, refer to Photo 1.");
+    expect(text).toContain("Vehicle and complaint details supplied for Photo 1:");
+    expect(text).toContain("Toyota Corolla"); expect(text).toContain("Symptoms: First car shakes at idle");
+    expect(text).not.toContain("Vehicle details supplied for this scan:");
+    expect(buildScanReport(record)).toContain("Vehicle and complaint details supplied for Photo 1:");
+    expect(review.photos.map((photo) => photo.id)).toEqual(["car-a-overview", "separate-car-b"]);
+    expect(JSON.stringify(record)).toBe(before);
+  });
+
+  it.each([
+    ["identify-pipeline-2026-11-05-photo-relationship-v1", "The main identification refers to Photo 1."],
+    ["identify-pipeline-2026-11-05-confirmed-vehicle-v1", "The main identification's per-photo scope was not recorded."],
+    [undefined, "The main identification's per-photo scope was not recorded."],
+  ] as const)("retains actual identity scope provenance in the handoff: %s", (pipelineVersion, expected) => {
+    const record = lookup();
+    record.photos = [{ id: "first", label: "overview", ...record.frame }, { id: "other", label: "other", ...record.frame }];
+    record.result = { partName: "Possible bracket", confidence: "low", scanCategory: "body", candidateMatches: [], whatItDoes: "Unconfirmed", visibleObservations: [], evidenceRegions: [], concerns: [], safetyTriage: "needs_better_photo", isSafetyCritical: false, nextAction: "Verify identity", needsBetterPhoto: true, evidence: [], sourceLinks: [], modelRun: { provider: "gemini", model: "fixture", pipelineVersion, latencyMs: 0, ocrUsed: false } };
+    const text = formatConditionHandoff(record);
+    expect(text).toContain(expected);
+    expect(text).not.toContain("No main identification is recorded.");
+    expect(text).toContain("Saved selection and supplied vehicle or complaint details, when present, refer to Photo 1.");
+    if (pipelineVersion !== "identify-pipeline-2026-11-05-photo-relationship-v1") expect(text).not.toContain("The main identification refers to Photo 1.");
   });
 });

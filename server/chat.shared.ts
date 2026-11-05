@@ -1,5 +1,5 @@
 import { CHAT_USER_MESSAGE_MAX_CHARS, FOLLOWUP_PROMPT } from "../src/services/systemPrompts.js";
-import type { SourceLink, VehicleContext } from "../src/types/index.js";
+import type { PhotoRelationship, SourceLink, VehicleContext } from "../src/types/index.js";
 import { formatVehicleContext, providerVehicleContext } from "../src/lib/vehicleContext.js";
 import { parseInspectionPhotos, photoCaption, buildPhotoEvidencePrompt, type InspectionPhoto } from "./inspectionPhotos.shared.js";
 
@@ -27,7 +27,8 @@ export type ChatResponse =
 const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 const LEGACY_FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
 const RETRYABLE_PROVIDER_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
-type ChatRequest = { userMessage: string; photos: InspectionPhoto[]; labeledPhotos: boolean; research: boolean; sourceUrls: string[]; vehicleContext?: VehicleContext };
+type SavedIdentityScope = "first_photo" | "unrecorded" | "none";
+type ChatRequest = { userMessage: string; photos: InspectionPhoto[]; photoRelationship: PhotoRelationship; savedIdentityScope: SavedIdentityScope; research: boolean; sourceUrls: string[]; vehicleContext?: VehicleContext };
 
 export async function createChatResponse(body: unknown, env: Record<string, string | undefined>): Promise<ChatResponse> {
   if (!isChatEnabled(env)) {
@@ -177,9 +178,9 @@ function fetchGeminiChat(model: string, request: ChatRequest, apiKey: string) {
         {
           role: "user",
           parts: [
-            { text: [request.userMessage, formatVehicleContext(request.vehicleContext), researchContext, request.labeledPhotos ? buildPhotoEvidencePrompt(request.photos) : ""].filter(Boolean).join("\n\n") },
+            { text: [request.userMessage, formatVehicleContext(request.vehicleContext), researchContext, buildPhotoEvidencePrompt(request.photos, request.photoRelationship), savedIdentityScopePrompt(request.savedIdentityScope)].filter(Boolean).join("\n\n") },
             ...request.photos.flatMap((photo, index) => [
-              ...(request.labeledPhotos ? [{ text: photoCaption(photo, index) }] : []),
+              { text: photoCaption(photo, index) },
               { inlineData: { mimeType: photo.mimeType, data: photo.base64 } },
             ]),
           ],
@@ -212,6 +213,17 @@ function logChatAttempt(model: string, startedAt: number, response: ChatResponse
   });
 }
 
+function savedIdentityScopePrompt(scope: SavedIdentityScope): string {
+  // Only fixed text derived from validated metadata reaches this instruction.
+  // This remains client-reported provenance, not proof that the saved identity is correct.
+  const description = scope === "first_photo"
+    ? "The saved main identification was produced under the first-photo identity scope. Keep it associated with Photo 1; it does not identify other independent or unlinked photos."
+    : scope === "none"
+      ? "No saved identification result is recorded. Do not treat a training label, user correction, or prior chat as an established saved AI identification."
+      : "The saved main identification's per-photo scope was not recorded. Do not retrospectively assign its identity, fitment, or condition to Photo 1 or any other specific photo. Request a new identification if that attribution is needed.";
+  return `Saved identification scope (client-reported provenance, not independent verification): ${description} Assess currently attached photos separately from saved suggestions.`;
+}
+
 function parseChatRequest(body: unknown): ChatRequest | { error: ChatResponse } {
   if (!isRecord(body) || typeof body.userMessage !== "string") {
     return { error: errorResponse(400, "invalid_input", "A question is required.") };
@@ -224,6 +236,9 @@ function parseChatRequest(body: unknown): ChatRequest | { error: ChatResponse } 
 
   const parsedPhotos = parseInspectionPhotos(body, false);
   if ("error" in parsedPhotos) return parsedPhotos;
+  if (body.savedIdentityScope !== undefined && body.savedIdentityScope !== "first_photo" && body.savedIdentityScope !== "unrecorded" && body.savedIdentityScope !== "none") {
+    return { error: errorResponse(400, "invalid_input", "Saved identification scope must be first_photo, unrecorded, or none.") };
+  }
   if (body.research !== undefined && typeof body.research !== "boolean") {
     return { error: errorResponse(400, "invalid_input", "Research must be explicitly enabled or disabled.") };
   }
@@ -239,7 +254,8 @@ function parseChatRequest(body: unknown): ChatRequest | { error: ChatResponse } 
   return {
     userMessage: userMessage.slice(0, CHAT_USER_MESSAGE_MAX_CHARS),
     photos: parsedPhotos.photos,
-    labeledPhotos: body.photos !== undefined,
+    photoRelationship: parsedPhotos.photoRelationship,
+    savedIdentityScope: body.savedIdentityScope ?? "unrecorded",
     research,
     sourceUrls,
     vehicleContext: providerVehicleContext(body.vehicleContext),
