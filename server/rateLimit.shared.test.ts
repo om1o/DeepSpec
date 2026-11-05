@@ -110,6 +110,28 @@ describe("enforceRateLimit", () => {
     expect(rpc).toHaveBeenCalledWith("check_rate_limit", { p_key: "chat:day:203.0.113.9", p_max: 300, p_window_seconds: 86_400 });
   });
 
+  it("uses independent vehicle-reference windows without a VIN, token, or AI quota key", async () => {
+    const rpc = mockRpc(async () => ({ data: true, error: null }));
+    await expect(enforceRateLimit("vehicle-reference", { ...HEADERS, authorization: "Bearer synthetic-secret" }, { ...ENV, NODE_ENV: "production" })).resolves.toEqual({ ok: true });
+    expect(rpc.mock.calls).toEqual([
+      ["check_rate_limit", { p_key: "vehicle-reference:min:203.0.113.9", p_max: 5, p_window_seconds: 60 }],
+      ["check_rate_limit", { p_key: "vehicle-reference:day:203.0.113.9", p_max: 50, p_window_seconds: 86_400 }],
+    ]);
+    expect(JSON.stringify(rpc.mock.calls)).not.toContain("synthetic-secret");
+  });
+
+  it("fails closed for vehicle-reference production quota outages and respects its daily denial", async () => {
+    const production = { ...ENV, NODE_ENV: "production" };
+    await expect(enforceRateLimit("vehicle-reference", {}, production)).resolves.toMatchObject(unavailable);
+    const rpc = mockRpc(async () => ({ data: true, error: null }));
+    rpc.mockResolvedValueOnce({ data: true, error: null }).mockResolvedValueOnce({ data: false, error: null });
+    await expect(enforceRateLimit("vehicle-reference", HEADERS, production)).resolves.toMatchObject({ ok: false, status: 429, retryAfterSeconds: 86_400 });
+    rpc.mockResolvedValue({ data: null, error: { message: "private outage" } });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(enforceRateLimit("vehicle-reference", HEADERS, production)).resolves.toMatchObject(unavailable);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("private outage");
+  });
+
   it("fails open (and logs) when the limiter query errors", async () => {
     mockRpc(async () => ({ data: null, error: { message: "boom" } }));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});

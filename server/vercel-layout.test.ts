@@ -7,6 +7,7 @@ import billingPortal from "../api/billing-portal";
 import billingWebhook from "../api/billing-webhook";
 import chat from "../api/chat";
 import identify from "../api/identify";
+import vehicleReference from "../api/vehicle-reference";
 
 const endpoints = [
   { name: "account-entitlement", handler: accountEntitlement },
@@ -15,6 +16,7 @@ const endpoints = [
   { name: "billing-webhook", handler: billingWebhook },
   { name: "chat", handler: chat },
   { name: "identify", handler: identify },
+  { name: "vehicle-reference", handler: vehicleReference },
 ];
 
 describe("Vercel Hobby deployment layout", () => {
@@ -74,6 +76,7 @@ describe("Vercel Hobby deployment layout", () => {
     const config = JSON.parse(readFileSync(resolve(process.cwd(), "vercel.json"), "utf8"));
     expect(config.functions["api/identify.ts"].maxDuration).toBe(90);
     expect(config.functions["api/chat.ts"].maxDuration).toBe(60);
+    expect(config.functions["api/vehicle-reference.ts"].maxDuration).toBe(30);
     expect(config.functions["api/account-entitlement.ts"].maxDuration).toBe(30);
     expect(config.functions["api/billing-checkout.ts"].maxDuration).toBe(30);
     expect(config.functions["api/billing-portal.ts"].maxDuration).toBe(30);
