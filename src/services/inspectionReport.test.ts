@@ -2,17 +2,27 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { getAccountScope, setActiveAccount } from "../lib/accountScope";
 import type { Lookup, ScanPhoto } from "../types";
 import type { ComponentMapRecord } from "../types/componentMap";
+import type { ServiceRecord } from "../types/serviceRecord";
+import { normalizeServiceRecords } from "../lib/serviceRecord";
 import { collectInspectionReport, INSPECTION_REPORT_MAX_IMAGE_BYTES, INSPECTION_REPORT_MAX_TOTAL_BYTES } from "./inspectionReport";
 
-const mocks = vi.hoisted(() => ({ lookups: vi.fn(), lookup: vi.fn(), map: vi.fn(), cloud: vi.fn(), auth: vi.fn() }));
+const mocks = vi.hoisted(() => ({ lookups: vi.fn(), lookup: vi.fn(), map: vi.fn(), cloud: vi.fn(), auth: vi.fn(), service: vi.fn(), serviceCloud: vi.fn(), snapshot: vi.fn() }));
 vi.mock("./storage", () => ({ readLookups: mocks.lookups, getLookup: mocks.lookup }));
 vi.mock("./componentMapStore", () => ({ readComponentMap: mocks.map }));
 vi.mock("./cloudHistory", () => ({ readCloudLookupForReport: mocks.cloud }));
 vi.mock("./auth", () => ({ getAuthClient: mocks.auth }));
+vi.mock("./serviceRecordStore", () => ({ readServiceRecords: mocks.service }));
+vi.mock("./serviceRecordCloud", () => ({ readCloudServiceRecords: mocks.serviceCloud }));
+vi.mock("./inspectionReportSnapshot", () => ({ readFinalInspectionSnapshot: mocks.snapshot }));
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
 const image = `data:image/png;base64,${PNG}`;
 const bytes = Uint8Array.from(atob(PNG), (part) => part.charCodeAt(0));
 const capturedAt = "2026-11-05T15:00:00.000Z";
+function measurement(): ServiceRecord {
+  return { version: 1, id: "20000000-0000-4000-8000-000000000001", lookupId: "root", recordedAt: capturedAt, occurredOn: "2026-11-04",
+    recordedBy: "PRIVATE_RECORDER", basis: "personally_performed", subject: "Lower bracket edge", photoIds: ["photo-1"], notes: "Measure again with the specified method",
+    kind: "measurement", quantity: "Thickness", reading: "2.00", unit: "mm", method: "Caliper", instrument: "Unknown calibration", conditions: "Dry", noReadingReason: "" };
+}
 const box = { x: .1, y: .2, width: .3, height: .4, confidence: .8 };
 const signed = (id: string, file = "original.png", token = "old") => `https://project.supabase.co/storage/v1/object/sign/scan-images/owner/${id}/${file}?token=${token}`;
 function scan(id: string, photos?: ScanPhoto[]): Lookup {
@@ -44,6 +54,16 @@ describe("saved inspection report collection", () => {
     mocks.lookup.mockImplementation((id: string, values: Lookup[]) => structuredClone(values.find((value) => value.id === id) ?? null));
     mocks.map.mockImplementation(async () => structuredClone(map));
     mocks.cloud.mockResolvedValue({ ok: true, value: null });
+    mocks.service.mockResolvedValue([]); mocks.serviceCloud.mockResolvedValue([]);
+    // Collector fixture only. The real single-transaction implementation has its
+    // own request/transaction tests and is exercised by native report export.
+    mocks.snapshot.mockImplementation(async (root: string, ids: string[], scope: ReturnType<typeof getAccountScope>) => ({
+      map: await mocks.map(root, scope),
+      serviceRecords: new Map(await Promise.all(ids.map(async (id) => {
+        try { return [id, normalizeServiceRecords(await mocks.service(id, scope), id) ?? null] as const; }
+        catch { return [id, null] as const; }
+      }))),
+    }));
     query = { select: vi.fn(), eq: vi.fn(), abortSignal: vi.fn(), maybeSingle: vi.fn(async () => ({ data: cloudMap, error: null })) };
     query.select.mockReturnValue(query); query.eq.mockReturnValue(query); query.abortSignal.mockReturnValue(query);
     mocks.auth.mockResolvedValue({ auth: { getUser: async () => ({ data: { user: { id: "owner" } }, error: null }) }, from: vi.fn(() => query) });
@@ -55,6 +75,96 @@ describe("saved inspection report collection", () => {
     });
   });
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+  it("includes immutable device and cloud human history without importing or changing a scan", async () => {
+    const first = measurement();
+    const correction = { ...first, id: "20000000-0000-4000-8000-000000000002", recordedAt: "2026-11-05T16:00:00.000Z", supersedesId: first.id, correctionReason: "Reading transcribed incorrectly", reading: "2.10" };
+    mocks.service.mockResolvedValue([first]); mocks.serviceCloud.mockResolvedValue([first, correction]);
+    const before = structuredClone(local);
+    const report = await collectInspectionReport("root");
+    expect(report.serviceLogs).toEqual([{ lookupId: "root", records: [first, correction], cloudChecked: true }]);
+    expect(mocks.service).toHaveBeenCalledTimes(2);
+    expect(mocks.serviceCloud).toHaveBeenCalledWith("root", getAccountScope(), expect.any(AbortSignal));
+    expect(local).toEqual(before); expect(report.serviceLogs![0].records[0]).not.toBe(first);
+  });
+
+  it("keeps available human records and declares failed cloud reads without exposing backend text", async () => {
+    mocks.service.mockResolvedValue([measurement()]); mocks.serviceCloud.mockRejectedValue(new Error("https://private.example/token?secret=hidden"));
+    const report = await collectInspectionReport("root");
+    expect(report.serviceLogs?.[0]).toMatchObject({ cloudChecked: false, records: [measurement()] });
+    expect(report.missing).toContainEqual(expect.objectContaining({ kind: "service_records", message: expect.stringContaining("Cloud human-service history") }));
+    expect(JSON.stringify(report)).not.toContain("private.example");
+  });
+
+  it("does not silently normalize an unreadable device log to an empty history", async () => {
+    mocks.service.mockResolvedValue([{ ...measurement(), version: 9 }]);
+    const report = await collectInspectionReport("root");
+    expect(report.missing).toContainEqual(expect.objectContaining({ kind: "service_records", message: expect.stringContaining("could not be read") }));
+  });
+
+  it("retains human evidence references when a photo has disappeared", async () => {
+    const record = { ...measurement(), photoIds: ["removed-original"] };
+    mocks.service.mockResolvedValue([record]);
+    const report = await collectInspectionReport("root");
+    expect(report.serviceLogs?.[0].records[0].photoIds).toEqual(["removed-original"]);
+    expect(report.missing).toContainEqual(expect.objectContaining({ kind: "photo", photoId: "removed-original", message: expect.stringContaining("human-service entry") }));
+  });
+
+  it("rejects a snapshot if the human history changes during collection", async () => {
+    mocks.service.mockResolvedValueOnce([]).mockResolvedValue([measurement()]);
+    await expect(collectInspectionReport("root")).rejects.toThrow(/records changed/);
+  });
+
+  it("collects retained device and cloud history even when a map-linked scan is unavailable", async () => {
+    map = mapWithLinks(["missing", "missing"]);
+    const first = { ...measurement(), lookupId: "missing", photoIds: ["historic-angle"] };
+    const corrected = { ...first, id: "20000000-0000-4000-8000-000000000002", supersedesId: first.id, correctionReason: "Transcription correction", reading: "2.10" };
+    mocks.service.mockImplementation(async (id) => id === "missing" ? [first] : []);
+    mocks.serviceCloud.mockImplementation(async (id) => id === "missing" ? [first, corrected] : []);
+    const report = await collectInspectionReport("root");
+    expect(report.scans.map((entry) => entry.id)).toEqual(["root"]);
+    expect(report.serviceLogs).toContainEqual({ lookupId: "missing", records: [first, corrected], cloudChecked: true });
+    expect(report.serviceLogs?.filter((log) => log.lookupId === "missing")).toHaveLength(1);
+    expect(report.missing).toContainEqual(expect.objectContaining({ kind: "photo", lookupId: "missing", photoId: "historic-angle" }));
+    expect(mocks.snapshot).toHaveBeenCalledWith("root", ["root", "missing"], getAccountScope());
+    expect(mocks.serviceCloud).toHaveBeenCalledWith("missing", getAccountScope(), expect.any(AbortSignal));
+  });
+
+  it("checks lookup changes after the final IDB snapshot settles rather than before awaiting it", async () => {
+    mocks.snapshot.mockImplementationOnce(async () => {
+      await Promise.resolve();
+      local[0].notes = "Edited while the final IDB snapshot was pending";
+      return { map: null, serviceRecords: new Map([["root", []]]) };
+    });
+    await expect(collectInspectionReport("root")).rejects.toThrow(/records changed/);
+    expect(mocks.lookups).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["map", "first-history", "missing-scan-history"])("rejects a %s mutation in the final joint snapshot", async (kind) => {
+    map = mapWithLinks(["missing"]);
+    mocks.snapshot.mockImplementationOnce(async () => {
+      const finalMap = structuredClone(map!);
+      const logs = new Map<string, ServiceRecord[] | null>([["root", []], ["missing", []]]);
+      if (kind === "map") finalMap.localRevision += 1;
+      else { const id = kind === "first-history" ? "root" : "missing"; logs.set(id, [{ ...measurement(), lookupId: id }]); }
+      return { map: finalMap, serviceRecords: logs };
+    });
+    await expect(collectInspectionReport("root")).rejects.toThrow(/records changed/);
+  });
+
+  it("preserves cloud history with an explicit missing-device warning when device data remains unreadable", async () => {
+    mocks.service.mockResolvedValue(null);
+    mocks.serviceCloud.mockResolvedValue([measurement()]);
+    const report = await collectInspectionReport("root");
+    expect(report.serviceLogs?.[0]).toEqual({ lookupId: "root", records: [measurement()], cloudChecked: true });
+    expect(report.missing).toContainEqual(expect.objectContaining({ kind: "service_records", message: expect.stringContaining("on this device could not be read") }));
+  });
+
+  it("rejects a late human history read after switching accounts", async () => {
+    mocks.service.mockImplementation(async () => { setActiveAccount("other-owner"); return [measurement()]; });
+    await expect(collectInspectionReport("root")).rejects.toThrow(/Account changed/);
+    expect(mocks.serviceCloud).not.toHaveBeenCalled();
+  });
 
   it("collects every saved photo group and preserves repeated component associations without duplicating scans", async () => {
     local.push(scan("detail", [photo("one"), photo("two")])); map = mapWithLinks();

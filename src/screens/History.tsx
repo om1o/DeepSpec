@@ -133,12 +133,12 @@ export default function History() {
   function removeDeviceRecord(lookup: Lookup) {
     if (!isAccountScopeCurrent(mountedScope)) return;
     const title = lookup.result?.partName ?? "this scan";
-    if (!window.confirm(`Remove the stored device copy of ${title}? Export first if you need a backup. Cloud records are not deleted. Open pages or cached previews may still show this scan.`)) return;
+    if (!window.confirm(`Remove the stored scan copy of ${title}? Export first if you need a backup. Human measurement, repair and follow-up history is kept separately on this device and will reappear when the same scan is reopened. Cloud records are not deleted. Open pages or cached previews may still show this scan.`)) return;
     if (!isAccountScopeCurrent(mountedScope)) return;
     const removed = deleteLookup(lookup.id);
     if (!removed.ok) { setStorageMessage(`Removal failed. ${removed.message}`); return; }
     setDeviceRead(readLookups());
-    setStorageMessage("Stored device copy removed. Cloud records are not deleted; cloud history and open views may still show this scan.");
+    setStorageMessage("Stored scan copy removed. Human measurement, repair and follow-up history is retained separately on this device. Cloud records are not deleted; cloud history and open views may still show this scan.");
   }
 
   const [categoryFilter, setCategoryFilter] = useState<ScanCategory | "all">("all");

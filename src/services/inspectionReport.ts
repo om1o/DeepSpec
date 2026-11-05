@@ -7,6 +7,10 @@ import { getAuthClient } from "./auth";
 import { readCloudLookupForReport, type ReportUnavailableImage } from "./cloudHistory";
 import { readComponentMap } from "./componentMapStore";
 import { getLookup, readLookups } from "./storage";
+import { mergeServiceRecords, normalizeServiceRecords } from "../lib/serviceRecord";
+import { readServiceRecords } from "./serviceRecordStore";
+import { readCloudServiceRecords } from "./serviceRecordCloud";
+import { readFinalInspectionSnapshot, type FinalInspectionSnapshot } from "./inspectionReportSnapshot";
 
 export const INSPECTION_REPORT_MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 export const INSPECTION_REPORT_MAX_TOTAL_BYTES = 32 * 1024 * 1024;
@@ -112,6 +116,8 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
   };
   let embeddedBytes = 0, imageSlots = 0;
   const scans: Lookup[] = [];
+  const serviceLogs: NonNullable<InspectionReportSnapshot["serviceLogs"]> = [];
+  const serviceSignatures = new Map<string, string | null>();
   const embedded = new Map<string, { data: string; size: number }>();
   const embed = async (source: string, lookupId: string) => {
     let image = embedded.get(source);
@@ -165,10 +171,34 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
     check(); progress(`Preparing saved scan ${scans.length + 1} of ${references.size}…`);
     const local = id === rootLookupId ? rootLocal : localLookup(id);
     const source = local ?? await remoteLookup(id); check();
+    let serviceRecords: NonNullable<InspectionReportSnapshot["serviceLogs"]>[number]["records"] = [];
+    let cloudChecked = false;
+    try {
+      const records = await wait(() => readServiceRecords(id, scope));
+      const checked = normalizeServiceRecords(records, id);
+      if (!checked) throw new Error();
+      serviceRecords = structuredClone(checked);
+      serviceSignatures.set(id, JSON.stringify(checked));
+    } catch (error) {
+      rethrowFatal(error);
+      serviceSignatures.set(id, null);
+      missing.push({ kind: "service_records", lookupId: id, message: "Human measurement, repair and follow-up records on this device could not be read. Their absence from this report does not mean none exist." });
+    }
+    if (configuredOrigin) {
+      try {
+        const cloud = await wait((signal) => readCloudServiceRecords(id, scope, signal));
+        serviceRecords = mergeServiceRecords(serviceRecords, cloud, id);
+        cloudChecked = true;
+      } catch (error) {
+        rethrowFatal(error);
+        missing.push({ kind: "service_records", lookupId: id, message: "Cloud human-service history could not be checked or combined safely. Available device records are included; cloud-only entries and conflicting copies may be missing." });
+      }
+    }
+    serviceLogs.push({ lookupId: id, records: structuredClone(serviceRecords), cloudChecked });
     if (!source) {
       if (id === rootLookupId) throw new ReportError(true, "This saved scan is unavailable. Reopen it from Saved scans before exporting.");
-      missing.push({ kind: "lookup", lookupId: id, message: "This linked saved scan is unavailable. Its component association remains listed." });
-      for (const photoId of expectedPhotos) missing.push({ kind: "photo", lookupId: id, photoId, message: "The linked original photo is unavailable because its saved scan could not be loaded." });
+      missing.push({ kind: "lookup", lookupId: id, message: "This linked saved scan is unavailable. Its component association and any available human-service history remain listed." });
+      for (const photoId of new Set([...expectedPhotos, ...serviceRecords.flatMap((record) => record.photoIds)])) missing.push({ kind: "photo", lookupId: id, photoId, message: "The linked original photo is unavailable because its saved scan could not be loaded. Any human record keeps its original reference." });
       continue;
     }
     const scan = structuredClone(source);
@@ -182,6 +212,7 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
     imageSlots += slots.length;
     if (imageSlots > MAX_IMAGE_SLOTS) throw limitError();
     const actualPhotos = new Set(scan.photos?.length ? scan.photos.map((photo) => photo.id) : ["photo-1"]);
+    for (const photoId of new Set(serviceRecords.flatMap((record) => record.photoIds))) if (!actualPhotos.has(photoId)) missing.push({ kind: "photo", lookupId: id, photoId, message: "A human-service entry references this original photo, which is no longer present in the saved scan. The entry and its original reference are retained." });
     for (const photoId of expectedPhotos) if (!actualPhotos.has(photoId)) missing.push({ kind: "photo", lookupId: id, photoId, message: "This original photo ID is missing from the linked saved scan. A different photo was not substituted." });
     const needsRefresh = local && slots.some((slot) => ownedSignedUrl(slot.source, id, scope.userId!, configuredOrigin));
     const remote = needsRefresh ? await remoteLookup(id) : null; check();
@@ -213,15 +244,22 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
     scans.push(scan);
   }
   progress("Checking that saved records have not changed…");
-  let finalMap: ComponentMapRecord | null;
-  try { finalMap = await wait(() => readComponentMap(rootLookupId, scope)); }
+  let finalSnapshot: FinalInspectionSnapshot;
+  try { finalSnapshot = await wait(() => readFinalInspectionSnapshot(rootLookupId, [...references.keys()], scope)); }
   catch (error) { rethrowFatal(error); throw staleError(); }
-  if (JSON.stringify(finalMap) !== mapSignature) throw staleError();
+  if (JSON.stringify(finalSnapshot.map) !== mapSignature) throw staleError();
+  for (const [id, before] of serviceSignatures) {
+    if (!finalSnapshot.serviceRecords.has(id)) throw staleError();
+    const current = finalSnapshot.serviceRecords.get(id);
+    if ((current === null ? null : JSON.stringify(current)) !== before) throw staleError();
+  }
+  // No more asynchronous reads after the joint IDB snapshot. Read localStorage
+  // synchronously so it cannot change while awaiting another history/map check.
   const finalRead = readLookups(); check();
   if (!finalRead.ok) throw staleError();
   for (const [id, before] of localSignatures) if (JSON.stringify(getLookup(id, finalRead.value)) !== before) throw staleError();
   check();
-  return { version: 1, createdAt: new Date().toISOString(), rootLookupId, map: map ? structuredClone(map) : null, scans, missing, embeddedBytes };
+  return { version: 1, createdAt: new Date().toISOString(), rootLookupId, map: map ? structuredClone(map) : null, scans, missing, embeddedBytes, serviceLogs };
 }
 
 function storageOrigin(): string | null {

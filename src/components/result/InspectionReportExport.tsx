@@ -78,7 +78,7 @@ export function InspectionReportExport({ lookupId, disabled = false }: { lookupI
       setOpen(!open);
     }}>Inspection report with photos</button>
     {open ? <div className="mt-3 space-y-3 text-sm text-[var(--ds-fg-2)]">
-      <p>Export this saved scan, its component map and linked photo groups. Only saved changes are included.</p>
+      <p>Export this saved scan, its component map, linked photo groups and saved human measurement, repair and follow-up history. Only saved changes are included.</p>
       <p className="text-xs text-[var(--ds-fg-3)]">The file includes photos, component notes, corrections and inspection findings. Photos may show identifiers or retain image metadata. Anyone you give the file to can open it.</p>
       <fieldset className="space-y-2" disabled={working}>
         <legend className="mb-2 font-semibold">Optional details</legend>
@@ -93,7 +93,7 @@ export function InspectionReportExport({ lookupId, disabled = false }: { lookupI
       </div>
       {snapshot ? <div className="space-y-3 rounded-xl border border-[var(--ds-border)] p-3" aria-label="Prepared report contents">
         <h3 className="font-bold">Review this snapshot</h3>
-        <p>{snapshot.map?.document.components.length ?? 0} mapped components · {snapshot.scans.length} saved scan groups · {photoCount} photo references</p>
+        <p>{snapshot.map?.document.components.length ?? 0} mapped components · {snapshot.scans.length} saved scan groups · {photoCount} photo references · {snapshot.serviceLogs?.reduce((count, log) => count + log.records.length, 0) ?? 0} human-service entries</p>
         <p className="text-xs">Prepared {new Date(snapshot.createdAt).toLocaleString()}. Later edits require a refreshed snapshot.</p>
         {snapshot.map?.conflict ? <p className="font-semibold">The map has an unresolved cloud conflict. This report uses the saved device version and records the conflict.</p> : null}
         <details>

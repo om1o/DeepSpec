@@ -4,6 +4,7 @@ import { DEFAULT_INSPECTION_REPORT_OPTIONS, type InspectionReportOptions, type I
 import { normalizeConditionAssessment } from "./conditionAssessment";
 import { buildIntakeDraft } from "./intakeDraft";
 import { vehicleContextDetails } from "./vehicleContext";
+import { normalizeServiceRecords, serviceRecordRows, serviceRecordStatus } from "./serviceRecord";
 
 export const MAX_INSPECTION_REPORT_HTML_BYTES = 64 * 1024 * 1024;
 
@@ -103,6 +104,31 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
     noteMissing(`Photo ${photoId} in scan ${lookupId} is unavailable in this snapshot.`);
     return `${escape(photoId)} <span class="badge">Unavailable</span>`;
   };
+  const serviceHistory = (lookupId: string, anchor: string): string => {
+    const logs = snapshot.serviceLogs?.filter((log) => log.lookupId === lookupId);
+    if (!logs?.length) return prose("Human measurement, repair and follow-up history was not collected in this snapshot.");
+    if (logs.length !== 1) throw new Error("This report contains duplicate human-service histories. Prepare it again.");
+    const log = logs[0];
+    const records = normalizeServiceRecords(log.records, lookupId);
+    if (!records) throw new Error("Human-service records could not be read safely. Prepare the report again; the saved records are unchanged.");
+    const recordAnchor = (id: string) => `${anchor}-service-${records.findIndex((record) => record.id === id) + 1}`;
+    const recordLink = (id: string) => `<a href="#${recordAnchor(id)}">${escape(id)}</a>`;
+    const scopeNote = log.cloudChecked
+      ? "Cloud human-service history was checked. Available records are listed below; any unavailable device history is identified under Missing or unavailable evidence. This does not mean both sources were available."
+      : "Cloud history was not verified for this snapshot. Only records from successfully read sources are listed below; unavailable sources may contain additional entries.";
+    return `${prose(scopeNote)}${prose("These entries are human-reported evidence, separate from AI estimates. A completed repair does not establish its cause, resolve a symptom, clear a safety instruction or certify function. A symptom not observed during one check may recur.")}
+      ${records.length ? records.map((record, index) => {
+        const status = serviceRecordStatus(record, records);
+        const followUps = record.kind === "repair" ? records.filter((other) => other.kind === "follow_up" && other.relatedRecordIds.includes(record.id) && serviceRecordStatus(other, records) === "current") : [];
+        return `<article id="${recordAnchor(record.id)}" class="service-record"><h4>Human ${escape(words(record.kind))} ${index + 1} <span class="badge">${escape(words(status))}</span></h4>
+          ${status === "conflicting_correction" ? prose("Conflicting corrections remain in this history. Neither alternative has been chosen automatically.") : ""}
+          ${details(serviceRecordRows(record, { includeVin: options.includeVin, includePrivateNotes: options.includePrivateNotes }))}
+          ${record.supersedesId ? `<p>Corrects or retracts earlier entry: ${recordLink(record.supersedesId)}.</p>` : ""}
+          <p>Supporting originals: ${record.photoIds.length ? record.photoIds.map((id) => photoLink(lookupId, id)).join(", ") : "No photo references recorded."}</p>
+          ${record.kind === "follow_up" && record.relatedRecordIds.length ? `<p>Related entries: ${record.relatedRecordIds.map(recordLink).join(", ")}.</p>` : ""}
+          ${record.kind === "repair" && ["completed", "attempted"].includes(record.status) ? followUps.length ? `<p>Separately recorded follow-up: ${followUps.map((followUp) => recordLink(followUp.id)).join(", ")}. Review its result and conditions.</p>` : prose("Follow-up not recorded for this repair entry. Its outcome remains unverified.") : ""}</article>`;
+      }).join("") : prose("No human measurement, repair or follow-up entries were found in the sources successfully read for this snapshot.")}`;
+  };
   const assetValidation = new Map<string, boolean>();
   const usedAssets = new Map<string, string>();
   let imageCharacters = 0;
@@ -196,18 +222,23 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
         ${result.measurements?.length ? `<h4>AI-reported dimensions — not human measurements</h4>${prose("These are model outputs, including estimates or interpretations of markings. No human measurement is inferred.")}${result.measurements.map((measurement) => details([["Dimension", measurement.label], ["AI-reported value", `${measurement.valueMm} mm`], ["Method", words(measurement.method)], ["AI confidence", measurement.confidence], ["Caveat", measurement.caveat]])).join("")}` : ""}
         ${result.sourceLinks.length ? `<h4>Saved reference links — not independently verified by this export</h4><ul>${result.sourceLinks.map((source) => `<li>${escape(source.label)} (${escape(source.sourceType)}): ${escape(source.url)}</li>`).join("")}</ul>` : ""}` : `<h3>Analysis unavailable</h3>${prose(scan.errorMessage || "No AI result is saved for this scan.")}`}
       <h3>Human inspection — self-reported record</h3>${human ? details([["Confirmed part name", human.confirmedPartName || "Not recorded"], ["Part number", human.partNumber || "Not recorded"], ["Identity evidence", human.identityEvidence || "Not recorded"], ["Visible condition", words(human.visibleCondition)], ["Visible condition notes", human.visibleNotes || "None recorded"], ["Functional test status", words(human.functionalStatus)], ["Functional test notes", human.functionalNotes || "None recorded"], ["Inspection recorded", human.inspectedAt]]) : prose("No human inspection or functional test recorded. Photos do not establish function.")}
+      <h3>Human measurements, repairs and follow-up history</h3>${serviceHistory(scan.id, anchor)}
       <h3>Checks still needed</h3>${list(draft.checks)}
       ${options.includePrivateNotes && scan.notes ? `<h3>Private scan notes — included by request</h3>${prose(scan.notes)}` : ""}</section>`;
   }).join("");
 
+  const unavailableServiceIds = [...new Set((snapshot.serviceLogs ?? []).map((log) => log.lookupId).filter((id) => !byId.has(id)))];
+  const unavailableServiceHtml = unavailableServiceIds.length ? `<section id="unavailable-service-history"><h2>Retained human history for unavailable scans</h2>
+    ${prose("These entries were saved independently of scan images. Their original scan metadata and photos are unavailable in this snapshot. The recorded statements and references remain intact; no other image or AI result has been substituted.")}
+    ${unavailableServiceIds.map((id, index) => `<section id="unavailable-service-${index + 1}"><h3>Unavailable scan: ${escape(id)}</h3>${serviceHistory(id, `unavailable-service-${index + 1}`)}</section>`).join("")}</section>` : "";
   if (!byId.has(snapshot.rootLookupId)) noteMissing("The requested overview scan is unavailable in this snapshot.");
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; object-src 'none'"><title>DeepSpec mechanic handoff</title><style>${CSS}</style></head><body><main>
     <header><h1>Mechanic handoff</h1>${prose(`Snapshot created: ${snapshot.createdAt}`)}${prose(`${entries.length} saved scan${entries.length === 1 ? "" : "s"}; ${map?.components.length ?? 0} mapped components. This is a saved evidence report, not a diagnosis or certification of condition, fitment, function or safety.`)}
     <p>AI observations, possible causes and human records are labeled separately. Linked photos are not assumed to show the same part or vehicle unless that relationship was established by the user. Original images may contain identifying details or embedded metadata.</p>
-    ${prose(`VIN ${options.includeVin ? "included where saved" : "excluded"}; private scan and vehicle notes ${options.includePrivateNotes ? "included where saved" : "excluded"}. Component notes and human inspection notes are included as inspection evidence. Customer, plate, job and inspector identity fields and chat transcripts are excluded.`)}
-    <nav aria-label="Report navigation"><ul><li><a href="#component-map">Component map</a></li>${entries.map((entry) => `<li><a href="#${entry.anchor}">Scan ${entry.number}</a></li>`).join("")}<li><a href="#missing-evidence">Missing evidence</a></li></ul></nav></header>
-    ${mapHtml}${scansHtml}<section id="missing-evidence"><h2>Missing or unavailable evidence</h2>${list(missing, "No missing evidence was reported for this snapshot. This does not establish completeness of an inspection.")}</section>
-    <footer>Static report with embedded raster images. No scripts or remote assets. Saved outlines are display overlays, not changes to original pixels. Repair history and a structured human measurement log are not recorded by this report.</footer></main></body></html>`;
+    ${prose(`VIN ${options.includeVin ? "included where saved" : "excluded"}; private scan and vehicle notes ${options.includePrivateNotes ? "included where saved" : "excluded"}. Component notes, human inspection notes and service-record notes are included as inspection evidence and may contain identifiers. Customer, plate, job, inspector and service-recorder identity fields and chat transcripts are excluded.`)}
+    <nav aria-label="Report navigation"><ul><li><a href="#component-map">Component map</a></li>${entries.map((entry) => `<li><a href="#${entry.anchor}">Scan ${entry.number}</a></li>`).join("")}${unavailableServiceIds.length ? '<li><a href="#unavailable-service-history">Retained history for unavailable scans</a></li>' : ""}<li><a href="#missing-evidence">Missing evidence</a></li></ul></nav></header>
+    ${mapHtml}${scansHtml}${unavailableServiceHtml}<section id="missing-evidence"><h2>Missing or unavailable evidence</h2>${list(missing, "No missing evidence was reported for this snapshot. This does not establish completeness of an inspection.")}</section>
+    <footer>Static report with embedded raster images. No scripts or remote assets. Saved outlines are display overlays, not changes to original pixels. Human-service entries retain corrections and retractions; they are self-reported records, not independently verified repairs or measurements.</footer></main></body></html>`;
   if (html.length > MAX_INSPECTION_REPORT_HTML_BYTES || new TextEncoder().encode(html).byteLength > MAX_INSPECTION_REPORT_HTML_BYTES) throw new Error("The HTML report exceeds the 64 MiB limit. Export fewer scans or smaller photos.");
   return html;
 }
