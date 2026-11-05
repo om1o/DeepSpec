@@ -47,6 +47,25 @@ describe("photo relationship draft compare-and-swap", () => {
   });
   afterEach(() => { vi.unstubAllGlobals(); setActiveAccount(null); });
 
+  it("keeps requested-photo context through editing and rejects old-client deletion and guide downgrade", async () => {
+    const requested: Extract<PhotoDraftEnvelope, { version: 8 }> = { ...draft, version: 8, comparisonTarget: { version: 2,
+      comparisonId: "00000000-0000-4000-8000-000000000003", lookupId: "follow-up", subject: "Requested photo", analysisSha256: "b".repeat(64),
+      earlier: { lookupId: "previous", photoId: "first", photoLabel: "overview", photoAddedAt: "2026-11-04T12:00:00Z", scanSavedAt: "2026-11-04T12:00:00Z", observedOn: null, vehicleContext: null, sha256: "a".repeat(64), width: 640, height: 480 },
+      requestedEvidence: { version: 1, kind: "photo", request: "Show the edge.", purpose: "Check the hidden face.", photoIds: ["first"] } } };
+    expect(await replacePhotoDraftEnvelopeIfMatches(null, requested)).toBe(true);
+    expect(await readPhotoDraftEnvelope()).toEqual(requested);
+    expect(await removePhotoDraftIfMatches(requested.photos)).toBe(false);
+    expect(await replacePhotoDraftEnvelopeIfMatches(draft, null)).toBe(false);
+    await expect(replacePhotoDraftEnvelopeIfMatches(requested, draft)).rejects.toThrow("cannot be replaced or removed");
+    const retargeted = { ...requested, comparisonTarget: { ...requested.comparisonTarget, analysisSha256: "c".repeat(64) } };
+    await expect(replacePhotoDraftEnvelopeIfMatches(requested, retargeted)).rejects.toThrow("cannot be replaced or removed");
+    const relabeled = { ...requested, photos: requested.photos.map((photo, index) => index === 0 ? { ...photo, label: "marking" as const } : photo) };
+    expect(await replacePhotoDraftEnvelopeIfMatches(requested, relabeled)).toBe(true);
+    expect(await replacePhotoDraftEnvelopeIfMatches(requested, null)).toBe(false);
+    expect(await readPhotoDraftEnvelope()).toEqual(relabeled);
+    expect(await replacePhotoDraftEnvelopeIfMatches(relabeled, null)).toBe(true);
+  });
+
   it("round trips a photo-only save, exact edit and remove through the protected version-five format", async () => {
     expect(await savePhotoDraftIfEmpty(draft.photos)).toBe(true);
     expect(await readPhotoDraftEnvelope()).toEqual({ version: 5, photos: draft.photos, photoRelationship: "unknown" });

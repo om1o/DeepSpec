@@ -4,11 +4,12 @@ import type { Lookup } from "../types";
 import type { ComparisonCaptureTarget, ComparisonSide, InspectionComparison } from "../types/inspectionComparison";
 import { completeComparisonCapture, verifyComparisonCaptureReference } from "./comparisonCapture";
 
-const mocks = vi.hoisted(() => ({ resolve: vi.fn(), side: vi.fn(), read: vi.fn(), append: vi.fn(), lookup: vi.fn() }));
+const mocks = vi.hoisted(() => ({ resolve: vi.fn(), side: vi.fn(), read: vi.fn(), append: vi.fn(), lookup: vi.fn(), requested: vi.fn(), assertRequested: vi.fn() }));
 vi.mock("./comparisonEvidence", () => ({ resolveComparisonSide: mocks.resolve, comparisonSideForLookup: mocks.side,
   comparisonPhotos: (lookup: Lookup) => lookup.photos?.length ? lookup.photos : [{ ...lookup.frame, id: "photo-1", label: "overview" }] }));
 vi.mock("./inspectionComparisonStore", () => ({ readInspectionComparisons: mocks.read, appendInspectionComparison: mocks.append }));
 vi.mock("./storage", () => ({ getLookup: mocks.lookup }));
+vi.mock("./requestedEvidenceCapture", () => ({ verifyRequestedEvidenceCaptureReference: mocks.requested, assertRequestedEvidenceCaptureCurrent: mocks.assertRequested }));
 
 const timestamp = "2026-11-05T12:00:00.000Z";
 const earlier: ComparisonSide = { lookupId: "earlier", photoId: "original", photoLabel: "overview", photoAddedAt: timestamp,
@@ -29,9 +30,34 @@ beforeEach(() => {
   mocks.lookup.mockReset().mockImplementation(() => structuredClone(saved));
   mocks.read.mockReset().mockImplementation(async () => structuredClone(records));
   mocks.append.mockReset().mockImplementation(async (record: InspectionComparison) => { records.push(structuredClone(record)); return structuredClone(records); });
+  mocks.requested.mockReset().mockResolvedValue(Object.freeze({ lookupId: earlier.lookupId })); mocks.assertRequested.mockReset();
 });
 
 describe("durable repeat-capture completion", () => {
+  const requestedTarget = (): Extract<ComparisonCaptureTarget, { version: 2 }> => ({ ...target, version: 2, analysisSha256: "c".repeat(64),
+    requestedEvidence: { version: 1, kind: "photo", request: "Show the mounting face.", purpose: "Check the hidden edge.", photoIds: [earlier.photoId] } });
+  it("verifies requested-photo origins while retaining the existing unreviewed comparison history format", async () => {
+    const requested = requestedTarget();
+    await verifyComparisonCaptureReference(requested);
+    expect(mocks.requested).toHaveBeenCalledWith(requested, expect.objectContaining({ userId: "capture-owner" }), undefined);
+    expect(mocks.resolve).not.toHaveBeenCalled();
+    const record = await completeComparisonCapture(requested, saved);
+    expect(record.version).toBe(1); expect(record).not.toHaveProperty("requestedEvidence"); expect(record).not.toHaveProperty("analysisSha256");
+    expect(record.observation.outcome).toBe("not_reviewed"); expect(record.relationship.component).toBe("unconfirmed");
+    expect(mocks.assertRequested).toHaveBeenCalled();
+  });
+  it("does not finish a requested-photo link after a changed originating answer, including an existing history entry", async () => {
+    const requested = requestedTarget();
+    await completeComparisonCapture(requested, saved);
+    mocks.requested.mockRejectedValueOnce(new Error("The originating AI result changed. Its pending photos were kept."));
+    await expect(completeComparisonCapture(requested, saved)).rejects.toThrow("originating AI result changed");
+    expect(mocks.append).toHaveBeenCalledTimes(1);
+  });
+  it("rechecks the issued requested-photo guard before appending history after asynchronous work", async () => {
+    mocks.read.mockImplementationOnce(async () => { mocks.assertRequested.mockImplementation(() => { throw new Error("The originating AI result changed"); }); return []; });
+    await expect(completeComparisonCapture(requestedTarget(), saved)).rejects.toThrow("originating AI result changed");
+    expect(mocks.append).not.toHaveBeenCalled();
+  });
   it("links the first saved original even after AI failure, without inventing review or observation dates", async () => {
     const before = JSON.stringify(saved);
     const record = await completeComparisonCapture(target, saved);

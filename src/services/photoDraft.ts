@@ -14,31 +14,33 @@ export type PhotoDraftKind = "upload" | "capture";
 export type PhotoDraftEnvelope = { photos: ScanPhoto[]; target?: ComponentCaptureTarget } & (
   | { version: 2; photoRelationship?: undefined }
   | { version: 3; photoRelationship?: undefined; vehicleContext: ShopVehicleContext | null; jobId?: string }
-  | { version: 4; photoRelationship?: undefined; vehicleContext: ShopVehicleContext | null; jobId?: string; comparisonTarget: ComparisonCaptureTarget }
+  | { version: 4; photoRelationship?: undefined; vehicleContext: ShopVehicleContext | null; jobId?: string; comparisonTarget: Extract<ComparisonCaptureTarget, { version: 1 }> }
   | { version: 5; photoRelationship: PhotoRelationship }
   | { version: 6; photoRelationship: PhotoRelationship; vehicleContext: ShopVehicleContext | null; jobId?: string }
-  | { version: 7; photoRelationship: PhotoRelationship; vehicleContext: ShopVehicleContext | null; jobId?: string; comparisonTarget: ComparisonCaptureTarget }
+  | { version: 7; photoRelationship: PhotoRelationship; vehicleContext: ShopVehicleContext | null; jobId?: string; comparisonTarget: Extract<ComparisonCaptureTarget, { version: 1 }> }
+  | { version: 8; photoRelationship: PhotoRelationship; vehicleContext: ShopVehicleContext | null; jobId?: string; comparisonTarget: Extract<ComparisonCaptureTarget, { version: 2 }> }
 );
-export type ModernPhotoDraftEnvelope = Extract<PhotoDraftEnvelope, { version: 5 | 6 | 7 }>;
+export type ModernPhotoDraftEnvelope = Extract<PhotoDraftEnvelope, { version: 5 | 6 | 7 | 8 }>;
 
-export function hasPhotoDraftContext(draft: PhotoDraftEnvelope | null | undefined): draft is Extract<PhotoDraftEnvelope, { version: 3 | 4 | 6 | 7 }> {
-  return Boolean(draft && [3, 4, 6, 7].includes(draft.version));
+export function hasPhotoDraftContext(draft: PhotoDraftEnvelope | null | undefined): draft is Extract<PhotoDraftEnvelope, { version: 3 | 4 | 6 | 7 | 8 }> {
+  return Boolean(draft && [3, 4, 6, 7, 8].includes(draft.version));
 }
 
-export function hasPhotoDraftComparison(draft: PhotoDraftEnvelope | null | undefined): draft is Extract<PhotoDraftEnvelope, { version: 4 | 7 }> {
-  return draft?.version === 4 || draft?.version === 7;
+export function hasPhotoDraftComparison(draft: PhotoDraftEnvelope | null | undefined): draft is Extract<PhotoDraftEnvelope, { version: 4 | 7 | 8 }> {
+  return draft?.version === 4 || draft?.version === 7 || draft?.version === 8;
 }
 
 export function normalizePhotoDraft(value: unknown): PhotoDraftEnvelope | null {
   if (validatePhotoGroup(value)) return { version: 2, photos: value };
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const draft = value as Record<string, unknown>;
-  if (![2, 3, 4, 5, 6, 7].includes(draft.version as number) || !validatePhotoGroup(draft.photos)) return null;
-  const modern = [5, 6, 7].includes(draft.version as number);
+  if (![2, 3, 4, 5, 6, 7, 8].includes(draft.version as number) || !validatePhotoGroup(draft.photos)) return null;
+  const modern = [5, 6, 7, 8].includes(draft.version as number);
   if (modern ? !isPhotoRelationship(draft.photoRelationship) : draft.photoRelationship !== undefined) return null;
-  const comparison = draft.version === 4 || draft.version === 7;
+  const comparison = draft.version === 4 || draft.version === 7 || draft.version === 8;
   const comparisonTarget = comparison ? normalizeComparisonCaptureTarget(draft.comparisonTarget) : undefined;
   if ((comparison && !comparisonTarget) || (!comparison && draft.comparisonTarget !== undefined)) return null;
+  if (comparisonTarget && (draft.version === 8 ? comparisonTarget.version !== 2 : comparisonTarget.version !== 1)) return null;
   const target = draft.target === undefined ? undefined : normalizeComponentCaptureTarget(draft.target);
   if (target === null || (target && comparisonTarget && target.lookupId !== comparisonTarget.lookupId)) return null;
   const common = { photos: draft.photos, ...(target ? { target } : {}) };
@@ -49,6 +51,7 @@ export function normalizePhotoDraft(value: unknown): PhotoDraftEnvelope | null {
   const job = draft.jobId ? { jobId: draft.jobId } : {};
   const vehicleContext = draft.vehicleContext === null ? null : normalizeVehicleContext(draft.vehicleContext);
   if (vehicleContext === undefined) return null;
+  if (comparisonTarget?.version === 2) return { version: 8, ...common, ...job, vehicleContext, comparisonTarget, photoRelationship };
   if (modern) return comparisonTarget ? { version: 7, ...common, ...job, vehicleContext, comparisonTarget, photoRelationship }
     : { version: 6, ...common, ...job, vehicleContext, photoRelationship };
   return comparisonTarget ? { version: 4, ...common, ...job, vehicleContext, comparisonTarget }
@@ -60,6 +63,7 @@ export function upgradePhotoDraft(draft: PhotoDraftEnvelope): ModernPhotoDraftEn
   const normalized = normalizePhotoDraft(draft);
   if (!normalized) throw new Error("The photo draft could not be upgraded safely. Its originals were preserved.");
   const photoRelationship = photoRelationshipOrUnknown(normalized.photoRelationship);
+  if (normalized.version === 8) return normalized;
   if (hasPhotoDraftComparison(normalized)) return { ...normalized, version: 7, photoRelationship };
   if (hasPhotoDraftContext(normalized)) return { ...normalized, version: 6, photoRelationship };
   return { ...normalized, version: 5, photoRelationship };
@@ -171,6 +175,9 @@ export async function replacePhotoDraftIfMatches(previous: ScanPhoto[] | null, n
 export async function replacePhotoDraftEnvelopeIfMatches(previous: PhotoDraftEnvelope | null, next: PhotoDraftEnvelope | null, scope = getAccountScope(), kind: PhotoDraftKind = "upload", mutationGuard?: () => void): Promise<boolean> {
   if ((previous !== null && !normalizePhotoDraft(previous)) || (next !== null && !normalizePhotoDraft(next))) {
     throw new Error("Choose one to four valid, labeled photos and a supported photo relationship. Your previous draft is preserved.");
+  }
+  if (previous?.version === 8 && next !== null && (next.version !== 8 || !comparisonCaptureTargetsMatch(previous.comparisonTarget, next.comparisonTarget))) {
+    throw new Error("The saved requested-evidence guide cannot be replaced or removed while editing its photos. Keep this draft or explicitly discard it first.");
   }
   const nextWrite = next === null ? null : upgradePhotoDraft(next);
   let matched = false;

@@ -59,10 +59,14 @@ const completeComponentCapture = vi.fn();
 const readComponentMapLookup = vi.fn();
 const completeComparisonCapture = vi.fn();
 const verifyComparisonCaptureReference = vi.fn();
+const verifyRequestedEvidenceCaptureReference = vi.fn();
+const assertRequestedEvidenceCaptureCurrent = vi.fn();
 const resolveComparisonSide = vi.fn();
 const repeatTarget: ComparisonCaptureTarget = { version: 1, comparisonId: "00000000-0000-4000-8000-000000000011", lookupId: "repeat-scan", subject: "Bracket stain",
   earlier: { lookupId: "earlier-scan", photoId: "earlier-photo", photoLabel: "overview", photoAddedAt: "2026-11-04T00:00:00Z", scanSavedAt: "2026-11-04T00:00:00Z",
     observedOn: null, sha256: "a".repeat(64), width: 640, height: 360, vehicleContext: { model: "Original car", engine: "1.8L" } } };
+const requestedTarget: Extract<ComparisonCaptureTarget, { version: 2 }> = { ...repeatTarget, version: 2, analysisSha256: "b".repeat(64),
+  requestedEvidence: { version: 1, kind: "marking", request: "Photograph the stamped number beside the lower bolt.", purpose: "A readable marking may distinguish the candidate housings.", photoIds: ["earlier-photo"] } };
 const draftKey = (scope?: AccountScope, kind: "upload" | "capture" = "upload") => `${scope?.userId ?? "test-user"}:${kind}`;
 const identifyCapturedFrame = vi.fn(async () => ({
   partName: "Alternator",
@@ -199,6 +203,10 @@ vi.mock("../services/comparisonCapture", () => ({
   completeComparisonCapture: (...args: unknown[]) => completeComparisonCapture(...args),
   verifyComparisonCaptureReference: (...args: unknown[]) => verifyComparisonCaptureReference(...args),
 }));
+vi.mock("../services/requestedEvidenceCapture", () => ({
+  verifyRequestedEvidenceCaptureReference: (...args: unknown[]) => verifyRequestedEvidenceCaptureReference(...args),
+  assertRequestedEvidenceCaptureCurrent: (...args: unknown[]) => assertRequestedEvidenceCaptureCurrent(...args),
+}));
 vi.mock("../services/comparisonEvidence", () => ({ resolveComparisonSide: (...args: unknown[]) => resolveComparisonSide(...args) }));
 
 vi.mock("../services/photoDraft", async (importOriginal) => {
@@ -314,6 +322,8 @@ describe("Scanner", () => {
     readComponentMapLookup.mockReset().mockResolvedValue({ ok: true, value: { id: "bay-overview", vehicleContext: { year: "2015", make: "Honda", model: "Civic", engine: "1.8L" } } });
     completeComparisonCapture.mockReset().mockResolvedValue({});
     verifyComparisonCaptureReference.mockReset().mockResolvedValue(undefined);
+    verifyRequestedEvidenceCaptureReference.mockReset().mockResolvedValue({});
+    assertRequestedEvidenceCaptureCurrent.mockReset();
     resolveComparisonSide.mockReset().mockResolvedValue({ status: "unchanged", image: "data:image/png;base64,ZWFybGllcg==", message: "Verified original" });
     readPhotoDraft.mockReset();
     readPhotoDraft.mockImplementation(async (scope, kind) => structuredClone(draftStore.get(draftKey(scope, kind)) ?? null));
@@ -1597,10 +1607,174 @@ describe("Scanner", () => {
     expect(getLookups()[0].photos).toEqual(reviewed);
   }, 10000);
 
+  it("keeps the requested marking guide through capture, chooser cancellation, close and reload before explicit analysis", async () => {
+    render(<MemoryRouter initialEntries={[{ pathname: "/scan", state: { accountId: "test-user", comparisonCaptureTarget: requestedTarget } }]}><Scanner /></MemoryRouter>);
+    expect(screen.getByRole("region", { name: "AI-suggested next photo" })).toHaveTextContent(requestedTarget.requestedEvidence.request);
+    expect(screen.getByText(requestedTarget.requestedEvidence.purpose)).toBeInTheDocument();
+    expect(await screen.findByRole("img", { name: "Earlier reference original: Bracket stain" })).toHaveAttribute("src", "data:image/png;base64,ZWFybGllcg==");
+    expect(screen.getByText("Use this earlier photo to locate the requested area. Follow the photo request above.")).toBeInTheDocument();
+    expect(screen.queryByText(/Match the earlier framing/)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/Only your new photos will be analyzed/)).toHaveLength(1);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await screen.findByRole("dialog", { name: "Review inspection photos" });
+    expect(draftEnvelopes.get("test-user:capture")).toMatchObject({ version: 8, comparisonTarget: requestedTarget });
+    expect(verifyRequestedEvidenceCaptureReference).not.toHaveBeenCalled();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Upload photo"), { target: { files: [] } });
+    expect(screen.getByText(requestedTarget.requestedEvidence.request)).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Photo 1 view" }), "marking");
+    await userEvent.click(screen.getByRole("button", { name: "Keep draft and close" }));
+    const retained = structuredClone(draftEnvelopes.get("test-user:capture"));
+    cleanup();
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(await screen.findByRole("button", { name: "Resume captured photo" }));
+    expect(screen.getByText(requestedTarget.requestedEvidence.request)).toBeInTheDocument();
+    expect(screen.getByText(requestedTarget.requestedEvidence.purpose)).toBeInTheDocument();
+    expect(screen.getByText(/Collecting a photo does not mean the request has been resolved/)).toBeInTheDocument();
+    expect(screen.queryByText(/Match the earlier framing/)).not.toBeInTheDocument();
+    expect(draftEnvelopes.get("test-user:capture")).toEqual(retained);
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    await analyzeReviewedPhotos();
+    await waitFor(() => expect(draftStore.has("test-user:capture")).toBe(false));
+    const saved = getLookups().find((lookup) => lookup.id === requestedTarget.lookupId)!;
+    expect(saved.photos).toEqual(retained!.photos);
+    expect(saved.photos![0].label).toBe("marking");
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
+    expect(identifyCapturedFrame.mock.calls[0][3]).toMatchObject({ photos: retained!.photos });
+    expect(JSON.stringify(identifyCapturedFrame.mock.calls)).not.toContain("ZWFybGllcg==");
+    expect(completeComparisonCapture).toHaveBeenCalledWith(requestedTarget, expect.objectContaining({ id: requestedTarget.lookupId }), expect.objectContaining({ userId: "test-user" }), expect.any(AbortSignal));
+    expect(assertRequestedEvidenceCaptureCurrent).toHaveBeenCalled();
+  });
+
+  it("keeps newly uploaded requested photos when the origin is stale instead of losing them during capture", async () => {
+    verifyRequestedEvidenceCaptureReference.mockRejectedValue(new Error("The original answer changed. New photos were kept."));
+    render(<MemoryRouter initialEntries={[{ pathname: "/scan", state: { accountId: "test-user", comparisonCaptureTarget: requestedTarget } }]}><Scanner /></MemoryRouter>);
+    await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["new marking"], "marking.jpg", { type: "image/jpeg" }));
+    await screen.findByRole("dialog", { name: "Review inspection photos" });
+    const retained = structuredClone(draftEnvelopes.get("test-user:upload"));
+    expect(retained).toMatchObject({ version: 8, comparisonTarget: requestedTarget });
+    expect(verifyRequestedEvidenceCaptureReference).not.toHaveBeenCalled();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    await analyzeReviewedPhotos();
+    expect(await within(screen.getByRole("dialog")).findByText("The original answer changed. New photos were kept.")).toBeInTheDocument();
+    expect(draftEnvelopes.get("test-user:upload")).toEqual(retained);
+    expect(screen.getByText(requestedTarget.requestedEvidence.request)).toBeInTheDocument();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    expect(completeComparisonCapture).not.toHaveBeenCalled();
+  });
+
+  it("keeps the requested guide visible and does not analyze after a device draft save failure", async () => {
+    savePhotoDraftIfEmpty.mockRejectedValueOnce(new Error("Device storage could not save this photo. Retry capture."));
+    render(<MemoryRouter initialEntries={[{ pathname: "/scan", state: { accountId: "test-user", comparisonCaptureTarget: requestedTarget } }]}><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    expect(await screen.findByText("Device storage could not save this photo. Retry capture.")).toBeInTheDocument();
+    expect(screen.getByText(requestedTarget.requestedEvidence.request)).toBeInTheDocument();
+    expect(screen.getByText(requestedTarget.requestedEvidence.purpose)).toBeInTheDocument();
+    expect(draftStore.size).toBe(0);
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    expect(completeComparisonCapture).not.toHaveBeenCalled();
+  });
+
+  it.each(["quality check", "visual preparation"])("rechecks the requested source after %s before a provider call", async (phase) => {
+    const photos: ScanPhoto[] = [{ id: "follow-up", label: "marking", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,cGFydA==" }];
+    const envelope: PhotoDraftEnvelope = { version: 8, photos, comparisonTarget: requestedTarget, vehicleContext: requestedTarget.earlier.vehicleContext, photoRelationship: "unknown" };
+    draftStore.set("test-user:capture", photos); draftEnvelopes.set("test-user:capture", envelope);
+    if (phase === "visual preparation") assertRequestedEvidenceCaptureCurrent.mockImplementationOnce(() => undefined);
+    assertRequestedEvidenceCaptureCurrent.mockImplementationOnce(() => { throw new Error("The requested evidence source changed; draft kept."); });
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(await screen.findByRole("button", { name: "Resume captured photo" }));
+    await analyzeReviewedPhotos();
+    await waitFor(() => expect(screen.getByRole("dialog")).toHaveTextContent("The requested evidence source changed; draft kept."));
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    expect(getLookups()).toEqual([]);
+    expect(draftEnvelopes.get("test-user:capture")).toEqual(envelope);
+  });
+
+  it.each(["cancellation", "account change"])("keeps a guided draft after %s during origin verification", async (reason) => {
+    const photos: ScanPhoto[] = [{ id: "follow-up", label: "marking", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,cGFydA==" }];
+    const envelope: PhotoDraftEnvelope = { version: 8, photos, comparisonTarget: requestedTarget, vehicleContext: requestedTarget.earlier.vehicleContext, photoRelationship: "unknown" };
+    draftStore.set("test-user:upload", photos); draftEnvelopes.set("test-user:upload", envelope);
+    let finish!: (guard: object) => void;
+    verifyRequestedEvidenceCaptureReference.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(await screen.findByRole("button", { name: "Resume 1-photo draft" }));
+    await analyzeReviewedPhotos();
+    await waitFor(() => expect(verifyRequestedEvidenceCaptureReference).toHaveBeenCalledTimes(1));
+    if (reason === "cancellation") await userEvent.click(screen.getByRole("button", { name: "Cancel scan" }));
+    else setActiveAccount("other-user");
+    await act(async () => finish({}));
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    expect(completeComparisonCapture).not.toHaveBeenCalled();
+    expect(draftEnvelopes.get("test-user:upload")).toEqual(envelope);
+    expect(draftStore.has("other-user:upload")).toBe(false);
+  });
+
+  it("retains the exact guide on saved-analysis completion failure and resumes without another AI call", async () => {
+    const photos: ScanPhoto[] = [{ id: "follow-up", label: "marking", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,cGFydA==" }];
+    const envelope: PhotoDraftEnvelope = { version: 8, photos, comparisonTarget: requestedTarget, vehicleContext: requestedTarget.earlier.vehicleContext, photoRelationship: "unknown" };
+    draftStore.set("test-user:upload", photos); draftEnvelopes.set("test-user:upload", envelope);
+    identifyCapturedFrame.mockRejectedValueOnce(new Error("Provider unavailable"));
+    completeComparisonCapture.mockRejectedValueOnce(new Error("Comparison save failed; pending photos retained."));
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(await screen.findByRole("button", { name: "Resume 1-photo draft" }));
+    await analyzeReviewedPhotos();
+    await screen.findByRole("button", { name: "Finish dated comparison" });
+    expect(screen.getByText(requestedTarget.requestedEvidence.request)).toBeInTheDocument();
+    expect(screen.getByText("Comparison save failed; pending photos retained.")).toBeInTheDocument();
+    const saved = structuredClone(getLookups());
+    expect(saved[0].result).toBeUndefined(); expect(saved[0].errorMessage).toBeTruthy();
+    cleanup();
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(await screen.findByRole("button", { name: "Resume 1-photo draft" }));
+    expect(draftEnvelopes.get("test-user:upload")).toEqual(envelope);
+    await userEvent.click(screen.getByRole("button", { name: "Finish dated comparison" }));
+    await waitFor(() => expect(draftStore.has("test-user:upload")).toBe(false));
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
+    expect(getLookups()).toEqual(saved);
+  });
+
+  it("does not retire a newer guide attached to identical photos after completing the older request", async () => {
+    const photos: ScanPhoto[] = [{ id: "follow-up", label: "marking", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,cGFydA==" }];
+    const envelope: PhotoDraftEnvelope = { version: 8, photos, comparisonTarget: requestedTarget, vehicleContext: requestedTarget.earlier.vehicleContext, photoRelationship: "unknown" };
+    const newer: PhotoDraftEnvelope = { ...envelope, comparisonTarget: { ...requestedTarget, requestedEvidence: { ...requestedTarget.requestedEvidence, request: "Photograph the upper marking instead." } } };
+    draftStore.set("test-user:upload", photos); draftEnvelopes.set("test-user:upload", envelope);
+    completeComparisonCapture.mockImplementationOnce(async () => { draftEnvelopes.set("test-user:upload", newer); return {}; });
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(await screen.findByRole("button", { name: "Resume 1-photo draft" }));
+    await analyzeReviewedPhotos();
+    await waitFor(() => expect(completeComparisonCapture).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(verifyRequestedEvidenceCaptureReference).toHaveBeenCalledTimes(2));
+    expect(draftEnvelopes.get("test-user:upload")).toEqual(newer);
+    expect(draftStore.get("test-user:upload")).toEqual(photos);
+    expect(removePhotoDraft).not.toHaveBeenCalled();
+  });
+
+  it("keeps the saved follow-up and pending guide if the original changes at the retirement boundary", async () => {
+    const photos: ScanPhoto[] = [{ id: "follow-up", label: "marking", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,cGFydA==" }];
+    const envelope: PhotoDraftEnvelope = { version: 8, photos, comparisonTarget: requestedTarget, vehicleContext: requestedTarget.earlier.vehicleContext, photoRelationship: "unknown" };
+    draftStore.set("test-user:capture", photos); draftEnvelopes.set("test-user:capture", envelope);
+    completeComparisonCapture.mockImplementationOnce(async () => {
+      assertRequestedEvidenceCaptureCurrent.mockImplementation(() => { throw new Error("The original changed before completion; pending draft retained."); });
+      return {};
+    });
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(await screen.findByRole("button", { name: "Resume captured photo" }));
+    await analyzeReviewedPhotos();
+    await screen.findByRole("button", { name: "Finish dated comparison" });
+    expect(screen.getByText("The original changed before completion; pending draft retained.")).toBeInTheDocument();
+    expect(screen.getByText(requestedTarget.requestedEvidence.request)).toBeInTheDocument();
+    expect(draftEnvelopes.get("test-user:capture")).toEqual(envelope);
+    expect(getLookups()[0].photos).toEqual(photos);
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
+    expect(removePhotoDraftIfMatches).not.toHaveBeenCalled();
+  });
+
   it("keeps the repeat reference separate, freezes its vehicle and saves only newly reviewed photos", async () => {
     expect(saveVehicleProfile({ model: "Different current profile" }).ok).toBe(true);
     render(<MemoryRouter initialEntries={[{ pathname: "/scan", state: { accountId: "test-user", comparisonCaptureTarget: repeatTarget } }]}><Scanner /></MemoryRouter>);
     expect(await screen.findByRole("img", { name: "Earlier reference original: Bracket stain" })).toHaveAttribute("src", "data:image/png;base64,ZWFybGllcg==");
+    expect(screen.getByText(/Match the earlier framing/)).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "AI-suggested next photo" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     const review = await screen.findByRole("dialog", { name: "Review inspection photos" });
     expect(within(review).getByTestId("comparison-capture-reference")).toBeInTheDocument();
@@ -1674,7 +1848,7 @@ describe("Scanner", () => {
   it("keeps a newer comparison target when an older completed analysis tries to retire identical photo bytes", async () => {
     const photos: ScanPhoto[] = [{ id: "follow-up", label: "overview", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,cGFydA==" }];
     const envelope: PhotoDraftEnvelope = { version: 4, photos, comparisonTarget: repeatTarget, vehicleContext: repeatTarget.earlier.vehicleContext };
-    const newer: PhotoDraftEnvelope = { ...upgradePhotoDraft(envelope), comparisonTarget: { ...repeatTarget, comparisonId: "00000000-0000-4000-8000-000000000012", lookupId: "newer-follow-up" } };
+    const newer: PhotoDraftEnvelope = { ...envelope, version: 7, photoRelationship: "unknown", comparisonTarget: { ...repeatTarget, comparisonId: "00000000-0000-4000-8000-000000000012", lookupId: "newer-follow-up" } };
     draftStore.set("test-user:upload", photos); draftEnvelopes.set("test-user:upload", envelope);
     completeComparisonCapture.mockImplementationOnce(async () => { draftEnvelopes.set("test-user:upload", newer); return {}; });
     render(<MemoryRouter><Scanner /></MemoryRouter>);

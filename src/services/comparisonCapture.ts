@@ -6,6 +6,7 @@ import type { ComparisonCaptureTarget, InspectionComparison } from "../types/ins
 import { comparisonPhotos, comparisonSideForLookup, resolveComparisonSide } from "./comparisonEvidence";
 import { appendInspectionComparison, readInspectionComparisons } from "./inspectionComparisonStore";
 import { getLookup } from "./storage";
+import { assertRequestedEvidenceCaptureCurrent, verifyRequestedEvidenceCaptureReference } from "./requestedEvidenceCapture";
 
 function requireScope(scope: AccountScope) {
   if (!isAccountScopeCurrent(scope)) throw new Error("Account changed. Resume these photos in their original account.");
@@ -15,6 +16,7 @@ export async function verifyComparisonCaptureReference(target: ComparisonCapture
   requireScope(scope);
   const checked = normalizeComparisonCaptureTarget(target);
   if (!checked) throw new Error("The dated comparison reference is invalid. Your photo draft was kept.");
+  if (checked.version === 2) { await verifyRequestedEvidenceCaptureReference(checked, scope, signal); return; }
   const resolved = await resolveComparisonSide(checked.earlier, scope, signal);
   requireScope(scope);
   if (signal?.aborted) throw new DOMException("Comparison verification canceled.", "AbortError");
@@ -45,6 +47,7 @@ export async function completeComparisonCapture(target: ComparisonCaptureTarget,
   requireScope(scope);
   const checked = normalizeComparisonCaptureTarget(target);
   if (!checked || saved.id !== checked.lookupId) throw new Error("The saved scan does not match this dated comparison. Both records were kept.");
+  const requestedGuard = checked.version === 2 ? await verifyRequestedEvidenceCaptureReference(checked, scope, signal) : undefined;
   const recordedAt = normalizeComparisonTimestamp(saved.createdAt);
   if (!recordedAt) throw new Error("The saved scan timestamp is invalid. Your photo draft was kept for review.");
   const identity = captureIdentity(saved);
@@ -53,6 +56,7 @@ export async function completeComparisonCapture(target: ComparisonCaptureTarget,
     if (signal?.aborted) throw new DOMException("Comparison completion canceled.", "AbortError");
     const current = getLookup(saved.id);
     if (!current || captureIdentity(current) !== identity) throw new Error("The saved follow-up evidence changed. Its photo draft was kept for review.");
+    if (checked.version === 2 && requestedGuard) assertRequestedEvidenceCaptureCurrent(requestedGuard, checked, scope);
   };
   requireCurrentSaved();
   const photo = comparisonPhotos(saved)[0];
