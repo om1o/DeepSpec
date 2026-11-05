@@ -13,7 +13,6 @@ import ShopJob from "./screens/ShopJob";
 import ShopNewJob from "./screens/ShopNewJob";
 import { getVerifiedAuthUser, subscribeToAuthChanges } from "./services/auth";
 import { getAccountScope, setActiveAccount } from "./lib/accountScope";
-import { PreviewTestAccess } from "./components/PreviewTestAccess";
 
 const loadScanner = () => import("./screens/Scanner");
 const Scanner = lazy(loadScanner);
@@ -143,8 +142,6 @@ function ScannerRouteFallback() {
 
 export default function App() {
   return (
-    <>
-    <PreviewTestAccess />
     <Routes>
       <Route path="/auth" element={<Auth />} />
       <Route path="/demo" element={<Navigate to="/scan" replace />} />
@@ -242,6 +239,5 @@ export default function App() {
       />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
-    </>
   );
 }
