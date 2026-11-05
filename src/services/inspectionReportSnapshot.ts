@@ -3,12 +3,15 @@ import { normalizeComponentMapRecord } from "../lib/componentMap";
 import { normalizeServiceRecords } from "../lib/serviceRecord";
 import type { ComponentMapRecord } from "../types/componentMap";
 import type { ServiceRecord } from "../types/serviceRecord";
-import { COMPONENT_MAP_STORE, EVIDENCE_STORAGE_TIMEOUT_MS, openEvidenceDatabase, SERVICE_RECORD_STORE } from "./evidenceDb";
+import type { InspectionComparison } from "../types/inspectionComparison";
+import { normalizeInspectionComparisons } from "../lib/inspectionComparison";
+import { COMPONENT_MAP_STORE, EVIDENCE_STORAGE_TIMEOUT_MS, openEvidenceDatabase, SERVICE_RECORD_STORE, INSPECTION_COMPARISON_STORE } from "./evidenceDb";
 
 export type FinalInspectionSnapshot = {
   map: ComponentMapRecord | null;
   // null is unreadable history, never an invented empty history.
   serviceRecords: Map<string, ServiceRecord[] | null>;
+  comparisons: Map<string, InspectionComparison[] | null>;
 };
 const validId = (value: string) => /^[A-Za-z0-9._:-]{1,160}$/.test(value) && value !== "." && value !== "..";
 function requireScope(scope: AccountScope) {
@@ -26,7 +29,7 @@ export async function readFinalInspectionSnapshot(rootLookupId: string, lookupId
   return new Promise((resolve, reject) => {
     let transaction: IDBTransaction | undefined;
     let settled = false, mapRead = false;
-    const result: FinalInspectionSnapshot = { map: null, serviceRecords: new Map() };
+    const result: FinalInspectionSnapshot = { map: null, serviceRecords: new Map(), comparisons: new Map() };
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true; clearTimeout(timer); database.close();
@@ -39,7 +42,7 @@ export async function readFinalInspectionSnapshot(rootLookupId: string, lookupId
     const timer = setTimeout(() => fail(new Error("Checking saved inspection records stalled. Prepare the report again.")), EVIDENCE_STORAGE_TIMEOUT_MS);
     try {
       requireScope(scope);
-      transaction = database.transaction([COMPONENT_MAP_STORE, SERVICE_RECORD_STORE], "readonly");
+      transaction = database.transaction([COMPONENT_MAP_STORE, SERVICE_RECORD_STORE, INSPECTION_COMPARISON_STORE], "readonly");
       const mapRequest = transaction.objectStore(COMPONENT_MAP_STORE).get([scope.userId!, rootLookupId]);
       mapRequest.onsuccess = () => {
         try {
@@ -62,10 +65,20 @@ export async function readFinalInspectionSnapshot(rootLookupId: string, lookupId
           } catch (error) { fail(error); }
         };
       }
+      const comparisons = transaction.objectStore(INSPECTION_COMPARISON_STORE);
+      for (const id of ids) {
+        const request = comparisons.get([scope.userId!, id]);
+        request.onsuccess = () => {
+          try {
+            requireScope(scope);
+            result.comparisons.set(id, normalizeInspectionComparisons(request.result === undefined ? [] : request.result, id) ?? null);
+          } catch (error) { fail(error); }
+        };
+      }
       transaction.oncomplete = () => {
         try {
           requireScope(scope);
-          if (!mapRead || result.serviceRecords.size !== ids.length) throw new Error("Some saved inspection records could not be checked safely.");
+          if (!mapRead || result.serviceRecords.size !== ids.length || result.comparisons.size !== ids.length) throw new Error("Some saved inspection records could not be checked safely.");
           finish();
         } catch (error) { finish(error as Error); }
       };

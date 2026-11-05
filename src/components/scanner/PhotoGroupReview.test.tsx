@@ -66,4 +66,14 @@ describe("PhotoGroupReview", () => {
     expect(actions.onAnalyze).not.toHaveBeenCalled();
     expect(actions.onChange).not.toHaveBeenCalled();
   });
+  it("shows the earlier reference separately and labels recovery without including it in the new photo count", async () => {
+    const actions = callbacks();
+    render(<PhotoGroupReview photos={[photos[0]]} busy={false} message={null}
+      referenceNode={<p>Earlier original remains a separate reference.</p>} savedActionLabel="Finish dated comparison" {...actions} />);
+    expect(screen.getByText("Earlier original remains a separate reference.")).toBeInTheDocument();
+    expect(screen.getAllByRole("combobox")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: /Analyze/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Finish dated comparison" }));
+    expect(actions.onAnalyze).toHaveBeenCalledTimes(1);
+  });
 });

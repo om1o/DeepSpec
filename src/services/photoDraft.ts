@@ -3,6 +3,8 @@ import { SCAN_PHOTO_LABELS, type ScanPhoto, type ShopVehicleContext } from "../t
 import { normalizeVehicleContext, vehicleContextsMatch } from "../lib/vehicleContext";
 import type { ComponentCaptureTarget } from "../types/componentMap";
 import { normalizeComponentCaptureTarget } from "../lib/componentMap";
+import type { ComparisonCaptureTarget } from "../types/inspectionComparison";
+import { normalizeComparisonCaptureTarget } from "../lib/inspectionComparison";
 import { openEvidenceDatabase } from "./evidenceDb";
 
 const STORE = "photo-drafts";
@@ -11,22 +13,32 @@ export type PhotoDraftKind = "upload" | "capture";
 export type PhotoDraftEnvelope = { photos: ScanPhoto[]; target?: ComponentCaptureTarget } & (
   | { version: 2 }
   | { version: 3; vehicleContext: ShopVehicleContext | null; jobId?: string }
+  | { version: 4; vehicleContext: ShopVehicleContext | null; jobId?: string; comparisonTarget: ComparisonCaptureTarget }
 );
 
 export function normalizePhotoDraft(value: unknown): PhotoDraftEnvelope | null {
   if (validatePhotoGroup(value)) return { version: 2, photos: value };
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const draft = value as Record<string, unknown>;
-  if ((draft.version !== 2 && draft.version !== 3) || !validatePhotoGroup(draft.photos)) return null;
+  if (![2, 3, 4].includes(draft.version as number) || !validatePhotoGroup(draft.photos)) return null;
+  const comparisonTarget = draft.version === 4 ? normalizeComparisonCaptureTarget(draft.comparisonTarget) : undefined;
+  if ((draft.version === 4 && !comparisonTarget) || (draft.version !== 4 && draft.comparisonTarget !== undefined)) return null;
   const target = draft.target === undefined ? undefined : normalizeComponentCaptureTarget(draft.target);
-  if (target === null) return null;
+  if (target === null || (target && comparisonTarget && target.lookupId !== comparisonTarget.lookupId)) return null;
   const common = { photos: draft.photos, ...(target ? { target } : {}) };
   if (draft.version === 2) return { version: 2, ...common };
   if (draft.jobId !== undefined && (typeof draft.jobId !== "string" || !/^[a-zA-Z0-9._:-]{1,120}$/.test(draft.jobId))) return null;
   const job = draft.jobId ? { jobId: draft.jobId } : {};
-  if (draft.vehicleContext === null) return { version: 3, ...common, ...job, vehicleContext: null };
-  const vehicleContext = normalizeVehicleContext(draft.vehicleContext);
-  return vehicleContext ? { version: 3, ...common, ...job, vehicleContext } : null;
+  const vehicleContext = draft.vehicleContext === null ? null : normalizeVehicleContext(draft.vehicleContext);
+  if (vehicleContext === undefined) return null;
+  return comparisonTarget ? { version: 4, ...common, ...job, vehicleContext, comparisonTarget }
+    : { version: 3, ...common, ...job, vehicleContext };
+}
+
+export function comparisonCaptureTargetsMatch(left?: ComparisonCaptureTarget, right?: ComparisonCaptureTarget): boolean {
+  if (!left || !right) return left === right;
+  const a = normalizeComparisonCaptureTarget(left), b = normalizeComparisonCaptureTarget(right);
+  return Boolean(a && b && JSON.stringify(a) === JSON.stringify(b));
 }
 
 export function componentCaptureTargetsMatch(left?: ComponentCaptureTarget, right?: ComponentCaptureTarget): boolean {
@@ -37,7 +49,8 @@ export function componentCaptureTargetsMatch(left?: ComponentCaptureTarget, righ
 
 export function photoDraftsMatch(left: PhotoDraftEnvelope, right: PhotoDraftEnvelope): boolean {
   return left.version === right.version
-    && (left.version !== 3 || (right.version === 3 && left.jobId === right.jobId && vehicleContextsMatch(left.vehicleContext, right.vehicleContext)))
+    && (left.version === 2 || (right.version !== 2 && left.jobId === right.jobId && vehicleContextsMatch(left.vehicleContext, right.vehicleContext)))
+    && comparisonCaptureTargetsMatch(left.version === 4 ? left.comparisonTarget : undefined, right.version === 4 ? right.comparisonTarget : undefined)
     && componentCaptureTargetsMatch(left.target, right.target) && photoGroupsMatch(left.photos, right.photos);
 }
 

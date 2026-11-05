@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { COMPONENT_MAP_STORE, EVIDENCE_DATABASE_NAME, EVIDENCE_DATABASE_VERSION, EVIDENCE_STORAGE_TIMEOUT_MS, openEvidenceDatabase, PHOTO_DRAFT_STORE, SERVICE_RECORD_STORE, SERVICE_RECORD_DRAFT_STORE } from "./evidenceDb";
+import { COMPONENT_MAP_STORE, COMPARISON_DRAFT_STORE, INSPECTION_COMPARISON_STORE, EVIDENCE_DATABASE_NAME, EVIDENCE_DATABASE_VERSION, EVIDENCE_STORAGE_TIMEOUT_MS, openEvidenceDatabase, PHOTO_DRAFT_STORE, SERVICE_RECORD_STORE, SERVICE_RECORD_DRAFT_STORE } from "./evidenceDb";
 
 // These tests exercise connection/upgrade lifecycle only. Atomic storage semantics
 // require the separate native IndexedDB browser checks, not this request stub.
@@ -28,8 +28,8 @@ describe("shared evidence database opener", () => {
     request.onsuccess?.call(request, new Event("success"));
     expect(await pending).toBe(database);
     expect(open).toHaveBeenCalledWith(EVIDENCE_DATABASE_NAME, EVIDENCE_DATABASE_VERSION);
-    expect(database.createObjectStore).toHaveBeenCalledTimes(3);
-    expect([...stores].sort()).toEqual([COMPONENT_MAP_STORE, PHOTO_DRAFT_STORE, SERVICE_RECORD_STORE, SERVICE_RECORD_DRAFT_STORE].sort());
+    expect(database.createObjectStore).toHaveBeenCalledTimes(5);
+    expect([...stores].sort()).toEqual([COMPONENT_MAP_STORE, PHOTO_DRAFT_STORE, SERVICE_RECORD_STORE, SERVICE_RECORD_DRAFT_STORE, INSPECTION_COMPARISON_STORE, COMPARISON_DRAFT_STORE].sort());
     database.onversionchange?.call(database, new Event("versionchange") as IDBVersionChangeEvent);
     expect(database.close).toHaveBeenCalledTimes(1);
   });
@@ -40,21 +40,33 @@ describe("shared evidence database opener", () => {
     request.onupgradeneeded?.call(request, new Event("upgradeneeded") as IDBVersionChangeEvent);
     request.onsuccess?.call(request, new Event("success"));
     expect(await pending).toBe(database);
-    expect(database.createObjectStore).toHaveBeenCalledTimes(2);
+    expect(database.createObjectStore).toHaveBeenCalledTimes(4);
     expect(database.createObjectStore).toHaveBeenCalledWith(SERVICE_RECORD_STORE);
     expect(database.createObjectStore).toHaveBeenCalledWith(SERVICE_RECORD_DRAFT_STORE);
-    expect(stores.size).toBe(4);
+    expect(stores.size).toBe(6);
     database.close();
   });
 
-  it("adds only the draft store without recreating version-three histories", async () => {
+  it("adds drafts and comparisons without recreating version-three histories", async () => {
     const { request, database, stores } = opening([PHOTO_DRAFT_STORE, COMPONENT_MAP_STORE, SERVICE_RECORD_STORE]);
     const pending = openEvidenceDatabase();
     request.onupgradeneeded?.call(request, new Event("upgradeneeded") as IDBVersionChangeEvent);
     request.onsuccess?.call(request, new Event("success"));
     expect(await pending).toBe(database);
-    expect(database.createObjectStore).toHaveBeenCalledExactlyOnceWith(SERVICE_RECORD_DRAFT_STORE);
-    expect(stores.size).toBe(4); database.close();
+    expect(database.createObjectStore).toHaveBeenCalledTimes(3);
+    expect(database.createObjectStore).toHaveBeenCalledWith(SERVICE_RECORD_DRAFT_STORE);
+    expect(stores.size).toBe(6); database.close();
+  });
+
+  it("adds only comparison stores when upgrading existing version-four drafts and histories", async () => {
+    const { request, database, stores } = opening([PHOTO_DRAFT_STORE, COMPONENT_MAP_STORE, SERVICE_RECORD_STORE, SERVICE_RECORD_DRAFT_STORE]);
+    const pending = openEvidenceDatabase();
+    request.onupgradeneeded?.call(request, new Event("upgradeneeded") as IDBVersionChangeEvent);
+    request.onsuccess?.call(request, new Event("success"));
+    expect(await pending).toBe(database); expect(database.createObjectStore).toHaveBeenCalledTimes(2);
+    expect(database.createObjectStore).toHaveBeenCalledWith(INSPECTION_COMPARISON_STORE);
+    expect(database.createObjectStore).toHaveBeenCalledWith(COMPARISON_DRAFT_STORE);
+    expect(stores.size).toBe(6); database.close();
   });
 
   it("creates all stores for a new account-independent database schema", async () => {
@@ -67,6 +79,8 @@ describe("shared evidence database opener", () => {
     expect(stores.has(COMPONENT_MAP_STORE)).toBe(true);
     expect(stores.has(SERVICE_RECORD_STORE)).toBe(true);
     expect(stores.has(SERVICE_RECORD_DRAFT_STORE)).toBe(true);
+    expect(stores.has(INSPECTION_COMPARISON_STORE)).toBe(true);
+    expect(stores.has(COMPARISON_DRAFT_STORE)).toBe(true);
     database.close();
   });
 
