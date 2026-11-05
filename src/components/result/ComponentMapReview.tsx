@@ -258,7 +258,7 @@ export function ComponentMapReview({ lookup }: { lookup: Lookup }) {
       if (!latest.boundOverview || latest.image !== target.image || latest.draft.id !== target.mapId || latest.record.localRevision !== target.revision
         || latest.selectedId !== target.componentId || latest.draft.components.find((component) => component.id === target.componentId)?.status === "not_visible") throw new Error("The area target changed. Your notes are retained; reopen the area editor after checking the original.");
       assertMapOverviewGuardCurrent(target.guard, latest.draft, scope);
-      setDraft((previous) => previous === latest.draft ? { ...previous, components: previous.components.map((component) => component.id === target.componentId
+      setDraft((previous) => previous && previous === latest.draft ? { ...previous, components: previous.components.map((component) => component.id === target.componentId
         ? { ...component, region: { sourcePhotoId: previous.overview.photoId, box } } : component) } : previous);
     } catch (error) { setVerification(null); setMessage(errorText(error)); setVerificationAttempt((attempt) => attempt + 1); }
   }
