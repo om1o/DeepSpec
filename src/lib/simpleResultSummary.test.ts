@@ -45,8 +45,8 @@ describe("getSimpleResultSummary", () => {
 
   it("describes the visible surface evidence without replacing it with a possible cause", () => {
     const result = makeResult("Brake rotor");
-    result.visibleObservations = ["Short radial crack-like lines are visible on the outer surface."];
-    result.concerns = ["Possible thermal cracking after excessive heat."];
+    result.visibleObservations = ["Surface rust is visible on the outer edge."];
+    result.concerns = ["Possible structural weakening from corrosion."];
     expect(getSimpleResultSummary(result)).toMatchObject({ eyebrow: "Visible issue", body: result.visibleObservations[0] });
   });
 
