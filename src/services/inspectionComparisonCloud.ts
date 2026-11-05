@@ -45,9 +45,10 @@ async function verifiedClient(scope: AccountScope, signal?: AbortSignal): Promis
   }
   return client;
 }
-function databaseError(error: { code?: string }) {
+function databaseError(error: { code?: string }, requested = false) {
   if (["42P01", "PGRST205", "42703", "PGRST204"].includes(error.code ?? "")) return new Error("Cloud comparisons require the inspection-comparisons database migration. Your device history is preserved.");
   if (error.code === "23503") return new Error("Save both source scans to the cloud in this account, then retry syncing the comparison. Your device history is preserved.");
+  if (error.code === "23514" && requested) return new Error("Cloud rejected this requested-photo history. Check that the requested-evidence-history migration is applied and the record is valid. Its complete device history was preserved; no reduced record was uploaded.");
   return new Error("Cloud comparisons could not be loaded or saved. Check your connection and account access, then retry. Your device history is preserved.");
 }
 function checkedRow(row: unknown, lookupId: string, scope: AccountScope): InspectionComparison {
@@ -119,7 +120,7 @@ export async function syncInspectionComparisons(lookupId: string, scope = getAcc
     const inserted = await bounded(scope, undefined, (signal) => client.from(TABLE)
       .insert({ user_id: scope.userId, id: record.id, lookup_id: lookupId, record_json: record })
       .select("id,user_id,lookup_id,record_json").abortSignal(signal).maybeSingle());
-    if (inserted.error && inserted.error.code !== "23505") throw databaseError(inserted.error);
+    if (inserted.error && inserted.error.code !== "23505") throw databaseError(inserted.error, record.version === 2);
     let saved: InspectionComparison;
     if (inserted.error?.code === "23505") {
       const existing = await bounded(scope, undefined, (signal) => client.from(TABLE).select("id,user_id,lookup_id,record_json")

@@ -92,7 +92,7 @@ export function normalizeComparisonCaptureTarget(value: unknown): ComparisonCapt
 }
 
 export function normalizeInspectionComparison(value: unknown): InspectionComparison | undefined {
-  if (!object(value) || !fits(value) || value.version !== 1 || !uuid(value.id) || !id(value.lookupId) || !time(value.recordedAt) || !text(value.subject, 200, true)) return undefined;
+  if (!object(value) || !fits(value) || (value.version !== 1 && value.version !== 2) || !uuid(value.id) || !id(value.lookupId) || !time(value.recordedAt) || !text(value.subject, 200, true)) return undefined;
   const earlier = normalizeComparisonSide(value.earlier), current = normalizeComparisonSide(value.current);
   if (!earlier || !current || current.lookupId !== value.lookupId || earlier.lookupId === current.lookupId
     || (earlier.observedOn && current.observedOn && earlier.observedOn > current.observedOn)) return undefined;
@@ -105,10 +105,25 @@ export function normalizeInspectionComparison(value: unknown): InspectionCompari
     || !object(a) || !number(a.rotation, -180, 180) || !number(a.scale, .25, 4) || !number(a.offsetX, -1, 1) || !number(a.offsetY, -1, 1)
     || (value.supersedesId !== undefined && (!uuid(value.supersedesId) || value.supersedesId.toLowerCase() === value.id.toLowerCase()))
     || (value.supersedesId === undefined ? value.correctionReason !== undefined : !text(value.correctionReason, 1000, true))) return undefined;
-  return { version: 1, id: value.id.toLowerCase(), lookupId: value.lookupId, recordedAt: value.recordedAt, subject: value.subject, earlier, current,
+  const target = normalizeComparisonCaptureTarget({ ...value, comparisonId: value.id });
+  if (!target) return undefined;
+  const metadata = target.version === 2
+    ? { version: 2 as const, requestedEvidence: target.requestedEvidence, analysisSha256: target.analysisSha256 }
+    : { version: 1 as const };
+  return { ...metadata, id: value.id.toLowerCase(), lookupId: value.lookupId, recordedAt: value.recordedAt, subject: value.subject, earlier, current,
     relationship: { sameVehicle: r.sameVehicle, component: r.component, basis: r.basis }, conditions: { angle: c.angle, lighting: c.lighting, surfaceNotes: c.surfaceNotes },
     observation: { outcome: o.outcome, notes: o.notes }, alignment: { rotation: a.rotation, scale: a.scale, offsetX: a.offsetX, offsetY: a.offsetY },
     ...(value.supersedesId === undefined ? {} : { supersedesId: value.supersedesId.toLowerCase(), correctionReason: value.correctionReason as string }) };
+}
+
+/** Corrections may edit reported dates and human conclusions, never rewrite a requested capture's evidence. */
+export function comparisonCorrectionPreservesRequest(prior: InspectionComparison, correction: InspectionComparison): boolean {
+  if (prior.version !== correction.version) return false;
+  return prior.version === 1 || (correction.version === 2
+    && prior.analysisSha256 === correction.analysisSha256
+    && JSON.stringify(prior.requestedEvidence) === JSON.stringify(correction.requestedEvidence)
+    && comparisonSideMatches(prior.earlier, correction.earlier)
+    && comparisonSideMatches(prior.current, correction.current));
 }
 
 export function inspectionComparisonValidationError(value: unknown): string | null {
@@ -127,6 +142,7 @@ function entries(value: unknown, lookupId: string): InspectionComparison[] | und
 function graphValid(records: readonly InspectionComparison[]): boolean {
   const byId = new Map(records.map((record) => [record.id, record]));
   return records.every((record) => {
+    if (record.supersedesId) { const parent = byId.get(record.supersedesId); if (!parent || !comparisonCorrectionPreservesRequest(parent, record)) return false; }
     const seen = new Set([record.id]); let previous = record.supersedesId;
     while (previous) { if (seen.has(previous)) return false; seen.add(previous); const prior = byId.get(previous); if (!prior) return false; previous = prior.supersedesId; }
     return true;
@@ -143,7 +159,7 @@ export function mergeInspectionComparisons(left: readonly InspectionComparison[]
   for (const record of b) { const prior = byId.get(record.id); if (prior && JSON.stringify(prior) !== JSON.stringify(record)) throw new Error("A comparison ID has conflicting content. Neither immutable version was overwritten."); byId.set(record.id, record); }
   const records = [...byId.values()];
   if (records.length > MAX_INSPECTION_COMPARISONS || !fits(records)) throw new Error("Comparison history exceeds 100 records or 256 KiB. Existing records were not truncated.");
-  if (!graphValid(records)) throw new Error("Comparison history has missing correction references or a cycle.");
+  if (!graphValid(records)) throw new Error("Comparison history has missing correction references, a cycle, or a correction that changes requested-photo evidence. Existing history was preserved.");
   return records.sort(order);
 }
 export function inspectionComparisonStatus(record: InspectionComparison, records: readonly InspectionComparison[]): InspectionComparisonStatus {

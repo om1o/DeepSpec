@@ -101,3 +101,38 @@ it("creates a new correction ID while retaining the exact historical originals",
   expect(corrected.record.earlier).toEqual(original.earlier); expect(corrected.record.current).toEqual(original.current);
   expect(parseComparisonDraft(JSON.stringify(corrected))).toEqual(corrected);
 });
+
+function requestedCorrection() {
+  const base = newComparisonDraft("current", "new-photo");
+  const side = { lookupId: "earlier", photoId: "old-photo", photoLabel: "overview" as const, photoAddedAt: "2026-11-01T12:00:00Z", scanSavedAt: "2026-11-01T12:00:00Z", sha256: "a".repeat(64), width: 40, height: 30, observedOn: null, vehicleContext: null };
+  return correctionComparisonDraft({ ...base.record, version: 2, subject: "Mounting face", earlier: side, current: { ...side, lookupId: "current", photoId: "new-photo" },
+    requestedEvidence: { version: 1, kind: "photo", request: "Show the mounting face.", purpose: "Check the obscured edge.", photoIds: [side.photoId] }, analysisSha256: "b".repeat(64) });
+}
+it("fences and recovers incomplete requested corrections with exact guide and locked originals", async () => {
+  const draft = requestedCorrection(); draft.record.subject = ""; draft.record.correctionReason = ""; draft.record.observation.notes = " Exact unfinished\n human note ";
+  expect(draft.version).toBe(2); expect(draft.record.version).toBe(2);
+  expect(parseComparisonDraft(JSON.stringify(draft))).toEqual(draft);
+  expect(parseComparisonDraft(JSON.stringify({ ...draft, version: 1 }))).toBeNull();
+  expect(parseComparisonDraft(JSON.stringify({ ...draft, record: { ...draft.record, version: 1 } }))).toBeNull();
+  expect(parseComparisonDraft(JSON.stringify({ ...draft, record: { ...draft.record, earlier: null } }))).toBeNull();
+  expect(parseComparisonDraft(JSON.stringify({ ...draft, record: { ...draft.record, analysisSha256: undefined } }))).toBeNull();
+  expect(() => changeComparisonPair(draft, { currentPhotoId: "different" })).toThrow("keeps its original");
+  expect(changeComparisonPair(draft, { currentPhotoId: draft.currentPhotoId })).toBe(draft);
+  const saved = await writeComparisonDraft(getAccountScope(), "current", null, draft); expect(saved.ok).toBe(true);
+  expect((await readComparisonDraft(getAccountScope(), "current")).draft).toEqual(draft);
+});
+it("allows date edits but refuses a v2 draft downgrade or source/request rewrite within the exact CAS", async () => {
+  const scope = getAccountScope(); const draft = requestedCorrection(); const saved = await writeComparisonDraft(scope, "current", null, draft);
+  if (!saved.ok) throw new Error("Expected saved requested correction");
+  const edited = structuredClone(draft); edited.record.earlier!.observedOn = "2026-10-31"; edited.record.observation.notes = "User note";
+  const changed = await writeComparisonDraft(scope, "current", saved.raw, edited); expect(changed.ok).toBe(true);
+  if (!changed.ok) throw new Error("Expected reported-date edit");
+  const altered = structuredClone(edited); altered.record.current!.sha256 = "c".repeat(64);
+  expect(await writeComparisonDraft(scope, "current", changed.raw, altered)).toMatchObject({ ok: false, message: expect.stringContaining("source evidence fixed") });
+  const changedRequest = structuredClone(edited); if (changedRequest.record.version !== 2) throw new Error("Expected requested correction");
+  changedRequest.record.requestedEvidence.purpose = "Altered purpose";
+  expect((await writeComparisonDraft(scope, "current", changed.raw, changedRequest)).ok).toBe(false);
+  expect((await writeComparisonDraft(scope, "current", changed.raw, newComparisonDraft("current", "new-photo"))).ok).toBe(false);
+  expect((await readComparisonDraft(scope, "current")).draft).toEqual(edited);
+  expect(await writeComparisonDraft(scope, "current", changed.raw, null)).toEqual({ ok: true, raw: null });
+});

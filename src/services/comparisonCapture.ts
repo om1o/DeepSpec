@@ -64,7 +64,8 @@ export async function completeComparisonCapture(target: ComparisonCaptureTarget,
   const current = await comparisonSideForLookup(saved, photo.id, scope);
   requireCurrentSaved();
   const expected = normalizeInspectionComparison({
-    version: 1, id: checked.comparisonId, lookupId: saved.id, recordedAt,
+    ...(checked.version === 2 ? { version: 2, requestedEvidence: checked.requestedEvidence, analysisSha256: checked.analysisSha256 } : { version: 1 }),
+    id: checked.comparisonId, lookupId: saved.id, recordedAt,
     subject: checked.subject, earlier: checked.earlier, current,
     relationship: { sameVehicle: false, component: "unconfirmed", basis: "" },
     conditions: { angle: "unknown", lighting: "unknown", surfaceNotes: "" },

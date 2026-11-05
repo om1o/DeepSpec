@@ -11,7 +11,7 @@ import * as drafts from "../../services/inspectionComparisonDraft";
 import { readCloudLookups } from "../../services/cloudHistory";
 import { downloadTextFile } from "../../services/report";
 import type { Lookup } from "../../types";
-import type { ComparisonSide, InspectionComparison } from "../../types/inspectionComparison";
+import type { ComparisonSide, InspectionComparison, RequestedInspectionComparison } from "../../types/inspectionComparison";
 
 const mocks = vi.hoisted(() => ({ navigate: vi.fn(), raw: null as string | null, failDraft: false }));
 vi.mock("react-router-dom", async (original) => ({ ...await original<typeof import("react-router-dom")>(), useNavigate: () => mocks.navigate }));
@@ -95,6 +95,61 @@ function savedRecord(): InspectionComparison {
   const draft = drafts.newComparisonDraft(lookup.id, "photo-2");
   return { ...draft.record, subject: "Rust patch", earlier: side(earlier, "photo-1"), current: side(lookup, "photo-2") };
 }
+
+function requestedRecord(): RequestedInspectionComparison {
+  return { ...savedRecord(), version: 2, analysisSha256: "d".repeat(64), requestedEvidence: {
+    version: 1, kind: "marking", request: "Photograph the stamped line on the reverse side.", purpose: "Read the obscured marking without guessing.", photoIds: ["photo-1"],
+  } };
+}
+
+it("shows the saved request on follow-up history and locks its source pair during human correction", async () => {
+  const original = requestedRecord(); history = [original]; await open();
+  const saved = within(screen.getByRole("list", { name: "Saved comparisons" }));
+  expect(await saved.findByText(original.requestedEvidence.request)).toBeInTheDocument();
+  expect(saved.getByLabelText("Saved photo request")).toHaveTextContent(original.requestedEvidence.purpose);
+  fireEvent.click(screen.getByRole("button", { name: "Correct comparison" }));
+  for (const name of ["Earlier saved scan", "Earlier original photo", "Current original photo"]) expect(screen.getByLabelText(name)).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Check selected originals" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Photograph this location again" })).toBeDisabled();
+  // Guard the callback as well as the disabled native control.
+  fill("Current original photo", "photo-1");
+  expect(screen.getByLabelText("Current original photo")).toHaveValue(original.current.photoId);
+  fill("Earlier observation date (self-reported, optional)", "2026-11-01");
+  fill("Current observation date (self-reported, optional)", "2026-11-05");
+  fill("Viewing angle", "different"); fill("Your comparison outcome", "inconclusive");
+  fill("Human observations (included in reports)", "The reverse-side mark is still obscured.");
+  fill("Reason for correction", "Add my observation dates and review."); await save();
+  expect(history).toHaveLength(2); expect(history[0]).toEqual(original);
+  expect(history[1]).toMatchObject({ version: 2, requestedEvidence: original.requestedEvidence, analysisSha256: original.analysisSha256,
+    earlier: { ...original.earlier, observedOn: "2026-11-01" }, current: { ...original.current, observedOn: "2026-11-05" },
+    observation: { outcome: "inconclusive", notes: "The reverse-side mark is still obscured." }, supersedesId: original.id });
+  expect(evidence.comparisonSideForLookup).toHaveBeenCalledWith(expect.objectContaining({ id: lookup.id }), original.current.photoId, expect.any(Object));
+});
+
+it("restores a requested-photo correction with its guide and locked pair after reload", async () => {
+  const original = requestedRecord(); history = [original]; const view = await open();
+  fireEvent.click(screen.getByRole("button", { name: "Correct comparison" }));
+  fill("Reason for correction", "Keep this unfinished human review");
+  await waitFor(() => expect(drafts.parseComparisonDraft(mocks.raw!)?.record.correctionReason).toBe("Keep this unfinished human review"));
+  expect(drafts.parseComparisonDraft(mocks.raw!)?.version).toBe(2);
+  view.unmount(); await open(lookup, true);
+  fireEvent.click(screen.getByRole("button", { name: "Restore comparison draft" }));
+  await waitFor(() => expect(screen.getByLabelText("Reason for correction")).toHaveValue("Keep this unfinished human review"));
+  expect(screen.getByLabelText("Current original photo")).toBeDisabled();
+  expect(screen.getByLabelText("Earlier saved scan")).toBeDisabled();
+  expect(drafts.parseComparisonDraft(mocks.raw!)?.record).toMatchObject({ version: 2, requestedEvidence: original.requestedEvidence, analysisSha256: original.analysisSha256, earlier: original.earlier, current: original.current });
+});
+
+it("preserves a requested-photo correction when its bound original no longer verifies", async () => {
+  const original = requestedRecord(); history = [original]; await open();
+  fireEvent.click(screen.getByRole("button", { name: "Correct comparison" }));
+  fill("Reason for correction", "Review the available view");
+  vi.mocked(evidence.resolveComparisonSide).mockResolvedValue({ status: "source_changed", message: "The saved earlier original changed; no substitute was shown." });
+  fireEvent.click(screen.getByRole("button", { name: "Save comparison on this device" }));
+  await screen.findByText("The saved earlier original changed; no substitute was shown.");
+  expect(store.appendInspectionComparison).not.toHaveBeenCalled(); expect(history).toEqual([original]);
+  expect(drafts.parseComparisonDraft(mocks.raw!)?.record).toMatchObject({ version: 2, requestedEvidence: original.requestedEvidence, analysisSha256: original.analysisSha256, earlier: original.earlier });
+});
 
 it("keeps local comparisons available while all optional cloud actions are off", async () => {
   vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");

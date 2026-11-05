@@ -11,6 +11,7 @@ import { appendInspectionComparison, importInspectionComparisons, readInspection
 import { readCloudInspectionComparisons, syncInspectionComparisons } from "../../services/inspectionComparisonCloud";
 import { isCloudSyncEnabled } from "../../services/cloudSyncPolicy";
 import { changeComparisonPair, correctionComparisonDraft, newComparisonDraft, readComparisonDraft, writeComparisonDraft, type ComparisonDraft, type ComparisonDraftRead } from "../../services/inspectionComparisonDraft";
+import { RequestedEvidenceReceipt } from "./RequestedEvidenceHistory";
 import type { Lookup } from "../../types";
 import type { ComparisonCaptureTarget, ComparisonSide, InspectionComparison } from "../../types/inspectionComparison";
 
@@ -81,7 +82,10 @@ function ComparisonEditor({ lookup, disabled }: { lookup: Lookup; disabled: bool
     });
   }
   const edit = (record: ComparisonDraft["record"]) => keep({ ...draftRef.current, record });
-  function pair(selection: Parameters<typeof changeComparisonPair>[1]) { keep(changeComparisonPair(draftRef.current, selection)); setMessage("Photo pair changed. Confirmations, outcome and alignment were reset. Review the retained notes for this new pair."); }
+  function pair(selection: Parameters<typeof changeComparisonPair>[1]) {
+    if (draftRef.current.record.version === 2) { setMessage("This requested-photo receipt keeps its original pair. Start a separate ordinary comparison to choose different photos."); return; }
+    keep(changeComparisonPair(draftRef.current, selection)); setMessage("Photo pair changed. Confirmations, outcome and alignment were reset. Review the retained notes for this new pair.");
+  }
   function download(saved = false) {
     if (!current()) return;
     const value = saved ? recovery.raw : JSON.stringify(draftRef.current, null, 2);
@@ -114,6 +118,7 @@ function ComparisonEditor({ lookup, disabled }: { lookup: Lookup; disabled: bool
   }
   async function prepare() {
     if (!current() || operation.current || disabled || !ready || recovering || blocked.current) return;
+    if (draftRef.current.record.version === 2) { setMessage("The requested-photo pair is retained. Saving verifies these exact originals without replacing them."); return; }
     const snapshot = draftRef.current; const reference = getLookup(snapshot.earlierLookupId) ?? choices.find((entry) => entry.id === snapshot.earlierLookupId);
     if (!reference) { setMessage("Choose an earlier saved scan first."); return; }
     operation.current = true; setBusy(true);
@@ -194,6 +199,7 @@ function ComparisonEditor({ lookup, disabled }: { lookup: Lookup; disabled: bool
   }
   async function repeat() {
     if (!current() || operation.current || disabled || !ready || recovering) return;
+    if (draftRef.current.record.version === 2) { setMessage("Keep or discard this correction draft before starting a separate comparison or capture. The saved request receipt remains unchanged."); return; }
     if (!draftRef.current.record.subject.trim()) { setMessage("Name the part or location before taking repeat photos."); return; }
     operation.current = true; setBusy(true);
     try {
@@ -217,13 +223,14 @@ function ComparisonEditor({ lookup, disabled }: { lookup: Lookup; disabled: bool
     {recovering ? <aside className="rounded-xl border border-amber-500 p-3" aria-label="Comparison draft recovery"><p>Unfinished comparison found. Restore it explicitly, or download and discard it; saved history is unchanged.</p><div className="mt-2 flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled={!recovery.draft || !ready || busy || disabled} onClick={() => void restore()}>Restore comparison draft</button><button type="button" className={buttonClass} onClick={() => download(true)}>Download comparison recovery</button><button type="button" className={buttonClass} disabled={!ready || busy || disabled} onClick={() => void discard()}>Discard comparison draft</button></div></aside> : null}
     <fieldset disabled={locked} className="min-w-0 space-y-3">
       <legend className="font-bold">{r.supersedesId ? "Correct a saved comparison" : "New comparison"}</legend>
+      {r.version === 2 ? <><RequestedEvidenceReceipt guide={r.requestedEvidence} /><p className="text-sm">This correction retains the saved request and original photo pair. You may edit human dates, conditions and observations. To use different photos, keep or download this draft, then discard it and start a separate ordinary comparison; the saved receipt remains.</p></> : null}
       <ComparisonText title="Part or location" value={r.subject} onChange={(subject) => edit({ ...r, subject })} max={200} />
       <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-        <label className="min-w-0 text-sm font-semibold">Earlier saved scan<select className={fieldClass} value={draft.earlierLookupId} onChange={(e) => { const selected = choices.find((item) => item.id === e.target.value); pair({ earlierLookupId: e.target.value, earlierPhotoId: selected ? comparisonPhotos(selected)[0]?.id ?? "" : "" }); }}><option value="">Choose a saved scan</option>{draft.earlierLookupId && !reference ? <option value={draft.earlierLookupId}>Saved reference unavailable in this list</option> : null}{choices.map((entry) => <option key={entry.id} value={entry.id}>{entry.result?.partName ?? "Saved scan"} — saved {date(entry.createdAt)}</option>)}</select></label>
-        <label className="min-w-0 text-sm font-semibold">Earlier original photo<select className={fieldClass} value={draft.earlierPhotoId} onChange={(e) => pair({ earlierPhotoId: e.target.value })}><option value="">Choose an original</option>{earlierPhotos.map((photo) => <option key={photo.id} value={photo.id}>{label(photo.label)} — {photo.id}</option>)}{draft.earlierPhotoId && !earlierPhotos.some((p) => p.id === draft.earlierPhotoId) ? <option value={draft.earlierPhotoId}>Saved original reference</option> : null}</select></label>
+        <label className="min-w-0 text-sm font-semibold">Earlier saved scan<select className={fieldClass} disabled={r.version === 2} value={draft.earlierLookupId} onChange={(e) => { const selected = choices.find((item) => item.id === e.target.value); pair({ earlierLookupId: e.target.value, earlierPhotoId: selected ? comparisonPhotos(selected)[0]?.id ?? "" : "" }); }}><option value="">Choose a saved scan</option>{draft.earlierLookupId && !reference ? <option value={draft.earlierLookupId}>Saved reference unavailable in this list</option> : null}{choices.map((entry) => <option key={entry.id} value={entry.id}>{entry.result?.partName ?? "Saved scan"} — saved {date(entry.createdAt)}</option>)}</select></label>
+        <label className="min-w-0 text-sm font-semibold">Earlier original photo<select className={fieldClass} disabled={r.version === 2} value={draft.earlierPhotoId} onChange={(e) => pair({ earlierPhotoId: e.target.value })}><option value="">Choose an original</option>{earlierPhotos.map((photo) => <option key={photo.id} value={photo.id}>{label(photo.label)} — {photo.id}</option>)}{draft.earlierPhotoId && !earlierPhotos.some((p) => p.id === draft.earlierPhotoId) ? <option value={draft.earlierPhotoId}>Saved original reference</option> : null}</select></label>
       </div>
-      <label className="block text-sm font-semibold">Current original photo<select className={fieldClass} value={draft.currentPhotoId} onChange={(e) => pair({ currentPhotoId: e.target.value })}>{comparisonPhotos(lookup).map((photo) => <option key={photo.id} value={photo.id}>{label(photo.label)} — {photo.id}</option>)}</select></label>
-      <div className="flex flex-wrap gap-2"><button type="button" className={buttonClass} onClick={() => void prepare()}>Check selected originals</button><button type="button" className={buttonClass} onClick={() => void repeat()}>Photograph this location again</button></div>
+      <label className="block text-sm font-semibold">Current original photo<select className={fieldClass} disabled={r.version === 2} value={draft.currentPhotoId} onChange={(e) => pair({ currentPhotoId: e.target.value })}>{comparisonPhotos(lookup).map((photo) => <option key={photo.id} value={photo.id}>{label(photo.label)} — {photo.id}</option>)}</select></label>
+      <div className="flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled={r.version === 2} onClick={() => void prepare()}>Check selected originals</button><button type="button" className={buttonClass} disabled={r.version === 2} onClick={() => void repeat()}>Photograph this location again</button></div>
       {r.earlier && r.current ? <>
         <OriginalPair earlier={r.earlier} current={r.current} alignment={r.alignment} />
         <div className="grid gap-3 sm:grid-cols-2">{(["earlier", "current"] as const).map((side) => <label key={side} className="text-sm font-semibold">{side === "earlier" ? "Earlier" : "Current"} observation date (self-reported, optional)<input className={fieldClass} type="date" value={r[side]?.observedOn ?? ""} onChange={(e) => edit({ ...r, [side]: { ...r[side]!, observedOn: e.target.value || null } })} /></label>)}</div>
@@ -245,7 +252,7 @@ function ComparisonEditor({ lookup, disabled }: { lookup: Lookup; disabled: bool
     <p role="status" className="text-sm">{notice}</p>{message ? <p role="status" className="text-sm font-semibold">{message}</p> : null}
     <ol aria-label="Saved comparisons" className="space-y-3">{records.map((record) => {
       const status = inspectionComparisonStatus(record, records);
-      return <li key={record.id} className="min-w-0 rounded-xl border border-[var(--ds-border)] p-3"><h3 className="font-bold">{record.subject}</h3><p className="text-xs">Recorded {date(record.recordedAt)} · {label(status)}</p>{status === "conflicting_correction" ? <p className="text-sm">Correction fork: review all versions; none is silently preferred.</p> : null}<OriginalPair earlier={record.earlier} current={record.current} alignment={record.alignment} /><p className="mt-2 text-sm">Same vehicle: {record.relationship.sameVehicle ? "user confirmed" : "not confirmed"}. Component: {label(record.relationship.component)}. {record.relationship.basis}</p><p className="text-sm">Angle: {record.conditions.angle}; lighting: {record.conditions.lighting}. {record.conditions.surfaceNotes}</p><p className="whitespace-pre-wrap text-sm">Human outcome: {label(record.observation.outcome)}. {record.observation.notes}</p>{record.correctionReason ? <><p className="text-sm">Correction reason: {record.correctionReason}</p><p className="text-sm">Earlier version remains in this history.</p></> : null}<button type="button" className={`${buttonClass} mt-2`} disabled={busy || disabled || dirty || recovering || !ready || status !== "current"} onClick={() => keep(correctionComparisonDraft(record))}>Correct comparison</button></li>;
+      return <li key={record.id} className="min-w-0 rounded-xl border border-[var(--ds-border)] p-3"><h3 className="font-bold">{record.subject}</h3><p className="text-xs">Recorded {date(record.recordedAt)} · {label(status)}</p>{status === "conflicting_correction" ? <p className="text-sm">Correction fork: review all versions; none is silently preferred.</p> : null}{record.version === 2 ? <RequestedEvidenceReceipt guide={record.requestedEvidence} /> : null}<OriginalPair earlier={record.earlier} current={record.current} alignment={record.alignment} /><p className="mt-2 text-sm">Same vehicle: {record.relationship.sameVehicle ? "user confirmed" : "not confirmed"}. Component: {label(record.relationship.component)}. {record.relationship.basis}</p><p className="text-sm">Angle: {record.conditions.angle}; lighting: {record.conditions.lighting}. {record.conditions.surfaceNotes}</p><p className="whitespace-pre-wrap text-sm">Human outcome: {label(record.observation.outcome)}. {record.observation.notes}</p>{record.correctionReason ? <><p className="text-sm">Correction reason: {record.correctionReason}</p><p className="text-sm">Earlier version remains in this history.</p></> : null}<button type="button" className={`${buttonClass} mt-2`} disabled={busy || disabled || dirty || recovering || !ready || status !== "current"} onClick={() => keep(correctionComparisonDraft(record))}>Correct comparison</button></li>;
     })}</ol>
   </div>;
 }

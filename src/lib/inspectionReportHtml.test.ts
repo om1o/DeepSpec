@@ -6,7 +6,7 @@ import type { InspectionReportSnapshot } from "../types/inspectionReport";
 import { buildInspectionReportHtml, getInspectionReportFilename, MAX_INSPECTION_REPORT_HTML_BYTES } from "./inspectionReportHtml";
 import { confirmVehicleContextField } from "./vehicleContext";
 import type { ServiceRecord } from "../types/serviceRecord";
-import type { InspectionComparison, ComparisonSide } from "../types/inspectionComparison";
+import type { InspectionComparison, ComparisonSide, RequestedInspectionComparison } from "../types/inspectionComparison";
 
 const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/bKkAAAAASUVORK5CYII=";
 const WHEN = "2026-11-05T12:00:00Z";
@@ -63,6 +63,18 @@ function visualComparison(): InspectionComparison {
     earlier: side("previous"), current: side("overview"), relationship: { sameVehicle: true, component: "same_part", basis: "Owner identified location" },
     conditions: { angle: "different", lighting: "unknown", surfaceNotes: "Wet in second photograph" }, observation: { outcome: "inconclusive", notes: "Could be lighting <script>" },
     alignment: { rotation: 15, scale: 1.2, offsetX: .1, offsetY: -.1 } };
+}
+function requestedReceipt(): RequestedInspectionComparison {
+  const record = visualComparison();
+  return { ...record, version: 2, lookupId: "followup", earlier: { ...record.earlier, lookupId: "overview", photoId: "overview-label", analysisAttemptId: "historical-analysis" }, current: { ...record.current, lookupId: "followup", photoId: "followup-label" },
+    relationship: { sameVehicle: false, component: "unconfirmed", basis: "" }, observation: { outcome: "not_reviewed", notes: "" },
+    requestedEvidence: { version: 1, kind: "marking", request: "Read the label <script>historical request</script>.", purpose: "Check the suffix & mounting number.", photoIds: ["overview-front", "overview-label"], analysisAttemptId: "historical-analysis" }, analysisSha256: "c".repeat(64) };
+}
+function withRequestedHistory(input: InspectionReportSnapshot, records = [requestedReceipt()]): InspectionReportSnapshot {
+  input.requestedEvidenceHistory = { originLookupId: input.rootLookupId, source: "device", cloudSearched: false, records, complete: true, scannedBuckets: 2 };
+  input.comparisonLogs = [{ lookupId: "followup", records, cloudChecked: false }];
+  input.comparisonEvidence = records.flatMap((record) => (["earlier", "current"] as const).map((side) => ({ lookupId: record.lookupId, recordId: record.id, side, status: "unchanged" as const })));
+  return input;
 }
 
 describe("self-contained mechanic HTML report", () => {
@@ -343,6 +355,59 @@ describe("self-contained mechanic HTML report", () => {
     expect(section.querySelector(".comparison-viewport")?.getAttribute("style")).toContain("aspect-ratio:4/3");
     for (const link of section.querySelectorAll<HTMLAnchorElement>('a[href^="#"]')) expect(doc.querySelector(link.getAttribute("href")!)).not.toBeNull();
     expect(parsed(input, { includeVin: true, includePrivateNotes: false }).body.textContent).toContain("PRIVATE_COMPARISON_VIN");
+  });
+
+  it("exports the immutable requested-photo guide, provenance and exact photo links without claiming resolution", () => {
+    const input = withRequestedHistory(snapshot([lookup(), lookup("followup")]));
+    const receipt = input.requestedEvidenceHistory!.records[0], before = JSON.stringify(input);
+    delete input.scans[0].result;
+    const doc = parsed(input), history = doc.querySelector("#requested-photo-history")!, guide = doc.querySelector(".requested-photo-receipt")!;
+    expect(history.textContent).toContain("device history only"); expect(history.textContent).toContain("Cloud follow-ups were not searched");
+    expect(history.textContent).toContain("not reviewed"); expect(history.textContent).toContain("does not establish");
+    expect(guide.textContent).toContain(receipt.requestedEvidence.request); expect(guide.textContent).toContain(receipt.requestedEvidence.purpose);
+    expect(guide.textContent).toContain("historical-analysis"); expect(guide.textContent).toContain(receipt.analysisSha256);
+    expect(guide.textContent).toContain("recorded, not reverified"); expect(guide.textContent).toContain("other cited photos");
+    expect(doc.querySelectorAll("script,[onerror],img[src^='http']")).toHaveLength(0);
+    const comparison = doc.querySelector(".comparison-record")!;
+    expect(comparison.querySelectorAll("img")).toHaveLength(2);
+    for (const image of comparison.querySelectorAll("img")) expect(image.getAttribute("src")).toBe(PNG);
+    expect(guide.querySelector('a[href="#scan-1-photo-1"]')).not.toBeNull(); expect(guide.querySelector('a[href="#scan-1-photo-2"]')).not.toBeNull();
+    for (const link of history.querySelectorAll("a")) expect(doc.querySelector(link.getAttribute("href")!)).not.toBeNull();
+    expect(JSON.stringify(input.requestedEvidenceHistory)).toBe(JSON.stringify(JSON.parse(before).requestedEvidenceHistory));
+    expect(doc.body.textContent).not.toContain("PRIVATE_COMPARISON_VIN");
+  });
+
+  it("keeps request history and its human correction when the follow-up images are unavailable", () => {
+    const first = requestedReceipt(), correction = { ...first, id: "30000000-0000-4000-8000-000000000002", supersedesId: first.id, correctionReason: "Clarify the human note", observation: { outcome: "inconclusive" as const, notes: "Label remains unreadable." } };
+    const input = withRequestedHistory(snapshot(), [first, correction]);
+    input.comparisonEvidence!.forEach((item) => { item.status = "missing_photo"; });
+    const doc = parsed(input), history = doc.querySelector("#requested-photo-history")!, section = doc.querySelector("#dated-comparisons")!;
+    expect(history.querySelectorAll("li")).toHaveLength(2); expect(section.querySelectorAll(".requested-photo-receipt")).toHaveLength(2);
+    expect(section.textContent).toContain(first.requestedEvidence.request); expect(section.textContent).toContain("Label remains unreadable.");
+    expect(section.textContent).toContain("superseded"); expect(section.textContent).toContain("Historical original unavailable or unverified");
+    expect(section.querySelectorAll("img")).toHaveLength(0);
+    expect(section.querySelector('a[href="#comparison-1-1"]')).not.toBeNull();
+  });
+
+  it("distinguishes an incomplete reverse search from no collected history or a complete empty device search", () => {
+    const input = withRequestedHistory(snapshot(), []);
+    input.requestedEvidenceHistory!.complete = false; input.requestedEvidenceHistory!.reason = "A device bucket was unreadable <retry>.";
+    const incomplete = parsed(input).querySelector("#requested-photo-history")!;
+    expect(incomplete.textContent).toContain("A device bucket was unreadable <retry>.");
+    expect(incomplete.textContent).toContain("this is not a complete search");
+    expect(incomplete.textContent).not.toContain("search completed");
+    input.requestedEvidenceHistory!.complete = true; delete input.requestedEvidenceHistory!.reason;
+    expect(parsed(input).querySelector("#requested-photo-history")!.textContent).toContain("No requested-photo entries were found in the device history read");
+    delete input.requestedEvidenceHistory;
+    expect(parsed(input).querySelector("#requested-photo-history")!.textContent).toContain("was not collected");
+  });
+
+  it("rejects a discovered receipt omitted or changed in the frozen comparison histories", () => {
+    const input = withRequestedHistory(snapshot()); input.comparisonLogs = [];
+    expect(() => parsed(input)).toThrow(/missing or inconsistent/);
+    withRequestedHistory(input);
+    input.comparisonLogs![0].records = [{ ...requestedReceipt(), requestedEvidence: { ...requestedReceipt().requestedEvidence, purpose: "A conflicting purpose." } }];
+    expect(() => parsed(input)).toThrow(/missing or inconsistent/);
   });
 
   it("retains corrections and unavailable comparison observations without substituting another original", () => {

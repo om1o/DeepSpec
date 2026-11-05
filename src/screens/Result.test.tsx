@@ -17,6 +17,8 @@ const cloudHistoryMocks = vi.hoisted(() => ({
   readCloudLookup: vi.fn(),
 }));
 const requestedCaptureMocks = vi.hoisted(() => ({ prepare: vi.fn() }));
+const requestedHistoryMocks = vi.hoisted(() => ({ read: vi.fn() }));
+vi.mock("../services/requestedEvidenceHistory", () => ({ readRequestedEvidenceHistory: requestedHistoryMocks.read }));
 vi.mock("../services/requestedEvidenceCapture", async (original) => ({ ...await original<typeof import("../services/requestedEvidenceCapture")>(), prepareRequestedEvidenceCapture: requestedCaptureMocks.prepare }));
 
 vi.mock("../services/cloudHistory", () => ({
@@ -82,6 +84,8 @@ describe("Result", () => {
     cloudHistoryMocks.readCloudLookup.mockReset();
     cloudHistoryMocks.readCloudLookup.mockResolvedValue({ ok: true, value: null });
     requestedCaptureMocks.prepare.mockReset();
+    requestedHistoryMocks.read.mockReset();
+    requestedHistoryMocks.read.mockResolvedValue({ records: [], complete: true, scannedBuckets: 0 });
   });
 
   afterEach(() => {
@@ -178,6 +182,30 @@ describe("Result", () => {
     renderResult({ ...successfulScan, savedLookup: local }, `/result/${local.id}`);
     expect(screen.getByRole("button", { name: "Collect requested photo" })).toBeDisabled();
     expect(requestedCaptureMocks.prepare).not.toHaveBeenCalled();
+  });
+
+  it("shows retained requested-photo history even when the original's current answer has no photo request", async () => {
+    const identify = vi.spyOn(aiService, "identifyCapturedFrame");
+    const origin = makeLookup();
+    const followup = makeLookup({ id: "followup-history", result: { ...successfulScan.result!, partName: "Follow-up mounting edge" } });
+    const side = (source: Lookup) => ({ lookupId: source.id, photoId: "photo-1", photoLabel: "overview" as const, photoAddedAt: frame.capturedAt, scanSavedAt: source.createdAt, sha256: "a".repeat(64), width: 40, height: 30, observedOn: null, vehicleContext: null });
+    const receipt: import("../types/inspectionComparison").RequestedInspectionComparison = {
+      version: 2, id: "11111111-1111-4111-8111-111111111111", lookupId: followup.id, recordedAt: "2026-11-05T14:00:00.000Z", subject: "Mounting edge",
+      earlier: side(origin), current: side(followup), requestedEvidence: { version: 1, kind: "photo", request: "Earlier request: photograph the hidden edge.", purpose: "Show the obscured attachment.", photoIds: ["photo-1"] }, analysisSha256: "b".repeat(64),
+      relationship: { sameVehicle: false, component: "unconfirmed", basis: "" }, conditions: { angle: "unknown", lighting: "unknown", surfaceNotes: "" }, observation: { outcome: "not_reviewed", notes: "" }, alignment: { rotation: 0, scale: 1, offsetX: 0, offsetY: 0 },
+    };
+    requestedHistoryMocks.read.mockResolvedValue({ records: [receipt], complete: true, scannedBuckets: 1 });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([origin, followup]));
+    renderResult(null, `/result/${origin.id}`);
+    expect(requestedHistoryMocks.read).not.toHaveBeenCalled();
+    const details = screen.getByText("Requested-photo follow-ups", { selector: "summary" }).closest("details")!;
+    details.open = true; fireEvent(details, new Event("toggle"));
+    expect(await screen.findByText(receipt.requestedEvidence.request)).toBeInTheDocument();
+    expect(requestedHistoryMocks.read).toHaveBeenCalledWith(origin.id, expect.any(Object));
+    expect(screen.getByText(/Collecting photos does not mean this request was resolved/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Open follow-up" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Follow-up mounting edge" })).toBeInTheDocument();
+    expect(identify).not.toHaveBeenCalled();
   });
 
   it("disables requested capture throughout an active retry", async () => {

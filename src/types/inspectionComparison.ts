@@ -16,7 +16,6 @@ export type ComparisonSide = {
 };
 
 export type InspectionComparison = {
-  version: 1;
   id: string;
   /** The follow-up scan owns this immutable history bucket. */
   lookupId: string;
@@ -42,7 +41,13 @@ export type InspectionComparison = {
   alignment: { rotation: number; scale: number; offsetX: number; offsetY: number };
   supersedesId?: string;
   correctionReason?: string;
-};
+} & (
+  | { version: 1; requestedEvidence?: never; analysisSha256?: never }
+  | { version: 2; requestedEvidence: RequestedEvidenceGuide; analysisSha256: string }
+);
+
+/** Immutable receipt of a requested photo capture; it does not resolve the request. */
+export type RequestedInspectionComparison = Extract<InspectionComparison, { version: 2 }>;
 
 /** A saved AI suggestion, not an instruction or evidence that it was resolved. */
 export type RequestedEvidenceGuide = {

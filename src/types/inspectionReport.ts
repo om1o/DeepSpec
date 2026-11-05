@@ -1,7 +1,7 @@
 import type { Lookup } from "./index";
 import type { ComponentMapRecord } from "./componentMap";
 import type { ServiceRecord } from "./serviceRecord";
-import type { InspectionComparison } from "./inspectionComparison";
+import type { InspectionComparison, RequestedInspectionComparison } from "./inspectionComparison";
 import type { DiagnosticBundle, ParsedDiagnosticReport } from "./diagnosticReport";
 
 export type InspectionReportIssue = {
@@ -38,6 +38,16 @@ export type InspectionReportSnapshot = {
   embeddedBytes: number;
   serviceLogs?: { lookupId: string; records: ServiceRecord[]; cloudChecked: boolean }[];
   comparisonLogs?: { lookupId: string; records: InspectionComparison[]; cloudChecked: boolean }[];
+  /** Reverse discovery is device-only; complete never means all cloud/device history. */
+  requestedEvidenceHistory?: {
+    originLookupId: string;
+    source: "device";
+    cloudSearched: false;
+    records: RequestedInspectionComparison[];
+    complete: boolean;
+    reason?: string;
+    scannedBuckets: number;
+  };
   diagnosticLogs?: { lookupId: string; bundle: DiagnosticBundle; parsed: { id: string; report: ParsedDiagnosticReport }[]; cloudChecked: boolean }[];
   diagnosticEvidence?: { lookupId: string; recordId: string; photoId: string; status: "unchanged" | "source_changed" | "missing_photo" | "verification_unavailable" }[];
   comparisonEvidence?: {

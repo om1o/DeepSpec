@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ComparisonSide, InspectionComparison } from "../types/inspectionComparison";
+import type { ComparisonSide, InspectionComparison, RequestedInspectionComparison } from "../types/inspectionComparison";
 import { comparisonSideMatches, inspectionComparisonStatus, mergeInspectionComparisons, normalizeComparisonCaptureTarget, normalizeComparisonSide, normalizeComparisonTimestamp, normalizeInspectionComparison, normalizeInspectionComparisons, normalizeRequestedEvidenceGuide } from "./inspectionComparison";
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -33,6 +33,51 @@ describe("requested-evidence capture protocol", () => {
 function record(n = 1): InspectionComparison {
   return { version: 1, id: id(n), lookupId: "scan", recordedAt: "2026-11-05T00:00:00Z", subject: "Bracket", earlier: side("earlier"), current: side("scan"), relationship: { sameVehicle: false, component: "unconfirmed", basis: "" }, conditions: { angle: "unknown", lighting: "unknown", surfaceNotes: "" }, observation: { outcome: "not_reviewed", notes: "" }, alignment: { rotation: 0, scale: 1, offsetX: 0, offsetY: 0 } };
 }
+function requested(n = 1): RequestedInspectionComparison {
+  return { ...record(n), version: 2, requestedEvidence: guide(), analysisSha256: "b".repeat(64) };
+}
+describe("requested-photo history receipts", () => {
+  it("round trips exact request context without claiming shared part, resolution or review", () => {
+    const saved = requested();
+    expect(normalizeInspectionComparison(JSON.parse(JSON.stringify(saved)))).toEqual(saved);
+    expect(normalizeInspectionComparisons([saved], "scan")).toEqual([saved]);
+    expect(saved.observation.outcome).toBe("not_reviewed"); expect(saved.relationship.component).toBe("unconfirmed");
+    expect(saved).not.toHaveProperty("resolved");
+  });
+  it.each([undefined, null, guide()])("fences v1 records against request metadata presence: %j", (requestedEvidence) => {
+    expect(normalizeInspectionComparison({ ...record(), requestedEvidence })).toBeUndefined();
+    expect(normalizeInspectionComparison({ ...record(), analysisSha256: undefined })).toBeUndefined();
+  });
+  it.each([{ requestedEvidence: undefined }, { analysisSha256: undefined }, { analysisSha256: "B".repeat(64) },
+    { requestedEvidence: { ...guide(), photoIds: ["other"] } }, { requestedEvidence: { ...guide(), analysisAttemptId: "changed" } }])("rejects invalid v2 receipt: %j", (change) => {
+    expect(normalizeInspectionComparison({ ...requested(), ...change })).toBeUndefined();
+  });
+  it("allows date and human corrections while preserving exact requested context and source bindings", () => {
+    const original = requested();
+    const correction = { ...requested(2), supersedesId: original.id, correctionReason: "Owner supplied the dates", subject: "Mounting face",
+      earlier: { ...original.earlier, observedOn: "2026-11-01" }, current: { ...original.current, observedOn: "2026-11-04" },
+      conditions: { ...original.conditions, surfaceNotes: "Dry at follow-up" }, observation: { outcome: "inconclusive" as const, notes: "Lighting differs" },
+      alignment: { rotation: 90, scale: 1, offsetX: 0, offsetY: 0 } };
+    expect(normalizeInspectionComparisons([original, correction], "scan")).toEqual([original, correction]);
+    expect(mergeInspectionComparisons([original], [correction], "scan")).toHaveLength(2);
+  });
+  it("rejects altered guide, answer fingerprint or source metadata in corrections and cloud unions", () => {
+    const original = requested();
+    const correction = { ...requested(2), supersedesId: original.id, correctionReason: "Review" };
+    const changes = [{ analysisSha256: "c".repeat(64) }, { requestedEvidence: { ...guide(), purpose: "Different purpose" } },
+      ...["earlier", "current"].flatMap((key) => [{ [key]: { ...original[key as "earlier" | "current"], sha256: "c".repeat(64) } },
+        { [key]: { ...original[key as "earlier" | "current"], photoId: "other" } },
+        { [key]: { ...original[key as "earlier" | "current"], analysisAttemptId: "changed" } }])];
+    for (const change of changes) {
+      const changed = { ...correction, ...change } as InspectionComparison;
+      expect(normalizeInspectionComparisons([original, changed], "scan")).toBeUndefined();
+      expect(() => mergeInspectionComparisons([original], [changed], "scan")).toThrow();
+    }
+    const legacyCorrection = { ...record(2), supersedesId: original.id, correctionReason: "Strip request" };
+    expect(normalizeInspectionComparisons([original, legacyCorrection], "scan")).toBeUndefined();
+    expect(normalizeInspectionComparisons([record(), correction], "scan")).toBeUndefined();
+  });
+});
 describe("immutable dated comparisons", () => {
   it("canonicalizes valid source timezone offsets and microseconds while rejecting invented dates", () => {
     for (const source of ["2026-11-05T00:00:00Z", "2026-11-05T00:00:00+00:00", "2026-11-04T19:00:00-05:00", "2026-11-05T01:30:00+01:30", "2026-11-05T00:00:00.000000+00:00"]) expect(normalizeComparisonTimestamp(source)).toBe("2026-11-05T00:00:00.000Z");

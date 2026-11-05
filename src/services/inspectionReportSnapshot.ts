@@ -8,6 +8,7 @@ import { normalizeInspectionComparisons } from "../lib/inspectionComparison";
 import { normalizeDiagnosticBundle } from "../lib/diagnosticAssociation";
 import type { DiagnosticBundle } from "../types/diagnosticReport";
 import { COMPONENT_MAP_STORE, EVIDENCE_STORAGE_TIMEOUT_MS, openEvidenceDatabase, SERVICE_RECORD_STORE, INSPECTION_COMPARISON_STORE, DIAGNOSTIC_REPORT_STORE } from "./evidenceDb";
+import { queueRequestedEvidenceHistory, type RequestedEvidenceHistory } from "./requestedEvidenceHistory";
 
 export type FinalInspectionSnapshot = {
   map: ComponentMapRecord | null;
@@ -15,6 +16,7 @@ export type FinalInspectionSnapshot = {
   serviceRecords: Map<string, ServiceRecord[] | null>;
   comparisons: Map<string, InspectionComparison[] | null>;
   diagnostics: Map<string, DiagnosticBundle | null>;
+  requestedEvidenceHistory: RequestedEvidenceHistory;
 };
 const validId = (value: string) => /^[A-Za-z0-9._:-]{1,160}$/.test(value) && value !== "." && value !== "..";
 function requireScope(scope: AccountScope) {
@@ -31,8 +33,9 @@ export async function readFinalInspectionSnapshot(rootLookupId: string, lookupId
   try { requireScope(scope); } catch (error) { database.close(); throw error; }
   return new Promise((resolve, reject) => {
     let transaction: IDBTransaction | undefined;
-    let settled = false, mapRead = false;
-    const result: FinalInspectionSnapshot = { map: null, serviceRecords: new Map(), comparisons: new Map(), diagnostics: new Map() };
+    let settled = false, mapRead = false, requestedHistoryRead = false;
+    const result: FinalInspectionSnapshot = { map: null, serviceRecords: new Map(), comparisons: new Map(), diagnostics: new Map(),
+      requestedEvidenceHistory: { records: [], complete: false, scannedBuckets: 0 } };
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true; clearTimeout(timer); database.close();
@@ -69,6 +72,10 @@ export async function readFinalInspectionSnapshot(rootLookupId: string, lookupId
         };
       }
       const comparisons = transaction.objectStore(INSPECTION_COMPARISON_STORE);
+      queueRequestedEvidenceHistory(comparisons, rootLookupId, scope, (history) => {
+        try { requireScope(scope); result.requestedEvidenceHistory = history; requestedHistoryRead = true; }
+        catch (error) { fail(error); }
+      }, fail);
       for (const id of ids) {
         const request = comparisons.get([scope.userId!, id]);
         request.onsuccess = () => {
@@ -91,7 +98,7 @@ export async function readFinalInspectionSnapshot(rootLookupId: string, lookupId
       transaction.oncomplete = () => {
         try {
           requireScope(scope);
-          if (!mapRead || result.serviceRecords.size !== ids.length || result.comparisons.size !== ids.length || result.diagnostics.size !== ids.length) throw new Error("Some saved inspection records could not be checked safely.");
+          if (!mapRead || !requestedHistoryRead || result.serviceRecords.size !== ids.length || result.comparisons.size !== ids.length || result.diagnostics.size !== ids.length) throw new Error("Some saved inspection records could not be checked safely.");
           finish();
         } catch (error) { finish(error as Error); }
       };
