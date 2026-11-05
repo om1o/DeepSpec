@@ -1,5 +1,6 @@
 import { accountStorageKey, setActiveAccount, type AccountScope } from "../lib/accountScope";
 import { createLookup, getLookups, LOOKUPS_STORAGE_KEY, MAX_SAVED_LOOKUPS } from "../services/storage";
+import { photoGroupsMatch } from "../services/photoDraft";
 import { getCachedScanResult, hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -169,8 +170,9 @@ vi.mock("../services/cloudSync", () => ({
   syncLookupToCloud: (...args: unknown[]) => syncLookupToCloud(...args),
 }));
 
-vi.mock("../services/photoDraft", () => ({
-  photoGroupsMatch: (left: ScanPhoto[], right: ScanPhoto[]) => JSON.stringify(left) === JSON.stringify(right),
+vi.mock("../services/photoDraft", async (importOriginal) => ({
+  // Storage normalizes property order; use production evidence equality rather than JSON bytes.
+  photoGroupsMatch: (await importOriginal<typeof import("../services/photoDraft")>()).photoGroupsMatch,
   readPhotoDraft: (scope?: AccountScope, kind?: "upload" | "capture") => readPhotoDraft(scope, kind),
   replacePhotoDraftIfMatches: (previous: ScanPhoto[] | null, next: ScanPhoto[] | null, scope?: AccountScope, kind?: "upload" | "capture") => replacePhotoDraftIfMatches(previous, next, scope, kind),
   savePhotoDraftIfEmpty: (photos: ScanPhoto[], scope?: AccountScope, kind?: "upload" | "capture") => savePhotoDraftIfEmpty(photos, scope, kind),
@@ -244,9 +246,9 @@ describe("Scanner", () => {
     replacePhotoDraftIfMatches.mockReset();
     replacePhotoDraftIfMatches.mockImplementation(async (previous, next, scope, kind) => {
       const current = draftStore.get(draftKey(scope, kind)) ?? null;
-      if (JSON.stringify(current) !== JSON.stringify(previous)) return false;
+      if (current === null ? previous !== null : previous === null || !photoGroupsMatch(current, previous)) return false;
       if (next === null) await removePhotoDraft(scope, kind);
-      else if (JSON.stringify(previous) !== JSON.stringify(next)) await savePhotoDraft(next, scope, kind);
+      else if (previous === null || !photoGroupsMatch(previous, next)) await savePhotoDraft(next, scope, kind);
       return true;
     });
     savePhotoDraftIfEmpty.mockReset();
@@ -259,7 +261,8 @@ describe("Scanner", () => {
     removePhotoDraftIfMatches.mockReset();
     removePhotoDraftIfMatches.mockImplementation(async (photos, scope, kind) => {
       const key = draftKey(scope, kind);
-      if (JSON.stringify(draftStore.get(key)) !== JSON.stringify(photos)) return false;
+      const current = draftStore.get(key);
+      if (!current || !photoGroupsMatch(current, photos)) return false;
       draftStore.delete(key);
       return true;
     });
@@ -297,6 +300,20 @@ describe("Scanner", () => {
     objectTargetOptions.latest = null;
     localStorage.clear();
     sessionStorage.clear();
+  });
+
+  it("matches normalized photo fields regardless of property order without accepting changed evidence", () => {
+    const captured: ScanPhoto = { id: "photo-1", label: "overview", imageBase64: "data:image/jpeg;base64,original", capturedAt: "2026-11-05T00:00:00Z" };
+    const normalized: ScanPhoto = { id: captured.id, label: captured.label, capturedAt: captured.capturedAt, imageBase64: captured.imageBase64 };
+    expect(JSON.stringify(captured)).not.toBe(JSON.stringify(normalized));
+    expect(photoGroupsMatch([captured], [normalized])).toBe(true);
+    for (const changed of [
+      { ...normalized, id: "other-photo" },
+      { ...normalized, label: "marking" as const },
+      { ...normalized, capturedAt: "2026-11-05T00:00:01Z" },
+      { ...normalized, imageBase64: "data:image/jpeg;base64,replacement" },
+    ]) expect(photoGroupsMatch([captured], [changed])).toBe(false);
+    expect(photoGroupsMatch([captured], [normalized, { ...normalized, id: "photo-2" }])).toBe(false);
   });
 
   it("scans on shutter press, identifies, saves it, and opens an in-place review", async () => {
