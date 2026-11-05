@@ -11,6 +11,7 @@ import { isCloudSyncEnabled } from "../../services/cloudSyncPolicy";
 import { getLookup, subscribeToLookupChanges } from "../../services/storage";
 import { assertMapOverviewGuardCurrent, resolveMapOverview, type MapOverviewSaveGuard, type MapOverviewVerification } from "../../services/mapOverviewEvidence";
 import { FocusAreaEditor } from "./FocusAreaEditor";
+import { LinkedPhotoGroupReview } from "./LinkedPhotoGroupReview";
 
 const STATUS_TEXT: Record<ComponentMapStatus, string> = { needs_view: "Needs view", inspected: "Inspected", not_visible: "Not visible" };
 const BUTTON = "min-h-11 rounded-lg border border-[var(--ds-border)] px-3 py-2 text-sm disabled:opacity-50";
@@ -40,6 +41,7 @@ export function ComponentMapReview({ lookup }: { lookup: Lookup }) {
   const [verificationAttempt, setVerificationAttempt] = useState(0);
   const [failedImage, setFailedImage] = useState<string>();
   const [linkErrors, setLinkErrors] = useState<Record<string, string>>({});
+  const [openLinkedGroup, setOpenLinkedGroup] = useState<{ mapId: string; componentId: string; linkId: string } | null>(null);
   const mounted = useRef(true);
   const generation = useRef(0);
   const writing = useRef(false);
@@ -63,7 +65,7 @@ export function ComponentMapReview({ lookup }: { lookup: Lookup }) {
   const verificationRef = useRef(evidence);
   verificationRef.current = evidence;
   const image = evidence?.image && evidence.image !== failedImage ? evidence.image : undefined;
-  const boundOverview = draft?.version === 3 && evidence?.status === "unchanged" && Boolean(image)
+  const boundOverview = (draft?.version === 3 || draft?.version === 4) && evidence?.status === "unchanged" && Boolean(image)
     && draft.id === evidence.guard?.lookupId && draft.overview.photoId === evidence.guard?.photoId
     && mapOverviewSourcesMatch(draft.overview.source, evidence.guard?.source);
   const canSeed = evidence?.status === "unchanged" && Boolean(evidence.source && evidence.guard);
@@ -89,6 +91,7 @@ export function ComponentMapReview({ lookup }: { lookup: Lookup }) {
       setSelectedId(saved?.document.components[0]?.id);
       setStale(false);
       setEditingArea(null);
+      setOpenLinkedGroup(null);
       setMessage(notice);
     } catch (error) {
       if (valid()) { setLoadFailed(true); setMessage(errorText(error)); }
@@ -164,7 +167,7 @@ export function ComponentMapReview({ lookup }: { lookup: Lookup }) {
     try {
       let document = draft;
       let guard: MapOverviewSaveGuard | undefined;
-      if (create || document?.version === 3) {
+      if (create || document?.version === 3 || document?.version === 4) {
         const checked = await resolveMapOverview(lookup, create ? undefined : document!, scope, controller.signal, requireLocal.current.required);
         if (!current()) return;
         if (controller.signal.aborted || sourceKeyRef.current !== sourceKey) throw new Error("The overview changed while saving. Your draft is retained; check the saved original before retrying.");
@@ -274,6 +277,10 @@ export function ComponentMapReview({ lookup }: { lookup: Lookup }) {
 
   async function openGroup(group: ComponentMapScanGroup) {
     if (!current() || busy || dirty || stale) return;
+    if (group.binding && draft && selected) {
+      setOpenLinkedGroup({ mapId: draft.id, componentId: selected.id, linkId: group.linkId });
+      return;
+    }
     setBusy(true);
     const groupGeneration = generation.current;
     const valid = () => current() && groupGeneration === generation.current && editorState.current.lookupId === lookup.id;
@@ -303,7 +310,7 @@ export function ComponentMapReview({ lookup }: { lookup: Lookup }) {
     {!loading && !loadFailed ? <div className="mt-3 rounded-lg border p-2" aria-label="Overview source verification">
       <p>{evidence?.message ?? "Checking the saved original overview…"}</p>
       {evidence && evidence.status !== "unchanged" ? <button type="button" className={`${BUTTON} mt-2`} disabled={busy} onClick={() => { setFailedImage(undefined); setVerificationAttempt((attempt) => attempt + 1); }}>Recheck overview source</button> : null}
-      {draft ? <p className="mt-1 text-xs">Linked photo groups are associated by scan and photo IDs. Their file contents are not bound by this overview check.</p> : null}
+      {draft ? <p className="mt-1 text-xs">Linked photo originals are checked separately when opened. Older ID-only groups have no historical file verification.</p> : null}
     </div> : null}
     {loading ? <p className="mt-3">Loading component map…</p> : !draft ? <div className="mt-3">
       <p>{loadFailed ? "The saved component map could not be loaded." : "No component map is saved on this device."}</p>
@@ -372,7 +379,10 @@ export function ComponentMapReview({ lookup }: { lookup: Lookup }) {
         <h3 className="font-semibold">Linked photo groups</h3>
         {selected.scanGroups.length ? <ul className="space-y-2">{selected.scanGroups.map((group, index) => <li key={group.linkId}>
           <button type="button" className={BUTTON} disabled={dirty || stale} onClick={() => void openGroup(group)}>Open photo group {index + 1} ({group.photoIds.length} photos)</button>
+          {!group.binding ? <p className="mt-1 text-xs">Legacy ID-only link. Opens the current saved scan; its files have not been verified as the linked originals.</p> : null}
           {linkErrors[group.linkId] ? <p role="status" className="mt-1 text-xs">{linkErrors[group.linkId]}</p> : null}
+          {group.binding && !stale && openLinkedGroup?.mapId === draft.id && openLinkedGroup.componentId === selected.id && openLinkedGroup.linkId === group.linkId
+            ? <LinkedPhotoGroupReview key={`${draft.id}:${selected.id}:${group.linkId}`} group={group} scope={scope} onClose={() => setOpenLinkedGroup(null)} /> : null}
         </li>)}</ul> : <p>No component photos linked yet.</p>}
       </fieldset> : null}
     </>}

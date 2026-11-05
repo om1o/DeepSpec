@@ -10,7 +10,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, expect, vi } from "vitest";
 import Scanner from "./Scanner";
-import type { ScanPhoto, ShopVehicleContext } from "../types";
+import type { Lookup, ScanPhoto, ShopVehicleContext } from "../types";
 import { saveVehicleProfile } from "../services/vehicleProfile";
 import { createShopJob, getShopJob, getVehicleContextForJob, updateShopJob } from "../services/shop";
 
@@ -55,6 +55,7 @@ const draftEnvelopes = new Map<string, PhotoDraftEnvelope>();
 const observeEnvelopeCompare = vi.fn<(previous: PhotoDraftEnvelope | null, next: PhotoDraftEnvelope | null) => void>();
 const readComponentMap = vi.fn();
 const linkComponentMap = vi.fn();
+const completeComponentCapture = vi.fn();
 const readComponentMapLookup = vi.fn();
 const completeComparisonCapture = vi.fn();
 const verifyComparisonCaptureReference = vi.fn();
@@ -192,6 +193,8 @@ vi.mock("../services/componentMapStore", () => ({
   linkComponentMap: (...args: unknown[]) => linkComponentMap(...args),
 }));
 vi.mock("../services/componentMapCloud", () => ({ readComponentMapLookup: (...args: unknown[]) => readComponentMapLookup(...args) }));
+vi.mock("../services/componentCaptureCompletion", async (importOriginal) => ({ ...(await importOriginal<typeof import("../services/componentCaptureCompletion")>()),
+  completeComponentCapture: (...args: unknown[]) => completeComponentCapture(...args) }));
 vi.mock("../services/comparisonCapture", () => ({
   completeComparisonCapture: (...args: unknown[]) => completeComparisonCapture(...args),
   verifyComparisonCaptureReference: (...args: unknown[]) => verifyComparisonCaptureReference(...args),
@@ -216,12 +219,13 @@ vi.mock("../services/photoDraft", async (importOriginal) => {
     const stored = draftEnvelopes.get(key);
     return photos ? stored ? { ...stored, photos } : { version: 2, photos, ...(target ? { target } : {}) } : null;
   },
-  replacePhotoDraftEnvelopeIfMatches: async (previous: PhotoDraftEnvelope | null, next: PhotoDraftEnvelope | null, scope?: AccountScope, kind?: "upload" | "capture") => {
+  replacePhotoDraftEnvelopeIfMatches: async (previous: PhotoDraftEnvelope | null, next: PhotoDraftEnvelope | null, scope?: AccountScope, kind?: "upload" | "capture", mutationGuard?: () => void) => {
     observeEnvelopeCompare(previous, next);
     const key = draftKey(scope, kind);
     if (!original.componentCaptureTargetsMatch(previous?.target, draftTargets.get(key))) return false;
     const stored = draftEnvelopes.get(key);
     if (previous && stored && !original.photoDraftsMatch(previous, { ...stored, photos: draftStore.get(key) ?? stored.photos })) return false;
+    mutationGuard?.();
     const matched = kind === "capture" && previous === null && next
       ? await savePhotoDraftIfEmpty(next.photos, scope, kind)
       : kind === "capture" && previous && next === null
@@ -304,6 +308,9 @@ describe("Scanner", () => {
     observeEnvelopeCompare.mockClear();
     readComponentMap.mockReset();
     linkComponentMap.mockReset().mockResolvedValue({});
+    // Completion's real hash/CAS boundary is tested in componentCaptureCompletion.test.
+    completeComponentCapture.mockReset().mockImplementation((target: ComponentCaptureTarget, saved: Lookup, scope: AccountScope) =>
+      linkComponentMap(target, saved.photos?.map((photo) => photo.id) ?? ["photo-1"], scope));
     readComponentMapLookup.mockReset().mockResolvedValue({ ok: true, value: { id: "bay-overview", vehicleContext: { year: "2015", make: "Honda", model: "Civic", engine: "1.8L" } } });
     completeComparisonCapture.mockReset().mockResolvedValue({});
     verifyComparisonCaptureReference.mockReset().mockResolvedValue(undefined);
@@ -1845,6 +1852,35 @@ describe("Scanner", () => {
     expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
     expect(linkComponentMap).toHaveBeenCalledTimes(3);
     expect(getLookups()).toHaveLength(1);
+  });
+
+  it.each(["source changed", "account changed"])("keeps the saved scan's pending component draft when completion reports %s", async (reason) => {
+    const target: ComponentCaptureTarget = { mapId: "bay-overview", componentId: "00000000-0000-4000-8000-000000000001", linkAttemptId: "00000000-0000-4000-8000-000000000002", lookupId: "component-scan" };
+    const photos: ScanPhoto[] = [{ id: "close-up", label: "close_up", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,cGFydA==" }];
+    const envelope: PhotoDraftEnvelope = { version: 5, photos, target, photoRelationship: "independent" };
+    draftStore.set("test-user:upload", photos); draftTargets.set("test-user:upload", target); draftEnvelopes.set("test-user:upload", envelope);
+    readComponentMap.mockResolvedValue({ document: { components: [{ id: target.componentId }] } });
+    completeComponentCapture.mockImplementationOnce(async () => {
+      if (reason === "account changed") setActiveAccount("other-user");
+      else throw new Error("The linked original changed. Pending draft kept.");
+    });
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(await screen.findByRole("button", { name: "Resume 1-photo draft" }));
+    await analyzeReviewedPhotos();
+    await waitFor(() => expect(completeComponentCapture).toHaveBeenCalledTimes(1));
+    expect(completeComponentCapture).toHaveBeenCalledWith(target, expect.objectContaining({ id: target.lookupId, photos, photoRelationship: "independent" }),
+      expect.objectContaining({ userId: "test-user" }), expect.any(AbortSignal));
+    expect(draftEnvelopes.get("test-user:upload")).toEqual(upgradePhotoDraft(envelope));
+    expect(draftStore.get("test-user:upload")).toEqual(photos);
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
+    expect(observeEnvelopeCompare.mock.calls.some(([previous, next]) => previous?.target?.linkAttemptId === target.linkAttemptId && next === null)).toBe(false);
+    if (reason === "source changed") {
+      expect(getLookups().find((lookup) => lookup.id === target.lookupId)?.photos).toEqual(photos);
+      await screen.findByRole("button", { name: "Finish component link" });
+      await userEvent.click(screen.getByRole("button", { name: "Finish component link" }));
+      await waitFor(() => expect(draftStore.has("test-user:upload")).toBe(false));
+      expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
+    }
   });
 
   it("does not append component photos to an older unrelated draft or silently retarget it", async () => {

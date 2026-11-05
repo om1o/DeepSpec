@@ -61,6 +61,17 @@ describe("map overview file binding", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1); expect(mocks.cloud).not.toHaveBeenCalled();
   });
 
+  it("preserves overview verification and guard immutability after a version-4 linked-photo upgrade", async () => {
+    const document: ComponentMap = { ...map(), version: 4 };
+    const verified = await resolveMapOverview(scan(), document);
+    expect(verified).toMatchObject({ status: "unchanged", image, source: source() });
+    expect(() => assertMapOverviewGuardCurrent(verified.guard!, document)).not.toThrow();
+    expect((await verifyMapOverviewImage(scan(), document)).status).toBe("unchanged");
+    expect(() => assertMapOverviewGuardCurrent(verified.guard!, { ...document, overview: { ...document.overview, source: { ...source(), width: 2 } } })).toThrow();
+    const invalid = { ...document, overview: { lookupId: "scan", photoId: "photo-1" } };
+    expect((await verifyMapOverviewImage(scan(), invalid)).status).toBe("verification_unavailable");
+  });
+
   it.each([1, 2] as const)("loads only a plain current image for legacy v%s without inventing a binding", async (version) => {
     const legacy: ComponentMap = { ...map(), version, overview: { lookupId: "scan", photoId: "photo-1" } };
     const before = JSON.stringify(legacy);

@@ -11,6 +11,7 @@ import { syncLookupToCloud } from "./cloudSync";
 import { readComponentMap, transactComponentMap } from "./componentMapStore";
 import { getLookup } from "./storage";
 import { verifyMapOverviewImage } from "./mapOverviewEvidence";
+import { verifyLinkedPhotoGroup } from "./linkedPhotoEvidence";
 
 export type ComponentMapCloudResult =
   | { ok: true; value: ComponentMapRecord | null; message: string }
@@ -130,7 +131,7 @@ export async function readComponentMapLookup(lookupId: string, scope = getAccoun
 }
 
 function originalPhotos(lookup: Lookup) {
-  return lookup.photos?.length ? lookup.photos : [{ id: "photo-1", ...lookup.frame }];
+  return lookup.photos !== undefined ? lookup.photos : [{ id: "photo-1", ...lookup.frame }];
 }
 
 function hasPhotos(lookup: Lookup, photoIds: Set<string>) {
@@ -140,10 +141,19 @@ function hasPhotos(lookup: Lookup, photoIds: Set<string>) {
 
 async function ensureReferencedEvidence(document: ComponentMap, scope: AccountScope) {
   const references = new Map<string, Set<string>>([[document.overview.lookupId, new Set([document.overview.photoId])]]);
+  const boundGroups = new Map<string, Map<string, (typeof document.components)[number]["scanGroups"][number]>>();
   for (const component of document.components) for (const group of component.scanGroups) {
     const photos = references.get(group.lookupId) ?? new Set<string>();
     group.photoIds.forEach((id) => photos.add(id));
     references.set(group.lookupId, photos);
+    if (group.binding) {
+      const groups = boundGroups.get(group.lookupId) ?? new Map();
+      groups.set(JSON.stringify(group.binding), group);
+      boundGroups.set(group.lookupId, groups);
+    }
+  }
+  if (references.size > 250 || [...boundGroups.values()].reduce((total, groups) => total + groups.size, 0) > 1000) {
+    throw new Error("This cloud map exceeds the verification limit (250 scans or 1,000 distinct linked groups). Save a smaller map; no map write was attempted.");
   }
   for (const [lookupId, photoIds] of references) {
     assertAccount(scope);
@@ -151,6 +161,8 @@ async function ensureReferencedEvidence(document: ComponentMap, scope: AccountSc
     assertAccount(scope);
     if (!cloud.ok) throw new Error(`Linked scan ${lookupId} is unavailable: ${cloud.message}`);
     if (!cloud.value || !hasPhotos(cloud.value, photoIds)) {
+      const boundOverview = (document.version === 3 || document.version === 4) && lookupId === document.overview.lookupId;
+      if (cloud.value && (boundOverview || boundGroups.has(lookupId))) throw new Error("A bound cloud scan is missing an original photo. It was not overwritten with device evidence; the device map is preserved.");
       const local = getLookup(lookupId);
       if (!local || !hasPhotos(local, photoIds)) throw new Error(`Linked scan ${lookupId} or its original photo IDs are unavailable. The map remains saved on this device.`);
       const saved = await syncLookupToCloud(local);
@@ -162,13 +174,21 @@ async function ensureReferencedEvidence(document: ComponentMap, scope: AccountSc
         throw new Error(`The original photos for linked scan ${lookupId} could not be verified in the cloud. The map remains saved on this device.`);
       }
     }
-    if (document.version === 3 && lookupId === document.overview.lookupId) {
+    if ((document.version === 3 || document.version === 4) && lookupId === document.overview.lookupId) {
       // Matching IDs or device bytes cannot attest to the stored cloud overview.
       const overview = cloud.value;
       if (!overview) throw new Error("The cloud overview image is unavailable. The device map was preserved.");
       const verified = await boundedRequest((signal) => verifyMapOverviewImage(overview, document, scope, signal));
       assertAccount(scope);
       if (verified.status !== "unchanged") throw new Error(`The cloud overview image could not be verified against this map. ${verified.message} The device map was preserved.`);
+    }
+    for (const group of boundGroups.get(lookupId)?.values() ?? []) {
+      const verified = await boundedRequest((signal) => verifyLinkedPhotoGroup(cloud.value, group, scope, signal));
+      assertAccount(scope);
+      if (verified.legacy || verified.photos.length !== group.photoIds.length
+        || verified.photos.some((photo, index) => photo.photoId !== group.photoIds[index] || photo.status !== "unchanged")) {
+        throw new Error("A linked cloud photo could not be verified against its historical binding. Existing cloud photos were not overwritten; the device map and its links are preserved.");
+      }
     }
   }
 }

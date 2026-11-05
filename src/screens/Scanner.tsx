@@ -8,7 +8,8 @@ import type { ComparisonCaptureTarget } from "../types/inspectionComparison";
 import { normalizeComparisonCaptureTarget } from "../lib/inspectionComparison";
 import { completeComparisonCapture, verifyComparisonCaptureReference } from "../services/comparisonCapture";
 import { resolveComparisonSide } from "../services/comparisonEvidence";
-import { linkComponentMap, readComponentMap } from "../services/componentMapStore";
+import { readComponentMap } from "../services/componentMapStore";
+import { assertComponentCaptureCurrent, completeComponentCapture } from "../services/componentCaptureCompletion";
 import { readComponentMapLookup } from "../services/componentMapCloud";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -839,25 +840,29 @@ export default function Scanner() {
   }, [activeShopJob, activeShopVehicleContext, vehicleProfile, isScanRequestActive, persistAndShowReview, recordScanOutcome, selectedCameraId, stopForQualityCoach]);
 
   const finishSavedDraft = useCallback(async (draft: PhotoDraftEnvelope, kind: PhotoDraftKind, saved: Lookup | null | undefined, signal?: AbortSignal) => {
+    const scope = accountScopeRef.current;
     const photos = draft.photos;
     const matchesSavedEvidence = saved && (saved.photos
       ? photoGroupsMatch(photos, saved.photos)
       : photos.length === 1 && saved.frame.imageBase64 === photos[0].imageBase64);
-    if (!matchesSavedEvidence || !isAccountScopeCurrent(accountScopeRef.current) || signal?.aborted) return false;
+    if (!matchesSavedEvidence || !isAccountScopeCurrent(scope) || signal?.aborted) return false;
     try {
+      const captureSnapshot = draft.target ? structuredClone(saved) : undefined;
       if (hasPhotoDraftContext(draft) && (!vehicleContextsMatch(draft.vehicleContext, saved.vehicleContext) || draft.jobId !== saved.jobId)) throw new Error("The saved scan has different vehicle details. The original photo draft was kept for review.");
-      if (hasPhotoDraftComparison(draft)) await completeComparisonCapture(draft.comparisonTarget, saved, accountScopeRef.current, signal);
+      if (photoRelationshipOrUnknown(draft.photoRelationship) !== photoRelationshipOrUnknown(saved.photoRelationship)) throw new Error("The saved scan has a different photo relationship. The original draft was kept for review.");
+      if (hasPhotoDraftComparison(draft)) await completeComparisonCapture(draft.comparisonTarget, saved, scope, signal);
       if (draft.target) {
         if (saved.id !== draft.target.lookupId) throw new Error("The scan is saved but its component link is pending. Resume this draft to recover it.");
-        await linkComponentMap(draft.target, photos.map((photo) => photo.id), accountScopeRef.current);
+        await completeComponentCapture(draft.target, captureSnapshot!, scope, signal);
       }
       // Ordinary upload drafts remain reusable. Targeted drafts retire only after
       // their idempotent link commits, leaving recovery possible at every boundary.
       if (kind === "upload" && !draft.target && !hasPhotoDraftComparison(draft)) return true;
-      if (signal?.aborted) return false;
-      const removed = await replacePhotoDraftEnvelopeIfMatches(draft, null, accountScopeRef.current, kind);
-      const remaining = removed ? null : await readPhotoDraftEnvelope(accountScopeRef.current, kind);
-      if (isAccountScopeCurrent(accountScopeRef.current)) {
+      if (!isAccountScopeCurrent(scope) || signal?.aborted) return false;
+      const removed = await replacePhotoDraftEnvelopeIfMatches(draft, null, scope, kind,
+        captureSnapshot ? () => assertComponentCaptureCurrent(captureSnapshot, scope, signal) : undefined);
+      const remaining = removed ? null : await readPhotoDraftEnvelope(scope, kind);
+      if (isAccountScopeCurrent(scope)) {
         const update = (current: PhotoDraftEnvelope | null) => current && photoDraftsMatch(current, draft) ? remaining : current;
         if (kind === "capture") setCaptureDraft(update); else setPhotoDraft(update);
         if (draft.target || hasPhotoDraftComparison(draft)) {
@@ -871,7 +876,7 @@ export default function Scanner() {
       }
       return true;
     } catch (error) {
-      if (isAccountScopeCurrent(accountScopeRef.current)) {
+      if (isAccountScopeCurrent(scope)) {
         setPhotoDraftMessage(error instanceof Error ? error.message : "The scan is saved. Resume its photo draft to finish linking it.");
         setPhotoDraftKind(kind);
         setShowPhotoDraft(true);

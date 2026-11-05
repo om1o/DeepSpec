@@ -16,6 +16,7 @@ const releaseSecurityOptimizationMigrationPath = join(migrationsDir, "2026110112
 const componentMapMigrationPath = join(migrationsDir, "20261105091323_component_maps.sql");
 const componentMapOccurrencesMigrationPath = join(migrationsDir, "20261105211101_component_map_occurrences.sql");
 const componentMapOverviewSourceMigrationPath = join(migrationsDir, "20261105213351_component_map_overview_source.sql");
+const componentMapLinkedSourcesMigrationPath = join(migrationsDir, "20261105221143_component_map_linked_sources.sql");
 const srcPath = join(process.cwd(), "src");
 
 describe("Supabase secure foundation migration", () => {
@@ -226,6 +227,52 @@ describe("Supabase billing webhook idempotency migration", () => {
     expect(regression).toContain("if event_count <> 1");
     expect(regression).toContain("'public.billing_purchase_events', 'truncate'");
     expect(regression).toContain("rollback;");
+  });
+});
+
+describe("Supabase component-map linked-source migration", () => {
+  const sql = readFileSync(componentMapLinkedSourcesMigrationPath, "utf8").replace(/\r\n/g, "\n");
+  const previous = readFileSync(componentMapOverviewSourceMigrationPath, "utf8").replace(/\r\n/g, "\n");
+
+  it("allows v4 with required overview identity and exact ordered group bindings", () => {
+    expect(sql).toContain("if doc->'version' in ('3'::jsonb, '4'::jsonb) then");
+    expect(sql).toContain("doc->'version' is distinct from '4'::jsonb or jsonb_typeof(group_binding) is distinct from 'object'");
+    expect(sql).toContain("group_binding - array['version', 'photoRelationship', 'photos']");
+    expect(sql).toContain("group_binding->'version' is distinct from '1'::jsonb");
+    expect(sql).toContain("('same_part_or_area', 'independent', 'unknown')");
+    expect(sql).toContain("jsonb_array_length(group_binding->'photos') <> jsonb_array_length(link->'photoIds')");
+    expect(sql).toContain("bound_photo->'photoId' is distinct from link->'photoIds'->binding_index");
+    expect(sql).toContain("bound_photo - array['photoId', 'label', 'source']");
+    expect(sql).toContain("('overview', 'close_up', 'marking', 'mounting', 'other')");
+  });
+
+  it("validates every linked source with the same bounded fingerprint contract", () => {
+    expect(sql).toContain("bound_source - array['sha256', 'width', 'height', 'photoAddedAt', 'scanSavedAt']");
+    expect(sql).toContain("bound_source->>'sha256' ~ '^[a-f0-9]{64}$'");
+    expect(sql).toContain("(bound_source->>'width')::numeric * (bound_source->>'height')::numeric > 100000000");
+    expect(sql).toContain("source_time := bound_source->>key");
+    expect(sql).toContain("raise exception 'invalid_component_map_link_binding'");
+  });
+
+  it("preserves bindings by stable association while allowing display reorder", () => {
+    expect(sql).toContain("where value->'id' = old_component->'id'");
+    expect(sql).toContain("where value->'linkId' = old_link->'linkId'");
+    expect(sql).toContain("next_link->'photoIds' is distinct from old_link->'photoIds'");
+    expect(sql).toContain("next_link->'binding' is distinct from old_link->'binding'");
+    expect(sql).toContain("raise exception 'component_map_link_binding_immutable'");
+    expect(sql).toContain("raise exception 'component_map_legacy_link_retrofit'");
+    expect(sql).toContain("old.document_json->'version' = '4'::jsonb and doc->'version' is distinct from '4'::jsonb");
+  });
+
+  it("retains prior protections without rewriting rows or changing permissions", () => {
+    for (const [, message, code] of previous.matchAll(/raise exception '([^']+)' using errcode = '([^']+)'/g)) {
+      expect(sql).toContain(`raise exception '${message}' using errcode = '${code}'`);
+    }
+    expect(sql).toContain("security invoker set search_path = ''");
+    expect(sql).toContain("s.user_id = new.user_id and s.local_id = link->>'lookupId'");
+    expect(sql).toContain("new.revision is distinct from old.revision + 1");
+    expect(sql).toContain("revoke all on function private.guard_component_map() from public, anon, authenticated");
+    expect(sql).not.toMatch(/(?:^|\n)\s*(?:alter table|drop|grant|insert into|update public|delete from|create trigger)\b/i);
   });
 });
 

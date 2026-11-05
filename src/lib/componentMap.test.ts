@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Lookup } from "../types";
-import type { ComponentCaptureTarget, ComponentMap, ComponentMapRecord, MapOverviewSource } from "../types/componentMap";
-import { MAX_SUGGESTED_LOCATION_LENGTH, componentCaptureTargetsMatch, createMapComponent, linkComponentMapDocument, mapOverviewSourcesMatch, normalizeComponentCaptureTarget, normalizeComponentMap, normalizeComponentMapRecord, normalizeMapOverviewSource, reviewMapComponent, seedMapFromLookup } from "./componentMap";
+import type { ComponentCaptureTarget, ComponentMap, ComponentMapGroupBinding, ComponentMapRecord, MapOverviewSource } from "../types/componentMap";
+import { MAX_SUGGESTED_LOCATION_LENGTH, componentCaptureTargetsMatch, componentMapBindingsPreserved, componentMapGroupBindingsMatch, createMapComponent, linkComponentMapDocument, mapOverviewSourcesMatch, normalizeComponentCaptureTarget, normalizeComponentMap, normalizeComponentMapGroupBinding, normalizeComponentMapRecord, normalizeMapOverviewSource, reviewMapComponent, seedMapFromLookup } from "./componentMap";
 
 const componentId = "10000000-0000-4000-8000-000000000001";
 const linkId = "20000000-0000-4000-8000-000000000001";
@@ -15,6 +15,95 @@ const record = (): ComponentMapRecord => ({ document: map(), localRevision: 1, c
 const lookup = (): Lookup => ({ id: "overview-lookup", createdAt: now, frame: { imageBase64: "data:image/jpeg;base64,AA==", capturedAt: now },
   rating: null, correction: null, notes: "", scanCategory: "engine", trainingLabel: "Engine bay", trainingStatus: "user_confirmed", chatHistory: [],
   provenance: { captureMode: "camera", analysisSource: "ai_detection", savedAt: now } });
+
+const binding = (): ComponentMapGroupBinding => ({ version: 1, photoRelationship: "independent", photos: [
+  { photoId: "photo-1", label: "close_up", source: source() },
+  { photoId: "photo-2", label: "marking", source: { ...source(), sha256: "b".repeat(64) } },
+] });
+const sourceMap = (): ComponentMap => ({ ...map(), version: 3, overview: { ...map().overview, source: source() } });
+
+describe("bound linked-photo groups", () => {
+  it("upgrades only the first new bound link while preserving overview and human work", () => {
+    const before = sourceMap(); before.components[0].notes = "Keep my note";
+    const linked = linkComponentMapDocument(before, target(), ["photo-1", "photo-2"], binding());
+    expect(linked.version).toBe(4); expect(linked.overview).toEqual(before.overview);
+    expect(linked.components[0]).toMatchObject({ notes: "Keep my note", status: "needs_view" });
+    expect(linked.components[0].scanGroups[0].binding).toEqual(binding());
+    expect(normalizeComponentMap(JSON.parse(JSON.stringify(linked)))).toEqual(linked);
+    expect(before.version).toBe(3); expect(before.components[0].scanGroups).toEqual([]);
+  });
+
+  it.each([null, {}, [], { ...binding(), version: "1" }, { ...binding(), extra: true },
+    { ...binding(), photoRelationship: undefined }, { ...binding(), photoRelationship: "same_car" },
+    { ...binding(), photos: [] }, { ...binding(), photos: Array(5).fill(binding().photos[0]) },
+    { ...binding(), photos: [binding().photos[0], binding().photos[0]] },
+    { ...binding(), photos: [{ ...binding().photos[0], extra: true }] },
+    { ...binding(), photos: [{ ...binding().photos[0], label: "confirmed_part" }] },
+    { ...binding(), photos: [{ ...binding().photos[0], source: { ...source(), sha256: "bad" } }] },
+  ])("rejects whole malformed group binding %# without dropping a photo", (value) => {
+    expect(normalizeComponentMapGroupBinding(value)).toBeUndefined();
+    const linked = linkComponentMapDocument(sourceMap(), target(), ["photo-1", "photo-2"], binding());
+    expect(normalizeComponentMap({ ...linked, components: [{ ...linked.components[0], scanGroups: [{ ...linked.components[0].scanGroups[0], binding: value }] }] })).toBeUndefined();
+  });
+
+  it("requires exact ordered IDs and preserves all allowed labels/relationships", () => {
+    expect(normalizeComponentMapGroupBinding(binding(), ["photo-2", "photo-1"])).toBeUndefined();
+    expect(normalizeComponentMapGroupBinding(binding(), ["photo-1"])).toBeUndefined();
+    for (const photoRelationship of ["same_part_or_area", "independent", "unknown"] as const) {
+      const value = { ...binding(), photoRelationship };
+      expect(normalizeComponentMapGroupBinding(value, ["photo-1", "photo-2"])).toEqual(value);
+    }
+    expect(componentMapGroupBindingsMatch(binding(), structuredClone(binding()))).toBe(true);
+    const reordered = binding(); reordered.photos.reverse();
+    expect(componentMapGroupBindingsMatch(binding(), reordered)).toBe(false);
+  });
+
+  it.each([1, 2, 3] as const)("rejects binding presence on version %s, including null", (version) => {
+    const linked = linkComponentMapDocument(sourceMap(), target(), ["photo-1", "photo-2"], binding());
+    linked.version = version; if (version < 3) delete linked.overview.source;
+    expect(normalizeComponentMap(linked)).toBeUndefined();
+    expect(normalizeComponentMap({ ...linked, components: [{ ...linked.components[0], scanGroups: [{ ...linked.components[0].scanGroups[0], binding: null }] }] })).toBeUndefined();
+  });
+
+  it("requires new v3/v4 binding, rejects new legacy binding and leaves old attempts unbound", () => {
+    expect(() => linkComponentMapDocument(sourceMap(), target(), ["photo-1", "photo-2"])).toThrow(/Verify the saved linked photos/);
+    expect(() => linkComponentMapDocument(map(), target(), ["photo-1", "photo-2"], binding())).toThrow(/legacy map/);
+    const old = linkComponentMapDocument(map(), target(), ["photo-1", "photo-2"]);
+    old.version = 3; old.overview.source = source();
+    expect(linkComponentMapDocument(old, target(), ["photo-1", "photo-2"], binding())).toEqual(old);
+    expect(old.components[0].scanGroups[0]).not.toHaveProperty("binding");
+  });
+
+  it("makes bound retries idempotent only for exact component, IDs and binding", () => {
+    const linked = linkComponentMapDocument(sourceMap(), target(), ["photo-1", "photo-2"], binding());
+    expect(linkComponentMapDocument(linked, target(), ["photo-1", "photo-2"], binding())).toEqual(linked);
+    expect(() => linkComponentMapDocument(linked, target(), ["photo-1", "photo-2"])).toThrow(/different evidence/);
+    const changed = binding(); changed.photos[0].source.sha256 = "c".repeat(64);
+    expect(() => linkComponentMapDocument(linked, target(), ["photo-1", "photo-2"], changed)).toThrow(/different evidence/);
+    expect(() => linkComponentMapDocument(linked, { ...target(), lookupId: "different" }, ["photo-1", "photo-2"], binding())).toThrow(/different evidence/);
+  });
+
+  it("permits component/group reorder and unrelated removals while rejecting moved or altered bindings", () => {
+    const before = linkComponentMapDocument(sourceMap(), target(), ["photo-1", "photo-2"], binding());
+    before.components.unshift({ ...map().components[0], id: "10000000-0000-4000-8000-000000000002", scanGroups: [] });
+    before.components[1].scanGroups.unshift({ linkId: "20000000-0000-4000-8000-000000000002", lookupId: "legacy", photoIds: ["old"] });
+    const reordered = structuredClone(before); reordered.components.reverse(); reordered.components[0].scanGroups.reverse();
+    expect(componentMapBindingsPreserved(before, reordered)).toBe(true);
+    reordered.components.pop(); expect(componentMapBindingsPreserved(before, reordered)).toBe(true);
+    for (const change of ["remove", "move", "hash", "label", "relationship", "order"] as const) {
+      const after = structuredClone(before), group = after.components[1].scanGroups[1];
+      if (change === "remove") after.components[1].scanGroups.pop();
+      if (change === "move") after.components[0].scanGroups.push(after.components[1].scanGroups.pop()!);
+      if (change === "hash") group.binding!.photos[0].source.sha256 = "c".repeat(64);
+      if (change === "label") group.binding!.photos[0].label = "other";
+      if (change === "relationship") group.binding!.photoRelationship = "unknown";
+      if (change === "order") { group.photoIds.reverse(); group.binding!.photos.reverse(); }
+      expect(componentMapBindingsPreserved(before, after), change).toBe(false);
+    }
+    const retrofitted = structuredClone(before); retrofitted.components[1].scanGroups[0].binding = { ...binding(), photos: [{ ...binding().photos[0], photoId: "old" }] };
+    expect(componentMapBindingsPreserved(before, retrofitted)).toBe(false);
+  });
+});
 
 describe("component map validation", () => {
   it("retains unknown locations without inventing geometry and strips unrelated fields", () => {

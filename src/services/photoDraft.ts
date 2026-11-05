@@ -168,13 +168,18 @@ export async function replacePhotoDraftIfMatches(previous: ScanPhoto[] | null, n
 
 // Compare the target as well as the evidence. An old tab cannot relabel, retarget,
 // or delete a newer component draft merely because its photo bytes are identical.
-export async function replacePhotoDraftEnvelopeIfMatches(previous: PhotoDraftEnvelope | null, next: PhotoDraftEnvelope | null, scope = getAccountScope(), kind: PhotoDraftKind = "upload"): Promise<boolean> {
+export async function replacePhotoDraftEnvelopeIfMatches(previous: PhotoDraftEnvelope | null, next: PhotoDraftEnvelope | null, scope = getAccountScope(), kind: PhotoDraftKind = "upload", mutationGuard?: () => void): Promise<boolean> {
   if ((previous !== null && !normalizePhotoDraft(previous)) || (next !== null && !normalizePhotoDraft(next))) {
     throw new Error("Choose one to four valid, labeled photos and a supported photo relationship. Your previous draft is preserved.");
   }
   const nextWrite = next === null ? null : upgradePhotoDraft(next);
   let matched = false;
-  await draftRequest("readwrite", (store, owner) => {
+  let mutationError: Error | undefined;
+  const assertMutation = () => {
+    // A Promise cannot authorize a mutation in this transaction's synchronous callback.
+    if (mutationGuard?.() !== undefined) throw new Error("Photo draft verification must complete synchronously. The draft was preserved.");
+  };
+  try { await draftRequest("readwrite", (store, owner) => {
     const key = `${owner}:${kind}`;
     const request = store.get(key);
     request.onsuccess = () => {
@@ -182,15 +187,21 @@ export async function replacePhotoDraftEnvelopeIfMatches(previous: PhotoDraftEnv
       const current = normalizePhotoDraft(request.result);
       matched = previous === null ? request.result === undefined : current !== null && photoDraftsMatch(previous, current);
       if (matched) {
-        if (nextWrite === null) {
-          if (request.result !== undefined) store.delete(key);
-        } else if (previous === null || !photoDraftsMatch(previous, nextWrite)) {
-          store.put(nextWrite, key);
+        try {
+          if (nextWrite === null) {
+            if (request.result !== undefined) { assertMutation(); store.delete(key); }
+          } else if (previous === null || !photoDraftsMatch(previous, nextWrite)) {
+            assertMutation(); store.put(nextWrite, key);
+          }
+        } catch (error) {
+          matched = false;
+          mutationError = error instanceof Error ? error : new Error("The saved evidence could not be verified. Its photo draft was preserved.");
+          store.transaction.abort();
         }
       }
     };
     return request;
-  }, scope);
+  }, scope); } catch (error) { throw mutationError ?? error; }
   return matched;
 }
 

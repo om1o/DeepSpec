@@ -11,7 +11,7 @@ import { ComponentMapReview } from "./ComponentMapReview";
 const mocks = vi.hoisted(() => ({
   read: vi.fn(), create: vi.fn(), update: vi.fn(), subscribe: vi.fn(),
   loadCloud: vi.fn(), syncCloud: vi.fn(), resolveCloud: vi.fn(), readLookup: vi.fn(), readLocalLookup: vi.fn(), navigate: vi.fn(),
-  subscribeLookups: vi.fn(), resolveOverview: vi.fn(), assertOverview: vi.fn(),
+  subscribeLookups: vi.fn(), resolveOverview: vi.fn(), assertOverview: vi.fn(), resolveLinked: vi.fn(),
   areaApply: undefined as ((box: VisualFocusBox) => void) | undefined,
 }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => mocks.navigate }));
@@ -19,6 +19,7 @@ vi.mock("../../services/storage", () => ({ getLookup: mocks.readLocalLookup, sub
 vi.mock("../../services/mapOverviewEvidence", () => ({
   resolveMapOverview: mocks.resolveOverview, assertMapOverviewGuardCurrent: mocks.assertOverview,
 }));
+vi.mock("../../services/linkedPhotoEvidence", () => ({ resolveLinkedPhotoGroup: mocks.resolveLinked }));
 vi.mock("../../services/componentMapStore", () => ({
   readComponentMap: mocks.read, createComponentMap: mocks.create, updateComponentMap: mocks.update, subscribeComponentMaps: mocks.subscribe,
 }));
@@ -72,7 +73,7 @@ beforeEach(() => {
   mocks.resolveOverview.mockImplementation(async (sourceLookup: Lookup, document?: ComponentMap): Promise<MapOverviewVerification> => {
     const image = sourceLookup.photos?.[0]?.imageBase64 ?? sourceLookup.frame.imageBase64;
     if (!image.startsWith("data:image/")) return { status: "verification_unavailable", message: "Saved overview image unavailable." };
-    if (document && document.version !== 3) return { status: "legacy_unverified", message: "Legacy overview source is unverified.", image };
+    if (document && document.version !== 3 && document.version !== 4) return { status: "legacy_unverified", message: "Legacy overview source is unverified.", image };
     return verified(sourceLookup);
   });
   mocks.read.mockResolvedValue(record());
@@ -106,6 +107,24 @@ function deferred<T>() {
 }
 
 describe("ComponentMapReview", () => {
+  it("opens bound v4 originals in the map and preserves their binding through a guarded note save", async () => {
+    const saved = record(); saved.document.version = 4;
+    const binding = { version: 1 as const, photoRelationship: "independent" as const, photos: [{ photoId: "detail", label: "close_up" as const, source }] };
+    saved.document.components[0].scanGroups = [{ linkId: uuid(500), lookupId: "component-scan", photoIds: ["detail"], binding }];
+    mocks.resolveLinked.mockResolvedValue({ legacy: false, photoRelationship: "independent", photos: [{ photoId: "detail", status: "missing_photo", message: "Original linked photo is missing." }] });
+    await ready(saved);
+    expect(screen.getByRole("button", { name: "Adjust map area" })).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: "Open photo group 1 (1 photos)" }));
+    expect(await screen.findByText("Original linked photo is missing.")).toBeInTheDocument();
+    expect(mocks.navigate).not.toHaveBeenCalled();
+    expect(mocks.readLookup).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Component notes"), { target: { value: "Retain the original linkage." } });
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await screen.findByText("Map saved on this device.");
+    expect(mocks.update.mock.calls[0][2].components[0].scanGroups[0].binding).toEqual(binding);
+    expect(mocks.update.mock.calls[0][4]).toEqual(expect.objectContaining(guard));
+  });
+
   it.each([1, 2] as const)("keeps version %s notes editable without displaying or adjusting unverified legacy areas", async (version) => {
     const saved = record(); saved.document.version = version;
     delete saved.document.overview.source;

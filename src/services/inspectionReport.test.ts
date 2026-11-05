@@ -75,6 +75,12 @@ function boundOverviewMap(): ComponentMapRecord {
   record.document.components[0].region = { sourcePhotoId: "photo-1", box };
   return record;
 }
+function boundLinkedMap(): ComponentMapRecord {
+  const record = boundOverviewMap(); record.document.version = 4;
+  record.document.components[0].scanGroups = [{ linkId: "10000000-0000-4000-8000-000000000001", lookupId: "detail", photoIds: ["one", "two"],
+    binding: { version: 1, photoRelationship: "independent", photos: ["one", "two"].map((photoId) => ({ photoId, label: "overview", source: { ...record.document.overview.source! } })) } }];
+  return record;
+}
 const rasterResponse = () => new Response(bytes.slice(), { status: 200, headers: { "Content-Type": "image/png" } });
 
 describe("saved inspection report collection", () => {
@@ -125,6 +131,60 @@ describe("saved inspection report collection", () => {
     });
   });
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+  it("verifies exact materialized linked rasters while preserving each association and historical metadata", async () => {
+    map = boundLinkedMap(); const detail = scan("detail", [photo("one"), photo("two")]); detail.photoRelationship = "same_part_or_area";
+    detail.photos![0].label = "marking"; local.push(detail);
+    const duplicate = structuredClone(map.document.components[0].scanGroups[0]); duplicate.linkId = "10000000-0000-4000-8000-000000000002";
+    map.document.components[0].scanGroups.push(duplicate);
+    const before = structuredClone(map), report = await collectInspectionReport("root");
+    expect(report.mapOverviewEvidence?.status).toBe("unchanged");
+    expect(report.map).toEqual(before);
+    expect(report.linkedPhotoEvidence).toHaveLength(4);
+    expect(report.linkedPhotoEvidence?.map((row) => [row.linkId, row.photoId, row.status, row.currentMetadataChanged])).toEqual([
+      [before.document.components[0].scanGroups[0].linkId, "one", "unchanged", true], [before.document.components[0].scanGroups[0].linkId, "two", "unchanged", true],
+      [duplicate.linkId, "one", "unchanged", true], [duplicate.linkId, "two", "unchanged", true],
+    ]);
+    expect(report.scans.find((entry) => entry.id === "detail")?.photos?.map((entry) => entry.imageBase64)).toEqual([image, image]);
+    expect(report.missing.filter((issue) => issue.kind === "map")).toEqual([]);
+  });
+
+  it.each(["pixels", "timestamp", "missing", "unavailable"])("reports only the affected linked photo for %s and retains its sibling and human records", async (change) => {
+    map = boundLinkedMap(); const detail = scan("detail", [photo("one"), photo("two")]); detail.photoRelationship = "independent";
+    if (change === "pixels") detail.photos![1].imageBase64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/bKkAAAAASUVORK5CYII=";
+    if (change === "timestamp") detail.photos![1].capturedAt = "2026-11-06T15:00:00.000Z";
+    if (change === "missing") detail.photos!.pop();
+    if (change === "unavailable") detail.photos![1].imageBase64 = "https://untrusted.example/photo.png";
+    local.push(detail); const before = structuredClone(map), report = await collectInspectionReport("root");
+    expect(report.map).toEqual(before);
+    expect(report.linkedPhotoEvidence).toEqual([
+      expect.objectContaining({ componentId: before.document.components[0].id, linkId: before.document.components[0].scanGroups[0].linkId, photoId: "one", status: "unchanged" }),
+      expect.objectContaining({ photoId: "two", status: change === "pixels" || change === "timestamp" ? "source_changed" : "missing_photo" }),
+    ]);
+    expect(report.missing).toContainEqual(expect.objectContaining({ kind: "map", lookupId: "detail", photoId: "two" }));
+    expect(report.scans.find((entry) => entry.id === "detail")?.photos?.[0].imageBase64).toBe(image);
+    if (change === "unavailable") expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps missing scans and mixed legacy groups explicit without inventing bindings", async () => {
+    map = boundLinkedMap();
+    map.document.components[0].scanGroups.push({ linkId: "10000000-0000-4000-8000-000000000002", lookupId: "root", photoIds: ["photo-1"] });
+    const report = await collectInspectionReport("root");
+    expect(report.linkedPhotoEvidence?.map((row) => row.status)).toEqual(["missing_photo", "missing_photo", "legacy_unverified"]);
+    expect(report.map?.document.components[0].scanGroups[1]).not.toHaveProperty("binding");
+  });
+
+  it.each(["lookup", "map", "account", "cancel"])("rejects a %s change during linked evidence verification before the final snapshot", async (change) => {
+    map = boundLinkedMap(); local.push(scan("detail", [photo("one"), photo("two")]));
+    const controller = new AbortController();
+    await expect(collectInspectionReport("root", { signal: controller.signal, onProgress: (message) => {
+      if (message !== "Checking embedded linked component photos…") return;
+      if (change === "lookup") local[1].notes = "newer human detail note";
+      if (change === "map") { map!.localRevision += 1; map!.document.components[0].notes = "newer map note"; }
+      if (change === "account") setActiveAccount("other-owner");
+      if (change === "cancel") controller.abort();
+    } })).rejects.toThrow(change === "account" ? /Account changed/ : change === "cancel" ? /canceled/ : /records changed/);
+  });
 
   it("verifies the exact materialized v3 overview while preserving its immutable map and human records", async () => {
     vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false"); map = boundOverviewMap();

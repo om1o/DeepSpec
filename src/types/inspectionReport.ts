@@ -24,6 +24,15 @@ export type InspectionReportSnapshot = {
   rootLookupId: string;
   map: ComponentMapRecord | null;
   mapOverviewEvidence?: MapOverviewReportEvidence;
+  linkedPhotoEvidence?: {
+    componentId: string;
+    linkId: string;
+    lookupId: string;
+    photoId: string;
+    status: MapOverviewReportEvidence["status"];
+    message: string;
+    currentMetadataChanged?: boolean;
+  }[];
   scans: Lookup[];
   missing: InspectionReportIssue[];
   embeddedBytes: number;

@@ -65,11 +65,11 @@ function failure(error: unknown, scope: AccountScope, signal?: AbortSignal): Map
 async function inspect(lookup: Lookup, document: ComponentMap | undefined, photoId: string, scope: AccountScope, signal?: AbortSignal, refresh?: () => Promise<string>): Promise<MapOverviewVerification> {
   guardOriginalEvidence(scope, signal);
   const photo = selectedPhoto(lookup, photoId), timestamps = dates(lookup, photo);
-  if (document?.version === 3 && (document.overview.source!.photoAddedAt !== timestamps.photoAddedAt || document.overview.source!.scanSavedAt !== timestamps.scanSavedAt)) throw changedOriginal();
+  if (document && (document.version === 3 || document.version === 4) && (document.overview.source!.photoAddedAt !== timestamps.photoAddedAt || document.overview.source!.scanSavedAt !== timestamps.scanSavedAt)) throw changedOriginal();
   const image = await inspectOriginalImage(photo.imageBase64, lookup.id, scope, signal, refresh);
   const source = normalizeMapOverviewSource({ sha256: image.sha256, width: image.width, height: image.height, ...timestamps });
   if (!source) throw unavailableOriginal();
-  if (document && document.version !== 3) return { status: "legacy_unverified", image: image.image,
+  if (document && document.version !== 3 && document.version !== 4) return { status: "legacy_unverified", image: image.image,
     message: "This legacy map has no historical overview fingerprint. The unannotated saved image is available; its old outlines have not been verified or rebound." };
   if (document && !mapOverviewSourcesMatch(document.overview.source, source)) throw changedOriginal();
   return { status: "unchanged", image: image.image, source,
@@ -125,7 +125,7 @@ export function assertMapOverviewGuardCurrent(guard: MapOverviewSaveGuard, docum
   if (!issued || issued.scope.userId !== scope.userId || issued.scope.generation !== scope.generation || JSON.stringify(guard) !== issued.proof) throw unavailableOriginal();
   guardOriginalEvidence(issued.scope);
   const checked = normalizeComponentMap(document);
-  if (!checked || checked.version !== 3 || checked.id !== guard.lookupId || checked.overview.photoId !== guard.photoId
+  if (!checked || (checked.version !== 3 && checked.version !== 4) || checked.id !== guard.lookupId || checked.overview.photoId !== guard.photoId
     || !mapOverviewSourcesMatch(checked.overview.source, guard.source)) throw changedOriginal();
   if (sourceSignature(localLookup(guard.lookupId, scope), guard.photoId, scope) !== guard.deviceSignature) throw changedOriginal();
 }

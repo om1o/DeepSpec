@@ -1,6 +1,13 @@
-import { describe, expect, it } from "vitest";
-import { hasPhotoDraftComparison, hasPhotoDraftContext, normalizePhotoDraft, photoDraftsMatch, upgradePhotoDraft, type PhotoDraftEnvelope } from "./photoDraft";
-import type { ScanPhoto } from "../types";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getAccountScope, setActiveAccount } from "../lib/accountScope";
+const mocks = vi.hoisted(() => ({ open: vi.fn(), read: vi.fn(), get: vi.fn() }));
+vi.mock("./evidenceDb", async (importOriginal) => ({ ...(await importOriginal<typeof import("./evidenceDb")>()), openEvidenceDatabase: mocks.open }));
+vi.mock("./storage", () => ({ readLookups: mocks.read, getLookup: mocks.get }));
+vi.mock("./componentMapStore", () => ({ readComponentMap: vi.fn(), linkComponentMap: vi.fn() }));
+vi.mock("./cloudHistory", () => ({ readCloudLookupForReport: vi.fn() }));
+import { hasPhotoDraftComparison, hasPhotoDraftContext, normalizePhotoDraft, photoDraftsMatch, replacePhotoDraftEnvelopeIfMatches, upgradePhotoDraft, type PhotoDraftEnvelope } from "./photoDraft";
+import { assertComponentCaptureCurrent } from "./componentCaptureCompletion";
+import type { Lookup, ScanPhoto } from "../types";
 import type { ComparisonCaptureTarget } from "../types/inspectionComparison";
 
 const photos: ScanPhoto[] = [{ id: "overview", label: "overview", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,cGhvdG8=" }];
@@ -114,5 +121,77 @@ describe("photo draft envelopes", () => {
     expect(photoDraftsMatch(repeat, { ...repeat, vehicleContext: { model: "Other car" } })).toBe(false);
     expect(photoDraftsMatch(repeat, { ...repeat, jobId: "another-job" })).toBe(false);
     expect(photoDraftsMatch(repeat, structuredClone(repeat))).toBe(true);
+  });
+});
+
+describe("queued photo-draft mutation guards", () => {
+  let stored: PhotoDraftEnvelope | undefined, release: (() => void) | undefined, saved: Lookup, local: Lookup | null;
+  let deletes: ReturnType<typeof vi.fn>, writes: ReturnType<typeof vi.fn>, abort: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    vi.clearAllMocks(); setActiveAccount("owner"); vi.stubGlobal("indexedDB", {}); release = undefined;
+    stored = upgradePhotoDraft(draft);
+    saved = { id: "detail", createdAt: "2026-11-05T00:00:00Z", frame: photos[0], photos: structuredClone(photos), photoRelationship: "unknown",
+      notes: "", correction: null, rating: null, chatHistory: [], scanCategory: "engine", trainingLabel: "", trainingStatus: "raw_unreviewed",
+      vehicleContext: { model: "Original car" }, jobId: "job-a", provenance: { captureMode: "upload", analysisSource: "ai_detection", savedAt: "2026-11-05T00:00:00Z" } };
+    local = structuredClone(saved);
+    mocks.read.mockImplementation(() => ({ ok: true, value: local ? [structuredClone(local)] : [] }));
+    mocks.get.mockImplementation((id: string, values: Lookup[]) => values.find((entry) => entry.id === id) ?? null);
+    // Controlled IDB request boundary: mutations remain staged until oncomplete;
+    // an abort discards them. Native acceptance separately exercises real IDB.
+    mocks.open.mockImplementation(async () => ({ close: vi.fn(), transaction: () => {
+      let aborted = false, staged: PhotoDraftEnvelope | undefined;
+      const request = { result: undefined as unknown, onsuccess: null as (() => void) | null };
+      const transaction = { oncomplete: null as (() => void) | null, onabort: null as (() => void) | null, onerror: null as (() => void) | null,
+        abort: () => {}, objectStore: () => ({}) };
+      abort = vi.fn(() => { aborted = true; queueMicrotask(() => transaction.onabort?.()); }); transaction.abort = abort;
+      deletes = vi.fn(() => { staged = undefined; }); writes = vi.fn((value: PhotoDraftEnvelope) => { staged = structuredClone(value); });
+      transaction.objectStore = () => ({ transaction, delete: deletes, put: writes, get: () => {
+        release = () => { request.result = structuredClone(stored); staged = structuredClone(stored); request.onsuccess?.();
+          if (!aborted) { stored = staged; transaction.oncomplete?.(); } };
+        return request;
+      } });
+      return transaction;
+    } }));
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it.each(["photo", "date", "relationship", "vehicle", "job", "delete", "cancel"])("preserves the matching draft if %s changes while its read is queued", async (kind) => {
+    const snapshot = structuredClone(saved), before = structuredClone(stored), controller = new AbortController(), scope = getAccountScope();
+    const pending = replacePhotoDraftEnvelopeIfMatches(before!, null, scope, "upload", () => assertComponentCaptureCurrent(snapshot, scope, controller.signal));
+    const rejected = expect(pending).rejects.toThrow();
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    if (kind === "photo") local!.photos![0].imageBase64 = "data:image/jpeg;base64,bmV3";
+    else if (kind === "date") local!.photos![0].capturedAt = "2026-11-04T00:00:00Z";
+    else if (kind === "relationship") local!.photoRelationship = "independent";
+    else if (kind === "vehicle") local!.vehicleContext = { model: "Another car" };
+    else if (kind === "job") local!.jobId = "job-b";
+    else if (kind === "delete") local = null;
+    else controller.abort();
+    release!(); await rejected;
+    expect(abort).toHaveBeenCalledOnce(); expect(deletes).not.toHaveBeenCalled(); expect(writes).not.toHaveBeenCalled(); expect(stored).toEqual(before);
+  });
+
+  it("skips a stale retirement guard and leaves a newer draft intact", async () => {
+    const before = structuredClone(stored), guard = vi.fn(() => { throw new Error("Must not run for a stale draft"); });
+    const pending = replacePhotoDraftEnvelopeIfMatches(before!, null, getAccountScope(), "upload", guard);
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    stored = { ...before!, target: { ...before!.target!, linkAttemptId: "00000000-0000-4000-8000-000000000099" } };
+    const newer = structuredClone(stored); release!();
+    expect(await pending).toBe(false); expect(guard).not.toHaveBeenCalled(); expect(deletes).not.toHaveBeenCalled(); expect(stored).toEqual(newer);
+  });
+
+  it("checks immediately before deletion and retires only unchanged saved evidence", async () => {
+    const scope = getAccountScope(), guard = vi.fn(() => { expect(deletes).not.toHaveBeenCalled(); assertComponentCaptureCurrent(saved, scope); });
+    const pending = replacePhotoDraftEnvelopeIfMatches(stored!, null, scope, "upload", guard);
+    await vi.waitFor(() => expect(release).toBeTypeOf("function")); release!();
+    expect(await pending).toBe(true); expect(guard).toHaveBeenCalledOnce(); expect(deletes).toHaveBeenCalledWith("owner:upload"); expect(stored).toBeUndefined();
+  });
+
+  it("also aborts a matching replacement when its synchronous guard fails", async () => {
+    const before = structuredClone(stored), next = { ...before!, photos: [{ ...photos[0], label: "close_up" as const }] };
+    const pending = replacePhotoDraftEnvelopeIfMatches(before!, next, getAccountScope(), "upload", () => { throw new Error("Evidence changed before write"); });
+    const rejected = expect(pending).rejects.toThrow("Evidence changed before write");
+    await vi.waitFor(() => expect(release).toBeTypeOf("function")); release!(); await rejected;
+    expect(writes).not.toHaveBeenCalled(); expect(stored).toEqual(before);
   });
 });

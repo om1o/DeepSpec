@@ -89,6 +89,109 @@ describe("component-map cloud concurrency and evidence", () => {
     mocks.cloudLookup.mockResolvedValue({ ok: true, value: structuredClone(source) });
     return source;
   }
+  function bindLinkedPhotos() {
+    const overview = bindOverview(); current!.document.version = 4;
+    const detail: Lookup = { ...lookup("detail"), photoRelationship: "independent", photos: [
+      { id: "one", label: "overview", imageBase64: boundImage, capturedAt: boundSource.photoAddedAt },
+      { id: "two", label: "marking", imageBase64: boundImage, capturedAt: boundSource.photoAddedAt },
+    ] };
+    current!.document.components[0].scanGroups = [{ linkId: componentId, lookupId: "detail", photoIds: ["one", "two"],
+      binding: { version: 1, photoRelationship: "independent", photos: detail.photos!.map((photo) => ({ photoId: photo.id, label: photo.label, source: { ...boundSource } })) } }];
+    mocks.lookup.mockImplementation((id) => structuredClone(id === "detail" ? detail : overview));
+    mocks.cloudLookup.mockImplementation(async (id) => ({ ok: true, value: structuredClone(id === "detail" ? detail : overview) }));
+    return { overview, detail };
+  }
+
+  it.each([3, 4] as const)("does not repair-upload an existing v%s bound overview whose original photo ID is missing", async (version) => {
+    const local = bindOverview(); current!.document.version = version;
+    const remoteOverview: Lookup = { ...structuredClone(local), photos: [{ ...local.frame, id: "replacement", label: "overview" }] };
+    mocks.cloudLookup.mockResolvedValue({ ok: true, value: remoteOverview });
+    const before = structuredClone(current!.document);
+    expect(await syncComponentMapToCloud("overview", 1)).toMatchObject({ ok: false, message: expect.stringContaining("not overwritten") });
+    expect(mocks.syncLookup).not.toHaveBeenCalled(); expect(mocks.lookup).not.toHaveBeenCalled();
+    expect(insert).not.toHaveBeenCalled(); expect(update).not.toHaveBeenCalled();
+    expect(current?.document).toEqual(before); expect(current?.syncAttempt).toBeUndefined();
+    expect(local.frame.imageBase64).toBe(boundImage);
+  });
+
+  it("verifies actual v4 cloud linked photos and preserves distinct associations sharing one binding", async () => {
+    bindLinkedPhotos();
+    const group = current!.document.components[0].scanGroups[0];
+    current!.document.components[0].scanGroups.push({ ...structuredClone(group), linkId: "22222222-2222-4222-8222-222222222222" });
+    const before = structuredClone(current!.document);
+    expect(await syncComponentMapToCloud("overview", 1)).toMatchObject({ ok: true });
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ document_json: before }));
+    expect(mocks.cloudLookup.mock.calls.map(([id]) => id)).toEqual(["overview", "detail"]);
+    expect(mocks.syncLookup).not.toHaveBeenCalled(); expect(mocks.lookup).not.toHaveBeenCalled();
+  });
+
+  it.each(["pixels", "timestamp", "order", "missing", "empty photos"])("blocks v4 cloud writes for changed linked %s without overwriting a matching local copy", async (change) => {
+    const { overview, detail } = bindLinkedPhotos(), remoteDetail = structuredClone(detail);
+    if (change === "pixels") remoteDetail.photos![1].imageBase64 = `data:image/png;base64,${OTHER_PNG}`;
+    if (change === "timestamp") remoteDetail.photos![1].capturedAt = "2026-11-06T00:00:00.000Z";
+    if (change === "order") remoteDetail.photos!.reverse();
+    if (change === "missing") remoteDetail.photos!.pop();
+    if (change === "empty photos") remoteDetail.photos = [];
+    mocks.cloudLookup.mockImplementation(async (id) => ({ ok: true, value: id === "detail" ? remoteDetail : overview }));
+    const before = structuredClone(current!.document);
+    expect(await syncComponentMapToCloud("overview", 1)).toMatchObject({ ok: false });
+    expect(insert).not.toHaveBeenCalled(); expect(update).not.toHaveBeenCalled(); expect(mocks.syncLookup).not.toHaveBeenCalled();
+    expect(current?.document).toEqual(before); expect(current?.syncAttempt).toBeUndefined();
+    expect(detail.photos![1].imageBase64).toBe(boundImage);
+  });
+
+  it.each([true, false])("verifies linked remote bytes after an absent scan upload (matching=%s)", async (matching) => {
+    const { overview, detail } = bindLinkedPhotos(); let detailReads = 0;
+    const remoteDetail = structuredClone(detail);
+    if (!matching) remoteDetail.photos![1].imageBase64 = `data:image/png;base64,${OTHER_PNG}`;
+    mocks.cloudLookup.mockImplementation(async (id) => ({ ok: true, value: id === "overview" ? overview : ++detailReads === 1 ? null : remoteDetail }));
+    expect(await syncComponentMapToCloud("overview", 1)).toMatchObject({ ok: matching });
+    expect(mocks.syncLookup).toHaveBeenCalledOnce(); expect(mocks.syncLookup).toHaveBeenCalledWith(detail);
+    expect(insert).toHaveBeenCalledTimes(matching ? 1 : 0);
+    expect(current?.document.components[0].scanGroups[0].binding?.photos[1].source).toEqual(boundSource);
+  });
+
+  it("keeps historical link metadata when current labels and relationship change without changing files", async () => {
+    const { overview, detail } = bindLinkedPhotos(), remoteDetail = structuredClone(detail);
+    remoteDetail.photoRelationship = "same_part_or_area"; remoteDetail.photos![0].label = "close_up";
+    mocks.cloudLookup.mockImplementation(async (id) => ({ ok: true, value: id === "overview" ? overview : remoteDetail }));
+    expect(await syncComponentMapToCloud("overview", 1)).toMatchObject({ ok: true });
+    expect(current?.document.components[0].scanGroups[0].binding).toMatchObject({ photoRelationship: "independent", photos: [{ label: "overview" }, { label: "marking" }] });
+  });
+
+  it("checks bytes fetched from the actual bound linked cloud object instead of substituting its device copy", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
+    const { overview, detail } = bindLinkedPhotos(), remoteDetail = structuredClone(detail);
+    remoteDetail.photos![1].imageBase64 = "https://project.supabase.co/storage/v1/object/sign/scan-images/owner/detail/two.png?token=fixture";
+    mocks.cloudLookup.mockImplementation(async (id) => ({ ok: true, value: id === "overview" ? overview : remoteDetail }));
+    const fetch = vi.fn(async () => new Response(Uint8Array.from(Buffer.from(OTHER_PNG, "base64")), { status: 200, headers: { "content-type": "image/png" } }));
+    vi.stubGlobal("fetch", fetch);
+    expect(await syncComponentMapToCloud("overview", 1)).toMatchObject({ ok: false });
+    expect(fetch).toHaveBeenCalledWith(remoteDetail.photos![1].imageBase64, expect.objectContaining({ credentials: "omit", redirect: "error", cache: "no-store" }));
+    expect(insert).not.toHaveBeenCalled(); expect(mocks.syncLookup).not.toHaveBeenCalled(); expect(mocks.lookup).not.toHaveBeenCalled();
+  });
+
+  it("fails before evidence requests or writes when a map exceeds the 250-scan cloud verification bound", async () => {
+    current!.document.components = Array.from({ length: 3 }, (_, componentIndex) => ({
+      id: `11111111-1111-4111-8111-${String(componentIndex).padStart(12, "0")}`, label: "Component", status: "needs_view", notes: "retained", scanGroups:
+        Array.from({ length: componentIndex === 2 ? 50 : 100 }, (_, groupIndex) => {
+          const index = componentIndex * 100 + groupIndex;
+          return { linkId: `22222222-2222-4222-8222-${String(index).padStart(12, "0")}`, lookupId: `detail-${index}`, photoIds: ["photo-1"] };
+        }),
+    }));
+    expect(await syncComponentMapToCloud("overview", 1)).toMatchObject({ ok: false, message: expect.stringContaining("250 scans") });
+    expect(mocks.cloudLookup).not.toHaveBeenCalled(); expect(insert).not.toHaveBeenCalled(); expect(current?.syncAttempt).toBeUndefined();
+  });
+
+  it("does not write or acknowledge after the account changes during linked photo decoding", async () => {
+    bindLinkedPhotos(); let decoded = 0;
+    vi.stubGlobal("Image", class {
+      naturalWidth = 1; naturalHeight = 1; onload: (() => void) | null = null; onerror: (() => void) | null = null;
+      set src(value: string) { if (value) queueMicrotask(() => { if (++decoded === 2) setActiveAccount("other-owner"); this.onload?.(); }); }
+    });
+    expect(await syncComponentMapToCloud("overview", 1)).toMatchObject({ ok: false });
+    expect(insert).not.toHaveBeenCalled(); expect(update).not.toHaveBeenCalled(); expect(current?.cloudRevision).toBeNull();
+  });
 
   it("writes a v3 map only after its actual cloud overview bytes match the immutable binding", async () => {
     bindOverview();

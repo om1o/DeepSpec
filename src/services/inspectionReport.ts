@@ -21,6 +21,7 @@ import { verifyDiagnosticDocument } from "../lib/diagnosticReport";
 import { readDiagnosticBundle } from "./diagnosticReportStore";
 import { readCloudDiagnosticBundle } from "./diagnosticReportCloud";
 import { verifyMapOverviewImage } from "./mapOverviewEvidence";
+import { verifyLinkedPhotoGroup, type LinkedPhotoGroupVerification } from "./linkedPhotoEvidence";
 
 export const INSPECTION_REPORT_MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 export const INSPECTION_REPORT_MAX_TOTAL_BYTES = 32 * 1024 * 1024;
@@ -280,7 +281,7 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
     const slots = imageReferences(scan);
     imageSlots += slots.length;
     if (imageSlots > MAX_IMAGE_SLOTS) throw limitError();
-    const actualPhotos = new Set(scan.photos?.length ? scan.photos.map((photo) => photo.id) : ["photo-1"]);
+    const actualPhotos = new Set(scan.photos !== undefined ? scan.photos.map((photo) => photo.id) : ["photo-1"]);
     for (const photoId of new Set(serviceRecords.flatMap((record) => record.photoIds))) if (!actualPhotos.has(photoId)) missing.push({ kind: "photo", lookupId: id, photoId, message: "A human-service entry references this original photo, which is no longer present in the saved scan. The entry and its original reference are retained." });
     for (const photoId of expectedPhotos) if (!actualPhotos.has(photoId)) missing.push({ kind: "photo", lookupId: id, photoId, message: "This original photo ID is missing from the linked saved scan. A different photo was not substituted." });
     const needsRefresh = local && slots.some((slot) => ownedSignedUrl(slot.source, id, scope.userId!, configuredOrigin));
@@ -316,7 +317,7 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
   if (map) {
     progress("Checking the embedded component-map overview…");
     const overview = scans.find((entry) => entry.id === map!.document.overview.lookupId);
-    if (map.document.version !== 3) {
+    if (map.document.version !== 3 && map.document.version !== 4) {
       mapOverviewEvidence = { status: "legacy_unverified", message: "This legacy map has no recorded overview fingerprint. Its component records are retained, but historical map outlines cannot be verified and are hidden." };
     } else if (!overview) {
       mapOverviewEvidence = { status: "missing_photo", message: "The bound component-map overview is unavailable. Component records are retained and map outlines are hidden." };
@@ -333,6 +334,42 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
     }
     if (mapOverviewEvidence.status !== "unchanged") missing.push({ kind: "map", lookupId: map.document.overview.lookupId,
       photoId: map.document.overview.photoId, message: mapOverviewEvidence.message });
+  }
+  const linkedPhotoEvidence: NonNullable<InspectionReportSnapshot["linkedPhotoEvidence"]> = [];
+  if (map) {
+    progress("Checking embedded linked component photos…");
+    const verifiedGroups = new Map<string, LinkedPhotoGroupVerification>();
+    const scanById = new Map(scans.map((scan) => [scan.id, scan]));
+    for (const component of map.document.components) for (const group of component.scanGroups) {
+      check();
+      const key = JSON.stringify([group.lookupId, group.photoIds, group.binding]);
+      let verification = verifiedGroups.get(key);
+      if (!verification) {
+        if (verifiedGroups.size >= 1000) throw new ReportError(true, "This report exceeds the linked-photo verification limit (1,000 distinct groups). Export a smaller inspection; no partial report was prepared.");
+        try {
+          verification = await wait((signal) => verifyLinkedPhotoGroup(scanById.get(group.lookupId) ?? null, group, scope, signal));
+        } catch (error) {
+          rethrowFatal(error);
+          verification = { legacy: !group.binding, photoRelationship: group.binding?.photoRelationship ?? "unknown",
+            photos: group.photoIds.map((photoId) => ({ photoId, status: group.binding ? "verification_unavailable" as const : "legacy_unverified" as const,
+              message: "This linked photo could not be verified. Its historical association is retained without substituting another image." })) };
+        }
+        // Scans already own the embedded rasters. Cache verification metadata
+        // only, so repeated historical bindings cannot retain extra image copies.
+        verification = { ...verification, photos: verification.photos.map((photo) => ({ ...photo, image: undefined })) };
+        verifiedGroups.set(key, verification);
+      }
+      for (const photoId of group.photoIds) {
+        const matches = verification.photos.filter((photo) => photo.photoId === photoId);
+        const photo = matches.length === 1 ? matches[0] : undefined;
+        const status = !group.binding ? "legacy_unverified" : photo?.status ?? "verification_unavailable";
+        const message = photo?.message ?? "This linked photo could not be verified. Its historical association is retained.";
+        linkedPhotoEvidence.push({ componentId: component.id, linkId: group.linkId, lookupId: group.lookupId, photoId, status, message,
+          ...(photo?.currentMetadataChanged ? { currentMetadataChanged: true } : {}) });
+        if (group.binding && status !== "unchanged") missing.push({ kind: "map", lookupId: group.lookupId, photoId,
+          message: "A bound linked component photo is changed, missing, or unavailable. Its historical link and human notes are retained; a different image is not substituted." });
+      }
+    }
   }
   progress("Checking originals used by dated comparisons…");
   for (const log of comparisonLogs) for (const record of log.records) for (const sideName of ["earlier", "current"] as const) {
@@ -392,7 +429,7 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
   for (const [id, before] of localSignatures) if (JSON.stringify(getLookup(id, finalRead.value)) !== before) throw staleError();
   check();
   return { version: 1, createdAt: new Date().toISOString(), rootLookupId, map: map ? structuredClone(map) : null,
-    ...(mapOverviewEvidence ? { mapOverviewEvidence } : {}), scans, missing, embeddedBytes, serviceLogs, comparisonLogs, comparisonEvidence, diagnosticLogs, diagnosticEvidence };
+    ...(mapOverviewEvidence ? { mapOverviewEvidence } : {}), ...(map ? { linkedPhotoEvidence } : {}), scans, missing, embeddedBytes, serviceLogs, comparisonLogs, comparisonEvidence, diagnosticLogs, diagnosticEvidence };
 }
 
 function storageOrigin(): string | null {
