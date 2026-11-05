@@ -38,11 +38,11 @@ type StorageResult<T> =
       value: T;
     };
 
-export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup> {
+export function createLookup(scanState: ScanAnalysisState, reservedId?: string): StorageResult<Lookup> {
   const createdAt = new Date().toISOString();
   const evidence = normalizeVisualEvidence(scanState);
   const lookup: Lookup = {
-    id: createId(),
+    id: reservedId ?? createId(),
     createdAt,
     frame: scanState.frame,
     ...(normalizeVisualFocusBox(scanState.focusBox) ? { focusBox: normalizeVisualFocusBox(scanState.focusBox) } : {}),
@@ -76,8 +76,21 @@ export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup
   };
 
   if (!evidence) return { ok: false, value: lookup, message: "Photo evidence could not be saved safely. Keep this scan open and retry." };
+  if (reservedId !== undefined && !/^[a-zA-Z0-9._:-]{1,160}$/.test(reservedId)) {
+    return { ok: false, value: lookup, message: "This saved component draft has an invalid scan reference. Its photos were kept for recovery." };
+  }
   const read = readLookups();
   if (!read.ok) return { ok: false, message: read.message, value: lookup };
+  const existing = reservedId ? read.value.find((item) => item.id === reservedId) : undefined;
+  if (existing) {
+    const samePhotos = existing.photos && lookup.photos
+      ? existing.photos.length === lookup.photos.length && existing.photos.every((photo, index) => {
+        const other = lookup.photos![index];
+        return photo.id === other.id && photo.label === other.label && photo.capturedAt === other.capturedAt && photo.imageBase64 === other.imageBase64;
+      }) : !existing.photos && !lookup.photos && existing.frame.imageBase64 === lookup.frame.imageBase64 && existing.frame.capturedAt === lookup.frame.capturedAt;
+    return samePhotos ? { ok: true, value: existing }
+      : { ok: false, value: lookup, message: "This component draft refers to a different saved scan. Existing photos were preserved; reopen the component map." };
+  }
   const lookups = [lookup, ...read.value];
   const writeResult = writeLookups(lookups);
 

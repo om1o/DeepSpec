@@ -14,6 +14,7 @@ import { PhotoEvidenceStrip } from "../components/result/PhotoEvidenceStrip";
 import { ScanSources } from "../components/result/ScanSources";
 import { PartInspectionForm } from "../components/result/PartInspectionForm";
 import { ConditionEvidenceReview } from "../components/result/ConditionEvidenceReview";
+import { ComponentMapReview } from "../components/result/ComponentMapReview";
 import { TrainingConsentPanel } from "../components/result/TrainingConsentPanel";
 import { IntakeDraft } from "../components/result/IntakeDraft";
 import { ScanDebugOverlay } from "../components/result/ScanDebugOverlay";
@@ -450,6 +451,7 @@ function ResultView({ id }: { id: string | undefined }) {
             photoCanvasRef.current?.focus({ preventScroll: true });
             photoCanvasRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
           }} /> : null}
+          {inspectionLookup ? <ComponentMapReview key={`component-map:${inspectionLookup.id}`} lookup={inspectionLookup} /> : null}
           {inspectionLookup ? <PartInspectionForm key={inspectionLookup.id} lookup={inspectionLookup} onSaved={(saved) => setLookup({
             ...saved,
             ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
