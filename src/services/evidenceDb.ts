@@ -1,11 +1,13 @@
 export const EVIDENCE_DATABASE_NAME = "deep-spec-evidence";
-export const EVIDENCE_DATABASE_VERSION = 5;
+export const EVIDENCE_DATABASE_VERSION = 6;
 export const PHOTO_DRAFT_STORE = "photo-drafts";
 export const COMPONENT_MAP_STORE = "component-maps";
 export const SERVICE_RECORD_STORE = "service-records";
 export const SERVICE_RECORD_DRAFT_STORE = "service-record-drafts";
 export const INSPECTION_COMPARISON_STORE = "inspection-comparisons";
 export const COMPARISON_DRAFT_STORE = "comparison-drafts";
+export const DIAGNOSTIC_REPORT_STORE = "diagnostic-reports";
+export const DIAGNOSTIC_DRAFT_STORE = "diagnostic-drafts";
 export const EVIDENCE_STORAGE_TIMEOUT_MS = 15_000;
 
 // Every caller closes its connection after its transaction. A version change must
@@ -27,7 +29,7 @@ export function openEvidenceDatabase(): Promise<IDBDatabase> {
     request.onupgradeneeded = () => {
       // An abandoned open must not migrate storage after the caller has failed.
       if (settled) { request.transaction?.abort(); return; }
-      for (const store of [PHOTO_DRAFT_STORE, COMPONENT_MAP_STORE, SERVICE_RECORD_STORE, SERVICE_RECORD_DRAFT_STORE, INSPECTION_COMPARISON_STORE, COMPARISON_DRAFT_STORE]) {
+      for (const store of [PHOTO_DRAFT_STORE, COMPONENT_MAP_STORE, SERVICE_RECORD_STORE, SERVICE_RECORD_DRAFT_STORE, INSPECTION_COMPARISON_STORE, COMPARISON_DRAFT_STORE, DIAGNOSTIC_REPORT_STORE, DIAGNOSTIC_DRAFT_STORE]) {
         if (!request.result.objectStoreNames.contains(store)) request.result.createObjectStore(store);
       }
     };

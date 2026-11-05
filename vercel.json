@@ -8,7 +8,8 @@
       "codex/car-vehicle-context-20261105": false,
       "codex/car-mechanic-handoff-20261105": false,
       "codex/car-inspection-followup-20261105": false,
-      "codex/car-dated-comparisons-20261105": false
+      "codex/car-dated-comparisons-20261105": false,
+      "codex/car-diagnostic-imports-20261105": false
     }
   },
   "functions": {
