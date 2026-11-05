@@ -16,7 +16,8 @@
       "codex/car-isolation-integrity-20261105": false,
       "codex/car-photo-relationships-20261105": false,
       "codex/car-photo-review-20261105": false,
-      "codex/car-map-occurrences-20261105": false
+      "codex/car-map-occurrences-20261105": false,
+      "codex/car-map-source-20261105": false
     }
   },
   "functions": {

@@ -15,6 +15,7 @@ const publicWriteHardeningSqlTestPath = join(process.cwd(), "supabase", "tests",
 const releaseSecurityOptimizationMigrationPath = join(migrationsDir, "20261101121627_optimize_release_security.sql");
 const componentMapMigrationPath = join(migrationsDir, "20261105091323_component_maps.sql");
 const componentMapOccurrencesMigrationPath = join(migrationsDir, "20261105211101_component_map_occurrences.sql");
+const componentMapOverviewSourceMigrationPath = join(migrationsDir, "20261105213351_component_map_overview_source.sql");
 const srcPath = join(process.cwd(), "src");
 
 describe("Supabase secure foundation migration", () => {
@@ -225,6 +226,51 @@ describe("Supabase billing webhook idempotency migration", () => {
     expect(regression).toContain("if event_count <> 1");
     expect(regression).toContain("'public.billing_purchase_events', 'truncate'");
     expect(regression).toContain("rollback;");
+  });
+});
+
+describe("Supabase component-map overview source migration", () => {
+  const sql = readFileSync(componentMapOverviewSourceMigrationPath, "utf8").replace(/\r\n/g, "\n");
+  const previous = readFileSync(componentMapOccurrencesMigrationPath, "utf8").replace(/\r\n/g, "\n");
+
+  it("requires an exact v3 source and rejects binding metadata on legacy documents", () => {
+    expect(sql).toContain("if doc->'version' = '3'::jsonb then");
+    expect(sql).toContain("jsonb_typeof(overview_source) is distinct from 'object'");
+    expect(sql).toContain("overview_source - array['sha256', 'width', 'height', 'photoAddedAt', 'scanSavedAt']");
+    expect(sql).toContain("overview_source->>'sha256' ~ '^[a-f0-9]{64}$'");
+    expect(sql).toContain("elsif (doc->'overview') ? 'source' then");
+    expect(sql).toContain("raise exception 'invalid_component_map_legacy_source'");
+  });
+
+  it("bounds decoded integer dimensions and canonical UTC millisecond timestamps", () => {
+    for (const field of ["width", "height"]) {
+      expect(sql).toContain(`jsonb_typeof(overview_source->'${field}') is distinct from 'number'`);
+      expect(sql).toContain(`(overview_source->>'${field}')::numeric not between 1 and 32768`);
+      expect(sql).toContain(`trunc((overview_source->>'${field}')::numeric) <> (overview_source->>'${field}')::numeric`);
+    }
+    expect(sql).toContain("(overview_source->>'width')::numeric * (overview_source->>'height')::numeric > 100000000");
+    expect(sql).toContain("foreach key in array array['photoAddedAt', 'scanSavedAt']");
+    expect(sql).toContain("left(source_time, 4) = '0000'");
+    expect(sql).toContain("'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'");
+    expect(sql).toContain("exception when sqlstate '22007' or sqlstate '22008'");
+  });
+
+  it("keeps v3 bindings immutable and blocks older-client downgrade without rewriting rows", () => {
+    expect(sql).toContain("old.document_json->'version' = '3'::jsonb and doc->'version' is distinct from '3'::jsonb");
+    expect(sql).toContain("doc#>'{overview,source}' is distinct from old.document_json#>'{overview,source}'");
+    expect(sql).toContain("raise exception 'component_map_overview_source_immutable'");
+    expect(sql).not.toMatch(/(?:^|\n)\s*(?:alter table|drop|grant|insert into|update public|delete from|create trigger)\b/i);
+  });
+
+  it("preserves prior trigger failures and ownership while allowing location hints in versions 2 and 3", () => {
+    for (const [, message, code] of previous.matchAll(/raise exception '([^']+)' using errcode = '([^']+)'/g)) {
+      expect(sql).toContain(`raise exception '${message}' using errcode = '${code}'`);
+    }
+    expect(sql).toContain("security invoker set search_path = ''");
+    expect(sql).toContain("s.user_id = new.user_id and s.local_id = link->>'lookupId'");
+    expect(sql).toContain("new.revision is distinct from old.revision + 1");
+    expect(sql).toContain("if (doc->'version' is distinct from '2'::jsonb and doc->'version' is distinct from '3'::jsonb) or jsonb_typeof(suggested_location) is distinct from 'object' then");
+    expect(sql).toContain("revoke all on function private.guard_component_map() from public, anon, authenticated");
   });
 });
 

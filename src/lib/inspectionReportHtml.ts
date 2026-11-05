@@ -159,14 +159,25 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
   };
   const mapRecord = snapshot.map;
   const map = mapRecord?.document;
+  const mapOverviewStatus = map?.version === 3 ? snapshot.mapOverviewEvidence?.status ?? "verification_unavailable" : "legacy_unverified";
+  const mapOverviewVerified = map?.version === 3 && mapOverviewStatus === "unchanged";
+  const mapOverviewMessage = mapOverviewStatus === "legacy_unverified"
+    ? "This legacy map has no recorded overview fingerprint. Historical map outlines are unverified and hidden; its components, notes, statuses and links are retained."
+    : mapOverviewStatus === "unchanged" ? "The embedded overview image matches the map's recorded source fingerprint and timestamps."
+      : mapOverviewStatus === "source_changed" ? "The embedded overview differs from the map's recorded source. Map outlines are hidden; its components, notes, statuses and links are retained."
+        : mapOverviewStatus === "missing_photo" ? "The bound overview image is missing. Map outlines are hidden; its components, notes, statuses and links are retained."
+          : "Verification of the embedded overview is unavailable. Map outlines are hidden; its components, notes, statuses and links are retained.";
+  if (map && !mapOverviewVerified) noteMissing(mapOverviewMessage);
   const componentStatus = (component: ComponentMapComponent) => ({ needs_view: "Needs a view", inspected: "Inspected — user review, not a safety certification", not_visible: "Not visible" })[component.status];
   const mapHtml = map && mapRecord ? `<section id="component-map"><h2>Component map</h2>
     <p>Saved component labels, notes and statuses are user-maintained. AI suggestions are starting points; no component is automatically inspected. Suggestions may repeat the same part when their identity is uncertain. This is not a complete engine inspection.</p>
+    <div class="${mapOverviewVerified ? "map-source-verified" : "warning"}" aria-label="Map overview verification">${prose(mapOverviewMessage)}</div>
+    <p>Overview verification checks file identity only. The saved image may itself be a crop; matching bytes do not prove a capture angle, vehicle identity, correct component label or condition. Linked photo groups are ID-based associations; their historical image bytes are not bound by this overview verification.</p>
     ${details([["Components", map.components.length], ["Local revision", mapRecord.localRevision], ["Acknowledged cloud revision", mapRecord.cloudRevision ?? "None"], ["Last acknowledged local revision", mapRecord.syncedLocalRevision]])}
     ${mapRecord.cloudRevision === null || mapRecord.syncedLocalRevision !== mapRecord.localRevision || mapRecord.syncAttempt ? prose("Local map changes are not acknowledged as saved to the cloud.") : prose("This local map revision is acknowledged as saved to the cloud.")}
     ${mapRecord.syncAttempt ? prose(`A cloud save attempt for local revision ${mapRecord.syncAttempt.localRevision} is unacknowledged (started ${mapRecord.syncAttempt.startedAt}).`) : ""}
     ${mapRecord.conflict ? `<p class="warning">Unresolved cloud conflict at cloud revision ${escape(mapRecord.conflict.revision)}. This report contains the local map shown above; the competing cloud map is not merged or included.</p>` : ""}
-    <p>Overview: ${photoLink(map.overview.lookupId, map.overview.photoId)}. Numbered outlines identify only saved regions on their source photo; unboxed and not-visible components remain in the index.</p>
+    <p>Overview: ${photoLink(map.overview.lookupId, map.overview.photoId)}. ${mapOverviewVerified ? "Numbered outlines identify saved regions on this verified overview image; they are not verified component boundaries." : "Saved regions are retained without drawing them on an unverified overview."} Unboxed and not-visible components remain in the index.</p>
     <ol class="component-list">${map.components.map((component, index) => {
       // Distinct link IDs are distinct saved associations, even with identical photos.
       const groups = component.scanGroups;
@@ -174,7 +185,7 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
         ${component.suggestedLocation ? prose(`AI-suggested location — unverified: ${component.suggestedLocation.text}. This text does not establish an outline or confirm the component's identity. User notes and marked areas are separate.`) : ""}
         ${component.reviewedAt ? prose(`User review recorded: ${component.reviewedAt}`) : prose("No explicit user review recorded.")}
         ${component.notes ? prose(component.notes) : prose("No component notes recorded.")}
-        ${component.region ? `<p>Saved region source: ${photoLink(map.overview.lookupId, component.region.sourcePhotoId)}${component.status === "not_visible" ? "; outline hidden because the component is marked not visible." : validBox(component.region.box) ? "." : "; invalid outline omitted."}</p>` : prose("No region outline saved.")}
+        ${component.region ? `<p>Saved region source: ${photoLink(map.overview.lookupId, component.region.sourcePhotoId)}${component.status === "not_visible" ? "; outline hidden because the component is marked not visible." : !mapOverviewVerified ? "; outline hidden because its overview source is unverified." : validBox(component.region.box) ? "." : "; invalid outline omitted."}</p>` : prose("No region outline saved.")}
         ${groups.length ? `<ul>${groups.map((group, groupIndex) => `<li>Photo group ${groupIndex + 1}: ${byId.has(group.lookupId) ? `<a href="#${byId.get(group.lookupId)!.anchor}">Scan ${byId.get(group.lookupId)!.number}</a>` : "Scan unavailable"} — ${[...new Set(group.photoIds)].map((id) => photoLink(group.lookupId, id)).join(", ")}</li>`).join("")}</ul>` : prose("No linked component photo groups.")}</li>`;
     }).join("")}</ol></section>` : `<section id="component-map"><h2>Component map</h2>${prose("No component map is included in this snapshot.")}</section>`;
 
@@ -208,7 +219,7 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
       const anchorId = photoAnchor(entry, photo.id)!;
       const outlines: Outline[] = [];
       if (photoIndex === 0) selections.forEach((selection, index) => { if (validBox(selection.box)) outlines.push({ box: selection.box, label: `Selection ${index + 1}`, target: `${anchor}-selection-${index + 1}` }); });
-      if (map?.overview.lookupId === scan.id) map.components.forEach((component, index) => {
+      if (mapOverviewVerified && map?.overview.lookupId === scan.id) map.components.forEach((component, index) => {
         if (component.status !== "not_visible" && component.region?.sourcePhotoId === photo.id && validBox(component.region.box)) outlines.push({ box: component.region.box, label: `Component ${index + 1}`, target: `component-${index + 1}`, map: true });
       });
       return `<figure id="${anchorId}"><h4>Photo ${photoIndex + 1} — ${escape(words(photo.label))}</h4>${imageMarkup(photo.imageBase64, anchorId, `Scan ${number}, saved photo ${photoIndex + 1}`, outlines)}<figcaption>Saved source image: ${escape(photo.id)}. Captured: ${escape(photo.capturedAt)}. This report embeds the saved pixels without further cropping or annotation; the saved image itself may be a crop. Optional outlines are separate display overlays.</figcaption></figure>`;

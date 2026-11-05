@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash, webcrypto } from "node:crypto";
 import type { ComponentMap, ComponentMapRecord } from "../types/componentMap";
 import type { Lookup } from "../types";
 import { getAccountScope, isAccountScopeCurrent, setActiveAccount } from "../lib/accountScope";
@@ -13,6 +14,11 @@ vi.mock("./cloudSync", () => ({ syncLookupToCloud: mocks.syncLookup }));
 import { loadComponentMapFromCloud, readComponentMapLookup, resolveComponentMapCloudConflict, syncComponentMapToCloud } from "./componentMapCloud";
 
 const componentId = "11111111-1111-4111-8111-111111111111";
+const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+const OTHER_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/bKkAAAAASUVORK5CYII=";
+const boundImage = `data:image/png;base64,${PNG}`;
+const boundSource = { sha256: createHash("sha256").update(Buffer.from(PNG, "base64")).digest("hex"), width: 1, height: 1,
+  photoAddedAt: "2026-11-05T00:00:00.000Z", scanSavedAt: "2026-11-05T00:00:00.000Z" };
 function document(notes = "device notes"): ComponentMap {
   return { version: 1, id: "overview", overview: { lookupId: "overview", photoId: "photo-1" }, components: [
     { id: componentId, label: "Alternator", status: "needs_view", notes, scanGroups: [] },
@@ -37,6 +43,11 @@ describe("component-map cloud concurrency and evidence", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal("crypto", webcrypto);
+    vi.stubGlobal("Image", class {
+      naturalWidth = 1; naturalHeight = 1; onload: (() => void) | null = null; onerror: (() => void) | null = null;
+      set src(value: string) { if (value) queueMicrotask(() => this.onload?.()); }
+    });
     setActiveAccount("owner");
     current = record();
     remote = { data: null, error: null };
@@ -67,6 +78,80 @@ describe("component-map cloud concurrency and evidence", () => {
     mocks.lookup.mockImplementation((id) => lookup(id));
     mocks.cloudLookup.mockImplementation(async (id) => ({ ok: true, value: lookup(id) }));
     mocks.syncLookup.mockResolvedValue({ ok: true, message: "saved" });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+
+  function bindOverview() {
+    current!.document.version = 3;
+    current!.document.overview.source = { ...boundSource };
+    const source = lookup(); source.frame.imageBase64 = boundImage;
+    mocks.lookup.mockReturnValue(source);
+    mocks.cloudLookup.mockResolvedValue({ ok: true, value: structuredClone(source) });
+    return source;
+  }
+
+  it("writes a v3 map only after its actual cloud overview bytes match the immutable binding", async () => {
+    bindOverview();
+    const before = structuredClone(current!.document);
+    expect(await syncComponentMapToCloud("overview", 1)).toMatchObject({ ok: true });
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ document_json: before }));
+    expect(current!.document).toEqual(before);
+    expect(mocks.lookup).not.toHaveBeenCalled();
+    expect(mocks.syncLookup).not.toHaveBeenCalled();
+  });
+
+  it.each(["changed bytes", "changed timestamp", "changed dimensions"])("does not bless %s in the cloud using a matching stale device overview", async (change) => {
+    const source = bindOverview(), remote = structuredClone(source), before = structuredClone(current!.document);
+    if (change === "changed bytes") remote.frame.imageBase64 = `data:image/png;base64,${OTHER_PNG}`;
+    if (change === "changed timestamp") remote.frame.capturedAt = "2026-11-06T00:00:00.000Z";
+    if (change === "changed dimensions") current!.document.overview.source!.width = 2;
+    mocks.cloudLookup.mockResolvedValue({ ok: true, value: remote });
+    expect(await syncComponentMapToCloud("overview", 1)).toMatchObject({ ok: false, message: expect.stringContaining("cloud overview image could not be verified") });
+    expect(insert).not.toHaveBeenCalled(); expect(update).not.toHaveBeenCalled(); expect(mocks.syncLookup).not.toHaveBeenCalled();
+    expect(current?.syncAttempt).toBeUndefined(); expect(current?.cloudRevision).toBeNull();
+    expect(current?.document.components).toEqual(before.components);
+    expect(source.frame.imageBase64).toBe(boundImage);
+  });
+
+  it("verifies cloud bytes after a required scan upload instead of trusting its local input", async () => {
+    const source = bindOverview(), remote = structuredClone(source);
+    remote.frame.imageBase64 = `data:image/png;base64,${OTHER_PNG}`;
+    mocks.cloudLookup.mockReset().mockResolvedValueOnce({ ok: true, value: null }).mockResolvedValueOnce({ ok: true, value: remote });
+    expect(await syncComponentMapToCloud("overview", 1)).toMatchObject({ ok: false });
+    expect(mocks.syncLookup).toHaveBeenCalledWith(source);
+    expect(insert).not.toHaveBeenCalled(); expect(update).not.toHaveBeenCalled(); expect(current?.syncAttempt).toBeUndefined();
+  });
+
+  it("rejects changed bytes fetched from the actual signed cloud object even when local bytes and IDs match", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
+    const source = bindOverview(), remote = structuredClone(source);
+    remote.frame.imageBase64 = "https://project.supabase.co/storage/v1/object/sign/scan-images/owner/overview/original.png?token=fixture";
+    mocks.cloudLookup.mockResolvedValue({ ok: true, value: remote });
+    const fetch = vi.fn(async () => new Response(Uint8Array.from(Buffer.from(OTHER_PNG, "base64")), { status: 200, headers: { "content-type": "image/png" } }));
+    vi.stubGlobal("fetch", fetch);
+    expect(await syncComponentMapToCloud("overview", 1)).toMatchObject({ ok: false });
+    expect(fetch).toHaveBeenCalledWith(remote.frame.imageBase64, expect.objectContaining({ credentials: "omit", redirect: "error", cache: "no-store" }));
+    expect(mocks.lookup).not.toHaveBeenCalled(); expect(insert).not.toHaveBeenCalled(); expect(update).not.toHaveBeenCalled();
+    expect(current?.document.overview.source).toEqual(boundSource); expect(current?.syncAttempt).toBeUndefined();
+  });
+
+  it("retains the v3 device map when its exact overview photo is missing", async () => {
+    bindOverview(); mocks.lookup.mockReturnValue(null);
+    mocks.cloudLookup.mockResolvedValue({ ok: true, value: { ...lookup(), photos: [{ id: "another-photo", label: "overview", capturedAt: boundSource.photoAddedAt, imageBase64: boundImage }] } });
+    expect(await syncComponentMapToCloud("overview", 1)).toMatchObject({ ok: false });
+    expect(insert).not.toHaveBeenCalled(); expect(update).not.toHaveBeenCalled(); expect(mocks.syncLookup).not.toHaveBeenCalled();
+    expect(current?.document.overview.photoId).toBe("photo-1"); expect(current?.syncAttempt).toBeUndefined();
+  });
+
+  it("does not write after an account change during overview image decoding", async () => {
+    bindOverview();
+    vi.stubGlobal("Image", class {
+      naturalWidth = 1; naturalHeight = 1; onload: (() => void) | null = null; onerror: (() => void) | null = null;
+      set src(value: string) { if (value) queueMicrotask(() => { setActiveAccount("other-owner"); this.onload?.(); }); }
+    });
+    expect(await syncComponentMapToCloud("overview", 1)).toMatchObject({ ok: false });
+    expect(insert).not.toHaveBeenCalled(); expect(update).not.toHaveBeenCalled();
+    expect(current?.document.overview.source).toEqual(boundSource);
   });
 
   it("inserts without an observed revision and acknowledges the exact local version", async () => {
