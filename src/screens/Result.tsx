@@ -15,6 +15,7 @@ import { ScanSources } from "../components/result/ScanSources";
 import { PartInspectionForm } from "../components/result/PartInspectionForm";
 import { ConditionEvidenceReview } from "../components/result/ConditionEvidenceReview";
 import { ComponentMapReview } from "../components/result/ComponentMapReview";
+import { InspectionReportExport } from "../components/result/InspectionReportExport";
 import { TrainingConsentPanel } from "../components/result/TrainingConsentPanel";
 import { IntakeDraft } from "../components/result/IntakeDraft";
 import { ScanDebugOverlay } from "../components/result/ScanDebugOverlay";
@@ -458,6 +459,7 @@ function ResultView({ id }: { id: string | undefined }) {
             ...(pendingCorrectionRef.current !== undefined ? { correction: pendingCorrectionRef.current } : {}),
           })} /> : null}
           {inspectionLookup ? <ReportActions lookup={inspectionLookup} /> : null}
+          {inspectionLookup ? <InspectionReportExport key={`report:${inspectionLookup.id}`} lookupId={inspectionLookup.id} disabled={hasPendingRetryResult || Boolean(saveError || selectionRetry)} /> : null}
           {inspectionLookup ? <TrainingConsentPanel key={`consent:${inspectionLookup.id}`} scanId={inspectionLookup.id} /> : null}
           {datasetSourceUrls.length > 0 ? <SourceFinePrint urls={datasetSourceUrls} /> : null}
           <Link
