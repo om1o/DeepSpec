@@ -15,13 +15,14 @@ import { readFinalInspectionSnapshot, type FinalInspectionSnapshot } from "./ins
 import { mergeInspectionComparisons, normalizeInspectionComparisons, comparisonSideMatches, normalizeComparisonTimestamp } from "../lib/inspectionComparison";
 import { readInspectionComparisons } from "./inspectionComparisonStore";
 import { readCloudInspectionComparisons } from "./inspectionComparisonCloud";
-import { comparisonSideForLookup, comparisonPhotos } from "./comparisonEvidence";
+import { comparisonSideForLookup } from "./comparisonEvidence";
 import { mergeDiagnosticBundles, normalizeDiagnosticBundle } from "../lib/diagnosticAssociation";
 import { verifyDiagnosticDocument } from "../lib/diagnosticReport";
 import { readDiagnosticBundle } from "./diagnosticReportStore";
 import { readCloudDiagnosticBundle } from "./diagnosticReportCloud";
 import { verifyMapOverviewImage } from "./mapOverviewEvidence";
 import { verifyLinkedPhotoGroup, type LinkedPhotoGroupVerification } from "./linkedPhotoEvidence";
+import { readRequestedEvidenceHistory, type RequestedEvidenceHistory } from "./requestedEvidenceHistory";
 
 export const INSPECTION_REPORT_MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 export const INSPECTION_REPORT_MAX_TOTAL_BYTES = 32 * 1024 * 1024;
@@ -38,6 +39,7 @@ class ReportError extends Error {
 }
 const limitError = () => new ReportError(true, "This report exceeds its evidence limit (12 MiB per image, 32 MiB total, 250 scans, or 2,000 image fields). Export a smaller inspection; no partial report was prepared.");
 const staleError = () => new ReportError(true, "Saved inspection records changed while preparing this report. Save your changes, then prepare it again.");
+const requestedHistorySignature = (history: RequestedEvidenceHistory) => JSON.stringify({ records: history.records, complete: history.complete, reason: history.reason });
 
 /** Collect saved evidence only. This function never saves, uploads or resolves records. */
 export async function collectInspectionReport(rootLookupId: string, options: CollectOptions = {}, scope: AccountScope = getAccountScope()): Promise<InspectionReportSnapshot> {
@@ -105,16 +107,24 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
   }
   if (map?.conflict) missing.push({ kind: "map", lookupId: rootLookupId, message: "This component map has an unresolved cloud conflict. The report uses the saved device version; the alternative version was not combined with it." });
   const references = new Map<string, Set<string>>([[rootLookupId, new Set()]]);
+  const addReference = (id: string, photos: string[]) => {
+    if (!ID.test(id) || photos.some((photo) => !PHOTO_ID.test(photo))) throw new ReportError(true, "A saved evidence reference is invalid. Review the inspection before exporting.");
+    const ids = references.get(id) ?? new Set<string>();
+    photos.forEach((photo) => ids.add(photo)); references.set(id, ids);
+    if (references.size > INSPECTION_REPORT_MAX_SCANS) throw limitError();
+  };
   if (map) {
-    const add = (id: string, photos: string[]) => {
-      if (!ID.test(id) || photos.some((photo) => !PHOTO_ID.test(photo))) throw new ReportError(true, "A saved component link is invalid. Review the map before exporting.");
-      const ids = references.get(id) ?? new Set<string>();
-      photos.forEach((photo) => ids.add(photo)); references.set(id, ids);
-      if (references.size > INSPECTION_REPORT_MAX_SCANS) throw limitError();
-    };
-    add(map.document.overview.lookupId, [map.document.overview.photoId]);
-    for (const component of map.document.components) for (const group of component.scanGroups) add(group.lookupId, group.photoIds);
+    addReference(map.document.overview.lookupId, [map.document.overview.photoId]);
+    for (const component of map.document.components) for (const group of component.scanGroups) addReference(group.lookupId, group.photoIds);
   }
+  progress("Reading requested-photo history on this device…");
+  let requestedHistory: RequestedEvidenceHistory;
+  try { requestedHistory = structuredClone(await wait(() => readRequestedEvidenceHistory(rootLookupId, scope))); }
+  catch (error) { rethrowFatal(error); throw new ReportError(true, "Requested-photo history on this device could not be checked safely. Reopen the inspection and prepare the report again."); }
+  const requestedSignature = requestedHistorySignature(requestedHistory);
+  if (!requestedHistory.complete) missing.push({ kind: "comparisons", lookupId: rootLookupId,
+    message: requestedHistory.reason ?? "The device requested-photo history search was incomplete. Additional follow-ups may exist." });
+  for (const record of requestedHistory.records) for (const side of [record.earlier, record.current]) addReference(side.lookupId, [side.photoId]);
   const remoteCache = new Map<string, Lookup | null>();
   const unavailableRemoteImages = new Map<string, ReportUnavailableImage[]>();
   const remoteLookup = async (id: string) => {
@@ -222,6 +232,11 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
       rethrowFatal(error); comparisonSignatures.set(id, null);
       missing.push({ kind: "comparisons", lookupId: id, message: "Dated comparisons on this device could not be read. Their absence from this report does not mean none exist." });
     }
+    // A discovered immutable receipt remains available even if its scan is
+    // missing. Never reconstruct its guide from the origin's current AI answer.
+    const requestedRecords = requestedHistory.records.filter((record) => record.lookupId === id);
+    try { comparisons = mergeInspectionComparisons(comparisons, requestedRecords, id); }
+    catch { throw staleError(); }
     if (configuredOrigin) {
       try {
         comparisons = mergeInspectionComparisons(comparisons, await wait((signal) => readCloudInspectionComparisons(id, scope, signal)), id);
@@ -235,9 +250,7 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
     // Map iteration visits newly discovered reference scans once, including a
     // comparison's older history. A cycle cannot loop and the same report limits apply.
     for (const record of comparisons) for (const side of [record.earlier, record.current]) {
-      const ids = references.get(side.lookupId) ?? new Set<string>();
-      ids.add(side.photoId); references.set(side.lookupId, ids);
-      if (references.size > INSPECTION_REPORT_MAX_SCANS) throw limitError();
+      addReference(side.lookupId, [side.photoId]);
     }
     const local = id === rootLookupId ? rootLocal : localLookup(id);
     const source = local ?? await remoteLookup(id); check();
@@ -375,7 +388,7 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
   for (const log of comparisonLogs) for (const record of log.records) for (const sideName of ["earlier", "current"] as const) {
     const side = record[sideName];
     const scan = scans.find((entry) => entry.id === side.lookupId);
-    const photo = scan && comparisonPhotos(scan).find((entry) => entry.id === side.photoId);
+    const photo = scan && (scan.photos !== undefined ? scan.photos : [{ ...scan.frame, id: "photo-1" }]).find((entry) => entry.id === side.photoId);
     let status: NonNullable<InspectionReportSnapshot["comparisonEvidence"]>[number]["status"] = "missing_photo";
     if (scan && photo?.imageBase64) {
       try {
@@ -391,7 +404,7 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
   }
   for (const log of diagnosticLogs) for (const record of log.bundle.associations) for (const side of record.photos) {
     const scan = scans.find((entry) => entry.id === side.lookupId);
-    const photo = scan && comparisonPhotos(scan).find((entry) => entry.id === side.photoId);
+    const photo = scan && (scan.photos !== undefined ? scan.photos : [{ ...scan.frame, id: "photo-1" }]).find((entry) => entry.id === side.photoId);
     let status: NonNullable<InspectionReportSnapshot["diagnosticEvidence"]>[number]["status"] = "missing_photo";
     if (scan && photo?.imageBase64) {
       try { status = comparisonSideMatches(side, await wait(() => comparisonSideForLookup(scan, side.photoId, scope))) ? "unchanged" : "source_changed"; }
@@ -406,6 +419,7 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
   try { finalSnapshot = await wait(() => readFinalInspectionSnapshot(rootLookupId, [...references.keys()], scope)); }
   catch (error) { rethrowFatal(error); throw staleError(); }
   if (JSON.stringify(finalSnapshot.map) !== mapSignature) throw staleError();
+  if (!finalSnapshot.requestedEvidenceHistory || requestedHistorySignature(finalSnapshot.requestedEvidenceHistory) !== requestedSignature) throw staleError();
   for (const [id, before] of serviceSignatures) {
     if (!finalSnapshot.serviceRecords.has(id)) throw staleError();
     const current = finalSnapshot.serviceRecords.get(id);
@@ -429,7 +443,8 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
   for (const [id, before] of localSignatures) if (JSON.stringify(getLookup(id, finalRead.value)) !== before) throw staleError();
   check();
   return { version: 1, createdAt: new Date().toISOString(), rootLookupId, map: map ? structuredClone(map) : null,
-    ...(mapOverviewEvidence ? { mapOverviewEvidence } : {}), ...(map ? { linkedPhotoEvidence } : {}), scans, missing, embeddedBytes, serviceLogs, comparisonLogs, comparisonEvidence, diagnosticLogs, diagnosticEvidence };
+    ...(mapOverviewEvidence ? { mapOverviewEvidence } : {}), ...(map ? { linkedPhotoEvidence } : {}), scans, missing, embeddedBytes, serviceLogs, comparisonLogs, comparisonEvidence, diagnosticLogs, diagnosticEvidence,
+    requestedEvidenceHistory: { ...requestedHistory, originLookupId: rootLookupId, source: "device", cloudSearched: false } };
 }
 
 function storageOrigin(): string | null {

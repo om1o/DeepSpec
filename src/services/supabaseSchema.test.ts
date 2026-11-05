@@ -406,6 +406,21 @@ describe("Supabase durable dataset migration", () => {
   });
 });
 
+describe("Requested-photo history migration", () => {
+  const sql = readFileSync(join(migrationsDir, "20261105231000_requested_evidence_history.sql"), "utf8");
+  it("extends only the existing insert guard while retaining owner, source, immutable and capacity defenses", () => {
+    expect(sql).toContain("create or replace function private.guard_inspection_comparison()");
+    expect(sql).toContain("security invoker set search_path = ''");
+    for (const invariant of ["inspection_comparison_immutable", "comparison_source_not_owned_or_missing", "for update", "count_saved >= 100", "262144", "comparison_correction_target_missing", "where user_id = new.user_id and lookup_id = new.lookup_id"]) expect(sql).toContain(invariant);
+    expect(sql).not.toMatch(/^\s*(create table|alter table|create policy|grant |delete from|update public\.)/im);
+    expect(sql).not.toContain("security definer");
+  });
+  it("requires exact v2 context and forbids stripping or retargeting requested corrections", () => {
+    for (const invariant of ["legacy_comparison_cannot_carry_request", "invalid_requested_evidence_guide", "invalid_requested_evidence_text", "text_units > 600", "jsonb_array_length(guide->'photoIds') > 4", "mismatched_requested_evidence_analysis", "comparison_correction_version_changed", "requested_comparison_context_changed", "requested_comparison_source_changed", "side - array['observedOn','photoAddedAt','scanSavedAt']"]) expect(sql).toContain(invariant);
+    expect(sql).toContain("revoke all on function private.guard_inspection_comparison() from public, anon, authenticated");
+  });
+});
+
 function readSourceFiles(path: string): string {
   return readdirSync(path)
     .flatMap((entry) => {

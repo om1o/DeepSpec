@@ -4,6 +4,7 @@ import type { ComponentMapRecord } from "../types/componentMap";
 import type { ServiceRecord } from "../types/serviceRecord";
 import type { DiagnosticBundle } from "../types/diagnosticReport";
 import { normalizeDiagnosticBundle } from "../lib/diagnosticAssociation";
+import type { RequestedInspectionComparison } from "../types/inspectionComparison";
 
 const mocks = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock("./evidenceDb", () => ({ openEvidenceDatabase: mocks.open, COMPONENT_MAP_STORE: "component-maps", SERVICE_RECORD_STORE: "service-records", INSPECTION_COMPARISON_STORE: "inspection-comparisons", DIAGNOSTIC_REPORT_STORE: "diagnostic-reports", EVIDENCE_STORAGE_TIMEOUT_MS: 15_000 }));
@@ -11,6 +12,12 @@ const map: ComponentMapRecord = { document: { version: 1, id: "root", overview: 
 const record = (lookupId = "root"): ServiceRecord => ({ version: 1, id: "20000000-0000-4000-8000-000000000001", lookupId, recordedAt: "2026-11-05T12:00:00Z", occurredOn: null, recordedBy: "Recorder", basis: "personally_performed", subject: "Hose", photoIds: [], notes: "Record remains without image", kind: "repair", action: "Inspect clamps", status: "planned", parts: "" });
 const diagnostic = (lookupId = "root"): DiagnosticBundle => normalizeDiagnosticBundle({ documents: [{ version: 1, id: "40000000-0000-4000-8000-000000000001", lookupId,
   importedAt: "2026-11-05T12:00:00Z", fileName: "synthetic.txt", mime: "text/plain", byteLength: 4, sha256: "a".repeat(64), encoding: "utf-8", sourceBase64: "VGVzdA==" }], associations: [] }, lookupId)!;
+function requested(lookupId = "followup", origin = "root"): RequestedInspectionComparison {
+  const side = (id: string) => ({ lookupId: id, photoId: "photo-1", photoLabel: "overview" as const, photoAddedAt: "2026-11-05T12:00:00Z", scanSavedAt: "2026-11-05T12:00:00Z", sha256: "a".repeat(64), width: 1, height: 1, observedOn: null, vehicleContext: null });
+  return { version: 2, id: "60000000-0000-4000-8000-000000000001", lookupId, recordedAt: "2026-11-05T12:00:00Z", subject: "Requested label", earlier: side(origin), current: side(lookupId),
+    relationship: { sameVehicle: false, component: "unconfirmed", basis: "" }, conditions: { angle: "unknown", lighting: "unknown", surfaceNotes: "" }, observation: { outcome: "not_reviewed", notes: "" }, alignment: { rotation: 0, scale: 1, offsetX: 0, offsetY: 0 },
+    requestedEvidence: { version: 1, kind: "marking", request: "Show the label.", purpose: "Read its suffix.", photoIds: ["photo-1"] }, analysisSha256: "b".repeat(64) };
+}
 // Final snapshot performs synchronous structural checks only. The collector
 // independently hashes and parses originals before comparing this exact bucket.
 
@@ -21,12 +28,16 @@ function fixture() {
   const rows = new Map<string, unknown>();
   const key = (store: string, id: string, owner = "owner") => JSON.stringify([store, owner, id]);
   const requests: { store: string; key: string; result: unknown; onsuccess: (() => void) | null }[] = [];
+  const cursors: { store: string; range: { lower: string[] }; result: { key: unknown; value: unknown; continue: () => void } | null; onsuccess: (() => void) | null; onerror: (() => void) | null }[] = [];
   let snapshot = new Map<string, unknown>(); let aborted = false;
   const tx = { oncomplete: null as (() => void) | null, onerror: null as (() => void) | null, onabort: null as (() => void) | null,
     abort: vi.fn(() => { aborted = true; queueMicrotask(() => tx.onabort?.()); }),
     objectStore: vi.fn((store: string) => ({ get: (pair: string[]) => {
       const request = { store, key: JSON.stringify([store, ...pair]), result: undefined as unknown, onsuccess: null as (() => void) | null };
       requests.push(request); return request;
+    }, openCursor: (range: { lower: string[] }) => {
+      const request = { store, range, result: null, onsuccess: null, onerror: null } as (typeof cursors)[number];
+      cursors.push(request); return request;
     } })),
   };
   const database = { close: vi.fn(), transaction: vi.fn(() => { snapshot = structuredClone(rows); return tx; }) };
@@ -35,13 +46,24 @@ function fixture() {
       if (aborted) return;
       const request = requests[index]; request.result = structuredClone(snapshot.get(request.key)); request.onsuccess?.(); between?.(index);
     }
+    for (const request of cursors) {
+      const entries = [...snapshot].filter(([encoded]) => { const [store, owner] = JSON.parse(encoded); return store === request.store && owner === request.range.lower[0]; });
+      let index = 0;
+      const next = () => {
+        if (aborted) return;
+        const entry = entries[index++];
+        request.result = entry ? { key: JSON.parse(entry[0]).slice(1), value: structuredClone(entry[1]), continue: next } : null;
+        request.onsuccess?.();
+      };
+      next();
+    }
     if (!aborted) tx.oncomplete?.();
   };
-  return { rows, key, database, requests, tx, drain };
+  return { rows, key, database, requests, cursors, tx, drain };
 }
 
-beforeEach(() => { vi.clearAllMocks(); setActiveAccount("owner"); });
-afterEach(() => vi.useRealTimers());
+beforeEach(() => { vi.clearAllMocks(); setActiveAccount("owner"); vi.stubGlobal("IDBKeyRange", { bound: (lower: string[], upper: unknown[]) => ({ lower, upper }) }); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 it("queues map and every history get in one readonly transaction before processing any result", async () => {
   const db = fixture(); mocks.open.mockResolvedValue(db.database);
@@ -51,11 +73,40 @@ it("queues map and every history get in one readonly transaction before processi
   await Promise.resolve();
   expect(db.database.transaction).toHaveBeenCalledExactlyOnceWith(["component-maps", "service-records", "inspection-comparisons", "diagnostic-reports"], "readonly");
   expect(db.requests.map((request) => request.key)).toEqual([db.key("component-maps", "root"), db.key("service-records", "root"), db.key("service-records", "missing"), db.key("inspection-comparisons", "root"), db.key("inspection-comparisons", "missing"), db.key("diagnostic-reports", "root"), db.key("diagnostic-reports", "missing")]);
+  expect(db.cursors).toHaveLength(1); expect(db.cursors[0].store).toBe("inspection-comparisons");
   db.drain(); const result = await pending;
   expect(result.map).toEqual(map); expect(result.serviceRecords.get("root")).toEqual([]);
   expect(result.serviceRecords.get("missing")).toEqual([record("missing")]); expect(db.database.close).toHaveBeenCalledOnce();
   expect(result.comparisons.get("root")).toEqual([]); expect(result.comparisons.get("missing")).toEqual([]);
   expect(result.diagnostics.get("root")).toEqual({ documents: [], associations: [] }); expect(result.diagnostics.get("missing")).toEqual(diagnostic("missing"));
+  expect(result.requestedEvidenceHistory).toEqual({ records: [], complete: true, scannedBuckets: 0 });
+});
+
+it("reads origin receipts outside the known scan list in the same final transaction", async () => {
+  const db = fixture(); mocks.open.mockResolvedValue(db.database);
+  const receipt = requested("removed-followup");
+  db.rows.set(db.key("inspection-comparisons", "removed-followup"), [receipt]);
+  db.rows.set(db.key("inspection-comparisons", "foreign-followup", "someone-else"), [requested("foreign-followup")]);
+  db.rows.set(db.key("inspection-comparisons", "unrelated"), [requested("unrelated", "different-origin")]);
+  const pending = readFinalInspectionSnapshot("root", ["root"]); await Promise.resolve();
+  db.drain((index) => { if (index === 0) db.rows.set(db.key("inspection-comparisons", "later-followup"), [requested("later-followup")]); });
+  const result = await pending;
+  expect(result.requestedEvidenceHistory).toEqual({ records: [receipt], complete: true, scannedBuckets: 2 });
+  expect(result.comparisons.has("removed-followup")).toBe(false);
+  expect(db.database.transaction).toHaveBeenCalledOnce();
+});
+
+it("retains incomplete reverse discovery when an owner bucket is corrupt", async () => {
+  const db = fixture(); mocks.open.mockResolvedValue(db.database); db.rows.set(db.key("inspection-comparisons", "corrupt"), null);
+  const pending = readFinalInspectionSnapshot("root", ["root"]); await Promise.resolve(); db.drain();
+  expect((await pending).requestedEvidenceHistory).toMatchObject({ records: [], complete: false, reason: expect.stringContaining("could not be read"), scannedBuckets: 1 });
+});
+
+it("refuses transaction completion without the queued reverse-discovery result", async () => {
+  const db = fixture(); mocks.open.mockResolvedValue(db.database);
+  const pending = expect(readFinalInspectionSnapshot("root", ["root"])).rejects.toThrow("Some saved inspection records");
+  await Promise.resolve(); db.cursors[0].onsuccess = null; db.drain(); await pending;
+  expect(db.database.close).toHaveBeenCalledOnce();
 });
 
 it("returns one transaction snapshot when map and an earlier history are edited during later callbacks", async () => {

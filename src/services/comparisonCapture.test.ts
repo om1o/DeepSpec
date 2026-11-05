@@ -36,15 +36,26 @@ beforeEach(() => {
 describe("durable repeat-capture completion", () => {
   const requestedTarget = (): Extract<ComparisonCaptureTarget, { version: 2 }> => ({ ...target, version: 2, analysisSha256: "c".repeat(64),
     requestedEvidence: { version: 1, kind: "photo", request: "Show the mounting face.", purpose: "Check the hidden edge.", photoIds: [earlier.photoId] } });
-  it("verifies requested-photo origins while retaining the existing unreviewed comparison history format", async () => {
+  it("verifies requested-photo origins and retains their exact guide and analysis fingerprint in history", async () => {
     const requested = requestedTarget();
     await verifyComparisonCaptureReference(requested);
     expect(mocks.requested).toHaveBeenCalledWith(requested, expect.objectContaining({ userId: "capture-owner" }), undefined);
     expect(mocks.resolve).not.toHaveBeenCalled();
     const record = await completeComparisonCapture(requested, saved);
-    expect(record.version).toBe(1); expect(record).not.toHaveProperty("requestedEvidence"); expect(record).not.toHaveProperty("analysisSha256");
+    expect(record).toMatchObject({ version: 2, requestedEvidence: requested.requestedEvidence, analysisSha256: requested.analysisSha256 });
     expect(record.observation.outcome).toBe("not_reviewed"); expect(record.relationship.component).toBe("unconfirmed");
     expect(mocks.assertRequested).toHaveBeenCalled();
+    expect(await completeComparisonCapture(structuredClone(requested), saved)).toEqual(record);
+    expect(mocks.append).toHaveBeenCalledTimes(1);
+  });
+  it.each(["guide", "analysis", "legacy"])("does not acknowledge an existing requested receipt with changed %s", async (change) => {
+    const requested = requestedTarget(); await completeComparisonCapture(requested, saved);
+    if (change === "legacy") { const legacy: Record<string, unknown> = { ...records[0], version: 1 }; delete legacy.requestedEvidence; delete legacy.analysisSha256; records[0] = legacy as InspectionComparison; }
+    else if (records[0].version === 2) records[0] = change === "guide"
+      ? { ...records[0], requestedEvidence: { ...records[0].requestedEvidence, purpose: "Other purpose" } }
+      : { ...records[0], analysisSha256: "d".repeat(64) };
+    await expect(completeComparisonCapture(requested, saved)).rejects.toThrow("different evidence or details");
+    expect(mocks.append).toHaveBeenCalledTimes(1);
   });
   it("does not finish a requested-photo link after a changed originating answer, including an existing history entry", async () => {
     const requested = requestedTarget();

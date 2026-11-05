@@ -65,6 +65,38 @@ describe("immutable owner-scoped comparison sync", () => {
   });
   afterEach(() => vi.useRealTimers());
 
+  const requested = (): InspectionComparison => ({ ...record(), version: 2, analysisSha256: "b".repeat(64),
+    requestedEvidence: { version: 1, kind: "marking", request: "Show the stamped marking.", purpose: "Read the uncertain number.", photoIds: ["photo-1"] } });
+  it("uploads and restores the full requested receipt without inventing a reviewed outcome", async () => {
+    local = [requested()]; const before = structuredClone(local);
+    expect(await syncInspectionComparisons("scan")).toMatchObject({ synced: 1 });
+    expect(remote[0].record_json).toEqual(before[0]);
+    expect(await readCloudInspectionComparisons("scan")).toEqual(before);
+    expect(await syncInspectionComparisons("scan")).toMatchObject({ synced: 0 });
+    expect(insert).toHaveBeenCalledTimes(1);
+  });
+  it("keeps the full device receipt after legacy SQL rejects v2 and never retries with stripped fields", async () => {
+    local = [requested()]; const before = structuredClone(local);
+    insertOverride = () => ({ data: null, error: { code: "23514", message: "invalid_inspection_comparison" } });
+    await expect(syncInspectionComparisons("scan")).rejects.toThrow("requested-evidence-history migration");
+    expect(insert).toHaveBeenCalledTimes(1); expect(insert.mock.calls[0][0].record_json).toEqual(before[0]);
+    expect(local).toEqual(before); expect(remote).toEqual([]);
+  });
+  it("rejects a duplicate requested receipt with an altered purpose rather than acknowledging it", async () => {
+    local = [requested()]; const before = structuredClone(local);
+    insertOverride = (value) => {
+      if (value.record_json.version !== 2) throw new Error("Expected requested receipt");
+      remote.push({ ...value, record_json: { ...value.record_json, requestedEvidence: { ...value.record_json.requestedEvidence, purpose: "Other purpose" } } });
+      return { data: null, error: { code: "23505" } };
+    };
+    await expect(syncInspectionComparisons("scan")).rejects.toThrow("conflicting content"); expect(local).toEqual(before);
+  });
+  it("rejects a cloud correction that changes requested source pixels before importing history", async () => {
+    const original = requested(); const correction = { ...original, id: id(2), supersedesId: original.id, correctionReason: "Changed source", current: { ...original.current, sha256: "c".repeat(64) } };
+    remote = [row(original), row(correction)];
+    await expect(readCloudInspectionComparisons("scan")).rejects.toThrow("invalid"); expect(mocks.import).not.toHaveBeenCalled();
+  });
+
   it("reads every owner page without importing or uploading", async () => {
     remote = Array.from({length:26},(_,index) => row(record(index + 1)));
     remote.push({ ...row(record(50)), user_id: "other" }, { ...row(record(51)), lookup_id: "different" });

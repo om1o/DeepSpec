@@ -1,12 +1,14 @@
 import { isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
-import { normalizeComparisonSide } from "../lib/inspectionComparison";
+import { comparisonSideMatches, normalizeComparisonCaptureTarget, normalizeComparisonSide } from "../lib/inspectionComparison";
 import type { ComparisonSide, InspectionComparison } from "../types/inspectionComparison";
 import { COMPARISON_DRAFT_STORE, EVIDENCE_STORAGE_TIMEOUT_MS, openEvidenceDatabase } from "./evidenceDb";
 
+type DraftRecord<T extends InspectionComparison = InspectionComparison> = T extends InspectionComparison
+  ? Omit<T, "earlier" | "current"> & { earlier: ComparisonSide | null; current: ComparisonSide | null } : never;
 export type ComparisonDraft = {
-  version: 1; updatedAt: string;
+  version: 1 | 2; updatedAt: string;
   earlierLookupId: string; earlierPhotoId: string; currentPhotoId: string;
-  record: Omit<InspectionComparison, "earlier" | "current"> & { earlier: ComparisonSide | null; current: ComparisonSide | null };
+  record: DraftRecord;
 };
 export type ComparisonDraftRead = { ok: boolean; raw: string | null; draft: ComparisonDraft | null; message: string };
 export type ComparisonDraftWrite = { ok: true; raw: string | null } | { ok: false; message: string };
@@ -27,12 +29,16 @@ export function newComparisonDraft(lookupId: string, currentPhotoId: string): Co
 
 export function correctionComparisonDraft(record: InspectionComparison): ComparisonDraft {
   const next = newComparisonDraft(record.lookupId, record.current.photoId);
-  return { ...next, earlierLookupId: record.earlier.lookupId, earlierPhotoId: record.earlier.photoId,
+  return { ...next, version: record.version, earlierLookupId: record.earlier.lookupId, earlierPhotoId: record.earlier.photoId,
     record: { ...structuredClone(record), id: next.record.id, recordedAt: next.record.recordedAt, supersedesId: record.id, correctionReason: "" } };
 }
 
 /** Changing either original invalidates claims and display alignment for that pair. */
 export function changeComparisonPair(draft: ComparisonDraft, selection: Partial<Pick<ComparisonDraft, "earlierLookupId" | "earlierPhotoId" | "currentPhotoId">>): ComparisonDraft {
+  if (draft.record.version === 2) {
+    if (Object.entries(selection).some(([key, value]) => value !== draft[key as keyof typeof selection])) throw new Error("Requested-photo history keeps its original and follow-up evidence fixed. Edit the reported dates and human review fields instead.");
+    return draft;
+  }
   return { ...draft, ...selection, record: { ...draft.record, earlier: null, current: null,
     relationship: { sameVehicle: false, component: "unconfirmed", basis: draft.record.relationship.basis },
     conditions: { angle: "unknown", lighting: "unknown", surfaceNotes: draft.record.conditions.surfaceNotes },
@@ -45,7 +51,7 @@ export function parseComparisonDraft(raw: string): ComparisonDraft | null {
     const value = JSON.parse(raw) as ComparisonDraft; const r = value?.record;
     const text = (v: unknown, max: number) => typeof v === "string" && v.length <= max;
     const oneOf = (v: unknown, values: string[]) => typeof v === "string" && values.includes(v);
-    if (value?.version !== 1 || !r || r.version !== 1 || !uuid.test(r.id) || !validId(r.lookupId)
+    if ((value?.version !== 1 && value?.version !== 2) || !r || r.version !== value.version || !uuid.test(r.id) || !validId(r.lookupId)
       || !text(value.updatedAt, 40) || !Number.isFinite(Date.parse(value.updatedAt)) || !text(r.recordedAt, 40) || !Number.isFinite(Date.parse(r.recordedAt))
       || ![value.earlierLookupId, value.earlierPhotoId, value.currentPhotoId].every((id) => id === "" || validId(id))
       || !text(r.subject, 200) || !r.relationship || typeof r.relationship.sameVehicle !== "boolean"
@@ -59,8 +65,11 @@ export function parseComparisonDraft(raw: string): ComparisonDraft | null {
     const current = r.current === null ? null : normalizeComparisonSide(r.current);
     if (earlier === undefined || current === undefined || (earlier && (earlier.lookupId !== value.earlierLookupId || earlier.photoId !== value.earlierPhotoId))
       || (current && (current.lookupId !== r.lookupId || current.photoId !== value.currentPhotoId))) return null;
-    return { version: 1, updatedAt: value.updatedAt, earlierLookupId: value.earlierLookupId, earlierPhotoId: value.earlierPhotoId, currentPhotoId: value.currentPhotoId,
-      record: { version: 1, id: r.id, lookupId: r.lookupId, recordedAt: r.recordedAt, subject: r.subject, earlier, current,
+    const target = r.version === 2 ? normalizeComparisonCaptureTarget({ ...r, comparisonId: r.id, subject: r.subject.trim() || "Pending human subject" }) : undefined;
+    if (r.version === 1 ? "requestedEvidence" in r || "analysisSha256" in r : !target || target.version !== 2 || !earlier || !current) return null;
+    const metadata = target?.version === 2 ? { version: 2 as const, requestedEvidence: target.requestedEvidence, analysisSha256: target.analysisSha256 } : { version: 1 as const };
+    return { version: value.version, updatedAt: value.updatedAt, earlierLookupId: value.earlierLookupId, earlierPhotoId: value.earlierPhotoId, currentPhotoId: value.currentPhotoId,
+      record: { ...metadata, id: r.id, lookupId: r.lookupId, recordedAt: r.recordedAt, subject: r.subject, earlier, current,
         relationship: { sameVehicle: r.relationship.sameVehicle, component: r.relationship.component, basis: r.relationship.basis },
         conditions: { angle: r.conditions.angle, lighting: r.conditions.lighting, surfaceNotes: r.conditions.surfaceNotes },
         observation: { outcome: r.observation.outcome, notes: r.observation.notes },
@@ -92,6 +101,15 @@ async function transact(scope: AccountScope, lookupId: string, change?: { expect
           requireScope(scope, lookupId); const previous: unknown = get.result === undefined ? null : get.result;
           if (previous !== null && typeof previous !== "string") throw new Error("Saved comparison recovery is unreadable and was not overwritten.");
           if (change && previous !== change.expected) throw new Error("Another tab changed this comparison draft. Your entered text is still here; download it before reopening the saved draft.");
+          if (change?.next && previous) {
+            const prior = parseComparisonDraft(previous)?.record, next = parseComparisonDraft(change.next)?.record;
+            if (prior?.version === 2 && (!next || next.version !== 2 || next.id !== prior.id || next.supersedesId !== prior.supersedesId
+              || next.analysisSha256 !== prior.analysisSha256 || JSON.stringify(next.requestedEvidence) !== JSON.stringify(prior.requestedEvidence)
+              || !prior.earlier || !next.earlier || !comparisonSideMatches(prior.earlier, next.earlier)
+              || !prior.current || !next.current || !comparisonSideMatches(prior.current, next.current))) {
+              throw new Error("Requested-photo recovery keeps its saved request and source evidence fixed. Download or explicitly discard this draft before starting another comparison.");
+            }
+          }
           result = change ? change.next : previous;
           if (change) { requireScope(scope, lookupId); if (result === null) store.delete(key); else store.put(result, key); }
         } catch (error) { fail(error); }

@@ -5,14 +5,15 @@ import type { ComponentMapRecord } from "../types/componentMap";
 import type { ServiceRecord } from "../types/serviceRecord";
 import { normalizeServiceRecords } from "../lib/serviceRecord";
 import { normalizeInspectionComparisons } from "../lib/inspectionComparison";
-import type { InspectionComparison, ComparisonSide } from "../types/inspectionComparison";
+import type { InspectionComparison, ComparisonSide, RequestedInspectionComparison } from "../types/inspectionComparison";
+import type { RequestedEvidenceHistory } from "./requestedEvidenceHistory";
 import { collectInspectionReport, INSPECTION_REPORT_MAX_IMAGE_BYTES, INSPECTION_REPORT_MAX_TOTAL_BYTES } from "./inspectionReport";
 import { createHash, webcrypto } from "node:crypto";
 import { normalizeDiagnosticBundle } from "../lib/diagnosticAssociation";
 import { diagnosticSourceBytes, normalizeDiagnosticDocument } from "../lib/diagnosticReport";
 import type { DiagnosticAssociation, DiagnosticBundle, DiagnosticDocument } from "../types/diagnosticReport";
 
-const mocks = vi.hoisted(() => ({ lookups: vi.fn(), lookup: vi.fn(), map: vi.fn(), cloud: vi.fn(), auth: vi.fn(), service: vi.fn(), serviceCloud: vi.fn(), snapshot: vi.fn(), comparisons: vi.fn(), comparisonsCloud: vi.fn(), comparisonSide: vi.fn(), diagnostics: vi.fn(), diagnosticsCloud: vi.fn() }));
+const mocks = vi.hoisted(() => ({ lookups: vi.fn(), lookup: vi.fn(), map: vi.fn(), cloud: vi.fn(), auth: vi.fn(), service: vi.fn(), serviceCloud: vi.fn(), snapshot: vi.fn(), comparisons: vi.fn(), comparisonsCloud: vi.fn(), comparisonSide: vi.fn(), diagnostics: vi.fn(), diagnosticsCloud: vi.fn(), requested: vi.fn() }));
 vi.mock("./storage", () => ({ readLookups: mocks.lookups, getLookup: mocks.lookup }));
 vi.mock("./componentMapStore", () => ({ readComponentMap: mocks.map }));
 vi.mock("./cloudHistory", () => ({ readCloudLookupForReport: mocks.cloud }));
@@ -22,6 +23,7 @@ vi.mock("./serviceRecordCloud", () => ({ readCloudServiceRecords: mocks.serviceC
 vi.mock("./inspectionReportSnapshot", () => ({ readFinalInspectionSnapshot: mocks.snapshot }));
 vi.mock("./inspectionComparisonStore", () => ({ readInspectionComparisons: mocks.comparisons }));
 vi.mock("./inspectionComparisonCloud", () => ({ readCloudInspectionComparisons: mocks.comparisonsCloud }));
+vi.mock("./requestedEvidenceHistory", () => ({ readRequestedEvidenceHistory: mocks.requested }));
 vi.mock("./diagnosticReportStore", () => ({ readDiagnosticBundle: mocks.diagnostics }));
 vi.mock("./diagnosticReportCloud", () => ({ readCloudDiagnosticBundle: mocks.diagnosticsCloud }));
 vi.mock("./comparisonEvidence", () => ({ comparisonSideForLookup: mocks.comparisonSide, comparisonPhotos: (lookup: Lookup) => lookup.photos?.length ? lookup.photos : [{ ...lookup.frame, id: "photo-1", label: "overview" }] }));
@@ -46,6 +48,12 @@ function comparison(lookupId = "root", earlier = "previous"): InspectionComparis
   return { version: 1, id: "30000000-0000-4000-8000-000000000001", lookupId, recordedAt: capturedAt, subject: "Bracket", earlier: comparisonSide(earlier), current: comparisonSide(lookupId),
     relationship: { sameVehicle: false, component: "unconfirmed", basis: "" }, conditions: { angle: "unknown", lighting: "unknown", surfaceNotes: "" },
     observation: { outcome: "not_reviewed", notes: "" }, alignment: { rotation: 0, scale: 1, offsetX: 0, offsetY: 0 } };
+}
+const emptyRequestedHistory = (): RequestedEvidenceHistory => ({ records: [], complete: true, scannedBuckets: 0 });
+function requestedComparison(lookupId = "followup"): RequestedInspectionComparison {
+  return { ...comparison(lookupId, "root"), version: 2,
+    requestedEvidence: { version: 1, kind: "marking", request: "Photograph the stamped number <exact historical request>.", purpose: "Read the hidden suffix, not a current AI suggestion.", photoIds: ["photo-1"] },
+    analysisSha256: "c".repeat(64) };
 }
 function measurement(): ServiceRecord {
   return { version: 1, id: "20000000-0000-4000-8000-000000000001", lookupId: "root", recordedAt: capturedAt, occurredOn: "2026-11-04",
@@ -101,6 +109,7 @@ describe("saved inspection report collection", () => {
     mocks.cloud.mockResolvedValue({ ok: true, value: null });
     mocks.service.mockResolvedValue([]); mocks.serviceCloud.mockResolvedValue([]);
     mocks.comparisons.mockResolvedValue([]); mocks.comparisonsCloud.mockResolvedValue([]);
+    mocks.requested.mockResolvedValue(emptyRequestedHistory());
     mocks.diagnostics.mockResolvedValue(emptyDiagnostics()); mocks.diagnosticsCloud.mockResolvedValue(emptyDiagnostics());
     mocks.comparisonSide.mockImplementation(async (lookup: Lookup, photoId: string) => comparisonSide(lookup.id, photoId));
     // Collector fixture only. The real single-transaction implementation has its
@@ -119,6 +128,7 @@ describe("saved inspection report collection", () => {
         try { return [id, normalizeDiagnosticBundle(await mocks.diagnostics(id, scope), id) ?? null] as const; }
         catch { return [id, null] as const; }
       }))),
+      requestedEvidenceHistory: await mocks.requested(root, scope),
     }));
     query = { select: vi.fn(), eq: vi.fn(), abortSignal: vi.fn(), maybeSingle: vi.fn(async () => ({ data: cloudMap, error: null })) };
     query.select.mockReturnValue(query); query.eq.mockReturnValue(query); query.abortSignal.mockReturnValue(query);
@@ -380,7 +390,7 @@ describe("saved inspection report collection", () => {
   it.each(["added", "removed", "corrupt", "omitted"] as const)("rejects a final diagnostic bucket that was %s after the initial read", async (kind) => {
     const populated = { documents: [diagnosticDocument()], associations: [] };
     const initial = kind === "added" ? emptyDiagnostics() : populated; mocks.diagnostics.mockResolvedValue(initial);
-    mocks.snapshot.mockImplementationOnce(async () => ({ map: null, serviceRecords: new Map([["root", []]]), comparisons: new Map([["root", []]]),
+    mocks.snapshot.mockImplementationOnce(async () => ({ map: null, requestedEvidenceHistory: emptyRequestedHistory(), serviceRecords: new Map([["root", []]]), comparisons: new Map([["root", []]]),
       diagnostics: kind === "omitted" ? new Map() : new Map([["root", kind === "corrupt" ? null : kind === "added" ? populated : emptyDiagnostics()]]) }));
     await expect(collectInspectionReport("root")).rejects.toThrow(/records changed/);
     expect(mocks.lookups).toHaveBeenCalledTimes(1);
@@ -412,6 +422,94 @@ describe("saved inspection report collection", () => {
     mocks.diagnostics.mockImplementation(async () => { setActiveAccount("other-owner"); return { documents: [diagnosticDocument()], associations: [] }; });
     await expect(collectInspectionReport("root")).rejects.toThrow(/Account changed/);
     expect(mocks.diagnosticsCloud).not.toHaveBeenCalled(); expect(mocks.snapshot).not.toHaveBeenCalled();
+  });
+
+  it("discovers requested follow-ups from their origin without a map link and preserves the historical guide", async () => {
+    const record = requestedComparison(); local.push(scan("followup"));
+    // The origin's current answer need not exist: the immutable receipt owns the guide.
+    expect(local[0].result).toBeUndefined();
+    const history = { records: [record], complete: true, scannedBuckets: 4 };
+    mocks.requested.mockResolvedValue(history);
+    mocks.comparisons.mockImplementation(async (id) => id === "followup" ? [record] : []);
+    const report = await collectInspectionReport("root");
+    expect(report.scans.map((entry) => entry.id)).toEqual(["root", "followup"]);
+    expect(report.requestedEvidenceHistory).toEqual({ ...history, originLookupId: "root", source: "device", cloudSearched: false });
+    expect(report.comparisonLogs?.find((log) => log.lookupId === "followup")?.records).toEqual([record]);
+    expect(report.comparisonEvidence).toEqual(["earlier", "current"].map((side) => ({ lookupId: "followup", recordId: record.id, side, status: "unchanged" })));
+    expect(mocks.snapshot).toHaveBeenCalledWith("root", ["root", "followup"], getAccountScope());
+  });
+
+  it("retains a requested receipt and guide when the follow-up scan is unavailable", async () => {
+    const record = requestedComparison("removed-followup");
+    mocks.requested.mockResolvedValue({ records: [record], complete: true, scannedBuckets: 1 });
+    mocks.comparisons.mockImplementation(async (id) => id === record.lookupId ? [record] : []);
+    const report = await collectInspectionReport("root");
+    expect(report.scans.map((entry) => entry.id)).toEqual(["root"]);
+    expect(report.requestedEvidenceHistory?.records).toEqual([record]);
+    expect(report.comparisonLogs?.find((log) => log.lookupId === record.lookupId)?.records).toEqual([record]);
+    expect(report.comparisonEvidence?.find((item) => item.side === "current")?.status).toBe("missing_photo");
+    expect(report.missing).toContainEqual(expect.objectContaining({ kind: "lookup", lookupId: record.lookupId }));
+    expect(mocks.comparisonSide).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not substitute a retained cover for an explicitly empty requested follow-up photo group", async () => {
+    const record = requestedComparison(); local.push(scan("followup", []));
+    mocks.requested.mockResolvedValue({ records: [record], complete: true, scannedBuckets: 1 });
+    mocks.comparisons.mockImplementation(async (id) => id === record.lookupId ? [record] : []);
+    const report = await collectInspectionReport("root");
+    expect(report.comparisonEvidence?.find((item) => item.side === "current")?.status).toBe("missing_photo");
+    expect(mocks.comparisonSide.mock.calls.some((call) => call[0].id === "followup")).toBe(false);
+    expect(report.requestedEvidenceHistory?.records).toEqual([record]);
+  });
+
+  it("preserves multiple requested captures and correction forks without duplicating their scans", async () => {
+    const first = requestedComparison(), other = { ...requestedComparison("followup-two"), id: "30000000-0000-4000-8000-000000000004" };
+    const corrections = [2, 3].map((suffix) => ({ ...first, id: `30000000-0000-4000-8000-00000000000${suffix}`, supersedesId: first.id, correctionReason: `Human correction ${suffix}` }));
+    const records = [first, ...corrections, other]; local.push(scan("followup"), scan("followup-two"));
+    mocks.requested.mockResolvedValue({ records, complete: true, scannedBuckets: 2 });
+    mocks.comparisons.mockImplementation(async (id) => records.filter((record) => record.lookupId === id));
+    const report = await collectInspectionReport("root");
+    expect(report.scans.map((entry) => entry.id)).toEqual(["root", "followup", "followup-two"]);
+    expect(report.requestedEvidenceHistory?.records).toEqual(records);
+    expect(report.comparisonLogs?.find((log) => log.lookupId === "followup")?.records).toHaveLength(3);
+  });
+
+  it("exports an explicit incomplete device search and never claims a cloud reverse search", async () => {
+    const history = { records: [], complete: false, reason: "Device search reached its bounded limit. Additional follow-ups may exist.", scannedBuckets: 512 };
+    mocks.requested.mockResolvedValue(history);
+    const report = await collectInspectionReport("root");
+    expect(report.requestedEvidenceHistory).toEqual({ ...history, originLookupId: "root", source: "device", cloudSearched: false });
+    expect(report.missing).toContainEqual({ kind: "comparisons", lookupId: "root", message: history.reason });
+  });
+
+  it.each(["relevant append", "completeness", "reason"])("rejects a changed reverse-discovery %s in the final transaction", async (change) => {
+    const before: RequestedEvidenceHistory = { records: [], complete: false, reason: "A bucket was unreadable.", scannedBuckets: 2 };
+    const after = { ...before };
+    if (change === "relevant append") after.records = [requestedComparison()];
+    if (change === "completeness") after.complete = true;
+    if (change === "reason") after.reason = "A different search limit was reached.";
+    mocks.requested.mockResolvedValueOnce(before).mockResolvedValue(after);
+    await expect(collectInspectionReport("root")).rejects.toThrow(/records changed/);
+  });
+
+  it("ignores an unrelated appended bucket when the discovered receipts and completeness are unchanged", async () => {
+    mocks.requested.mockResolvedValueOnce({ ...emptyRequestedHistory(), scannedBuckets: 1 }).mockResolvedValue({ ...emptyRequestedHistory(), scannedBuckets: 2 });
+    const report = await collectInspectionReport("root");
+    expect(report.requestedEvidenceHistory?.records).toEqual([]);
+    expect(report.requestedEvidenceHistory?.complete).toBe(true);
+  });
+
+  it("applies the existing aggregate scan cap to reverse-discovered follow-ups", async () => {
+    map = mapWithLinks(Array.from({ length: 100 }, (_, index) => `mapped-${index}`));
+    mocks.requested.mockResolvedValue({ records: Array.from({ length: 150 }, (_, index) => ({ ...requestedComparison(`followup-${index}`), id: `30000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}` })), complete: true, scannedBuckets: 150 });
+    await expect(collectInspectionReport("root")).rejects.toThrow(/250 scans/);
+    expect(mocks.snapshot).not.toHaveBeenCalled();
+  });
+
+  it.each(["unreadable", "account"])("rejects %s reverse history instead of inventing a complete empty list", async (failure) => {
+    mocks.requested.mockImplementationOnce(async () => { if (failure === "account") setActiveAccount("other-owner"); throw new Error("Private storage failure"); });
+    await expect(collectInspectionReport("root")).rejects.toThrow(failure === "account" ? /Account changed/ : /Requested-photo history/);
+    expect(mocks.snapshot).not.toHaveBeenCalled();
   });
 
   it("follows comparison photo references and verifies the embedded frozen originals", async () => {
@@ -506,7 +604,7 @@ describe("saved inspection report collection", () => {
     mocks.snapshot.mockImplementationOnce(async () => {
       await Promise.resolve();
       local[0].notes = "Edited while the final IDB snapshot was pending";
-      return { map: null, serviceRecords: new Map([["root", []]]), comparisons: new Map([["root", []]]), diagnostics: new Map([["root", emptyDiagnostics()]]) };
+      return { map: null, requestedEvidenceHistory: emptyRequestedHistory(), serviceRecords: new Map([["root", []]]), comparisons: new Map([["root", []]]), diagnostics: new Map([["root", emptyDiagnostics()]]) };
     });
     await expect(collectInspectionReport("root")).rejects.toThrow(/records changed/);
     expect(mocks.lookups).toHaveBeenCalledTimes(2);
@@ -519,7 +617,7 @@ describe("saved inspection report collection", () => {
       const logs = new Map<string, ServiceRecord[] | null>([["root", []], ["missing", []]]);
       if (kind === "map") finalMap.localRevision += 1;
       else { const id = kind === "first-history" ? "root" : "missing"; logs.set(id, [{ ...measurement(), lookupId: id }]); }
-      return { map: finalMap, serviceRecords: logs, comparisons: new Map([["root", []], ["missing", []]]), diagnostics: new Map([["root", emptyDiagnostics()], ["missing", emptyDiagnostics()]]) };
+      return { map: finalMap, requestedEvidenceHistory: emptyRequestedHistory(), serviceRecords: logs, comparisons: new Map([["root", []], ["missing", []]]), diagnostics: new Map([["root", emptyDiagnostics()], ["missing", emptyDiagnostics()]]) };
     });
     await expect(collectInspectionReport("root")).rejects.toThrow(/records changed/);
   });
