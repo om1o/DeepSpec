@@ -1487,7 +1487,7 @@ export default function Scanner() {
         componentMapId={activeDraftEnvelope?.target?.mapId} savedForComponent={Boolean(activeDraftEnvelope?.target && getLookup(activeDraftEnvelope.target.lookupId))}
         referenceNode={activeComparisonTarget ? <ComparisonCaptureReference target={activeComparisonTarget} /> : undefined}
         savedActionLabel={activeComparisonTarget && getLookup(activeComparisonTarget.lookupId) ? activeDraftEnvelope?.target ? "Finish comparison and component link" : "Finish dated comparison" : undefined}
-        busy={photoDraftBusy || isAnalyzing} message={photoDraftMessage} onChange={(photos) => void updatePhotoDraft(photos)} onAdd={() => galleryInputRef.current?.click()} onAnalyze={() => void analyzePhotoDraft()} onClose={() => setShowPhotoDraft(false)} onDiscard={() => void updatePhotoDraft(null)} /> : null}
+        busy={photoDraftBusy || isAnalyzing} message={captureError ?? photoDraftMessage} onChange={(photos) => void updatePhotoDraft(photos)} onAdd={() => galleryInputRef.current?.click()} onAnalyze={() => void analyzePhotoDraft()} onClose={() => setShowPhotoDraft(false)} onDiscard={() => void updatePhotoDraft(null)} /> : null}
       {!scanReview && !cropBoxEnabled ? (
         <LensBottomBar
           isAnalyzing={isAnalyzing}

@@ -1204,6 +1204,7 @@ describe("Scanner", () => {
     render(<MemoryRouter><Scanner /></MemoryRouter>);
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     expect(await screen.findByText("Saved capture changed in another tab. Review its current photos before analysis.")).toBeInTheDocument();
+    expect(within(screen.getByRole("dialog", { name: "Review inspection photos" })).getByText("Saved capture changed in another tab. Review its current photos before analysis.")).toHaveAttribute("role", "status");
     expect(draftStore.get("test-user:capture")).toEqual([newer]);
     expect(screen.getByRole("img", { name: "Photo 1: Label or marking" })).toHaveAttribute("src", newer.imageBase64);
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
@@ -1980,6 +1981,7 @@ describe("Scanner", () => {
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
     expect(removePhotoDraft).not.toHaveBeenCalled();
     expect(await screen.findByText("Scan canceled. Ready when you are.")).toBeInTheDocument();
+    expect(within(screen.getByRole("dialog", { name: "Review inspection photos" })).getByText("Scan canceled. Ready when you are.")).toHaveAttribute("role", "status");
   });
 
   it("rejects a provider transition when the account changes during draft verification", async () => {
