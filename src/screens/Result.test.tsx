@@ -709,6 +709,33 @@ describe("Result", () => {
     expect(screen.getByText("No scan with this link exists in your signed-in account.")).toBeInTheDocument();
   });
 
+  it("directs a missing device result to saved scans without cloud restoration or an impossible retry when sync is off", async () => {
+    vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
+    sessionStorage.setItem(accountStorageKey("deep-spec:latest-scan-state"), JSON.stringify(successfulScan));
+    cloudHistoryMocks.readCloudLookup.mockResolvedValue({ ok: true, value: makeLookup({ id: "cloud-only" }) });
+
+    renderResult(null, "/result/cloud-only");
+
+    expect(await screen.findByText("Cloud history is off. This scan is not saved on this device. Open saved scans to choose an available device record.")).toBeInTheDocument();
+    expect(cloudHistoryMocks.readCloudLookup).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Retry loading" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 1, name: "Alternator" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("link", { name: "Open saved scans" }));
+    expect(screen.getByText("Saved scans page")).toBeInTheDocument();
+  });
+
+  it("still restores an exact device result when cloud sync is off", async () => {
+    vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
+    const local = makeLookup();
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
+
+    renderResult(null, `/result/${local.id}`);
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Alternator" })).toBeInTheDocument();
+    expect(cloudHistoryMocks.readCloudLookup).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Retry loading" })).not.toBeInTheDocument();
+  });
+
   it("shows a retryable cloud outage without showing another scan", async () => {
     const restored = makeLookup({ id: "retry-cloud", result: { ...successfulScan.result!, partName: "Recovered starter" } });
     cloudHistoryMocks.readCloudLookup
@@ -1212,6 +1239,7 @@ function renderResult(state: (ScanAnalysisState & { savedLookup?: Lookup }) | nu
         <Route path="/result" element={<Result />} />
         <Route path="/result/:id" element={<Result />} />
         <Route path="/result/:id/chat" element={<Chat />} />
+        <Route path="/history" element={<p>Saved scans page</p>} />
       </Routes>
     </MemoryRouter>,
   );

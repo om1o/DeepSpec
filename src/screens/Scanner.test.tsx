@@ -285,6 +285,7 @@ describe("Scanner", () => {
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     window.history.pushState({}, "", "/");
   });
 
@@ -1726,7 +1727,8 @@ describe("Scanner", () => {
     expect(getLookups().some((lookup) => lookup.vehicleContext?.model === "Car A")).toBe(true);
   }, 10000);
 
-  it("recovers a saved scan whose component link failed without paying for another analysis", async () => {
+  it.each(["true", "false"])("recovers a saved component link with cloud sync %s without another analysis", async (cloudEnabled) => {
+    vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", cloudEnabled);
     const target: ComponentCaptureTarget = { mapId: "bay-overview", componentId: "00000000-0000-4000-8000-000000000001", linkAttemptId: "00000000-0000-4000-8000-000000000002", lookupId: "component-scan" };
     const photos: ScanPhoto[] = [{ id: "close-up", label: "close_up", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,cGFydA==" }];
     draftStore.set("test-user:upload", photos);
@@ -1743,10 +1745,22 @@ describe("Scanner", () => {
     cleanup();
     render(<MemoryRouter><Scanner /></MemoryRouter>);
     await userEvent.click(await screen.findByRole("button", { name: "Resume 1-photo draft" }));
+    // Keep this exact draft visible for one retirement conflict so its recovery
+    // message can be reviewed before retrying the already committed link.
+    const compareAndSwap = replacePhotoDraftIfMatches.getMockImplementation()!;
+    replacePhotoDraftIfMatches.mockImplementation(async (...args) => args[1] === null ? false : compareAndSwap(...args));
+    await userEvent.click(screen.getByRole("button", { name: "Finish component link" }));
+    const expectedMessage = cloudEnabled === "true"
+      ? "Photos linked to the component on this device. Save the map to cloud from its overview."
+      : "Photos linked to the component on this device. Cloud sync is off; reopen the map overview to review them.";
+    expect(await screen.findByText(expectedMessage)).toBeInTheDocument();
+    if (cloudEnabled === "false") expect(screen.queryByText(/Save the map to cloud from its overview/)).not.toBeInTheDocument();
+    expect(draftStore.has("test-user:upload")).toBe(true);
+    replacePhotoDraftIfMatches.mockImplementation(compareAndSwap);
     await userEvent.click(screen.getByRole("button", { name: "Finish component link" }));
     await waitFor(() => expect(draftStore.has("test-user:upload")).toBe(false));
     expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
-    expect(linkComponentMap).toHaveBeenCalledTimes(2);
+    expect(linkComponentMap).toHaveBeenCalledTimes(3);
     expect(getLookups()).toHaveLength(1);
   });
 

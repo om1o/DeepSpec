@@ -66,6 +66,7 @@ const lookup: Lookup = {
 
 describe("Chat", () => {
   beforeEach(() => {
+    vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "true");
     localStorage.clear();
     readCloudLookupMock.mockReset();
     readCloudLookupMock.mockResolvedValue({ ok: true, value: null });
@@ -73,6 +74,38 @@ describe("Chat", () => {
     sendFollowUpDetailsMock.mockReset();
     syncLookupChatToCloudMock.mockReset();
     syncLookupChatToCloudMock.mockResolvedValue({ ok: true, message: "Scan synced." });
+  });
+
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("saves an answered exchange locally without cloud calls or a misleading retry when cloud sync is off", async () => {
+    vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
+    sendFollowUpMock.mockResolvedValue("This answer stays with your saved photo.");
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    renderChat(`/result/${lookup.id}/chat`);
+    await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "What should I photograph next?");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("This answer stays with your saved photo.")).toBeInTheDocument();
+    expect(getLookup(lookup.id)?.chatHistory.map((message) => message.content)).toEqual([
+      "What should I photograph next?", "This answer stays with your saved photo.",
+    ]);
+    expect(sendFollowUpMock).toHaveBeenCalledTimes(1);
+    expect(syncLookupChatToCloudMock).not.toHaveBeenCalled();
+    expect(readCloudLookupMock).not.toHaveBeenCalled();
+    expect(screen.getByText("Cloud sync is off. Saved conversations stay on this device.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry cloud save" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Conversation needs cloud sync")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Ask a follow-up question")).toBeEnabled();
+  });
+
+  it("explains unavailable cloud-only photos without fetching or claiming the scan is absent", async () => {
+    vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([{ ...lookup, frame: { ...lookup.frame, imageBase64: "https://example.test/signed-photo.jpg" } }]));
+    renderChat(`/result/${lookup.id}/chat`);
+    expect(await screen.findByText("Cloud history is off. Open a scan whose photos are saved on this device.")).toBeInTheDocument();
+    expect(readCloudLookupMock).not.toHaveBeenCalled();
+    expect(sendFollowUpMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Retry loading scan" })).not.toBeInTheDocument();
   });
 
   it("shows a saved scan not found state", async () => {

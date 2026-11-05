@@ -3,6 +3,7 @@ import { getAccountScope, isAccountScopeCurrent, type AccountScope } from "../li
 import { MAX_SERVICE_RECORD_BYTES, MAX_SERVICE_RECORDS, mergeServiceRecords, normalizeServiceRecord, normalizeServiceRecords } from "../lib/serviceRecord";
 import type { ServiceRecord } from "../types/serviceRecord";
 import { getAuthClient } from "./auth";
+import { assertCloudSyncEnabled } from "./cloudSyncPolicy";
 import { importServiceRecords } from "./serviceRecordStore";
 
 const TABLE = "human_service_records";
@@ -32,6 +33,7 @@ async function bounded<T>(scope: AccountScope, signal: AbortSignal | undefined, 
   } finally { clearTimeout(timer); if (cancel) signal?.removeEventListener("abort", cancel); }
 }
 async function verifiedClient(scope: AccountScope, signal?: AbortSignal): Promise<SupabaseClient> {
+  assertCloudSyncEnabled();
   const client = await bounded(scope, signal, () => getAuthClient());
   if (!client) throw new Error("Cloud human records are not configured for this build. Your device history is preserved.");
   // getUser validates the session with Auth, rather than trusting cached claims.

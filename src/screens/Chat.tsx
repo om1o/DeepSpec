@@ -9,6 +9,7 @@ import { ScanSources } from "../components/result/ScanSources";
 import Button from "../components/ui/Button";
 import { AIServiceError, getAIErrorDetails, getAIErrorMessage, sendFollowUp, sendFollowUpDetails } from "../services/aiService";
 import { syncLookupChatToCloud } from "../services/cloudSync";
+import { isCloudSyncEnabled } from "../services/cloudSyncPolicy";
 import { readCloudLookup } from "../services/cloudHistory";
 import { appendChatMessages, createChatMessage, getLookup, saveExistingLookup } from "../services/storage";
 import type { ChatMessage, Lookup } from "../types";
@@ -25,16 +26,20 @@ export default function Chat() {
 }
 
 function ChatConversation({ id }: { id: string | undefined }) {
+  const cloudSyncEnabled = isCloudSyncEnabled();
   const accountScopeRef = useRef(getAccountScope());
   const isMountedRef = useRef(true);
   const [searchParams] = useSearchParams();
   const [initialLookup] = useState(() => id ? getLookup(id) : null);
   const [lookup, setLookup] = useState<Lookup | null>(initialLookup);
   const cloudEvidenceRef = useRef<{ lookup: Lookup; refreshedAt: number } | null>(null);
+  const initialCloudHistoryUnavailable = Boolean(id && (!initialLookup || hasCloudPhotos(initialLookup)) && !cloudSyncEnabled);
   const [lookupLoadState, setLookupLoadState] = useState<"loading" | "ready" | "not_found" | "error">(
-    initialLookup && !hasCloudPhotos(initialLookup) ? "ready" : id ? "loading" : "not_found",
+    initialLookup && !hasCloudPhotos(initialLookup) ? "ready" : initialCloudHistoryUnavailable ? "error" : id ? "loading" : "not_found",
   );
-  const [lookupLoadError, setLookupLoadError] = useState<string | null>(null);
+  const [lookupLoadError, setLookupLoadError] = useState<string | null>(
+    initialCloudHistoryUnavailable ? "Cloud history is off. Open a scan whose photos are saved on this device." : null,
+  );
   const [lookupLoadRetry, setLookupLoadRetry] = useState(0);
   const [question, setQuestion] = useState(() => searchParams.get("q")?.trim().slice(0, 500) ?? "");
   const [error, setError] = useState<string | null>(null);
@@ -62,7 +67,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
   }
 
   useEffect(() => {
-    if (!id || (initialLookup && !hasCloudPhotos(initialLookup))) return;
+    if (!cloudSyncEnabled || !id || (initialLookup && !hasCloudPhotos(initialLookup))) return;
     let active = true;
     const isCurrentLoad = () => active && isMountedRef.current && isAccountScopeCurrent(accountScopeRef.current);
     const timeout = window.setTimeout(() => {
@@ -111,7 +116,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
       active = false;
       window.clearTimeout(timeout);
     };
-  }, [id, initialLookup, lookupLoadRetry]);
+  }, [id, initialLookup, lookupLoadRetry, cloudSyncEnabled]);
 
   useEffect(() => {
     const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -238,7 +243,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
   }
 
   async function syncConversation(savedLookup: Lookup) {
-    if (!isCurrentConversation() || isCloudSyncing) return;
+    if (!cloudSyncEnabled || !isCurrentConversation() || isCloudSyncing) return;
     setIsCloudSyncing(true);
     const result = await syncLookupChatToCloud(savedLookup);
     if (!isCurrentConversation()) return;
@@ -280,7 +285,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
         <section className="w-full max-w-sm rounded-[24px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-6 shadow-sm" role={lookupLoadState === "error" ? "alert" : "status"}>
           <h1 className="text-2xl font-extrabold tracking-tight">{lookupLoadState === "error" ? "Could not load scan" : "Loading saved scan"}</h1>
           <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-3)]">{lookupLoadState === "error" ? lookupLoadError : "Checking this device and your cloud history…"}</p>
-          {lookupLoadState === "error" ? <Button className="mt-5 w-full" type="button" onClick={() => {
+          {lookupLoadState === "error" && cloudSyncEnabled ? <Button className="mt-5 w-full" type="button" onClick={() => {
             if (!isCurrentConversation()) return;
             setLookupLoadError(null);
             setLookupLoadState("loading");
@@ -342,6 +347,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
           <ScanEvidencePanel lookup={lookup} onDraftQuestion={draftEvidenceQuestion} />
 
           <section className="ds-chat-conversation" aria-label="Full scan conversation">
+            {!cloudSyncEnabled ? <p role="status" className="text-sm text-[var(--ds-fg-3)]">Cloud sync is off. Saved conversations stay on this device.</p> : null}
             {showSafetyWarning ? (
               <section className="ds-chat-safety rounded-2xl border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-3">
                 <p className="text-sm font-extrabold text-[var(--ds-warn-ink)]">Safety check needed</p>

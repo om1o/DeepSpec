@@ -117,6 +117,27 @@ describe("saved inspection report collection", () => {
   });
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
+  it("exports device evidence with no cloud lookup, image fetch or false cloud-history verification when disabled", async () => {
+    vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
+    mocks.service.mockResolvedValue([measurement()]);
+    const before = structuredClone(local), report = await collectInspectionReport("root");
+    expect(report.scans[0].frame.imageBase64).toBe(image);
+    expect(report.serviceLogs?.[0]).toMatchObject({ records: [measurement()], cloudChecked: false });
+    expect(report.comparisonLogs?.[0].cloudChecked).toBe(false);
+    expect(report.diagnosticLogs?.[0].cloudChecked).toBe(false);
+    expect(mocks.auth).not.toHaveBeenCalled(); expect(mocks.cloud).not.toHaveBeenCalled();
+    expect(mocks.serviceCloud).not.toHaveBeenCalled(); expect(mocks.comparisonsCloud).not.toHaveBeenCalled(); expect(mocks.diagnosticsCloud).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled(); expect(local).toEqual(before);
+  });
+
+  it("does not fetch or refresh a previously signed photo during a disabled cloud report", async () => {
+    vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false"); local[0].frame.imageBase64 = signed("root");
+    const report = await collectInspectionReport("root");
+    expect(report.scans[0].frame.imageBase64).toBe("");
+    expect(report.missing.some((issue) => issue.kind === "photo")).toBe(true);
+    expect(fetchSpy).not.toHaveBeenCalled(); expect(mocks.cloud).not.toHaveBeenCalled(); expect(mocks.auth).not.toHaveBeenCalled();
+  });
+
   it("retains exact diagnostic bytes and human associations, deriving unsupported coverage from the original", async () => {
     const document = diagnosticDocument(), record = diagnosticAssociation(document);
     const bundle = { documents: [document], associations: [record] };

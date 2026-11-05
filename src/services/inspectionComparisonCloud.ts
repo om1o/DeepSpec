@@ -3,6 +3,7 @@ import { getAccountScope, isAccountScopeCurrent, type AccountScope } from "../li
 import { MAX_INSPECTION_COMPARISON_BYTES, MAX_INSPECTION_COMPARISONS, mergeInspectionComparisons, normalizeInspectionComparison, normalizeInspectionComparisons } from "../lib/inspectionComparison";
 import type { InspectionComparison } from "../types/inspectionComparison";
 import { getAuthClient } from "./auth";
+import { assertCloudSyncEnabled } from "./cloudSyncPolicy";
 import { importInspectionComparisons } from "./inspectionComparisonStore";
 
 const TABLE = "inspection_comparisons";
@@ -32,6 +33,7 @@ async function bounded<T>(scope: AccountScope, signal: AbortSignal | undefined, 
   } finally { clearTimeout(timer); if (cancel) signal?.removeEventListener("abort", cancel); }
 }
 async function verifiedClient(scope: AccountScope, signal?: AbortSignal): Promise<SupabaseClient> {
+  assertCloudSyncEnabled();
   const client = await bounded(scope, signal, () => getAuthClient());
   if (!client) throw new Error("Cloud comparisons are not configured for this build. Your device history is preserved.");
   // getUser validates the session with Auth, rather than trusting cached claims.

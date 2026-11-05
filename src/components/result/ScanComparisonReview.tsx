@@ -9,6 +9,7 @@ import { readCloudLookups } from "../../services/cloudHistory";
 import { downloadTextFile } from "../../services/report";
 import { appendInspectionComparison, importInspectionComparisons, readInspectionComparisons, subscribeInspectionComparisons } from "../../services/inspectionComparisonStore";
 import { readCloudInspectionComparisons, syncInspectionComparisons } from "../../services/inspectionComparisonCloud";
+import { isCloudSyncEnabled } from "../../services/cloudSyncPolicy";
 import { changeComparisonPair, correctionComparisonDraft, newComparisonDraft, readComparisonDraft, writeComparisonDraft, type ComparisonDraft, type ComparisonDraftRead } from "../../services/inspectionComparisonDraft";
 import type { Lookup } from "../../types";
 import type { ComparisonCaptureTarget, ComparisonSide, InspectionComparison } from "../../types/inspectionComparison";
@@ -167,7 +168,7 @@ function ComparisonEditor({ lookup, disabled }: { lookup: Lookup; disabled: bool
     finally { operation.current = false; if (current()) setBusy(false); }
   }
   async function cloud(action: "scans" | "read" | "sync") {
-    if (!current() || operation.current || disabled) return;
+    if (!isCloudSyncEnabled() || !current() || operation.current || disabled) return;
     operation.current = true; setBusy(true);
     try {
       if (action === "scans") {
@@ -211,8 +212,8 @@ function ComparisonEditor({ lookup, disabled }: { lookup: Lookup; disabled: bool
   const earlierPhotos = reference ? comparisonPhotos(reference) : [];
   return <div className="mt-3 min-w-0 space-y-4">
     <p className="text-sm">Compare the same location over time using original photos. Dates below are when photos were added or scans saved, not proven exposure dates. Lighting, angle, distance, cleaning and wetness can change appearance; this does not measure damage growth or prove safety.</p>
-    <div className="flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled={busy || disabled} onClick={() => void cloud("scans")}>Load cloud scan choices</button><button type="button" className={buttonClass} disabled={busy || disabled} onClick={() => void cloud("read")}>Read cloud comparisons</button><button type="button" className={buttonClass} disabled={busy || disabled || !loaded} onClick={() => void cloud("sync")}>Sync comparisons</button></div>
-    <p role="status" className="text-sm">{cloudMessage}</p>
+    <div className="flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled={!isCloudSyncEnabled() || busy || disabled} onClick={() => void cloud("scans")}>Load cloud scan choices</button><button type="button" className={buttonClass} disabled={!isCloudSyncEnabled() || busy || disabled} onClick={() => void cloud("read")}>Read cloud comparisons</button><button type="button" className={buttonClass} disabled={!isCloudSyncEnabled() || busy || disabled || !loaded} onClick={() => void cloud("sync")}>Sync comparisons</button></div>
+    <p role="status" className="text-sm">{isCloudSyncEnabled() ? cloudMessage : "Cloud sync is off. Compare saved photos and keep comparison history on this device."}</p>
     {recovering ? <aside className="rounded-xl border border-amber-500 p-3" aria-label="Comparison draft recovery"><p>Unfinished comparison found. Restore it explicitly, or download and discard it; saved history is unchanged.</p><div className="mt-2 flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled={!recovery.draft || !ready || busy || disabled} onClick={() => void restore()}>Restore comparison draft</button><button type="button" className={buttonClass} onClick={() => download(true)}>Download comparison recovery</button><button type="button" className={buttonClass} disabled={!ready || busy || disabled} onClick={() => void discard()}>Discard comparison draft</button></div></aside> : null}
     <fieldset disabled={locked} className="min-w-0 space-y-3">
       <legend className="font-bold">{r.supersedesId ? "Correct a saved comparison" : "New comparison"}</legend>

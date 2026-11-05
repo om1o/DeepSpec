@@ -8,7 +8,31 @@ vi.mock("../../services/trainingConsent", () => ({ loadTrainingConsent: vi.fn(),
 const off: TrainingConsent = { enabled: false, revision: null, updatedAt: null };
 const on: TrainingConsent = { enabled: true, revision: 1, updatedAt: "2026-09-27T00:00:00Z" };
 beforeEach(() => vi.mocked(loadTrainingConsent).mockResolvedValue(off));
-afterEach(() => vi.resetAllMocks());
+afterEach(() => { vi.resetAllMocks(); vi.unstubAllEnvs(); });
+it("does not load or change training consent when cloud sync is off", async () => {
+  vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
+  const user = userEvent.setup();
+  render(<TrainingConsentPanel scanId="scan-1" />);
+  expect(screen.getByRole("status")).toHaveTextContent("Cloud sync is off");
+  expect(screen.getByRole("checkbox")).toBeDisabled();
+  for (const name of ["Save consent choice", "Reload consent status"]) {
+    const button = screen.getByRole("button", { name }); expect(button).toBeDisabled(); await user.click(button);
+  }
+  expect(loadTrainingConsent).not.toHaveBeenCalled(); expect(saveTrainingConsent).not.toHaveBeenCalled();
+  expect(screen.queryByText("Cloud consent is off.")).not.toBeInTheDocument();
+  expect(screen.getByText(/Turning off cloud sync does not withdraw consent/)).toBeInTheDocument();
+});
+it("preserves a known consent choice if cloud controls become disabled", async () => {
+  vi.mocked(loadTrainingConsent).mockResolvedValue(on);
+  const view = render(<TrainingConsentPanel scanId="scan-1" />);
+  await screen.findByText("Cloud consent is on.");
+  vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
+  view.rerender(<TrainingConsentPanel scanId="scan-1" />);
+  expect(screen.getByRole("checkbox")).toBeChecked(); expect(screen.getByRole("checkbox")).toBeDisabled();
+  expect(screen.getByRole("status")).toHaveTextContent("Cloud sync is off");
+  expect(loadTrainingConsent).toHaveBeenCalledOnce(); expect(saveTrainingConsent).not.toHaveBeenCalled();
+  expect(screen.queryByText(/Consent withdrawn in the cloud/)).not.toBeInTheDocument();
+});
 it("defaults off and requires an explicit choice before saving", async () => {
   const user = userEvent.setup();
   vi.mocked(saveTrainingConsent).mockResolvedValue(on);

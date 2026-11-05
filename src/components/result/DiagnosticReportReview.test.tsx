@@ -59,7 +59,7 @@ beforeEach(async () => {
   vi.mocked(cloud.readCloudDiagnosticBundle).mockResolvedValue({ documents: [], associations: [] });
   vi.mocked(cloud.syncDiagnosticReports).mockResolvedValue({ synced: 0, message: "All snapshot originals and associations cloud-confirmed. Later entries need another sync." });
 });
-afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 function openDetails(summary: string) { const details = screen.getByText(summary, { selector: "summary" }).closest("details")!; details.open = true; fireEvent(details, new Event("toggle")); }
 async function open(value = lookup, recovering = false) {
@@ -83,6 +83,23 @@ async function save() {
 }
 function savedRecord(): DiagnosticAssociation { return { ...drafts.newDiagnosticDraft(lookup.id, document).record, subject: "Original relationship", photos: [side(lookup, "photo-2")] }; }
 function selectFile(file: File) { fireEvent.change(screen.getByLabelText("Plain-text report (.txt, up to 2 MiB)"), { target: { files: [file] } }); }
+
+it("imports reports locally while cloud reads and sync stay disabled", async () => {
+  vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
+  bundle = { documents: [], associations: [] }; await open();
+  for (const name of ["Read cloud diagnostic reports", "Sync diagnostic reports"]) {
+    const button = screen.getByRole("button", { name }); expect(button).toBeDisabled(); fireEvent.click(button);
+  }
+  selectFile(new File([SOURCE], "device-only.txt", { type: "text/plain" }));
+  fireEvent.click(screen.getByRole("button", { name: "Import original on this device" }));
+  await screen.findByRole("option", { name: /device-only.txt/ });
+  expect(bundle.documents).toHaveLength(1);
+  expect(diagnosticSourceBytes(bundle.documents[0])).toEqual(new TextEncoder().encode(SOURCE));
+  expect(screen.getByText(/Cloud sync is off/)).toBeInTheDocument();
+  expect(screen.getByLabelText("Part or location associated with the report")).toBeEnabled();
+  expect(cloud.readCloudDiagnosticBundle).not.toHaveBeenCalled(); expect(cloud.syncDiagnosticReports).not.toHaveBeenCalled();
+  expect(store.importDiagnosticBundle).not.toHaveBeenCalled();
+});
 
 it("imports exact original bytes before offering the saved report and keeps parsing local", async () => {
   bundle = { documents: [], associations: [] }; await open(); const network = vi.fn(); vi.stubGlobal("fetch", network);

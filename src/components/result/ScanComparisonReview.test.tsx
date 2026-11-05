@@ -58,7 +58,7 @@ beforeEach(() => {
   vi.mocked(cloud.syncInspectionComparisons).mockResolvedValue({ synced: 0, message: "All snapshot comparisons cloud-confirmed. Later entries need another sync." });
   vi.mocked(readCloudLookups).mockResolvedValue({ ok: true, value: [earlier] });
 });
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 function openDetails(summary: string) {
   const details = screen.getByText(summary, { selector: "summary" }).closest("details")!;
@@ -95,6 +95,20 @@ function savedRecord(): InspectionComparison {
   const draft = drafts.newComparisonDraft(lookup.id, "photo-2");
   return { ...draft.record, subject: "Rust patch", earlier: side(earlier, "photo-1"), current: side(lookup, "photo-2") };
 }
+
+it("keeps local comparisons available while all optional cloud actions are off", async () => {
+  vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
+  await open();
+  for (const name of ["Load cloud scan choices", "Read cloud comparisons", "Sync comparisons"]) {
+    const button = screen.getByRole("button", { name }); expect(button).toBeDisabled(); fireEvent.click(button);
+  }
+  await prepare(); observation(); await save();
+  expect(history).toHaveLength(1);
+  expect(history[0]).toMatchObject({ earlier: { lookupId: earlier.id }, current: { lookupId: lookup.id } });
+  expect(screen.getByText(/Cloud sync is off/)).toBeInTheDocument();
+  expect(readCloudLookups).not.toHaveBeenCalled(); expect(cloud.readCloudInspectionComparisons).not.toHaveBeenCalled();
+  expect(cloud.syncInspectionComparisons).not.toHaveBeenCalled(); expect(store.importInspectionComparisons).not.toHaveBeenCalled();
+});
 
 it("saves exact selected originals and human notes without changing AI or automatically using cloud", async () => {
   const before = JSON.stringify(getLookup(lookup.id)); await open(); await prepare(); observation();

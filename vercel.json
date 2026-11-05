@@ -11,7 +11,8 @@
       "codex/car-dated-comparisons-20261105": false,
       "codex/car-diagnostic-imports-20261105": false,
       "codex/car-vehicle-references-20261105": false,
-      "codex/car-claim-evidence-fixes-20261105": false
+      "codex/car-claim-evidence-fixes-20261105": false,
+      "codex/car-preview-local-save-20261105": false
     }
   },
   "functions": {

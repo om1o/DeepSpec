@@ -67,13 +67,28 @@ const bodyLookup: Lookup = {
 
 describe("History", () => {
   beforeEach(() => {
+    vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "true");
     localStorage.clear();
     readCloudLookupsMock.mockReset();
     vi.mocked(syncLookupToCloud).mockReset();
     readCloudLookupsMock.mockResolvedValue({ ok: true, value: [] });
   });
 
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+
+  it("shows device history without remote reads or cloud-save actions when sync is off", async () => {
+    vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    renderHistory();
+    expect(await screen.findByRole("link", { name: /Alternator/ })).toBeInTheDocument();
+    expect(screen.getByText("Cloud sync is off. Showing scans saved on this device.")).toBeInTheDocument();
+    expect(screen.getByText("Device copy · Cloud sync is off")).toBeInTheDocument();
+    expect(readCloudLookupsMock).not.toHaveBeenCalled();
+    expect(vi.mocked(syncLookupToCloud)).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /Save .* to cloud/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry cloud history" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Export JSON" })).toBeEnabled();
+  });
 
   it("requires ownership confirmation, supports cancellation, and imports only on explicit request", async () => {
     const raw = JSON.stringify([lookup]);

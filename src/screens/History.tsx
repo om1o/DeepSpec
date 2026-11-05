@@ -6,6 +6,7 @@ import ScanThumb from "../components/ui/ScanThumb";
 import { signOut } from "../services/auth";
 import { readCloudLookups } from "../services/cloudHistory";
 import { syncLookupToCloud } from "../services/cloudSync";
+import { isCloudSyncEnabled } from "../services/cloudSyncPolicy";
 import { getScanQualityMetrics, type ScanQualityFailureReason, type ScanQualityMetrics } from "../services/scanQualityMetrics";
 import { DEVICE_SCAN_LIMIT_MESSAGE, MAX_SAVED_LOOKUPS, detectLegacyScans, importLegacyScans, deleteLookup, getLookup, readLookups, saveExistingLookup, scanStateFromLookup, subscribeToLookupChanges } from "../services/storage";
 import { getTrainingReadiness } from "../services/trainingReadiness";
@@ -18,6 +19,7 @@ import { SCAN_CATEGORIES, type Lookup, type Rating, type ScanCategory, type Trai
 
 export default function History() {
   const navigate = useNavigate();
+  const cloudSyncEnabled = isCloudSyncEnabled();
   const [mountedScope] = useState(getAccountScope);
   // The on-device cap counts what this device stores, not the merged list that also holds cloud scans.
   const [legacyRead, setLegacyRead] = useState(detectLegacyScans);
@@ -25,7 +27,7 @@ export default function History() {
   const [deviceRead, setDeviceRead] = useState(readLookups);
   const deviceLookups = deviceRead.value;
   const [cloudLookups, setCloudLookups] = useState<Lookup[]>([]);
-  const [cloudHistoryState, setCloudHistoryState] = useState<"loading" | "ready" | "error">("loading");
+  const [cloudHistoryState, setCloudHistoryState] = useState<"loading" | "ready" | "error">(cloudSyncEnabled ? "loading" : "ready");
   const cloudHistoryRequest = useRef(0);
   const isMounted = useRef(false);
   const lookups = useMemo(() => mergeLookups(deviceLookups, cloudLookups), [deviceLookups, cloudLookups]);
@@ -37,7 +39,7 @@ export default function History() {
   const qualityMetrics = useMemo(() => getScanQualityMetrics(), []);
 
   const loadCloudHistory = useCallback(async () => {
-    if (!isMounted.current || !isAccountScopeCurrent(mountedScope)) return;
+    if (!cloudSyncEnabled || !isMounted.current || !isAccountScopeCurrent(mountedScope)) return;
     const requestId = ++cloudHistoryRequest.current;
 
     try {
@@ -55,12 +57,12 @@ export default function History() {
         setCloudHistoryState("error");
       }
     }
-  }, [mountedScope]);
+  }, [mountedScope, cloudSyncEnabled]);
 
   useEffect(() => {
     isMounted.current = true;
     const requestId = ++cloudHistoryRequest.current;
-    void readCloudLookups()
+    if (cloudSyncEnabled) void readCloudLookups()
       .then((result) => {
         if (!isMounted.current || requestId !== cloudHistoryRequest.current || !isAccountScopeCurrent(mountedScope)) return;
         if (!result.ok) {
@@ -81,7 +83,7 @@ export default function History() {
       isMounted.current = false;
       cloudHistoryRequest.current += 1;
     };
-  }, [loadCloudHistory, mountedScope]);
+  }, [loadCloudHistory, mountedScope, cloudSyncEnabled]);
 
   useEffect(() => {
     if (!isAccountScopeCurrent(mountedScope)) return;
@@ -91,7 +93,7 @@ export default function History() {
   }, [mountedScope]);
 
   async function retryCloudSave(id: string) {
-    if (retryPending.current || !isAccountScopeCurrent(mountedScope)) return;
+    if (!cloudSyncEnabled || retryPending.current || !isAccountScopeCurrent(mountedScope)) return;
     let current = getLookup(id);
     if (!current) return;
     const remote = cloudLookups.find((lookup) => lookup.id === id);
@@ -196,6 +198,7 @@ export default function History() {
           </nav>
         </header>
 
+        {!cloudSyncEnabled ? <p role="status" className="mt-4 text-sm text-[var(--ds-fg-3)]">Cloud sync is off. Showing scans saved on this device.</p> : null}
         <details className="ds-quality-details">
           <summary>Scan quality insights <span>{qualityMetrics.attempts} attempts</span></summary>
           <ScanQualityMetricsPanel metrics={qualityMetrics} />
@@ -325,10 +328,10 @@ export default function History() {
             {filteredLookups.map((lookup) => (
               <div key={lookup.id}>
                 <LookupCard lookup={lookup} />
-                <p className="mt-2 px-3 text-xs font-semibold text-[var(--ds-fg-3)]">{cloudSaveLabel(deviceLookups.find((local) => local.id === lookup.id))}</p>
+                <p className="mt-2 px-3 text-xs font-semibold text-[var(--ds-fg-3)]">{cloudSaveLabel(deviceLookups.find((local) => local.id === lookup.id), cloudSyncEnabled)}</p>
                 {deviceLookups.some((local) => local.id === lookup.id) ? (
                   <div className="flex flex-wrap gap-2">
-                    {lookup.frame.imageBase64.startsWith("data:") || lookup.inspection ? (
+                    {cloudSyncEnabled && (lookup.frame.imageBase64.startsWith("data:") || lookup.inspection) ? (
                       <button type="button" disabled={retryingId !== null} className="mt-2 px-3 py-2 text-xs font-semibold text-[var(--ds-fg-3)] underline disabled:opacity-50" aria-label={`Save ${lookup.result?.partName ?? "scan"} to cloud`} onClick={() => void retryCloudSave(lookup.id)}>{retryingId === lookup.id ? "Saving…" : !lookup.frame.imageBase64.startsWith("data:") ? "Save inspection to cloud" : "Save to cloud"}</button>
                     ) : null}
                     <button type="button" disabled={retryingId === lookup.id} className="mt-2 px-3 py-2 text-xs font-semibold text-[var(--ds-fg-3)] underline disabled:opacity-50" aria-label={`Remove ${lookup.result?.partName ?? "scan"} from this device`} onClick={() => removeDeviceRecord(lookup)}>Remove device record</button>
@@ -362,8 +365,9 @@ export default function History() {
   );
 }
 
-function cloudSaveLabel(local?: Lookup): string {
+function cloudSaveLabel(local?: Lookup, cloudSyncEnabled = true): string {
   if (!local) return "Loaded from cloud";
+  if (!cloudSyncEnabled && local.cloudSave?.status !== "acknowledged") return "Device copy · Cloud sync is off";
   if (!local.cloudSave) return "Device copy · Cloud save not confirmed for these changes";
   if (local.cloudSave.status === "acknowledged") {
     if (local.cloudSave.scope === "scan" && local.cloudSave.shopAssociation) {

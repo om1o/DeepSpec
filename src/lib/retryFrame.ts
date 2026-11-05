@@ -1,5 +1,6 @@
 import type { CapturedFrame } from "../types";
 import { compressImageDataUrl } from "./utils";
+import { assertCloudSyncEnabled } from "../services/cloudSyncPolicy";
 
 const MAX_RECOVERED_DATA_URL_LENGTH = 750_000;
 const BASE64_CHUNK_SIZE = 32_768;
@@ -18,6 +19,7 @@ export async function prepareRetryFrame(
   compressImage = compressImageDataUrl,
 ): Promise<CapturedFrame> {
   if (frame.imageBase64.startsWith("data:")) return frame;
+  assertCloudSyncEnabled();
   const unavailable = "The saved photo could not be loaded. Reopen it from saved scans to refresh its link, or take a new photo.";
   if (!frame.imageBase64.startsWith("https://")) throw new Error(unavailable);
   const controller = new AbortController();

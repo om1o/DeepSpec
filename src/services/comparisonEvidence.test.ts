@@ -40,6 +40,17 @@ describe("frozen comparison originals", () => {
   });
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
+  it("retains local-byte comparisons while refusing signed-photo fetch and cloud-only restore in disabled builds", async () => {
+    vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
+    const side = await comparisonSideForLookup(scan(), "photo-1");
+    expect(await resolveComparisonSide(side)).toMatchObject({ status: "unchanged", image });
+    local = [scan("scan", [photo("photo-1", signed())])];
+    expect(await resolveComparisonSide(side)).toMatchObject({ status: "verification_unavailable", message: expect.stringContaining("off for this build") });
+    local = [];
+    expect(await resolveComparisonSide(side)).toMatchObject({ status: "verification_unavailable", message: expect.stringContaining("off for this build") });
+    expect(fetchSpy).not.toHaveBeenCalled(); expect(mocks.cloud).not.toHaveBeenCalled();
+  });
+
   it("hashes decoded original bytes and natural dimensions, not a URL or base64 spelling", async () => {
     const embedded = await comparisonSideForLookup(scan(), "photo-1");
     expect(embedded.sha256).toBe(createHash("sha256").update(bytes).digest("hex"));

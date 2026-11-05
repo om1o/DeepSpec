@@ -1,5 +1,6 @@
 import { getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import { getAuthClient } from "./auth";
+import { assertCloudSyncEnabled } from "./cloudSyncPolicy";
 
 export const TRAINING_CONSENT_POLICY_VERSION = "2026-09-27-v1";
 export type TrainingConsent = { enabled: boolean; revision: number | null; updatedAt: string | null };
@@ -19,6 +20,7 @@ function parseRow(row: Record<string, unknown>, scanId: string, scope: AccountSc
 }
 
 export async function loadTrainingConsent(scanId: string, scope = getAccountScope()): Promise<TrainingConsent> {
+  assertCloudSyncEnabled();
   checkScope(scope);
   const client = await getAuthClient();
   checkScope(scope);
@@ -35,6 +37,7 @@ export async function loadTrainingConsent(scanId: string, scope = getAccountScop
 }
 
 export async function saveTrainingConsent(scanId: string, enabled: boolean, expectedRevision: number | null, scope = getAccountScope()): Promise<TrainingConsent> {
+  assertCloudSyncEnabled();
   checkScope(scope);
   const client = await getAuthClient();
   checkScope(scope);

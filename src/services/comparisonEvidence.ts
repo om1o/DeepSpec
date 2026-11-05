@@ -4,6 +4,7 @@ import { providerVehicleContext } from "../lib/vehicleContext";
 import type { Lookup, ScanPhoto } from "../types";
 import type { ComparisonSide } from "../types/inspectionComparison";
 import { readCloudLookupForReport } from "./cloudHistory";
+import { CLOUD_SYNC_DISABLED_MESSAGE, isCloudSyncEnabled } from "./cloudSyncPolicy";
 import { getLookup, readLookups } from "./storage";
 
 export const MAX_COMPARISON_IMAGE_BYTES = 12 * 1024 * 1024;
@@ -64,6 +65,7 @@ function signature(lookup: Lookup | null, photoId: string, scope: AccountScope):
   return JSON.stringify({ ...metadata(lookup, photo), image: url ? `${url.origin}${url.pathname}` : photo.imageBase64 });
 }
 async function cloudLookup(id: string, scope: AccountScope, signal?: AbortSignal): Promise<Lookup | null> {
+  if (!isCloudSyncEnabled()) throw new EvidenceError("verification_unavailable", CLOUD_SYNC_DISABLED_MESSAGE);
   const response = await bounded(scope, signal, () => readCloudLookupForReport(id));
   if (!response.ok) throw unavailable();
   if (response.value && response.value.id !== id) throw unavailable();
@@ -116,6 +118,7 @@ async function fetchRaster(url: string, scope: AccountScope, signal?: AbortSigna
 async function raster(lookup: Lookup, photo: ScanPhoto, scope: AccountScope, signal?: AbortSignal): Promise<Raster> {
   if (!photo.imageBase64) throw missing();
   if (photo.imageBase64.startsWith("data:")) return dataRaster(photo.imageBase64);
+  if (!isCloudSyncEnabled()) throw new EvidenceError("verification_unavailable", CLOUD_SYNC_DISABLED_MESSAGE);
   const url = ownedUrl(photo.imageBase64, lookup.id, scope); if (!url) throw unavailable();
   try { return await fetchRaster(url.href, scope, signal); }
   catch {

@@ -5,6 +5,7 @@ import { mergeCloudLookup } from "../lib/lookupMerge";
 import type { ComponentMap, ComponentMapRecord } from "../types/componentMap";
 import type { Lookup } from "../types";
 import { getAuthClient } from "./auth";
+import { assertCloudSyncEnabled } from "./cloudSyncPolicy";
 import { readCloudLookup } from "./cloudHistory";
 import { syncLookupToCloud } from "./cloudSync";
 import { readComponentMap, transactComponentMap } from "./componentMapStore";
@@ -40,6 +41,7 @@ function assertAccount(scope: AccountScope) {
 }
 
 async function verifiedClient(scope: AccountScope): Promise<SupabaseClient> {
+  assertCloudSyncEnabled();
   assertAccount(scope);
   const client = await boundedRequest(() => getAuthClient());
   assertAccount(scope);

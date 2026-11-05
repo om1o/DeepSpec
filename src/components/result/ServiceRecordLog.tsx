@@ -6,6 +6,7 @@ import { getLookup } from "../../services/storage";
 import { downloadTextFile } from "../../services/report";
 import { appendServiceRecord, importServiceRecords, readServiceRecords, subscribeServiceRecords } from "../../services/serviceRecordStore";
 import { readCloudServiceRecords, syncServiceRecords } from "../../services/serviceRecordCloud";
+import { isCloudSyncEnabled } from "../../services/cloudSyncPolicy";
 import { correctionServiceRecordDraft, newServiceRecordDraft, readServiceRecordDraft, serviceRecordContextForLookup, serviceRecordContextsMatch, serviceRecordDraftVehicleContext, serviceRecordFromDraft, writeServiceRecordDraft, type ServiceRecordContext, type ServiceRecordDraft, type ServiceRecordDraftRead, type ServiceRecordFields } from "../../services/serviceRecordDraft";
 import type { Lookup } from "../../types";
 import type { ServiceRecord } from "../../types/serviceRecord";
@@ -179,7 +180,7 @@ export function ServiceRecordLog({ lookup, disabled = false }: { lookup: Lookup;
     } finally { operation.current = false; if (isAccountScopeCurrent(scope)) setBusy(false); }
   }
   async function cloud(action: "read" | "sync") {
-    if (!requireAccount() || operation.current || disabled) return;
+    if (!isCloudSyncEnabled() || !requireAccount() || operation.current || disabled) return;
     operation.current = true; setBusy(true);
     try {
       if (action === "read") {
@@ -207,8 +208,8 @@ export function ServiceRecordLog({ lookup, disabled = false }: { lookup: Lookup;
   return <details className="rounded-[22px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 shadow-sm">
     <summary className="cursor-pointer text-sm font-extrabold">Human service history{recoveryPending ? " — draft available" : ` — ${records.length} record${records.length === 1 ? "" : "s"}`}</summary>
     <p className="mt-3 text-sm text-[var(--ds-fg-3)]">Record measurements, work and follow-up checks. These are self-reported history, separate from AI findings and the human inspection summary. A completed action or symptom not observed during one check is not proof of repair or roadworthiness.</p>
-    <div className="mt-3 flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled={busy || disabled} onClick={() => void cloud("read")}>Read cloud service history</button><button type="button" className={buttonClass} disabled={busy || disabled || !loaded} onClick={() => void cloud("sync")}>Sync service history</button></div>
-    <p role="status" className="mt-2 text-sm">{cloudMessage}</p>
+    <div className="mt-3 flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled={!isCloudSyncEnabled() || busy || disabled} onClick={() => void cloud("read")}>Read cloud service history</button><button type="button" className={buttonClass} disabled={!isCloudSyncEnabled() || busy || disabled || !loaded} onClick={() => void cloud("sync")}>Sync service history</button></div>
+    <p role="status" className="mt-2 text-sm">{isCloudSyncEnabled() ? cloudMessage : "Cloud sync is off. Service history can be saved and reviewed on this device."}</p>
     <ol className="mt-4 space-y-3" aria-label="Saved service records">{records.map((record) => {
       const status = serviceRecordStatus(record, records);
       return <li key={record.id} className="rounded-xl border border-[var(--ds-border)] p-3">
