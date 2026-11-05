@@ -419,7 +419,8 @@ describe("Result", () => {
     await act(async () => finish(successfulScan.result!));
     expect(screen.getByAltText("Captured car part")).toHaveAttribute("src", replacement.frame.imageBase64);
     expect(screen.getByTestId("result-focus-frame")).toHaveAttribute("data-focus-mode", "full_frame");
-    expect(screen.getByTestId("focused-part-window")).not.toHaveStyle({ left: "10%", top: "20%", width: "30%", height: "40%" });
+    expect(screen.queryByTestId("focused-part-window")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Original", exact: true })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("heading", { level: 1, name: "Alternator" })).not.toBeInTheDocument();
     expect(screen.getByText("Replacement photo is not analyzed.")).toBeInTheDocument();
     expect(getLookups()).toHaveLength(0);

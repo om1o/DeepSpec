@@ -5,6 +5,7 @@ const { loadModel, loadProcessor, readImage, supportsWebGpu } = vi.hoisted(() =>
   loadModel: vi.fn(), loadProcessor: vi.fn(), readImage: vi.fn(), supportsWebGpu: vi.fn(),
 }));
 vi.mock("@huggingface/transformers", () => ({
+  env: { version: "test-sam-boundary" },
   SamModel: { from_pretrained: loadModel }, AutoProcessor: { from_pretrained: loadProcessor }, RawImage: { read: readImage },
 }));
 vi.mock("./browserTransformers", () => ({ configureSameOriginOnnxRuntime: vi.fn() }));
@@ -191,44 +192,66 @@ describe("scene selection preservation", () => {
   it("retains original boxes when pipeline creation fails", async () => {
     loadModel.mockRejectedValue(new Error("GPU pipeline failed"));
     expect(await isolateSceneObjects(frame, inputs)).toEqual(expectedCrops());
+    expect(loadModel).toHaveBeenCalledTimes(1);
+    expect(loadProcessor).toHaveBeenCalledTimes(1);
+    expect(readImage).not.toHaveBeenCalled();
     expect(model).not.toHaveBeenCalled();
   });
 
   it("retains original boxes when model loading times out", async () => {
-    vi.useFakeTimers();
+    // Keep imports and Image.onload microtasks real; only the production deadlines are virtual.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     let markStarted!: () => void;
     const started = new Promise<void>((resolve) => { markStarted = resolve; });
     loadModel.mockImplementation(() => { markStarted(); return new Promise(() => {}); });
     const pending = isolateSceneObjects(frame, inputs);
-    await started;
+    await Promise.race([started, pending.then(() => { throw new Error("Isolation finished before the model loader started"); })]);
     expect(loadModel).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(25_000);
+    expect(loadProcessor).toHaveBeenCalledTimes(1);
+    const settled = vi.fn();
+    void pending.then(settled);
+    await vi.advanceTimersByTimeAsync(24_999);
+    expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
     expect(await pending).toEqual(expectedCrops());
+    expect(readImage).not.toHaveBeenCalled();
     expect(model).not.toHaveBeenCalled();
   });
 
   it("retains original boxes when inference throws", async () => {
     model.mockRejectedValue(new Error("GPU inference failed"));
     expect(await isolateSceneObjects(frame, inputs)).toEqual(expectedCrops());
+    expect(loadModel).toHaveBeenCalledTimes(1);
+    expect(readImage).toHaveBeenCalledWith(frame.imageBase64);
     expect(model).toHaveBeenCalledTimes(1);
+    expect(postProcess).not.toHaveBeenCalled();
   });
 
   it("retains original boxes when inference times out", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     let markStarted!: () => void;
     const started = new Promise<void>((resolve) => { markStarted = resolve; });
     model.mockImplementation(() => { markStarted(); return new Promise(() => {}); });
     const pending = isolateSceneObjects(frame, inputs);
-    await started;
+    await Promise.race([started, pending.then(() => { throw new Error("Isolation finished before inference started"); })]);
+    expect(loadModel).toHaveBeenCalledTimes(1);
+    expect(readImage).toHaveBeenCalledWith(frame.imageBase64);
     expect(model).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(25_000);
+    const settled = vi.fn();
+    void pending.then(settled);
+    await vi.advanceTimersByTimeAsync(24_999);
+    expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
     expect(await pending).toEqual(expectedCrops());
+    expect(postProcess).not.toHaveBeenCalled();
   });
 
   it("retains every selection when all masks are empty", async () => {
     postProcess.mockResolvedValue([maskTensor([])]);
     expect(await isolateSceneObjects(frame, inputs)).toEqual(expectedCrops());
     expect(model).toHaveBeenCalledTimes(1);
+    expect(postProcess).toHaveBeenCalledTimes(1);
+    expect(HTMLCanvasElement.prototype.toDataURL).not.toHaveBeenCalled();
   });
 
   it.each(["empty", "missing", "composite failure"])("retains a successful first mask and the second original selection after %s", async (reason) => {
@@ -240,6 +263,8 @@ describe("scene selection preservation", () => {
         .mockImplementationOnce(() => { throw new Error("Canvas export failed"); });
     }
     const result = await isolateSceneObjects(frame, inputs);
+    expect(model).toHaveBeenCalledTimes(1);
+    expect(postProcess).toHaveBeenCalledTimes(1);
     expect(result).toHaveLength(2);
     expect(result[0]).toMatchObject({ name: "Alternator", primary: true, focusMode: "mask", isolatedImageBase64: "data:image/png;base64,bWFzaw==" });
     expect(result[0].focusBox).toEqual({ x: 0, y: 0, width: 0.5, height: 0.5, confidence: 0.5 });
@@ -256,6 +281,11 @@ describe("scene selection preservation", () => {
       { x: 0, y: 0, width: 0.5, height: 0.5, confidence: 0.5 },
       { x: 0.5, y: 0.5, width: 0.5, height: 0.5, confidence: 0.5 },
     ]);
+    expect(loadModel).toHaveBeenCalledTimes(1);
+    expect(loadProcessor).toHaveBeenCalledTimes(1);
+    expect(readImage).toHaveBeenCalledWith(frame.imageBase64);
     expect(model).toHaveBeenCalledTimes(1);
+    expect(postProcess).toHaveBeenCalledTimes(1);
+    expect(HTMLCanvasElement.prototype.toDataURL).toHaveBeenCalledTimes(2);
   });
 });

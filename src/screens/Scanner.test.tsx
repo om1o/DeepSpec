@@ -470,7 +470,7 @@ describe("Scanner", () => {
   }, 10000);
 
   it("keeps the complete scene when the primary mask and on-device segmentation are unavailable", async () => {
-    mockStillImageTarget({ confidence: 0.9, x: 0.2, y: 0.2, width: 0.3, height: 0.3 });
+    const originalImage = mockStillImageTarget({ confidence: 0.9, x: 0.2, y: 0.2, width: 0.3, height: 0.3 });
     isPromptableSegmentationEnabled.mockReturnValue(false);
     isolateSceneObjects.mockImplementation(async (_frame: unknown, inputs: SceneObjectInput[]) => createSceneCropFallbacks(inputs));
     identifyCapturedFrame.mockResolvedValueOnce({ ...makeScanResult("Alternator"), sceneObjects: [
@@ -484,7 +484,7 @@ describe("Scanner", () => {
     expect(isolateSceneObjects).toHaveBeenCalledTimes(1);
     expect(getLookups()[0].isolatedObjects).toHaveLength(3);
     expect(getLookups()[0].isolatedObjects?.every((object) => object.focusMode === "crop" && object.isolatedImageBase64 === "")).toBe(true);
-    expect(getLookups()[0].frame.imageBase64).toBe("data:image/jpeg;base64,compressed-frame");
+    expect(getLookups()[0].frame.imageBase64).toBe(originalImage);
     expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
   });
 
@@ -963,7 +963,8 @@ describe("Scanner", () => {
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole("heading", { level: 3, name: "Alternator" })).toBeInTheDocument();
     expect(screen.getByTestId("focused-part-overlay")).toHaveAttribute("data-focus-mode", "full_frame");
-    expect(screen.getByTestId("focused-part-window")).toBeInTheDocument();
+    expect(screen.queryByTestId("focused-part-window")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Original", exact: true })).toHaveAttribute("aria-pressed", "true");
   }, 10000);
 
   it("does not wait for a prominent live target before a manual scan", async () => {
@@ -1825,7 +1826,8 @@ describe("Scanner", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Resume 2-photo draft" }));
     await analyzeReviewedPhotos();
 
-    expect(await screen.findByTestId("issue-callout")).toHaveTextContent(issue);
+    await userEvent.click(await screen.findByRole("button", { name: "Outline", exact: true }));
+    expect(screen.getByTestId("issue-callout")).toHaveTextContent(issue);
     expect(screen.getByAltText("Reviewed scan photo")).toHaveAttribute("src", photos[0].imageBase64);
     await userEvent.click(screen.getByRole("button", { name: "2. Close-up" }));
     expect(screen.getByAltText("Reviewed scan photo")).toHaveAttribute("src", photos[1].imageBase64);
@@ -1833,6 +1835,7 @@ describe("Scanner", () => {
     expect(screen.queryByTestId("issue-callout")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "1. Overview" }));
     expect(screen.getByAltText("Reviewed scan photo")).toHaveAttribute("src", photos[0].imageBase64);
+    await userEvent.click(screen.getByRole("button", { name: "Outline", exact: true }));
     expect(screen.getByTestId("issue-callout")).toHaveTextContent(issue);
     expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
   });
