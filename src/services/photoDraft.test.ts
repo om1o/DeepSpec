@@ -27,4 +27,22 @@ describe("photo draft envelopes", () => {
     expect(normalizePhotoDraft({ ...draft, photos: [] })).toBeNull();
     expect(normalizePhotoDraft({ ...draft, photos: Array.from({ length: 5 }, (_, index) => ({ ...photos[0], id: `photo-${index}` })) })).toBeNull();
   });
+  it("retains a version-three vehicle snapshot and job when reading or relabeling", () => {
+    const snapshot: PhotoDraftEnvelope = { version: 3, photos, vehicleContext: { year: "2015", make: "Honda", mileage: "120000", mileageUnit: "mi" }, jobId: "job-a" };
+    expect(normalizePhotoDraft(snapshot)).toEqual(snapshot);
+    expect(normalizePhotoDraft({ ...snapshot, photos: [{ ...photos[0], label: "close_up" }] })).toMatchObject({ vehicleContext: snapshot.vehicleContext, jobId: "job-a" });
+  });
+  it("keeps old clients and another vehicle or job from changing identical photos", () => {
+    const snapshot: PhotoDraftEnvelope = { version: 3, photos, vehicleContext: { model: "Civic" }, jobId: "job-a" };
+    expect(photoDraftsMatch(snapshot, { version: 2, photos })).toBe(false);
+    expect(photoDraftsMatch(snapshot, { ...snapshot, vehicleContext: { model: "Accord" } })).toBe(false);
+    expect(photoDraftsMatch(snapshot, { ...snapshot, jobId: "job-b" })).toBe(false);
+    expect(photoDraftsMatch(snapshot, structuredClone(snapshot))).toBe(true);
+  });
+  it("requires an explicit no-vehicle snapshot and refuses broken new metadata", () => {
+    expect(normalizePhotoDraft({ version: 3, photos, vehicleContext: null })).toEqual({ version: 3, photos, vehicleContext: null });
+    expect(normalizePhotoDraft({ version: 3, photos })).toBeNull();
+    expect(normalizePhotoDraft({ version: 3, photos, vehicleContext: "other car" })).toBeNull();
+    expect(normalizePhotoDraft({ version: 3, photos, vehicleContext: null, jobId: "wrong/job" })).toBeNull();
+  });
 });

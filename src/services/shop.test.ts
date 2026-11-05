@@ -10,10 +10,13 @@ import {
   getShopJob,
   getShopJobScans,
   getShopMetrics,
+  getVehicleContextForJob,
   searchShopJobs,
   setShopLearningOptIn,
+  updateShopJob,
 } from "./shop";
 import type { ScanAnalysisState } from "../types";
+import { confirmVehicleContextField, isVehicleFieldConfirmed } from "../lib/vehicleContext";
 
 const baseJob = {
   make: "Toyota",
@@ -151,6 +154,51 @@ describe("shop service", () => {
 
     expect(report).toContain("VIN: not provided");
     expect(report).toContain("Do not treat this as exact OEM fitment");
+  });
+
+  it("round trips units, modifications and value-bound confirmations in local shop records", () => {
+    let context = confirmVehicleContextField({ ...baseJob, mileage: "120000", mileageUnit: "km", modifications: { status: "modified", details: "Replacement engine" }, vin: "1hgcm82633a004352" }, "mileage", true);
+    context = confirmVehicleContextField(context, "modifications", true);
+    context = confirmVehicleContextField(context, "vin", true);
+    const result = createShopJob({ ...baseJob, ...context, make: baseJob.make, model: baseJob.model, year: baseJob.year, symptom: baseJob.symptom, technicianName: baseJob.technicianName, bayOrRo: "RO-9" });
+    expect(result.ok).toBe(true);
+    const reopened = getShopJob(result.value!.id)!;
+    const scanContext = getVehicleContextForJob(reopened);
+    expect(scanContext).toMatchObject({ mileage: "120000", mileageUnit: "km", modifications: { status: "modified", details: "Replacement engine" }, bayOrRo: "RO-9", vin: "1HGCM82633A004352" });
+    expect(isVehicleFieldConfirmed(scanContext, "mileage")).toBe(true);
+    expect(isVehicleFieldConfirmed(scanContext, "modifications")).toBe(true);
+    expect(isVehicleFieldConfirmed(scanContext, "vin")).toBe(true);
+    expect(isVehicleFieldConfirmed(scanContext, "year")).toBe(false);
+    const report = buildCustomerJobReport(reopened, []);
+    expect(report).toContain("Mileage: 120000 km — user-confirmed (self-reported)");
+    expect(report).toContain("Modified: Replacement engine — user-confirmed (self-reported)");
+    expect(report).toContain(`Symptoms: ${baseJob.symptom}`);
+    expect(report).toContain("Year: 2014 — supplied, unconfirmed");
+    expect(report.match(/VIN:/g)).toHaveLength(1);
+  });
+
+  it("drops stale mileage or modification confirmation when a job field changes", () => {
+    let context = confirmVehicleContextField({ ...baseJob, mileage: "80000", mileageUnit: "mi", modifications: { status: "none_known" } }, "mileage", true);
+    context = confirmVehicleContextField(context, "modifications", true);
+    const job = createShopJob({ ...context, ...baseJob }).value!;
+    const changedUnits = updateShopJob(job.id, { mileageUnit: "km" }).value!;
+    expect(isVehicleFieldConfirmed(changedUnits, "mileage")).toBe(false);
+    expect(isVehicleFieldConfirmed(changedUnits, "modifications")).toBe(true);
+    const changedModifications = updateShopJob(job.id, { modifications: { status: "modified", details: "Changed intake" } }).value!;
+    expect(isVehicleFieldConfirmed(changedModifications, "modifications")).toBe(false);
+  });
+
+  it("preserves legacy intake without promoting a VIN or freeform mileage to confirmation", () => {
+    const job = createShopJob({ ...baseJob, mileage: "120000 miles", vin: "1HGCM82633A004352", notes: "Owner notes", symptom: "A".repeat(450) }).value!;
+    const context = getVehicleContextForJob(getShopJob(job.id)!);
+    expect(context).toMatchObject({ mileage: "120000 miles", notes: "Owner notes", symptom: "A".repeat(450) });
+    expect(context.mileageUnit).toBeUndefined();
+    expect(context.confirmedFields).toBeUndefined();
+    const report = buildCustomerJobReport(job, []);
+    expect(report).toContain("(unit unknown)");
+    expect(report).toContain("Modifications: Unknown — not confirmed");
+    expect(report).toContain("VIN: 1HGCM82633A004352 — supplied, unconfirmed");
+    expect(report).toContain("A".repeat(450));
   });
 });
 

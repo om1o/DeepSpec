@@ -3,6 +3,7 @@ import type { CandidateMatch, CandidatePart, CapturedFrame, ChatMessage, Confide
 import type { PartInspectionDraft } from "../types";
 import { normalizePartInspection, withLatestInspection } from "../lib/partInspection";
 import { normalizeConditionAssessment } from "../lib/conditionAssessment";
+import { normalizeVehicleContext, vehicleContextsMatch } from "../lib/vehicleContext";
 import { accountStorageKey, getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import { inspectionDraftKey } from "./inspectionDraft";
 import { isEvidenceImage, normalizeVisualEvidence } from "./visualEvidence";
@@ -88,8 +89,9 @@ export function createLookup(scanState: ScanAnalysisState, reservedId?: string):
         const other = lookup.photos![index];
         return photo.id === other.id && photo.label === other.label && photo.capturedAt === other.capturedAt && photo.imageBase64 === other.imageBase64;
       }) : !existing.photos && !lookup.photos && existing.frame.imageBase64 === lookup.frame.imageBase64 && existing.frame.capturedAt === lookup.frame.capturedAt;
-    return samePhotos ? { ok: true, value: existing }
-      : { ok: false, value: lookup, message: "This component draft refers to a different saved scan. Existing photos were preserved; reopen the component map." };
+    const sameContext = vehicleContextsMatch(existing.vehicleContext, lookup.vehicleContext) && existing.jobId === lookup.jobId;
+    return samePhotos && sameContext ? { ok: true, value: existing }
+      : { ok: false, value: lookup, message: "This component draft refers to different saved photos, vehicle details or a shop job. The saved scan was preserved; reopen the component map." };
   }
   const lookups = [lookup, ...read.value];
   const writeResult = writeLookups(lookups);
@@ -1177,20 +1179,7 @@ function cleanTextValue(value: unknown, maxLength: number) {
 }
 
 function normalizeShopVehicleContext(value: unknown): ShopVehicleContext | undefined {
-  if (!isRecord(value)) {
-    return undefined;
-  }
-
-  const context: ShopVehicleContext = {};
-  const fields: Array<keyof ShopVehicleContext> = ["bayOrRo", "customerName", "engine", "jobTitle", "make", "mileage", "model", "notes", "plate", "symptom", "technicianName", "vin", "year"];
-  for (const field of fields) {
-    const clean = cleanTextValue(value[field], field === "notes" || field === "symptom" ? 300 : 120);
-    if (clean) {
-      (context as Record<string, string>)[field] = clean;
-    }
-  }
-
-  return Object.keys(context).length ? context : undefined;
+  return normalizeVehicleContext(value);
 }
 
 function normalizeCustomerVisibleReport(value: unknown): CustomerVisibleReport | undefined {

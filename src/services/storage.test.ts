@@ -22,6 +22,7 @@ import {
 } from "./storage";
 import type { ScanAnalysisState } from "../types";
 import { emptyPartInspection } from "../lib/partInspection";
+import { confirmVehicleContextField } from "../lib/vehicleContext";
 
 describe("reserved component scan identities", () => {
   it("recovers the same saved evidence without duplicating or replacing the original analysis", () => {
@@ -33,6 +34,19 @@ describe("reserved component scan identities", () => {
     const changed = [{ ...photos[0], imageBase64: "data:image/jpeg;base64,dHdv" }];
     expect(createLookup({ frame: changed[0], photos: changed }, "reserved-component-scan").ok).toBe(false);
     expect(getLookup("reserved-component-scan")?.photos).toEqual(photos);
+  });
+
+  it("rejects reserved-id recovery when vehicle context or job differs despite identical photos", () => {
+    const frame = { capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,b25l" };
+    const context = confirmVehicleContextField({ make: "Toyota", mileage: "120000", mileageUnit: "mi" }, "mileage", true, "2026-11-05T12:00:00.000Z");
+    const saved = createLookup({ frame, vehicleContext: context, jobId: "job-one" }, "reserved-vehicle-scan");
+    expect(saved.ok).toBe(true);
+    expect(createLookup({ frame, vehicleContext: { ...context, make: "Honda" }, jobId: "job-one" }, "reserved-vehicle-scan").ok).toBe(false);
+    expect(createLookup({ frame, vehicleContext: context, jobId: "job-two" }, "reserved-vehicle-scan").ok).toBe(false);
+    expect(createLookup({ frame, vehicleContext: context }, "reserved-vehicle-scan").ok).toBe(false);
+    expect(createLookup({ frame, vehicleContext: { ...context, confirmedFields: undefined }, jobId: "job-one" }, "reserved-vehicle-scan").ok).toBe(false);
+    expect(createLookup({ frame, vehicleContext: { ...context, make: " Toyota " }, jobId: "job-one" }, "reserved-vehicle-scan")).toEqual(saved);
+    expect(getLookup(saved.value.id)).toMatchObject({ vehicleContext: context, jobId: "job-one" });
   });
 });
 
@@ -426,6 +440,25 @@ describe("storage", () => {
         technicianName: "Sam",
       },
     });
+  });
+
+  it("round trips exact vehicle confirmations, mileage units and modifications without promoting legacy facts", () => {
+    let context = confirmVehicleContextField({ make: "Toyota", model: "Camry", mileage: "120000", mileageUnit: "mi", modifications: { status: "modified", details: "Aftermarket intake" }, customerName: "Customer", symptom: "Rattle" }, "mileage", true, "2026-11-05T12:00:00.000Z");
+    context = confirmVehicleContextField(context, "modifications", true, "2026-11-05T12:00:00.000Z");
+    const saved = createLookup({ ...scanState, vehicleContext: context });
+    expect(saved.ok).toBe(true);
+    expect(getLookup(saved.value.id)?.vehicleContext).toEqual(context);
+    expect(scanStateFromLookup(getLookup(saved.value.id)!)?.vehicleContext).toEqual(context);
+    expect(getLookup(saved.value.id)?.vehicleContext?.confirmedFields?.make).toBeUndefined();
+  });
+
+  it("drops stale vehicle confirmations on restore while retaining the scan and useful facts", () => {
+    const context = confirmVehicleContextField({ engine: "2.0L", mileage: "120000", mileageUnit: "mi" }, "engine", true, "2026-11-05T12:00:00.000Z");
+    const saved = createLookup({ ...scanState, vehicleContext: context }).value;
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([{ ...saved, vehicleContext: { ...context, engine: "2.5L", mileageUnit: "yards", modifications: { status: "invalid" } } }]));
+    expect(getLookup(saved.id)).toMatchObject({ result: { partName: "Alternator" }, vehicleContext: { engine: "2.5L", mileage: "120000" } });
+    expect(getLookup(saved.id)?.vehicleContext?.confirmedFields).toBeUndefined();
+    expect(getLookup(saved.id)?.vehicleContext?.mileageUnit).toBeUndefined();
   });
 
   it("updates AI result on successful retry", () => {

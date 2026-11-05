@@ -1,5 +1,6 @@
 import { getLookups } from "./storage";
 import { accountStorageKey } from "../lib/accountScope";
+import { normalizeVehicleContext, vehicleContextDetails } from "../lib/vehicleContext";
 import type {
   CustomerVisibleReport,
   Lookup,
@@ -32,20 +33,13 @@ type StorageResult<T> =
       value: T;
     };
 
-export type ShopJobInput = {
-  bayOrRo?: string;
-  customerName?: string;
-  engine?: string;
+export type ShopJobInput = ShopVehicleContext & {
   make: string;
-  mileage?: string;
   model: string;
-  notes?: string;
   orgId?: string;
-  plate?: string;
   symptom: string;
   technicianName: string;
   title: string;
-  vin?: string;
   year: string;
 };
 
@@ -136,7 +130,7 @@ export function createShopJob(input: ShopJobInput): StorageResult<ShopJob | null
   }
 
   const now = new Date().toISOString();
-  const job: ShopJob = {
+  const job: ShopJob = normalizeShopJob({
     id: createId("job"),
     bayOrRo: clean(input.bayOrRo, 80),
     createdAt: now,
@@ -145,6 +139,9 @@ export function createShopJob(input: ShopJobInput): StorageResult<ShopJob | null
     engine: clean(input.engine, 120),
     make: clean(input.make, 80),
     mileage: clean(input.mileage, 40),
+    mileageUnit: input.mileageUnit,
+    modifications: input.modifications,
+    confirmedFields: input.confirmedFields,
     model: clean(input.model, 80),
     notes: clean(input.notes, 500),
     orgId: input.orgId || org.id,
@@ -158,7 +155,7 @@ export function createShopJob(input: ShopJobInput): StorageResult<ShopJob | null
     updatedAt: now,
     vin: cleanVin(input.vin),
     year: clean(input.year, 20),
-  };
+  });
 
   const writeResult = writeJobs([job, ...getShopJobs()].slice(0, MAX_SHOP_JOBS));
   return writeResult.ok
@@ -188,23 +185,29 @@ export function getShopJob(jobId: string): ShopJob | null {
   return getShopJobs().find((job) => job.id === normalizedId) ?? null;
 }
 
-export function updateShopJob(jobId: string, patch: Partial<Pick<ShopJob, "status" | "vin" | "mileage" | "engine" | "notes" | "reviewStatus">>): StorageResult<ShopJob | null> {
+export function updateShopJob(jobId: string, patch: Partial<Pick<ShopJob, "status" | "vin" | "year" | "make" | "model" | "mileage" | "mileageUnit" | "modifications" | "confirmedFields" | "engine" | "notes" | "reviewStatus">>): StorageResult<ShopJob | null> {
   const jobs = getShopJobs();
   const index = jobs.findIndex((job) => job.id === jobId);
   if (index === -1) {
     return { ok: false, message: "Shop job was not found.", value: null };
   }
 
-  const updated: ShopJob = {
+  const updated: ShopJob = normalizeShopJob({
     ...jobs[index],
     ...(isShopJobStatus(patch.status) ? { status: patch.status } : {}),
     ...(isShopReviewStatus(patch.reviewStatus) ? { reviewStatus: patch.reviewStatus } : {}),
     ...(typeof patch.vin === "string" ? { vin: cleanVin(patch.vin) } : {}),
+    ...(typeof patch.year === "string" ? { year: clean(patch.year, 20) } : {}),
+    ...(typeof patch.make === "string" ? { make: clean(patch.make, 80) } : {}),
+    ...(typeof patch.model === "string" ? { model: clean(patch.model, 80) } : {}),
     ...(typeof patch.mileage === "string" ? { mileage: clean(patch.mileage, 40) } : {}),
+    ...("mileageUnit" in patch ? { mileageUnit: patch.mileageUnit } : {}),
+    ...("modifications" in patch ? { modifications: patch.modifications } : {}),
+    ...("confirmedFields" in patch ? { confirmedFields: patch.confirmedFields } : {}),
     ...(typeof patch.engine === "string" ? { engine: clean(patch.engine, 120) } : {}),
     ...(typeof patch.notes === "string" ? { notes: clean(patch.notes, 500) } : {}),
     updatedAt: new Date().toISOString(),
-  };
+  });
 
   const next = [...jobs];
   next[index] = updated;
@@ -240,13 +243,16 @@ export function attachScanToJob(jobId: string, lookupId: string): StorageResult<
 }
 
 export function getVehicleContextForJob(job: ShopJob): ShopVehicleContext {
-  return {
+  return normalizeVehicleContext({
     bayOrRo: job.bayOrRo,
     customerName: job.customerName,
     engine: job.engine,
     jobTitle: job.title,
     make: job.make,
     mileage: job.mileage,
+    mileageUnit: job.mileageUnit,
+    modifications: job.modifications,
+    confirmedFields: job.confirmedFields,
     model: job.model,
     notes: job.notes,
     plate: job.plate,
@@ -254,7 +260,7 @@ export function getVehicleContextForJob(job: ShopJob): ShopVehicleContext {
     technicianName: job.technicianName,
     vin: job.vin,
     year: job.year,
-  };
+  }) ?? {};
 }
 
 export function getShopJobScans(job: ShopJob): Lookup[] {
@@ -337,13 +343,10 @@ export function buildCustomerJobReport(job: ShopJob, scans = getShopJobScans(job
   const lines = [
     "DeepSpec shop report",
     `Job: ${job.title}`,
-    `Vehicle: ${job.year} ${job.make} ${job.model}`,
     `Technician: ${job.technicianName}`,
     job.customerName ? `Customer: ${job.customerName}` : "",
-    job.bayOrRo ? `Bay/RO: ${job.bayOrRo}` : "",
-    job.vin ? `VIN: ${job.vin}` : "VIN: not provided",
-    job.mileage ? `Mileage: ${job.mileage}` : "",
-    `Complaint: ${job.symptom}`,
+    "Vehicle details and intake:",
+    ...vehicleContextDetails(getVehicleContextForJob(job)).map(([label, value]) => `${label}: ${label === "VIN" && !job.vin ? "not provided — not confirmed" : value}`),
     "",
     `Scans: ${scans.length}`,
     ...scans.flatMap((scan, index) => [
@@ -389,7 +392,7 @@ function writeJobs(jobs: ShopJob[]): StorageResult<ShopJob[]> {
 }
 
 function normalizeShopJob(job: ShopJob): ShopJob {
-  return {
+  const cleaned = {
     ...job,
     bayOrRo: clean(job.bayOrRo, 80),
     customerName: clean(job.customerName, 120),
@@ -409,6 +412,10 @@ function normalizeShopJob(job: ShopJob): ShopJob {
     vin: cleanVin(job.vin),
     year: clean(job.year, 20),
   };
+  // Confirmations are bound to the saved values, including mileage units and
+  // modification details. Legacy jobs stay supplied until explicitly confirmed.
+  const context = normalizeVehicleContext(cleaned);
+  return { ...cleaned, mileageUnit: context?.mileageUnit, modifications: context?.modifications, confirmedFields: context?.confirmedFields };
 }
 
 function getReviewStatusForScanIds(scanIds: string[]): ShopReviewStatus {

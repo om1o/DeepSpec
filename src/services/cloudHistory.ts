@@ -2,6 +2,7 @@ import { getAccountScope, isAccountScopeCurrent } from "../lib/accountScope";
 import { getAuthClient, isSupabaseAuthConfigured } from "./auth";
 import { normalizePartInspection } from "../lib/partInspection";
 import { normalizeConditionAssessment } from "../lib/conditionAssessment";
+import { normalizeVehicleContext } from "../lib/vehicleContext";
 import { evidencePaths, parseEvidenceBundle, restoreEvidenceBundle } from "./visualEvidence";
 import type {
   CandidateMatch,
@@ -548,19 +549,7 @@ function parseCustomerVisibleReport(value: unknown): CustomerVisibleReport | und
 }
 
 function parseShopVehicleContext(value: unknown): ShopVehicleContext | undefined {
-  if (!isObject(value)) {
-    return undefined;
-  }
-
-  const context: ShopVehicleContext = {};
-  const fields: Array<keyof ShopVehicleContext> = ["bayOrRo", "customerName", "engine", "jobTitle", "make", "mileage", "model", "notes", "plate", "symptom", "technicianName", "vin", "year"];
-  for (const field of fields) {
-    if (isString(value[field])) {
-      (context as Record<string, string>)[field] = value[field].trim().slice(0, field === "notes" || field === "symptom" ? 300 : 120);
-    }
-  }
-
-  return Object.keys(context).length ? context : undefined;
+  return normalizeVehicleContext(value);
 }
 
 function parseSourceLinks(value: unknown): SourceLink[] {

@@ -86,12 +86,19 @@ export type CandidateMatch = {
   reason: string;
 };
 
+export type VehicleContextField = "vin" | "year" | "make" | "model" | "engine" | "mileage" | "modifications";
+
 export type VehicleContext = {
   vin?: string;
   year?: string;
   make?: string;
   model?: string;
   engine?: string;
+  mileage?: string;
+  mileageUnit?: "mi" | "km" | "unknown";
+  modifications?: { status: "unknown" | "none_known" | "modified"; details?: string };
+  confirmedFields?: Partial<Record<VehicleContextField, { value: string; confirmedAt: string }>>;
+  symptom?: string;
   notes?: string;
 };
 
@@ -121,9 +128,7 @@ export type ShopVehicleContext = VehicleContext & {
   bayOrRo?: string;
   customerName?: string;
   jobTitle?: string;
-  mileage?: string;
   plate?: string;
-  symptom?: string;
   technicianName?: string;
 };
 
@@ -136,6 +141,9 @@ export type ShopJob = {
   engine?: string;
   make: string;
   mileage?: string;
+  mileageUnit?: VehicleContext["mileageUnit"];
+  modifications?: VehicleContext["modifications"];
+  confirmedFields?: VehicleContext["confirmedFields"];
   model: string;
   notes?: string;
   orgId: string;

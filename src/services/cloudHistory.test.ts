@@ -1,6 +1,7 @@
 import { setActiveAccount } from "../lib/accountScope";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConditionAssessment } from "../types";
+import { confirmVehicleContextField } from "../lib/vehicleContext";
 
 type SelectResult = { data: unknown; error: { message?: string } | null };
 
@@ -260,6 +261,31 @@ describe("readCloudLookups", () => {
     expect(mocks.select).toHaveBeenCalledTimes(2);
     expect(mocks.select.mock.calls[1][0]).not.toContain("job_id");
     expect(result.ok && result.value.map((lookup) => lookup.id)).toEqual(["scan-1"]);
+  });
+
+  it("restores confirmed vehicle facts and new metadata through cloud and local parsing", async () => {
+    let context = confirmVehicleContextField({ year: "2014", make: "Toyota", engine: "2.5L", mileage: "120000", mileageUnit: "km", modifications: { status: "none_known" }, customerName: "Customer" }, "mileage", true, "2026-11-05T12:00:00.000Z");
+    context = confirmVehicleContextField(context, "modifications", true, "2026-11-05T12:00:00.000Z");
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, vehicle_context: context }], error: null });
+    const { readCloudLookups } = await import("./cloudHistory");
+    const { normalizeLookup } = await import("./storage");
+    const result = await readCloudLookups();
+    if (!result.ok) throw new Error(result.message);
+    expect(result.value[0].vehicleContext).toEqual(context);
+    expect(normalizeLookup(result.value[0])?.vehicleContext).toEqual(context);
+    expect(result.value[0].vehicleContext?.confirmedFields?.year).toBeUndefined();
+  });
+
+  it("keeps cloud legacy facts but rejects changed values, units and invalid confirmation metadata", async () => {
+    let context = confirmVehicleContextField({ engine: "2.0L", mileage: "120000", mileageUnit: "mi" }, "engine", true, "2026-11-05T12:00:00.000Z");
+    context = confirmVehicleContextField(context, "mileage", true, "2026-11-05T12:00:00.000Z");
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, vehicle_context: { ...context, engine: "2.5L", mileageUnit: "km", modifications: { status: "invalid" }, make: "Toyota" } }], error: null });
+    const { readCloudLookups } = await import("./cloudHistory");
+    const result = await readCloudLookups();
+    if (!result.ok) throw new Error(result.message);
+    expect(result.value[0].vehicleContext).toEqual({ make: "Toyota", engine: "2.5L", mileage: "120000", mileageUnit: "km" });
+    expect(result.value[0].reviewStatus).toBe("confirmed");
+    expect(result.value[0].vehicleContext?.confirmedFields).toBeUndefined();
   });
 
   it("reports other errors without retrying", async () => {

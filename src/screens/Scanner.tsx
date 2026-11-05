@@ -18,6 +18,9 @@ import { ScanDebugOverlay } from "../components/result/ScanDebugOverlay";
 import { ScanSources } from "../components/result/ScanSources";
 import { CropBox } from "../components/scanner/CropBox";
 import { PhotoGroupReview } from "../components/scanner/PhotoGroupReview";
+import { VehicleContextEditor } from "../components/vehicle/VehicleContextEditor";
+import { normalizeVehicleContext, vehicleContextsMatch } from "../lib/vehicleContext";
+import { readVehicleProfile, saveVehicleProfile } from "../services/vehicleProfile";
 import { photoGroupsMatch, photoDraftsMatch, componentCaptureTargetsMatch, readPhotoDraftEnvelope, replacePhotoDraftEnvelopeIfMatches, type PhotoDraftEnvelope, type PhotoDraftKind } from "../services/photoDraft";
 import { isCropBoxEnabled } from "../components/scanner/cropBoxGeometry";
 import { IssueLine, ResultDetailSections, SceneCategoryList } from "../components/result/PositiveAnswerCard";
@@ -111,6 +114,8 @@ type ActiveScanRequest = {
   requestId: number;
 };
 
+type CaptureVehicleSnapshot = { vehicleContext: ShopVehicleContext | null; jobId?: string };
+
 type ScanQualityCoachIssue = ImageQualityIssue | "object_too_small" | "needs_better_photo";
 
 type ScanQualityCoachState = {
@@ -131,7 +136,10 @@ function buildShopScanContext(
 
   return {
     // Describe the scan being saved, not the job's previous one (this runs before it's stored).
-    customerVisibleReport: buildCustomerVisibleReport(job, undefined, { result, correction: null }),
+    customerVisibleReport: buildCustomerVisibleReport({ ...job,
+      year: vehicleContext?.year ?? "", make: vehicleContext?.make ?? "", model: vehicleContext?.model ?? "",
+      symptom: vehicleContext?.symptom ?? "Complaint not supplied", title: vehicleContext?.jobTitle ?? "Saved inspection",
+    }, undefined, { result, correction: null }),
     jobId: job.id,
     orgId: job.orgId,
     reviewStatus: "needs_review",
@@ -165,6 +173,11 @@ export default function Scanner() {
     () => (activeShopJob ? getVehicleContextForJob(activeShopJob) : undefined),
     [activeShopJob],
   );
+  const [initialVehicleProfile] = useState(() => readVehicleProfile());
+  const [vehicleProfile, setVehicleProfile] = useState<ShopVehicleContext | undefined>(() => initialVehicleProfile.ok ? initialVehicleProfile.value : undefined);
+  const [vehicleEdit, setVehicleEdit] = useState<ShopVehicleContext | undefined>(vehicleProfile);
+  const [showVehicleEditor, setShowVehicleEditor] = useState(false);
+  const [vehicleMessage, setVehicleMessage] = useState<string | null>(() => initialVehicleProfile.ok ? null : initialVehicleProfile.message);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [uploadEnvelope, setPhotoDraft] = useState<PhotoDraftEnvelope | null>(null);
   const [captureEnvelope, setCaptureDraft] = useState<PhotoDraftEnvelope | null>(null);
@@ -205,6 +218,7 @@ export default function Scanner() {
   const [qualityCoach, setQualityCoach] = useState<ScanQualityCoachState | null>(null);
   const guidedRetakeUsedRef = useRef(false);
   const pendingGuidedRetakeRef = useRef(false);
+  const retakeVehicleSnapshotRef = useRef<CaptureVehicleSnapshot | null>(null);
   const cancelScanRef = useRef(false);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const activeIdentifyRef = useRef<ActiveScanRequest | null>(null);
@@ -421,8 +435,8 @@ export default function Scanner() {
     const saved = createLookup(scanState, target?.lookupId);
     if (saved.ok) {
       const savedState = target ? scanStateFromLookup(saved.value) : scanState;
-      if (activeShopJob) {
-        attachScanToJob(activeShopJob.id, saved.value.id);
+      if (saved.value.jobId) {
+        attachScanToJob(saved.value.jobId, saved.value.id);
       }
       saveLatestScanState(savedState);
       setScanReview({
@@ -457,7 +471,18 @@ export default function Scanner() {
       sourceUpdatedAt,
     });
     return null;
-  }, [activeShopJob, isScanRequestActive, syncSavedLookup]);
+  }, [isScanRequestActive, syncSavedLookup]);
+
+  const captureVehicleSnapshot = useCallback(async () => {
+    if (retakeVehicleSnapshotRef.current) return retakeVehicleSnapshotRef.current;
+    if (routeCaptureTarget) {
+      const overview = await readComponentMapLookup(routeCaptureTarget.mapId, accountScopeRef.current);
+      if (!isAccountScopeCurrent(accountScopeRef.current)) throw new Error("Account changed. Reopen the original account before taking photos.");
+      if (!overview.ok || !overview.value) throw new Error(overview.ok ? "Reopen the component overview before taking photos." : overview.message);
+      return { vehicleContext: normalizeVehicleContext(overview.value.vehicleContext) ?? null };
+    }
+    return { vehicleContext: normalizeVehicleContext(activeShopVehicleContext ?? vehicleProfile) ?? null, ...(activeShopJob ? { jobId: activeShopJob.id } : {}) };
+  }, [routeCaptureTarget, activeShopVehicleContext, vehicleProfile, activeShopJob]);
 
   const analyzeImageBase64 = useCallback(async (
     imageBase64: string,
@@ -469,14 +494,18 @@ export default function Scanner() {
     photos?: ScanPhoto[],
     captureEvidence?: { original: ScanPhoto; persist: (accepted: ScanPhoto[]) => Promise<boolean> },
     componentTarget?: ComponentCaptureTarget,
+    vehicleContextSnapshot?: ShopVehicleContext | null,
+    jobIdSnapshot?: string | null,
   ) => {
     activeComponentTargetRef.current = componentTarget ? { requestId, target: componentTarget } : null;
-    let scanVehicleContext = activeShopVehicleContext;
-    if (componentTarget) {
+    const scanShopJob = jobIdSnapshot === undefined ? activeShopJob : jobIdSnapshot ? getShopJob(jobIdSnapshot) : null;
+    if (jobIdSnapshot && !scanShopJob) throw new Error("The job for these photos is unavailable. Your draft is kept; reopen its original job before analysis.");
+    let scanVehicleContext = normalizeVehicleContext(vehicleContextSnapshot === undefined ? activeShopVehicleContext ?? vehicleProfile : vehicleContextSnapshot);
+    if (componentTarget && vehicleContextSnapshot === undefined) {
       const overview = await readComponentMapLookup(componentTarget.mapId, accountScopeRef.current);
       if (!isScanRequestActive(requestId)) return;
       if (!overview.ok || !overview.value) throw new Error(overview.ok ? "Reopen the component overview before analyzing these photos." : overview.message);
-      scanVehicleContext = overview.value.vehicleContext;
+      scanVehicleContext = normalizeVehicleContext(overview.value.vehicleContext);
     }
     const sourceUpdatedAt = new Date().toISOString();
     const deviceRead = readLookups();
@@ -516,10 +545,10 @@ export default function Scanner() {
         errorMessage: `Photo quality check: ${coach.title}. ${coach.action}${guidedRetakeUsedRef.current ? " Guided retake used; identity remains unresolved. Review the saved evidence before deciding what to do next." : " Identification was not run."}`,
         analyzedAt: sourceUpdatedAt,
         provenance: { captureMode, analysisSource: "ai_detection", savedAt: sourceUpdatedAt },
-        ...buildShopScanContext(activeShopJob, scanVehicleContext, undefined),
+        ...buildShopScanContext(scanShopJob, scanVehicleContext, undefined),
       }, { captureMode, requestId, reviewTarget, source: "AI detection", analysisSource: "ai_detection", sourceUpdatedAt });
     }
-    saveLatestScanState({ frame, photos: evidencePhotos, scanQuality });
+    saveLatestScanState({ frame, photos: evidencePhotos, scanQuality, ...buildShopScanContext(scanShopJob, scanVehicleContext, undefined) });
     resetScanDebug();
 
     let focusedFrame: CapturedFrame | undefined;
@@ -606,16 +635,16 @@ export default function Scanner() {
     }
     if (captureEvidence && !await captureEvidence.persist(evidencePhotos)) return;
     if (!isScanRequestActive(requestId)) return;
-    saveLatestScanState({ frame, photos: evidencePhotos, scanQuality });
+    saveLatestScanState({ frame, photos: evidencePhotos, scanQuality, ...buildShopScanContext(scanShopJob, scanVehicleContext, undefined) });
     // Decide cache eligibility only after all accepted inputs are known and durable.
     setAnalysisStep("Checking saved matches");
-    const imageHash = !photos && !identifySecondFrame ? await hashImageDataUrl(imageBase64) : null;
+    const imageHash = !photos && !identifySecondFrame && !scanVehicleContext ? await hashImageDataUrl(imageBase64) : null;
     if (!isScanRequestActive(requestId)) return;
-    if (imageHash && !activeShopJob) {
+    if (imageHash && !scanShopJob) {
       const cached = getCachedScanResult(imageHash);
       if (cached) {
         const contextualResult = applyShopFitmentContext(cached, scanVehicleContext);
-        const shopScanContext = buildShopScanContext(activeShopJob, scanVehicleContext, contextualResult);
+        const shopScanContext = buildShopScanContext(scanShopJob, scanVehicleContext, contextualResult);
         setAnalysisStep("Opening result");
         recordScanOutcome(contextualResult);
         return persistAndShowReview(
@@ -667,7 +696,7 @@ export default function Scanner() {
         console.warn(`[DeepSpec] Identify took ${identifyMs}ms (over ${IDENTIFY_BUDGET_WARN_MS}ms budget).`);
       }
       // The cache key covers only the original, so a two-photo result cannot be reused by it.
-      if (imageHash && !activeShopJob && !photos && !identifySecondFrame) setCachedScanResult(imageHash, result);
+      if (imageHash && !scanShopJob && !scanVehicleContext && !photos && !identifySecondFrame) setCachedScanResult(imageHash, result);
       recordScanOutcome(result);
 
       // Step 6: when the scene has several objects, cut each out (SlimSAM, one pass) for the
@@ -697,7 +726,7 @@ export default function Scanner() {
       }
 
       setAnalysisStep("Saving");
-      const shopScanContext = buildShopScanContext(activeShopJob, scanVehicleContext, result);
+      const shopScanContext = buildShopScanContext(scanShopJob, scanVehicleContext, result);
       return persistAndShowReview(
         {
           frame,
@@ -744,7 +773,7 @@ export default function Scanner() {
           focusMode,
           isolatedImageBase64,
           scanQuality,
-          ...buildShopScanContext(activeShopJob, scanVehicleContext, undefined),
+          ...buildShopScanContext(scanShopJob, scanVehicleContext, undefined),
           provenance: {
             analysisSource: "ai_detection",
             captureMode,
@@ -763,7 +792,7 @@ export default function Scanner() {
         },
       );
     }
-  }, [activeShopJob, activeShopVehicleContext, isScanRequestActive, persistAndShowReview, recordScanOutcome, selectedCameraId, stopForQualityCoach]);
+  }, [activeShopJob, activeShopVehicleContext, vehicleProfile, isScanRequestActive, persistAndShowReview, recordScanOutcome, selectedCameraId, stopForQualityCoach]);
 
   const finishSavedDraft = useCallback(async (draft: PhotoDraftEnvelope, kind: PhotoDraftKind, saved: Lookup | null | undefined) => {
     const photos = draft.photos;
@@ -772,6 +801,7 @@ export default function Scanner() {
       : photos.length === 1 && saved.frame.imageBase64 === photos[0].imageBase64);
     if (!matchesSavedEvidence || !isAccountScopeCurrent(accountScopeRef.current)) return false;
     try {
+      if (draft.version === 3 && (!vehicleContextsMatch(draft.vehicleContext, saved.vehicleContext) || draft.jobId !== saved.jobId)) throw new Error("The saved scan has different vehicle details. The original photo draft was kept for review.");
       if (draft.target) {
         if (saved.id !== draft.target.lookupId) throw new Error("The scan is saved but its component link is pending. Resume this draft to recover it.");
         await linkComponentMap(draft.target, photos.map((photo) => photo.id), accountScopeRef.current);
@@ -800,7 +830,7 @@ export default function Scanner() {
     }
   }, []);
 
-  const handleIdentify = useCallback(async (reviewTargetOverride?: CameraObjectTarget) => {
+  const handleIdentify = useCallback(async (reviewTargetOverride?: CameraObjectTarget, snapshotOverride?: CaptureVehicleSnapshot) => {
     if (!isAccountScopeCurrent(accountScopeRef.current) || isAnalyzing || activeIdentifyRef.current || photoDraftBusyRef.current) {
       return;
     }
@@ -824,16 +854,18 @@ export default function Scanner() {
         return;
       }
       if (routeCaptureTarget && getLookup(routeCaptureTarget.lookupId)) throw new Error("This component group is already saved. Return to the component map to start another group.");
+      const vehicleSnapshot = snapshotOverride ?? await captureVehicleSnapshot();
+      if (!isScanRequestActive(requestId)) return;
       setAnalysisStep("Capturing photo");
       const imageBase64 = await captureFrame();
       if (!isScanRequestActive(requestId)) return;
 
       let captured: ScanPhoto[] = [{ id: "photo-1", label: "overview", imageBase64, capturedAt: new Date().toISOString() }];
-      let draft: PhotoDraftEnvelope = { version: 2, photos: captured, ...(routeCaptureTarget ? { target: routeCaptureTarget } : {}) };
+      let draft: PhotoDraftEnvelope = { version: 3, photos: captured, ...vehicleSnapshot, ...(routeCaptureTarget ? { target: routeCaptureTarget } : {}) };
       photoDraftRevisionRef.current += 1;
       setAnalysisStep("Saving captured photo");
       const stored = await replacePhotoDraftEnvelopeIfMatches(null, draft, accountScopeRef.current, "capture");
-      if (stored && isAccountScopeCurrent(accountScopeRef.current)) setCaptureDraft(draft);
+      if (stored && isAccountScopeCurrent(accountScopeRef.current)) { setCaptureDraft(draft); retakeVehicleSnapshotRef.current = null; }
       if (!isScanRequestActive(requestId)) return;
       if (!stored) {
         const pendingCapture = await readPhotoDraftEnvelope(accountScopeRef.current, "capture");
@@ -870,7 +902,7 @@ export default function Scanner() {
           setCaptureDraft(next);
           return true;
         },
-      });
+      }, undefined, vehicleSnapshot.vehicleContext, vehicleSnapshot.jobId ?? null);
       await finishSavedDraft(draft, "capture", saved);
     } catch (error) {
       if (isScanRequestActive(requestId)) {
@@ -884,7 +916,7 @@ export default function Scanner() {
       }
       finishScanRequest(activeRequest);
     }
-  }, [analyzeImageBase64, beginScanRequest, captureFrame, finishScanRequest, isAnalyzing, isScanRequestActive, pauseAutoScan, finishSavedDraft, routeCaptureTarget, startScanWatchdog]);
+  }, [analyzeImageBase64, beginScanRequest, captureFrame, captureVehicleSnapshot, finishScanRequest, isAnalyzing, isScanRequestActive, pauseAutoScan, finishSavedDraft, routeCaptureTarget, startScanWatchdog]);
 
   const refreshConflictingDraft = useCallback(async (kind: PhotoDraftKind) => {
     const scope = accountScopeRef.current;
@@ -911,8 +943,17 @@ export default function Scanner() {
       // Read the selected slot before appending; unreadable storage must never become [].
       const stored = kind === "capture" ? await readPhotoDraftEnvelope(scope, kind) : await readPhotoDraftEnvelope(scope);
       if (!isAccountScopeCurrent(scope)) return;
+      if (showPhotoDraft && (!stored || !activeDraftEnvelope || !photoDraftsMatch(activeDraftEnvelope, stored))) {
+        await refreshConflictingDraft(kind);
+        return;
+      }
       if (kind === "capture") setCaptureDraft(stored); else setPhotoDraft(stored);
-      if (stored && !showPhotoDraft && !componentCaptureTargetsMatch(stored.target, routeCaptureTarget ?? undefined)) {
+      const vehicleSnapshot = !stored || !showPhotoDraft ? await captureVehicleSnapshot() : null;
+      if (!isAccountScopeCurrent(scope)) return;
+      if (stored && !showPhotoDraft && (!componentCaptureTargetsMatch(stored.target, routeCaptureTarget ?? undefined)
+        || (stored.version === 3
+          ? !vehicleContextsMatch(stored.vehicleContext, vehicleSnapshot?.vehicleContext) || stored.jobId !== vehicleSnapshot?.jobId
+          : Boolean(vehicleSnapshot?.vehicleContext || vehicleSnapshot?.jobId)))) {
         setPhotoDraftKind(kind);
         setShowPhotoDraft(true);
         setPhotoDraftMessage("An earlier draft belongs to a different inspection. Resume or discard it before adding these photos. No photos were added.");
@@ -934,13 +975,14 @@ export default function Scanner() {
         if (!isAccountScopeCurrent(scope)) return;
         next.push({ id: crypto.randomUUID(), label: next.length ? "other" : "overview", imageBase64, capturedAt: new Date().toISOString() });
       }
-      const nextEnvelope: PhotoDraftEnvelope = { version: 2, photos: next,
-        ...(stored?.target ? { target: stored.target } : !stored && routeCaptureTarget ? { target: routeCaptureTarget } : {}) };
+      const nextEnvelope: PhotoDraftEnvelope = stored ? { ...stored, photos: next } : { version: 3, photos: next, ...vehicleSnapshot!,
+        ...(routeCaptureTarget ? { target: routeCaptureTarget } : {}) };
       const matched = kind === "capture"
         ? await replacePhotoDraftEnvelopeIfMatches(stored, nextEnvelope, scope, kind)
         : await replacePhotoDraftEnvelopeIfMatches(stored, nextEnvelope, scope);
       if (!isAccountScopeCurrent(scope)) return;
       if (!matched) { await refreshConflictingDraft(kind); return; }
+      retakeVehicleSnapshotRef.current = null;
       if (kind === "capture") setCaptureDraft(nextEnvelope); else setPhotoDraft(nextEnvelope);
       setPhotoDraftKind(kind);
       setShowPhotoDraft(true);
@@ -954,7 +996,7 @@ export default function Scanner() {
       photoDraftBusyRef.current = false;
       setPhotoDraftBusy(false);
     }
-  }, [isAnalyzing, showPhotoDraft, photoDraftKind, refreshConflictingDraft, routeCaptureTarget]);
+  }, [isAnalyzing, showPhotoDraft, photoDraftKind, activeDraftEnvelope, refreshConflictingDraft, routeCaptureTarget, captureVehicleSnapshot]);
 
   const updatePhotoDraft = async (photos: ScanPhoto[] | null) => {
     if (photoDraftBusyRef.current || !activeDraftEnvelope || !isAccountScopeCurrent(accountScopeRef.current)) return;
@@ -968,7 +1010,7 @@ export default function Scanner() {
       if (!isAccountScopeCurrent(accountScopeRef.current)) return;
       if (!matched) { await refreshConflictingDraft(photoDraftKind); return; }
       if (photoDraftKind === "capture") setCaptureDraft(next); else setPhotoDraft(next);
-      if (!photos) setShowPhotoDraft(false);
+      if (!photos) { setShowPhotoDraft(false); retakeVehicleSnapshotRef.current = null; pendingGuidedRetakeRef.current = false; }
       setPhotoDraftMessage("Draft saved on this device.");
     } catch (error) {
       setPhotoDraftMessage(error instanceof Error ? error.message : "The draft could not be updated. Retry.");
@@ -1005,13 +1047,16 @@ export default function Scanner() {
         const prior = getLookup(reviewedDraft.target.lookupId);
         if (prior) {
           if (!prior.photos || !photoGroupsMatch(prior.photos, reviewedPhotos)) throw new Error("This draft differs from its saved scan. Both were kept; reopen the component map before continuing.");
+          if (reviewedDraft.version === 3 && (!vehicleContextsMatch(reviewedDraft.vehicleContext, prior.vehicleContext) || reviewedDraft.jobId !== prior.jobId)) throw new Error("The saved scan has different vehicle details. Both records were kept; review the original component map before continuing.");
           const linked = await finishSavedDraft(reviewedDraft, photoDraftKind, prior);
           if (linked && isScanRequestActive(requestId)) navigate(`/result/${encodeURIComponent(prior.id)}`);
           return;
         }
       }
       setShowPhotoDraft(false);
-      const saved = await analyzeImageBase64(reviewedPhotos[0].imageBase64, requestId, photoDraftKind === "capture" ? "camera" : "upload", activeRequest.controller.signal, undefined, undefined, reviewedPhotos, undefined, reviewedDraft.target);
+      const saved = await analyzeImageBase64(reviewedPhotos[0].imageBase64, requestId, photoDraftKind === "capture" ? "camera" : "upload", activeRequest.controller.signal, undefined, undefined, reviewedPhotos, undefined, reviewedDraft.target,
+        reviewedDraft.version === 3 ? reviewedDraft.vehicleContext : reviewedDraft.target ? undefined : null,
+        reviewedDraft.version === 3 ? reviewedDraft.jobId ?? null : null);
       await finishSavedDraft(reviewedDraft, photoDraftKind, saved);
     } catch (error) {
       if (isScanRequestActive(requestId)) {
@@ -1034,7 +1079,7 @@ export default function Scanner() {
 
     setScanCardStatusMessage("Rescanning this point.");
     const override = getObjectTargetFromReviewTarget(scanReview.reviewTarget);
-    await handleIdentify(override);
+    await handleIdentify(override, { vehicleContext: scanReview.scanState.vehicleContext ?? null, ...(scanReview.scanState.jobId ? { jobId: scanReview.scanState.jobId } : {}) });
   }, [handleIdentify, scanReview]);
 
   const handleFlipCamera = useCallback(() => {
@@ -1091,6 +1136,7 @@ export default function Scanner() {
   function closeScanReview() {
     guidedRetakeUsedRef.current = false;
     pendingGuidedRetakeRef.current = false;
+    retakeVehicleSnapshotRef.current = null;
     setQualityCoach(null);
     setScanReview(null);
     setCaptureError(null);
@@ -1106,6 +1152,7 @@ export default function Scanner() {
     const coach = getReviewRetakeCoach(scanReview.scanState);
     if (!coach) return;
     pendingGuidedRetakeRef.current = true;
+    retakeVehicleSnapshotRef.current = { vehicleContext: scanReview.scanState.vehicleContext ?? null, ...(scanReview.scanState.jobId ? { jobId: scanReview.scanState.jobId } : {}) };
     setQualityCoach(coach);
     if (scanReview.scanState.provenance?.captureMode === "upload" || cameraState !== "ready") {
       galleryInputRef.current?.click();
@@ -1148,7 +1195,7 @@ export default function Scanner() {
         setObjectAnalyses((prev) => ({ ...prev, [index]: { status: "error", message: "This selected area is unavailable. Keep the original photo and adjust the outline or retake it before analyzing this part." } }));
         return;
       }
-      return identifyCapturedFrame({ imageBase64, capturedAt: original?.capturedAt ?? new Date().toISOString() });
+      return identifyCapturedFrame({ imageBase64, capturedAt: original?.capturedAt ?? new Date().toISOString() }, undefined, undefined, { vehicleContext: scanReview?.scanState.vehicleContext });
     })()
       .then((result) => {
         if (!result || !stillCurrent()) return;
@@ -1158,7 +1205,7 @@ export default function Scanner() {
         if (!isAccountScopeCurrent(accountScopeRef.current) || startedObjectAnalysisRef.current !== analysisSession) return;
         setObjectAnalyses((prev) => ({ ...prev, [index]: { status: "error", message: getSimpleScanErrorMessage(error) } }));
       });
-  }, [scanReview?.scanState.frame]);
+  }, [scanReview?.scanState.frame, scanReview?.scanState.vehicleContext]);
 
   const handleFocusObject = useCallback((index: number | null) => {
     setFocusedObjectIndex(index);
@@ -1226,8 +1273,27 @@ export default function Scanner() {
         <div className="flex flex-col items-center">
           <BrandLockup size="sm" />
         </div>
-        <div className="size-10" aria-hidden="true" />
+        {!activeShopJob && !routeCaptureTarget ? <button type="button" disabled={isAnalyzing || photoDraftBusy || Boolean(scanReview)} onClick={() => { setVehicleEdit(vehicleProfile); setShowVehicleEditor(true); }} className="rounded-full border border-white/25 bg-slate-950/80 px-3 py-2 text-sm disabled:opacity-40">Car details</button> : <div className="size-10" aria-hidden="true" />}
       </header>
+
+      {showVehicleEditor ? <section role="dialog" aria-modal="true" aria-label="Car details for new photos" className="fixed inset-0 z-[90] overflow-y-auto bg-slate-950 p-5 text-white">
+        <div className="mx-auto max-w-3xl space-y-5">
+          <h2 className="text-xl font-semibold">Car details for new photos</h2>
+          <p>Save the car you are inspecting. These details are remembered on this device for new photos. Saved scans and unfinished photo groups keep their original details.</p>
+          <VehicleContextEditor value={vehicleEdit} onChange={setVehicleEdit} />
+          {vehicleMessage ? <p role="status">{vehicleMessage}</p> : null}
+          <div className="flex flex-wrap gap-3">
+            <button type="button" onClick={() => {
+              const saved = saveVehicleProfile(vehicleEdit, accountScopeRef.current);
+              if (!saved.ok) { setVehicleMessage(saved.message); return; }
+              setVehicleProfile(saved.value); setVehicleEdit(saved.value); setVehicleMessage(null); setShowVehicleEditor(false);
+              retakeVehicleSnapshotRef.current = null; pendingGuidedRetakeRef.current = false;
+            }} className="rounded bg-white px-4 py-3 font-semibold text-slate-950">Use these details for new photos</button>
+            <button type="button" onClick={() => { setVehicleEdit(undefined); setVehicleMessage("No car selected. Save to use no vehicle details for new photos."); }} className="rounded border px-4 py-3">Clear selected car</button>
+            <button type="button" onClick={() => setShowVehicleEditor(false)} className="rounded border px-4 py-3">Cancel</button>
+          </div>
+        </div>
+      </section> : null}
 
       {routeCaptureTarget && !showPhotoDraft ? <div className="fixed left-4 right-4 top-20 z-30 rounded-xl bg-slate-950/90 p-3 text-sm">
         <p>Photograph one component, then add its other angles before analysis.</p>
@@ -1374,7 +1440,7 @@ export default function Scanner() {
         type="file"
       />
       {!showPhotoDraft && !isAnalyzing ? <div className="fixed bottom-24 left-3 z-[65] flex gap-2">{photoDraft ? <button type="button" onClick={() => { setPhotoDraftKind("upload"); setShowPhotoDraft(true); }} className="rounded-xl bg-white px-4 py-3 text-sm font-semibold text-slate-950">Resume {photoDraft.length}-photo draft</button> : null}{captureDraft ? <button type="button" onClick={() => { setPhotoDraftKind("capture"); setShowPhotoDraft(true); }} className="rounded-xl bg-white px-4 py-3 text-sm font-semibold text-slate-950">Resume captured photo</button> : null}</div> : null}
-      {activePhotoDraft && showPhotoDraft ? <PhotoGroupReview photos={activePhotoDraft} componentMapId={activeDraftEnvelope?.target?.mapId} savedForComponent={Boolean(activeDraftEnvelope?.target && getLookup(activeDraftEnvelope.target.lookupId))} busy={photoDraftBusy || isAnalyzing} message={photoDraftMessage} onChange={(photos) => void updatePhotoDraft(photos)} onAdd={() => galleryInputRef.current?.click()} onAnalyze={() => void analyzePhotoDraft()} onClose={() => setShowPhotoDraft(false)} onDiscard={() => void updatePhotoDraft(null)} /> : null}
+      {activePhotoDraft && showPhotoDraft ? <PhotoGroupReview photos={activePhotoDraft} vehicleContext={activeDraftEnvelope?.version === 3 ? activeDraftEnvelope.vehicleContext : undefined} componentMapId={activeDraftEnvelope?.target?.mapId} savedForComponent={Boolean(activeDraftEnvelope?.target && getLookup(activeDraftEnvelope.target.lookupId))} busy={photoDraftBusy || isAnalyzing} message={photoDraftMessage} onChange={(photos) => void updatePhotoDraft(photos)} onAdd={() => galleryInputRef.current?.click()} onAnalyze={() => void analyzePhotoDraft()} onClose={() => setShowPhotoDraft(false)} onDiscard={() => void updatePhotoDraft(null)} /> : null}
       {!scanReview && !cropBoxEnabled ? (
         <LensBottomBar
           isAnalyzing={isAnalyzing}
