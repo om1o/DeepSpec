@@ -1443,7 +1443,8 @@ describe("Scanner", () => {
     const newer: ScanPhoto = { id: "newer-camera", label: "marking", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,newer" };
     draftStore.set("test-user:capture", [newer]);
     await act(async () => finishIdentify(makeScanResult("Alternator")));
-    await waitFor(() => expect(removePhotoDraftIfMatches).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(observeEnvelopeCompare).toHaveBeenCalledWith(expect.objectContaining({ version: 3, photos: getLookups()[0].photos }), null));
+    expect(getLookups()[0].photos?.[0].imageBase64).not.toBe(newer.imageBase64);
     expect(draftStore.get("test-user:capture")).toEqual([newer]);
     await userEvent.click(await screen.findByRole("button", { name: "Resume captured photo" }));
     expect(screen.getByRole("img", { name: "Photo 1: Label or marking" })).toHaveAttribute("src", newer.imageBase64);

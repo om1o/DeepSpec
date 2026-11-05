@@ -65,10 +65,11 @@ export function VehicleContextEditor({ value, onChange, disabled = false, hideSy
       </label> : null}
       {confirmation("modifications", "Modifications", Boolean(modifications && modifications.status !== "unknown"))}
     </div>
-    {!hideSymptom ? <label htmlFor={`${id}-symptom`} className="mt-4 block text-sm font-semibold">Symptom / complaint (optional)
-      <textarea id={`${id}-symptom`} className={FIELD} maxLength={500} value={value?.symptom ?? ""}
+    {!hideSymptom ? <div className="mt-4">
+      <label htmlFor={`${id}-symptom`} className="block text-sm font-semibold">Symptom / complaint (optional)</label>
+      <textarea id={`${id}-symptom`} aria-describedby={`${id}-symptom-help`} className={FIELD} maxLength={500} value={value?.symptom ?? ""}
         onChange={(event) => onChange(updateVehicleContextField(value, "symptom", event.target.value))} />
-      <span className="mt-1 block text-xs font-normal text-[var(--ds-fg-3)]">Describe what you noticed. A reported symptom is separate from what a photo shows.</span>
-    </label> : null}
+      <span id={`${id}-symptom-help`} className="mt-1 block text-xs font-normal text-[var(--ds-fg-3)]">Describe what you noticed. A reported symptom is separate from what a photo shows.</span>
+    </div> : null}
   </fieldset>;
 }

@@ -86,6 +86,7 @@ describe("VehicleContextEditor", () => {
   it("records an optional symptom without treating it as confirmed vehicle identity", () => {
     const { latest } = setup(confirmVehicleContextField({ model: "Camry" }, "model", true));
     fireEvent.change(screen.getByLabelText("Symptom / complaint (optional)"), { target: { value: "Rattle only while cold" } });
+    expect(screen.getByLabelText("Symptom / complaint (optional)")).toHaveAccessibleDescription("Describe what you noticed. A reported symptom is separate from what a photo shows.");
     expect(latest().symptom).toBe("Rattle only while cold");
     expect(isVehicleFieldConfirmed(latest(), "model")).toBe(true);
     expect(screen.queryByRole("button", { name: /Confirm symptom/i })).not.toBeInTheDocument();
