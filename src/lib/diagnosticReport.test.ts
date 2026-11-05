@@ -85,7 +85,9 @@ describe("immutable diagnostic source documents", () => {
     const source = `\uFEFF${report().replace(/\n/g, "\r\n")}`;
     const document = await createDiagnosticDocument(file(source), "scan-1", "utf-8", DOC_ID);
     expect(document).toMatchObject({ id: DOC_ID, lookupId: "scan-1", encoding: "utf-8", fileName: "synthetic.txt", mime: "text/plain" });
-    expect(diagnosticSourceBytes(document)).toEqual(new TextEncoder().encode(source));
+    // jsdom Uint8Array and Node's TextEncoder output can have different realms.
+    // Compare every byte, including the BOM and CRLF, without comparing prototypes.
+    expect(Array.from(diagnosticSourceBytes(document))).toEqual(Array.from(new TextEncoder().encode(source)));
     expect(diagnosticSourceText(document)).toBe(source.slice(1));
     expect(await verifyDiagnosticDocument(document)).toMatchObject({ format: "vcds_autoscan", coverage: "complete" });
     await expect(verifyDiagnosticDocument({ ...document, sha256: "a".repeat(64) })).rejects.toThrow("fingerprint");

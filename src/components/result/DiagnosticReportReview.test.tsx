@@ -92,7 +92,7 @@ it("imports exact original bytes before offering the saved report and keeps pars
   selectFile(source); fireEvent.click(screen.getByRole("button", { name: "Import original on this device" }));
   await waitFor(() => expect(store.appendDiagnosticDocument).toHaveBeenCalledOnce());
   const saved = vi.mocked(store.appendDiagnosticDocument).mock.calls[0][0];
-  expect(diagnosticSourceBytes(saved)).toEqual(new TextEncoder().encode(`\uFEFF${SOURCE}`));
+  expect(Array.from(diagnosticSourceBytes(saved))).toEqual(Array.from(new TextEncoder().encode(`\uFEFF${SOURCE}`)));
   expect(screen.queryByRole("option", { name: /original.txt/ })).not.toBeInTheDocument();
   await act(async () => acknowledge({ documents: [saved], associations: [] }));
   expect(await screen.findByRole("option", { name: /original.txt/ })).toBeInTheDocument();
@@ -147,7 +147,7 @@ it("retains unsupported original text safely and downloads its exact bytes witho
   fireEvent.click(screen.getByRole("button", { name: "Download exact original bytes" })); expect(click).toHaveBeenCalledOnce();
   const blob = urls.mock.calls[0][0] as Blob;
   const bytes = await new Promise<ArrayBuffer>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result as ArrayBuffer); reader.onerror = reject; reader.readAsArrayBuffer(blob); });
-  expect(new Uint8Array(bytes)).toEqual(new TextEncoder().encode(text));
+  expect(Array.from(new Uint8Array(bytes))).toEqual(Array.from(new TextEncoder().encode(text)));
 });
 
 it("surfaces incomplete coverage and does not equate no reported fault with vehicle health", async () => {
