@@ -5,6 +5,7 @@ import { ScanSources } from "../result/ScanSources";
 import ScanThumb from "../ui/ScanThumb";
 import { getTrustedFocusBox } from "./scanEvidenceGeometry";
 import { PhotoEvidenceStrip } from "../result/PhotoEvidenceStrip";
+import { PhotoReviewPanel } from "../result/PhotoReviewPanel";
 
 type EvidenceItem = {
   id: "identity" | "function" | "visible" | "concerns" | "next" | "sources";
@@ -66,6 +67,8 @@ export function ScanEvidencePanel({ lookup, onDraftQuestion }: ScanEvidencePanel
           Result: {modelRun.provider} · {modelRun.model}
         </p>
       ) : null}
+
+      <PhotoReviewPanel scan={lookup} onSelectPhoto={setSelectedPhotoId} />
 
       {selected ? (
         <>

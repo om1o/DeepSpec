@@ -1,6 +1,7 @@
 import type { CapturedFrame, ScanAnalysisState, ScanQualitySnapshot } from "../types";
 import { accountStorageKey } from "./accountScope";
-import { normalizeVisualEvidence } from "../services/visualEvidence";
+import { isEvidenceImage, normalizeVisualEvidence } from "../services/visualEvidence";
+import { normalizePhotoReview } from "./photoReview";
 
 const LATEST_CAPTURED_FRAME_KEY = "deep-spec:latest-captured-frame";
 const LATEST_SCAN_STATE_KEY = "deep-spec:latest-scan-state";
@@ -56,6 +57,13 @@ export function readLatestScanState(): ScanAnalysisState | null {
     }
     const visual = normalizeVisualEvidence(state);
     if (!visual) return null;
+    const allowedPhotoIds = visual.photos?.map((photo) => photo.id)
+      ?? (isEvidenceImage(state.frame.imageBase64) ? ["photo-1"] : []);
+    const result = state.result ? (() => {
+      const { photoReview: rawPhotoReview, ...rest } = state.result;
+      const photoReview = normalizePhotoReview(rawPhotoReview, allowedPhotoIds);
+      return { ...rest, ...(photoReview ? { photoReview } : {}) };
+    })() : undefined;
 
     return {
       frame: state.frame,
@@ -68,7 +76,7 @@ export function readLatestScanState(): ScanAnalysisState | null {
       reviewStatus: state.reviewStatus,
       technicianUserId: state.technicianUserId,
       customerVisibleReport: state.customerVisibleReport,
-      result: state.result,
+      result,
       errorMessage: typeof state.errorMessage === "string" ? state.errorMessage : undefined,
       errorCode: typeof state.errorCode === "string" ? state.errorCode : undefined,
       analyzedAt: typeof state.analyzedAt === "string" ? state.analyzedAt : undefined,

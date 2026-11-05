@@ -1,4 +1,5 @@
 import { accountStorageKey } from "./accountScope";
+import type { IdentificationResult, PhotoReview } from "../types";
 import {
   cx,
   getScaledDimensions,
@@ -31,6 +32,23 @@ describe("getScaledDimensions", () => {
 describe("latest captured frame storage", () => {
   beforeEach(() => {
     sessionStorage.clear();
+  });
+
+  it.each(["valid", "missing", "wrong-photo", "duplicate"])("restores only validated partial review against the actual session originals: %s", (kind) => {
+    const frame = { imageBase64: "data:image/jpeg;base64,YQ==", capturedAt: "2026-11-05T00:00:00Z" };
+    const photoReview: PhotoReview = { version: 1, photos: [{ photoId: kind === "wrong-photo" ? "photo-1" : "custom-original",
+      status: "limited_view", summary: "Only the front is visible." }], disagreements: [] };
+    if (kind === "duplicate") photoReview.photos.push({ ...photoReview.photos[0] });
+    const result: IdentificationResult = { partName: "Panel", confidence: "low", scanCategory: "body", candidateMatches: [], whatItDoes: "Body panel",
+      visibleObservations: [], evidenceRegions: [], concerns: [], safetyTriage: "can_help", isSafetyCritical: false, nextAction: "Inspect", needsBetterPhoto: true,
+      evidence: [], sourceLinks: [], ...(kind === "missing" ? {} : { photoReview }) };
+    const photos = [{ ...frame, id: "custom-original", label: "overview" as const }, { ...frame, id: "omitted-view", label: "close_up" as const }];
+    saveLatestScanState({ frame, photos, result });
+    const restored = readLatestScanState();
+    expect(restored?.photos).toEqual(photos);
+    expect(restored?.result?.partName).toBe("Panel");
+    if (kind === "valid") expect(restored?.result?.photoReview).toEqual(photoReview);
+    else expect(restored?.result).not.toHaveProperty("photoReview");
   });
 
   it("saves and reads the last captured frame", () => {

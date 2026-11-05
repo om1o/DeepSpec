@@ -1895,6 +1895,34 @@ describe("Scanner", () => {
     expect(screen.queryByRole("dialog", { name: "Review inspection photos" })).not.toBeInTheDocument();
   });
 
+  it("opens both photo-review references as originals without another analysis or a changed saved result", async () => {
+    const photos: ScanPhoto[] = [
+      { id: "overview-photo", label: "overview", imageBase64: "data:image/jpeg;base64,b3ZlcnZpZXc=", capturedAt: "2026-11-05T00:00:00Z" },
+      { id: "detail-photo", label: "close_up", imageBase64: "data:image/jpeg;base64,ZGV0YWls", capturedAt: "2026-11-05T00:01:00Z" },
+    ];
+    draftStore.set("test-user:upload", photos);
+    const photoReview = { version: 1 as const,
+      photos: [{ photoId: photos[0].id, status: "observations_returned" as const, summary: "A dark edge is visible." }, { photoId: photos[1].id, status: "limited_view" as const, summary: "Glare obscures that edge." }],
+      disagreements: [{ id: "d1", photoIds: photos.map((photo) => photo.id), description: "The views do not establish whether this edge is a gap.", nextEvidence: { request: "Photograph the edge in diffuse light.", purpose: "Distinguish glare from an opening." } }],
+    };
+    identifyCapturedFrame.mockResolvedValueOnce({ ...makeScanResult("Alternator"), photoReview });
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(await screen.findByRole("button", { name: "Resume 2-photo draft" }));
+    await analyzeReviewedPhotos();
+    const review = await screen.findByRole("region", { name: "Photo review" });
+    await waitFor(() => expect(getLookups()[0]?.result?.photoReview).toEqual(photoReview));
+    const saved = JSON.stringify(getLookups());
+    await userEvent.click(screen.getByRole("button", { name: "Outline", exact: true }));
+    await userEvent.click(within(review).getByRole("button", { name: "View Photo 1 — Overview for disagreement d1" }));
+    expect(screen.getByRole("button", { name: "Original", exact: true })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByAltText("Reviewed scan photo")).toHaveAttribute("src", photos[0].imageBase64);
+    await userEvent.click(within(review).getByRole("button", { name: "View Photo 2 — Close-up for disagreement d1" }));
+    expect(screen.getByRole("button", { name: "Original", exact: true })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByAltText("Reviewed scan photo")).toHaveAttribute("src", photos[1].imageBase64);
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(getLookups())).toBe(saved);
+  });
+
   it.each(["ready", "blocked"] as const)("keeps a reviewed draft and presents its durable-check error once with camera %s", async (cameraState) => {
     cameraHookState.current = { ...cameraHookState.current, cameraState };
     render(<MemoryRouter><Scanner /></MemoryRouter>);

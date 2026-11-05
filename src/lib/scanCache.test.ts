@@ -65,6 +65,27 @@ describe("getCachedScanResult", () => {
 });
 
 describe("setCachedScanResult / getCachedScanResult", () => {
+  it("retains a single-original review and the original model run without inventing fresh coverage", () => {
+    const result: IdentificationResult = { ...makeResult("Brake Caliper"), photoReview: { version: 1,
+      photos: [{ photoId: "photo-1", status: "limited_view", summary: "Only one surface is visible." }], disagreements: [] } };
+    result.modelRun!.runId = "original-attempt";
+    setCachedScanResult("hash1", result);
+    expect(getCachedScanResult("hash1")).toEqual(result);
+    setCachedScanResult("hash1", makeResult("Legacy answer without review"));
+    expect(getCachedScanResult("hash1")).not.toHaveProperty("photoReview");
+  });
+
+  it.each(["photo-2", "saved-custom-id"])("omits review for %s from the single-original cache at write and untrusted restore", (photoId) => {
+    const result: IdentificationResult = { ...makeResult("Brake Caliper"), photoReview: { version: 1,
+      photos: [{ photoId, status: "observations_returned", summary: "A surface is visible." }], disagreements: [] } };
+    setCachedScanResult("hash1", result);
+    expect(JSON.parse(localStorage.getItem(accountStorageKey(SCAN_CACHE_KEY))!)[0].result).not.toHaveProperty("photoReview");
+    localStorage.setItem(accountStorageKey(SCAN_CACHE_KEY), JSON.stringify([{ inputVersion: "single-original-v1", pipelineVersion: IDENTIFY_PIPELINE_VERSION,
+      hash: "hash1", result, cachedAt: "2026-11-05T00:00:00Z" }]));
+    expect(getCachedScanResult("hash1")?.partName).toBe("Brake Caliper");
+    expect(getCachedScanResult("hash1")).not.toHaveProperty("photoReview");
+  });
+
   it("stores and retrieves a result by hash", () => {
     const result = makeResult("Brake Caliper");
     setCachedScanResult("hash1", result);

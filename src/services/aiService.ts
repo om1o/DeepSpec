@@ -1,4 +1,4 @@
-import { CHAT_USER_MESSAGE_MAX_CHARS, IDENTIFY_PIPELINE_VERSION, IDENTIFY_PROMPT } from "./systemPrompts";
+import { CHAT_USER_MESSAGE_MAX_CHARS, IDENTIFY_PROMPT } from "./systemPrompts";
 import { identifyOnDevice, isOnDeviceFallbackEnabled } from "./onDeviceIdentify";
 import { getAuthClient } from "./auth";
 import { getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
@@ -6,9 +6,10 @@ import { prepareRetryFrame } from "../lib/retryFrame";
 import { compressImageDataUrl } from "../lib/utils";
 import { validatePhotoGroup } from "./photoDraft";
 import { normalizeConditionAssessment } from "../lib/conditionAssessment";
+import { normalizePhotoReview } from "../lib/photoReview";
 import { buildConditionHandoff } from "../lib/conditionHandoff";
 import { providerVehicleContext } from "../lib/vehicleContext";
-import { isPhotoRelationship } from "../lib/photoRelationship";
+import { hasFirstPhotoIdentityScopePipeline, isPhotoRelationship } from "../lib/photoRelationship";
 import {
   SCAN_CATEGORIES,
   type AIInput,
@@ -420,7 +421,7 @@ export async function sendFollowUp(lookup: Lookup, question: string): Promise<st
 
 export async function sendFollowUpDetails(lookup: Lookup, question: string, options: FollowUpOptions = {}): Promise<FollowUpDetails> {
   const photoRelationship = validatePhotoRelationship(lookup.photoRelationship);
-  const hasFirstPhotoIdentityScope = lookup.result?.modelRun?.pipelineVersion === IDENTIFY_PIPELINE_VERSION
+  const hasFirstPhotoIdentityScope = hasFirstPhotoIdentityScopePipeline(lookup.result?.modelRun?.pipelineVersion)
     && ((lookup.photos?.length ?? 1) <= 1 || photoRelationship !== "same_part_or_area");
   const savedIdentityScope = !lookup.result ? "none"
     : hasFirstPhotoIdentityScope ? "first_photo" : "unrecorded";
@@ -436,8 +437,10 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
   const vehicleContext = providerVehicleContext(lookup.vehicleContext);
   if (lookup.photos?.length) {
     const photos = await preparePhotoGroupForRequest(lookup.photos);
+    const photoReview = normalizePhotoReview(lookup.result?.photoReview, photos.map((photo) => photo.id));
     const result = await postAI<ChatApiSuccess>("/api/chat", {
       userMessage: buildFollowUpContext(lookup, trimmedQuestion), photos, photoRelationship, savedIdentityScope,
+      ...(photoReview ? { photoReview } : {}),
       ...(vehicleContext ? { vehicleContext } : {}),
       ...(options.research ? { research: true, ...(options.sourceUrls?.length ? { sourceUrls: options.sourceUrls } : {}) } : {}),
     }, { timeoutMs: options.research ? 60_000 : DEFAULT_CHAT_CLIENT_TIMEOUT_MS, scope });
@@ -456,10 +459,12 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
   }
   const attachPhoto = imageBase64.length <= 4_000_000 && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(imageBase64) && imageBase64.split(",")[1].length % 4 === 0;
   if (!attachPhoto) throw new AIServiceError("invalid_input", "The saved photo must be a JPEG, PNG, or WebP image small enough for chat. Reopen the scan or use a smaller photo.");
+  const photoReview = normalizePhotoReview(lookup.result?.photoReview, ["photo-1"]);
   const result = await postAI<ChatApiSuccess>("/api/chat", {
     userMessage: buildFollowUpContext(lookup, trimmedQuestion),
     photoRelationship,
     savedIdentityScope,
+    ...(photoReview ? { photoReview } : {}),
     ...(vehicleContext ? { vehicleContext } : {}),
     imageBase64,
     ...(options.research ? { research: true, ...(options.sourceUrls?.length ? { sourceUrls: options.sourceUrls } : {}) } : {}),
@@ -552,9 +557,10 @@ export function getAIErrorDetails(code: string | undefined | null): AIErrorDetai
 }
 
 function withValidatedConditionAssessment(value: IdentificationResult, allowedPhotoIds: readonly string[]): IdentificationResult {
-  const { conditionAssessment: rawAssessment, ...result } = value;
+  const { conditionAssessment: rawAssessment, photoReview: rawPhotoReview, ...result } = value;
   const conditionAssessment = normalizeConditionAssessment(rawAssessment, allowedPhotoIds);
-  return { ...result, ...(conditionAssessment ? { conditionAssessment } : {}) };
+  const photoReview = normalizePhotoReview(rawPhotoReview, allowedPhotoIds);
+  return { ...result, ...(conditionAssessment ? { conditionAssessment } : {}), ...(photoReview ? { photoReview } : {}) };
 }
 
 function assertIdentificationResult(value: unknown, allowedPhotoIds: readonly string[]): IdentificationResult {

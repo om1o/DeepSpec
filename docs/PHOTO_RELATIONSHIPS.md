@@ -20,9 +20,9 @@ The same metadata is used for normal identification, compact rescue, existing fa
 
 Model selection, output limits, request counts, authentication and scan allowance are unchanged. The identification prompt and pipeline versions change so older cached answers are not treated as answers under these semantics.
 
-Reports attribute independent/unknown primary identification to Photo 1 only for `identify-pipeline-2026-11-05-photo-relationship-v1`. Older or absent pipeline provenance is described as unrecorded per-photo identity scope; a record without a result has no identification. Selection and supplied car details or complaint remain scoped to Photo 1. Secondary independent/unknown photos do not inherit Photo 1's vehicle context when used in comparisons or diagnostic associations. Existing historical snapshots remain unchanged and fail source verification when that inherited context no longer matches.
+Reports attribute independent/unknown primary identification to Photo 1 for the recognized `identify-pipeline-2026-11-05-photo-relationship-v1` and `identify-pipeline-2026-11-05-photo-review-v1` versions. Older, unknown or absent pipeline provenance is described as unrecorded per-photo identity scope; a record without a result has no identification. Selection and supplied car details or complaint remain scoped to Photo 1. Secondary independent/unknown photos do not inherit Photo 1's vehicle context when used in comparisons or diagnostic associations. Existing historical snapshots remain unchanged and fail source verification when that inherited context no longer matches.
 
-The application asks the model to discuss incompatible views; it does not yet enforce complete per-photo review or structured conflict records. The existing follow-up prose budget can still omit detailed saved observations. This change does not add secondary-photo geometry, prove multi-angle accuracy, establish chronology, or verify physical condition or function. Those remain separate implementation and live-evaluation requirements.
+The optional [photo review contract](PHOTO_REVIEW.md) now records which image entries the model returned, limited or unassessed views, and reported disagreements with targeted next evidence. Missing rows remain unreported; complete or accurate review is not guaranteed. The structured review travels outside the follow-up prose budget, while other detailed saved prose can still be omitted. This does not add secondary-photo geometry, prove multi-angle accuracy, establish chronology, or verify physical condition or function. Saved images can include derived crops; separate image entries do not establish separate capture angles.
 
 ## Persistence and release
 
@@ -32,7 +32,7 @@ This branch is a separate draft source change. Automatic Vercel deployment is di
 
 ## Sources and validation
 
-- [Google's multiple-image guidance](https://ai.google.dev/gemini-api/docs/generate-content/image-understanding) describes supplying multiple image parts in one request. DeepSpec retains explicit captions/IDs beside the images. The relationship contract and safeguards here are application design decisions, not an accuracy guarantee from that documentation.
+- [Google's multiple-image guidance](https://ai.google.dev/gemini-api/docs/generate-content/image-understanding) describes supplying multiple images in one request; its current redirected examples use Interactions. The [generateContent API reference](https://ai.google.dev/api/generate-content) documents the Content.parts/inlineData shape retained here. DeepSpec keeps explicit captions/IDs beside the images. The relationship contract and safeguards are application design decisions, not an accuracy guarantee from that documentation.
 - [Supabase JSON documentation](https://supabase.com/docs/guides/database/json) describes storing and validating JSON metadata. This patch extends the application's existing evidence object and validates its enum before use; it adds no database/API convention.
 - [Supabase changelog](https://supabase.com/changelog) was checked on November 5, 2026. No CLI, authentication, table exposure, SDK version or hosted schema is changed by this slice.
 

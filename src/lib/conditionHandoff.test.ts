@@ -1,11 +1,25 @@
 import { describe, expect, it } from "vitest";
-import type { Lookup } from "../types";
+import type { Lookup, PhotoReview } from "../types";
 import { buildConditionHandoff, formatConditionHandoff } from "./conditionHandoff";
 import { confirmVehicleContextField } from "./vehicleContext";
 import { buildScanReport } from "../services/report";
 
 function lookup(): Lookup {
   return { id: "vehicle-handoff", createdAt: "2026-11-05T12:00:00Z", frame: { capturedAt: "2026-11-05T12:00:00Z", imageBase64: "data:image/png;base64,original" }, scanCategory: "brakes", rating: null, correction: null, notes: "", trainingLabel: "Unknown", trainingStatus: "raw_unreviewed", chatHistory: [], provenance: { analysisSource: "ai_detection", captureMode: "upload", savedAt: "2026-11-05T12:00:00Z" } };
+}
+
+function photoReviewLookup(): Lookup {
+  const record = lookup();
+  record.photos = ["front", "marking", "mounting", "other"].map((id) => ({ id, label: "other", ...record.frame }));
+  record.result = { partName: "Possible bracket", confidence: "low", scanCategory: "body", candidateMatches: [], whatItDoes: "Unconfirmed", visibleObservations: [], evidenceRegions: [], concerns: [], safetyTriage: "needs_better_photo", isSafetyCritical: false, nextAction: "Verify the originals", needsBetterPhoto: true, evidence: [], sourceLinks: [] };
+  record.result.photoReview = {
+    version: 1, photos: [
+      { photoId: "front", status: "observations_returned", summary: "A mounting slot is visible." },
+      { photoId: "marking", status: "limited_view", summary: "The last character is blurred." },
+      { photoId: "mounting", status: "not_assessed", summary: "No assessment was made of this view." },
+    ], disagreements: [{ id: "different-marking", photoIds: ["front", "marking"], description: "The markings appear different; this needs confirmation.", nextEvidence: { request: "Photograph both markings sharply without changing their labels.", purpose: "Check whether the originals show different examples." } }],
+  };
+  return record;
 }
 
 describe("vehicle context in condition handoff", () => {
@@ -51,7 +65,8 @@ describe("vehicle context in condition handoff", () => {
 
   it("keeps the missing relationship explicitly unknown without inventing a legacy assessment", () => {
     const text = formatConditionHandoff(lookup());
-    expect(text).toBe("Photo relationship: Relationship unknown — a shared part, vehicle or sequence has not been established.");
+    expect(text).toContain("Photo relationship: Relationship unknown — a shared part, vehicle or sequence has not been established.");
+    expect(text).toContain("No AI identification or photo review is recorded.");
     expect(text).not.toContain("Condition evidence");
     expect(text).not.toContain("refer to Photo 1");
   });
@@ -103,5 +118,58 @@ describe("vehicle context in condition handoff", () => {
     expect(text).not.toContain("No main identification is recorded.");
     expect(text).toContain("Saved selection and supplied vehicle or complaint details, when present, refer to Photo 1.");
     if (pipelineVersion !== "identify-pipeline-2026-11-05-photo-relationship-v1") expect(text).not.toContain("The main identification refers to Photo 1.");
+  });
+});
+
+describe("per-photo review in text handoff", () => {
+  it("preserves returned, limited, not-assessed and omitted saved images without claiming separate capture angles", () => {
+    const record = photoReviewLookup(), before = JSON.stringify(record);
+    const review = buildConditionHandoff(record), text = formatConditionHandoff(record), full = buildScanReport(record);
+    expect(review.assessment).toBeUndefined();
+    expect(review.photoReview).toEqual(record.result!.photoReview);
+    expect(text).toContain("Photo review (AI-reported, not human confirmation):");
+    expect(text).toContain("Saved images may include crops of another image; separate capture angles are not verified.");
+    expect(text).toContain("3 of 4 photos have an AI review entry. This is not proof of complete or correct inspection.");
+    expect(text).toContain("[front]: Observations returned — A mounting slot is visible.");
+    expect(text).toContain("[marking]: Limited view — The last character is blurred.");
+    expect(text).toContain("[mounting]: Not assessed — No assessment was made of this view.");
+    expect(text).toContain("[other]: No review returned");
+    expect(text).toContain("[different-marking]");
+    expect(text).toContain("Photo 1 [front] / Photo 2 [marking]");
+    expect(text).not.toContain("Other angle");
+    expect(text).toContain("Next evidence: Photograph both markings sharply without changing their labels.");
+    expect(text).toContain("Why: Check whether the originals show different examples.");
+    expect(full).toContain(text);
+    expect(JSON.stringify(record)).toBe(before);
+  });
+
+  it("does not turn an empty disagreement list into verified agreement", () => {
+    const record = photoReviewLookup(); record.result!.photoReview!.disagreements = [];
+    expect(formatConditionHandoff(record)).toContain("No disagreements were reported. Agreement between the photos has not been verified.");
+    expect(formatConditionHandoff(record)).not.toContain("Next evidence:");
+  });
+
+  it("rejects a foreign review reference as a whole and keeps malformed distinct from absent coverage", () => {
+    const record = photoReviewLookup();
+    record.result!.photoReview!.photos[0] = { photoId: "foreign-photo", status: "observations_returned", summary: "FOREIGN_REVIEW_MUST_NOT_EXPORT" };
+    expect(buildConditionHandoff(record).photoReview).toBeUndefined();
+    const invalid = formatConditionHandoff(record);
+    expect(invalid).toContain("The saved photo review could not be validated. Coverage and disagreements are unavailable.");
+    expect(invalid).not.toContain("FOREIGN_REVIEW_MUST_NOT_EXPORT");
+    expect(invalid).not.toContain("different-marking");
+    expect(invalid.match(/No review returned/g)).toHaveLength(4);
+    delete record.result!.photoReview;
+    expect(formatConditionHandoff(record)).toContain("Photo-by-photo review was not reported for this result.");
+    record.result = undefined;
+    expect(formatConditionHandoff(record)).toContain("No AI identification or photo review is recorded.");
+    expect(formatConditionHandoff(record)).toContain("Saved images may include crops of another image; separate capture angles are not verified.");
+  });
+
+  it("does not export a malformed disagreement targeting an unassessed photo", () => {
+    const record = photoReviewLookup();
+    record.result!.photoReview = { ...record.result!.photoReview!, disagreements: [{ id: "unsupported", photoIds: ["front", "mounting"], description: "UNSUPPORTED_DISAGREEMENT", nextEvidence: { request: "UNSUPPORTED_REQUEST", purpose: "UNSUPPORTED_PURPOSE" } }] } as PhotoReview;
+    const text = formatConditionHandoff(record);
+    expect(text).toContain("could not be validated");
+    expect(text).not.toContain("UNSUPPORTED_");
   });
 });

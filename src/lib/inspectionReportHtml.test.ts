@@ -63,6 +63,73 @@ function visualComparison(): InspectionComparison {
 }
 
 describe("self-contained mechanic HTML report", () => {
+  it("links each saved image's review status and targeted disagreements without asserting separate capture angles", () => {
+    const record = lookup(); delete record.result!.conditionAssessment;
+    record.photos!.push({ id: "overview-mounting", label: "mounting", ...record.frame }, { id: "overview-other", label: "other", ...record.frame });
+    record.result!.photoReview = {
+      version: 1, photos: [
+        { photoId: "overview-front", status: "observations_returned", summary: "A slot <not a confirmed defect> is visible." },
+        { photoId: "overview-label", status: "limited_view", summary: "The marking is blurred <script>alert(1)</script>." },
+        { photoId: "overview-mounting", status: "not_assessed", summary: "No assessment of this view was returned." },
+      ], disagreements: [{ id: "marking-difference", photoIds: ["overview-front", "overview-label"], description: "Markings differ <img src=x onerror=alert(1)>.", nextEvidence: { request: "Show both markings <clearly>.", purpose: "Check identity without assuming the examples match & agree." } }],
+    };
+    const input = snapshot([record]), before = JSON.stringify(input), document = parsed(input);
+    const section = document.querySelector("#scan-1-photo-review")!, rows = section.querySelectorAll(".photo-review-rows > li");
+    expect(rows).toHaveLength(4);
+    expect(section.textContent).toContain("Saved images may include crops of another image; separate capture angles are not verified.");
+    expect(rows[0].querySelector("p")?.textContent).toMatch(/^Photo 1:/);
+    expect(rows[3].querySelector("p")?.textContent).toMatch(/^Photo 4:/);
+    expect(rows[0].textContent).toContain("Observations returned"); expect(rows[0].textContent).toContain("A slot <not a confirmed defect> is visible.");
+    expect(rows[1].textContent).toContain("Limited view"); expect(rows[2].textContent).toContain("Not assessed"); expect(rows[3].textContent).toContain("No review returned");
+    rows.forEach((row, index) => expect(row.querySelector("a")?.getAttribute("href")).toBe(`#scan-1-photo-${index + 1}`));
+    const disagreement = section.querySelector(".photo-review-disagreements > li")!;
+    expect([...disagreement.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual(["#scan-1-photo-1", "#scan-1-photo-2"]);
+    expect(disagreement.textContent).toContain("Markings differ <img src=x onerror=alert(1)>.");
+    expect(disagreement.textContent).toContain("Referenced saved images:");
+    expect(disagreement.textContent).not.toContain("Referenced originals:");
+    expect(disagreement.textContent).toContain("Show both markings <clearly>.");
+    expect(disagreement.textContent).toContain("Check identity without assuming the examples match & agree.");
+    expect(section.textContent).toContain("AI-reported disagreements need confirmation");
+    expect(section.textContent).toContain("not proof of complete or correct inspection");
+    expect(document.querySelectorAll("script,[onerror],img[src='x']")).toHaveLength(0);
+    for (const link of section.querySelectorAll<HTMLAnchorElement>('a[href^="#"]')) expect(document.querySelector(link.getAttribute("href")!)).not.toBeNull();
+    expect(document.querySelector("#scan-1-photo-1 img")?.getAttribute("src")).toBe(PNG);
+    expect(document.querySelector("#scan-1-photo-1 img")?.getAttribute("alt")).toBe("Scan 1, saved photo 1");
+    expect(document.querySelector("#scan-1-photo-1 figcaption")?.textContent).toContain("Saved source image: overview-front.");
+    expect(document.querySelector("#scan-1-photo-2 figcaption")?.textContent).toContain("This report embeds the saved pixels without further cropping or annotation; the saved image itself may be a crop.");
+    expect(document.body.textContent).not.toContain("Saved original:");
+    expect(document.body.textContent).toContain("Do not drive until the brake fault is inspected.");
+    expect(JSON.stringify(input)).toBe(before);
+  });
+
+  it("qualifies empty disagreements while keeping omitted saved images explicitly unreported", () => {
+    const record = lookup(); record.result!.photoReview = { version: 1, photos: [{ photoId: "overview-front", status: "observations_returned", summary: "The first original is described." }], disagreements: [] };
+    const section = parsed(snapshot([record])).querySelector("#scan-1-photo-review")!;
+    expect(section.textContent).toContain("1 of 2 photos have an AI review entry");
+    expect(section.querySelectorAll(".photo-review-rows > li")[1].textContent).toContain("No review returned");
+    expect(section.textContent).toContain("No disagreements were reported. Agreement between the photos has not been verified.");
+    expect(section.querySelectorAll(".photo-review-disagreements > li")).toHaveLength(0);
+  });
+
+  it("retains saved image links and source limits when a review is invalid, legacy-unreported or has no AI result", () => {
+    const record = lookup(); record.result!.photoReview = { version: 1, photos: [{ photoId: "foreign-photo", status: "observations_returned", summary: "FOREIGN_CLAIM" }], disagreements: [] };
+    let document = parsed(snapshot([record])), section = document.querySelector("#scan-1-photo-review")!;
+    expect(section.textContent).toContain("The saved photo review could not be validated. Coverage and disagreements are unavailable.");
+    expect(section.textContent).not.toContain("FOREIGN_CLAIM");
+    expect(section.textContent).not.toContain("foreign-photo");
+    expect(section.querySelectorAll(".photo-review-rows > li")).toHaveLength(2);
+    expect(document.querySelector("#missing-evidence")?.textContent).toContain("saved per-photo review could not be validated");
+    delete record.result!.photoReview;
+    document = parsed(snapshot([record])); section = document.querySelector("#scan-1-photo-review")!;
+    expect(section.textContent).toContain("Photo-by-photo review was not reported for this result.");
+    expect(section.textContent).toContain("Saved images may include crops of another image; separate capture angles are not verified.");
+    record.result = undefined;
+    section = parsed(snapshot([record])).querySelector("#scan-1-photo-review")!;
+    expect(section.textContent).toContain("No AI identification or photo review is recorded.");
+    expect(section.textContent).toContain("Saved images may include crops of another image; separate capture angles are not verified.");
+    expect([...section.querySelectorAll(".photo-review-rows a")].map((link) => link.getAttribute("href"))).toEqual(["#scan-1-photo-1", "#scan-1-photo-2"]);
+  });
+
   it.each([
     ["same_part_or_area", "Same part or area of one car — reported by the user, not independently verified."],
     ["independent", "Independent examples — do not assume the same part, vehicle or before-and-after sequence."],

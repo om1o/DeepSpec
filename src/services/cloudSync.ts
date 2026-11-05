@@ -5,7 +5,8 @@ import { assertCloudSyncEnabled, CLOUD_SYNC_DISABLED_MESSAGE, isCloudSyncEnabled
 import { getLookup, readLookups, recordCloudRevision, recordCloudSaveAttempt } from "./storage";
 import type { FeedbackSubmission, Lookup, WaitlistSignup } from "../types";
 import { feedbackCloudMessage, getFeedbackIssue, normalizeFeedbackContext } from "./feedbackDetails";
-import { hasVisualEvidence, isOwnedEvidencePath, normalizeVisualEvidence, type EvidenceBundle } from "./visualEvidence";
+import { hasVisualEvidence, isEvidenceImage, isOwnedEvidencePath, normalizeVisualEvidence, type EvidenceBundle } from "./visualEvidence";
+import { normalizePhotoReview } from "../lib/photoReview";
 
 const SCAN_BUCKET = "scan-images";
 const CLOUD_HEALTH_STORAGE_KEY = "deep-spec:cloud-health";
@@ -269,6 +270,12 @@ async function syncLookupForAccount(
     if (!deviceRead.ok) return { ok: false, message: deviceRead.message };
     lookup = getLookup(lookup.id, deviceRead.value) ?? lookup;
     if (!normalizeVisualEvidence(lookup)) return { ok: false, message: "Evidence not synced: photo or relationship metadata is invalid. Your original photos are unchanged." };
+    if (lookup.result) {
+      const { photoReview: rawPhotoReview, ...result } = lookup.result;
+      const photoReview = normalizePhotoReview(rawPhotoReview, lookup.photos?.map((photo) => photo.id)
+        ?? (isEvidenceImage(lookup.frame.imageBase64) ? ["photo-1"] : []));
+      lookup = { ...lookup, result: { ...result, ...(photoReview ? { photoReview } : {}) } };
+    }
     const mode = requestedMode === "chat" && isCloudRevision(lookup.cloudRevision) ? "chat" : "full";
     receipt = {
       attemptId: createRuntimeId(), attemptedAt: new Date().toISOString(), status: "unconfirmed",

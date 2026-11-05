@@ -4,7 +4,7 @@ import { setActiveAccount } from "../lib/accountScope";
 import { compressImageDataUrl } from "../lib/utils";
 import { confirmVehicleContextField } from "../lib/vehicleContext";
 import { IDENTIFY_PIPELINE_VERSION } from "./systemPrompts";
-import type { AIInput, ConditionAssessment, ScanPhoto, ShopVehicleContext } from "../types";
+import type { AIInput, ConditionAssessment, PhotoReview, ScanPhoto, ShopVehicleContext } from "../types";
 
 vi.mock("./onDeviceIdentify", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./onDeviceIdentify")>();
@@ -58,6 +58,13 @@ const conditionAssessment = (photoId: string): ConditionAssessment => ({
   possibleCauses: [{ text: "Moisture exposure is possible; its cause is unconfirmed.", observationIds: ["rust-edge"] }],
   unknowns: ["Depth and the condition behind the panel are unknown."],
   nextEvidence: { kind: "photo", request: "Photograph the back of this edge.", purpose: "Check whether the affected area is visible from behind.", photoIds: [photoId] },
+});
+
+const photoReview = (photoIds: string[]): PhotoReview => ({
+  version: 1,
+  photos: photoIds.map((photoId, index) => ({ photoId, status: index ? "limited_view" : "observations_returned", summary: index ? "The connector is partly obscured." : "The connector outline is visible." })),
+  disagreements: photoIds.length > 1 ? [{ id: "connector-shape", photoIds: photoIds.slice(0, 2), description: "The apparent connector outlines differ.",
+    nextEvidence: { request: "Show both connector faces without the obstruction.", purpose: "Distinguish a real difference from the viewing angle." } }] : [],
 });
 
 function savedVehicleContext(): ShopVehicleContext {
@@ -143,6 +150,7 @@ describe("aiService", () => {
   it.each([
     { pipelineVersion: undefined, hasResult: true, expected: "unrecorded" },
     { pipelineVersion: "identify-pipeline-2026-11-03", hasResult: true, expected: "unrecorded" },
+    { pipelineVersion: "identify-pipeline-2026-11-05-photo-relationship-v1", hasResult: true, expected: "first_photo" },
     { pipelineVersion: IDENTIFY_PIPELINE_VERSION, hasResult: true, expected: "first_photo" },
     { pipelineVersion: undefined, hasResult: false, expected: "none" },
   ].flatMap((fixture) => [false, true].map((grouped) => ({ ...fixture, grouped }))))("sends $expected saved identity scope outside capped context (pipeline=$pipelineVersion, grouped=$grouped)", async ({ pipelineVersion, hasResult, expected, grouped }) => {
@@ -180,6 +188,54 @@ describe("aiService", () => {
     expect(body.savedIdentityScope).toBe(expected);
     expect(body.photoRelationship).toBe("same_part_or_area");
     expect(body.photos).toHaveLength(photoCount);
+  });
+
+  it.each([false, true])("validates photo review against actual identify inputs (grouped=%s)", async (grouped) => {
+    const photos: ScanPhoto[] = ["bay", "connector", "marking"].map((id) => ({ id, label: "other", imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" }));
+    const review = photoReview(grouped ? ["bay", "connector"] : ["photo-1", "photo-2"]);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ result: { ...result, photoReview: review } }), { status: 200 }));
+    const identified = await identifyCapturedFrame(photos[0], grouped ? undefined : photos[1], undefined, grouped ? { photos } : {});
+    expect(identified.photoReview).toEqual(review);
+    expect(identified.photoReview?.photos).toHaveLength(2);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])("drops foreign photo-review references while preserving valid condition evidence (grouped=%s)", async (grouped) => {
+    const photos: ScanPhoto[] = [{ id: "bay", label: "overview", imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" }];
+    const assessment = conditionAssessment(grouped ? "bay" : "photo-1");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ result: { ...result, conditionAssessment: assessment, photoReview: photoReview(["not-supplied"]) } }), { status: 200 }));
+    const identified = await identifyCapturedFrame(photos[0], undefined, undefined, grouped ? { photos } : {});
+    expect(identified).not.toHaveProperty("photoReview");
+    expect(identified.conditionAssessment).toEqual(assessment);
+    expect(identified.partName).toBe(result.partName);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])("sends normalized saved photo review outside capped follow-up prose (research=%s)", async (research) => {
+    const photos: ScanPhoto[] = ["bay", "connector", "marking"].map((id) => ({ id, label: "other", imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" }));
+    const review = photoReview(["bay", "connector"]);
+    const lookup = { frame: photos[0], photos, photoRelationship: "independent", result: { ...result, concerns: ["Uncertain ".repeat(500)], photoReview: { ...review, ignored: "UNTRUSTED_EXTRA" } },
+      scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "The connector disagreement needs another view." }), { status: 200 }));
+    await sendFollowUpDetails(lookup, "Why do the connector views disagree?", { research });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.photoReview).toEqual(review);
+    expect(body.photos).toHaveLength(3);
+    expect(body.userMessage.length).toBeLessThanOrEqual(3000);
+    expect(JSON.stringify(body)).not.toContain("UNTRUSTED_EXTRA");
+  });
+
+  it.each([false, true])("validates saved review on legacy single-photo follow-up (foreign=%s)", async (foreign) => {
+    const review = photoReview([foreign ? "another-scan" : "photo-1"]);
+    const lookup = { frame: { imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" }, result: { ...result, photoReview: review },
+      scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "Inspect the supplied original." }), { status: 200 }));
+    await sendFollowUpDetails(lookup, "What was reviewed?");
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    if (foreign) expect(body).not.toHaveProperty("photoReview");
+    else expect(body.photoReview).toEqual(review);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it("uses the on-device model when offline and the fallback is enabled", async () => {

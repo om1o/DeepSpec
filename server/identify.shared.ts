@@ -1,5 +1,6 @@
-import { CONDITION_ASSESSMENT_PROMPT, IDENTIFY_PROMPT, IDENTIFY_PROMPT_VERSION, IDENTIFY_PIPELINE_VERSION } from "../src/services/systemPrompts.js";
+import { CONDITION_ASSESSMENT_PROMPT, PHOTO_REVIEW_PROMPT, IDENTIFY_PROMPT, IDENTIFY_PROMPT_VERSION, IDENTIFY_PIPELINE_VERSION } from "../src/services/systemPrompts.js";
 import { normalizeConditionAssessment } from "../src/lib/conditionAssessment.js";
+import { normalizePhotoReview } from "../src/lib/photoReview.js";
 import { formatVehicleContext, providerVehicleContext } from "../src/lib/vehicleContext.js";
 import { randomUUID } from "node:crypto";
 import { observeIdentification } from "./identifyDiagnostics.shared.js";
@@ -94,7 +95,7 @@ const CREDENTIALED_PROVIDER_HOSTS: Record<"gemini" | "groq" | "huggingface" | "h
 
 const GEMINI_IDENTIFY_PROMPT = [
   "Identify the main visible vehicle part or damage from the photo.",
-  `Return only JSON with: partName, confidence, confidenceScore, confidenceRange, confirmationNeed, scanCategory, whatItDoes, visibleObservations, evidence, evidenceRegions, sceneObjects, concerns, conditionAssessment, candidateMatches, primaryPart, candidateParts, possibleVehicleContexts, measurements, requiredNextEvidence, fitmentConfidence, safetyTriage, isSafetyCritical, nextAction, needsBetterPhoto, sourceLinks.`,
+  `Return only JSON with: partName, confidence, confidenceScore, confidenceRange, confirmationNeed, scanCategory, whatItDoes, visibleObservations, evidence, evidenceRegions, sceneObjects, concerns, conditionAssessment, photoReview, candidateMatches, primaryPart, candidateParts, possibleVehicleContexts, measurements, requiredNextEvidence, fitmentConfidence, safetyTriage, isSafetyCritical, nextAction, needsBetterPhoto, sourceLinks.`,
   "sceneObjects: list every distinct visible object including background items (posters, tools, hands, other parts); set primary true only for the main part; return [] when only the main subject is visible.",
   `scanCategory must be one of: ${SCAN_CATEGORIES.join(", ")}.`,
   "When visible exterior damage exists, name the damage type explicitly in visibleObservations, concerns, or evidence: dent, scratch, cracked, broken/damaged, missing/detached, paint chip, corrosion/rust. Do not say no visible damage when any of those are visible.",
@@ -103,14 +104,16 @@ const GEMINI_IDENTIFY_PROMPT = [
   "Use leak only for visible active fluid, wet staining, dripping, pooling, oil, coolant, fuel, or other fluid evidence.",
   "Keep text short for a phone UI.",
   CONDITION_ASSESSMENT_PROMPT,
+  PHOTO_REVIEW_PROMPT,
 ].join(" ");
 
 const OLLAMA_IDENTIFY_PROMPT = [
   "Identify the main visible car part or car damage.",
-  "Return only JSON with partName, confidence, scanCategory, visibleObservations, evidence, concerns, conditionAssessment, and nextAction.",
+  "Return only JSON with partName, confidence, scanCategory, visibleObservations, evidence, concerns, conditionAssessment, photoReview, and nextAction.",
   "confidence: high, medium, or low.",
   `scanCategory: ${SCAN_CATEGORIES.join(", ")}.`,
   CONDITION_ASSESSMENT_PROMPT,
+  PHOTO_REVIEW_PROMPT,
 ].join(" ");
 
 export function validateIdentifyRequest(body: unknown, env?: Record<string, string | undefined>): IdentifyResponse | null {
@@ -1211,10 +1214,11 @@ function fetchGeminiRescueIdentify(
         parts: [{
           text: [
             "Identify the main visible vehicle part from the image.",
-            `Return only compact JSON with partName, confidence, confidenceScore, scanCategory, whatItDoes, visibleObservations, evidence, concerns, conditionAssessment, isSafetyCritical, safetyTriage, nextAction, needsBetterPhoto.`,
+            `Return only compact JSON with partName, confidence, confidenceScore, scanCategory, whatItDoes, visibleObservations, evidence, concerns, conditionAssessment, photoReview, isSafetyCritical, safetyTriage, nextAction, needsBetterPhoto.`,
             `scanCategory must be one of: ${SCAN_CATEGORIES.join(", ")}.`,
             "Use category engine for a complete engine assembly unless active fluid leakage is visible.",
             CONDITION_ASSESSMENT_PROMPT,
+            PHOTO_REVIEW_PROMPT,
           ].join(" "),
         }],
       },
@@ -1422,7 +1426,10 @@ function parseIdentificationResult(text: string, allowedPhotoIds: readonly strin
     const parsed = JSON.parse(jsonText) as unknown;
     // Malformed optional evidence must not invalidate an otherwise usable result.
     const diagnosticValue = isRecord(parsed) ? { ...parsed } : parsed;
-    if (isRecord(diagnosticValue)) delete diagnosticValue.conditionAssessment;
+    if (isRecord(diagnosticValue)) {
+      delete diagnosticValue.conditionAssessment;
+      delete diagnosticValue.photoReview;
+    }
     if (containsProviderDiagnostic(diagnosticValue) || containsProviderDiagnostic(text.replace(jsonText, ""))) {
       return null;
     }
@@ -1465,13 +1472,15 @@ function extractJsonObjectText(text: string) {
 }
 
 function toIdentificationResult(value: unknown, allowedPhotoIds: readonly string[]): IdentificationResult | null {
+  const photoReview = isRecord(value) ? normalizePhotoReview(value.photoReview, allowedPhotoIds) : undefined;
   const conditionAssessment = isRecord(value)
     ? normalizeConditionAssessment(value.conditionAssessment, allowedPhotoIds)
     : undefined;
   if (isIdentificationResult(value)) {
     const result = { ...value };
     delete result.conditionAssessment;
-    return { ...result, ...(conditionAssessment ? { conditionAssessment } : {}) };
+    delete result.photoReview;
+    return { ...result, ...(conditionAssessment ? { conditionAssessment } : {}), ...(photoReview ? { photoReview } : {}) };
   }
 
   if (!isRecord(value)) {
@@ -1526,6 +1535,7 @@ function toIdentificationResult(value: unknown, allowedPhotoIds: readonly string
       : "This is a visible vehicle component that should be verified with vehicle-specific context before ordering or repair.",
     visibleObservations,
     ...(conditionAssessment ? { conditionAssessment } : {}),
+    ...(photoReview ? { photoReview } : {}),
     evidenceRegions: coerceEvidenceRegions(base.evidenceRegions ?? value.evidenceRegions, partName, visibleObservations),
     sceneObjects: coerceSceneObjects(value.sceneObjects),
     concerns,
@@ -1865,6 +1875,7 @@ function parseOllamaIdentificationResult(text: string, allowedPhotoIds: readonly
       ? parsed.visibleObservations
       : [`The local vision model identified ${partName} as the main visible item.`];
     const conditionAssessment = normalizeConditionAssessment(parsed.conditionAssessment, allowedPhotoIds);
+    const photoReview = normalizePhotoReview(parsed.photoReview, allowedPhotoIds);
 
     return {
       partName,
@@ -1874,6 +1885,7 @@ function parseOllamaIdentificationResult(text: string, allowedPhotoIds: readonly
       whatItDoes: `${partName} is the main item the local vision model could identify in this scan.`,
       visibleObservations,
       ...(conditionAssessment ? { conditionAssessment } : {}),
+      ...(photoReview ? { photoReview } : {}),
       evidenceRegions: [
         {
           label: partName,

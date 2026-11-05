@@ -246,6 +246,18 @@ export type ConditionAssessment = {
   nextEvidence?: NextConditionEvidence;
 };
 
+export type PhotoReviewStatus = "observations_returned" | "limited_view" | "not_assessed";
+export type PhotoReview = {
+  version: 1;
+  photos: { photoId: string; status: PhotoReviewStatus; summary: string }[];
+  disagreements: {
+    id: string;
+    photoIds: string[];
+    description: string;
+    nextEvidence: { request: string; purpose: string };
+  }[];
+};
+
 export type SceneObject = {
   name: string;
   category: ScanCategory | string;
@@ -325,6 +337,7 @@ export type IdentificationResult = {
   visibleObservations: string[];
   evidenceRegions: EvidenceRegion[];
   conditionAssessment?: ConditionAssessment;
+  photoReview?: PhotoReview;
   sceneObjects?: SceneObject[];
   concerns: string[];
   safetyTriage: SafetyTriage;

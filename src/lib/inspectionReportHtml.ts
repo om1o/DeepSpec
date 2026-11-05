@@ -8,6 +8,7 @@ import { normalizeServiceRecords, serviceRecordRows, serviceRecordStatus } from 
 import { normalizeInspectionComparisons, inspectionComparisonStatus } from "./inspectionComparison";
 import { buildDiagnosticReportSection } from "./diagnosticReportHtml";
 import { photoRelationshipDescription, photoRelationshipOrUnknown, photoRelationshipScopeDescription } from "./photoRelationship";
+import { buildPhotoReviewState, photoReviewStatusLabel } from "./photoReview";
 
 export const MAX_INSPECTION_REPORT_HTML_BYTES = 64 * 1024 * 1024;
 
@@ -182,6 +183,22 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
     const draft = buildIntakeDraft(scan);
     const assessment = normalizeConditionAssessment(result?.conditionAssessment, photos.map((photo) => photo.id));
     if (result?.conditionAssessment && !assessment) noteMissing(`Scan ${number}: invalid condition-assessment references were omitted; other saved findings remain below.`);
+    const reviewState = buildPhotoReviewState(result?.photoReview, photos.map((photo, index) => ({ id: photo.id, label: `Photo ${index + 1}` })), Boolean(result));
+    if (reviewState.invalid) noteMissing(`Scan ${number}: the saved per-photo review could not be validated; its claims were omitted.`);
+    const photoReviewHtml = `<div class="photo-review" id="${anchor}-photo-review"><h3>Per-photo AI review</h3>
+      ${prose("AI-reported review is not human verification or proof of condition, function, safety, fitment or agreement.")}
+      ${prose(reviewState.sourceMessage)}
+      ${prose(reviewState.message)}
+      <ol class="photo-review-rows">${reviewState.rows.map((row, index) => {
+        return `<li id="${anchor}-photo-review-${index + 1}"><p>${escape(row.label)}: ${photoLink(scan.id, row.id)}</p>
+          ${details([["AI review status", photoReviewStatusLabel(row.status)]])}${row.summary ? prose(row.summary) : ""}</li>`;
+      }).join("")}</ol>
+      <h4>Cross-photo disagreements — AI-reported, unconfirmed</h4>
+      ${prose(reviewState.disagreementMessage)}
+      ${reviewState.review?.disagreements.length ? `<ol class="photo-review-disagreements">${reviewState.review.disagreements.map((item, index) => `<li id="${anchor}-photo-disagreement-${index + 1}">
+        ${prose(item.description)}<p>Referenced saved images: ${item.photoIds.map((id) => photoLink(scan.id, id)).join(", ")}</p>
+        ${details([["Targeted next evidence", item.nextEvidence.request], ["Purpose", item.nextEvidence.purpose]])}</li>`).join("")}</ol>`
+        : ""}</div>`;
     const selections = (scan.isolatedObjects ?? []).map((object) => ({ name: object.name, box: object.focusBox, mode: object.focusMode, data: object.isolatedImageBase64, correctedAt: object.correctedAt, primary: object.primary }));
     if ((scan.focusBox || scan.isolatedImageBase64) && !selections.some((selection) => selection.primary && JSON.stringify(selection.box) === JSON.stringify(scan.focusBox) && selection.data === (scan.isolatedImageBase64 ?? "") && selection.mode === scan.focusMode)) {
       selections.unshift({ name: "Primary selection", box: scan.focusBox!, mode: scan.focusMode, data: scan.isolatedImageBase64 ?? "", correctedAt: undefined, primary: true });
@@ -193,7 +210,7 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
       if (map?.overview.lookupId === scan.id) map.components.forEach((component, index) => {
         if (component.status !== "not_visible" && component.region?.sourcePhotoId === photo.id && validBox(component.region.box)) outlines.push({ box: component.region.box, label: `Component ${index + 1}`, target: `component-${index + 1}`, map: true });
       });
-      return `<figure id="${anchorId}"><h4>Photo ${photoIndex + 1} — ${escape(words(photo.label))}</h4>${imageMarkup(photo.imageBase64, anchorId, `Scan ${number}, original photo ${photoIndex + 1}`, outlines)}<figcaption>Saved original: ${escape(photo.id)}. Captured: ${escape(photo.capturedAt)}. Embedded pixels are not cropped or annotated; optional outlines are separate display overlays.</figcaption></figure>`;
+      return `<figure id="${anchorId}"><h4>Photo ${photoIndex + 1} — ${escape(words(photo.label))}</h4>${imageMarkup(photo.imageBase64, anchorId, `Scan ${number}, saved photo ${photoIndex + 1}`, outlines)}<figcaption>Saved source image: ${escape(photo.id)}. Captured: ${escape(photo.capturedAt)}. This report embeds the saved pixels without further cropping or annotation; the saved image itself may be a crop. Optional outlines are separate display overlays.</figcaption></figure>`;
     }).join("");
     const selectionsHtml = selections.map((selection, index) => {
       const selectionAnchor = `${anchor}-selection-${index + 1}`;
@@ -218,9 +235,10 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
       ${scan.correction ? details([["User-corrected label — not independently verified", scan.correction]]) : ""}
       <h3>Saved vehicle and complaint${photos.length > 1 && photoRelationshipOrUnknown(scan.photoRelationship) !== "same_part_or_area" ? " — Photo 1" : ""}</h3>${details(vehicleRows(scan, options))}
       <p class="muted">Vehicle confirmation is self-reported. These details do not establish part fitment or condition.</p>
-      <h3>Original photo evidence</h3>${details([[photoRelationshipOrUnknown(scan.photoRelationship) === "unknown" ? "Photo relationship" : "User-reported photo relationship", photoRelationshipDescription(scan.photoRelationship)]])}
+      <h3>Saved image evidence</h3>${details([[photoRelationshipOrUnknown(scan.photoRelationship) === "unknown" ? "Photo relationship" : "User-reported photo relationship", photoRelationshipDescription(scan.photoRelationship)]])}
       ${relationshipScope ? prose(relationshipScope) : ""}
       ${photosHtml}${selections.length ? `<h3>Saved selections and cutouts</h3>${selectionsHtml}` : prose("No isolated selections or cutouts saved.")}
+      ${photoReviewHtml}
       ${result ? `<h3>AI identification — unverified</h3>${details([["Suggested identity", result.partName], ["Confidence", result.confidence], ["Category", words(result.scanCategory)], ["What it does", result.whatItDoes], ["Fitment", result.fitmentConfidence ? words(result.fitmentConfidence) : "Not established"], ["Confirmation needed", result.confirmationNeed ? words(result.confirmationNeed) : "Not recorded"]])}
         ${result.modelRun ? details([["Provider", result.modelRun.provider], ["Model", result.modelRun.model], ["Prompt version", result.modelRun.promptVersion ?? "Not recorded"], ["Pipeline version", result.modelRun.pipelineVersion ?? "Not recorded"], ["Analyzed", scan.analyzedAt ?? "Not recorded"], ["OCR used", result.modelRun.ocrUsed ? "Yes" : "No"], ...(result.modelRun.fallbackReason ? [["Provider fallback", result.modelRun.fallbackReason] as const] : [])]) : prose("Model provenance not recorded.")}
         <div class="${result.isSafetyCritical || result.safetyTriage === "needs_professional" ? "safety" : "warning"}"><h4>${result.isSafetyCritical || result.safetyTriage === "needs_professional" ? "Safety action — preserve before further use" : "Saved next action"}</h4>${prose(result.nextAction || "No specific action recorded.")}${details([["Safety triage", words(result.safetyTriage)], ["Safety-critical flag", result.isSafetyCritical ? "Yes" : "No — not a safety clearance"]])}</div>

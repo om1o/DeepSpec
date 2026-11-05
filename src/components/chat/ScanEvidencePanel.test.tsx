@@ -40,6 +40,29 @@ const lookup: Lookup = {
 };
 
 describe("ScanEvidencePanel", () => {
+  it("opens a disagreement's exact original without drafting a message or inferring missing coverage", async () => {
+    const value: Lookup = { ...lookup, photos: [
+      { ...lookup.frame, id: "bay", label: "overview" },
+      { ...lookup.frame, id: "detail", label: "close_up", imageBase64: "data:image/png;base64,ZGV0YWls" },
+      { ...lookup.frame, id: "marking", label: "marking", imageBase64: "data:image/png;base64,bWFya2luZw==" },
+    ], result: { ...lookup.result!, photoReview: { version: 1,
+      photos: [{ photoId: "bay", status: "observations_returned", summary: "A dark edge is visible." }, { photoId: "detail", status: "limited_view", summary: "Glare obscures that edge." }],
+      disagreements: [{ id: "d1", photoIds: ["bay", "detail"], description: "The dark edge cannot be matched confidently.", nextEvidence: { request: "Photograph the edge in diffuse light.", purpose: "Distinguish glare from an opening." } }],
+    } } };
+    const onDraftQuestion = vi.fn(), before = JSON.stringify(value);
+    renderPanel(value, onDraftQuestion);
+    const review = screen.getByRole("region", { name: "Photo review" });
+    expect(review).toHaveTextContent("2 of 3 photos have an AI review entry.");
+    expect(within(review).getAllByText("No review returned")).toHaveLength(1);
+    await userEvent.click(within(review).getByRole("button", { name: "View Photo 2 — Close-up for disagreement d1" }));
+    expect(screen.getByRole("img", { name: "Saved photo of Alternator" })).toHaveAttribute("src", value.photos![1].imageBase64);
+    expect(screen.queryByTestId("chat-focus-target")).not.toBeInTheDocument();
+    await userEvent.click(within(review).getByRole("button", { name: "View saved Photo 3 — Label or marking" }));
+    expect(screen.getByRole("img", { name: "Saved photo of Alternator" })).toHaveAttribute("src", value.photos![2].imageBase64);
+    expect(onDraftQuestion).not.toHaveBeenCalled();
+    expect(JSON.stringify(value)).toBe(before);
+  });
+
   it.each([
     ["same_part_or_area", "Same part or area of one car — reported by the user, not independently verified."],
     ["independent", "Independent examples — do not assume the same part, vehicle or before-and-after sequence."],

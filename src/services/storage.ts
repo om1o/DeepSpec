@@ -3,6 +3,7 @@ import type { CandidateMatch, CandidatePart, CapturedFrame, ChatMessage, Confide
 import type { PartInspectionDraft } from "../types";
 import { normalizePartInspection, withLatestInspection } from "../lib/partInspection";
 import { normalizeConditionAssessment } from "../lib/conditionAssessment";
+import { normalizePhotoReview } from "../lib/photoReview";
 import { normalizeVehicleContext, vehicleContextsMatch } from "../lib/vehicleContext";
 import { accountStorageKey, getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import { inspectionDraftKey } from "./inspectionDraft";
@@ -907,9 +908,10 @@ function evidencePhotoIds(photos: Lookup["photos"], frame: Lookup["frame"]): str
 
 function withValidatedConditionAssessment(result: IdentificationResult | undefined, allowedPhotoIds: readonly string[]): IdentificationResult | undefined {
   if (!result) return undefined;
-  const { conditionAssessment: rawAssessment, ...legacyResult } = result;
+  const { conditionAssessment: rawAssessment, photoReview: rawPhotoReview, ...legacyResult } = result;
   const conditionAssessment = normalizeConditionAssessment(rawAssessment, allowedPhotoIds);
-  return { ...legacyResult, ...(conditionAssessment ? { conditionAssessment } : {}) };
+  const photoReview = normalizePhotoReview(rawPhotoReview, allowedPhotoIds);
+  return { ...legacyResult, ...(conditionAssessment ? { conditionAssessment } : {}), ...(photoReview ? { photoReview } : {}) };
 }
 
 function normalizeStoredIdentificationResult(value: unknown, allowedPhotoIds: readonly string[], correction?: string): IdentificationResult | undefined {
@@ -934,6 +936,7 @@ function normalizeStoredIdentificationResult(value: unknown, allowedPhotoIds: re
   }
 
   const conditionAssessment = normalizeConditionAssessment(result.conditionAssessment, allowedPhotoIds);
+  const photoReview = normalizePhotoReview(result.photoReview, allowedPhotoIds);
   return {
     partName: cleanText(result.partName, 80),
     confidence: result.confidence,
@@ -952,6 +955,7 @@ function normalizeStoredIdentificationResult(value: unknown, allowedPhotoIds: re
     visibleObservations: cleanStringArray(result.visibleObservations, 6, 180),
     evidenceRegions: normalizeEvidenceRegions(result.evidenceRegions, result.visibleObservations, result.evidence),
     ...(conditionAssessment ? { conditionAssessment } : {}),
+    ...(photoReview ? { photoReview } : {}),
     sceneObjects: normalizeSceneObjects(result.sceneObjects),
     concerns: cleanStringArray(result.concerns, 6, 180),
     safetyTriage: result.safetyTriage,

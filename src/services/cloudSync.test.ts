@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import type { Lookup } from "../types";
+import type { Lookup, PhotoReview } from "../types";
 
 const mocks = vi.hoisted(() => ({
   createClient: vi.fn(),
@@ -24,6 +24,36 @@ describe("cloudSync", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  it.each(["valid", "missing", "foreign-photo", "unassessed-disagreement"])("uploads only validated optional review in result_json without changing the caller's originals: %s", async (kind) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const scanWrite = vi.fn().mockResolvedValue({ data: { revision: 1 }, error: null });
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
+      auth: { getSession: async () => ({ data: { session: { user: { id: "user-1", email_confirmed_at: "now" } } }, error: null }) },
+      from: (table: string) => table === "scan_lookups" ? makeScanWriteQuery(scanWrite) : { insert: async () => ({ error: null }), upsert: async () => ({ error: null }) },
+      storage: { from: () => ({ upload: vi.fn().mockResolvedValue({ error: null }) }) },
+    });
+    const lookup = makeLookup();
+    lookup.photos = ["overview", "detail", "marking"].map((id) => ({ ...lookup.frame, id, label: "other" }));
+    const photoReview: PhotoReview = { version: 1, photos: [
+      { photoId: "overview", status: "observations_returned", summary: "The edge appears smooth." },
+      { photoId: "detail", status: "limited_view", summary: "The edge is shadowed." },
+    ], disagreements: [{ id: "edge", photoIds: ["overview", "detail"], description: "The edge differs between views.",
+      nextEvidence: { request: "Show the edge with even light.", purpose: "Separate shadow from surface damage." } }] };
+    if (kind === "foreign-photo") photoReview.photos[0].photoId = "other-scan";
+    if (kind === "unassessed-disagreement") photoReview.photos[1].status = "not_assessed";
+    if (kind !== "missing") lookup.result = { ...lookup.result!, photoReview };
+    const original = JSON.stringify(lookup);
+    const { syncLookupToCloud } = await import("./cloudSync");
+    expect((await syncLookupToCloud(lookup)).ok).toBe(true);
+    const row = scanWrite.mock.calls[0][0];
+    if (kind === "valid") expect(row.result_json.photoReview).toEqual(photoReview);
+    else expect(row.result_json).not.toHaveProperty("photoReview");
+    expect(row.result_json.partName).toBe(lookup.result!.partName);
+    expect(row.evidence_bundle_json.photos).toHaveLength(3);
+    expect(JSON.stringify(lookup)).toBe(original);
   });
 
   it.each(["saved", "missing-column", "failed-cutout"])("saves all photo/selection evidence separately from AI: %s", async (outcome) => {

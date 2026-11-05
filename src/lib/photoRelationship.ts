@@ -17,7 +17,10 @@ export function photoRelationshipDescription(value: unknown): string {
   }
 }
 
-const FIRST_PHOTO_IDENTITY_PIPELINE = "identify-pipeline-2026-11-05-photo-relationship-v1";
+export function hasFirstPhotoIdentityScopePipeline(version?: string | null): boolean {
+  return version === "identify-pipeline-2026-11-05-photo-relationship-v1"
+    || version === "identify-pipeline-2026-11-05-photo-review-v1";
+}
 
 /** null means no identification result; undefined means its pipeline was not recorded. */
 export function photoRelationshipScopeDescription(value: unknown, pipelineVersion?: string | null): string | undefined {
@@ -25,7 +28,7 @@ export function photoRelationshipScopeDescription(value: unknown, pipelineVersio
     return pipelineVersion === null ? "No main identification is recorded." : undefined;
   }
   const identity = pipelineVersion === null ? "No main identification is recorded."
-    : pipelineVersion === FIRST_PHOTO_IDENTITY_PIPELINE ? "The main identification refers to Photo 1."
+    : hasFirstPhotoIdentityScopePipeline(pipelineVersion) ? "The main identification refers to Photo 1."
       : "The main identification's per-photo scope was not recorded.";
   return `${identity} Saved selection and supplied vehicle or complaint details, when present, refer to Photo 1.`;
 }

@@ -3,6 +3,7 @@ import { CLOUD_SYNC_DISABLED_MESSAGE, isCloudSyncEnabled } from "./cloudSyncPoli
 import { getAuthClient, isSupabaseAuthConfigured } from "./auth";
 import { normalizePartInspection } from "../lib/partInspection";
 import { normalizeConditionAssessment } from "../lib/conditionAssessment";
+import { normalizePhotoReview } from "../lib/photoReview";
 import { normalizeVehicleContext } from "../lib/vehicleContext";
 import { evidencePaths, isOwnedEvidencePath, parseEvidenceBundle, restoreEvidenceBundle } from "./visualEvidence";
 import type {
@@ -350,7 +351,7 @@ function mapCloudRowToLookup(
   const evidence = parseEvidenceBundle(row.evidence_bundle_json, userId, String(row.local_id));
   const restoredEvidence = evidence ? restoreEvidenceBundle(evidence, signedImageMap) : {};
   const photoIds = restoredEvidence.photos?.map((photo) => photo.id)
-    ?? (forReport || signedImageMap.has(imagePath) ? ["photo-1"] : []);
+    ?? ((forReport && isOwnedEvidencePath(imagePath, userId, String(row.local_id))) || signedImageMap.has(imagePath) ? ["photo-1"] : []);
   const result = parseIdentificationResult(row.result_json, scanCategory, photoIds);
 
   return {
@@ -402,6 +403,7 @@ function parseIdentificationResult(value: unknown, fallbackCategory: ScanCategor
   }
 
   const conditionAssessment = normalizeConditionAssessment(value.conditionAssessment, allowedPhotoIds);
+  const photoReview = normalizePhotoReview(value.photoReview, allowedPhotoIds);
   return {
     partName,
     confidence: parseConfidence(value.confidence),
@@ -420,6 +422,7 @@ function parseIdentificationResult(value: unknown, fallbackCategory: ScanCategor
     visibleObservations: parseStringList(value.visibleObservations, 8, 220),
     evidenceRegions: parseEvidenceRegions(value.evidenceRegions),
     ...(conditionAssessment ? { conditionAssessment } : {}),
+    ...(photoReview ? { photoReview } : {}),
     sceneObjects: parseSceneObjects(value.sceneObjects),
     concerns: parseStringList(value.concerns, 8, 220),
     safetyTriage: parseSafetyTriage(value.safetyTriage),
