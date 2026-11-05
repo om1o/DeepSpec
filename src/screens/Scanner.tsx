@@ -204,6 +204,7 @@ export default function Scanner() {
   const activePhotoDraft = photoDraftKind === "capture" ? captureDraft : photoDraft;
   const activeDraftEnvelope = photoDraftKind === "capture" ? captureEnvelope : uploadEnvelope;
   const [showPhotoDraft, setShowPhotoDraft] = useState(false);
+  const isPhotoDraftReviewOpen = Boolean(activePhotoDraft && showPhotoDraft);
   const activeComparisonTarget = showPhotoDraft ? (activeDraftEnvelope?.version === 4 ? activeDraftEnvelope.comparisonTarget : undefined) : routeComparisonTarget;
   const [photoDraftBusy, setPhotoDraftBusy] = useState(false);
   const [photoDraftMessage, setPhotoDraftMessage] = useState<string | null>(null);
@@ -1358,7 +1359,7 @@ export default function Scanner() {
       {cameraState === "blocked" && !scanReview ? (
         <CameraBlocked
           devices={cameraDevices}
-          notice={qualityCoach ? { title: qualityCoach.title, text: qualityCoach.action } : captureError ? { text: captureError } : null}
+          notice={qualityCoach ? { title: qualityCoach.title, text: qualityCoach.action } : captureError && !isPhotoDraftReviewOpen ? { text: captureError } : null}
           onGallery={() => galleryInputRef.current?.click()}
           message={cameraError}
           onRetry={retryCamera}
@@ -1379,7 +1380,7 @@ export default function Scanner() {
               onTryAgain={() => void handleIdentify()}
             />
           ) : null}
-          {captureError ? <CaptureErrorNotice message={captureError} onTryAgain={() => setCaptureError(null)} /> : null}
+          {captureError && !isPhotoDraftReviewOpen ? <CaptureErrorNotice message={captureError} onTryAgain={() => setCaptureError(null)} /> : null}
         </>
       ) : null}
 

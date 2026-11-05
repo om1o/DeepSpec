@@ -1795,16 +1795,25 @@ describe("Scanner", () => {
     expect(screen.queryByRole("dialog", { name: "Review inspection photos" })).not.toBeInTheDocument();
   });
 
-  it("keeps a reviewed draft and prevents provider work when checking its durable group fails", async () => {
+  it.each(["ready", "blocked"] as const)("keeps a reviewed draft and presents its durable-check error once with camera %s", async (cameraState) => {
+    cameraHookState.current = { ...cameraHookState.current, cameraState };
     render(<MemoryRouter><Scanner /></MemoryRouter>);
     await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["engine"], "engine.jpg", { type: "image/jpeg" }));
     await screen.findByRole("dialog", { name: "Review inspection photos" });
     replacePhotoDraftIfMatches.mockRejectedValueOnce(new Error("Could not verify these saved photos. Retry before analysis."));
     await analyzeReviewedPhotos();
     expect(await screen.findByText("Could not verify these saved photos. Retry before analysis.")).toBeInTheDocument();
-    expect(screen.getByRole("dialog", { name: "Review inspection photos" })).toBeInTheDocument();
+    const review = screen.getByRole("dialog", { name: "Review inspection photos" });
+    expect(within(review).getByText("Could not verify these saved photos. Retry before analysis.")).toHaveAttribute("role", "status");
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
     expect(removePhotoDraft).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Keep draft and close" }));
+    expect(screen.queryByRole("dialog", { name: "Review inspection photos" })).not.toBeInTheDocument();
+    expect(screen.getByText("Could not verify these saved photos. Retry before analysis.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Resume 1-photo draft" }));
+    expect(screen.getByText("Could not verify these saved photos. Retry before analysis.")).toHaveAttribute("role", "status");
+    expect(draftStore.get("test-user:upload")).toHaveLength(1);
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
   });
 
   it.each([

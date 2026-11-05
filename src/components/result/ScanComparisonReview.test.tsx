@@ -60,11 +60,18 @@ beforeEach(() => {
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
-async function open(value = lookup) {
+function openDetails(summary: string) {
+  const details = screen.getByText(summary, { selector: "summary" }).closest("details")!;
+  details.open = true;
+  fireEvent(details, new Event("toggle"));
+}
+async function open(value = lookup, recovering = false) {
   const view = render(<ScanComparisonReview lookup={value} />);
-  const details = screen.getByText("Compare dated inspections").closest("details")!; details.open = true; fireEvent.toggle(details);
+  openDetails("Compare dated inspections");
   await screen.findByLabelText("Part or location");
-  await waitFor(() => expect(screen.getByLabelText("Part or location")).toBeEnabled()); return view;
+  if (recovering) await screen.findByLabelText("Comparison draft recovery");
+  else await waitFor(() => expect(screen.getByLabelText("Part or location")).toBeEnabled());
+  return view;
 }
 function fill(name: string, value: string) { fireEvent.change(screen.getByLabelText(name), { target: { value } }); }
 async function prepare(photoId = "photo-2") {
@@ -72,6 +79,8 @@ async function prepare(photoId = "photo-2") {
   fireEvent.click(screen.getByRole("button", { name: "Check selected originals" }));
   await screen.findByLabelText("Earlier observation date (self-reported, optional)");
   await waitFor(() => expect(screen.getByRole("button", { name: "Save comparison on this device" })).toBeEnabled());
+  await screen.findByAltText("Earlier original");
+  await screen.findByAltText("Current original");
 }
 function observation() {
   fireEvent.click(screen.getByLabelText("I confirm these show the same vehicle")); fill("Component relationship", "same_part");
@@ -99,6 +108,7 @@ it("saves exact selected originals and human notes without changing AI or automa
 
 it("resets confirmation, outcome and alignment after changing either original while retaining entered notes", async () => {
   await open(); await prepare(); observation();
+  openDetails("Align display only");
   fireEvent.change(screen.getByLabelText("Rotate current photo"), { target: { value: "90" } });
   fill("Current original photo", "photo-1");
   expect(screen.getByLabelText("I confirm these show the same vehicle")).not.toBeChecked();
@@ -116,6 +126,7 @@ it("keeps unknown observation dates and unconfirmed identity instead of treating
 
 it("applies reversible viewing transforms and reset without changing the original image or frozen dimensions", async () => {
   await open(); await prepare(); const image = screen.getByAltText("Current original"); const originalSrc = image.getAttribute("src");
+  openDetails("Align display only");
   fireEvent.change(screen.getByLabelText("Rotate current photo"), { target: { value: "90" } });
   fireEvent.change(screen.getByLabelText("Scale current photo"), { target: { value: "2" } });
   expect(image).toHaveStyle({ transform: "translate(0%, 0%) rotate(90deg) scale(2)" }); expect(image.getAttribute("src")).toBe(originalSrc);
@@ -168,7 +179,7 @@ it("supports an originally cloud-only current scan with guarded saved prop conte
 
 it("retains and explicitly restores the draft after reopening, without silently replacing another tab", async () => {
   const view = await open(); await prepare(); observation(); await waitFor(() => expect(mocks.raw).toContain("Darker edge"));
-  const prior = mocks.raw; view.unmount(); await open();
+  const prior = mocks.raw; view.unmount(); await open(lookup, true);
   expect(await screen.findByLabelText("Comparison draft recovery")).toBeInTheDocument(); expect(screen.getByLabelText("Part or location")).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Restore comparison draft" })); await waitFor(() => expect(screen.getByLabelText("Part or location")).toBeEnabled());
   expect(screen.getByLabelText("Human observations (included in reports)")).toHaveValue("  Darker edge; different lighting may explain it.  ");
@@ -186,11 +197,15 @@ it("does not clear a failed local save and retries the same record ID", async ()
   expect(vi.mocked(store.appendInspectionComparison).mock.calls[1][0].id).toBe(id);
 });
 
-it("appends a correction with reason and preserves both originals and the prior record", async () => {
+it.each(["Lighting was different", "Lighting was different."])("appends correction reason %s without adding punctuation and preserves both originals and the prior record", async (reason) => {
   const original = savedRecord(); history = [original]; await open();
-  fireEvent.click(screen.getByRole("button", { name: "Correct comparison" })); fill("Reason for correction", "Lighting was different");
+  fireEvent.click(screen.getByRole("button", { name: "Correct comparison" })); fill("Reason for correction", reason);
   fill("Lighting", "different"); await save();
-  expect(history).toHaveLength(2); expect(history[0]).toEqual(original); expect(history[1]).toMatchObject({ supersedesId: original.id, correctionReason: "Lighting was different", earlier: original.earlier, current: original.current });
+  expect(history).toHaveLength(2); expect(history.find((record) => record.id === original.id)).toEqual(original);
+  expect(history.find((record) => record.supersedesId === original.id)).toMatchObject({ correctionReason: reason, earlier: original.earlier, current: original.current });
+  expect(screen.getByText(`Correction reason: ${reason}`, { exact: true })).toBeInTheDocument();
+  expect(screen.getByText("Earlier version remains in this history.")).toBeInTheDocument();
+  expect(screen.queryByText(/Earlier version retained below/)).not.toBeInTheDocument();
 });
 
 it("shows correction forks without silently preferring a branch", async () => {
