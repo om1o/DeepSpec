@@ -4,6 +4,7 @@ import type { ComponentMapComponent } from "../types/componentMap";
 import type { InspectionReportSnapshot } from "../types/inspectionReport";
 import { buildInspectionReportHtml, getInspectionReportFilename, MAX_INSPECTION_REPORT_HTML_BYTES } from "./inspectionReportHtml";
 import { confirmVehicleContextField } from "./vehicleContext";
+import type { ServiceRecord } from "../types/serviceRecord";
 
 const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/bKkAAAAASUVORK5CYII=";
 const WHEN = "2026-11-05T12:00:00Z";
@@ -44,7 +45,97 @@ function parsed(report: InspectionReportSnapshot, options?: Parameters<typeof bu
   return new DOMParser().parseFromString(buildInspectionReportHtml(report, options), "text/html");
 }
 
+function humanMeasurement(): Extract<ServiceRecord, { kind: "measurement" }> {
+  return { version: 1, id: "10000000-0000-4000-8000-000000000001", lookupId: "overview", recordedAt: "2026-11-05T12:00:00.000Z", occurredOn: "2026-11-04",
+    recordedBy: "PRIVATE_SERVICE_RECORDER", basis: "personally_performed", subject: "Lower bracket edge", photoIds: ["overview-front"], notes: "Calibration unknown; no service limit supplied",
+    analysisAttemptId: "original-analysis", vehicleContext: { year: "2010", make: "Example", model: "Test", mileage: "123000", mileageUnit: "mi", vin: "1HGBH41JXMN109186" },
+    kind: "measurement", quantity: "Thickness", reading: "2.00", unit: "mm", method: "Caliper across marked location", instrument: "Unverified caliper", conditions: "Dry", noReadingReason: "" };
+}
+
 describe("self-contained mechanic HTML report", () => {
+  it("preserves exact human readings, corrections, original photo links and private identity boundaries", () => {
+    const first = humanMeasurement();
+    const correction = { ...first, id: "10000000-0000-4000-8000-000000000002", recordedAt: "2026-11-05T13:00:00.000Z", reading: "2.10", supersedesId: first.id, correctionReason: "Transcription correction <keep original>" };
+    const input = snapshot(); input.serviceLogs = [{ lookupId: "overview", records: [first, correction], cloudChecked: true }];
+    const document = parsed(input); const text = document.body.textContent!;
+    expect(document.querySelectorAll(".service-record")).toHaveLength(2);
+    expect(text).toContain("2.00"); expect(text).toContain("2.10"); expect(text).toContain("superseded");
+    expect(text).toContain("Transcription correction <keep original>"); expect(text).toContain("original-analysis");
+    expect(text).toContain("123000"); expect(text).not.toContain("PRIVATE_SERVICE_RECORDER"); expect(text).not.toContain(first.vehicleContext!.vin);
+    expect(document.querySelector("#scan-1-service-2 a[href='#scan-1-service-1']")).not.toBeNull();
+    expect(document.querySelector("#scan-1-service-1 a[href='#scan-1-photo-1']")).not.toBeNull();
+    expect(document.querySelectorAll("script")).toHaveLength(0);
+    expect(parsed(input, { includeVin: true, includePrivateNotes: true }).body.textContent).toContain(first.vehicleContext!.vin);
+    expect(parsed(input, { includeVin: true, includePrivateNotes: true }).body.textContent).not.toContain("PRIVATE_SERVICE_RECORDER");
+  });
+
+  it("keeps reported repair completion separate from a linked follow-up and the existing safety action", () => {
+    const common = humanMeasurement();
+    const repair: ServiceRecord = { version: 1, id: common.id, lookupId: common.lookupId, recordedAt: common.recordedAt, occurredOn: common.occurredOn,
+      recordedBy: common.recordedBy, basis: common.basis, subject: common.subject, photoIds: common.photoIds, notes: "Cause not established",
+      kind: "repair", action: "Reported bracket replacement", status: "completed", parts: "Reported replacement bracket" };
+    const input = snapshot(); input.serviceLogs = [{ lookupId: "overview", records: [repair], cloudChecked: false }];
+    expect(parsed(input).body.textContent).toContain("Follow-up not recorded for this repair entry");
+    const followUp: ServiceRecord = { ...repair, id: "10000000-0000-4000-8000-000000000002", recordedAt: "2026-11-05T13:00:00.000Z",
+      kind: "follow_up", check: "Owner reports no rattle during brief stationary check", outcome: "symptom_not_observed", conditions: "Stationary", relatedRecordIds: [repair.id] };
+    // Construct only the follow-up's own fields, not the repair payload.
+    delete (followUp as unknown as Record<string, unknown>).action;
+    delete (followUp as unknown as Record<string, unknown>).status;
+    delete (followUp as unknown as Record<string, unknown>).parts;
+    input.serviceLogs[0].records.push(followUp);
+    const document = parsed(input);
+    expect(document.body.textContent).toContain("Separately recorded follow-up");
+    expect(document.body.textContent).toContain("Do not drive until the brake fault is inspected.");
+    expect(document.body.textContent).toContain("A symptom not observed during one check may recur");
+    expect(document.body.textContent).toContain("Cloud history was not verified");
+    expect(document.querySelector("#scan-1-service-2 a[href='#scan-1-service-1']")).not.toBeNull();
+  });
+
+  it("shows missing human evidence references without silently relinking to another photo", () => {
+    const input = snapshot(); input.serviceLogs = [{ lookupId: "overview", records: [{ ...humanMeasurement(), photoIds: ["removed-photo"] }], cloudChecked: true }];
+    const document = parsed(input);
+    expect(document.querySelector(".service-record")?.textContent).toContain("removed-photo Unavailable");
+    expect(document.querySelector("#missing-evidence")?.textContent).toContain("Photo removed-photo");
+    for (const link of document.querySelectorAll<HTMLAnchorElement>("a[href^='#']")) expect(document.getElementById(link.hash.slice(1))).not.toBeNull();
+  });
+
+  it("renders retained history for an unavailable linked scan with its own context, corrections and missing original references", () => {
+    const input = snapshot();
+    const first = { ...humanMeasurement(), lookupId: "missing-scan", photoIds: ["historic-angle"], vehicleContext: { model: "Historical vehicle" } };
+    const correction = { ...first, id: "10000000-0000-4000-8000-000000000002", supersedesId: first.id, correctionReason: "Keep original evidence", reading: "2.10" };
+    input.serviceLogs = [{ lookupId: "missing-scan", records: [first, correction], cloudChecked: false }];
+    input.missing = [{ kind: "lookup", lookupId: "missing-scan", message: "This linked saved scan is unavailable." }];
+    const document = parsed(input);
+    const section = document.querySelector("#unavailable-service-history")!;
+    expect(section.textContent).toContain("original scan metadata and photos are unavailable");
+    expect(section.textContent).toContain("Historical vehicle");
+    expect(section.textContent).toContain("2.00"); expect(section.textContent).toContain("2.10");
+    expect(section.textContent).toContain("historic-angle Unavailable");
+    expect(section.querySelectorAll(".service-record")).toHaveLength(2);
+    expect(section.querySelectorAll("img")).toHaveLength(0);
+    expect(section.textContent).not.toContain("PRIVATE_SERVICE_RECORDER");
+    expect(section.querySelector("a[href='#unavailable-service-1-service-1']")).not.toBeNull();
+    for (const link of document.querySelectorAll<HTMLAnchorElement>("a[href^='#']")) expect(document.getElementById(link.hash.slice(1))).not.toBeNull();
+  });
+
+  it("does not describe a successful cloud check as a successful device history read", () => {
+    const input = snapshot();
+    input.serviceLogs = [{ lookupId: "overview", records: [humanMeasurement()], cloudChecked: true }];
+    input.missing = [{ kind: "service_records", lookupId: "overview", message: "Human records on this device could not be read." }];
+    const text = parsed(input).body.textContent!;
+    expect(text).toContain("Cloud human-service history was checked");
+    expect(text).toContain("does not mean both sources were available");
+    expect(text).toContain("Human records on this device could not be read");
+    expect(text).not.toContain("Includes the device and cloud records");
+  });
+
+  it("rejects invalid human-service snapshots instead of emitting a report with silently discarded records", () => {
+    const input = snapshot(); input.serviceLogs = [{ lookupId: "overview", records: [{ ...humanMeasurement(), version: 3 } as unknown as ServiceRecord], cloudChecked: true }];
+    expect(() => buildInspectionReportHtml(input)).toThrow(/could not be read safely/);
+    input.serviceLogs = [{ lookupId: "overview", records: [], cloudChecked: true }, { lookupId: "overview", records: [], cloudChecked: true }];
+    expect(() => buildInspectionReportHtml(input)).toThrow(/duplicate human-service histories/);
+  });
+
   it("includes all 12 components and distinct saved associations while deduplicating scan sections and assets", () => {
     const overview = lookup(); const detail = lookup("detail");
     const input = snapshot([overview, detail, detail]);

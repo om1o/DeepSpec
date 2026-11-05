@@ -72,6 +72,7 @@ export function buildScanReport(lookup: Lookup) {
       `Test method and result: ${lookup.inspection.functionalNotes || "None recorded"}`,
       "No visible damage does not establish function. Recorded tests are not safety certification.",
     ] : ["No human inspection recorded. Function not verified."]),
+    "Human measurement, repair and follow-up history is not included in this quick text summary. Prepare the inspection report with photos to include that saved history and its corrections.",
     "",
     "User correction:",
     lookup.correction?.trim() || "None",

@@ -16,6 +16,7 @@ import { PartInspectionForm } from "../components/result/PartInspectionForm";
 import { ConditionEvidenceReview } from "../components/result/ConditionEvidenceReview";
 import { ComponentMapReview } from "../components/result/ComponentMapReview";
 import { InspectionReportExport } from "../components/result/InspectionReportExport";
+import { ServiceRecordLog } from "../components/result/ServiceRecordLog";
 import { TrainingConsentPanel } from "../components/result/TrainingConsentPanel";
 import { IntakeDraft } from "../components/result/IntakeDraft";
 import { ScanDebugOverlay } from "../components/result/ScanDebugOverlay";
@@ -458,6 +459,7 @@ function ResultView({ id }: { id: string | undefined }) {
             ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
             ...(pendingCorrectionRef.current !== undefined ? { correction: pendingCorrectionRef.current } : {}),
           })} /> : null}
+          {inspectionLookup ? <ServiceRecordLog key={`service-log:${inspectionLookup.id}`} lookup={inspectionLookup} disabled={hasPendingRetryResult || Boolean(saveError || selectionRetry)} /> : null}
           {inspectionLookup ? <ReportActions lookup={inspectionLookup} /> : null}
           {inspectionLookup ? <InspectionReportExport key={`report:${inspectionLookup.id}`} lookupId={inspectionLookup.id} disabled={hasPendingRetryResult || Boolean(saveError || selectionRetry)} /> : null}
           {inspectionLookup ? <TrainingConsentPanel key={`consent:${inspectionLookup.id}`} scanId={inspectionLookup.id} /> : null}

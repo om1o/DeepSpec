@@ -1,8 +1,9 @@
 import type { Lookup } from "./index";
 import type { ComponentMapRecord } from "./componentMap";
+import type { ServiceRecord } from "./serviceRecord";
 
 export type InspectionReportIssue = {
-  kind: "map" | "lookup" | "photo" | "cutout";
+  kind: "map" | "lookup" | "photo" | "cutout" | "service_records";
   lookupId: string;
   photoId?: string;
   selectionName?: string;
@@ -18,6 +19,7 @@ export type InspectionReportSnapshot = {
   scans: Lookup[];
   missing: InspectionReportIssue[];
   embeddedBytes: number;
+  serviceLogs?: { lookupId: string; records: ServiceRecord[]; cloudChecked: boolean }[];
 };
 
 export type InspectionReportOptions = {
