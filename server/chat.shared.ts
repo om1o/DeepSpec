@@ -1,5 +1,6 @@
 import { CHAT_USER_MESSAGE_MAX_CHARS, FOLLOWUP_PROMPT } from "../src/services/systemPrompts.js";
-import type { SourceLink } from "../src/types/index.js";
+import type { SourceLink, VehicleContext } from "../src/types/index.js";
+import { formatVehicleContext, providerVehicleContext } from "../src/lib/vehicleContext.js";
 import { parseInspectionPhotos, photoCaption, buildPhotoEvidencePrompt, type InspectionPhoto } from "./inspectionPhotos.shared.js";
 
 type JsonObject = Record<string, unknown>;
@@ -26,7 +27,7 @@ export type ChatResponse =
 const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 const LEGACY_FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
 const RETRYABLE_PROVIDER_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
-type ChatRequest = { userMessage: string; photos: InspectionPhoto[]; labeledPhotos: boolean; research: boolean; sourceUrls: string[] };
+type ChatRequest = { userMessage: string; photos: InspectionPhoto[]; labeledPhotos: boolean; research: boolean; sourceUrls: string[]; vehicleContext?: VehicleContext };
 
 export async function createChatResponse(body: unknown, env: Record<string, string | undefined>): Promise<ChatResponse> {
   if (!isChatEnabled(env)) {
@@ -176,7 +177,7 @@ function fetchGeminiChat(model: string, request: ChatRequest, apiKey: string) {
         {
           role: "user",
           parts: [
-            { text: [request.userMessage, researchContext, request.labeledPhotos ? buildPhotoEvidencePrompt(request.photos) : ""].filter(Boolean).join("\n\n") },
+            { text: [request.userMessage, formatVehicleContext(request.vehicleContext), researchContext, request.labeledPhotos ? buildPhotoEvidencePrompt(request.photos) : ""].filter(Boolean).join("\n\n") },
             ...request.photos.flatMap((photo, index) => [
               ...(request.labeledPhotos ? [{ text: photoCaption(photo, index) }] : []),
               { inlineData: { mimeType: photo.mimeType, data: photo.base64 } },
@@ -241,6 +242,7 @@ function parseChatRequest(body: unknown): ChatRequest | { error: ChatResponse } 
     labeledPhotos: body.photos !== undefined,
     research,
     sourceUrls,
+    vehicleContext: providerVehicleContext(body.vehicleContext),
   };
 }
 

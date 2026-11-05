@@ -1,10 +1,12 @@
-import { SCAN_PHOTO_LABELS, type ScanPhoto, type ScanPhotoLabel } from "../../types";
+import { SCAN_PHOTO_LABELS, type ScanPhoto, type ScanPhotoLabel, type ShopVehicleContext } from "../../types";
+import { vehicleContextDetails } from "../../lib/vehicleContext";
 import { PHOTO_LABEL_TEXT } from "../../lib/photoLabels";
 import { Link } from "react-router-dom";
 
-export function PhotoGroupReview({ photos, busy, message, componentMapId, savedForComponent, onChange, onAdd, onAnalyze, onClose, onDiscard }: {
+export function PhotoGroupReview({ photos, busy, message, componentMapId, savedForComponent, vehicleContext, onChange, onAdd, onAnalyze, onClose, onDiscard }: {
   photos: ScanPhoto[]; busy: boolean; message: string | null;
   componentMapId?: string; savedForComponent?: boolean;
+  vehicleContext?: ShopVehicleContext | null;
   onChange: (photos: ScanPhoto[]) => void; onAdd: () => void; onAnalyze: () => void;
   onClose: () => void; onDiscard: () => void;
 }) {
@@ -13,6 +15,7 @@ export function PhotoGroupReview({ photos, busy, message, componentMapId, savedF
       <div className="flex items-center justify-between gap-3"><h2 className="text-xl font-semibold">Photos of one part or area</h2><button type="button" disabled={busy} onClick={onClose} className="rounded border px-3 py-2">Keep draft and close</button></div>
       <p>Start with an overview, then add a close-up, a readable marking and mounting points. Label each view. All photos should show the same part or area of the same car.</p>
       {componentMapId ? <p className="rounded border border-white/20 p-3">These photos belong to one component in your saved overview. <Link to={`/result/${encodeURIComponent(componentMapId)}`} className="underline">Open component map</Link>{savedForComponent ? " The scan is already saved. Resume its link without running AI again." : ""}</p> : null}
+      {vehicleContext ? <details className="rounded border border-white/20 p-3"><summary className="cursor-pointer font-semibold">Car details saved with these photos</summary><dl className="mt-2 space-y-2">{vehicleContextDetails(vehicleContext).map(([label, value]) => <div key={label}><dt className="font-semibold">{label}</dt><dd>{value}</dd></div>)}</dl></details> : <p className="text-sm text-slate-300">{vehicleContext === undefined && componentMapId ? "These older component photos use the saved overview's vehicle details." : "No vehicle details were saved with these photos. Analysis can describe visible features; vehicle-specific details need confirmation."}</p>}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{photos.map((photo, index) => <article key={photo.id} className="rounded-xl border border-white/20 p-3">
         <img src={photo.imageBase64} alt={`Photo ${index + 1}: ${PHOTO_LABEL_TEXT[photo.label]}`} className="h-44 w-full rounded object-contain" />
         <label className="mt-2 block">Photo {index + 1}<select aria-label={`Photo ${index + 1} view`} disabled={busy} value={photo.label} onChange={(event) => onChange(photos.map((item) => item.id === photo.id ? { ...item, label: event.target.value as ScanPhotoLabel } : item))} className="mt-1 block w-full rounded bg-slate-800 p-2">{SCAN_PHOTO_LABELS.map((label) => <option key={label} value={label}>{PHOTO_LABEL_TEXT[label]}</option>)}</select></label>

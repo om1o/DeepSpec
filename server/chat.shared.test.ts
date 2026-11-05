@@ -1,4 +1,5 @@
 import { createChatResponse } from "./chat.shared";
+import { confirmVehicleContextField } from "../src/lib/vehicleContext";
 
 describe("createChatResponse", () => {
   beforeEach(() => {
@@ -137,7 +138,7 @@ describe("createChatResponse", () => {
     await expect(createChatResponse({ userMessage: "What do you see on this belt?", imageBase64: "data:image/png;base64,aGVsbG8=" }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({ status: 200 });
     const sent = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
     expect(sent.contents[0].parts).toEqual([
-      { text: "What do you see on this belt?" },
+      { text: expect.stringContaining("What do you see on this belt?") },
       { inlineData: { mimeType: "image/png", data: "aGVsbG8=" } },
     ]);
     expect(sent).not.toHaveProperty("tools");
@@ -201,5 +202,43 @@ describe("createChatResponse", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     await expect(createChatResponse({ userMessage: "Research", research: true, sourceUrls: [url] }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({ status: 400 });
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("carries saved vehicle confirmations beyond the question cap for research=%s", async (research) => {
+    let vehicleContext = confirmVehicleContextField({ year: "2018", engine: "2.0 L", mileage: "123456", mileageUnit: "km",
+      modifications: { status: "modified", details: "Aftermarket intake" }, customerName: "private-customer", plate: "private-plate",
+      technicianName: "private-technician", notes: "private-notes", symptom: "Rough idle when cold" }, "year", true, "2026-11-05T12:00:00.000Z");
+    vehicleContext = confirmVehicleContextField(vehicleContext, "mileage", true, "2026-11-05T12:00:00.000Z");
+    vehicleContext = confirmVehicleContextField(vehicleContext, "modifications", true, "2026-11-05T12:00:00.000Z");
+    // A stale confirmation for a different exact value must not survive parsing.
+    vehicleContext.confirmedFields = { ...vehicleContext.confirmedFields, engine: { value: "1.5 L", confirmedAt: "2026-11-05T12:00:00.000Z" } };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "Confirm the engine variant before applying that procedure." }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    expect((await createChatResponse({ userMessage: "Q".repeat(4000), vehicleContext, research,
+      photos: [{ id: "saved-original", label: "overview", imageBase64: "data:image/png;base64,aGVsbG8=" }] }, { GEMINI_API_KEY: "test-key" })).status).toBe(200);
+    const sent = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    const prompt = sent.contents[0].parts[0].text;
+    expect(prompt).toContain("Q".repeat(3000));
+    expect(prompt).not.toContain("Q".repeat(3001));
+    expect(prompt).toContain("Year: 2018 — user-confirmed (self-reported)");
+    expect(prompt).toContain("Mileage: 123456 km — user-confirmed (self-reported)");
+    expect(prompt).toContain("Modifications: Modified: Aftermarket intake — user-confirmed (self-reported)");
+    expect(prompt).toContain("Engine: 2.0 L — supplied, unconfirmed");
+    expect(prompt).toContain("Rough idle when cold");
+    expect(prompt).toContain("unconfirmed; not a visual observation");
+    expect(prompt).toContain("ask the user to confirm that detail");
+    expect(prompt).toContain("do not establish exact part fitment, condition, serviceability or repair safety");
+    expect(JSON.stringify(sent)).not.toContain("private-");
+    expect(JSON.stringify(sent)).not.toContain("1.5 L");
+    expect(Boolean(sent.tools)).toBe(research);
+  });
+
+  it("keeps missing vehicle details explicit for legacy chat requests", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "What is the engine variant?" }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    await createChatResponse({ userMessage: "Which torque specification applies?" }, { GEMINI_API_KEY: "test-key" });
+    const prompt = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)).contents[0].parts[0].text;
+    expect(prompt).toContain("Engine: Unknown — not confirmed");
+    expect(prompt).toContain("Mileage: Unknown — not confirmed");
+    expect(prompt).toContain("Modifications: Unknown — not confirmed");
+    expect(prompt).toContain("General visual identification may continue without it");
   });
 });

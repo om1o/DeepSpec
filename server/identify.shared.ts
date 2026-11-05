@@ -1,5 +1,6 @@
 import { CONDITION_ASSESSMENT_PROMPT, IDENTIFY_PROMPT, IDENTIFY_PROMPT_VERSION, IDENTIFY_PIPELINE_VERSION } from "../src/services/systemPrompts.js";
 import { normalizeConditionAssessment } from "../src/lib/conditionAssessment.js";
+import { formatVehicleContext, providerVehicleContext } from "../src/lib/vehicleContext.js";
 import { randomUUID } from "node:crypto";
 import { observeIdentification } from "./identifyDiagnostics.shared.js";
 import {
@@ -1307,31 +1308,12 @@ function parseIdentifyRequest(body: unknown): ParsedIdentifyRequest | { error: I
     userMessage,
     labelRescueTrigger: body.labelRescueTrigger === "too_blurry" ? "too_blurry" : null,
     measurementContext: parseMeasurementContext(body.measurementContext),
-    vehicleContext: parseVehicleContext(body.vehicleContext),
+    vehicleContext: providerVehicleContext(body.vehicleContext) ?? null,
   };
 }
 
 function buildIdentifyContextPrompt(parsed: ParsedIdentifyRequest) {
-  const sections = [buildPhotoEvidencePrompt(parsed.photos)];
-
-  if (parsed.vehicleContext) {
-    const vehicleFacts = [
-      parsed.vehicleContext.vin ? `VIN: ${parsed.vehicleContext.vin}` : "",
-      parsed.vehicleContext.year ? `Year: ${parsed.vehicleContext.year}` : "",
-      parsed.vehicleContext.make ? `Make: ${parsed.vehicleContext.make}` : "",
-      parsed.vehicleContext.model ? `Model: ${parsed.vehicleContext.model}` : "",
-      parsed.vehicleContext.engine ? `Engine: ${parsed.vehicleContext.engine}` : "",
-      parsed.vehicleContext.notes ? `Notes: ${parsed.vehicleContext.notes}` : "",
-    ].filter(Boolean);
-
-    if (vehicleFacts.length) {
-      sections.push([
-        "Vehicle context supplied by the user or verifier:",
-        ...vehicleFacts.map((fact) => `- ${fact}`),
-        "Use this only to narrow likely candidates. Do not claim exact fitment unless visible labels or verified source context support it.",
-      ].join("\n"));
-    }
-  }
+  const sections = [buildPhotoEvidencePrompt(parsed.photos), formatVehicleContext(parsed.vehicleContext ?? undefined)];
 
   if (parsed.measurementContext) {
     const context = parsed.measurementContext;
@@ -1345,29 +1327,6 @@ function buildIdentifyContextPrompt(parsed: ParsedIdentifyRequest) {
   }
 
   return sections.join("\n\n");
-}
-
-function parseVehicleContext(value: unknown): VehicleContext | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-
-  const context: VehicleContext = {};
-  const vin = cleanOptionalContextText(value.vin, 24);
-  const year = cleanOptionalContextText(value.year, 12);
-  const make = cleanOptionalContextText(value.make, 48);
-  const model = cleanOptionalContextText(value.model, 64);
-  const engine = cleanOptionalContextText(value.engine, 80);
-  const notes = cleanOptionalContextText(value.notes, 180);
-
-  if (vin) context.vin = vin;
-  if (year) context.year = year;
-  if (make) context.make = make;
-  if (model) context.model = model;
-  if (engine) context.engine = engine;
-  if (notes) context.notes = notes;
-
-  return Object.keys(context).length ? context : null;
 }
 
 function parseMeasurementContext(value: unknown): MeasurementContext | null {

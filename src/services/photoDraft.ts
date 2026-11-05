@@ -1,5 +1,6 @@
 import { getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
-import { SCAN_PHOTO_LABELS, type ScanPhoto } from "../types";
+import { SCAN_PHOTO_LABELS, type ScanPhoto, type ShopVehicleContext } from "../types";
+import { normalizeVehicleContext, vehicleContextsMatch } from "../lib/vehicleContext";
 import type { ComponentCaptureTarget } from "../types/componentMap";
 import { normalizeComponentCaptureTarget } from "../lib/componentMap";
 import { openEvidenceDatabase } from "./evidenceDb";
@@ -7,15 +8,25 @@ import { openEvidenceDatabase } from "./evidenceDb";
 const STORE = "photo-drafts";
 export const MAX_INSPECTION_PHOTOS = 4;
 export type PhotoDraftKind = "upload" | "capture";
-export type PhotoDraftEnvelope = { version: 2; photos: ScanPhoto[]; target?: ComponentCaptureTarget };
+export type PhotoDraftEnvelope = { photos: ScanPhoto[]; target?: ComponentCaptureTarget } & (
+  | { version: 2 }
+  | { version: 3; vehicleContext: ShopVehicleContext | null; jobId?: string }
+);
 
 export function normalizePhotoDraft(value: unknown): PhotoDraftEnvelope | null {
   if (validatePhotoGroup(value)) return { version: 2, photos: value };
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const draft = value as Partial<PhotoDraftEnvelope>;
-  if (draft.version !== 2 || !validatePhotoGroup(draft.photos)) return null;
+  const draft = value as Record<string, unknown>;
+  if ((draft.version !== 2 && draft.version !== 3) || !validatePhotoGroup(draft.photos)) return null;
   const target = draft.target === undefined ? undefined : normalizeComponentCaptureTarget(draft.target);
-  return target === null ? null : { version: 2, photos: draft.photos, ...(target ? { target } : {}) };
+  if (target === null) return null;
+  const common = { photos: draft.photos, ...(target ? { target } : {}) };
+  if (draft.version === 2) return { version: 2, ...common };
+  if (draft.jobId !== undefined && (typeof draft.jobId !== "string" || !/^[a-zA-Z0-9._:-]{1,120}$/.test(draft.jobId))) return null;
+  const job = draft.jobId ? { jobId: draft.jobId } : {};
+  if (draft.vehicleContext === null) return { version: 3, ...common, ...job, vehicleContext: null };
+  const vehicleContext = normalizeVehicleContext(draft.vehicleContext);
+  return vehicleContext ? { version: 3, ...common, ...job, vehicleContext } : null;
 }
 
 export function componentCaptureTargetsMatch(left?: ComponentCaptureTarget, right?: ComponentCaptureTarget): boolean {
@@ -25,7 +36,9 @@ export function componentCaptureTargetsMatch(left?: ComponentCaptureTarget, righ
 }
 
 export function photoDraftsMatch(left: PhotoDraftEnvelope, right: PhotoDraftEnvelope): boolean {
-  return componentCaptureTargetsMatch(left.target, right.target) && photoGroupsMatch(left.photos, right.photos);
+  return left.version === right.version
+    && (left.version !== 3 || (right.version === 3 && left.jobId === right.jobId && vehicleContextsMatch(left.vehicleContext, right.vehicleContext)))
+    && componentCaptureTargetsMatch(left.target, right.target) && photoGroupsMatch(left.photos, right.photos);
 }
 
 export function validatePhotoGroup(photos: unknown): photos is ScanPhoto[] {

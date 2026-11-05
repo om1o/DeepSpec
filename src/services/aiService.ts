@@ -7,6 +7,7 @@ import { compressImageDataUrl } from "../lib/utils";
 import { validatePhotoGroup } from "./photoDraft";
 import { normalizeConditionAssessment } from "../lib/conditionAssessment";
 import { buildConditionHandoff } from "../lib/conditionHandoff";
+import { providerVehicleContext } from "../lib/vehicleContext";
 import {
   SCAN_CATEGORIES,
   type AIInput,
@@ -103,6 +104,7 @@ export class AIServiceError extends Error {
 
 export async function runAI(input: AIInput, options: AIRequestOptions = {}): Promise<string | object> {
   throwIfAborted(options.signal);
+  const vehicleContext = providerVehicleContext(input.vehicleContext);
   if (input.type === "text") {
     if (!input.userMessage.trim()) {
       throw new AIServiceError("invalid_input", "Ask a question first.");
@@ -112,6 +114,7 @@ export async function runAI(input: AIInput, options: AIRequestOptions = {}): Pro
       "/api/chat",
       {
         userMessage: input.userMessage,
+        ...(vehicleContext ? { vehicleContext } : {}),
         ...(input.imageBase64 ? { imageBase64: input.imageBase64 } : {}),
         systemPrompt: input.systemPrompt,
         responseAsJson: input.responseAsJson ?? false,
@@ -128,7 +131,7 @@ export async function runAI(input: AIInput, options: AIRequestOptions = {}): Pro
       const photos = await preparePhotoGroupForRequest(input.photos, options.signal);
       const body = await postAI<IdentifyApiSuccess>("/api/identify", {
         photos,
-        ...(input.vehicleContext ? { vehicleContext: input.vehicleContext } : {}),
+        ...(vehicleContext ? { vehicleContext } : {}),
         ...(input.measurementContext ? { measurementContext: input.measurementContext } : {}),
         userMessage: input.userMessage,
         responseAsJson: true,
@@ -159,7 +162,7 @@ export async function runAI(input: AIInput, options: AIRequestOptions = {}): Pro
         imageBase64,
         ...(imageBase64_2 ? { imageBase64_2 } : {}),
         ...(input.labelRescueTrigger ? { labelRescueTrigger: input.labelRescueTrigger } : {}),
-        ...(input.vehicleContext ? { vehicleContext: input.vehicleContext } : {}),
+        ...(vehicleContext ? { vehicleContext } : {}),
         ...(input.measurementContext ? { measurementContext: input.measurementContext } : {}),
         userMessage: input.userMessage,
         responseAsJson: input.responseAsJson ?? true,
@@ -407,10 +410,14 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
 
   const scope = getAccountScope();
   if (!isAccountScopeCurrent(scope)) throw new AIServiceError("invalid_input", "Reopen this scan before asking a question.");
+  // Keep vehicle facts separate from the bounded question/history text, and
+  // exclude customer, registration and technician metadata at the transport edge.
+  const vehicleContext = providerVehicleContext(lookup.vehicleContext);
   if (lookup.photos?.length) {
     const photos = await preparePhotoGroupForRequest(lookup.photos);
     const result = await postAI<ChatApiSuccess>("/api/chat", {
       userMessage: buildFollowUpContext(lookup, trimmedQuestion), photos,
+      ...(vehicleContext ? { vehicleContext } : {}),
       ...(options.research ? { research: true, ...(options.sourceUrls?.length ? { sourceUrls: options.sourceUrls } : {}) } : {}),
     }, { timeoutMs: options.research ? 60_000 : DEFAULT_CHAT_CLIENT_TIMEOUT_MS, scope });
     if (typeof result.message !== "string" || !result.message.trim()) throw new AIServiceError("invalid_response", "Deep Spec received an unreadable chat response.");
@@ -430,6 +437,7 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
   if (!attachPhoto) throw new AIServiceError("invalid_input", "The saved photo must be a JPEG, PNG, or WebP image small enough for chat. Reopen the scan or use a smaller photo.");
   const result = await postAI<ChatApiSuccess>("/api/chat", {
     userMessage: buildFollowUpContext(lookup, trimmedQuestion),
+    ...(vehicleContext ? { vehicleContext } : {}),
     imageBase64,
     ...(options.research ? { research: true, ...(options.sourceUrls?.length ? { sourceUrls: options.sourceUrls } : {}) } : {}),
   }, { timeoutMs: options.research ? 60_000 : DEFAULT_CHAT_CLIENT_TIMEOUT_MS, scope });
@@ -702,6 +710,9 @@ function collapseWhitespace(value: string) {
 function buildFollowUpContext(lookup: Lookup, question: string) {
   const result = lookup.result;
   const condition = buildConditionHandoff(lookup);
+  const functionalChecks = lookup.inspection
+    ? `${lookup.inspection.functionalStatus.replaceAll("_", " ")} (self-reported inspection)`
+    : condition.functionStatus;
   const questionLine = `User question: ${question}`;
   const facts = [
     `Saved scan category: ${lookup.scanCategory}`,
@@ -714,7 +725,7 @@ function buildFollowUpContext(lookup: Lookup, question: string) {
     lookup.correction ? `User correction: ${lookup.correction}` : "",
     ...(condition.assessment ? [
       "Condition evidence is AI-reported, not human confirmation. Causes are hypotheses; photos do not establish hidden damage or serviceability.",
-      `Functional checks: ${condition.functionStatus}`,
+      `Functional checks: ${functionalChecks}`,
       `Still unknown: ${condition.unknowns.join("; ") || "No unknowns listed; condition and function are not established."}`,
       ...(condition.nextEvidence ? [`Priority evidence: ${condition.nextEvidence.request} Why: ${condition.nextEvidence.purpose}`] : []),
       ...condition.observations.map((item) => `Observed appearance [${item.id}] in photos [${item.photoIds.join(", ")}]: ${item.text}`),

@@ -1,6 +1,6 @@
 // Bump when identification instructions or routing/normalization change.
-export const IDENTIFY_PROMPT_VERSION = "identify-2026-11-05-condition-evidence-v1";
-export const IDENTIFY_PIPELINE_VERSION = "identify-pipeline-2026-11-05-condition-evidence-v1";
+export const IDENTIFY_PROMPT_VERSION = "identify-2026-11-05-confirmed-vehicle-v1";
+export const IDENTIFY_PIPELINE_VERSION = "identify-pipeline-2026-11-05-confirmed-vehicle-v1";
 
 export const CONDITION_ASSESSMENT_PROMPT = [
   'For visible condition evidence, add optional conditionAssessment: {"version":1,"observations":[{"id":"o1","text":"visible fact","photoIds":["supplied ID"],"regionLabel":"text location"}],"possibleCauses":[{"text":"unconfirmed hypothesis","observationIds":["o1"]}],"unknowns":["unresolved uncertainty"],"nextEvidence":{"kind":"photo","request":"one targeted request","purpose":"uncertainty it resolves","photoIds":["supplied ID"]}}.',

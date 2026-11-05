@@ -2,7 +2,8 @@ import { getAIErrorDetails, identifyCapturedFrame, isAIRequestCanceled, runAI, s
 import { identifyOnDevice } from "./onDeviceIdentify";
 import { setActiveAccount } from "../lib/accountScope";
 import { compressImageDataUrl } from "../lib/utils";
-import type { ConditionAssessment, ScanPhoto } from "../types";
+import { confirmVehicleContextField } from "../lib/vehicleContext";
+import type { AIInput, ConditionAssessment, ScanPhoto, ShopVehicleContext } from "../types";
 
 vi.mock("./onDeviceIdentify", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./onDeviceIdentify")>();
@@ -57,6 +58,15 @@ const conditionAssessment = (photoId: string): ConditionAssessment => ({
   unknowns: ["Depth and the condition behind the panel are unknown."],
   nextEvidence: { kind: "photo", request: "Photograph the back of this edge.", purpose: "Check whether the affected area is visible from behind.", photoIds: [photoId] },
 });
+
+function savedVehicleContext(): ShopVehicleContext {
+  let context: ShopVehicleContext = { year: "2018", make: "Honda", model: "Civic", engine: "2.0 L",
+    mileage: "123456", mileageUnit: "km", modifications: { status: "modified", details: "Aftermarket intake" },
+    customerName: "private-customer", plate: "private-plate", technicianName: "private-technician",
+    bayOrRo: "private-ro", jobTitle: "private-job", notes: "private-notes", symptom: "Rough idle when cold" };
+  for (const field of ["year", "mileage", "modifications"] as const) context = confirmVehicleContextField(context, field, true, "2026-11-05T12:00:00.000Z");
+  return context;
+}
 
 describe("aiService", () => {
   beforeEach(() => {
@@ -520,6 +530,55 @@ describe("aiService", () => {
 
     expect(JSON.stringify(fetchSpy.mock.calls[0][1]?.body)).toContain("Part name: Alternator");
     expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toHaveProperty("imageBase64", "data:image/jpeg;base64,test");
+  });
+
+  it.each(["single-image", "photo-group", "text"] as const)("sends only vehicle facts and exact confirmations for %s requests", async (kind) => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(kind === "text" ? { message: "Confirm the engine." } : { result }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const vehicleContext = savedVehicleContext();
+    const input: AIInput = { type: kind === "text" ? "text" : "vision", userMessage: "Identify the visible part", systemPrompt: "test", vehicleContext,
+      ...(kind === "photo-group" ? { photos: [{ id: "saved-original", label: "overview", imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T12:00:00.000Z" }] }
+        : { imageBase64: "data:image/png;base64,aGVsbG8=" }) };
+    await runAI(input);
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.vehicleContext).toMatchObject({ year: "2018", engine: "2.0 L", mileage: "123456", mileageUnit: "km", symptom: "Rough idle when cold", modifications: { status: "modified", details: "Aftermarket intake" },
+      confirmedFields: { year: { value: "2018" }, mileage: { value: '["123456","km"]' }, modifications: { value: '["modified","Aftermarket intake"]' } } });
+    expect(JSON.stringify(body)).not.toContain("private-");
+    expect(body.vehicleContext.confirmedFields.engine).toBeUndefined();
+    expect(vehicleContext.customerName).toBe("private-customer");
+  });
+
+  it.each([
+    { group: false, research: false }, { group: true, research: false },
+    { group: false, research: true }, { group: true, research: true },
+  ])("preserves saved vehicle facts outside long chat history: group=$group research=$research", async ({ group, research }) => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "Confirm the engine before selecting a procedure." }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const frame = { imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T12:00:00.000Z" };
+    const vehicleContext = savedVehicleContext();
+    const lookup = { id: "saved-scan", frame, ...(group ? { photos: [{ ...frame, id: "saved-original", label: "overview" }] } : {}),
+      result: { ...result, visibleObservations: ["visible detail ".repeat(500)] }, scanCategory: "electrical", trainingLabel: "Alternator", vehicleContext,
+      chatHistory: [{ id: "previous-answer", role: "assistant", content: "old chat ".repeat(1000), timestamp: frame.capturedAt }] } as Parameters<typeof sendFollowUpDetails>[0];
+    await sendFollowUpDetails(lookup, "Which engine detail do you need?", { research });
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.vehicleContext).toMatchObject({ year: "2018", engine: "2.0 L", mileage: "123456", mileageUnit: "km", symptom: "Rough idle when cold",
+      modifications: { status: "modified", details: "Aftermarket intake" }, confirmedFields: vehicleContext.confirmedFields });
+    expect(body.userMessage.length).toBeLessThanOrEqual(3000);
+    expect(body.userMessage).toContain("User question: Which engine detail do you need?");
+    expect(body.research === true).toBe(research);
+    expect(Boolean(body.photos)).toBe(group);
+    expect(JSON.stringify(body)).not.toContain("private-");
+  });
+
+  it("retains self-reported functional results without forwarding the inspector name", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "The failed functional check needs further diagnosis." }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const lookup = { frame: { imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T12:00:00.000Z" },
+      result: { ...result, conditionAssessment: conditionAssessment("photo-1") }, scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [],
+      inspection: { confirmedPartName: "Alternator", partNumber: "", identityEvidence: "", visibleCondition: "uncertain", visibleNotes: "",
+        functionalStatus: "failed", functionalNotes: "", inspectorName: "private-inspector", inspectedAt: "2026-11-05T12:00:00.000Z" } } as Parameters<typeof sendFollowUpDetails>[0];
+    await sendFollowUpDetails(lookup, "What should I check next?");
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.userMessage).toContain("Functional checks: failed (self-reported inspection)");
+    expect(JSON.stringify(body)).not.toContain("private-inspector");
+    expect(lookup.inspection?.inspectorName).toBe("private-inspector");
   });
 
   it("sends opt-in research references with the actual saved photo and keeps grounded response metadata", async () => {
