@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { setActiveAccount } from "../../lib/accountScope";
 import { loadTrainingConsent, saveTrainingConsent, type TrainingConsent } from "../../services/trainingConsent";
@@ -23,14 +23,22 @@ it("does not load or change training consent when cloud sync is off", async () =
   expect(screen.getByText(/Turning off cloud sync does not withdraw consent/)).toBeInTheDocument();
 });
 it("preserves a known consent choice if cloud controls become disabled", async () => {
+  const user = userEvent.setup();
   vi.mocked(loadTrainingConsent).mockResolvedValue(on);
   const view = render(<TrainingConsentPanel scanId="scan-1" />);
   await screen.findByText("Cloud consent is on.");
+  await waitFor(() => expect(screen.getByRole("checkbox")).toBeEnabled());
+  expect(screen.getByRole("checkbox")).toBeChecked();
+  const enabledReadCount = vi.mocked(loadTrainingConsent).mock.calls.length;
+  expect(enabledReadCount).toBeGreaterThan(0);
   vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
   view.rerender(<TrainingConsentPanel scanId="scan-1" />);
   expect(screen.getByRole("checkbox")).toBeChecked(); expect(screen.getByRole("checkbox")).toBeDisabled();
   expect(screen.getByRole("status")).toHaveTextContent("Cloud sync is off");
-  expect(loadTrainingConsent).toHaveBeenCalledOnce(); expect(saveTrainingConsent).not.toHaveBeenCalled();
+  for (const name of ["Save consent choice", "Reload consent status"]) {
+    const button = screen.getByRole("button", { name }); expect(button).toBeDisabled(); await user.click(button);
+  }
+  expect(loadTrainingConsent).toHaveBeenCalledTimes(enabledReadCount); expect(saveTrainingConsent).not.toHaveBeenCalled();
   expect(screen.queryByText(/Consent withdrawn in the cloud/)).not.toBeInTheDocument();
 });
 it("defaults off and requires an explicit choice before saving", async () => {

@@ -94,7 +94,7 @@ it("imports reports locally while cloud reads and sync stay disabled", async () 
   fireEvent.click(screen.getByRole("button", { name: "Import original on this device" }));
   await screen.findByRole("option", { name: /device-only.txt/ });
   expect(bundle.documents).toHaveLength(1);
-  expect(diagnosticSourceBytes(bundle.documents[0])).toEqual(new TextEncoder().encode(SOURCE));
+  expect(Array.from(diagnosticSourceBytes(bundle.documents[0]))).toEqual(Array.from(new TextEncoder().encode(SOURCE)));
   expect(screen.getByText(/Cloud sync is off/)).toBeInTheDocument();
   expect(screen.getByLabelText("Part or location associated with the report")).toBeEnabled();
   expect(cloud.readCloudDiagnosticBundle).not.toHaveBeenCalled(); expect(cloud.syncDiagnosticReports).not.toHaveBeenCalled();
