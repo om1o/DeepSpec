@@ -8,9 +8,13 @@ export function mergeCloudLookup(local: Lookup, remote: Lookup): Lookup {
   // Device photos are durable. Cached cloud URLs expire, so use the newly
   // signed URL when available without replacing a photo with the cloud fallback.
   const refresh = (current: string, incoming?: string) => /^https?:\/\//i.test(current) && incoming && /^https?:\/\//i.test(incoming) ? incoming : current;
+  // A cover frame can also contain the cached brand placeholder. Recover that
+  // frame while preserving device pixels and the intentional empty cutouts below.
+  const frameImage = !/^(data:|blob:)/i.test(local.frame.imageBase64) && /^https?:\/\//i.test(remote.frame.imageBase64)
+    ? remote.frame.imageBase64 : local.frame.imageBase64;
   const sameSelection = (a: Pick<Lookup, "focusBox" | "focusMode">, b: Pick<Lookup, "focusBox" | "focusMode">) => JSON.stringify(a.focusBox) === JSON.stringify(b.focusBox) && a.focusMode === b.focusMode;
   return { ...merged,
-    frame: { ...local.frame, imageBase64: refresh(local.frame.imageBase64, remote.frame.imageBase64) },
+    frame: { ...local.frame, imageBase64: frameImage },
     ...(local.photos ? { photos: local.photos.map((photo) => {
       const match = remote.photos?.find((p) => p.id === photo.id && p.capturedAt === photo.capturedAt);
       return { ...photo, imageBase64: refresh(photo.imageBase64, match?.imageBase64) };

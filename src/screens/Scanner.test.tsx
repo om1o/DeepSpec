@@ -376,7 +376,7 @@ describe("Scanner", () => {
 
   it.each(["success", "failure"])("ignores a previous scan's late object-analysis %s", async (outcome) => {
     mockStillImageTarget({ confidence: 0.9, x: 0.2, y: 0.2, width: 0.3, height: 0.3 });
-    const focusBox = { x: 0.2, y: 0.2, width: 0.3, height: 0.3 };
+    const focusBox = { x: 0.2, y: 0.2, width: 0.3, height: 0.3, confidence: 0.9 };
     createSegmentedProductIsolation.mockResolvedValue({
       focusBox,
       frame: { imageBase64: "data:image/png;base64,isolated", capturedAt: new Date().toISOString() },
@@ -406,8 +406,13 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     await userEvent.click(await screen.findByRole("button", { name: "Select Wrench" }));
     expect(screen.getByTestId("focused-object-card")).toHaveTextContent("Analyzing");
+    expect(getLookups()).toHaveLength(1);
+    expect(getLookups()[0].isolatedObjects).toHaveLength(2);
+    await waitFor(() => expect(draftStore.has("test-user:capture")).toBe(false));
     await userEvent.click(screen.getByTestId("focused-object-back"));
     await userEvent.click(screen.getByRole("button", { name: "Close result card" }));
+    // This exercises a new scan, rather than replaying the first photo's cached result.
+    captureFrame.mockResolvedValue(`data:image/jpeg;base64,${"b".repeat(240)}`);
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     await userEvent.click(await screen.findByRole("button", { name: "Select Wrench" }));
     await waitFor(() => expect(screen.getByTestId("focused-object-card")).toHaveTextContent("Socket wrench"));
@@ -423,7 +428,7 @@ describe("Scanner", () => {
   }, 20000);
 
   it.each(["available", "unavailable", "account changed"])("uses original evidence for a corrected object when its crop is %s", async (outcome) => {
-    mockStillImageTarget({ confidence: 0.9, x: 0.2, y: 0.2, width: 0.3, height: 0.3 });
+    const originalImage = mockStillImageTarget({ confidence: 0.9, x: 0.2, y: 0.2, width: 0.3, height: 0.3 });
     const focusBox = { x: 0.2, y: 0.2, width: 0.3, height: 0.3, confidence: 0.9 };
     const correctedBox = { x: 0.5, y: 0.1, width: 0.25, height: 0.4, confidence: 0 };
     createSegmentedProductIsolation.mockResolvedValue({
@@ -446,7 +451,7 @@ describe("Scanner", () => {
     let finishCrop!: (image: string | null) => void;
     createFocusedScanCrop.mockImplementationOnce(() => new Promise((resolve) => { finishCrop = resolve; }));
     await userEvent.click(screen.getByRole("button", { name: "Select Wrench" }));
-    expect(createFocusedScanCrop).toHaveBeenCalledExactlyOnceWith("data:image/jpeg;base64,compressed-frame", correctedBox);
+    expect(createFocusedScanCrop).toHaveBeenCalledExactlyOnceWith(originalImage, correctedBox);
     expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
     await act(async () => {
       if (outcome === "account changed") setActiveAccount("other-user");
@@ -463,7 +468,7 @@ describe("Scanner", () => {
   });
 
   it("invalidates an old object analysis when its selected outline is corrected", async () => {
-    mockStillImageTarget({ confidence: 0.9, x: 0.2, y: 0.2, width: 0.3, height: 0.3 });
+    const originalImage = mockStillImageTarget({ confidence: 0.9, x: 0.2, y: 0.2, width: 0.3, height: 0.3 });
     const focusBox = { x: 0.2, y: 0.2, width: 0.3, height: 0.3, confidence: 0.9 };
     createSegmentedProductIsolation.mockResolvedValue({ focusBox, frame: { imageBase64: "data:image/png;base64,isolated", capturedAt: new Date().toISOString() }, isolatedImageBase64: "data:image/png;base64,isolated" });
     isPromptableSegmentationEnabled.mockReturnValue(true);
@@ -487,7 +492,7 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByTestId("focused-object-back"));
     await userEvent.click(screen.getByRole("button", { name: "Select Wrench" }));
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(3));
-    expect(createFocusedScanCrop).toHaveBeenCalledWith("data:image/jpeg;base64,compressed-frame", { ...focusBox, x: 0.4, confidence: 0 });
+    expect(createFocusedScanCrop).toHaveBeenCalledWith(originalImage, { ...focusBox, x: 0.4, confidence: 0 });
     expect(identifyCapturedFrame.mock.calls[2][0]).toMatchObject({ imageBase64: "data:image/jpeg;base64,target-crop" });
   });
 
@@ -2031,7 +2036,8 @@ function mockStillImageTarget(
 ) {
   Object.defineProperty(window, "innerWidth", { configurable: true, value: size.width });
   Object.defineProperty(window, "innerHeight", { configurable: true, value: size.height });
-  captureFrame.mockResolvedValue(`data:image/jpeg;base64,${"a".repeat(240)}`);
+  const imageBase64 = `data:image/jpeg;base64,${"a".repeat(240)}`;
+  captureFrame.mockResolvedValue(imageBase64);
   detectObjectTargetFromImageData.mockReturnValue(target);
 
   class TestImage {
@@ -2060,6 +2066,7 @@ function mockStillImageTarget(
 
     return createRealElement(tagName, options);
   });
+  return imageBase64;
 }
 
 function makeScanResult(partName: string) {

@@ -58,7 +58,8 @@ describe("Gemini 3.5 migration", () => {
     expect(sent.generationConfig).toEqual({ maxOutputTokens: 2048, responseMimeType: "application/json", thinkingConfig: { thinkingLevel: "MINIMAL" } });
     expect(sent.contents).toHaveLength(1);
     expect(sent.contents[0].role).toBe("user");
-    expect(sent.contents[0].parts[0].inline_data).toEqual({ mime_type: "image/png", data: "aGVsbG8=" });
+    const imageParts = sent.contents[0].parts.filter((part: { inline_data?: unknown }) => part.inline_data);
+    expect(imageParts).toEqual([{ inline_data: { mime_type: "image/png", data: "aGVsbG8=" } }]);
   });
 
   it("uses modern settings again for compact rescue after invalid structured output", async () => {
