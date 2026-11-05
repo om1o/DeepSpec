@@ -7,6 +7,8 @@ import billingPortal from "../api/billing-portal";
 import billingWebhook from "../api/billing-webhook";
 import chat from "../api/chat";
 import identify from "../api/identify";
+import qaTestLaunch from "../api/qa-test-launch";
+import qaTestSession from "../api/qa-test-session";
 
 const endpoints = [
   { name: "account-entitlement", handler: accountEntitlement },
@@ -15,6 +17,8 @@ const endpoints = [
   { name: "billing-webhook", handler: billingWebhook },
   { name: "chat", handler: chat },
   { name: "identify", handler: identify },
+  { name: "qa-test-launch", handler: qaTestLaunch },
+  { name: "qa-test-session", handler: qaTestSession },
 ];
 
 describe("Vercel Hobby deployment layout", () => {
@@ -105,6 +109,7 @@ describe("Vercel Hobby deployment layout", () => {
     const response = {
       status: vi.fn().mockReturnThis(),
       json: vi.fn(),
+      end: vi.fn(),
       setHeader: vi.fn(),
     };
 
