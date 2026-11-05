@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({ read: vi.fn(), get: vi.fn(), cloud: vi.fn() })
 vi.mock("./storage", () => ({ readLookups: mocks.read, getLookup: mocks.get }));
 vi.mock("./cloudHistory", () => ({ readCloudLookupForReport: mocks.cloud }));
 import { assertLinkedPhotoGuardCurrent, prepareLinkedPhotoBinding, resolveLinkedPhotoGroup, verifyLinkedPhotoGroup } from "./linkedPhotoEvidence";
+import { OriginalEvidenceError } from "./originalImageEvidence";
 
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
 const image = `data:image/png;base64,${PNG}`;
@@ -167,13 +168,45 @@ describe("linked original evidence", () => {
     }
   });
 
-  it("suppresses all images after cancellation/account switch and bounds stalled decode", async () => {
+  it("suppresses all images after cancellation or an account switch", async () => {
     const scope = getAccountScope(); decode = () => setActiveAccount("other");
     expect((await verifyLinkedPhotoGroup(scan(), group(), scope)).photos.every((row) => row.status === "verification_unavailable" && !row.image)).toBe(true);
     setActiveAccount("owner"); const controller = new AbortController(); decode = () => controller.abort();
     expect((await verifyLinkedPhotoGroup(scan(), group(), getAccountScope(), controller.signal)).photos.every((row) => !row.image)).toBe(true);
-    decode = undefined; hung = true; vi.useFakeTimers();
-    const pending = prepareLinkedPhotoBinding(scan(), group().photoIds); const rejected = expect(pending).rejects.toThrow(/timed out/);
-    await vi.advanceTimersByTimeAsync(20_001); await rejected;
+  });
+
+  it("aborts a stalled decoder at the 20-second deadline without issuing a binding or guard", async () => {
+    vi.useFakeTimers();
+    let started!: () => void;
+    const decodingStarted = new Promise<void>((resolve) => { started = resolve; });
+    const sources: string[] = [];
+    const decoder = { naturalWidth: 1, naturalHeight: 1, onload: null as (() => void) | null, onerror: null as (() => void) | null,
+      set src(value: string) { sources.push(value); if (value) started(); } };
+    vi.stubGlobal("Image", class { constructor() { return decoder; } });
+    let settled = false;
+    // Handle the rejection immediately, rather than leaving a rejecting assertion
+    // promise unobserved while Vitest advances the timer/microtask queue.
+    const completed = prepareLinkedPhotoBinding(scan(), group().photoIds).then(
+      (value) => { settled = true; return { ok: true as const, value }; },
+      (error: unknown) => { settled = true; return { ok: false as const, error }; },
+    );
+    await decodingStarted;
+    expect(sources).toEqual([image]);
+    await vi.advanceTimersByTimeAsync(19_999);
+    expect(settled).toBe(false);
+    expect(sources).toEqual([image]);
+    await vi.advanceTimersByTimeAsync(1);
+    const result = await completed;
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("A stalled decoder must not issue a binding or guard.");
+    // The deadline aborts first: the decoder's sanitized abort rejection can win
+    // Promise.race over the deadline's own error. Verify the boundary, not wording.
+    expect(result.error).toBeInstanceOf(OriginalEvidenceError);
+    expect(result.error).toMatchObject({ status: "verification_unavailable" });
+    expect(sources).toEqual([image, ""]);
+    expect(decoder.onload).toBeNull();
+    expect(decoder.onerror).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
