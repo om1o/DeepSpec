@@ -7,6 +7,7 @@ import { edgeSafeShift, getContainedStageStyle, getFocusLabelPlacement, orderSce
 import { FocusAreaEditor } from "./FocusAreaEditor";
 
 type PhotoView = "original" | "outline" | "cutout";
+type CorrectFocus = (box: VisualFocusBox, objectIndex: number | null) => void;
 
 type IsolatedPartViewProps = {
   frameBase64: string;
@@ -25,10 +26,11 @@ type IsolatedPartViewProps = {
   onFocusObject?: (index: number | null) => void;
   /** Normalized original-photo geometry. Multi-object indices use orderSceneObjects order.
    * The parent saves this correction and invalidates the old cutout; it is not a new mask. */
-  onCorrectFocus?: (box: VisualFocusBox, objectIndex: number | null) => void;
+  onCorrectFocus?: CorrectFocus;
 };
 
-const DEFAULT_BOX: VisualFocusBox = { confidence: 0, height: 0.4, width: 0.68, x: 0.16, y: 0.28 };
+// A starting point for an explicitly opened editor, never inferred photo evidence.
+const DRAFT_BOX: VisualFocusBox = { confidence: 0, height: 0.4, width: 0.68, x: 0.16, y: 0.28 };
 
 /**
  * The AR isolation layer. Blurs the captured frame and lifts the identified part out of it:
@@ -57,13 +59,14 @@ function IsolatedPartViewContent({
   focusedObjectIndex,
   onFocusObject,
   onCorrectFocus,
-  initialView = "cutout",
+  initialView,
 }: IsolatedPartViewProps) {
   const [failedCutoutSource, setFailedCutoutSource] = useState<string | null>(null);
   const [viewState, setViewState] = useState<{ frame: string; view: PhotoView } | null>(null);
-  const [editingFrame, setEditingFrame] = useState<string | null>(null);
-  const view = viewState?.frame === frameBase64 ? viewState.view : initialView;
-  const editing = editingFrame === frameBase64;
+  const [editTarget, setEditTarget] = useState<{ frame: string; box: VisualFocusBox; apply: CorrectFocus } | null>(null);
+  const hasBox = Boolean(focusBox);
+  const view = viewState?.frame === frameBase64 ? viewState.view : initialView ?? (hasBox ? "cutout" : "original");
+  const editing = editTarget?.frame === frameBase64;
   const setView = (next: PhotoView) => setViewState({ frame: frameBase64, view: next });
 
   // Permanent trace: the render's own account of what it received and which tier it chose.
@@ -76,7 +79,7 @@ function IsolatedPartViewContent({
       return;
     }
     const isLens = Boolean(objects && objects.length >= 2);
-    const cutout = focusMode === "mask" && Boolean(isolatedImageBase64) && failedCutoutSource !== isolatedImageBase64;
+    const cutout = Boolean(focusBox) && focusMode === "mask" && Boolean(isolatedImageBase64) && failedCutoutSource !== isolatedImageBase64;
     const cropWindow = !cutout && Boolean(focusBox) && (focusMode === "crop" || focusMode === "mask");
     const tier = isLens ? "Lens (multi-object)" : cutout ? "A · Isolated cutout" : cropWindow ? "B · Focused crop" : "C · In view";
     console.info("[DeepSpec TRACE] IsolatedPartView", {
@@ -92,7 +95,7 @@ function IsolatedPartViewContent({
     return null;
   }
 
-  // Step 6: several cut-out objects → the Lens-style overview instead of one cutout.
+  // Keep successful cutouts and crop-only selections together in the same photo space.
   if (objects && objects.length >= 2) {
     return (
       <LensOverview
@@ -108,9 +111,8 @@ function IsolatedPartViewContent({
     );
   }
 
-  const hasBox = Boolean(focusBox);
-  const box = focusBox ?? DEFAULT_BOX;
-  const showCutout = view === "cutout" && !editing && focusMode === "mask" && Boolean(isolatedImageBase64) && failedCutoutSource !== isolatedImageBase64;
+  const box = focusBox;
+  const showCutout = view === "cutout" && !editing && hasBox && focusMode === "mask" && Boolean(isolatedImageBase64) && failedCutoutSource !== isolatedImageBase64;
   const showCropWindow = view === "cutout" && !editing && !showCutout && hasBox && (focusMode === "crop" || focusMode === "mask");
   const chips = sceneChips ?? [];
   // Busy scene: several distinct objects → only "edge out" the background a little so the
@@ -131,12 +133,18 @@ function IsolatedPartViewContent({
   return (
     <ArStage
       frameBase64={frameBase64}
-      ariaLabel="Isolated part view"
+      ariaLabel={hasBox ? "Photo selection" : "Original photo"}
       containerClassName={`pointer-events-none ${containerClass}`}
-      dataFocusMode={focusMode}
+      dataFocusMode={hasBox ? focusMode : "full_frame"}
       testId={testId}
       controls={<PhotoViewControls view={view} onView={setView} editing={editing} canCorrect={Boolean(onCorrectFocus)}
-        onCorrect={() => { setView("outline"); setEditingFrame(frameBase64); }} />}
+        selectionMessage={!hasBox && !editing ? "No saved selection for this photo. Original is available."
+          : view === "cutout" && hasBox && !showCutout && !showCropWindow && !editing ? "No cutout is available. The saved area is shown as an outline." : undefined}
+        onCorrect={() => {
+          if (!onCorrectFocus) return;
+          setView("outline");
+          setEditTarget({ frame: frameBase64, box: { ...(focusBox ?? DRAFT_BOX) }, apply: onCorrectFocus });
+        }} />}
     >
       {/* Background: the captured frame, filling the aspect-locked stage exactly (no crop), so
           every overlay below lines up with the pixels underneath. Hard-blurred for a single part,
@@ -149,7 +157,7 @@ function IsolatedPartViewContent({
       {blurBackground ? <div aria-hidden className={`absolute inset-0 ${busyScene ? "bg-slate-950/20" : "bg-slate-950/45"}`} /> : null}
 
       {/* Tier A: the true cutout, sharp, sitting where the part is */}
-      {showCutout ? (
+      {showCutout && box ? (
         <img
           alt={`Isolated ${label}`}
           className="absolute object-contain drop-shadow-[0_18px_40px_rgba(2,6,23,0.55)]"
@@ -161,7 +169,7 @@ function IsolatedPartViewContent({
       ) : null}
 
       {/* Tier B: a sharp window cut out of the same frame, aligned with the blur underneath */}
-      {showCropWindow ? (
+      {showCropWindow && box ? (
         <img
           aria-hidden
           alt=""
@@ -173,7 +181,7 @@ function IsolatedPartViewContent({
       ) : null}
 
       {/* Original is unannotated; Outline preserves the source without image enhancement. */}
-      {view !== "original" && !editing && (hasBox || view === "cutout") ? <div
+      {view !== "original" && !editing && box ? <div
         className="absolute rounded-[18px]"
         data-testid="focused-part-window"
         style={{ ...percentBox(box), outline: "2px solid rgba(255,255,255,0.92)", outlineOffset: 0 }}
@@ -185,7 +193,7 @@ function IsolatedPartViewContent({
           style={getFocusLabelPlacement(box)}
         >
           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-[var(--ds-accent)]">
-            {showCutout ? "Isolated" : showCropWindow ? "Focused · Crop only" : hasBox ? "Selected area" : "In view"}
+            {showCutout ? "Isolated" : showCropWindow ? "Focused · Crop only" : "Selected area"}
           </p>
           <p className="mt-0.5 truncate text-sm font-black">{label}</p>
         </div>
@@ -198,9 +206,9 @@ function IsolatedPartViewContent({
 
       {/* One calm callout pointing at the visible issue, when there is one */}
       {view !== "original" && !editing && issue && anchor ? <ApproximateIssueArea anchor={anchor} text={issue.text} /> : null}
-      {editing && onCorrectFocus ? <FocusAreaEditor key={frameBase64} box={box}
-        onCancel={() => setEditingFrame(null)}
-        onApply={(corrected) => { onCorrectFocus(corrected, null); setEditingFrame(null); setView("outline"); }} /> : null}
+      {editing && editTarget ? <FocusAreaEditor key={frameBase64} box={editTarget.box}
+        onCancel={() => setEditTarget(null)}
+        onApply={(corrected) => { editTarget.apply(corrected, null); setEditTarget(null); setView("outline"); }} /> : null}
     </ArStage>
   );
 }
@@ -319,7 +327,7 @@ function LensOverview({
   variant: "scanner" | "result";
   focusedIndex?: number | null;
   onFocusChange?: (index: number | null) => void;
-  onCorrectFocus?: (box: VisualFocusBox, objectIndex: number | null) => void;
+  onCorrectFocus?: CorrectFocus;
   initialView?: PhotoView;
 }) {
   // Controlled when the parent supplies onFocusChange (scanner variant, which drives a detail card);
@@ -327,7 +335,7 @@ function LensOverview({
   const controlled = typeof onFocusChange === "function";
   const [localFocus, setLocalFocus] = useState<{ frame: string; index: number | null } | null>(null);
   const [viewState, setViewState] = useState<{ frame: string; view: PhotoView } | null>(null);
-  const [editTarget, setEditTarget] = useState<{ frame: string; index: number } | null>(null);
+  const [editTarget, setEditTarget] = useState<{ frame: string; index: number; box: VisualFocusBox; apply: CorrectFocus } | null>(null);
   const [failedCutouts, setFailedCutouts] = useState<string[]>([]);
   const view = viewState?.frame === frameBase64 ? viewState.view : initialView;
   const setView = (next: PhotoView) => setViewState({ frame: frameBase64, view: next });
@@ -343,9 +351,11 @@ function LensOverview({
   const ordered = orderSceneObjects(objects);
   const anchor = issue?.anchor ?? null;
   const focusedObject = focusedIndex !== null ? ordered[focusedIndex] : undefined;
-  const editing = editTarget?.frame === frameBase64 && editTarget.index === focusedIndex && Boolean(focusedObject);
+  const editing = editTarget?.frame === frameBase64 && editTarget.index === focusedIndex;
   const hasCutout = (object: IsolatedObject) => object.focusMode !== "crop" && object.focusMode !== "full_frame"
     && Boolean(object.isolatedImageBase64) && !failedCutouts.includes(object.isolatedImageBase64);
+  const cutoutCount = ordered.filter(hasCutout).length;
+  const cropCount = ordered.length - cutoutCount;
   const testId = variant === "scanner" ? "focused-part-overlay" : "result-focus-frame";
   const containerClass = variant === "scanner" ? "fixed inset-0 z-40" : "absolute inset-0";
   const frameAlt = variant === "scanner" ? "Reviewed scan photo" : "Captured car part";
@@ -353,14 +363,21 @@ function LensOverview({
   return (
     <ArStage
       frameBase64={frameBase64}
-      ariaLabel="Isolated scene"
+      ariaLabel="Photo selections"
       containerClassName={`pointer-events-auto ${containerClass}`}
-      dataFocusMode="mask"
+      dataFocusMode={cropCount ? cutoutCount ? "mixed" : "crop" : "mask"}
       dataLens="multi"
       testId={testId}
       controls={<PhotoViewControls view={view} onView={setView} editing={editing}
         canCorrect={Boolean(onCorrectFocus)} needsSelection={!focusedObject}
-        onCorrect={() => { if (focusedIndex !== null) { setView("outline"); setEditTarget({ frame: frameBase64, index: focusedIndex }); } }} />}
+        selectionMessage={view !== "original" && !editing
+          ? `Selections are approximate. Check the original and correct the area.${view === "cutout" && cropCount ? ` ${cutoutCount} cutout${cutoutCount === 1 ? "" : "s"}; ${cropCount} crop-only selection${cropCount === 1 ? "" : "s"}. Crops are not segmentation masks.` : ""}`
+          : undefined}
+        onCorrect={() => {
+          if (focusedIndex === null || !focusedObject || !onCorrectFocus) return;
+          setView("outline");
+          setEditTarget({ frame: frameBase64, index: focusedIndex, box: { ...focusedObject.focusBox }, apply: onCorrectFocus });
+        }} />}
     >
       {/* Background: gently dimmed (not heavy-blurred) so the other objects stay readable */}
       <ScanThumb
@@ -445,19 +462,20 @@ function LensOverview({
         : null}
 
       {view !== "original" && !editing && issue && anchor ? <ApproximateIssueArea anchor={anchor} text={issue.text} /> : null}
-      {editing && focusedObject && onCorrectFocus ? <FocusAreaEditor key={`${frameBase64}-${focusedIndex}`} box={focusedObject.focusBox}
+      {editing && editTarget ? <FocusAreaEditor key={`${frameBase64}-${editTarget.index}`} box={editTarget.box}
         onCancel={() => setEditTarget(null)}
-        onApply={(corrected) => { onCorrectFocus(corrected, focusedIndex); setEditTarget(null); setView("outline"); }} /> : null}
+        onApply={(corrected) => { editTarget.apply(corrected, editTarget.index); setEditTarget(null); setView("outline"); }} /> : null}
     </ArStage>
   );
 }
 
-function PhotoViewControls({ view, onView, editing, canCorrect, needsSelection, onCorrect }: {
+function PhotoViewControls({ view, onView, editing, canCorrect, needsSelection, selectionMessage, onCorrect }: {
   view: PhotoView;
   onView: (view: PhotoView) => void;
   editing: boolean;
   canCorrect: boolean;
   needsSelection?: boolean;
+  selectionMessage?: string;
   onCorrect: () => void;
 }) {
   return <div className="pointer-events-auto absolute inset-x-2 top-2 z-[60] flex flex-wrap items-center gap-1 rounded-xl border border-white/25 bg-slate-950/90 p-1 text-white" aria-label="Photo inspection controls">
@@ -471,6 +489,7 @@ function PhotoViewControls({ view, onView, editing, canCorrect, needsSelection, 
       title={needsSelection ? "Select a part in Outline or Cutout first" : undefined}
       className="min-h-11 rounded-lg border border-white/30 px-3 text-xs font-bold disabled:opacity-50">Correct area</button> : null}
     {canCorrect && needsSelection ? <span className="px-2 text-[11px]">Select a part to correct its area.</span> : null}
+    {selectionMessage ? <p role="status" className="w-full px-2 text-[11px]">{selectionMessage}</p> : null}
   </div>;
 }
 

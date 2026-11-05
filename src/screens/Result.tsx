@@ -3,12 +3,12 @@ import { prepareRetryFrame } from "../lib/retryFrame";
 import { applyShopFitmentContext } from "../lib/shopFitmentContext";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { BrandLockup } from "../components/BrandLockup";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AIServiceError, getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
 import { readCloudLookup } from "../services/cloudHistory";
 import { getCloudSyncStatus, syncAnalysisFailuresToCloud, syncLookupToCloud } from "../services/cloudSync";
 import { isCloudSyncEnabled } from "../services/cloudSyncPolicy";
-import { correctScanSelection } from "../lib/visualSelection";
+import { correctScanSelection, visualSelectionSourceMatches } from "../lib/visualSelection";
 import Button from "../components/ui/Button";
 import { IsolatedPartView } from "../components/result/IsolatedPartView";
 import { PhotoEvidenceStrip } from "../components/result/PhotoEvidenceStrip";
@@ -51,6 +51,10 @@ function ResultView({ id }: { id: string | undefined }) {
   const navigate = useNavigate();
   const historyLookup = normalizeLookup(routeState?.savedLookup);
   const [lookup, setLookup] = useState<Lookup | null>(() => resolveRoutedLookup(id, routeState));
+  const latestLookupRef = useRef(lookup);
+  useEffect(() => { latestLookupRef.current = lookup; }, [lookup]);
+  // Captured by the area editor's callback: a deleted device scan must not be recreated.
+  const displayedDeviceLookupId = useMemo(() => lookup && getLookup(lookup.id) ? lookup.id : null, [lookup]);
   const [restoreStatus, setRestoreStatus] = useState<ResultRestoreStatus>(() => id && !resolveRoutedLookup(id, routeState) ? "loading" : "ready");
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [restoreAttempt, setRestoreAttempt] = useState(0);
@@ -338,11 +342,22 @@ function ResultView({ id }: { id: string | undefined }) {
   function handleCorrectFocus(box: VisualFocusBox, objectIndex: number | null) {
     if (!scanState || !isAccountScopeCurrent(mountedScope)) return;
     try {
-      const local = lookup ? getLookup(lookup.id) : null;
-      const current = local ?? lookup;
-      const corrected = correctScanSelection(current ?? scanState, box, objectIndex);
-      const saved = local ? updateLookupVisualSelection(local.id, box, objectIndex)
-        : current ? saveExistingLookup(corrected as Lookup) : createLookup(corrected);
+      const latest = latestLookupRef.current;
+      if ((lookup && latest?.id !== lookup.id) || !currentScanStateRef.current
+        || !visualSelectionSourceMatches(currentScanStateRef.current, scanState, { lookupId: lookup?.id ?? latest?.id ?? "" })) {
+        setSelectionStatus("The displayed scan changed while you were editing. Reopen the scan before correcting the area.");
+        return;
+      }
+      const target = lookup ?? latest;
+      const local = target ? getLookup(target.id) : null;
+      if ((displayedDeviceLookupId || (!lookup && latest)) && !local) {
+        setSelectionStatus("This device scan was removed while you were editing. The area was not saved. Reopen Saved scans.");
+        return;
+      }
+      const current = local ?? target;
+      const corrected = correctScanSelection(scanState, box, objectIndex);
+      const saved = local ? updateLookupVisualSelection(local.id, box, objectIndex, scanState)
+        : current ? saveExistingLookup({ ...current, ...corrected }) : createLookup(corrected);
       if (!saved.ok) { setSelectionStatus(`Selection was not saved. ${saved.message}`); return; }
       if (!saved.value) { setSelectionStatus("Selection was not saved. This saved scan was not found."); return; }
       setLookup(saved.value);
