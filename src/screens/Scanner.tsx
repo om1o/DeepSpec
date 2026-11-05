@@ -16,6 +16,7 @@ import Webcam from "react-webcam";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { IsolatedPartView } from "../components/result/IsolatedPartView";
 import { PhotoEvidenceStrip } from "../components/result/PhotoEvidenceStrip";
+import { PhotoReviewPanel } from "../components/result/PhotoReviewPanel";
 import { photoRelationshipOrUnknown } from "../lib/photoRelationship";
 import { correctScanSelection } from "../lib/visualSelection";
 import { orderSceneObjects } from "../components/result/isolatedPartViewGeometry";
@@ -241,6 +242,7 @@ export default function Scanner() {
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [scanReview, setScanReview] = useState<ScanReviewState | null>(null);
   const [selectedPhotoId, setSelectedPhotoId] = useState<string>();
+  const [photoReviewViewRequest, setPhotoReviewViewRequest] = useState(0);
   const selectedPhoto = scanReview?.scanState.photos?.find((photo) => photo.id === selectedPhotoId);
   const isOverviewPhoto = !selectedPhoto || selectedPhoto.id === scanReview?.scanState.photos?.[0]?.id;
   const [scanSave, setScanSave] = useState<{ lookupId: string; status: "pending" | "saved" | "local" | "failed" } | null>(null);
@@ -334,6 +336,7 @@ export default function Scanner() {
     // Clear any multi-object focus + cached per-object analyses from the previous scan so a stale
     // index/cache can never leak onto the new scan's objects.
     setSelectedPhotoId(undefined);
+    setPhotoReviewViewRequest(0);
     setFocusedObjectIndex(null);
     setObjectAnalyses({});
     startedObjectAnalysisRef.current = new Set();
@@ -1418,6 +1421,8 @@ export default function Scanner() {
           <div className="grid min-h-0 flex-1 grid-rows-[minmax(200px,42dvh)_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_420px] lg:grid-rows-1">
             <div aria-label="Scan photo" data-testid="scan-workspace-photo" className="relative min-h-0 overflow-hidden bg-[#020617] [&>div]:absolute">
               <IsolatedPartView
+                key={photoReviewViewRequest}
+                initialView={photoReviewViewRequest ? "original" : undefined}
                 frameBase64={selectedPhoto?.imageBase64 ?? scanReview.scanState.frame.imageBase64}
                 isolatedImageBase64={isOverviewPhoto ? scanReview.scanState.isolatedImageBase64 : undefined}
                 focusBox={isOverviewPhoto ? scanReview.scanState.focusBox : undefined}
@@ -1472,6 +1477,11 @@ export default function Scanner() {
                 retakeUsesUpload={scanReview.scanState.provenance?.captureMode === "upload" || cameraState !== "ready"}
                 scanCardStatusMessage={scanCardStatusMessage}
               />}
+              <PhotoReviewPanel scan={scanReview.scanState} onSelectPhoto={(id) => {
+                setSelectedPhotoId(id);
+                handleFocusObject(null);
+                setPhotoReviewViewRequest((request) => request + 1);
+              }} />
             </div>
           </div>
         </section>

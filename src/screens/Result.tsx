@@ -15,6 +15,7 @@ import { PhotoEvidenceStrip } from "../components/result/PhotoEvidenceStrip";
 import { ScanSources } from "../components/result/ScanSources";
 import { PartInspectionForm } from "../components/result/PartInspectionForm";
 import { ConditionEvidenceReview } from "../components/result/ConditionEvidenceReview";
+import { PhotoReviewPanel } from "../components/result/PhotoReviewPanel";
 import { ComponentMapReview } from "../components/result/ComponentMapReview";
 import { InspectionReportExport } from "../components/result/InspectionReportExport";
 import { ServiceRecordLog } from "../components/result/ServiceRecordLog";
@@ -473,6 +474,12 @@ function ResultView({ id }: { id: string | undefined }) {
               onRetrySave={retryFeedbackSave}
             />
           ) : null}
+          {scanState ? <PhotoReviewPanel scan={scanState} onSelectPhoto={(photoId) => {
+            setSelectedPhotoId(photoId);
+            setEvidenceViewRequest((request) => request + 1);
+            photoCanvasRef.current?.focus({ preventScroll: true });
+            photoCanvasRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+          }} /> : null}
           {inspectionLookup ? <ConditionEvidenceReview lookup={inspectionLookup} onSelectPhoto={(photoId) => {
             setSelectedPhotoId(photoId);
             setEvidenceViewRequest((request) => request + 1);

@@ -1,6 +1,6 @@
 import { setActiveAccount } from "../lib/accountScope";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ConditionAssessment } from "../types";
+import type { ConditionAssessment, PhotoReview } from "../types";
 import { confirmVehicleContextField } from "../lib/vehicleContext";
 
 type SelectResult = { data: unknown; error: { message?: string } | null };
@@ -102,6 +102,19 @@ describe("readCloudLookupForReport", () => {
     expect(JSON.stringify(result)).not.toContain("private signing error");
   });
 
+  it.each([true, false])("keeps a legacy report's review only when an original reference exists (reference: %s)", async (hasOriginal) => {
+    const photoReview: PhotoReview = { version: 1, photos: [{ photoId: "photo-1", status: "limited_view", summary: "Only the front was visible." }], disagreements: [] };
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, image_path: hasOriginal ? `${base}original.png` : null,
+      result_json: { partName: "Panel", photoReview } }], error: null });
+    mocks.signedUrls.mockRejectedValue(new Error("signing unavailable"));
+    const { readCloudLookupForReport } = await import("./cloudHistory");
+    const result = await readCloudLookupForReport("scan-1");
+    if (!result.ok || !result.value) throw new Error("expected report projection");
+    expect(result.value.frame.imageBase64).toBe("");
+    if (hasOriginal) expect(result.value.result?.photoReview).toEqual(photoReview);
+    else expect(result.value.result).not.toHaveProperty("photoReview");
+  });
+
   it.each(["owner", "scan", "bundle"])("rejects foreign %s paths before requesting any signed asset", async (kind) => {
     const row = reportRow();
     if (kind === "owner") row.image_path = "other/scan-1/original.png";
@@ -139,6 +152,33 @@ describe("readCloudLookups", () => {
     mocks.limit.mockReset();
     mocks.signedUrls.mockReset();
     mocks.signedUrls.mockResolvedValue({ data: [], error: null });
+  });
+
+  it.each(["valid", "missing", "foreign-photo", "duplicate", "unassessed-disagreement"])("restores only valid photo review without synthesizing omitted coverage: %s", async (kind) => {
+    const base = "user-1/scan-1/";
+    const review: PhotoReview = { version: 1, photos: [
+      { photoId: "overview", status: "observations_returned", summary: "The edge looks smooth." },
+      { photoId: "detail", status: "limited_view", summary: "The dark line is uncertain." },
+    ], disagreements: [{ id: "edge", photoIds: ["overview", "detail"], description: "The edge differs between views.",
+      nextEvidence: { request: "Photograph in even light.", purpose: "Check whether the line is a shadow." } }] };
+    if (kind === "foreign-photo") review.photos[0].photoId = "other-scan";
+    if (kind === "duplicate") review.photos[1].photoId = "overview";
+    if (kind === "unassessed-disagreement") review.photos[1].status = "not_assessed";
+    const bundle = { version: 1, photos: ["overview", "detail", "marking"].map((id) => ({ id, label: "other", capturedAt: "now", imagePath: `${base}${id}.jpg` })) };
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, image_path: `${base}overview.jpg`, evidence_bundle_json: bundle,
+      result_json: { partName: "Rocker panel", ...(kind === "missing" ? {} : { photoReview: review }) }, inspection_json: inspection }], error: null });
+    mocks.signedUrls.mockImplementation(async (paths: string[]) => ({ data: paths.map((path) => ({ path, signedUrl: `https://images/${path}?signed=new` })), error: null }));
+    const { readCloudLookup } = await import("./cloudHistory");
+    const loaded = await readCloudLookup("scan-1");
+    if (!loaded.ok || !loaded.value) throw new Error("expected cloud scan");
+    expect(loaded.value.photos).toHaveLength(3);
+    expect(loaded.value.inspection).toEqual(inspection);
+    const { normalizeLookup, scanStateFromLookup } = await import("./storage");
+    const reopened = scanStateFromLookup(normalizeLookup(loaded.value)!);
+    if (kind === "valid") {
+      expect(reopened.result?.photoReview).toEqual(review);
+      expect(reopened.result?.photoReview?.photos).toHaveLength(2);
+    } else expect(reopened.result).not.toHaveProperty("photoReview");
   });
 
   it.each(["same_part_or_area", "independent", "unknown", undefined] as const)("restores relationship %s with every photo and cutout, keeping corrected crops empty", async (photoRelationship) => {

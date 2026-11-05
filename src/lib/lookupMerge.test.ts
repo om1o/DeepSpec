@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mergeCloudLookup } from "./lookupMerge";
-import type { Lookup } from "../types";
+import type { IdentificationResult, Lookup } from "../types";
 const box = { x: 0, y: 0, width: 0.3, height: 0.4, confidence: 1 };
 const lookup = (token: string) => ({ id: "scan", cloudRevision: 1, frame: { capturedAt: "now", imageBase64: `https://images/original?${token}` },
   photos: [{ id: "overview", label: "overview", capturedAt: "now", imageBase64: `https://images/photo?${token}` }],
@@ -8,6 +8,19 @@ const lookup = (token: string) => ({ id: "scan", cloudRevision: 1, frame: { capt
   isolatedObjects: [{ name: "Part", category: "engine", primary: true, focusBox: box, focusMode: "mask", isolatedImageBase64: `https://images/object?${token}` }],
 } as Lookup);
 describe("cloud evidence URL refresh", () => {
+  it.each([true, false])("keeps local review coverage from its own attempt when refreshing URLs (local review: %s)", (hasReview) => {
+    const result: IdentificationResult = { partName: "Panel", confidence: "low", scanCategory: "body", candidateMatches: [], whatItDoes: "Body panel",
+      visibleObservations: [], evidenceRegions: [], concerns: [], safetyTriage: "can_help", isSafetyCritical: false, nextAction: "Inspect", needsBetterPhoto: true,
+      evidence: [], sourceLinks: [], modelRun: { provider: "gemini", model: "fixture", runId: "local-attempt", latencyMs: 1, ocrUsed: false },
+      ...(hasReview ? { photoReview: { version: 1 as const, photos: [{ photoId: "overview", status: "limited_view" as const, summary: "Reverse not visible." }], disagreements: [] } } : {}) };
+    const local = { ...lookup("old"), result };
+    const remote = { ...lookup("new"), result: { ...result, modelRun: { ...result.modelRun!, runId: "remote-attempt" },
+      photoReview: { version: 1 as const, photos: [{ photoId: "overview", status: "observations_returned" as const, summary: "A different review." }], disagreements: [] } } };
+    const merged = mergeCloudLookup(local, remote);
+    expect(merged.result).toEqual(result);
+    expect(merged.photos?.[0].imageBase64).toBe(remote.photos?.[0].imageBase64);
+    if (!hasReview) expect(merged.result).not.toHaveProperty("photoReview");
+  });
   it.each(["same_part_or_area", "independent", "unknown", undefined] as const)("keeps local relationship %s while refreshing URLs, not a remote source's declaration", (photoRelationship) => {
     const local = { ...lookup("old"), photoRelationship };
     const remote = { ...lookup("new"), photoRelationship: "independent" as const };

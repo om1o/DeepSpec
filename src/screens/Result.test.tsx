@@ -143,6 +143,29 @@ describe("Result", () => {
     expect(screen.getByRole("region", { name: "Safety action" })).toHaveTextContent(safetyAction);
   });
 
+  it.each(["bay", "detail"])("opens photo-review disagreement %s as an untouched original without a condition assessment", async (photoId) => {
+    const local = makeLookup({
+      focusBox: { x: 0.1, y: 0.15, width: 0.3, height: 0.4, confidence: 0.9 }, focusMode: "mask", isolatedImageBase64: "data:image/png;base64,cutout",
+      photos: [{ ...frame, id: "bay", label: "overview" }, { ...frame, id: "detail", label: "close_up", imageBase64: "data:image/jpeg;base64,detail" }],
+      result: { ...successfulScan.result!, photoReview: {
+        version: 1, photos: [{ photoId: "bay", status: "observations_returned", summary: "A dark edge is visible." }, { photoId: "detail", status: "limited_view", summary: "Glare obscures that edge." }],
+        disagreements: [{ id: "d1", photoIds: ["bay", "detail"], description: "The views do not establish whether the dark edge is a gap.", nextEvidence: { request: "Photograph the edge in diffuse light.", purpose: "Distinguish glare from an opening." } }],
+      } },
+    });
+    const identify = vi.spyOn(aiService, "identifyCapturedFrame");
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
+    renderResult({ ...successfulScan, savedLookup: local }, `/result/${local.id}`);
+    const canvas = screen.getByTestId("result-photo-canvas");
+    canvas.scrollIntoView = vi.fn();
+    await userEvent.click(screen.getByRole("button", { name: `View Photo ${photoId === "bay" ? "1 — Overview" : "2 — Close-up"} for disagreement d1` }));
+    expect(screen.getByRole("button", { name: "Original", exact: true })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute("src", local.photos!.find((photo) => photo.id === photoId)!.imageBase64);
+    expect(screen.queryByTestId("isolated-part-image")).not.toBeInTheDocument();
+    expect(canvas).toHaveFocus();
+    expect(identify).not.toHaveBeenCalled();
+    expect(getLookup(local.id)?.result?.photoReview).toEqual(local.result!.photoReview);
+  });
+
   it("persists a corrected area on an existing device scan and clears its stale cutout", async () => {
     const user = userEvent.setup();
     const local = makeLookup({

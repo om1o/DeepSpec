@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { accountStorageKey, setActiveAccount } from "../lib/accountScope";
 import { createLookup, getLookup, LOOKUPS_STORAGE_KEY, normalizeLookup, readLookups, saveExistingLookup, scanStateFromLookup, updateLookup, updateLookupResult, updateLookupVisualSelection, withRetriedLookupResult } from "./storage";
-import type { ConditionAssessment, IdentificationResult, PartInspection, ScanAnalysisState } from "../types";
+import type { ConditionAssessment, IdentificationResult, PartInspection, PhotoReview, ScanAnalysisState } from "../types";
 const image = "data:image/jpeg;base64,YQ==";
 const box = { x: 0.1, y: 0.1, width: 0.3, height: 0.4, confidence: 0.8 };
 const state: ScanAnalysisState = {
@@ -25,6 +25,11 @@ const identification: IdentificationResult = {
   safetyTriage: "needs_professional", isSafetyCritical: true, nextAction: "Have the area inspected.", needsBetterPhoto: true,
   evidence: ["Visible edge"], sourceLinks: [],
 };
+const photoReview: PhotoReview = { version: 1, photos: [
+  { photoId: "p0", status: "observations_returned", summary: "The edge appears smooth." },
+  { photoId: "p1", status: "limited_view", summary: "A dark line may be a shadow; the reverse is hidden." },
+], disagreements: [{ id: "edge", photoIds: ["p0", "p1"], description: "The edge looks different between these views.",
+  nextEvidence: { request: "Show the edge under even light.", purpose: "Distinguish shadow from a surface break." } }] };
 const inspection: PartInspection = {
   confirmedPartName: "Rocker panel", partNumber: "", identityEvidence: "Checked vehicle location",
   visibleCondition: "uncertain", visibleNotes: "Rear surface not inspected", functionalStatus: "not_tested", functionalNotes: "",
@@ -32,6 +37,50 @@ const inspection: PartInspection = {
 };
 describe("durable visual evidence", () => {
   beforeEach(() => { localStorage.clear(); setActiveAccount("owner"); });
+  it("retains partial photo review and disagreement across save/reopen without marking the omitted photo reviewed", () => {
+    const saved = createLookup({ ...state, result: { ...identification, photoReview } }).value;
+    updateLookup(saved.id, { notes: "Human note", correction: "User label" });
+    const reopened = scanStateFromLookup(getLookup(saved.id)!);
+    expect(reopened.result?.photoReview).toEqual(photoReview);
+    expect(reopened.result?.photoReview?.photos.map((photo) => photo.photoId)).toEqual(["p0", "p1"]);
+    expect(reopened.photos).toEqual(state.photos);
+    expect(getLookup(saved.id)?.notes).toBe("Human note");
+  });
+  it("replaces review coverage on retry and does not inherit it when the next result omits it", () => {
+    const saved = createLookup({ ...state, result: { ...identification, photoReview } }).value;
+    const laterReview: PhotoReview = { version: 1, photos: [{ photoId: "p2", status: "not_assessed", summary: "The marking is unreadable." }], disagreements: [] };
+    expect(saveExistingLookup(saved, { ...state, result: { ...identification, photoReview: laterReview } }).ok).toBe(true);
+    expect(getLookup(saved.id)?.result?.photoReview).toEqual(laterReview);
+    expect(saveExistingLookup(getLookup(saved.id)!, { ...state, result: identification }).ok).toBe(true);
+    expect(getLookup(saved.id)?.result).not.toHaveProperty("photoReview");
+    expect(updateLookupResult(saved.id, { ...identification, photoReview }).ok).toBe(true);
+    expect(getLookup(saved.id)?.result?.photoReview).toEqual(photoReview);
+  });
+  it.each(["wrong-photo", "duplicate", "unassessed-disagreement"])("omits an invalid %s review while preserving original photos, AI answer and human work", (kind) => {
+    const invalid = structuredClone(photoReview);
+    if (kind === "wrong-photo") invalid.photos[0].photoId = "photo-1";
+    if (kind === "duplicate") invalid.photos[1].photoId = "p0";
+    if (kind === "unassessed-disagreement") invalid.photos[1].status = "not_assessed";
+    const result = { ...identification, photoReview: invalid };
+    const saved = createLookup({ ...state, result }).value;
+    expect(saved.result).not.toHaveProperty("photoReview");
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([{ ...saved, result, inspection }]));
+    const reopened = getLookup(saved.id)!;
+    expect(reopened.result).not.toHaveProperty("photoReview");
+    expect(reopened.result?.partName).toBe(identification.partName);
+    expect(reopened.photos).toEqual(state.photos);
+    expect(reopened.inspection).toEqual(inspection);
+  });
+  it("validates review against replacement retry photos and leaves legacy absence unreported", () => {
+    const saved = createLookup({ ...state, result: identification }).value;
+    expect(getLookup(saved.id)?.result).not.toHaveProperty("photoReview");
+    const retried = withRetriedLookupResult(saved, { ...state, photos: [{ ...state.photos![0], id: "new-original" }], result: { ...identification, photoReview } });
+    expect(retried.result).not.toHaveProperty("photoReview");
+    const legacy = createLookup({ frame: state.frame, result: { ...identification, photoReview: { version: 1,
+      photos: [{ photoId: "photo-1", status: "limited_view", summary: "Only one side is visible." }], disagreements: [] } } }).value;
+    expect(getLookup(legacy.id)?.result?.photoReview?.photos[0].photoId).toBe("photo-1");
+    expect(normalizeLookup({ ...legacy, frame: { ...legacy.frame, imageBase64: "placeholder" } })?.result).not.toHaveProperty("photoReview");
+  });
   it.each(["same_part_or_area", "independent", "unknown"] as const)("retains %s through save, reopen, retry and result updates", (photoRelationship) => {
     const saved = createLookup({ ...state, photoRelationship }).value;
     expect(scanStateFromLookup(getLookup(saved.id)!).photoRelationship).toBe(photoRelationship);
