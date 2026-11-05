@@ -61,6 +61,32 @@ it("separates human inspection from AI and never infers function from appearance
   expect(buildScanReport(lookup)).toContain("No human inspection recorded. Function not verified.");
 });
 
+it("exports photo-linked condition evidence and one priority request separately from human checks", () => {
+  const record: Lookup = { ...lookup,
+    vehicleContext: { year: "2014", make: "Subaru", model: "Forester", mileage: "120000 miles", symptom: "New stain after parking" },
+    result: { ...lookup.result!, conditionAssessment: {
+      version: 1,
+      observations: [{ id: "o1", text: "Brown flaking material is visible on the bracket.", photoIds: ["photo-1"] }],
+      possibleCauses: [{ text: "Corrosion may explain the appearance.", observationIds: ["o1"] }],
+      unknowns: ["Hidden depth and remaining strength are unknown."],
+      nextEvidence: { kind: "professional_inspection", request: "Have the mounting area inspected in person.", purpose: "Establish material condition beyond the visible surface." },
+    } },
+    inspection: { ...emptyPartInspection, inspectorName: "Pat", inspectedAt: "2026-11-05T08:00:00Z", visibleCondition: "no_visible_damage", functionalStatus: "not_tested" },
+  };
+  const report = buildScanReport(record);
+  expect(report).toContain("2014 Subaru Forester");
+  expect(report).toContain("Symptoms: New stain after parking");
+  expect(report).toContain("Original photo [photo-1]");
+  expect(report).toContain("Possible causes — unconfirmed:");
+  expect(report).toContain("Hidden depth and remaining strength are unknown.");
+  expect(report.match(/Have the mounting area inspected in person\./g)).toHaveLength(1);
+  expect(report).toContain("Why: Establish material condition beyond the visible surface.");
+  expect(report).toContain("Functional test: not tested");
+  expect(report).not.toContain("Functional test: passed");
+  record.result!.nextAction = "Do not drive until the cracked brake component has been inspected.";
+  expect(buildScanReport(record)).toContain("Safety action:\nDo not drive until the cracked brake component has been inspected.");
+});
+
 const lookup: Lookup = {
   id: "lookup-1",
   createdAt: "2026-05-17T12:00:00.000Z",

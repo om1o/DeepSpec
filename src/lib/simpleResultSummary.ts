@@ -12,15 +12,16 @@ const GENERIC_NON_PART = /\b(not a vehicle part|unknown component|unidentified|u
 
 export function getSimpleResultSummary(result: IdentificationResult): SimpleResultSummary {
   const title = getSimpleTitle(result);
-  const concern = result.concerns.find((item) => describesVisibleDamage(item));
-  const visibleIssue = concern ?? result.visibleObservations.find((item) => describesVisibleDamage(item));
+  const visibleIssue = result.visibleObservations.find((item) => describesVisibleDamage(item));
   const body = summarizeSentence(visibleIssue || result.whatItDoes || result.visibleObservations[0] || result.evidence[0] || "Deep Spec matched the visible item.");
   const needsPhoto = result.needsBetterPhoto || result.safetyTriage === "needs_better_photo" || GENERIC_NON_PART.test(result.partName);
+  const needsSafetyCheck = result.isSafetyCritical || result.safetyTriage === "needs_professional";
 
   return {
     body,
     eyebrow: visibleIssue ? "Visible issue" : GENERIC_NON_PART.test(result.partName) ? "Identified" : "Best match",
-    nextAction: needsPhoto ? summarizeSentence(result.nextAction || "Use a closer photo of the part.") : null,
+    nextAction: needsSafetyCheck ? result.nextAction.trim() || "Check this safety item before driving or repairing."
+      : needsPhoto ? summarizeSentence(result.nextAction || "Use a closer photo of the part.") : null,
     title,
   };
 }
@@ -31,7 +32,7 @@ function getSimpleTitle(result: IdentificationResult) {
     return "Item identified";
   }
 
-  return clean.replace(/^likely\s+/i, "");
+  return clean;
 }
 
 function summarizeSentence(value: string) {

@@ -2,9 +2,10 @@ import type { CandidateMatch, CandidatePart, CapturedFrame, ChatMessage, Confide
 
 import type { PartInspectionDraft } from "../types";
 import { normalizePartInspection, withLatestInspection } from "../lib/partInspection";
+import { normalizeConditionAssessment } from "../lib/conditionAssessment";
 import { accountStorageKey, getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import { inspectionDraftKey } from "./inspectionDraft";
-import { normalizeVisualEvidence } from "./visualEvidence";
+import { isEvidenceImage, normalizeVisualEvidence } from "./visualEvidence";
 import { correctScanSelection } from "../lib/visualSelection";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
@@ -48,7 +49,7 @@ export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup
     ...(isVisualFocusMode(scanState.focusMode) ? { focusMode: scanState.focusMode } : {}),
     ...(cleanImageDataUrl(scanState.isolatedImageBase64) ? { isolatedImageBase64: cleanImageDataUrl(scanState.isolatedImageBase64) } : {}),
     ...evidence,
-    result: scanState.result,
+    result: withValidatedConditionAssessment(scanState.result, evidencePhotoIds(evidence?.photos, scanState.frame)),
     analysisAttemptId: cleanTextValue(scanState.analysisAttemptId, 160) || undefined,
     ...(scanState.errorCode && scanState.analysisAttemptId ? { analysisFailures: [{
       attemptId: scanState.analysisAttemptId, errorCode: scanState.errorCode,
@@ -99,7 +100,7 @@ export function saveExistingLookup(lookup: Lookup, retryState?: ScanAnalysisStat
 export function withRetriedLookupResult(existing: Lookup, retryState?: ScanAnalysisState | null): Lookup {
   // A cloud-only retry lives in screen state until Save; retain the original
   // record's identity and human work while replacing the failed AI attempt.
-  return retryState?.result ? {
+  const updated = retryState?.result ? {
     ...existing,
     frame: retryState.frame ?? existing.frame,
     ...(normalizeVisualEvidence({ ...existing, ...retryState }) ?? {}),
@@ -113,6 +114,8 @@ export function withRetriedLookupResult(existing: Lookup, retryState?: ScanAnaly
     trainingStatus: getTrainingStatus(existing.rating, existing.correction),
     provenance: normalizeScanProvenance({ ...existing.provenance, ...retryState.provenance }, existing.createdAt),
   } : existing;
+  const evidence = normalizeVisualEvidence(updated);
+  return { ...updated, result: withValidatedConditionAssessment(updated.result, evidencePhotoIds(evidence?.photos, updated.frame)) };
 }
 
 export function saveLookupInspection(id: string, draft: PartInspectionDraft, cloudLookup?: Lookup): StorageResult<Lookup | null> {
@@ -323,7 +326,7 @@ export function updateLookupResult(
     ...existing,
     frame: frame ?? existing.frame,
     cloudSave: undefined,
-    result,
+    result: withValidatedConditionAssessment(result, evidencePhotoIds(existing.photos, frame ?? existing.frame)),
     analysisAttemptId: result.modelRun?.runId,
     errorMessage: undefined,
     errorCode: undefined,
@@ -572,14 +575,14 @@ export function normalizeLookup(value: unknown): Lookup | null {
   const rating = isRating(lookup.rating) ? lookup.rating : null;
   const correction = typeof lookup.correction === "string" ? lookup.correction : null;
   const notes = typeof lookup.notes === "string" ? lookup.notes : "";
-  const result = normalizeStoredIdentificationResult(lookup.result, correction ?? undefined);
+  const evidence = normalizeVisualEvidence(lookup);
+  if (!evidence) return null;
+  const result = normalizeStoredIdentificationResult(lookup.result, evidencePhotoIds(evidence.photos, lookup.frame), correction ?? undefined);
   const scanQuality = normalizeScanQualitySnapshot(lookup.scanQuality);
   const scanCategory = isScanCategory(lookup.scanCategory) ? lookup.scanCategory : categorizeScan(result, correction ?? undefined);
   const trainingStatus = isTrainingStatus(lookup.trainingStatus)
     ? lookup.trainingStatus
     : getTrainingStatus(rating, correction);
-  const evidence = normalizeVisualEvidence(lookup);
-  if (!evidence) return null;
 
   return {
     inspection: normalizePartInspection(lookup.inspection),
@@ -866,7 +869,18 @@ function categorizeText(text: string): ScanCategory {
   return CATEGORY_MATCHERS.find(([, pattern]) => pattern.test(text))?.[0] ?? "unknown";
 }
 
-function normalizeStoredIdentificationResult(value: unknown, correction?: string): IdentificationResult | undefined {
+function evidencePhotoIds(photos: Lookup["photos"], frame: Lookup["frame"]): string[] {
+  return photos?.map((photo) => photo.id) ?? (isEvidenceImage(frame.imageBase64) ? ["photo-1"] : []);
+}
+
+function withValidatedConditionAssessment(result: IdentificationResult | undefined, allowedPhotoIds: readonly string[]): IdentificationResult | undefined {
+  if (!result) return undefined;
+  const { conditionAssessment: rawAssessment, ...legacyResult } = result;
+  const conditionAssessment = normalizeConditionAssessment(rawAssessment, allowedPhotoIds);
+  return { ...legacyResult, ...(conditionAssessment ? { conditionAssessment } : {}) };
+}
+
+function normalizeStoredIdentificationResult(value: unknown, allowedPhotoIds: readonly string[], correction?: string): IdentificationResult | undefined {
   if (typeof value !== "object" || value === null) {
     return undefined;
   }
@@ -887,6 +901,7 @@ function normalizeStoredIdentificationResult(value: unknown, correction?: string
     return undefined;
   }
 
+  const conditionAssessment = normalizeConditionAssessment(result.conditionAssessment, allowedPhotoIds);
   return {
     partName: cleanText(result.partName, 80),
     confidence: result.confidence,
@@ -904,6 +919,7 @@ function normalizeStoredIdentificationResult(value: unknown, correction?: string
     whatItDoes: cleanText(result.whatItDoes, 500),
     visibleObservations: cleanStringArray(result.visibleObservations, 6, 180),
     evidenceRegions: normalizeEvidenceRegions(result.evidenceRegions, result.visibleObservations, result.evidence),
+    ...(conditionAssessment ? { conditionAssessment } : {}),
     sceneObjects: normalizeSceneObjects(result.sceneObjects),
     concerns: cleanStringArray(result.concerns, 6, 180),
     safetyTriage: result.safetyTriage,

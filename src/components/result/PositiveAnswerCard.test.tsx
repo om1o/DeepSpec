@@ -27,7 +27,7 @@ function makeResult(overrides: Partial<IdentificationResult> = {}): Identificati
 
 describe("PositiveAnswerCard pieces", () => {
   it("IssueLine renders the damage sentence when present", () => {
-    render(<IssueLine result={makeResult({ concerns: ["A dent on the door."] })} variant="result" />);
+    render(<IssueLine result={makeResult({ visibleObservations: ["A dent on the door."] })} variant="result" />);
     expect(screen.getByTestId("visible-issue-line")).toHaveTextContent("dent");
   });
 
@@ -37,7 +37,7 @@ describe("PositiveAnswerCard pieces", () => {
   });
 
   it("getAnswerBody names the function when there is an issue, otherwise the summary body", () => {
-    const withIssue = makeResult({ concerns: ["Crack in the case."], whatItDoes: "It powers the cooling fan." });
+    const withIssue = makeResult({ visibleObservations: ["Crack in the case."], whatItDoes: "It powers the cooling fan." });
     expect(getAnswerBody(withIssue, getSimpleResultSummary(withIssue))).toBe("It powers the cooling fan.");
 
     const clean = makeResult();

@@ -2,7 +2,8 @@
   "git": {
     "deploymentEnabled": {
       "codex/pilot-assembled-20261103": false,
-      "codex/car-inspection-evidence-20261105": false
+      "codex/car-inspection-evidence-20261105": false,
+      "codex/car-condition-evidence-20261105": false
     }
   },
   "functions": {

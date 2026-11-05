@@ -5,8 +5,9 @@ import { describesVisibleDamage } from "./damageWords";
 
 /** The first sentence describing visible damage, or null when nothing looks wrong. */
 export function findVisibleIssue(result: IdentificationResult): string | null {
-  const concern = result.concerns.find((item) => describesVisibleDamage(item));
-  return concern ?? result.visibleObservations.find((item) => describesVisibleDamage(item)) ?? null;
+  return result.visibleObservations.find((item) => describesVisibleDamage(item))
+    ?? result.evidenceRegions.find((item) => describesVisibleDamage(item.observation))?.observation
+    ?? null;
 }
 
 export function summarize(value: string, limit: number) {

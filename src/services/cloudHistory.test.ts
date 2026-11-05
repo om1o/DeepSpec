@@ -1,5 +1,6 @@
 import { setActiveAccount } from "../lib/accountScope";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ConditionAssessment } from "../types";
 
 type SelectResult = { data: unknown; error: { message?: string } | null };
 
@@ -48,6 +49,13 @@ const inspection = {
   inspectedAt: "2026-09-20T12:00:00.000Z",
 };
 
+const conditionAssessment = (photoId: string): ConditionAssessment => ({
+  version: 1, observations: [{ id: "edge", text: "Orange flaking is visible.", photoIds: [photoId] }],
+  possibleCauses: [{ text: "Moisture exposure is possible, but unconfirmed.", observationIds: ["edge"] }],
+  unknowns: ["Depth and hidden condition are unknown."],
+  nextEvidence: { kind: "photo", request: "Photograph the reverse of the edge.", purpose: "Show the hidden surface.", photoIds: [photoId] },
+});
+
 describe("readCloudLookups", () => {
   beforeEach(() => {
     setActiveAccount("user-1");
@@ -82,6 +90,45 @@ describe("readCloudLookups", () => {
     expect(reopened.photos).toEqual(result.value.photos);
     expect(reopened.isolatedObjects).toEqual(result.value.isolatedObjects);
     expect(mocks.signedUrls).toHaveBeenCalledWith([`${base}original.jpg`, `${base}detail.jpg`, `${base}primary.png`, `${base}secondary.png`], 3600);
+  });
+
+  it.each(["detail", "photo-1", "other-scan-photo"])("validates restored condition references against the owned evidence bundle: %s", async (photoId) => {
+    const base = "user-1/scan-1/";
+    const assessment = conditionAssessment(photoId);
+    const bundle = { version: 1, photos: [
+      { id: "overview", label: "overview", capturedAt: "now", imagePath: `${base}original.jpg` },
+      { id: "detail", label: "close_up", capturedAt: "later", imagePath: `${base}detail.jpg` },
+    ] };
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, image_path: `${base}original.jpg`, evidence_bundle_json: bundle,
+      result_json: { partName: "Rocker panel", conditionAssessment: assessment }, inspection_json: inspection }], error: null });
+    mocks.signedUrls.mockImplementation(async (paths: string[]) => ({ data: paths.map((path) => ({ path, signedUrl: `https://images/${path}?signed=new` })), error: null }));
+    const { readCloudLookup } = await import("./cloudHistory");
+    const loaded = await readCloudLookup("scan-1");
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok || !loaded.value) throw new Error("expected cloud scan");
+    expect(loaded.value.inspection).toEqual(inspection);
+    expect(loaded.value.reviewStatus).toBe("confirmed");
+    expect(loaded.value.result?.partName).toBe("Rocker panel");
+    if (photoId === "detail") {
+      expect(loaded.value.result?.conditionAssessment).toEqual(assessment);
+      const { normalizeLookup, scanStateFromLookup } = await import("./storage");
+      expect(scanStateFromLookup(normalizeLookup(loaded.value)!).result?.conditionAssessment).toEqual(assessment);
+    } else expect(loaded.value.result).not.toHaveProperty("conditionAssessment");
+  });
+
+  it.each([true, false])("allows legacy photo-1 only when an original was restored (available: %s)", async (available) => {
+    const imagePath = "user-1/scan-1/original.jpg";
+    const assessment = conditionAssessment("photo-1");
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, image_path: available ? imagePath : null,
+      result_json: { partName: "Rocker panel", conditionAssessment: assessment }, inspection_json: inspection }], error: null });
+    mocks.signedUrls.mockResolvedValue({ data: [{ path: imagePath, signedUrl: "https://images/original.jpg?signed=new" }], error: null });
+    const { readCloudLookup } = await import("./cloudHistory");
+    const loaded = await readCloudLookup("scan-1");
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok || !loaded.value) throw new Error("expected legacy cloud scan");
+    expect(loaded.value.inspection).toEqual(inspection);
+    if (available) expect(loaded.value.result?.conditionAssessment).toEqual(assessment);
+    else expect(loaded.value.result).not.toHaveProperty("conditionAssessment");
   });
 
   it.each(["other-owner", "other-scan", "missing-image", "malformed"])("does not partially restore unsafe evidence: %s", async (kind) => {

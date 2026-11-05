@@ -2,6 +2,7 @@ import { getAIErrorDetails, identifyCapturedFrame, isAIRequestCanceled, runAI, s
 import { identifyOnDevice } from "./onDeviceIdentify";
 import { setActiveAccount } from "../lib/accountScope";
 import { compressImageDataUrl } from "../lib/utils";
+import type { ConditionAssessment, ScanPhoto } from "../types";
 
 vi.mock("./onDeviceIdentify", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./onDeviceIdentify")>();
@@ -48,6 +49,14 @@ const result = {
     },
   ],
 };
+
+const conditionAssessment = (photoId: string): ConditionAssessment => ({
+  version: 1,
+  observations: [{ id: "rust-edge", text: "Orange flaking is visible along the edge.", photoIds: [photoId], regionLabel: "lower edge" }],
+  possibleCauses: [{ text: "Moisture exposure is possible; its cause is unconfirmed.", observationIds: ["rust-edge"] }],
+  unknowns: ["Depth and the condition behind the panel are unknown."],
+  nextEvidence: { kind: "photo", request: "Photograph the back of this edge.", purpose: "Check whether the affected area is visible from behind.", photoIds: [photoId] },
+});
 
 describe("aiService", () => {
   beforeEach(() => {
@@ -190,6 +199,49 @@ describe("aiService", () => {
     expect(body.photos).toEqual(photos.map(({ id, label, imageBase64 }) => ({ id, label, imageBase64 })));
     expect(body).not.toHaveProperty("imageBase64");
     expect(body).not.toHaveProperty("imageBase64_2");
+  });
+
+  it.each(["detail", "photo-1", "unsubmitted-angle"])("validates condition references against the submitted group: %s", async (photoId) => {
+    const photos: ScanPhoto[] = ["overview", "detail"].map((id) => ({ id, label: id === "overview" ? "overview" : "close_up",
+      imageBase64: "data:image/jpeg;base64,dGVzdA==", capturedAt: "2026-11-05T00:00:00.000Z" }));
+    const assessment = conditionAssessment(photoId);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ result: { ...result, conditionAssessment: assessment } }), { status: 200 }));
+    const identified = await identifyCapturedFrame(photos[0], undefined, undefined, { photos });
+    expect(identified.partName).toBe(result.partName);
+    if (photoId === "detail") expect(identified.conditionAssessment).toEqual(assessment);
+    else expect(identified).not.toHaveProperty("conditionAssessment");
+  });
+
+  it.each([
+    { second: false, photoId: "photo-1", valid: true },
+    { second: false, photoId: "photo-2", valid: false },
+    { second: true, photoId: "photo-2", valid: true },
+  ])("keeps legacy condition reference $photoId only when supplied (second photo: $second)", async ({ second, photoId, valid }) => {
+    const frame = { imageBase64: "data:image/jpeg;base64,dGVzdA==", capturedAt: "2026-11-05T00:00:00.000Z" };
+    const assessment = conditionAssessment(photoId);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ result: { ...result, conditionAssessment: assessment } }), { status: 200 }));
+    const identified = await identifyCapturedFrame(frame, second ? frame : undefined);
+    if (valid) expect(identified.conditionAssessment).toEqual(assessment);
+    else expect(identified).not.toHaveProperty("conditionAssessment");
+  });
+
+  it("drops the whole optional assessment with a dangling cause but retains the legacy response", async () => {
+    const assessment = { ...conditionAssessment("photo-1"), possibleCauses: [{ text: "Possible moisture exposure", observationIds: ["missing-observation"] }] };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ result: { ...result, conditionAssessment: assessment } }), { status: 200 }));
+    const identified = await identifyCapturedFrame({ imageBase64: "data:image/jpeg;base64,dGVzdA==", capturedAt: "now" });
+    expect(identified).toEqual(result);
+  });
+
+  it("does not ground an on-device fallback in the second photo it never received", async () => {
+    vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "true");
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network down"));
+    vi.mocked(identifyOnDevice).mockReset().mockResolvedValue({ ...result, conditionAssessment: conditionAssessment("photo-2") } as never);
+    const frame = { imageBase64: "data:image/jpeg;base64,dGVzdA==", capturedAt: "now" };
+    const identified = await identifyCapturedFrame(frame, frame);
+    expect(identified.partName).toBe(result.partName);
+    expect(identified).not.toHaveProperty("conditionAssessment");
+    expect(identifyOnDevice).toHaveBeenCalledWith(frame);
   });
 
   it("does not drop angles into a single-photo offline fallback", async () => {
@@ -499,6 +551,28 @@ describe("aiService", () => {
     expect(fetchSpy.mock.calls[0]).toEqual([lookup.frame.imageBase64, expect.objectContaining({ credentials: "omit" })]);
     expect(fetchSpy.mock.calls[1][0]).toBe("/api/chat");
     expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body))).toHaveProperty("imageBase64", "data:image/jpeg;base64,/9j/AA==");
+  });
+
+  it("keeps photo-linked appearance, unconfirmed causes and unknown severity in follow-up context", async () => {
+    const photos = [{ id: "detail", label: "close_up" as const, imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00Z" }];
+    const assessment = {
+      version: 1 as const,
+      observations: [{ id: "o1", text: "Short radial lines are visible.", photoIds: ["detail"] }],
+      possibleCauses: [{ text: "Heat checking is one possibility.", observationIds: ["o1"] }],
+      unknowns: ["The photos do not establish depth or severity."],
+      nextEvidence: { kind: "professional_inspection" as const, request: "Inspect both faces directly.", purpose: "Resolve whether the lines extend through the disc." },
+    };
+    const lookup = { frame: photos[0], photos, result: { ...result, conditionAssessment: assessment }, scanCategory: "brake", trainingLabel: "Rotor", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "Depth remains unknown." }), { status: 200 }));
+    await sendFollowUpDetails(lookup, "What does the second view establish?");
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.userMessage).toContain("Observed appearance [o1] in photos [detail]: Short radial lines are visible.");
+    expect(body.userMessage).toContain("Unconfirmed possible cause, based on [o1]: Heat checking is one possibility.");
+    expect(body.userMessage).toContain(assessment.unknowns[0]);
+    expect(body.userMessage).toContain(assessment.nextEvidence.purpose);
+    expect(body.userMessage).toContain("not human confirmation");
+    expect(body.userMessage).toContain("User question: What does the second view establish?");
+    expect(body.userMessage.length).toBeLessThanOrEqual(3000);
   });
 
   it("does not mix an old cloud photo with the new account's chat token after a switch", async () => {

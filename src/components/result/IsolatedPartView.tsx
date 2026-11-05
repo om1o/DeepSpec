@@ -18,6 +18,7 @@ type IsolatedPartViewProps = {
   sceneChips?: SceneChip[];
   objects?: IsolatedObject[];
   variant: "scanner" | "result";
+  initialView?: PhotoView;
   isVisible?: boolean;
   /** Controlled multi-object focus (lifted to the parent so a detail card can react). */
   focusedObjectIndex?: number | null;
@@ -60,11 +61,12 @@ function IsolatedPartViewContent({
   focusedObjectIndex,
   onFocusObject,
   onCorrectFocus,
+  initialView = "cutout",
 }: IsolatedPartViewProps) {
   const [failedCutoutSource, setFailedCutoutSource] = useState<string | null>(null);
   const [viewState, setViewState] = useState<{ frame: string; view: PhotoView } | null>(null);
   const [editingFrame, setEditingFrame] = useState<string | null>(null);
-  const view = viewState?.frame === frameBase64 ? viewState.view : "cutout";
+  const view = viewState?.frame === frameBase64 ? viewState.view : initialView;
   const editing = editingFrame === frameBase64;
   const setView = (next: PhotoView) => setViewState({ frame: frameBase64, view: next });
 
@@ -105,6 +107,7 @@ function IsolatedPartViewContent({
         focusedIndex={focusedObjectIndex}
         onFocusChange={onFocusObject}
         onCorrectFocus={onCorrectFocus}
+        initialView={initialView}
       />
     );
   }
@@ -311,6 +314,7 @@ function LensOverview({
   focusedIndex: controlledFocus,
   onFocusChange,
   onCorrectFocus,
+  initialView = "cutout",
 }: {
   frameBase64: string;
   objects: IsolatedObject[];
@@ -319,6 +323,7 @@ function LensOverview({
   focusedIndex?: number | null;
   onFocusChange?: (index: number | null) => void;
   onCorrectFocus?: (box: VisualFocusBox, objectIndex: number | null) => void;
+  initialView?: PhotoView;
 }) {
   // Controlled when the parent supplies onFocusChange (scanner variant, which drives a detail card);
   // otherwise fall back to local state (e.g. the saved Result page).
@@ -327,7 +332,7 @@ function LensOverview({
   const [viewState, setViewState] = useState<{ frame: string; view: PhotoView } | null>(null);
   const [editTarget, setEditTarget] = useState<{ frame: string; index: number } | null>(null);
   const [failedCutouts, setFailedCutouts] = useState<string[]>([]);
-  const view = viewState?.frame === frameBase64 ? viewState.view : "cutout";
+  const view = viewState?.frame === frameBase64 ? viewState.view : initialView;
   const setView = (next: PhotoView) => setViewState({ frame: frameBase64, view: next });
   const focusedIndex = controlled ? (controlledFocus ?? null) : localFocus?.frame === frameBase64 ? localFocus.index : null;
   const setFocused = (index: number | null) => {

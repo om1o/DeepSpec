@@ -1,4 +1,5 @@
-import { IDENTIFY_PROMPT, IDENTIFY_PROMPT_VERSION, IDENTIFY_PIPELINE_VERSION } from "../src/services/systemPrompts.js";
+import { CONDITION_ASSESSMENT_PROMPT, IDENTIFY_PROMPT, IDENTIFY_PROMPT_VERSION, IDENTIFY_PIPELINE_VERSION } from "../src/services/systemPrompts.js";
+import { normalizeConditionAssessment } from "../src/lib/conditionAssessment.js";
 import { randomUUID } from "node:crypto";
 import { observeIdentification } from "./identifyDiagnostics.shared.js";
 import {
@@ -90,7 +91,7 @@ const CREDENTIALED_PROVIDER_HOSTS: Record<"gemini" | "groq" | "huggingface" | "h
 
 const GEMINI_IDENTIFY_PROMPT = [
   "Identify the main visible vehicle part or damage from the photo.",
-  `Return only JSON with: partName, confidence, confidenceScore, confidenceRange, confirmationNeed, scanCategory, whatItDoes, visibleObservations, evidence, evidenceRegions, sceneObjects, concerns, candidateMatches, primaryPart, candidateParts, possibleVehicleContexts, measurements, requiredNextEvidence, fitmentConfidence, safetyTriage, isSafetyCritical, nextAction, needsBetterPhoto, sourceLinks.`,
+  `Return only JSON with: partName, confidence, confidenceScore, confidenceRange, confirmationNeed, scanCategory, whatItDoes, visibleObservations, evidence, evidenceRegions, sceneObjects, concerns, conditionAssessment, candidateMatches, primaryPart, candidateParts, possibleVehicleContexts, measurements, requiredNextEvidence, fitmentConfidence, safetyTriage, isSafetyCritical, nextAction, needsBetterPhoto, sourceLinks.`,
   "sceneObjects: list every distinct visible object including background items (posters, tools, hands, other parts); set primary true only for the main part; return [] when only the main subject is visible.",
   `scanCategory must be one of: ${SCAN_CATEGORIES.join(", ")}.`,
   "When visible exterior damage exists, name the damage type explicitly in visibleObservations, concerns, or evidence: dent, scratch, cracked, broken/damaged, missing/detached, paint chip, corrosion/rust. Do not say no visible damage when any of those are visible.",
@@ -98,13 +99,15 @@ const GEMINI_IDENTIFY_PROMPT = [
   "For complete engines, prefer category engine unless visible active leaking fuel/fluid or a specific safety system is the main subject.",
   "Use leak only for visible active fluid, wet staining, dripping, pooling, oil, coolant, fuel, or other fluid evidence.",
   "Keep text short for a phone UI.",
+  CONDITION_ASSESSMENT_PROMPT,
 ].join(" ");
 
 const OLLAMA_IDENTIFY_PROMPT = [
   "Identify the main visible car part or car damage.",
-  "Return only JSON with partName, confidence, scanCategory, visibleObservations, evidence, concerns, and nextAction.",
+  "Return only JSON with partName, confidence, scanCategory, visibleObservations, evidence, concerns, conditionAssessment, and nextAction.",
   "confidence: high, medium, or low.",
   `scanCategory: ${SCAN_CATEGORIES.join(", ")}.`,
+  CONDITION_ASSESSMENT_PROMPT,
 ].join(" ");
 
 export function validateIdentifyRequest(body: unknown, env?: Record<string, string | undefined>): IdentifyResponse | null {
@@ -427,7 +430,7 @@ async function createGeminiIdentifyAttempt(
     return { model, response: invalidResponse, rateLimited: false };
   }
 
-  const result = parseIdentificationResult(text);
+  const result = parseIdentificationResult(text, parsed.photos.map((photo) => photo.id));
   if (!result) {
     const invalidResponse = errorResponse(502, "invalid_response", "Gemini returned JSON that Deep Spec could not read.");
     logIdentifyAttempt("gemini", model, startedAt, invalidResponse, fallbackAvailable);
@@ -503,7 +506,7 @@ async function createGeminiRescueIdentifyResponse(
   }
 
   const text = extractGeminiText(responseBody);
-  const result = text ? parseIdentificationResult(text) : null;
+  const result = text ? parseIdentificationResult(text, parsed.photos.map((photo) => photo.id)) : null;
   if (!result) {
     const invalidResponse = errorResponse(502, "invalid_response", "Gemini returned JSON that Deep Spec could not read.");
     logIdentifyAttempt("gemini", model, startedAt, invalidResponse, false);
@@ -731,7 +734,7 @@ async function createBackendIdentifyResponse(
   }
 
   const text = extractOpenAiChatText(responseBody);
-  const result = text ? parseIdentificationResult(text) : null;
+  const result = text ? parseIdentificationResult(text, parsed.photos.map((photo) => photo.id)) : null;
   if (!result) {
     const invalidResponse = errorResponse(502, "invalid_response", `${label} returned JSON that Deep Spec could not read.`);
     logIdentifyAttempt(provider, model, startedAt, invalidResponse, false);
@@ -1010,7 +1013,7 @@ async function createOllamaIdentifyResponse(
   }
 
   const text = extractOllamaText(responseBody);
-  const result = text ? parseOllamaIdentificationResult(text) : null;
+  const result = text ? parseOllamaIdentificationResult(text, parsed.photos.map((photo) => photo.id)) : null;
   if (!result) {
     const invalidResponse = errorResponse(502, "invalid_response", "Ollama returned JSON that Deep Spec could not read.");
     logIdentifyAttempt("ollama", model, startedAt, invalidResponse, false);
@@ -1205,9 +1208,10 @@ function fetchGeminiRescueIdentify(
         parts: [{
           text: [
             "Identify the main visible vehicle part from the image.",
-            `Return only compact JSON with partName, confidence, confidenceScore, scanCategory, whatItDoes, visibleObservations, evidence, concerns, isSafetyCritical, safetyTriage, nextAction, needsBetterPhoto.`,
+            `Return only compact JSON with partName, confidence, confidenceScore, scanCategory, whatItDoes, visibleObservations, evidence, concerns, conditionAssessment, isSafetyCritical, safetyTriage, nextAction, needsBetterPhoto.`,
             `scanCategory must be one of: ${SCAN_CATEGORIES.join(", ")}.`,
             "Use category engine for a complete engine assembly unless active fluid leakage is visible.",
+            CONDITION_ASSESSMENT_PROMPT,
           ].join(" "),
         }],
       },
@@ -1450,17 +1454,17 @@ function extractGeminiText(responseBody: JsonObject | null) {
     .trim();
 }
 
-function parseIdentificationResult(text: string): IdentificationResult | null {
-  if (containsProviderDiagnostic(text)) {
-    return null;
-  }
-
+function parseIdentificationResult(text: string, allowedPhotoIds: readonly string[]): IdentificationResult | null {
   try {
-    const parsed = JSON.parse(extractJsonObjectText(text)) as unknown;
-    if (containsProviderDiagnostic(parsed)) {
+    const jsonText = extractJsonObjectText(text);
+    const parsed = JSON.parse(jsonText) as unknown;
+    // Malformed optional evidence must not invalidate an otherwise usable result.
+    const diagnosticValue = isRecord(parsed) ? { ...parsed } : parsed;
+    if (isRecord(diagnosticValue)) delete diagnosticValue.conditionAssessment;
+    if (containsProviderDiagnostic(diagnosticValue) || containsProviderDiagnostic(text.replace(jsonText, ""))) {
       return null;
     }
-    return toIdentificationResult(parsed);
+    return toIdentificationResult(parsed, allowedPhotoIds);
   } catch {
     return null;
   }
@@ -1498,9 +1502,14 @@ function extractJsonObjectText(text: string) {
   return start >= 0 && end > start ? trimmed.slice(start, end + 1) : trimmed;
 }
 
-function toIdentificationResult(value: unknown): IdentificationResult | null {
+function toIdentificationResult(value: unknown, allowedPhotoIds: readonly string[]): IdentificationResult | null {
+  const conditionAssessment = isRecord(value)
+    ? normalizeConditionAssessment(value.conditionAssessment, allowedPhotoIds)
+    : undefined;
   if (isIdentificationResult(value)) {
-    return value;
+    const result = { ...value };
+    delete result.conditionAssessment;
+    return { ...result, ...(conditionAssessment ? { conditionAssessment } : {}) };
   }
 
   if (!isRecord(value)) {
@@ -1554,6 +1563,7 @@ function toIdentificationResult(value: unknown): IdentificationResult | null {
       ? String(base.whatItDoes ?? value.whatItDoes)
       : "This is a visible vehicle component that should be verified with vehicle-specific context before ordering or repair.",
     visibleObservations,
+    ...(conditionAssessment ? { conditionAssessment } : {}),
     evidenceRegions: coerceEvidenceRegions(base.evidenceRegions ?? value.evidenceRegions, partName, visibleObservations),
     sceneObjects: coerceSceneObjects(value.sceneObjects),
     concerns,
@@ -1875,8 +1885,8 @@ function isOptionalFitmentConfidence(value: unknown) {
   return value === "not_applicable" || value === "needs_vehicle_context" || value === "possible" || value === "supported";
 }
 
-function parseOllamaIdentificationResult(text: string): IdentificationResult | null {
-  const fullResult = parseIdentificationResult(text);
+function parseOllamaIdentificationResult(text: string, allowedPhotoIds: readonly string[]): IdentificationResult | null {
+  const fullResult = parseIdentificationResult(text, allowedPhotoIds);
   if (fullResult) {
     return fullResult;
   }
@@ -1892,6 +1902,7 @@ function parseOllamaIdentificationResult(text: string): IdentificationResult | n
     const visibleObservations = isStringArray(parsed.visibleObservations) && parsed.visibleObservations.length > 0
       ? parsed.visibleObservations
       : [`The local vision model identified ${partName} as the main visible item.`];
+    const conditionAssessment = normalizeConditionAssessment(parsed.conditionAssessment, allowedPhotoIds);
 
     return {
       partName,
@@ -1900,6 +1911,7 @@ function parseOllamaIdentificationResult(text: string): IdentificationResult | n
       candidateMatches: [],
       whatItDoes: `${partName} is the main item the local vision model could identify in this scan.`,
       visibleObservations,
+      ...(conditionAssessment ? { conditionAssessment } : {}),
       evidenceRegions: [
         {
           label: partName,
@@ -2105,6 +2117,9 @@ function normalizeIdentificationResult(
   const candidateMatches = normalizeCandidateMatches(result, datasetMatches, partName, resolvedScanCategory);
   const evidenceRegions = normalizeEvidenceRegions(result.evidenceRegions, visibleObservations, cleanEvidence, partName);
   const sourceLinks = normalizeSourceLinks(result.sourceLinks, datasetMatches, partName);
+  const conditionEvidenceRequest = result.conditionAssessment?.nextEvidence?.request;
+  const requiredNextEvidence = normalizeRequiredNextEvidence(result.requiredNextEvidence, confirmationNeed, needsBetterPhoto);
+  const nextAction = normalizeNextAction(result.nextAction, safety.safetyTriage, needsBetterPhoto, partName);
 
   return {
     ...result,
@@ -2117,7 +2132,9 @@ function normalizeIdentificationResult(
     candidateParts: normalizeCandidateParts(result.candidateParts, candidateMatches, partName, confidence, resolvedScanCategory),
     possibleVehicleContexts: normalizePossibleVehicleContexts(result.possibleVehicleContexts),
     measurements: normalizeMeasurements(result.measurements, measurementContext),
-    requiredNextEvidence: normalizeRequiredNextEvidence(result.requiredNextEvidence, confirmationNeed, needsBetterPhoto),
+    requiredNextEvidence: conditionEvidenceRequest
+      ? [conditionEvidenceRequest, ...requiredNextEvidence.filter((item) => item !== conditionEvidenceRequest)]
+      : requiredNextEvidence,
     fitmentConfidence: normalizeFitmentConfidence(result.fitmentConfidence, result.possibleVehicleContexts),
     scanCategory: resolvedScanCategory,
     candidateMatches,
@@ -2127,7 +2144,9 @@ function normalizeIdentificationResult(
     concerns: cleanList(result.concerns),
     evidence: cleanEvidence,
     sourceLinks,
-    nextAction: normalizeNextAction(result.nextAction, safety.safetyTriage, needsBetterPhoto, partName),
+    nextAction: conditionEvidenceRequest && !safety.isSafetyCritical
+      ? conditionEvidenceRequest
+      : nextAction,
     safetyTriage: safety.safetyTriage,
     isSafetyCritical: safety.isSafetyCritical,
     needsBetterPhoto,
@@ -3148,10 +3167,6 @@ function buildOcrContext(text: string) {
 
 function ensureProfessionalNextAction(nextAction: string) {
   const cleaned = cleanText(nextAction, "Check this safety item before driving or repairing.");
-  if (/mechanic|professional|shop/i.test(cleaned)) {
-    return "Check this safety item before driving or repairing.";
-  }
-
   return /before driving|before repairing|do not drive|check this safety item/i.test(cleaned)
     ? cleaned
     : `${cleaned} Check this safety item before driving or repairing.`;

@@ -13,6 +13,7 @@ import { IsolatedPartView } from "../components/result/IsolatedPartView";
 import { PhotoEvidenceStrip } from "../components/result/PhotoEvidenceStrip";
 import { ScanSources } from "../components/result/ScanSources";
 import { PartInspectionForm } from "../components/result/PartInspectionForm";
+import { ConditionEvidenceReview } from "../components/result/ConditionEvidenceReview";
 import { TrainingConsentPanel } from "../components/result/TrainingConsentPanel";
 import { IntakeDraft } from "../components/result/IntakeDraft";
 import { ScanDebugOverlay } from "../components/result/ScanDebugOverlay";
@@ -48,6 +49,8 @@ function ResultView({ id }: { id: string | undefined }) {
   const [restoreAttempt, setRestoreAttempt] = useState(0);
   const [liveScanState, setLiveScanState] = useState<ScanAnalysisState | null>(null);
   const [selectedPhotoId, setSelectedPhotoId] = useState<string>();
+  const [evidenceViewRequest, setEvidenceViewRequest] = useState(0);
+  const photoCanvasRef = useRef<HTMLDivElement>(null);
   const [selectionStatus, setSelectionStatus] = useState<string | null>(null);
   const [selectionRetry, setSelectionRetry] = useState<Lookup | null>(null);
   const selectionSyncGenerationRef = useRef(0);
@@ -351,10 +354,12 @@ function ResultView({ id }: { id: string | undefined }) {
               <Link to="/scan" className="ds-workbench-back">Back</Link>
             </nav>
           </header>
-          <PhotoEvidenceStrip photos={scanState?.photos} selectedId={selectedPhotoId} onSelect={setSelectedPhotoId} />
-          <div data-testid="result-photo-canvas" className="relative min-h-0 flex-1">
+          <PhotoEvidenceStrip photos={scanState?.photos} selectedId={selectedPhotoId} onSelect={(photoId) => { setSelectedPhotoId(photoId); setEvidenceViewRequest(0); }} />
+          <div ref={photoCanvasRef} tabIndex={-1} aria-label="Selected inspection photo" data-testid="result-photo-canvas" className="relative min-h-0 flex-1">
             {displayFrame?.imageBase64 ? (
               <IsolatedPartView
+                key={evidenceViewRequest}
+                initialView={evidenceViewRequest ? "original" : undefined}
                 frameBase64={displayFrame.imageBase64}
                 isolatedImageBase64={isOverviewPhoto ? scanState?.isolatedImageBase64 : undefined}
                 focusBox={isOverviewPhoto ? scanState?.focusBox : undefined}
@@ -439,6 +444,12 @@ function ResultView({ id }: { id: string | undefined }) {
               onRetrySave={retryFeedbackSave}
             />
           ) : null}
+          {inspectionLookup ? <ConditionEvidenceReview lookup={inspectionLookup} onSelectPhoto={(photoId) => {
+            setSelectedPhotoId(photoId);
+            setEvidenceViewRequest((request) => request + 1);
+            photoCanvasRef.current?.focus({ preventScroll: true });
+            photoCanvasRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+          }} /> : null}
           {inspectionLookup ? <PartInspectionForm key={inspectionLookup.id} lookup={inspectionLookup} onSaved={(saved) => setLookup({
             ...saved,
             ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
@@ -719,8 +730,9 @@ function AnalysisResult({
       </section>
 
       {showSafetyWarning ? (
-        <section className="rounded-[22px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-4">
+        <section aria-label="Safety action" className="rounded-[22px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-4">
           <p className="text-sm font-extrabold text-[var(--ds-warn-ink)]">Professional check needed</p>
+          <p className="mt-2 text-sm font-semibold leading-6 text-[var(--ds-fg-2)]">{result.nextAction.trim() || "Check this safety item before driving or repairing."}</p>
           <p className="mt-2 text-sm leading-6 text-[var(--ds-fg-2)]">
             Verify before driving or repairing. The scan reads visible clues; this category affects safety.
           </p>

@@ -1,6 +1,7 @@
 import { getAccountScope, isAccountScopeCurrent } from "../lib/accountScope";
 import { getAuthClient, isSupabaseAuthConfigured } from "./auth";
 import { normalizePartInspection } from "../lib/partInspection";
+import { normalizeConditionAssessment } from "../lib/conditionAssessment";
 import { evidencePaths, parseEvidenceBundle, restoreEvidenceBundle } from "./visualEvidence";
 import type {
   CandidateMatch,
@@ -290,9 +291,12 @@ function mapCloudRowToLookup(
   const createdAt = isString(row.created_at) ? row.created_at : new Date().toISOString();
   const imagePath = isString(row.image_path) ? row.image_path : "";
   const scanCategory = parseScanCategory(row.scan_category);
-  const result = parseIdentificationResult(row.result_json, scanCategory);
   const correction = isString(row.correction) ? row.correction : null;
   const evidence = parseEvidenceBundle(row.evidence_bundle_json, userId, String(row.local_id));
+  const restoredEvidence = evidence ? restoreEvidenceBundle(evidence, signedImageMap) : {};
+  const photoIds = restoredEvidence.photos?.map((photo) => photo.id)
+    ?? (signedImageMap.has(imagePath) ? ["photo-1"] : []);
+  const result = parseIdentificationResult(row.result_json, scanCategory, photoIds);
 
   return {
     id: isString(row.local_id) ? row.local_id : `cloud-${index}`,
@@ -303,7 +307,7 @@ function mapCloudRowToLookup(
       imageBase64: signedImageMap.get(imagePath) ?? FALLBACK_IMAGE,
       capturedAt: isString(row.captured_at) ? row.captured_at : createdAt,
     },
-    ...(evidence ? restoreEvidenceBundle(evidence, signedImageMap) : {}),
+    ...restoredEvidence,
     analyzedAt: isString(row.analyzed_at) ? row.analyzed_at : undefined,
     errorCode: isString(row.error_code) ? row.error_code : undefined,
     errorMessage: isString(row.error_message) ? row.error_message : undefined,
@@ -332,7 +336,7 @@ function mapCloudRowToLookup(
   };
 }
 
-function parseIdentificationResult(value: unknown, fallbackCategory: ScanCategory): IdentificationResult | undefined {
+function parseIdentificationResult(value: unknown, fallbackCategory: ScanCategory, allowedPhotoIds: readonly string[]): IdentificationResult | undefined {
   if (!isObject(value)) {
     return undefined;
   }
@@ -342,6 +346,7 @@ function parseIdentificationResult(value: unknown, fallbackCategory: ScanCategor
     return undefined;
   }
 
+  const conditionAssessment = normalizeConditionAssessment(value.conditionAssessment, allowedPhotoIds);
   return {
     partName,
     confidence: parseConfidence(value.confidence),
@@ -359,6 +364,7 @@ function parseIdentificationResult(value: unknown, fallbackCategory: ScanCategor
     whatItDoes: isString(value.whatItDoes) ? value.whatItDoes : "",
     visibleObservations: parseStringList(value.visibleObservations, 8, 220),
     evidenceRegions: parseEvidenceRegions(value.evidenceRegions),
+    ...(conditionAssessment ? { conditionAssessment } : {}),
     sceneObjects: parseSceneObjects(value.sceneObjects),
     concerns: parseStringList(value.concerns, 8, 220),
     safetyTriage: parseSafetyTriage(value.safetyTriage),

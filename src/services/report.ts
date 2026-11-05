@@ -1,17 +1,21 @@
 import { getLocalDateStamp } from "../lib/utils";
 import { formatIntakeDraft } from "../lib/intakeDraft";
+import { buildConditionHandoff, formatConditionHandoff } from "../lib/conditionHandoff";
 import type { CandidateMatch, EvidenceRegion, Lookup, SourceLink } from "../types";
 
 export function buildScanReport(lookup: Lookup) {
   const result = lookup.result;
   const datasetEvidence = getDatasetEvidence(result?.evidence ?? []);
   const detectedText = getDetectedTextEvidence(result?.evidence ?? []);
+  const condition = buildConditionHandoff(lookup);
+  const conditionText = formatConditionHandoff(lookup);
   const lines = [
     "Deep Spec Scan Report",
     `Created: ${formatDate(lookup.createdAt)}`,
     `Captured: ${formatDate(lookup.frame.capturedAt)}`,
     "",
     formatIntakeDraft(lookup),
+    ...(conditionText ? ["", conditionText] : []),
     "",
     "AI scan summary:",
     `${result?.partName ?? "Unidentified part"} - ${result?.confidence ?? "unknown"} confidence - ${lookup.scanCategory}`,
@@ -51,8 +55,9 @@ export function buildScanReport(lookup: Lookup) {
     "Ranked sources:",
     formatSourceLinks(result?.sourceLinks),
     "",
-    "Next action:",
-    result?.nextAction ?? "Review the saved evidence and unresolved checks before deciding on another scan or inspection.",
+    ...(condition.nextEvidence && (result?.isSafetyCritical || result?.safetyTriage === "needs_professional")
+      ? ["Safety action:", result.nextAction]
+      : !condition.nextEvidence ? ["Next action:", result?.nextAction ?? "Review the saved evidence and unresolved checks before deciding on another scan or inspection."] : []),
     "",
     "Human inspection (self-reported, separate from AI):",
     ...(lookup.inspection ? [
