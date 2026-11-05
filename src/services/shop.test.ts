@@ -1,4 +1,4 @@
-import { accountStorageKey } from "../lib/accountScope";
+import { accountStorageKey, getAccountScope, setActiveAccount } from "../lib/accountScope";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createLookup, LOOKUPS_STORAGE_KEY, updateLookup } from "./storage";
 import {
@@ -14,6 +14,9 @@ import {
   searchShopJobs,
   setShopLearningOptIn,
   updateShopJob,
+  readShopJob,
+  subscribeShopJobs,
+  SHOP_JOBS_STORAGE_KEY,
 } from "./shop";
 import type { ScanAnalysisState } from "../types";
 import { confirmVehicleContextField, isVehicleFieldConfirmed } from "../lib/vehicleContext";
@@ -30,6 +33,37 @@ const baseJob = {
 describe("shop service", () => {
   beforeEach(() => {
     localStorage.clear();
+  });
+
+  it("distinguishes an absent job from unreadable owner storage without creating an organization", () => {
+    expect(readShopJob("missing")).toEqual({ ok: true, value: null }); expect(localStorage.length).toBe(0);
+    const key = accountStorageKey(SHOP_JOBS_STORAGE_KEY);
+    for (const raw of ["{broken", "{}", JSON.stringify([{ id: "bad", scanIds: [] }])]) {
+      localStorage.setItem(key, raw); expect(readShopJob("missing")).toMatchObject({ ok: false, value: null }); expect(localStorage.getItem(key)).toBe(raw);
+    }
+  });
+  it("rejects duplicate job identities and non-string scan references rather than normalizing them away", () => {
+    const job = createShopJob(baseJob).value!; const key = accountStorageKey(SHOP_JOBS_STORAGE_KEY);
+    localStorage.setItem(key, JSON.stringify([job, job])); expect(readShopJob(job.id).ok).toBe(false);
+    localStorage.setItem(key, JSON.stringify([{ ...job, scanIds: [123] }])); expect(readShopJob(job.id).ok).toBe(false);
+  });
+  it("reads only the current account and rejects an old generation after switching back", () => {
+    const scope = getAccountScope(); const job = createShopJob(baseJob).value!;
+    expect(readShopJob(job.id, scope)).toMatchObject({ ok: true, value: { id: job.id } });
+    setActiveAccount("different-shop-owner"); expect(readShopJob(job.id, scope).ok).toBe(false); expect(readShopJob(job.id)).toEqual({ ok: true, value: null });
+    setActiveAccount(scope.userId); expect(readShopJob(job.id, scope).ok).toBe(false); expect(readShopJob(job.id).ok).toBe(true);
+  });
+  it("notifies successful job writes only for the captured owner and stops after unsubscribe", () => {
+    const job = createShopJob(baseJob).value!; const scope = getAccountScope(); const listener = vi.fn(); const stop = subscribeShopJobs(listener, scope);
+    updateShopJob(job.id, { notes: "Saved change" }); expect(listener).toHaveBeenCalledTimes(1);
+    const ownKey = accountStorageKey(SHOP_JOBS_STORAGE_KEY);
+    window.dispatchEvent(new StorageEvent("storage", { key: ownKey, storageArea: localStorage })); expect(listener).toHaveBeenCalledTimes(2);
+    window.dispatchEvent(new StorageEvent("storage", { key: "another-key", storageArea: localStorage })); expect(listener).toHaveBeenCalledTimes(2);
+    const failure = vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => { throw new Error("Full"); });
+    expect(updateShopJob(job.id, { notes: "Unsaved" }).ok).toBe(false); expect(listener).toHaveBeenCalledTimes(2); failure.mockRestore();
+    setActiveAccount("different-shop-owner"); window.dispatchEvent(new StorageEvent("storage", { key: ownKey, storageArea: localStorage })); expect(listener).toHaveBeenCalledTimes(2);
+    setActiveAccount(scope.userId); updateShopJob(job.id, { notes: "New generation" }); expect(listener).toHaveBeenCalledTimes(2);
+    stop(); updateShopJob(job.id, { notes: "After cleanup" }); expect(listener).toHaveBeenCalledTimes(2);
   });
 
   it("requires complete technician intake before creating a job", () => {
