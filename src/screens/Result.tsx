@@ -6,9 +6,11 @@ import { BrandLockup } from "../components/BrandLockup";
 import { useEffect, useRef, useState } from "react";
 import { AIServiceError, getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
 import { readCloudLookup } from "../services/cloudHistory";
-import { syncAnalysisFailuresToCloud } from "../services/cloudSync";
+import { getCloudSyncStatus, syncAnalysisFailuresToCloud, syncLookupToCloud } from "../services/cloudSync";
+import { correctScanSelection } from "../lib/visualSelection";
 import Button from "../components/ui/Button";
 import { IsolatedPartView } from "../components/result/IsolatedPartView";
+import { PhotoEvidenceStrip } from "../components/result/PhotoEvidenceStrip";
 import { ScanSources } from "../components/result/ScanSources";
 import { PartInspectionForm } from "../components/result/PartInspectionForm";
 import { TrainingConsentPanel } from "../components/result/TrainingConsentPanel";
@@ -24,8 +26,8 @@ import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } fro
 import { buildScanReport, downloadTextFile, getScanReportFilename } from "../services/report";
 import { recordManualCorrection } from "../services/scanQualityMetrics";
 import { getShopJob } from "../services/shop";
-import { createLookup, getLookup, normalizeLookup, recordLookupAnalysisFailure, saveExistingLookup, scanStateFromLookup, updateLookup, updateLookupResult, withRetriedLookupResult } from "../services/storage";
-import type { CapturedFrame, IdentificationResult, Lookup, Rating, ScanAnalysisState, ShopJob as ShopJobRecord } from "../types";
+import { createLookup, getLookup, normalizeLookup, recordLookupAnalysisFailure, saveExistingLookup, scanStateFromLookup, updateLookup, updateLookupResult, updateLookupVisualSelection, withRetriedLookupResult } from "../services/storage";
+import type { CapturedFrame, IdentificationResult, Lookup, Rating, ScanAnalysisState, VisualFocusBox, ShopJob as ShopJobRecord } from "../types";
 
 type ResultRestoreStatus = "ready" | "loading" | "not-found" | "error";
 
@@ -45,6 +47,10 @@ function ResultView({ id }: { id: string | undefined }) {
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [restoreAttempt, setRestoreAttempt] = useState(0);
   const [liveScanState, setLiveScanState] = useState<ScanAnalysisState | null>(null);
+  const [selectedPhotoId, setSelectedPhotoId] = useState<string>();
+  const [selectionStatus, setSelectionStatus] = useState<string | null>(null);
+  const [selectionRetry, setSelectionRetry] = useState<Lookup | null>(null);
+  const selectionSyncGenerationRef = useRef(0);
   const inspectionBase = historyLookup && historyLookup.id === id
     ? (lookup ? mergeCloudLookup(lookup, historyLookup) : historyLookup)
     : lookup;
@@ -54,6 +60,9 @@ function ResultView({ id }: { id: string | undefined }) {
   const [retrySaveLabel, setRetrySaveLabel] = useState("Retry saving feedback");
   const scanState = liveScanState ?? (lookup ? scanStateFromLookup(inspectionBase ?? lookup) : (id ? null : getScanState(routeState)));
   const frame = scanState?.frame ?? (id ? undefined : readLatestCapturedFrame());
+  const selectedPhoto = scanState?.photos?.find((photo) => photo.id === selectedPhotoId);
+  const displayFrame = selectedPhoto ?? frame;
+  const isOverviewPhoto = !selectedPhoto || selectedPhoto.id === scanState?.photos?.[0]?.id;
   const capturedAt = frame?.capturedAt ? new Date(frame.capturedAt).toLocaleString() : null;
   const storageWarning = scanState?.storageWarning;
   const shopJob = scanState?.jobId ? getShopJob(scanState.jobId) : null;
@@ -292,6 +301,40 @@ function ResultView({ id }: { id: string | undefined }) {
     }
   }
 
+  async function syncSelection(saved: Lookup) {
+    const generation = ++selectionSyncGenerationRef.current;
+    if (!getCloudSyncStatus().configured) {
+      setSelectionStatus("Selection saved on this device. Cloud sync is off.");
+      setSelectionRetry(null);
+      return;
+    }
+    setSelectionStatus("Selection saved on this device. Saving to cloud…");
+    setSelectionRetry(null);
+    const result = await syncLookupToCloud(saved).catch(() => ({ ok: false, message: "Cloud save was interrupted." }));
+    if (!isAccountScopeCurrent(mountedScope) || generation !== selectionSyncGenerationRef.current) return;
+    setSelectionStatus(result.ok ? "Selection saved to cloud." : `Selection saved on this device. ${result.message}`);
+    setSelectionRetry(result.ok ? null : saved);
+  }
+
+  function handleCorrectFocus(box: VisualFocusBox, objectIndex: number | null) {
+    if (!scanState || !isAccountScopeCurrent(mountedScope)) return;
+    try {
+      const local = lookup ? getLookup(lookup.id) : null;
+      const current = local ?? lookup;
+      const corrected = correctScanSelection(current ?? scanState, box, objectIndex);
+      const saved = local ? updateLookupVisualSelection(local.id, box, objectIndex)
+        : current ? saveExistingLookup(corrected as Lookup) : createLookup(corrected);
+      if (!saved.ok) { setSelectionStatus(`Selection was not saved. ${saved.message}`); return; }
+      if (!saved.value) { setSelectionStatus("Selection was not saved. This saved scan was not found."); return; }
+      setLookup(saved.value);
+      setLiveScanState(null);
+      saveLatestScanState(scanStateFromLookup(saved.value));
+      void syncSelection(saved.value);
+    } catch (error) {
+      setSelectionStatus(error instanceof Error ? error.message : "Selection was not saved. Try again.");
+    }
+  }
+
   return (
     <main className="ds-result-page ds-workbench min-h-dvh bg-[var(--ds-bg)] text-[var(--ds-fg-1)]">
       <div className="mx-auto grid min-h-dvh w-full max-w-[1600px] lg:grid-cols-[minmax(0,1fr)_430px] lg:gap-5 lg:p-5">
@@ -304,17 +347,19 @@ function ResultView({ id }: { id: string | undefined }) {
               <Link to="/scan" className="ds-workbench-back">Back</Link>
             </nav>
           </header>
+          <PhotoEvidenceStrip photos={scanState?.photos} selectedId={selectedPhotoId} onSelect={setSelectedPhotoId} />
           <div data-testid="result-photo-canvas" className="relative min-h-0 flex-1">
-            {frame?.imageBase64 ? (
+            {displayFrame?.imageBase64 ? (
               <IsolatedPartView
-                frameBase64={frame.imageBase64}
-                isolatedImageBase64={scanState?.isolatedImageBase64}
-                focusBox={scanState?.focusBox}
-                focusMode={scanState?.focusMode ?? "full_frame"}
+                frameBase64={displayFrame.imageBase64}
+                isolatedImageBase64={isOverviewPhoto ? scanState?.isolatedImageBase64 : undefined}
+                focusBox={isOverviewPhoto ? scanState?.focusBox : undefined}
+                focusMode={isOverviewPhoto ? (scanState?.focusMode ?? "full_frame") : "full_frame"}
                 label={simpleSummary?.title ?? "Captured frame"}
                 issue={scanState?.result ? deriveIssue(scanState.result) : null}
-                sceneChips={scanState?.result ? getSceneChips(scanState.result) : undefined}
-                objects={scanState?.isolatedObjects}
+                sceneChips={isOverviewPhoto && scanState?.result ? getSceneChips(scanState.result) : undefined}
+                objects={isOverviewPhoto ? scanState?.isolatedObjects : undefined}
+                onCorrectFocus={isOverviewPhoto && !hasPendingRetryResult ? handleCorrectFocus : undefined}
                 variant="result"
               />
             ) : <div className="absolute inset-0 grid place-items-center bg-[#061522] px-8 text-center text-sm text-white/62">{getRestorePhotoMessage(restoreStatus)}</div>}
@@ -333,6 +378,7 @@ function ResultView({ id }: { id: string | undefined }) {
           ) : <>
           {storageWarning ? <StorageWarning message={storageWarning} /> : null}
           {saveError ? <StorageWarning message={saveError} /> : null}
+          {selectionStatus ? <p role="status" className="rounded-xl border p-3 text-sm">{selectionStatus}{selectionRetry ? <button type="button" className="ml-2 underline" onClick={() => void syncSelection(selectionRetry)}>Retry cloud selection save</button> : null}</p> : null}
           {shopJob ? <ShopJobBanner job={shopJob} /> : null}
           {scanState?.result ? (
             <AnalysisResult
@@ -352,6 +398,7 @@ function ResultView({ id }: { id: string | undefined }) {
               message={scanState.errorMessage} 
               capturedAt={capturedAt} 
               frame={frame}
+              photos={scanState.photos}
               lookup={locallySavedLookup ? lookup : null}
               vehicleContext={lookup?.vehicleContext ?? scanState.vehicleContext}
               onLookupRetrySuccess={(updatedLookup, warning) => {
@@ -818,6 +865,7 @@ function AnalysisError({
   captureMode,
   code,
   frame,
+  photos,
   lookup,
   message,
   vehicleContext,
@@ -828,6 +876,7 @@ function AnalysisError({
   captureMode: "camera" | "upload";
   code?: string;
   frame: CapturedFrame | null | undefined;
+  photos?: ScanAnalysisState["photos"];
   lookup: Lookup | null;
   vehicleContext?: Lookup["vehicleContext"];
   message: string;
@@ -872,7 +921,7 @@ function AnalysisError({
     try {
       const identificationFrame = await prepareRetryFrame(retryFrame);
       if (!isCurrentRetry()) return;
-      const result = applyShopFitmentContext(await identifyCapturedFrame(identificationFrame, undefined, undefined, { vehicleContext }), vehicleContext);
+      const result = applyShopFitmentContext(await identifyCapturedFrame(identificationFrame, undefined, undefined, { vehicleContext, photos: lookup?.photos ?? photos }), vehicleContext);
       if (!isCurrentRetry()) return;
       if (lookup) {
         const updateResult = updateLookupResult(lookup.id, result, {
@@ -887,6 +936,7 @@ function AnalysisError({
       } else {
         onScanRetrySuccess({
           frame: identificationFrame,
+          photos,
           result,
           analysisAttemptId: attemptId,
           vehicleContext,

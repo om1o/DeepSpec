@@ -1,6 +1,7 @@
 import { getAccountScope, isAccountScopeCurrent } from "../lib/accountScope";
 import { getAuthClient, isSupabaseAuthConfigured } from "./auth";
 import { normalizePartInspection } from "../lib/partInspection";
+import { evidencePaths, parseEvidenceBundle, restoreEvidenceBundle } from "./visualEvidence";
 import type {
   CandidateMatch,
   CandidatePart,
@@ -59,6 +60,7 @@ type CloudHistoryRow = {
   image_path: unknown;
   analysis_attempt_id?: unknown;
   inspection_json?: unknown;
+  evidence_bundle_json?: unknown;
 };
 
 type SignedImageRow = {
@@ -107,10 +109,13 @@ export async function readCloudLookups(limit = DEFAULT_HISTORY_LIMIT): Promise<R
   }
 
   const rows = Array.isArray(rowsResult.data) ? (rowsResult.data as CloudHistoryRow[]) : [];
-  const signedImageMap = await getSignedImageMap(supabase, rows);
+  const evidenceError = validateCloudEvidence(rows, scope.userId!);
+  if (evidenceError) return { ok: false, message: evidenceError };
+  const signedImageMap = await getSignedImageMap(supabase, rows, scope.userId!);
   if (!isAccountScopeCurrent(scope)) return changed();
+  if (hasMissingEvidenceImages(rows, signedImageMap, scope.userId!)) return { ok: false, message: "Some saved evidence photos or cutouts could not be loaded. Reopen cloud history to retry; the scan was not restored partially." };
   const lookups = rows
-    .map((row, index) => mapCloudRowToLookup(row, signedImageMap, index))
+    .map((row, index) => mapCloudRowToLookup(row, signedImageMap, index, scope.userId!))
     .filter((lookup): lookup is Lookup => Boolean(lookup));
 
   return { ok: true, value: lookups };
@@ -146,13 +151,16 @@ export async function readCloudLookup(id: string): Promise<ReadCloudLookupResult
     return { ok: false, message: "This saved scan could not be identified uniquely. Try again." };
   }
 
-  const signedImageMap = await getSignedImageMap(supabase, matchingRows);
+  const evidenceError = validateCloudEvidence(matchingRows, scope.userId!);
+  if (evidenceError) return { ok: false, message: evidenceError };
+  const signedImageMap = await getSignedImageMap(supabase, matchingRows, scope.userId!);
   if (!isAccountScopeCurrent(scope)) return changed();
+  if (hasMissingEvidenceImages(matchingRows, signedImageMap, scope.userId!)) return { ok: false, message: "Some saved evidence photos or cutouts could not be loaded. Reopen this saved scan to retry; the scan was not restored partially." };
   const imagePath = matchingRows[0].image_path;
   if (isString(imagePath) && !signedImageMap.has(imagePath)) {
     return { ok: false, message: "The saved scan photo could not be loaded. Try again." };
   }
-  return { ok: true, value: mapCloudRowToLookup(matchingRows[0], signedImageMap, 0) };
+  return { ok: true, value: mapCloudRowToLookup(matchingRows[0], signedImageMap, 0, scope.userId!) };
 }
 
 async function getVerifiedCloudClient(scope: ReturnType<typeof getAccountScope>): Promise<VerifiedClientResult> {
@@ -186,18 +194,20 @@ async function selectCloudRowsWithFallback(
   selectRows: (columns: string) => PromiseLike<CloudHistoryQueryResult>,
   scope: ReturnType<typeof getAccountScope>,
 ): Promise<CloudHistoryQueryResult | null> {
-  let optionalColumns = [...CLOUD_HISTORY_SHOP_COLUMNS, "inspection_json", "analysis_attempt_id"];
+  let optionalColumns = [...CLOUD_HISTORY_SHOP_COLUMNS, "inspection_json", "analysis_attempt_id", "evidence_bundle_json"];
   let rowsResult = await selectRows(`${CLOUD_HISTORY_CORE_SELECT},${optionalColumns.join(",")}`);
   if (!isAccountScopeCurrent(scope)) return null;
 
   // Optional migrations can land independently. Remove only the unavailable group.
-  for (let attempt = 0; attempt < 3 && rowsResult.error; attempt += 1) {
+  for (let attempt = 0; attempt < 4 && rowsResult.error; attempt += 1) {
     if (isMissingShopColumn(rowsResult.error)) {
       optionalColumns = optionalColumns.filter((column) => !CLOUD_HISTORY_SHOP_COLUMNS.includes(column));
     } else if (isMissingInspectionColumn(rowsResult.error)) {
       optionalColumns = optionalColumns.filter((column) => column !== "inspection_json");
     } else if (/does not exist|schema cache|could not find .* column/i.test(rowsResult.error.message ?? "") && rowsResult.error.message?.includes("analysis_attempt_id")) {
       optionalColumns = optionalColumns.filter((column) => column !== "analysis_attempt_id");
+    } else if (/does not exist|schema cache|could not find .* column/i.test(rowsResult.error.message ?? "") && rowsResult.error.message?.includes("evidence_bundle_json")) {
+      optionalColumns = optionalColumns.filter((column) => column !== "evidence_bundle_json");
     } else {
       break;
     }
@@ -224,9 +234,13 @@ function isMissingInspectionColumn(error: { message?: string } | null) {
 async function getSignedImageMap(
   supabase: NonNullable<Awaited<ReturnType<typeof getAuthClient>>>,
   rows: CloudHistoryRow[],
+  userId: string,
 ) {
   const map = new Map<string, string>();
-  const paths = [...new Set(rows.map((row) => row.image_path).filter(isString))];
+  const paths = [...new Set([...rows.map((row) => row.image_path).filter(isString), ...rows.flatMap((row) => {
+    const bundle = parseEvidenceBundle(row.evidence_bundle_json, userId, String(row.local_id));
+    return bundle ? evidencePaths(bundle) : [];
+  })])];
 
   if (!paths.length) {
     return map;
@@ -245,7 +259,7 @@ async function getSignedImageMap(
         ? entry.signedURL
         : null;
 
-    if (!path || !signedUrl) {
+    if (!path || !signedUrl || entry.error || !paths.includes(path)) {
       continue;
     }
 
@@ -255,16 +269,30 @@ async function getSignedImageMap(
   return map;
 }
 
+function validateCloudEvidence(rows: CloudHistoryRow[], userId: string): string | null {
+  return rows.some((row) => row.evidence_bundle_json != null && !parseEvidenceBundle(row.evidence_bundle_json, userId, String(row.local_id)))
+    ? "Saved evidence has invalid metadata or an image from another account or scan. Nothing was restored; your cloud record is unchanged." : null;
+}
+
+function hasMissingEvidenceImages(rows: CloudHistoryRow[], signed: Map<string, string>, userId: string) {
+  return rows.some((row) => {
+    const bundle = parseEvidenceBundle(row.evidence_bundle_json, userId, String(row.local_id));
+    return bundle && evidencePaths(bundle).some((path) => !signed.has(path));
+  });
+}
+
 function mapCloudRowToLookup(
   row: CloudHistoryRow,
   signedImageMap: Map<string, string>,
   index: number,
+  userId: string,
 ): Lookup | null {
   const createdAt = isString(row.created_at) ? row.created_at : new Date().toISOString();
   const imagePath = isString(row.image_path) ? row.image_path : "";
   const scanCategory = parseScanCategory(row.scan_category);
   const result = parseIdentificationResult(row.result_json, scanCategory);
   const correction = isString(row.correction) ? row.correction : null;
+  const evidence = parseEvidenceBundle(row.evidence_bundle_json, userId, String(row.local_id));
 
   return {
     id: isString(row.local_id) ? row.local_id : `cloud-${index}`,
@@ -275,6 +303,7 @@ function mapCloudRowToLookup(
       imageBase64: signedImageMap.get(imagePath) ?? FALLBACK_IMAGE,
       capturedAt: isString(row.captured_at) ? row.captured_at : createdAt,
     },
+    ...(evidence ? restoreEvidenceBundle(evidence, signedImageMap) : {}),
     analyzedAt: isString(row.analyzed_at) ? row.analyzed_at : undefined,
     errorCode: isString(row.error_code) ? row.error_code : undefined,
     errorMessage: isString(row.error_message) ? row.error_message : undefined,

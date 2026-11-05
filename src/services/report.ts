@@ -37,6 +37,7 @@ export function buildScanReport(lookup: Lookup) {
     "",
     "Image evidence:",
     formatEvidenceRegions(result?.evidenceRegions),
+    ...(lookup.photos?.length ? ["", "Photo group:", ...lookup.photos.map((photo, index) => `${index + 1}. ${photo.label.replaceAll("_", " ")} — ${photo.id} — ${formatDate(photo.capturedAt)}`), "This text export lists photo references; open the saved inspection to view the images."] : []),
     "",
     "Detected text:",
     formatList(detectedText, "None detected."),

@@ -4,6 +4,8 @@ import type { PartInspectionDraft } from "../types";
 import { normalizePartInspection, withLatestInspection } from "../lib/partInspection";
 import { accountStorageKey, getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import { inspectionDraftKey } from "./inspectionDraft";
+import { normalizeVisualEvidence } from "./visualEvidence";
+import { correctScanSelection } from "../lib/visualSelection";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
 export const MAX_SAVED_LOOKUPS = 50;
@@ -37,6 +39,7 @@ type StorageResult<T> =
 
 export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup> {
   const createdAt = new Date().toISOString();
+  const evidence = normalizeVisualEvidence(scanState);
   const lookup: Lookup = {
     id: createId(),
     createdAt,
@@ -44,6 +47,7 @@ export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup
     ...(normalizeVisualFocusBox(scanState.focusBox) ? { focusBox: normalizeVisualFocusBox(scanState.focusBox) } : {}),
     ...(isVisualFocusMode(scanState.focusMode) ? { focusMode: scanState.focusMode } : {}),
     ...(cleanImageDataUrl(scanState.isolatedImageBase64) ? { isolatedImageBase64: cleanImageDataUrl(scanState.isolatedImageBase64) } : {}),
+    ...evidence,
     result: scanState.result,
     analysisAttemptId: cleanTextValue(scanState.analysisAttemptId, 160) || undefined,
     ...(scanState.errorCode && scanState.analysisAttemptId ? { analysisFailures: [{
@@ -70,6 +74,7 @@ export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup
     ...(normalizeShopVehicleContext(scanState.vehicleContext) ? { vehicleContext: normalizeShopVehicleContext(scanState.vehicleContext) } : {}),
   };
 
+  if (!evidence) return { ok: false, value: lookup, message: "Photo evidence could not be saved safely. Keep this scan open and retry." };
   const read = readLookups();
   if (!read.ok) return { ok: false, message: read.message, value: lookup };
   const lookups = [lookup, ...read.value];
@@ -97,6 +102,7 @@ export function withRetriedLookupResult(existing: Lookup, retryState?: ScanAnaly
   return retryState?.result ? {
     ...existing,
     frame: retryState.frame ?? existing.frame,
+    ...(normalizeVisualEvidence({ ...existing, ...retryState }) ?? {}),
     result: retryState.result,
     analysisAttemptId: retryState.analysisAttemptId,
     analyzedAt: retryState.analyzedAt ?? new Date().toISOString(),
@@ -122,6 +128,18 @@ export function saveLookupInspection(id: string, draft: PartInspectionDraft, clo
   const write = writeLookups(lookups.some((lookup) => lookup.id === id)
     ? lookups.map((lookup) => lookup.id === id ? updated : lookup)
     : [updated, ...lookups]);
+  return write.ok ? { ok: true, value: updated } : { ok: false, value: existing, message: write.message };
+}
+
+export function updateLookupVisualSelection(id: string, focusBox: VisualFocusBox, objectIndex: number | null): StorageResult<Lookup | null> {
+  const read = readLookups();
+  if (!read.ok) return { ok: false, value: null, message: read.message };
+  const existing = read.value.find((lookup) => lookup.id === id);
+  if (!existing) return { ok: false, value: null, message: "Saved scan not found." };
+  let updated: Lookup;
+  try { updated = { ...correctScanSelection(existing, focusBox, objectIndex), cloudSave: undefined }; }
+  catch (error) { return { ok: false, value: existing, message: error instanceof Error ? error.message : "Selection could not be saved." }; }
+  const write = writeLookups(read.value.map((lookup) => lookup.id === id ? updated : lookup));
   return write.ok ? { ok: true, value: updated } : { ok: false, value: existing, message: write.message };
 }
 
@@ -431,6 +449,8 @@ export function scanStateFromLookup(lookup: Lookup): ScanAnalysisState {
   return {
     analysisAttemptId: lookup.analysisAttemptId,
     frame: lookup.frame,
+    photos: lookup.photos,
+    isolatedObjects: lookup.isolatedObjects,
     focusBox: lookup.focusBox,
     focusMode: lookup.focusMode,
     isolatedImageBase64: lookup.isolatedImageBase64,
@@ -558,6 +578,8 @@ export function normalizeLookup(value: unknown): Lookup | null {
   const trainingStatus = isTrainingStatus(lookup.trainingStatus)
     ? lookup.trainingStatus
     : getTrainingStatus(rating, correction);
+  const evidence = normalizeVisualEvidence(lookup);
+  if (!evidence) return null;
 
   return {
     inspection: normalizePartInspection(lookup.inspection),
@@ -573,6 +595,7 @@ export function normalizeLookup(value: unknown): Lookup | null {
     ...(normalizeVisualFocusBox(lookup.focusBox) ? { focusBox: normalizeVisualFocusBox(lookup.focusBox) } : {}),
     ...(isVisualFocusMode(lookup.focusMode) ? { focusMode: lookup.focusMode } : {}),
     ...(cleanImageDataUrl(lookup.isolatedImageBase64) ? { isolatedImageBase64: cleanImageDataUrl(lookup.isolatedImageBase64) } : {}),
+    ...evidence,
     result,
     errorMessage: lookup.errorMessage,
     analysisAttemptId: cleanTextValue(lookup.analysisAttemptId, 160) || undefined,

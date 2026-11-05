@@ -51,6 +51,17 @@ describe("latest captured frame storage", () => {
     expect(readLatestCapturedFrame()).toBeNull();
   });
 
+  it("restores labeled photos, component cutouts, geometry and capture provenance", () => {
+    const frame = { imageBase64: "data:image/jpeg;base64,dGVzdA==", capturedAt: "2026-11-05T00:00:00.000Z" };
+    const state: import("../types").ScanAnalysisState = {
+      frame, photos: [{ ...frame, id: "photo-1", label: "overview" }, { ...frame, id: "photo-2", label: "mounting" }],
+      isolatedObjects: [{ name: "Hose", category: "engine", primary: false, isolatedImageBase64: frame.imageBase64, focusBox: { x: 0.2, y: 0.2, width: 0.2, height: 0.2, confidence: 0.5 } }],
+      provenance: { captureMode: "upload", analysisSource: "ai_detection", savedAt: frame.capturedAt },
+    };
+    saveLatestScanState(state);
+    expect(readLatestScanState()).toEqual(state);
+  });
+
   it("saves and reads an analyzed scan state", () => {
     const scanState = {
       frame: {

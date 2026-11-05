@@ -7,10 +7,14 @@ import type { ReactNode } from "react";
 import Webcam from "react-webcam";
 import { Link, useLocation } from "react-router-dom";
 import { IsolatedPartView } from "../components/result/IsolatedPartView";
+import { PhotoEvidenceStrip } from "../components/result/PhotoEvidenceStrip";
+import { correctScanSelection } from "../lib/visualSelection";
 import { orderSceneObjects } from "../components/result/isolatedPartViewGeometry";
 import { ScanDebugOverlay } from "../components/result/ScanDebugOverlay";
 import { ScanSources } from "../components/result/ScanSources";
 import { CropBox } from "../components/scanner/CropBox";
+import { PhotoGroupReview } from "../components/scanner/PhotoGroupReview";
+import { photoGroupsMatch, readPhotoDraft, removePhotoDraftIfMatches, replacePhotoDraftIfMatches, savePhotoDraftIfEmpty, type PhotoDraftKind } from "../services/photoDraft";
 import { isCropBoxEnabled } from "../components/scanner/cropBoxGeometry";
 import { IssueLine, ResultDetailSections, SceneCategoryList } from "../components/result/PositiveAnswerCard";
 import Button from "../components/ui/Button";
@@ -41,8 +45,8 @@ import {
   recordScanQualityFailure,
   recordScanQualityRetake,
 } from "../services/scanQualityMetrics";
-import { createLookup, DEVICE_SCAN_LIMIT_MESSAGE, readLookups, MAX_SAVED_LOOKUPS, updateLookup } from "../services/storage";
-import type { IdentificationResult, CapturedFrame, IsolatedObject, Lookup, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanDebugInfo, ScanQualitySnapshot, ShopJob, ShopVehicleContext, VisualFocusBox, VisualFocusMode } from "../types";
+import { createLookup, DEVICE_SCAN_LIMIT_MESSAGE, readLookups, MAX_SAVED_LOOKUPS, updateLookup, updateLookupVisualSelection } from "../services/storage";
+import type { IdentificationResult, CapturedFrame, IsolatedObject, Lookup, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanDebugInfo, ScanPhoto, ScanQualitySnapshot, ShopJob, ShopVehicleContext, VisualFocusBox, VisualFocusMode } from "../types";
 
 // Build-freshness stamp for the Scanner UI chunk. ScanResultCard, the collapse toggle, and the
 // Item view panel all live in THIS module. If after a reload you see the SAM chunk's "v5" log but
@@ -154,10 +158,34 @@ export default function Scanner() {
     [activeShopJob],
   );
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [photoDraft, setPhotoDraft] = useState<ScanPhoto[] | null>(null);
+  const [captureDraft, setCaptureDraft] = useState<ScanPhoto[] | null>(null);
+  const [photoDraftKind, setPhotoDraftKind] = useState<PhotoDraftKind>("upload");
+  const activePhotoDraft = photoDraftKind === "capture" ? captureDraft : photoDraft;
+  const [showPhotoDraft, setShowPhotoDraft] = useState(false);
+  const [photoDraftBusy, setPhotoDraftBusy] = useState(false);
+  const [photoDraftMessage, setPhotoDraftMessage] = useState<string | null>(null);
+  const photoDraftBusyRef = useRef(false);
+  const photoDraftRevisionRef = useRef(0);
+  useEffect(() => {
+    let canceled = false;
+    const scope = accountScopeRef.current;
+    void readPhotoDraft(scope).then((draft) => {
+      if (!canceled && photoDraftRevisionRef.current === 0 && isAccountScopeCurrent(scope)) setPhotoDraft(draft);
+    }).catch(() => { /* Saving before analysis provides an actionable storage error. */ });
+    void readPhotoDraft(scope, "capture").then((draft) => {
+      if (!canceled && photoDraftRevisionRef.current === 0 && isAccountScopeCurrent(scope)) setCaptureDraft(draft);
+    }).catch(() => { /* Saving before analysis provides an actionable storage error. */ });
+    return () => { canceled = true; };
+  }, []);
   const [analysisStep, setAnalysisStep] = useState<string | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [scanReview, setScanReview] = useState<ScanReviewState | null>(null);
+  const [selectedPhotoId, setSelectedPhotoId] = useState<string>();
+  const selectedPhoto = scanReview?.scanState.photos?.find((photo) => photo.id === selectedPhotoId);
+  const isOverviewPhoto = !selectedPhoto || selectedPhoto.id === scanReview?.scanState.photos?.[0]?.id;
   const [scanSave, setScanSave] = useState<{ lookupId: string; status: "pending" | "saved" | "local" | "failed" } | null>(null);
+  const scanSaveGenerationRef = useRef(0);
   const [focusedObjectIndex, setFocusedObjectIndex] = useState<number | null>(null);
   const [objectAnalyses, setObjectAnalyses] = useState<Record<number, ObjectAnalysis>>({});
   const startedObjectAnalysisRef = useRef<Set<number>>(new Set());
@@ -315,6 +343,7 @@ export default function Scanner() {
   const syncSavedLookup = useCallback((lookup: Lookup) => {
     const scope = accountScopeRef.current;
     if (!isAccountScopeCurrent(scope)) return;
+    const generation = ++scanSaveGenerationRef.current;
     if (!getCloudSyncStatus().configured) {
       setScanSave({ lookupId: lookup.id, status: "local" });
       return;
@@ -322,7 +351,7 @@ export default function Scanner() {
 
     setScanSave({ lookupId: lookup.id, status: "pending" });
     const finish = (status: "saved" | "failed") => setScanSave((current) => (
-      isAccountScopeCurrent(scope) && current?.lookupId === lookup.id ? { lookupId: lookup.id, status } : current
+      isAccountScopeCurrent(scope) && generation === scanSaveGenerationRef.current && current?.lookupId === lookup.id ? { lookupId: lookup.id, status } : current
     ));
     void syncLookupToCloud(lookup).then((result) => finish(result.ok ? "saved" : "failed"), () => finish("failed"));
   }, []);
@@ -394,7 +423,7 @@ export default function Scanner() {
         sourceUpdatedAt,
       });
       syncSavedLookup(saved.value);
-      return;
+      return saved.value;
     }
 
     const fallbackState = {
@@ -413,6 +442,7 @@ export default function Scanner() {
       source,
       sourceUpdatedAt,
     });
+    return null;
   }, [activeShopJob, isScanRequestActive, syncSavedLookup]);
 
   const analyzeImageBase64 = useCallback(async (
@@ -422,6 +452,7 @@ export default function Scanner() {
     signal: AbortSignal,
     secondFrameProvider?: () => Promise<string>,
     reviewTargetOverride?: CameraObjectTarget,
+    photos?: ScanPhoto[],
   ) => {
     const sourceUpdatedAt = new Date().toISOString();
     const deviceRead = readLookups();
@@ -450,21 +481,20 @@ export default function Scanner() {
 
     const frame: CapturedFrame = {
       imageBase64,
-      capturedAt: new Date().toISOString(),
+      capturedAt: photos?.[0]?.capturedAt ?? new Date().toISOString(),
     };
     if (!quality.ok) {
       stopForQualityCoach(quality.issue);
       const coach = getScanQualityCoach(quality.issue);
-      persistAndShowReview({
-        frame, scanQuality, errorCode: "quality_rejected",
+      return persistAndShowReview({
+        frame, photos, scanQuality, errorCode: "quality_rejected",
         errorMessage: `Photo quality check: ${coach.title}. ${coach.action}${guidedRetakeUsedRef.current ? " Guided retake used; identity remains unresolved. Review the saved evidence before deciding what to do next." : " Identification was not run."}`,
         analyzedAt: sourceUpdatedAt,
         provenance: { captureMode, analysisSource: "ai_detection", savedAt: sourceUpdatedAt },
         ...buildShopScanContext(activeShopJob, activeShopVehicleContext, undefined),
       }, { captureMode, requestId, reviewTarget, source: "AI detection", analysisSource: "ai_detection", sourceUpdatedAt });
-      return;
     }
-    saveLatestScanState({ frame, scanQuality });
+    saveLatestScanState({ frame, photos, scanQuality });
     resetScanDebug();
 
     let focusedFrame: CapturedFrame | undefined;
@@ -530,14 +560,14 @@ export default function Scanner() {
     setAnalysisStep("Checking saved matches");
     const imageHash = await hashImageDataUrl(imageBase64);
     if (!isScanRequestActive(requestId)) return;
-    if (imageHash && !activeShopJob) {
+    if (imageHash && !activeShopJob && !photos) {
       const cached = getCachedScanResult(imageHash);
       if (cached) {
         const contextualResult = applyShopFitmentContext(cached, activeShopVehicleContext);
         const shopScanContext = buildShopScanContext(activeShopJob, activeShopVehicleContext, contextualResult);
         setAnalysisStep("Opening result");
         recordScanOutcome(contextualResult);
-        await persistAndShowReview(
+        return persistAndShowReview(
           {
             frame,
             result: contextualResult,
@@ -564,7 +594,6 @@ export default function Scanner() {
             sourceUpdatedAt,
           },
         );
-        return;
       }
     }
 
@@ -590,6 +619,7 @@ export default function Scanner() {
       const identifyStartedAt = performance.now();
       const result = applyShopFitmentContext(
         await identifyCapturedFrame(frame, focusedFrame ?? secondFrame, undefined, {
+          photos,
           signal,
           vehicleContext: activeShopVehicleContext,
         }),
@@ -601,7 +631,7 @@ export default function Scanner() {
       if (identifyMs > IDENTIFY_BUDGET_WARN_MS) {
         console.warn(`[DeepSpec] Identify took ${identifyMs}ms (over ${IDENTIFY_BUDGET_WARN_MS}ms budget).`);
       }
-      if (imageHash && !activeShopJob) setCachedScanResult(imageHash, result);
+      if (imageHash && !activeShopJob && !photos) setCachedScanResult(imageHash, result);
       recordScanOutcome(result);
 
       // Step 6: when the scene has several objects, cut each out (SlimSAM, one pass) for the
@@ -632,11 +662,12 @@ export default function Scanner() {
 
       setAnalysisStep("Saving");
       const shopScanContext = buildShopScanContext(activeShopJob, activeShopVehicleContext, result);
-      await persistAndShowReview(
+      return persistAndShowReview(
         {
           frame,
           result,
           debug,
+          photos,
           analysisAttemptId,
           analyzedAt: new Date().toISOString(),
           focusBox,
@@ -665,10 +696,11 @@ export default function Scanner() {
     } catch (analysisError) {
       if (isAIRequestCanceled(analysisError)) return;
       if (!isScanRequestActive(requestId)) return;
-      await persistAndShowReview(
+      return persistAndShowReview(
         {
           frame,
           errorMessage: getSimpleScanErrorMessage(analysisError),
+          photos,
           errorCode: analysisError instanceof AIServiceError ? analysisError.code : "analysis_failed",
           analysisAttemptId,
           analyzedAt: new Date().toISOString(),
@@ -697,8 +729,26 @@ export default function Scanner() {
     }
   }, [activeShopJob, activeShopVehicleContext, isScanRequestActive, persistAndShowReview, recordScanOutcome, selectedCameraId, stopForQualityCoach]);
 
+  const retireSavedCapture = useCallback(async (photos: ScanPhoto[], saved: Lookup | null | undefined) => {
+    const matchesSavedEvidence = saved && (saved.photos
+      ? photoGroupsMatch(photos, saved.photos)
+      : photos.length === 1 && saved.frame.imageBase64 === photos[0].imageBase64);
+    if (!matchesSavedEvidence || !isAccountScopeCurrent(accountScopeRef.current)) return;
+    try {
+      const removed = await removePhotoDraftIfMatches(photos, accountScopeRef.current, "capture");
+      const remaining = removed ? null : await readPhotoDraft(accountScopeRef.current, "capture");
+      if (isAccountScopeCurrent(accountScopeRef.current)) {
+        setCaptureDraft((current) => current && photoGroupsMatch(current, photos) ? remaining : current);
+      }
+    } catch {
+      if (isAccountScopeCurrent(accountScopeRef.current)) {
+        setPhotoDraftMessage("The scan is saved. Its captured-photo draft is still available on this device.");
+      }
+    }
+  }, []);
+
   const handleIdentify = useCallback(async (reviewTargetOverride?: CameraObjectTarget) => {
-    if (!isAccountScopeCurrent(accountScopeRef.current) || isAnalyzing || activeIdentifyRef.current) {
+    if (!isAccountScopeCurrent(accountScopeRef.current) || isAnalyzing || activeIdentifyRef.current || photoDraftBusyRef.current) {
       return;
     }
 
@@ -708,12 +758,39 @@ export default function Scanner() {
     const watchdog = startScanWatchdog(requestId);
     try {
       setIsAnalyzing(true);
-      setAnalysisStep("Capturing photo");
+      setAnalysisStep("Checking saved capture");
       setCaptureError(null);
+      photoDraftRevisionRef.current += 1;
+      const pending = await readPhotoDraft(accountScopeRef.current, "capture");
+      if (!isScanRequestActive(requestId)) return;
+      if (pending) {
+        setCaptureDraft(pending);
+        setPhotoDraftKind("capture");
+        setShowPhotoDraft(true);
+        setPhotoDraftMessage("Resume or discard this saved capture before taking another photo.");
+        return;
+      }
+      setAnalysisStep("Capturing photo");
       const imageBase64 = await captureFrame();
       if (!isScanRequestActive(requestId)) return;
 
-      await analyzeImageBase64(imageBase64, requestId, "camera", activeRequest.controller.signal, captureFrame, reviewTarget);
+      const captured: ScanPhoto[] = [{ id: crypto.randomUUID(), label: "overview", imageBase64, capturedAt: new Date().toISOString() }];
+      photoDraftRevisionRef.current += 1;
+      setAnalysisStep("Saving captured photo");
+      const stored = await savePhotoDraftIfEmpty(captured, accountScopeRef.current, "capture");
+      if (stored && isAccountScopeCurrent(accountScopeRef.current)) setCaptureDraft(captured);
+      if (!isScanRequestActive(requestId)) return;
+      if (!stored) {
+        const pendingCapture = await readPhotoDraft(accountScopeRef.current, "capture");
+        if (!isScanRequestActive(requestId)) return;
+        setCaptureDraft(pendingCapture);
+        setPhotoDraftKind("capture");
+        setShowPhotoDraft(Boolean(pendingCapture));
+        setPhotoDraftMessage("Another capture was saved. Resume or discard it before taking another photo.");
+        return;
+      }
+      const saved = await analyzeImageBase64(imageBase64, requestId, "camera", activeRequest.controller.signal, captureFrame, reviewTarget);
+      await retireSavedCapture(captured, saved);
     } catch (error) {
       if (isScanRequestActive(requestId)) {
         pauseAutoScan(error instanceof Error ? error.message : "Capture failed. Try again.");
@@ -726,27 +803,107 @@ export default function Scanner() {
       }
       finishScanRequest(activeRequest);
     }
-  }, [analyzeImageBase64, beginScanRequest, captureFrame, finishScanRequest, isAnalyzing, isScanRequestActive, pauseAutoScan, startScanWatchdog]);
+  }, [analyzeImageBase64, beginScanRequest, captureFrame, finishScanRequest, isAnalyzing, isScanRequestActive, pauseAutoScan, retireSavedCapture, startScanWatchdog]);
 
-  const handleGalleryFile = useCallback(async (file: File) => {
+  const refreshConflictingDraft = useCallback(async (kind: PhotoDraftKind) => {
+    const scope = accountScopeRef.current;
+    const current = await readPhotoDraft(scope, kind);
+    if (!isAccountScopeCurrent(scope)) return;
+    if (kind === "capture") setCaptureDraft(current); else setPhotoDraft(current);
+    setPhotoDraftKind(kind);
+    setShowPhotoDraft(Boolean(current));
+    const message = "Saved photos changed in another tab. Your change was not applied. Review the current draft before continuing.";
+    setPhotoDraftMessage(message);
+    setCaptureError(current ? null : message);
+  }, []);
+
+  const handleGalleryFiles = useCallback(async (files: File[]) => {
+    if (!isAccountScopeCurrent(accountScopeRef.current) || isAnalyzing || photoDraftBusyRef.current) return;
+    const scope = accountScopeRef.current;
+    const kind = showPhotoDraft ? photoDraftKind : "upload";
+    photoDraftBusyRef.current = true;
+    photoDraftRevisionRef.current += 1;
+    setPhotoDraftBusy(true);
+    setPhotoDraftMessage("Checking saved photos on this device…");
+    try {
+      // The startup read may still be pending, or another tab may have saved a draft.
+      // Read the selected slot before appending; unreadable storage must never become [].
+      const stored = kind === "capture" ? await readPhotoDraft(scope, kind) : await readPhotoDraft(scope);
+      if (!isAccountScopeCurrent(scope)) return;
+      if (kind === "capture") setCaptureDraft(stored); else setPhotoDraft(stored);
+      const previous = stored ?? [];
+      if (previous.length + files.length > 4) {
+        setCaptureError("Choose up to four photos of the same part or area. No photos were discarded.");
+        setPhotoDraftMessage("Choose up to four photos. Remove a photo before adding another.");
+        return;
+      }
+      setPhotoDraftMessage("Saving photos on this device…");
+      const next = [...previous];
+      for (const file of files) {
+        const raw = await readImageFileAsDataUrl(file);
+        const imageBase64 = file.size > COMPRESS_UPLOAD_OVER_BYTES ? await compressImageDataUrl(raw, CAPTURE_MAX_EDGE, 0.85) : raw;
+        if (!isAccountScopeCurrent(scope)) return;
+        next.push({ id: crypto.randomUUID(), label: next.length ? "other" : "overview", imageBase64, capturedAt: new Date().toISOString() });
+      }
+      const matched = kind === "capture"
+        ? await replacePhotoDraftIfMatches(stored, next, scope, kind)
+        : await replacePhotoDraftIfMatches(stored, next, scope);
+      if (!isAccountScopeCurrent(scope)) return;
+      if (!matched) { await refreshConflictingDraft(kind); return; }
+      if (kind === "capture") setCaptureDraft(next); else setPhotoDraft(next);
+      setPhotoDraftKind(kind);
+      setShowPhotoDraft(true);
+      setPhotoDraftMessage("Photos saved on this device. Check the labels before analysis.");
+      setCaptureError(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not save these photos. Retry before analysis.";
+      setCaptureError(message);
+      setPhotoDraftMessage(message);
+    } finally {
+      photoDraftBusyRef.current = false;
+      setPhotoDraftBusy(false);
+    }
+  }, [isAnalyzing, showPhotoDraft, photoDraftKind, refreshConflictingDraft]);
+
+  const updatePhotoDraft = async (photos: ScanPhoto[] | null) => {
+    if (photoDraftBusyRef.current || !activePhotoDraft || !isAccountScopeCurrent(accountScopeRef.current)) return;
+    photoDraftBusyRef.current = true;
+    photoDraftRevisionRef.current += 1;
+    setPhotoDraftBusy(true);
+    try {
+      const matched = await replacePhotoDraftIfMatches(activePhotoDraft, photos, accountScopeRef.current, photoDraftKind);
+      if (!isAccountScopeCurrent(accountScopeRef.current)) return;
+      if (!matched) { await refreshConflictingDraft(photoDraftKind); return; }
+      if (photoDraftKind === "capture") setCaptureDraft(photos); else setPhotoDraft(photos);
+      if (!photos) setShowPhotoDraft(false);
+      setPhotoDraftMessage("Draft saved on this device.");
+    } catch (error) {
+      setPhotoDraftMessage(error instanceof Error ? error.message : "The draft could not be updated. Retry.");
+    } finally {
+      photoDraftBusyRef.current = false;
+      setPhotoDraftBusy(false);
+    }
+  };
+
+  const analyzePhotoDraft = useCallback(async () => {
     if (!isAccountScopeCurrent(accountScopeRef.current) || isAnalyzing || activeIdentifyRef.current) {
       return;
     }
+    if (!activePhotoDraft?.length || photoDraftBusyRef.current) return;
 
     const activeRequest = beginScanRequest();
     const { requestId } = activeRequest;
     const watchdog = startScanWatchdog(requestId);
     try {
       setIsAnalyzing(true);
-      setAnalysisStep("Loading photo");
+      setAnalysisStep("Checking saved photos before analysis");
       setCaptureError(null);
-      const rawImageBase64 = await readImageFileAsDataUrl(file);
+      const matched = await replacePhotoDraftIfMatches(activePhotoDraft, activePhotoDraft, accountScopeRef.current, photoDraftKind);
       if (!isScanRequestActive(requestId)) return;
-      const imageBase64 = file.size > COMPRESS_UPLOAD_OVER_BYTES
-        ? await compressImageDataUrl(rawImageBase64, CAPTURE_MAX_EDGE, 0.85)
-        : rawImageBase64;
-      if (!isScanRequestActive(requestId)) return;
-      await analyzeImageBase64(imageBase64, requestId, "upload", activeRequest.controller.signal);
+      if (!matched) { await refreshConflictingDraft(photoDraftKind); return; }
+      setShowPhotoDraft(false);
+      const saved = await analyzeImageBase64(activePhotoDraft[0].imageBase64, requestId, photoDraftKind === "capture" ? "camera" : "upload", activeRequest.controller.signal, undefined, undefined, activePhotoDraft);
+      if (photoDraftKind === "capture") await retireSavedCapture(activePhotoDraft, saved);
     } catch (error) {
       if (isScanRequestActive(requestId)) {
         pauseAutoScan(error instanceof Error ? error.message : "Could not read that photo.");
@@ -759,7 +916,7 @@ export default function Scanner() {
       }
       finishScanRequest(activeRequest);
     }
-  }, [analyzeImageBase64, beginScanRequest, finishScanRequest, isAnalyzing, isScanRequestActive, pauseAutoScan, startScanWatchdog]);
+  }, [activePhotoDraft, photoDraftKind, analyzeImageBase64, beginScanRequest, finishScanRequest, isAnalyzing, isScanRequestActive, pauseAutoScan, refreshConflictingDraft, retireSavedCapture, startScanWatchdog]);
 
   const retryReviewScan = useCallback(async () => {
     if (!scanReview?.reviewTarget) {
@@ -868,16 +1025,31 @@ export default function Scanner() {
     // not overwrite another scan's card just because it uses the same object index.
     const analysisSession = startedObjectAnalysisRef.current;
     setObjectAnalyses((prev) => ({ ...prev, [index]: { status: "loading" } }));
-    void identifyCapturedFrame({ imageBase64: object.isolatedImageBase64, capturedAt: new Date().toISOString() })
+    const original = scanReview?.scanState.frame;
+    const stillCurrent = () => isAccountScopeCurrent(accountScopeRef.current) && startedObjectAnalysisRef.current === analysisSession;
+    void (async () => {
+      const hasImage = (image: string | null | undefined): image is string => Boolean(image && /^data:image\/(?:jpeg|png|webp);base64,\S+$/.test(image));
+      const imageBase64 = object.focusMode !== "crop" && hasImage(object.isolatedImageBase64)
+        ? object.isolatedImageBase64
+        : original && hasImage(original.imageBase64)
+          ? await optionalVisual(createFocusedScanCrop(original.imageBase64, object.focusBox), 1000, null)
+          : null;
+      if (!stillCurrent()) return;
+      if (!hasImage(imageBase64)) {
+        setObjectAnalyses((prev) => ({ ...prev, [index]: { status: "error", message: "This selected area is unavailable. Keep the original photo and adjust the outline or retake it before analyzing this part." } }));
+        return;
+      }
+      return identifyCapturedFrame({ imageBase64, capturedAt: original?.capturedAt ?? new Date().toISOString() });
+    })()
       .then((result) => {
-        if (!isAccountScopeCurrent(accountScopeRef.current) || startedObjectAnalysisRef.current !== analysisSession) return;
+        if (!result || !stillCurrent()) return;
         setObjectAnalyses((prev) => ({ ...prev, [index]: { status: "done", result } }));
       })
       .catch((error) => {
         if (!isAccountScopeCurrent(accountScopeRef.current) || startedObjectAnalysisRef.current !== analysisSession) return;
         setObjectAnalyses((prev) => ({ ...prev, [index]: { status: "error", message: getSimpleScanErrorMessage(error) } }));
       });
-  }, []);
+  }, [scanReview?.scanState.frame]);
 
   const handleFocusObject = useCallback((index: number | null) => {
     setFocusedObjectIndex(index);
@@ -996,20 +1168,39 @@ export default function Scanner() {
             <BrandLockup size="sm" />
             <Link to="/history" className="rounded-full border border-white/15 px-3 py-2 text-xs font-bold">Saved scans</Link>
           </header>
+          <PhotoEvidenceStrip photos={scanReview.scanState.photos} selectedId={selectedPhoto?.id} onSelect={(id) => { setSelectedPhotoId(id); handleFocusObject(null); }} />
           <div className="grid min-h-0 flex-1 grid-rows-[minmax(200px,42dvh)_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_420px] lg:grid-rows-1">
             <div aria-label="Scan photo" data-testid="scan-workspace-photo" className="relative min-h-0 overflow-hidden bg-[#020617] [&>div]:absolute">
               <IsolatedPartView
-                frameBase64={scanReview.scanState.frame.imageBase64}
-                isolatedImageBase64={scanReview.scanState.isolatedImageBase64}
-                focusBox={scanReview.scanState.focusBox}
-                focusMode={scanReview.scanState.focusMode ?? (scanReview.isolatedFrame ? "crop" : "full_frame")}
+                frameBase64={selectedPhoto?.imageBase64 ?? scanReview.scanState.frame.imageBase64}
+                isolatedImageBase64={isOverviewPhoto ? scanReview.scanState.isolatedImageBase64 : undefined}
+                focusBox={isOverviewPhoto ? scanReview.scanState.focusBox : undefined}
+                focusMode={isOverviewPhoto ? (scanReview.scanState.focusMode ?? (scanReview.isolatedFrame ? "crop" : "full_frame")) : "full_frame"}
                 label={scanReview.scanState.result ? getSimpleResultSummary(scanReview.scanState.result).title : "Item captured"}
                 issue={scanReview.scanState.result ? deriveIssue(scanReview.scanState.result) : null}
-                sceneChips={scanReview.scanState.result ? getSceneChips(scanReview.scanState.result) : undefined}
-                objects={scanReview.scanState.isolatedObjects}
+                sceneChips={isOverviewPhoto && scanReview.scanState.result ? getSceneChips(scanReview.scanState.result) : undefined}
+                objects={isOverviewPhoto ? scanReview.scanState.isolatedObjects : undefined}
                 variant="scanner"
                 focusedObjectIndex={focusedObjectIndex}
                 onFocusObject={handleFocusObject}
+                onCorrectFocus={isOverviewPhoto ? (box, objectIndex) => {
+                  if (!isAccountScopeCurrent(accountScopeRef.current)) return;
+                  try {
+                    const corrected = correctScanSelection(scanReview.scanState, box, objectIndex);
+                    if (scanReview.lookup) {
+                      const saved = updateLookupVisualSelection(scanReview.lookup.id, box, objectIndex);
+                      if (!saved.ok || !saved.value) { setScanCardStatusMessage(saved.ok ? "Saved scan not found." : saved.message); return; }
+                      setScanReview({ ...scanReview, scanState: corrected, lookup: saved.value });
+                      syncSavedLookup(saved.value);
+                    } else {
+                      setScanReview({ ...scanReview, scanState: corrected });
+                      setScanCardStatusMessage("Selection changed in this view. Save the scan to keep it.");
+                    }
+                    startedObjectAnalysisRef.current = new Set();
+                    setObjectAnalyses({});
+                    saveLatestScanState(corrected);
+                  } catch (error) { setScanCardStatusMessage(error instanceof Error ? error.message : "Could not save selection."); }
+                } : undefined}
               />
             </div>
             <div data-testid="scan-workspace-overview" className="min-h-0 overflow-y-auto border-t border-white/10 bg-[var(--ds-page)] lg:border-l lg:border-t-0">
@@ -1060,13 +1251,16 @@ export default function Scanner() {
         accept="image/jpeg,image/png,image/webp"
         className="sr-only"
         disabled={isAnalyzing}
+        multiple
         onChange={(event) => {
-          const file = event.currentTarget.files?.[0];
+          const files = Array.from(event.currentTarget.files ?? []);
           event.currentTarget.value = "";
-          if (file) void handleGalleryFile(file);
+          if (files.length) void handleGalleryFiles(files);
         }}
         type="file"
       />
+      {!showPhotoDraft && !isAnalyzing ? <div className="fixed bottom-24 left-3 z-[65] flex gap-2">{photoDraft ? <button type="button" onClick={() => { setPhotoDraftKind("upload"); setShowPhotoDraft(true); }} className="rounded-xl bg-white px-4 py-3 text-sm font-semibold text-slate-950">Resume {photoDraft.length}-photo draft</button> : null}{captureDraft ? <button type="button" onClick={() => { setPhotoDraftKind("capture"); setShowPhotoDraft(true); }} className="rounded-xl bg-white px-4 py-3 text-sm font-semibold text-slate-950">Resume captured photo</button> : null}</div> : null}
+      {activePhotoDraft && showPhotoDraft ? <PhotoGroupReview photos={activePhotoDraft} busy={photoDraftBusy || isAnalyzing} message={photoDraftMessage} onChange={(photos) => void updatePhotoDraft(photos)} onAdd={() => galleryInputRef.current?.click()} onAnalyze={() => void analyzePhotoDraft()} onClose={() => setShowPhotoDraft(false)} onDiscard={() => void updatePhotoDraft(null)} /> : null}
       {!scanReview && !cropBoxEnabled ? (
         <LensBottomBar
           isAnalyzing={isAnalyzing}
@@ -1618,7 +1812,9 @@ function FocusedObjectCard({
       </div>
       <h3 className="text-[18px] font-black leading-tight tracking-[-0.02em]">{title}</h3>
 
-      <ItemViewPanel badge="Isolated" imageBase64={object.isolatedImageBase64} label={object.name} />
+      {object.focusMode !== "crop" && object.isolatedImageBase64
+        ? <ItemViewPanel badge="Isolated" imageBase64={object.isolatedImageBase64} label={object.name} />
+        : <p className="mt-2 text-xs text-white/70">Selected area shown on the original photo above.</p>}
 
       <div className="mt-3">
         {!analysis || analysis.status === "loading" ? (
@@ -1736,7 +1932,12 @@ function readImageFileAsDataUrl(file: File) {
 
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
+    const timeout = setTimeout(() => {
+      reader.abort();
+      reject(new Error("Reading this photo stalled. Try selecting it again."));
+    }, 15_000);
     reader.onload = () => {
+      clearTimeout(timeout);
       const result = reader.result;
       if (typeof result === "string") {
         resolve(result);
@@ -1745,7 +1946,8 @@ function readImageFileAsDataUrl(file: File) {
 
       reject(new Error("Could not read that photo."));
     };
-    reader.onerror = () => reject(new Error("Could not read that photo."));
+    reader.onerror = () => { clearTimeout(timeout); reject(new Error("Could not read that photo.")); };
+    reader.onabort = () => { clearTimeout(timeout); reject(new Error("Reading this photo was interrupted. Select it again.")); };
     reader.readAsDataURL(file);
   });
 }

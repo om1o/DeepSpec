@@ -180,6 +180,34 @@ describe("aiService", () => {
     );
   });
 
+  it("sends the complete labeled group once, without a duplicate legacy cover", async () => {
+    const photos = ["overview", "close_up", "marking", "mounting"].map((label, index) => ({
+      id: `photo-${index + 1}`, label, imageBase64: `data:image/jpeg;base64,${btoa(`view-${index}`)}`, capturedAt: "2026-11-05T00:00:00.000Z",
+    })) as import("../types").ScanPhoto[];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ result }), { status: 200 }));
+    await identifyCapturedFrame(photos[0], undefined, undefined, { photos });
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.photos).toEqual(photos.map(({ id, label, imageBase64 }) => ({ id, label, imageBase64 })));
+    expect(body).not.toHaveProperty("imageBase64");
+    expect(body).not.toHaveProperty("imageBase64_2");
+  });
+
+  it("does not drop angles into a single-photo offline fallback", async () => {
+    vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "true");
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    vi.mocked(identifyOnDevice).mockClear();
+    const photo = { id: "overview", label: "overview" as const, imageBase64: "data:image/jpeg;base64,dGVzdA==", capturedAt: "2026-11-05T00:00:00.000Z" };
+    await expect(identifyCapturedFrame(photo, undefined, undefined, { photos: [photo] })).rejects.toMatchObject({ code: "network" });
+    expect(identifyOnDevice).not.toHaveBeenCalled();
+  });
+
+  it("rejects duplicate evidence IDs before sending a group", async () => {
+    const photo = { id: "overview", label: "overview" as const, imageBase64: "data:image/jpeg;base64,dGVzdA==", capturedAt: "2026-11-05T00:00:00.000Z" };
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    await expect(identifyCapturedFrame(photo, undefined, undefined, { photos: [photo, photo] })).rejects.toMatchObject({ code: "invalid_input" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("compresses an oversized scan before sending it to the identify API", async () => {
     const compressed = "data:image/jpeg;base64,dGVzdA==";
     vi.mocked(compressImageDataUrl).mockResolvedValue(compressed);
@@ -448,6 +476,17 @@ describe("aiService", () => {
     const lookup = { frame: { imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-05-16T00:00:00.000Z" }, result, scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
     await expect(sendFollowUpDetails(lookup, "Research this marking", { research: true, sourceUrls: ["https://example.com/manual"] })).resolves.toEqual({ message: "Visible wear\n\nCompare the belt marking.", sources, searchSuggestions: "<div>Related searches</div>" });
     expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toMatchObject({ imageBase64: lookup.frame.imageBase64, research: true, sourceUrls: ["https://example.com/manual"] });
+  });
+
+  it("attaches every labeled saved angle to a follow-up question", async () => {
+    const photos = ["overview", "close_up"].map((label, index) => ({ id: `photo-${index}`, label,
+      imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" })) as import("../types").ScanPhoto[];
+    const lookup = { frame: photos[0], photos, result, scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "The close-up does not establish depth." }), { status: 200 }));
+    await expect(sendFollowUpDetails(lookup, "Compare these views")).resolves.toMatchObject({ message: "The close-up does not establish depth." });
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.photos).toEqual(photos.map(({ id, label, imageBase64 }) => ({ id, label, imageBase64 })));
+    expect(body).not.toHaveProperty("imageBase64");
   });
 
   it("loads a signed cloud photo in the browser and sends bounded image data to chat", async () => {

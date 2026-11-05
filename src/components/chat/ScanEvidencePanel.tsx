@@ -4,6 +4,7 @@ import type { IdentificationResult, Lookup, VisualFocusBox } from "../../types";
 import { ScanSources } from "../result/ScanSources";
 import ScanThumb from "../ui/ScanThumb";
 import { getTrustedFocusBox } from "./scanEvidenceGeometry";
+import { PhotoEvidenceStrip } from "../result/PhotoEvidenceStrip";
 
 type EvidenceItem = {
   id: "identity" | "function" | "visible" | "concerns" | "next" | "sources";
@@ -22,8 +23,10 @@ export function ScanEvidencePanel({ lookup, onDraftQuestion }: ScanEvidencePanel
   const result = lookup.result;
   const items = useMemo(() => result ? buildEvidenceItems(result) : [], [result]);
   const [selectedId, setSelectedId] = useState<EvidenceItem["id"]>("identity");
+  const [selectedPhotoId, setSelectedPhotoId] = useState<string>();
+  const selectedPhoto = lookup.photos?.find((photo) => photo.id === selectedPhotoId);
   const selected = items.find((item) => item.id === selectedId) ?? items[0];
-  const trustedFocus = getTrustedFocusBox(lookup.focusBox);
+  const trustedFocus = !selectedPhoto || selectedPhoto.id === lookup.photos?.[0]?.id ? getTrustedFocusBox(lookup.focusBox) : null;
   const partName = result?.partName ?? "Captured frame";
   const modelRun = result?.modelRun;
 
@@ -37,8 +40,10 @@ export function ScanEvidencePanel({ lookup, onDraftQuestion }: ScanEvidencePanel
         <Link to={`/result/${lookup.id}`} className="ds-evidence-open">Full result</Link>
       </header>
 
+      <PhotoEvidenceStrip photos={lookup.photos} selectedId={selectedPhotoId} onSelect={setSelectedPhotoId} />
+
       <div className="ds-evidence-stage" data-has-locked-target={trustedFocus ? "true" : "false"}>
-        <ScanThumb alt={`Saved photo of ${partName}`} className="ds-evidence-photo" src={lookup.frame.imageBase64} />
+        <ScanThumb alt={`Saved photo of ${partName}`} className="ds-evidence-photo" src={selectedPhoto?.imageBase64 ?? lookup.frame.imageBase64} />
         {trustedFocus ? (
           <button
             aria-label={`Inspect detected ${partName}`}

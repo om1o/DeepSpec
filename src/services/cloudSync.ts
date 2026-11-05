@@ -4,6 +4,7 @@ import { getAuthClient } from "./auth";
 import { getLookup, readLookups, recordCloudRevision, recordCloudSaveAttempt } from "./storage";
 import type { FeedbackSubmission, Lookup, WaitlistSignup } from "../types";
 import { feedbackCloudMessage, getFeedbackIssue, normalizeFeedbackContext } from "./feedbackDetails";
+import { hasVisualEvidence, isOwnedEvidencePath, normalizeVisualEvidence, type EvidenceBundle } from "./visualEvidence";
 
 const SCAN_BUCKET = "scan-images";
 const CLOUD_HEALTH_STORAGE_KEY = "deep-spec:cloud-health";
@@ -324,8 +325,10 @@ async function performLookupSync(lookup: Lookup, scope: AccountScope, guard: () 
   if (lookup.inspection && !lookup.frame.imageBase64.startsWith("data:")) {
     const revision = lookup.cloudRevision;
     if (!isCloudRevision(revision)) throw new Error(CLOUD_CONFLICT_MESSAGE);
+    const evidence = hasVisualEvidence(lookup) ? await uploadEvidenceBundle(supabase, user.id, lookup, guard) : undefined;
+    guard();
     const updated = await supabase.from("scan_lookups")
-      .update({ inspection_json: lookup.inspection, revision: revision + 1 })
+      .update({ inspection_json: lookup.inspection, ...(evidence ? { evidence_bundle_json: evidence, ...clearedCutoutFields(lookup) } : {}), revision: revision + 1 })
       .eq("user_id", user.id)
       .eq("local_id", lookup.id)
       .eq("revision", revision)
@@ -355,26 +358,19 @@ async function performLookupSync(lookup: Lookup, scope: AccountScope, guard: () 
   // Keep the device record untouched; only authorized cloud identifiers travel.
   const cloudLookup = { ...lookup, orgId: association?.orgId, jobId: association?.jobId,
     technicianUserId: association ? lookup.technicianUserId : undefined };
-  const image = dataUrlToBlob(lookup.frame.imageBase64);
-  const imageHash = await hashBytes(image.bytes);
-  guard();
   // Upload before the row CAS, but never overwrite an image another revision
   // references. A rejected save can leave an unreferenced object, not lost data.
-  const imagePath = `${user.id}/${lookup.id}/original-${imageHash ?? createRuntimeId()}.${image.extension}`;
-  const uploaded = await supabase.storage.from(SCAN_BUCKET).upload(imagePath, image.blob, {
-    contentType: image.contentType,
-    upsert: false,
-  });
-
-  guard();
-  if (uploaded.error && !isExistingImage(uploaded.error)) {
-    throw new Error(uploaded.error.message);
-  }
-
+  const original = await uploadEvidenceImage(supabase, user.id, lookup.id, lookup.frame.imageBase64, "original", guard);
+  const imagePath = original.image_path;
   const isolatedImage = await uploadIsolatedImage(supabase, user.id, lookup, guard);
+  const cachedPaths = new Map([[`photo:${lookup.frame.imageBase64}`, imagePath]]);
+  if (lookup.isolatedImageBase64 && isolatedImage.isolated_image_path) cachedPaths.set(`isolated:${lookup.isolatedImageBase64}`, isolatedImage.isolated_image_path);
+  const evidence = hasVisualEvidence(lookup) ? await uploadEvidenceBundle(supabase, user.id, lookup, guard, cachedPaths) : undefined;
   guard();
   const saved = await upsertScanLookupRow(supabase, {
     ...isolatedImage,
+    ...clearedCutoutFields(lookup),
+    ...(evidence ? { evidence_bundle_json: evidence } : {}),
     analysis_attempt_id: lookup.analysisAttemptId ?? null,
     analyzed_at: lookup.analyzedAt ?? null,
     captured_at: lookup.frame.capturedAt,
@@ -383,10 +379,7 @@ async function performLookupSync(lookup: Lookup, scope: AccountScope, guard: () 
     created_at: lookup.createdAt,
     error_code: lookup.errorCode ?? null,
     error_message: lookup.errorMessage ?? null,
-    image_byte_length: image.byteLength,
-    image_hash: imageHash,
-    image_mime_type: image.contentType,
-    image_path: imagePath,
+    ...original,
     local_id: lookup.id,
     notes: lookup.notes,
     rating: lookup.rating,
@@ -677,19 +670,67 @@ async function insertScanModelRun(supabase: SupabaseClient, userId: string, look
 async function uploadIsolatedImage(supabase: SupabaseClient, userId: string, lookup: Lookup, guard: () => void) {
   // No crop on this device does not mean a previously saved crop should be cleared.
   if (!lookup.isolatedImageBase64?.startsWith("data:")) return {};
-  const image = dataUrlToBlob(lookup.isolatedImageBase64);
-  const hash = await hashBytes(image.bytes);
-  if (!hash) throw new Error("A secure connection is required to verify the isolated image.");
-  guard();
-  const path = `${userId}/${lookup.id}/isolated-${hash}.${image.extension}`;
-  const uploaded = await supabase.storage.from(SCAN_BUCKET).upload(path, image.blob, { contentType: image.contentType, upsert: true });
-  guard();
-  if (uploaded.error) throw new Error(uploaded.error.message);
+  const uploaded = await uploadEvidenceImage(supabase, userId, lookup.id, lookup.isolatedImageBase64, "isolated", guard);
   return {
-    isolated_image_path: path, isolated_image_hash: hash,
-    isolated_image_mime_type: image.contentType, isolated_image_byte_length: image.byteLength,
+    isolated_image_path: uploaded.image_path, isolated_image_hash: uploaded.image_hash,
+    isolated_image_mime_type: uploaded.image_mime_type, isolated_image_byte_length: uploaded.image_byte_length,
     isolated_image_kind: lookup.focusMode === "mask" ? "segmentation" : lookup.focusMode === "crop" ? "crop" : null,
   };
+}
+
+function clearedCutoutFields(lookup: Lookup) {
+  return lookup.isolatedImageBase64 === "" ? { isolated_image_path: null, isolated_image_hash: null,
+    isolated_image_mime_type: null, isolated_image_byte_length: null, isolated_image_kind: null } : {};
+}
+
+async function uploadEvidenceImage(supabase: SupabaseClient, userId: string, lookupId: string, source: string, kind: "original" | "photo" | "isolated", guard: () => void) {
+  if (!/^[a-zA-Z0-9._:-]+$/.test(lookupId) || lookupId === "." || lookupId === "..") throw new Error("Evidence not synced: invalid scan identity.");
+  guard();
+  if (!source.startsWith("data:")) {
+    let path: string | undefined;
+    try {
+      const url = new URL(source);
+      const config = getCloudSyncConfig();
+      const prefix = `/storage/v1/object/sign/${SCAN_BUCKET}/`;
+      if (config && url.origin === new URL(config.url).origin && url.pathname.startsWith(prefix)) path = decodeURIComponent(url.pathname.slice(prefix.length));
+    } catch { /* Invalid or foreign image references are never persisted. */ }
+    if (!isOwnedEvidencePath(path, userId, lookupId)) throw new Error("Evidence not synced: a saved photo reference does not belong to this account and scan. Reopen the saved scan before retrying.");
+    return { image_path: path } as { image_path: string; image_hash?: string | null; image_mime_type?: string; image_byte_length?: number };
+  }
+  const image = dataUrlToBlob(source);
+  if (!["image/jpeg", "image/png", "image/webp"].includes(image.contentType)) throw new Error("Evidence not synced: unsupported image format.");
+  const hash = await hashBytes(image.bytes);
+  if (kind === "isolated" && !hash) throw new Error("A secure connection is required to verify the isolated image.");
+  guard();
+  const path = `${userId}/${lookupId}/${kind}-${hash ?? createRuntimeId()}.${image.extension}`;
+  const uploaded = await supabase.storage.from(SCAN_BUCKET).upload(path, image.blob, { contentType: image.contentType, upsert: false });
+  guard();
+  if (uploaded.error && !isExistingImage(uploaded.error)) throw new Error(uploaded.error.message);
+  return { image_path: path, image_hash: hash, image_mime_type: image.contentType, image_byte_length: image.byteLength };
+}
+
+async function uploadEvidenceBundle(supabase: SupabaseClient, userId: string, lookup: Lookup, guard: () => void, cachedPaths = new Map<string, string>()): Promise<EvidenceBundle> {
+  const evidence = normalizeVisualEvidence(lookup);
+  if (!evidence) throw new Error("Evidence not synced: photo or selection metadata is invalid. Your device record is unchanged.");
+  const upload = async (source: string, kind: "photo" | "isolated") => {
+    const key = `${kind}:${source}`;
+    const cached = cachedPaths.get(key);
+    if (cached) return cached;
+    const saved = await uploadEvidenceImage(supabase, userId, lookup.id, source, kind, guard);
+    cachedPaths.set(key, saved.image_path);
+    return saved.image_path;
+  };
+  const bundle: EvidenceBundle = { version: 1, ...(evidence.focusBox ? { focusBox: evidence.focusBox } : {}), ...(evidence.focusMode ? { focusMode: evidence.focusMode } : {}) };
+  if (evidence.photos !== undefined) {
+    bundle.photos = [];
+    for (const { imageBase64, ...photo } of evidence.photos) bundle.photos.push({ ...photo, imagePath: await upload(imageBase64, "photo") });
+  }
+  if (evidence.isolatedObjects !== undefined) {
+    bundle.isolatedObjects = [];
+    for (const { isolatedImageBase64, ...object } of evidence.isolatedObjects) bundle.isolatedObjects.push({ ...object, imagePath: isolatedImageBase64 ? await upload(isolatedImageBase64, "isolated") : null });
+  }
+  if (evidence.isolatedImageBase64 !== undefined) bundle.isolatedImagePath = evidence.isolatedImageBase64 ? await upload(evidence.isolatedImageBase64, "isolated") : null;
+  return bundle;
 }
 
 async function insertSyncEvent(
@@ -1046,6 +1087,10 @@ function getImageExtension(contentType: string) {
 
 function getFriendlySyncError(error: unknown) {
   const message = error instanceof Error ? error.message : "Unknown cloud sync error.";
+  if (message.startsWith("Evidence not synced:")) return message;
+  if (/evidence_bundle_json/i.test(message) && /does not exist|schema cache|could not find .* column/i.test(message)) {
+    return "Evidence not synced: the cloud evidence database migration is required. All photos and selections remain on this device; cloud save is not complete.";
+  }
   if (message === "Sign in to the account that owns this scan before syncing." || message.startsWith("Account changed.")) return message;
   if (message === CLOUD_CONFLICT_MESSAGE || message.includes("scan_lookup_revision_conflict")) return CLOUD_CONFLICT_MESSAGE;
   if (/sync_scan_details/i.test(message) && /does not exist|schema cache|could not find/i.test(message)) {

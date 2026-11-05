@@ -58,6 +58,52 @@ describe("readCloudLookups", () => {
     mocks.signedUrls.mockResolvedValue({ data: [], error: null });
   });
 
+  it("restores every photo and secondary cutout with signed URLs, keeping corrected crops empty", async () => {
+    const base = "user-1/scan-1/";
+    const box = { x: 0.1, y: 0.1, width: 0.3, height: 0.4, confidence: 0.8 };
+    const bundle = { version: 1,
+      photos: [{ id: "overview", label: "overview", capturedAt: "now", imagePath: `${base}original.jpg` }, { id: "detail", label: "close_up", capturedAt: "later", imagePath: `${base}detail.jpg` }],
+      isolatedObjects: [{ name: "Primary", category: "engine", primary: true, focusBox: box, imagePath: `${base}primary.png` }, { name: "Secondary", category: "electrical", primary: false, focusBox: box, imagePath: `${base}secondary.png` }, { name: "Corrected", category: "engine", primary: false, focusBox: box, imagePath: null, focusMode: "crop", correctedAt: "today" }],
+      focusBox: box, focusMode: "mask", isolatedImagePath: `${base}primary.png`,
+    };
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, image_path: `${base}original.jpg`, evidence_bundle_json: bundle }], error: null });
+    mocks.signedUrls.mockImplementation(async (paths: string[]) => ({ data: paths.map((path) => ({ path, signedUrl: `https://images/${path}?signed=new` })), error: null }));
+    const { readCloudLookup } = await import("./cloudHistory");
+    const result = await readCloudLookup("scan-1");
+    expect(result.ok).toBe(true);
+    if (!result.ok || !result.value) throw new Error("expected a cloud scan");
+    expect(result.value.photos?.map((photo) => photo.id)).toEqual(["overview", "detail"]);
+    expect(result.value.photos?.[1].imageBase64).toContain("detail.jpg?signed=new");
+    expect(result.value.isolatedObjects?.[1].isolatedImageBase64).toContain("secondary.png?signed=new");
+    expect(result.value.isolatedObjects?.[2]).toMatchObject({ isolatedImageBase64: "", focusMode: "crop", correctedAt: "today" });
+    expect(result.value.isolatedImageBase64).toContain("primary.png?signed=new");
+    const { normalizeLookup, scanStateFromLookup } = await import("./storage");
+    const reopened = scanStateFromLookup(normalizeLookup(result.value)!);
+    expect(reopened.photos).toEqual(result.value.photos);
+    expect(reopened.isolatedObjects).toEqual(result.value.isolatedObjects);
+    expect(mocks.signedUrls).toHaveBeenCalledWith([`${base}original.jpg`, `${base}detail.jpg`, `${base}primary.png`, `${base}secondary.png`], 3600);
+  });
+
+  it.each(["other-owner", "other-scan", "missing-image", "malformed"])("does not partially restore unsafe evidence: %s", async (kind) => {
+    const imagePath = kind === "other-owner" ? "user-2/scan-1/photo.jpg" : kind === "other-scan" ? "user-1/scan-2/photo.jpg" : "user-1/scan-1/photo.jpg";
+    const bundle = { version: 1, photos: [{ id: "detail", label: kind === "malformed" ? "not-a-label" : "close_up", capturedAt: "now", imagePath }] };
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, evidence_bundle_json: bundle }], error: null });
+    const { readCloudLookup } = await import("./cloudHistory");
+    expect(await readCloudLookup("scan-1")).toMatchObject({ ok: false });
+    if (kind !== "missing-image") expect(mocks.signedUrls).not.toHaveBeenCalled();
+  });
+
+  it("reads old scans when the evidence column migration has not landed", async () => {
+    mocks.select.mockImplementation((columns) => columns.includes("evidence_bundle_json")
+      ? { data: null, error: { message: "column scan_lookups.evidence_bundle_json does not exist" } }
+      : { data: [shopRow], error: null });
+    const { readCloudLookups } = await import("./cloudHistory");
+    expect(await readCloudLookups()).toMatchObject({ ok: true });
+    expect(mocks.select).toHaveBeenCalledTimes(2);
+    expect(mocks.select.mock.calls[1][0]).toContain("inspection_json");
+    expect(mocks.select.mock.calls[1][0]).not.toContain("evidence_bundle_json");
+  });
+
   it("reads the verified account history with its owner filter and limit despite an obsolete preview flag", async () => {
     vi.stubEnv("VITE_DEEPSPEC_GUEST_PREVIEW", "true");
     mocks.select.mockReturnValue({ data: [shopRow], error: null });

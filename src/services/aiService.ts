@@ -4,6 +4,7 @@ import { getAuthClient } from "./auth";
 import { getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import { prepareRetryFrame } from "../lib/retryFrame";
 import { compressImageDataUrl } from "../lib/utils";
+import { validatePhotoGroup } from "./photoDraft";
 import {
   SCAN_CATEGORIES,
   type AIInput,
@@ -18,6 +19,7 @@ import {
   type PartMeasurement,
   type PossibleVehicleContext,
   type ScanCategory,
+  type ScanPhoto,
   type SourceLink,
   type VehicleContext,
 } from "../types";
@@ -119,6 +121,18 @@ export async function runAI(input: AIInput, options: AIRequestOptions = {}): Pro
   }
 
   if (input.type === "vision") {
+    if (input.photos) {
+      const scope = getAccountScope();
+      const photos = await preparePhotoGroupForRequest(input.photos, options.signal);
+      const body = await postAI<IdentifyApiSuccess>("/api/identify", {
+        photos,
+        ...(input.vehicleContext ? { vehicleContext: input.vehicleContext } : {}),
+        ...(input.measurementContext ? { measurementContext: input.measurementContext } : {}),
+        userMessage: input.userMessage,
+        responseAsJson: true,
+      }, { signal: options.signal, timeoutMs: getIdentifyClientTimeoutMs(), scope });
+      return { ...body.result, ...(body.modelRun ? { modelRun: body.modelRun } : {}) };
+    }
     if (!input.imageBase64) {
       throw new AIServiceError("invalid_input", "No captured image was provided.");
     }
@@ -232,18 +246,34 @@ async function fitIdentifyImageToRequest(dataUrl: string, maxChars: number, sign
   throw new AIServiceError("image_too_large", "The captured photo is too large. Try a lower-resolution photo.");
 }
 
+export async function preparePhotoGroupForRequest(photos: ScanPhoto[], signal?: AbortSignal) {
+  if (!photos.length || photos.length > 4) throw new AIServiceError("invalid_input", "Choose one to four labeled photos of the same part or area.");
+  const prepared: ScanPhoto[] = [];
+  for (const photo of photos) {
+    throwIfAborted(signal);
+    const frame = await prepareRetryFrame(photo);
+    prepared.push({ ...photo, ...frame, imageBase64: await fitIdentifyImageToRequest(frame.imageBase64, Math.floor(3_700_000 / photos.length), signal) });
+  }
+  if (!validatePhotoGroup(prepared)) throw new AIServiceError("invalid_input", "The saved photo group is incomplete. Reopen it before retrying.");
+  return prepared.map(({ id, label, imageBase64 }) => ({ id, label, imageBase64 }));
+}
+
 export async function identifyCapturedFrame(
   frame: CapturedFrame,
   secondFrame?: CapturedFrame,
   labelRescueTrigger?: LabelRescueTrigger,
   options: {
+    photos?: ScanPhoto[];
     measurementContext?: MeasurementContext;
     signal?: AbortSignal;
     vehicleContext?: VehicleContext;
   } = {},
 ): Promise<IdentificationResult> {
   throwIfAborted(options.signal);
-  if (isOnDeviceFallbackEnabled() && typeof navigator !== "undefined" && navigator.onLine === false) {
+  if (options.photos && typeof navigator !== "undefined" && navigator.onLine === false) {
+    throw new AIServiceError("network", "Your photo group is saved on this device. Reconnect and retry to analyze every angle together.");
+  }
+  if (!options.photos && isOnDeviceFallbackEnabled() && typeof navigator !== "undefined" && navigator.onLine === false) {
     const offlineResult = await identifyOnDevice(frame);
     throwIfAborted(options.signal);
     return assertIdentificationResult(offlineResult);
@@ -251,7 +281,7 @@ export async function identifyCapturedFrame(
 
   const result = await runCloudIdentify(frame, secondFrame, labelRescueTrigger, options).catch((error: unknown) => {
     throwIfAborted(options.signal);
-    if (shouldUseOnDeviceAfterCloudError(error)) {
+    if (!options.photos && shouldUseOnDeviceAfterCloudError(error)) {
       return identifyOnDeviceWithTimeout(frame, error, options.signal);
     }
 
@@ -305,6 +335,7 @@ function runCloudIdentify(
   secondFrame: CapturedFrame | undefined,
   labelRescueTrigger: LabelRescueTrigger | undefined,
   options: {
+    photos?: ScanPhoto[];
     measurementContext?: MeasurementContext;
     signal?: AbortSignal;
     vehicleContext?: VehicleContext;
@@ -314,6 +345,7 @@ function runCloudIdentify(
     type: "vision",
     imageBase64: frame.imageBase64,
     imageBase64_2: secondFrame?.imageBase64,
+    photos: options.photos,
     labelRescueTrigger,
     measurementContext: options.measurementContext,
     userMessage: "Identify this car part from the captured photo.",
@@ -368,6 +400,19 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
 
   const scope = getAccountScope();
   if (!isAccountScopeCurrent(scope)) throw new AIServiceError("invalid_input", "Reopen this scan before asking a question.");
+  if (lookup.photos?.length) {
+    const photos = await preparePhotoGroupForRequest(lookup.photos);
+    const result = await postAI<ChatApiSuccess>("/api/chat", {
+      userMessage: buildFollowUpContext(lookup, trimmedQuestion), photos,
+      ...(options.research ? { research: true, ...(options.sourceUrls?.length ? { sourceUrls: options.sourceUrls } : {}) } : {}),
+    }, { timeoutMs: options.research ? 60_000 : DEFAULT_CHAT_CLIENT_TIMEOUT_MS, scope });
+    if (typeof result.message !== "string" || !result.message.trim()) throw new AIServiceError("invalid_response", "Deep Spec received an unreadable chat response.");
+    return {
+      message: result.message.trim(),
+      ...(isSourceLinkArray(result.sources) ? { sources: result.sources.filter((source) => /^https:\/\//.test(source.url)).slice(0, 8) } : {}),
+      ...(typeof result.searchSuggestions === "string" && result.searchSuggestions.length <= 50_000 ? { searchSuggestions: result.searchSuggestions } : {}),
+    };
+  }
   let imageBase64: string;
   try {
     imageBase64 = (await prepareRetryFrame(lookup.frame)).imageBase64;

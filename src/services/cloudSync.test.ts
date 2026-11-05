@@ -26,6 +26,97 @@ describe("cloudSync", () => {
     vi.unstubAllEnvs();
   });
 
+  it.each(["saved", "missing-column", "failed-cutout"])("saves all photo/selection evidence separately from AI: %s", async (outcome) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    if (outcome === "failed-cutout") upload.mockResolvedValueOnce({ error: null }).mockResolvedValueOnce({ error: null }).mockResolvedValueOnce({ error: { message: "cutout upload unavailable" } });
+    const scanWrite = vi.fn().mockResolvedValue(outcome === "missing-column"
+      ? { data: null, error: { message: "Could not find the 'evidence_bundle_json' column in the schema cache" } }
+      : { data: { revision: 1 }, error: null });
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
+      auth: { getSession: async () => ({ data: { session: { user: { id: "user-1", email_confirmed_at: "now" } } }, error: null }) },
+      from: (table: string) => table === "scan_lookups" ? makeScanWriteQuery(scanWrite) : { insert: async () => ({ error: null }), upsert: async () => ({ error: null }) },
+      storage: { from: () => ({ upload }) },
+    });
+    const lookup = makeLookup();
+    const box = { x: 0.1, y: 0.1, width: 0.3, height: 0.4, confidence: 0.8 };
+    lookup.photos = [{ ...lookup.frame, id: "overview", label: "overview" }, { ...lookup.frame, id: "detail", label: "close_up", imageBase64: "data:image/jpeg;base64,Ynll" }];
+    lookup.isolatedObjects = [
+      { name: "Primary", category: "engine", primary: true, focusBox: box, isolatedImageBase64: "data:image/png;base64,YQ==" },
+      { name: "Secondary", category: "electrical", primary: false, focusBox: box, isolatedImageBase64: "data:image/png;base64,Yg==" },
+      { name: "Corrected", category: "engine", primary: false, focusBox: box, isolatedImageBase64: "", focusMode: "crop", correctedAt: "2026-11-05T00:00:00Z" },
+    ];
+    const { saveExistingLookup, getLookup } = await import("./storage");
+    saveExistingLookup(lookup);
+    const savedAiResult = getLookup(lookup.id)?.result;
+    const { syncLookupToCloud } = await import("./cloudSync");
+    const result = await syncLookupToCloud(lookup);
+    expect(result.ok).toBe(outcome === "saved");
+    expect(getLookup(lookup.id)?.cloudSave?.status).toBe(outcome === "saved" ? "acknowledged" : "failed");
+    expect(upload.mock.calls.every(([path, , options]) => path.startsWith("user-1/lookup-1/") && options.upsert === false)).toBe(true);
+    if (outcome === "failed-cutout") { expect(scanWrite).not.toHaveBeenCalled(); return; }
+    const row = scanWrite.mock.calls[0][0];
+    expect(row.result_json).toEqual(savedAiResult);
+    expect(row.evidence_bundle_json).toMatchObject({ version: 1, photos: [{ id: "overview" }, { id: "detail" }], isolatedObjects: [{ name: "Primary" }, { name: "Secondary" }, { name: "Corrected", imagePath: null, focusMode: "crop" }] });
+    expect(JSON.stringify(row.evidence_bundle_json)).not.toContain("base64");
+    expect(row.evidence_bundle_json.photos[0].imagePath).toBe(row.image_path);
+    expect(row.evidence_bundle_json.isolatedObjects[0].imagePath).not.toBe(row.evidence_bundle_json.isolatedObjects[1].imagePath);
+    if (outcome === "missing-column") {
+      expect(result.message).toContain("Evidence not synced");
+      expect(scanWrite).toHaveBeenCalledTimes(1);
+      expect(getLookup(lookup.id)?.cloudRevision).toBeUndefined();
+    }
+  });
+
+  it.each(["other-owner", "other-scan", "foreign-host"])("refuses an unowned signed evidence reference: %s", async (kind) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const scanWrite = vi.fn();
+    const upload = vi.fn().mockResolvedValue({ error: null });
+    mocks.createClient.mockReturnValue({ auth: { getSession: async () => ({ data: { session: { user: { id: "user-1", email_confirmed_at: "now" } } }, error: null }) },
+      from: () => makeScanWriteQuery(scanWrite), storage: { from: () => ({ upload }) } });
+    const lookup = makeLookup();
+    const owner = kind === "other-owner" ? "user-2" : "user-1";
+    const scan = kind === "other-scan" ? "lookup-2" : lookup.id;
+    const host = kind === "foreign-host" ? "foreign.example" : "example.supabase.co";
+    lookup.photos = [{ ...lookup.frame, id: "detail", label: "close_up", imageBase64: `https://${host}/storage/v1/object/sign/scan-images/${owner}/${scan}/photo.jpg?token=old` }];
+    const { syncLookupToCloud } = await import("./cloudSync");
+    expect(await syncLookupToCloud(lookup)).toMatchObject({ ok: false, message: expect.stringContaining("Evidence not synced") });
+    expect(scanWrite).not.toHaveBeenCalled();
+  });
+
+  it("saves a corrected cloud selection by reference without overwriting original image metadata", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const upload = vi.fn();
+    const scanWrite = vi.fn().mockResolvedValue({ data: { revision: 2 }, error: null });
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
+      auth: { getSession: async () => ({ data: { session: { user: { id: "user-1", email_confirmed_at: "now" } } }, error: null }) },
+      from: (table: string) => table === "scan_lookups" ? makeScanWriteQuery(scanWrite) : { insert: async () => ({ error: null }), upsert: async () => ({ error: null }) },
+      storage: { from: () => ({ upload }) },
+    });
+    const lookup = makeLookup();
+    const originalPath = "user-1/lookup-1/original.jpg";
+    lookup.cloudRevision = 1;
+    lookup.frame.imageBase64 = `https://example.supabase.co/storage/v1/object/sign/scan-images/${originalPath}?token=expired`;
+    lookup.photos = [{ ...lookup.frame, id: "overview", label: "overview" }];
+    lookup.focusBox = { x: 0.2, y: 0.1, width: 0.3, height: 0.4, confidence: 1 };
+    lookup.focusMode = "crop";
+    lookup.isolatedImageBase64 = "";
+    lookup.isolatedObjects = [{ name: "Corrected", category: "engine", primary: true, focusBox: lookup.focusBox, focusMode: "crop", correctedAt: "today", isolatedImageBase64: "" }];
+    const { syncLookupToCloud } = await import("./cloudSync");
+    expect(await syncLookupToCloud(lookup)).toMatchObject({ ok: true });
+    expect(upload).not.toHaveBeenCalled();
+    const row = scanWrite.mock.calls[0][0];
+    expect(row.image_path).toBe(originalPath);
+    expect(row).not.toHaveProperty("image_hash");
+    expect(row).not.toHaveProperty("image_byte_length");
+    expect(row.isolated_image_path).toBeNull();
+    expect(row.evidence_bundle_json).toMatchObject({ isolatedImagePath: null, focusMode: "crop", photos: [{ imagePath: originalPath }], isolatedObjects: [{ imagePath: null, correctedAt: "today" }] });
+    expect(JSON.stringify(row.evidence_bundle_json)).not.toContain("token=");
+  });
+
   it.each(["malformed", "mixed", "transient"])("does not upload an older screen snapshot when device history is %s", async (mode) => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");

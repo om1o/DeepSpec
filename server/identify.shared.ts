@@ -21,14 +21,14 @@ import {
 } from "../src/types/index.js";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { parseInspectionPhotos, photoCaption, geminiPhotoParts, buildPhotoEvidencePrompt, type InspectionPhoto } from "./inspectionPhotos.shared.js";
 
 type JsonObject = Record<string, unknown>;
 type LabelRescueTrigger = "too_blurry";
 type ParsedIdentifyRequest = {
   base64: string;
   mimeType: string;
-  base64_2: string | null;
-  mimeType_2: string | null;
+  photos: InspectionPhoto[];
   userMessage: string;
   labelRescueTrigger: LabelRescueTrigger | null;
   measurementContext: MeasurementContext | null;
@@ -79,10 +79,6 @@ const DEFAULT_HF_AUTOMOTIVE_SOURCE_INDEX_PATH = "datasets/verified/hf-automotive
 const RETRYABLE_PROVIDER_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 const DEFAULT_BACKUP_RATE_LIMIT_RETRIES = 1;
 const DEFAULT_BACKUP_RETRY_BACKOFF_MS = 800;
-// Vercel rejects request bodies above 4.5 MB before the function runs. Keep
-// image data below that platform boundary with room for JSON and scan context.
-const MAX_IDENTIFY_IMAGE_PAYLOAD_CHARS = 4_000_000;
-
 // Credentialed image requests are restricted to exact, supported provider hosts.
 // Subdomains, lookalike suffixes, custom ports, embedded credentials, and HTTP are rejected.
 const CREDENTIALED_PROVIDER_HOSTS: Record<"gemini" | "groq" | "huggingface" | "huggingface_ocr", ReadonlySet<string>> = {
@@ -106,7 +102,7 @@ const GEMINI_IDENTIFY_PROMPT = [
 
 const OLLAMA_IDENTIFY_PROMPT = [
   "Identify the main visible car part or car damage.",
-  "Return only JSON with partName, confidence, scanCategory, and visibleObservations.",
+  "Return only JSON with partName, confidence, scanCategory, visibleObservations, evidence, concerns, and nextAction.",
   "confidence: high, medium, or low.",
   `scanCategory: ${SCAN_CATEGORIES.join(", ")}.`,
 ].join(" ");
@@ -704,6 +700,11 @@ async function createBackendIdentifyResponse(
       `${label} endpoint must use HTTPS on a supported provider host.`,
     );
   }
+  // https://console.groq.com/docs/vision limits this model to three images.
+  // Keep the entire group available to the next configured provider.
+  if (provider === "groq" && model === DEFAULT_GROQ_IDENTIFY_MODEL && parsed.photos.length > 3) {
+    return errorResponse(422, "unsupported_photo_count", "The configured Groq model supports at most 3 photos. Use another configured provider or submit up to 3 photos.");
+  }
 
   const startedAt = Date.now();
   const response = await fetchBackendIdentify(backend, parsed, ocr, sourceContext, signal);
@@ -783,20 +784,10 @@ function fetchBackendIdentify(
         sourceContext ?? "",
       ].filter(Boolean).join("\n\n"),
     },
-    {
-      type: "image_url",
-      image_url: {
-        url: `data:${parsed.mimeType};base64,${parsed.base64}`,
-      },
-    },
-    ...(parsed.base64_2 && parsed.mimeType_2
-      ? [{
-          type: "image_url",
-          image_url: {
-            url: `data:${parsed.mimeType_2};base64,${parsed.base64_2}`,
-          },
-        }]
-      : []),
+    ...parsed.photos.flatMap((photo, index) => [
+      { type: "text", text: photoCaption(photo, index) },
+      { type: "image_url", image_url: { url: `data:${photo.mimeType};base64,${photo.base64}` } },
+    ]),
   ];
 
   return fetch(backend.endpoint, {
@@ -1076,7 +1067,7 @@ function fetchOllamaIdentify(
       ]
         .filter(Boolean)
         .join("\n\n"),
-      images: [parsed.base64, parsed.base64_2].filter(isString),
+      images: parsed.photos.map((photo) => photo.base64),
     },
   ];
 
@@ -1170,15 +1161,7 @@ function fetchGeminiIdentify(
         {
           role: "user",
           parts: [
-            {
-              inline_data: {
-                mime_type: parsed.mimeType,
-                data: parsed.base64,
-              },
-            },
-            ...(parsed.base64_2 && parsed.mimeType_2
-              ? [{ inline_data: { mime_type: parsed.mimeType_2, data: parsed.base64_2 } }]
-              : []),
+            ...geminiPhotoParts(parsed.photos),
             ...(ocr?.text ? [{ text: buildOcrContext(ocr.text) }] : []),
             ...(sourceContext ? [{ text: sourceContext }] : []),
             ...(buildIdentifyContextPrompt(parsed) ? [{ text: buildIdentifyContextPrompt(parsed) }] : []),
@@ -1232,13 +1215,9 @@ function fetchGeminiRescueIdentify(
         {
           role: "user",
           parts: [
-            {
-              inline_data: {
-                mime_type: parsed.mimeType,
-                data: parsed.base64,
-              },
-            },
+            ...geminiPhotoParts(parsed.photos),
             ...(ocr?.text ? [{ text: buildOcrContext(ocr.text) }] : []),
+            { text: buildIdentifyContextPrompt(parsed) },
             { text: parsed.userMessage },
           ],
         },
@@ -1302,48 +1281,25 @@ function identifyTimeoutResponse(): IdentifyResponse {
 }
 
 function parseIdentifyRequest(body: unknown): ParsedIdentifyRequest | { error: IdentifyResponse } {
-  if (!isRecord(body) || typeof body.imageBase64 !== "string") {
+  if (!isRecord(body)) {
     return { error: errorResponse(400, "invalid_input", "A captured image is required.") };
   }
 
-  if (body.imageBase64_2 !== undefined && typeof body.imageBase64_2 !== "string") {
-    return { error: errorResponse(400, "invalid_input", "The second captured image must be a JPEG, PNG, or WebP data URL.") };
-  }
+  const parsedPhotos = parseInspectionPhotos(body);
+  if ("error" in parsedPhotos) return parsedPhotos;
+  const { photos } = parsedPhotos;
 
-  const secondImageLength = typeof body.imageBase64_2 === "string" ? body.imageBase64_2.length : 0;
-  if (body.imageBase64.length + secondImageLength > MAX_IDENTIFY_IMAGE_PAYLOAD_CHARS) {
-    return { error: errorResponse(400, "image_too_large", "The captured image is too large. Try a lower-resolution photo.") };
-  }
-
-  const parsedImage = parseDataUrl(body.imageBase64);
-  if (!parsedImage) {
-    return { error: errorResponse(400, "invalid_input", "The captured image must be a JPEG, PNG, or WebP data URL.") };
-  }
-
-  let base64_2: string | null = null;
-  let mimeType_2: string | null = null;
-  if (typeof body.imageBase64_2 === "string") {
-    const parsed2 = parseDataUrl(body.imageBase64_2);
-    if (!parsed2) {
-      return { error: errorResponse(400, "invalid_input", "The second captured image must be a JPEG, PNG, or WebP data URL.") };
-    }
-    base64_2 = parsed2.base64;
-    mimeType_2 = parsed2.mimeType;
-  }
-
-  const hasSecond = base64_2 !== null;
   const userMessage =
     typeof body.userMessage === "string" && body.userMessage.trim()
       ? body.userMessage.trim().slice(0, 500)
-      : hasSecond
-        ? "Identify this car part from two photos taken from slightly different angles."
+      : photos.length > 1
+        ? "Identify this car part from the grouped photos taken from different angles."
         : "Identify this car part from the captured photo.";
 
   return {
-    base64: parsedImage.base64,
-    mimeType: parsedImage.mimeType,
-    base64_2,
-    mimeType_2,
+    base64: photos[0].base64,
+    mimeType: photos[0].mimeType,
+    photos,
     userMessage,
     labelRescueTrigger: body.labelRescueTrigger === "too_blurry" ? "too_blurry" : null,
     measurementContext: parseMeasurementContext(body.measurementContext),
@@ -1352,7 +1308,7 @@ function parseIdentifyRequest(body: unknown): ParsedIdentifyRequest | { error: I
 }
 
 function buildIdentifyContextPrompt(parsed: ParsedIdentifyRequest) {
-  const sections = [];
+  const sections = [buildPhotoEvidencePrompt(parsed.photos)];
 
   if (parsed.vehicleContext) {
     const vehicleFacts = [
@@ -1479,26 +1435,6 @@ function clampRatio(value: number) {
   }
 
   return Math.max(0, Math.min(1, value));
-}
-
-function parseDataUrl(dataUrl: string) {
-  const match = dataUrl.match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/);
-  if (!match || match[2].length % 4 !== 0) {
-    return null;
-  }
-
-  try {
-    if (Buffer.from(match[2], "base64").toString("base64") !== match[2]) {
-      return null;
-    }
-  } catch {
-    return null;
-  }
-
-  return {
-    mimeType: match[1],
-    base64: match[2],
-  };
 }
 
 function extractGeminiText(responseBody: JsonObject | null) {
@@ -3331,10 +3267,6 @@ function isRecord(value: unknown): value is JsonObject {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
-}
-
-function isString(value: unknown): value is string {
-  return typeof value === "string";
 }
 
 function isCandidateMatchArray(value: unknown): value is CandidateMatch[] {

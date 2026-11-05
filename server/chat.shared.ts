@@ -1,5 +1,6 @@
 import { CHAT_USER_MESSAGE_MAX_CHARS, FOLLOWUP_PROMPT } from "../src/services/systemPrompts.js";
 import type { SourceLink } from "../src/types/index.js";
+import { parseInspectionPhotos, photoCaption, buildPhotoEvidencePrompt, type InspectionPhoto } from "./inspectionPhotos.shared.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -25,8 +26,7 @@ export type ChatResponse =
 const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 const LEGACY_FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
 const RETRYABLE_PROVIDER_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
-const MAX_IMAGE_CHARS = 4_000_000;
-type ChatRequest = { userMessage: string; image?: { mimeType: string; data: string }; research: boolean; sourceUrls: string[] };
+type ChatRequest = { userMessage: string; photos: InspectionPhoto[]; labeledPhotos: boolean; research: boolean; sourceUrls: string[] };
 
 export async function createChatResponse(body: unknown, env: Record<string, string | undefined>): Promise<ChatResponse> {
   if (!isChatEnabled(env)) {
@@ -176,8 +176,11 @@ function fetchGeminiChat(model: string, request: ChatRequest, apiKey: string) {
         {
           role: "user",
           parts: [
-            { text: [request.userMessage, researchContext].filter(Boolean).join("\n\n") },
-            ...(request.image ? [{ inlineData: request.image }] : []),
+            { text: [request.userMessage, researchContext, request.labeledPhotos ? buildPhotoEvidencePrompt(request.photos) : ""].filter(Boolean).join("\n\n") },
+            ...request.photos.flatMap((photo, index) => [
+              ...(request.labeledPhotos ? [{ text: photoCaption(photo, index) }] : []),
+              { inlineData: { mimeType: photo.mimeType, data: photo.base64 } },
+            ]),
           ],
         },
       ],
@@ -218,20 +221,8 @@ function parseChatRequest(body: unknown): ChatRequest | { error: ChatResponse } 
     return { error: errorResponse(400, "invalid_input", "A question is required.") };
   }
 
-  let image: ChatRequest["image"];
-  if (body.imageBase64 !== undefined) {
-    if (typeof body.imageBase64 !== "string") {
-      return { error: errorResponse(400, "invalid_input", "The saved photo must be a JPEG, PNG, or WebP data URL.") };
-    }
-    if (body.imageBase64.length > MAX_IMAGE_CHARS) {
-      return { error: errorResponse(400, "image_too_large", "The saved photo is too large for chat. Use a smaller photo.") };
-    }
-    const match = body.imageBase64.match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/);
-    if (!match?.[2] || match[2].length % 4 !== 0) {
-      return { error: errorResponse(400, "invalid_input", "The saved photo must be a JPEG, PNG, or WebP data URL.") };
-    }
-    image = { mimeType: match[1], data: match[2] };
-  }
+  const parsedPhotos = parseInspectionPhotos(body, false);
+  if ("error" in parsedPhotos) return parsedPhotos;
   if (body.research !== undefined && typeof body.research !== "boolean") {
     return { error: errorResponse(400, "invalid_input", "Research must be explicitly enabled or disabled.") };
   }
@@ -246,7 +237,8 @@ function parseChatRequest(body: unknown): ChatRequest | { error: ChatResponse } 
 
   return {
     userMessage: userMessage.slice(0, CHAT_USER_MESSAGE_MAX_CHARS),
-    image,
+    photos: parsedPhotos.photos,
+    labeledPhotos: body.photos !== undefined,
     research,
     sourceUrls,
   };

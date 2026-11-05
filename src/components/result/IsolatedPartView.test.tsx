@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { IsolatedPartView } from "./IsolatedPartView";
@@ -133,6 +133,138 @@ describe("IsolatedPartView", () => {
     // Overview labels give way to a single promoted "Isolated" frame for the focused object.
     expect(screen.queryAllByTestId("lens-label")).toHaveLength(0);
     expect(screen.getByTestId("lens-focused-label")).toHaveTextContent("Xbox Controller");
+  });
+
+  it("shows the untouched original without masks, outlines, scene labels, or issue callouts", async () => {
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusBox={box} focusMode="mask" isolatedImageBase64={cutout} label="Engine" issue={{ text: "Crack", anchor: box }} />);
+    await userEvent.click(screen.getByRole("button", { name: "Original", exact: true }));
+    expect(screen.getByRole("button", { name: "Original", exact: true })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByAltText("Captured car part")).toHaveAttribute("src", frame);
+    expect(screen.getByAltText("Captured car part").className).not.toMatch(/blur|brightness|contrast|saturate/);
+    expect(screen.queryByTestId("isolated-part-image")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("focused-part-window")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("issue-callout")).not.toBeInTheDocument();
+  });
+
+  it("shows an outline on the unchanged source and restores the cutout when requested", async () => {
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusBox={box} focusMode="mask" isolatedImageBase64={cutout} label="Engine" />);
+    await userEvent.click(screen.getByRole("button", { name: "Outline", exact: true }));
+    expect(screen.getByTestId("focused-part-window")).toHaveStyle({ left: "20%", top: "20%" });
+    expect(screen.getByAltText("Captured car part").className).not.toMatch(/blur|brightness|contrast/);
+    expect(screen.queryByTestId("isolated-part-image")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Cutout", exact: true }));
+    expect(screen.getByTestId("isolated-part-image")).toHaveAttribute("src", cutout);
+  });
+
+  it("labels a crop fallback explicitly and does not offer an unsaved correction without its callback", () => {
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusBox={box} focusMode="crop" label="Engine" />);
+    expect(screen.getByTestId("focused-part-label")).toHaveTextContent("Crop only");
+    expect(screen.queryByRole("button", { name: "Correct area" })).not.toBeInTheDocument();
+  });
+
+  it("applies a bounded keyboard-adjustable correction only on explicit confirmation", async () => {
+    const onCorrectFocus = vi.fn();
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusBox={box} focusMode="mask" isolatedImageBase64={cutout} label="Engine" onCorrectFocus={onCorrectFocus} />);
+    await userEvent.click(screen.getByRole("button", { name: "Correct area" }));
+    expect(screen.queryByTestId("isolated-part-image")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("slider", { name: "Selection x" }), { target: { value: "40" } });
+    fireEvent.change(screen.getByRole("slider", { name: "Selection width" }), { target: { value: "60" } });
+    expect(onCorrectFocus).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Apply area" }));
+    expect(onCorrectFocus).toHaveBeenCalledExactlyOnceWith({ ...box, x: 0.4, width: 0.6, confidence: 0 }, null);
+    expect(screen.getByRole("button", { name: "Outline", exact: true })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByTestId("focus-area-editor")).not.toBeInTheDocument();
+  });
+
+  it("cancels an edit without changing parent evidence", async () => {
+    const onCorrectFocus = vi.fn();
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusBox={box} focusMode="crop" label="Engine" onCorrectFocus={onCorrectFocus} />);
+    await userEvent.click(screen.getByRole("button", { name: "Correct area" }));
+    fireEvent.change(screen.getByRole("slider", { name: "Selection y" }), { target: { value: "30" } });
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onCorrectFocus).not.toHaveBeenCalled();
+    expect(screen.getByTestId("focused-part-window")).toHaveStyle({ top: "20%" });
+  });
+
+  it("normalizes a reversed pointer drag against the photo stage rather than the viewport", async () => {
+    const onCorrectFocus = vi.fn();
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusBox={box} focusMode="crop" label="Engine" onCorrectFocus={onCorrectFocus} />);
+    await userEvent.click(screen.getByRole("button", { name: "Correct area" }));
+    const surface = screen.getByTestId("focus-area-editor");
+    vi.spyOn(surface, "getBoundingClientRect").mockReturnValue({ left: 100, top: 200, width: 400, height: 200, right: 500, bottom: 400, x: 100, y: 200, toJSON: () => ({}) });
+    const pointer = (type: string, x: number, y: number) => {
+      const event = new MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: y });
+      Object.defineProperty(event, "pointerId", { value: 1 });
+      fireEvent(surface, event);
+    };
+    pointer("pointerdown", 420, 360);
+    pointer("pointermove", 180, 240);
+    pointer("pointerup", 180, 240);
+    await userEvent.click(screen.getByRole("button", { name: "Apply area" }));
+    const [corrected, index] = onCorrectFocus.mock.calls[0];
+    expect(index).toBeNull();
+    expect(corrected.x).toBeCloseTo(0.2);
+    expect(corrected.y).toBeCloseTo(0.2);
+    expect(corrected.width).toBeCloseTo(0.6);
+    expect(corrected.height).toBeCloseTo(0.6);
+  });
+
+  it("keeps puzzle selection while switching views and corrects the selected ordered object", async () => {
+    const onCorrectFocus = vi.fn();
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusMode="mask" label="Controller" objects={[sceneObjects[1], sceneObjects[0]]} onCorrectFocus={onCorrectFocus} />);
+    expect(screen.getByRole("button", { name: "Correct area" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Select Wall poster" }));
+    await userEvent.click(screen.getByRole("button", { name: "Original", exact: true }));
+    expect(screen.queryByTestId("lens-object")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("lens-focused-frame")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Outline", exact: true }));
+    expect(screen.getByRole("button", { name: "Select Wall poster" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByAltText("Isolated Wall poster")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Correct area" }));
+    fireEvent.change(screen.getByRole("slider", { name: "Selection x" }), { target: { value: "10" } });
+    await userEvent.click(screen.getByRole("button", { name: "Apply area" }));
+    expect(onCorrectFocus).toHaveBeenCalledExactlyOnceWith({ ...sceneObjects[1].focusBox, x: 0.1, confidence: 0 }, 1);
+  });
+
+  it("retains controlled multi-object taps and falls back honestly when a secondary mask fails", async () => {
+    const onFocusObject = vi.fn();
+    render(<IsolatedPartView variant="scanner" frameBase64={frame} focusMode="mask" label="Controller" objects={sceneObjects} focusedObjectIndex={1} onFocusObject={onFocusObject} />);
+    fireEvent.error(screen.getByAltText("Isolated Wall poster"));
+    expect(screen.queryByAltText("Isolated Wall poster")).not.toBeInTheDocument();
+    expect(screen.getByTestId("lens-focused-label")).toHaveTextContent("Crop only");
+    expect(screen.getByRole("button", { name: "Select Wall poster" }).style.backgroundImage).toContain(frame);
+    await userEvent.click(screen.getByRole("button", { name: "Select Xbox Controller" }));
+    expect(onFocusObject).toHaveBeenCalledWith(0);
+    await userEvent.click(screen.getByRole("button", { name: "Show all objects" }));
+    expect(onFocusObject).toHaveBeenCalledWith(null);
+  });
+
+  it("does not carry an unfinished correction into a different photo", async () => {
+    const onCorrectFocus = vi.fn();
+    const props = { variant: "result" as const, focusBox: box, focusMode: "crop" as const, label: "Engine", onCorrectFocus };
+    const { rerender } = render(<IsolatedPartView {...props} frameBase64={frame} />);
+    await userEvent.click(screen.getByRole("button", { name: "Correct area" }));
+    rerender(<IsolatedPartView {...props} frameBase64="data:image/jpeg;base64,new-photo" />);
+    expect(screen.queryByTestId("focus-area-editor")).not.toBeInTheDocument();
+    rerender(<IsolatedPartView {...props} frameBase64={frame} />);
+    expect(screen.queryByTestId("focus-area-editor")).not.toBeInTheDocument();
+    expect(onCorrectFocus).not.toHaveBeenCalled();
+  });
+
+  it("keeps corrected puzzle components selectable after their old cutout is discarded", async () => {
+    const objects = sceneObjects.map((object) => ({ ...object, focusMode: "crop" as const, isolatedImageBase64: "", correctedAt: "2026-11-05T00:00:00Z" }));
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusMode="crop" label="Controller" objects={objects} />);
+    expect(screen.getAllByTestId("lens-object")).toHaveLength(2);
+    expect(screen.getAllByText("Crop only")).toHaveLength(2);
+    expect(screen.queryByAltText("Isolated Xbox Controller")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Select Xbox Controller" }));
+    expect(screen.getByTestId("lens-focused-label")).toHaveTextContent("Crop only");
+  });
+
+  it("does not reuse stale cutout bytes for an object explicitly marked as a crop", () => {
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusMode="mask" label="Controller" objects={sceneObjects.map((object) => ({ ...object, focusMode: "crop" }))} />);
+    expect(screen.queryByAltText("Isolated Xbox Controller")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Crop only")).toHaveLength(2);
   });
 });
 

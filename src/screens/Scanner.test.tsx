@@ -1,4 +1,4 @@
-import { accountStorageKey, setActiveAccount } from "../lib/accountScope";
+import { accountStorageKey, setActiveAccount, type AccountScope } from "../lib/accountScope";
 import { createLookup, getLookups, LOOKUPS_STORAGE_KEY, MAX_SAVED_LOOKUPS } from "../services/storage";
 import { hashImageDataUrl, setCachedScanResult } from "../lib/scanCache";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, expect, vi } from "vitest";
 import Scanner from "./Scanner";
+import type { ScanPhoto } from "../types";
 
 const createRealElement = document.createElement.bind(document);
 const captureFrame = vi.fn(async () => "data:image/jpeg;base64,compressed-frame");
@@ -35,6 +36,15 @@ const isolateSceneObjects = vi.fn(async () => []);
 const detectObjectTargetFromImageData = vi.fn(() => null);
 const getCloudSyncStatus = vi.fn(() => ({ configured: false, message: "Cloud sync is off." }));
 const syncLookupToCloud = vi.fn(async () => ({ ok: true, message: "Scan synced." }));
+const readPhotoDraft = vi.fn<(scope?: AccountScope, kind?: "upload" | "capture") => Promise<ScanPhoto[] | null>>();
+// Write observers used by the in-memory transactional mock below.
+const savePhotoDraft = vi.fn<(photos: ScanPhoto[], scope?: AccountScope, kind?: "upload" | "capture") => Promise<void>>();
+const removePhotoDraft = vi.fn<(scope?: AccountScope, kind?: "upload" | "capture") => Promise<void>>();
+const replacePhotoDraftIfMatches = vi.fn<(previous: ScanPhoto[] | null, next: ScanPhoto[] | null, scope?: AccountScope, kind?: "upload" | "capture") => Promise<boolean>>();
+const savePhotoDraftIfEmpty = vi.fn<(photos: ScanPhoto[], scope?: AccountScope, kind?: "upload" | "capture") => Promise<boolean>>();
+const removePhotoDraftIfMatches = vi.fn<(photos: ScanPhoto[], scope?: AccountScope, kind?: "upload" | "capture") => Promise<boolean>>();
+const draftStore = new Map<string, ScanPhoto[]>();
+const draftKey = (scope?: AccountScope, kind: "upload" | "capture" = "upload") => `${scope?.userId ?? "test-user"}:${kind}`;
 const identifyCapturedFrame = vi.fn(async () => ({
   partName: "Alternator",
   confidence: "high",
@@ -159,6 +169,14 @@ vi.mock("../services/cloudSync", () => ({
   syncLookupToCloud: (...args: unknown[]) => syncLookupToCloud(...args),
 }));
 
+vi.mock("../services/photoDraft", () => ({
+  photoGroupsMatch: (left: ScanPhoto[], right: ScanPhoto[]) => JSON.stringify(left) === JSON.stringify(right),
+  readPhotoDraft: (scope?: AccountScope, kind?: "upload" | "capture") => readPhotoDraft(scope, kind),
+  replacePhotoDraftIfMatches: (previous: ScanPhoto[] | null, next: ScanPhoto[] | null, scope?: AccountScope, kind?: "upload" | "capture") => replacePhotoDraftIfMatches(previous, next, scope, kind),
+  savePhotoDraftIfEmpty: (photos: ScanPhoto[], scope?: AccountScope, kind?: "upload" | "capture") => savePhotoDraftIfEmpty(photos, scope, kind),
+  removePhotoDraftIfMatches: (photos: ScanPhoto[], scope?: AccountScope, kind?: "upload" | "capture") => removePhotoDraftIfMatches(photos, scope, kind),
+}));
+
 // Pass all images as ok - quality logic is tested separately in imageQuality.test.ts
 vi.mock("../lib/imageQuality", () => ({
   assessImageQuality: (...args: unknown[]) => assessImageQuality(...args),
@@ -198,6 +216,12 @@ function AuthReturnProbe() {
   return <p>Auth return: {state?.from ?? "missing"}</p>;
 }
 
+async function analyzeReviewedPhotos() {
+  const button = await screen.findByRole("button", { name: /^Analyze [1-4] photos?$/ });
+  await waitFor(() => expect(button).toBeEnabled());
+  await userEvent.click(button);
+}
+
 describe("Scanner", () => {
   afterEach(() => {
     cleanup();
@@ -207,6 +231,35 @@ describe("Scanner", () => {
   });
 
   beforeEach(() => {
+    draftStore.clear();
+    readPhotoDraft.mockReset();
+    readPhotoDraft.mockImplementation(async (scope, kind) => structuredClone(draftStore.get(draftKey(scope, kind)) ?? null));
+    savePhotoDraft.mockReset();
+    savePhotoDraft.mockImplementation(async (photos, scope, kind) => { draftStore.set(draftKey(scope, kind), structuredClone(photos)); });
+    removePhotoDraft.mockReset();
+    removePhotoDraft.mockImplementation(async (scope, kind) => { draftStore.delete(draftKey(scope, kind)); });
+    replacePhotoDraftIfMatches.mockReset();
+    replacePhotoDraftIfMatches.mockImplementation(async (previous, next, scope, kind) => {
+      const current = draftStore.get(draftKey(scope, kind)) ?? null;
+      if (JSON.stringify(current) !== JSON.stringify(previous)) return false;
+      if (next === null) await removePhotoDraft(scope, kind);
+      else if (JSON.stringify(previous) !== JSON.stringify(next)) await savePhotoDraft(next, scope, kind);
+      return true;
+    });
+    savePhotoDraftIfEmpty.mockReset();
+    savePhotoDraftIfEmpty.mockImplementation(async (photos, scope, kind) => {
+      const key = draftKey(scope, kind);
+      if (draftStore.has(key)) return false;
+      draftStore.set(key, structuredClone(photos));
+      return true;
+    });
+    removePhotoDraftIfMatches.mockReset();
+    removePhotoDraftIfMatches.mockImplementation(async (photos, scope, kind) => {
+      const key = draftKey(scope, kind);
+      if (JSON.stringify(draftStore.get(key)) !== JSON.stringify(photos)) return false;
+      draftStore.delete(key);
+      return true;
+    });
     captureFrame.mockReset();
     captureFrame.mockResolvedValue("data:image/jpeg;base64,compressed-frame");
     retryCamera.mockClear();
@@ -317,7 +370,7 @@ describe("Scanner", () => {
     const snapshot = JSON.stringify(getLookups());
     await act(async () => { settle(stage === "debug GPU" ? true : stage === "scene" ? [{ ...cutout, name: "Late object" }] : cutout); await pending; });
     expect(JSON.stringify(getLookups())).toBe(snapshot);
-    expect(screen.queryByRole("button", { name: "Isolated Late object" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Select Late object" })).not.toBeInTheDocument();
     vi.unstubAllEnvs();
   }, 10000);
 
@@ -351,12 +404,12 @@ describe("Scanner", () => {
     render(<MemoryRouter><Scanner /></MemoryRouter>);
 
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
-    await userEvent.click(await screen.findByRole("button", { name: "Isolated Wrench" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Select Wrench" }));
     expect(screen.getByTestId("focused-object-card")).toHaveTextContent("Analyzing");
     await userEvent.click(screen.getByTestId("focused-object-back"));
     await userEvent.click(screen.getByRole("button", { name: "Close result card" }));
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
-    await userEvent.click(await screen.findByRole("button", { name: "Isolated Wrench" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Select Wrench" }));
     await waitFor(() => expect(screen.getByTestId("focused-object-card")).toHaveTextContent("Socket wrench"));
 
     await act(async () => {
@@ -368,6 +421,75 @@ describe("Scanner", () => {
     expect(screen.getByTestId("focused-object-card")).not.toHaveTextContent("Old scan");
     expect(identifyCapturedFrame).toHaveBeenCalledTimes(4);
   }, 20000);
+
+  it.each(["available", "unavailable", "account changed"])("uses original evidence for a corrected object when its crop is %s", async (outcome) => {
+    mockStillImageTarget({ confidence: 0.9, x: 0.2, y: 0.2, width: 0.3, height: 0.3 });
+    const focusBox = { x: 0.2, y: 0.2, width: 0.3, height: 0.3, confidence: 0.9 };
+    const correctedBox = { x: 0.5, y: 0.1, width: 0.25, height: 0.4, confidence: 0 };
+    createSegmentedProductIsolation.mockResolvedValue({
+      focusBox,
+      frame: { imageBase64: "data:image/png;base64,isolated", capturedAt: new Date().toISOString() },
+      isolatedImageBase64: "data:image/png;base64,isolated",
+    });
+    isPromptableSegmentationEnabled.mockReturnValue(true);
+    isolateSceneObjects.mockResolvedValue([
+      { name: "Alternator", category: "electrical", focusBox, isolatedImageBase64: "data:image/png;base64,primary", primary: true },
+      { name: "Wrench", category: "tools", focusBox: correctedBox, isolatedImageBase64: "", focusMode: "crop", correctedAt: "2026-11-05T00:00:00Z", primary: false },
+    ]);
+    identifyCapturedFrame.mockResolvedValueOnce({ ...makeScanResult("Alternator"), sceneObjects: [
+      { name: "Wrench", category: "tools", regionLabel: "right", confidence: "high" },
+    ] }).mockResolvedValueOnce(makeScanResult("Socket wrench"));
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await screen.findByRole("button", { name: "Select Wrench" });
+    createFocusedScanCrop.mockClear();
+    let finishCrop!: (image: string | null) => void;
+    createFocusedScanCrop.mockImplementationOnce(() => new Promise((resolve) => { finishCrop = resolve; }));
+    await userEvent.click(screen.getByRole("button", { name: "Select Wrench" }));
+    expect(createFocusedScanCrop).toHaveBeenCalledExactlyOnceWith("data:image/jpeg;base64,compressed-frame", correctedBox);
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      if (outcome === "account changed") setActiveAccount("other-user");
+      finishCrop(outcome === "unavailable" ? null : "data:image/jpeg;base64,corrected-crop");
+    });
+    if (outcome === "available") {
+      await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(2));
+      expect(identifyCapturedFrame.mock.calls[1][0]).toMatchObject({ imageBase64: "data:image/jpeg;base64,corrected-crop" });
+      expect(await screen.findByText("Socket wrench")).toBeInTheDocument();
+    } else {
+      expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
+      if (outcome === "unavailable") expect(screen.getByTestId("focused-object-card")).toHaveTextContent("This selected area is unavailable");
+    }
+  });
+
+  it("invalidates an old object analysis when its selected outline is corrected", async () => {
+    mockStillImageTarget({ confidence: 0.9, x: 0.2, y: 0.2, width: 0.3, height: 0.3 });
+    const focusBox = { x: 0.2, y: 0.2, width: 0.3, height: 0.3, confidence: 0.9 };
+    createSegmentedProductIsolation.mockResolvedValue({ focusBox, frame: { imageBase64: "data:image/png;base64,isolated", capturedAt: new Date().toISOString() }, isolatedImageBase64: "data:image/png;base64,isolated" });
+    isPromptableSegmentationEnabled.mockReturnValue(true);
+    isolateSceneObjects.mockResolvedValue([
+      { name: "Alternator", category: "electrical", focusBox, isolatedImageBase64: "data:image/png;base64,primary", primary: true },
+      { name: "Wrench", category: "tools", focusBox, isolatedImageBase64: "data:image/png;base64,secondary", primary: false },
+    ]);
+    let finishOld!: (result: ReturnType<typeof makeScanResult>) => void;
+    identifyCapturedFrame.mockResolvedValueOnce({ ...makeScanResult("Alternator"), sceneObjects: [{ name: "Wrench", category: "tools", regionLabel: "right", confidence: "high" }] })
+      .mockImplementationOnce(() => new Promise((resolve) => { finishOld = resolve; }))
+      .mockResolvedValueOnce(makeScanResult("Corrected wrench"));
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Select Wrench" }));
+    await userEvent.click(screen.getByRole("button", { name: "Correct area" }));
+    fireEvent.change(screen.getByRole("slider", { name: "Selection x" }), { target: { value: "40" } });
+    await userEvent.click(screen.getByRole("button", { name: "Apply area" }));
+    await act(async () => finishOld(makeScanResult("Stale selection")));
+    expect(screen.getByTestId("focused-object-card")).not.toHaveTextContent("Stale selection");
+    createFocusedScanCrop.mockClear();
+    await userEvent.click(screen.getByTestId("focused-object-back"));
+    await userEvent.click(screen.getByRole("button", { name: "Select Wrench" }));
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(3));
+    expect(createFocusedScanCrop).toHaveBeenCalledWith("data:image/jpeg;base64,compressed-frame", { ...focusBox, x: 0.4, confidence: 0 });
+    expect(identifyCapturedFrame.mock.calls[2][0]).toMatchObject({ imageBase64: "data:image/jpeg;base64,target-crop" });
+  });
 
   it("opens a simple captured-item review when AI analysis fails", async () => {
     identifyCapturedFrame.mockRejectedValueOnce(new Error("Provider jammed"));
@@ -777,6 +899,31 @@ describe("Scanner", () => {
     expect(await screen.findByTestId("scan-save-status")).toHaveTextContent("Saved on this device. Cloud sync is off.");
   });
 
+  it("does not let an older successful sync hide a failed corrected selection or its retry", async () => {
+    mockStillImageTarget({ confidence: 0.9, x: 0.2, y: 0.2, width: 0.3, height: 0.3 });
+    getCloudSyncStatus.mockReturnValue({ configured: true, message: "Configured" });
+    let finishInitial!: (result: { ok: boolean; message: string }) => void;
+    syncLookupToCloud.mockImplementationOnce(() => new Promise((resolve) => { finishInitial = resolve; }))
+      .mockResolvedValueOnce({ ok: false, message: "New correction was not synced" });
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await screen.findByRole("heading", { level: 3, name: "Alternator" });
+    await userEvent.click(screen.getByRole("button", { name: "Correct area" }));
+    fireEvent.change(screen.getByRole("slider", { name: "Selection x" }), { target: { value: "40" } });
+    await userEvent.click(screen.getByRole("button", { name: "Apply area" }));
+    await waitFor(() => expect(screen.getByTestId("scan-save-status")).toHaveTextContent("Cloud sync failed"));
+    expect(syncLookupToCloud).toHaveBeenCalledTimes(2);
+    expect(syncLookupToCloud.mock.calls[1][0]).toMatchObject({ id: getLookups()[0].id, focusBox: { x: 0.4 } });
+    await act(async () => finishInitial({ ok: true, message: "Old initial scan synced" }));
+    expect(screen.getByTestId("scan-save-status")).toHaveTextContent("Cloud sync failed");
+    const providerCalls = identifyCapturedFrame.mock.calls.length;
+    await userEvent.click(screen.getByRole("button", { name: "Retry cloud save" }));
+    await waitFor(() => expect(screen.getByTestId("scan-save-status")).toHaveTextContent("Scan saved to cloud"));
+    expect(syncLookupToCloud).toHaveBeenCalledTimes(3);
+    expect(syncLookupToCloud.mock.calls[2][0]).toMatchObject({ id: getLookups()[0].id, focusBox: { x: 0.4 } });
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(providerCalls);
+  });
+
   it.each(["camera", "upload"])("stops %s analysis at device capacity without dropping earlier records", async (mode) => {
     for (let index = 0; index < MAX_SAVED_LOOKUPS; index += 1) {
       createLookup({ frame: { imageBase64: "data:image/jpeg;base64,test", capturedAt: new Date().toISOString() } });
@@ -784,7 +931,10 @@ describe("Scanner", () => {
     const ids = getLookups().map((lookup) => lookup.id);
     render(<MemoryRouter><Scanner /></MemoryRouter>);
     if (mode === "camera") await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
-    else await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["test-image"], "part.jpg", { type: "image/jpeg" }));
+    else {
+      await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["test-image"], "part.jpg", { type: "image/jpeg" }));
+      await analyzeReviewedPhotos();
+    }
     expect(await screen.findByText(/Device limit reached/)).toBeInTheDocument();
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
     expect(syncLookupToCloud).not.toHaveBeenCalled();
@@ -797,6 +947,8 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
     expect(await screen.findByTestId("scan-save-status")).toHaveTextContent("Not saved on this device");
     expect(syncLookupToCloud).not.toHaveBeenCalled();
+    expect(removePhotoDraftIfMatches).not.toHaveBeenCalled();
+    expect(draftStore.get("test-user:capture")?.[0].imageBase64).toBe("data:image/jpeg;base64,compressed-frame");
   });
 
   it.each(["camera", "upload"])("stops %s analysis when existing records cannot be read", async (mode) => {
@@ -805,7 +957,10 @@ describe("Scanner", () => {
     localStorage.setItem(key, raw);
     render(<MemoryRouter><Scanner /></MemoryRouter>);
     if (mode === "camera") await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
-    else await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["test-image"], "part.jpg", { type: "image/jpeg" }));
+    else {
+      await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["test-image"], "part.jpg", { type: "image/jpeg" }));
+      await analyzeReviewedPhotos();
+    }
     expect(await screen.findByText(/Saved scans could not be read safely/)).toBeInTheDocument();
     expect(identifyCapturedFrame).not.toHaveBeenCalled();
     expect(syncLookupToCloud).not.toHaveBeenCalled();
@@ -942,6 +1097,378 @@ describe("Scanner", () => {
     expect(within(reviewCard as HTMLElement).queryByRole("button", { name: "Open details" })).not.toBeInTheDocument();
   }, 10000);
 
+  it("saves camera evidence in its separate capture draft before quality checks or provider work", async () => {
+    let finishSave!: (saved: boolean) => void;
+    savePhotoDraftIfEmpty.mockImplementationOnce(() => new Promise((resolve) => { finishSave = resolve; }));
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await waitFor(() => expect(savePhotoDraftIfEmpty).toHaveBeenCalledTimes(1));
+    expect(savePhotoDraftIfEmpty.mock.calls[0][0]).toEqual([expect.objectContaining({ imageBase64: "data:image/jpeg;base64,compressed-frame", label: "overview" })]);
+    expect(savePhotoDraftIfEmpty.mock.calls[0][1]).toMatchObject({ userId: "test-user" });
+    expect(savePhotoDraftIfEmpty.mock.calls[0][2]).toBe("capture");
+    expect(assessImageQuality).not.toHaveBeenCalled();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    await act(async () => finishSave(true));
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    await screen.findByRole("heading", { level: 3, name: "Alternator" });
+  });
+
+  it("stops camera analysis when the captured photo cannot be saved durably", async () => {
+    savePhotoDraftIfEmpty.mockRejectedValueOnce(new Error("Captured photo could not be saved. Free space and retry."));
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    expect(await screen.findByText("Captured photo could not be saved. Free space and retry.")).toBeInTheDocument();
+    expect(assessImageQuality).not.toHaveBeenCalled();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite a kept upload group when taking a new camera photo", async () => {
+    const kept: ScanPhoto[] = [{ id: "kept-overview", label: "overview", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,kept" }];
+    readPhotoDraft.mockImplementation(async (_scope, kind) => kind === "capture" ? null : kept);
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await screen.findByRole("button", { name: "Resume 1-photo draft" });
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    expect(savePhotoDraft).not.toHaveBeenCalled();
+    expect(savePhotoDraftIfEmpty.mock.calls[0][2]).toBe("capture");
+    await userEvent.click(await screen.findByRole("button", { name: "Resume 1-photo draft" }));
+    expect(screen.getByRole("img", { name: "Photo 1: Overview" })).toHaveAttribute("src", kept[0].imageBase64);
+  });
+
+  it("resumes a pending camera capture before allowing another shutter capture", async () => {
+    const pending: ScanPhoto = { id: "pending-camera", label: "overview", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,pending" };
+    draftStore.set("test-user:capture", [pending]);
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await screen.findByRole("dialog", { name: "Review inspection photos" });
+    expect(screen.getByRole("img", { name: "Photo 1: Overview" })).toHaveAttribute("src", pending.imageBase64);
+    expect(captureFrame).not.toHaveBeenCalled();
+    expect(savePhotoDraftIfEmpty).not.toHaveBeenCalled();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Discard draft" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Review inspection photos" })).not.toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await screen.findByRole("heading", { level: 3, name: "Alternator" });
+    expect(savePhotoDraftIfEmpty).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a capture saved by another tab while the shutter is obtaining its photo", async () => {
+    const newer: ScanPhoto = { id: "other-tab", label: "mounting", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,other-tab" };
+    captureFrame.mockImplementationOnce(async () => {
+      draftStore.set("test-user:capture", [newer]);
+      return "data:image/jpeg;base64,this-tab";
+    });
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await screen.findByRole("dialog", { name: "Review inspection photos" });
+    expect(screen.getByRole("img", { name: "Photo 1: Mounting points" })).toHaveAttribute("src", newer.imageBase64);
+    expect(draftStore.get("test-user:capture")).toEqual([newer]);
+    expect(assessImageQuality).not.toHaveBeenCalled();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+  });
+
+  it("preserves a canceled capture and resumes it instead of taking a replacement", async () => {
+    let finishIdentify!: (result: ReturnType<typeof makeScanResult>) => void;
+    identifyCapturedFrame.mockImplementationOnce(() => new Promise((resolve) => { finishIdentify = resolve; }));
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    const pending = structuredClone(draftStore.get("test-user:capture"));
+    const captureCount = captureFrame.mock.calls.length;
+    await userEvent.click(screen.getByRole("button", { name: "Cancel scan" }));
+    await act(async () => finishIdentify(makeScanResult("Canceled result")));
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await screen.findByRole("dialog", { name: "Review inspection photos" });
+    expect(draftStore.get("test-user:capture")).toEqual(pending);
+    expect(captureFrame).toHaveBeenCalledTimes(captureCount);
+    expect(removePhotoDraftIfMatches).not.toHaveBeenCalled();
+    expect(getLookups()).toHaveLength(0);
+  });
+
+  it("retires a matching capture only after Lookup persistence and allows the next camera scan", async () => {
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await screen.findByRole("heading", { level: 3, name: "Alternator" });
+    await waitFor(() => expect(draftStore.has("test-user:capture")).toBe(false));
+    const captured = savePhotoDraftIfEmpty.mock.calls[0][0];
+    expect(getLookups()[0].frame.imageBase64).toBe(captured[0].imageBase64);
+    expect(removePhotoDraftIfMatches).toHaveBeenCalledWith(captured, expect.objectContaining({ userId: "test-user" }), "capture");
+    expect(removePhotoDraft).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Close result card" }));
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await waitFor(() => expect(savePhotoDraftIfEmpty).toHaveBeenCalledTimes(2));
+    await screen.findByRole("heading", { level: 3, name: "Alternator" });
+    expect(getLookups()).toHaveLength(2);
+  });
+
+  it("keeps a newer capture when an older analysis finishes saving", async () => {
+    let finishIdentify!: (result: ReturnType<typeof makeScanResult>) => void;
+    identifyCapturedFrame.mockImplementationOnce(() => new Promise((resolve) => { finishIdentify = resolve; }));
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    const newer: ScanPhoto = { id: "newer-camera", label: "marking", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,newer" };
+    draftStore.set("test-user:capture", [newer]);
+    await act(async () => finishIdentify(makeScanResult("Alternator")));
+    await waitFor(() => expect(removePhotoDraftIfMatches).toHaveBeenCalledTimes(1));
+    expect(draftStore.get("test-user:capture")).toEqual([newer]);
+    await userEvent.click(await screen.findByRole("button", { name: "Resume captured photo" }));
+    expect(screen.getByRole("img", { name: "Photo 1: Label or marking" })).toHaveAttribute("src", newer.imageBase64);
+  });
+
+  it("retires a resumed captured group once all its evidence is saved to Lookup", async () => {
+    const pending: ScanPhoto = { id: "resume-camera", label: "overview", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,resume" };
+    draftStore.set("test-user:capture", [pending]);
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(await screen.findByRole("button", { name: "Resume captured photo" }));
+    await analyzeReviewedPhotos();
+    await screen.findByRole("heading", { level: 3, name: "Alternator" });
+    await waitFor(() => expect(draftStore.has("test-user:capture")).toBe(false));
+    expect(getLookups()[0].photos).toEqual([pending]);
+    expect(removePhotoDraftIfMatches.mock.calls[0][0]).toEqual([pending]);
+  });
+
+  it("reviews both labeled photos and verifies their durable group without rewriting it before asking the provider", async () => {
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.upload(screen.getByLabelText("Upload photo"), [
+      new File(["engine overview"], "overview.jpg", { type: "image/jpeg" }),
+      new File(["part marking"], "marking.jpg", { type: "image/jpeg" }),
+    ]);
+    const review = await screen.findByRole("dialog", { name: "Review inspection photos" });
+    expect(within(review).getAllByRole("img")).toHaveLength(2);
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Photo 2 view" }), "marking");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Analyze 2 photos" })).toBeEnabled());
+    const reviewed = savePhotoDraft.mock.calls.at(-1)![0];
+    expect(reviewed.map((photo) => photo.label)).toEqual(["overview", "marking"]);
+    const writeCount = savePhotoDraft.mock.calls.length;
+    let finishVerification!: (matched: boolean) => void;
+    replacePhotoDraftIfMatches.mockImplementationOnce(() => new Promise((resolve) => { finishVerification = resolve; }));
+    await analyzeReviewedPhotos();
+    expect(replacePhotoDraftIfMatches.mock.calls.at(-1)!.slice(0, 2)).toEqual([reviewed, reviewed]);
+    expect(savePhotoDraft).toHaveBeenCalledTimes(writeCount);
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    await act(async () => finishVerification(true));
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    expect(identifyCapturedFrame.mock.calls[0][3]).toMatchObject({ photos: reviewed });
+    expect(identifyCapturedFrame.mock.calls[0][0]).toMatchObject({ imageBase64: reviewed[0].imageBase64 });
+    await screen.findByRole("heading", { level: 3, name: "Alternator" });
+  }, 10000);
+
+  it("does not run analysis when saving an uploaded photo fails", async () => {
+    savePhotoDraft.mockRejectedValueOnce(new Error("Photo storage is full. Free space and retry."));
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["engine"], "engine.jpg", { type: "image/jpeg" }));
+    expect(await screen.findByText("Photo storage is full. Free space and retry.")).toBeInTheDocument();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "Review inspection photos" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a reviewed draft and prevents provider work when checking its durable group fails", async () => {
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["engine"], "engine.jpg", { type: "image/jpeg" }));
+    await screen.findByRole("dialog", { name: "Review inspection photos" });
+    replacePhotoDraftIfMatches.mockRejectedValueOnce(new Error("Could not verify these saved photos. Retry before analysis."));
+    await analyzeReviewedPhotos();
+    expect(await screen.findByText("Could not verify these saved photos. Retry before analysis.")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Review inspection photos" })).toBeInTheDocument();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    expect(removePhotoDraft).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { kind: "upload" as const, action: "edit" },
+    { kind: "upload" as const, action: "discard" },
+    { kind: "upload" as const, action: "analyze" },
+    { kind: "capture" as const, action: "edit" },
+    { kind: "capture" as const, action: "discard" },
+    { kind: "capture" as const, action: "analyze" },
+  ])("preserves a newer $kind draft when a stale review tries to $action", async ({ kind, action }) => {
+    const old: ScanPhoto = { id: "reviewed-photo", label: "overview", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,reviewed" };
+    const newer: ScanPhoto = { id: "other-tab-photo", label: "mounting", capturedAt: "2026-11-05T01:00:00Z", imageBase64: "data:image/jpeg;base64,newer" };
+    draftStore.set(`test-user:${kind}`, [old]);
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(await screen.findByRole("button", { name: kind === "capture" ? "Resume captured photo" : "Resume 1-photo draft" }));
+    draftStore.set(`test-user:${kind}`, [newer]);
+    if (action === "edit") await userEvent.selectOptions(screen.getByRole("combobox", { name: "Photo 1 view" }), "marking");
+    else if (action === "discard") await userEvent.click(screen.getByRole("button", { name: "Discard draft" }));
+    else await analyzeReviewedPhotos();
+    expect(await screen.findByText("Saved photos changed in another tab. Your change was not applied. Review the current draft before continuing.")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Photo 1: Mounting points" })).toHaveAttribute("src", newer.imageBase64);
+    expect(draftStore.get(`test-user:${kind}`)).toEqual([newer]);
+    expect(replacePhotoDraftIfMatches.mock.calls[0][0]).toEqual([old]);
+    expect(savePhotoDraft).not.toHaveBeenCalled();
+    expect(removePhotoDraft).not.toHaveBeenCalled();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+  });
+
+  it.each(["upload", "capture"] as const)("preserves a newer %s group saved while an added file is being prepared", async (kind) => {
+    const old: ScanPhoto = { id: "before-add", label: "overview", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,old" };
+    const newer: ScanPhoto = { id: "during-add", label: "marking", capturedAt: "2026-11-05T01:00:00Z", imageBase64: "data:image/jpeg;base64,newer" };
+    draftStore.set(`test-user:${kind}`, [old]);
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(await screen.findByRole("button", { name: kind === "capture" ? "Resume captured photo" : "Resume 1-photo draft" }));
+    const compareAndSwap = replacePhotoDraftIfMatches.getMockImplementation()!;
+    replacePhotoDraftIfMatches.mockImplementationOnce(async (...args) => {
+      // A different tab commits after the append read, before the prepared photo can be written.
+      draftStore.set(`test-user:${kind}`, [newer]);
+      return compareAndSwap(...args);
+    });
+    await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["new angle"], "angle.jpg", { type: "image/jpeg" }));
+    expect(await screen.findByText("Saved photos changed in another tab. Your change was not applied. Review the current draft before continuing.")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Photo 1: Label or marking" })).toHaveAttribute("src", newer.imageBase64);
+    expect(draftStore.get(`test-user:${kind}`)).toEqual([newer]);
+    expect(replacePhotoDraftIfMatches.mock.calls[0][0]).toEqual([old]);
+    expect(replacePhotoDraftIfMatches.mock.calls[0][1]).toHaveLength(2);
+    expect(savePhotoDraft).not.toHaveBeenCalled();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+  });
+
+  it("appends an uploaded angle after keeping a draft closed instead of replacing its original", async () => {
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["original"], "overview.jpg", { type: "image/jpeg" }));
+    await screen.findByRole("dialog", { name: "Review inspection photos" });
+    const original = savePhotoDraft.mock.calls[0][0][0];
+    await userEvent.click(screen.getByRole("button", { name: "Keep draft and close" }));
+    await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["next angle"], "angle.jpg", { type: "image/jpeg" }));
+    await screen.findByRole("button", { name: "Analyze 2 photos" });
+    const appended = savePhotoDraft.mock.calls.at(-1)![0];
+    expect(appended).toHaveLength(2);
+    expect(appended[0]).toEqual(original);
+    expect(appended[1].id).not.toBe(original.id);
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    expect(removePhotoDraft).not.toHaveBeenCalled();
+  });
+
+  it("reads the persisted group before appending while the startup draft read is still pending", async () => {
+    const kept: ScanPhoto = { id: "kept-before-startup", label: "overview", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,kept" };
+    draftStore.set("test-user:upload", [kept]);
+    let finishStartupRead!: (photos: ScanPhoto[]) => void;
+    readPhotoDraft.mockImplementationOnce(() => new Promise((resolve) => { finishStartupRead = resolve; }));
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+
+    await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["another view"], "new.jpg", { type: "image/jpeg" }));
+    await screen.findByRole("button", { name: "Analyze 2 photos" });
+    const appended = draftStore.get("test-user:upload")!;
+    expect(appended).toHaveLength(2);
+    expect(appended[0]).toEqual(kept);
+    expect(appended[1].id).not.toBe(kept.id);
+    expect(readPhotoDraft.mock.calls.filter((call) => call[1] === undefined)).toHaveLength(2);
+    expect(savePhotoDraft.mock.calls[0][2]).toBeUndefined();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+
+    await act(async () => finishStartupRead([kept]));
+    expect(screen.getByRole("button", { name: "Analyze 2 photos" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Photo 2: Other angle" })).toHaveAttribute("src", appended[1].imageBase64);
+  });
+
+  it("does not replace a saved group when its authoritative append read fails", async () => {
+    const kept: ScanPhoto = { id: "kept-unreadable", label: "overview", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,kept" };
+    draftStore.set("test-user:upload", [kept]);
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await screen.findByRole("button", { name: "Resume 1-photo draft" });
+    readPhotoDraft.mockRejectedValueOnce(new Error("The saved photo draft could not be read safely. It has been kept for recovery."));
+    await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["new"], "new.jpg", { type: "image/jpeg" }));
+    expect(await screen.findByText("The saved photo draft could not be read safely. It has been kept for recovery.")).toBeInTheDocument();
+    expect(savePhotoDraft).not.toHaveBeenCalled();
+    expect(removePhotoDraft).not.toHaveBeenCalled();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    expect(draftStore.get("test-user:upload")).toEqual([kept]);
+  });
+
+  it("enforces the four-photo limit against storage while the initial group is still loading", async () => {
+    const kept: ScanPhoto[] = Array.from({ length: 4 }, (_, index) => ({ id: `kept-${index}`, label: "overview", capturedAt: "2026-11-05T00:00:00Z", imageBase64: `data:image/jpeg;base64,photo${index}` }));
+    draftStore.set("test-user:upload", kept);
+    let finishStartupRead!: (photos: ScanPhoto[]) => void;
+    readPhotoDraft.mockImplementationOnce(() => new Promise((resolve) => { finishStartupRead = resolve; }));
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["fifth"], "fifth.jpg", { type: "image/jpeg" }));
+    expect(await screen.findByText("Choose up to four photos of the same part or area. No photos were discarded.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Resume 4-photo draft" })).toBeInTheDocument();
+    expect(savePhotoDraft).not.toHaveBeenCalled();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    expect(draftStore.get("test-user:upload")).toEqual(kept);
+    await act(async () => finishStartupRead(kept));
+  });
+
+  it("reads and appends the capture slot only while that capture draft is being edited", async () => {
+    const capture: ScanPhoto = { id: "camera-view", label: "overview", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,camera" };
+    const upload: ScanPhoto = { id: "upload-view", label: "overview", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,upload" };
+    draftStore.set("test-user:capture", [capture]);
+    draftStore.set("test-user:upload", [upload]);
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(await screen.findByRole("button", { name: "Resume captured photo" }));
+    await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["capture angle"], "angle.jpg", { type: "image/jpeg" }));
+    await screen.findByRole("button", { name: "Analyze 2 photos" });
+    expect(readPhotoDraft.mock.calls.at(-1)![1]).toBe("capture");
+    expect(savePhotoDraft.mock.calls.at(-1)![2]).toBe("capture");
+    expect(draftStore.get("test-user:capture")![0]).toEqual(capture);
+    expect(draftStore.get("test-user:upload")).toEqual([upload]);
+
+    await userEvent.click(screen.getByRole("button", { name: "Keep draft and close" }));
+    await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["upload angle"], "upload-angle.jpg", { type: "image/jpeg" }));
+    await screen.findByRole("button", { name: "Analyze 2 photos" });
+    expect(readPhotoDraft.mock.calls.at(-1)![1]).toBeUndefined();
+    expect(savePhotoDraft.mock.calls.at(-1)![2]).toBeUndefined();
+    expect(draftStore.get("test-user:upload")![0]).toEqual(upload);
+    expect(draftStore.get("test-user:capture")).toHaveLength(2);
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+  });
+
+  it("does not write after the account changes during the authoritative append read", async () => {
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await waitFor(() => expect(readPhotoDraft).toHaveBeenCalledTimes(2));
+    let finishAppendRead!: (photos: ScanPhoto[] | null) => void;
+    readPhotoDraft.mockImplementationOnce(() => new Promise((resolve) => { finishAppendRead = resolve; }));
+    await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["new"], "new.jpg", { type: "image/jpeg" }));
+    await waitFor(() => expect(readPhotoDraft).toHaveBeenCalledTimes(3));
+    await act(async () => { setActiveAccount("other-user"); finishAppendRead(null); });
+    expect(savePhotoDraft).not.toHaveBeenCalled();
+    expect(removePhotoDraft).not.toHaveBeenCalled();
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+  });
+
+  it("cancels while draft verification is pending and does not call the provider afterward", async () => {
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["engine"], "engine.jpg", { type: "image/jpeg" }));
+    await screen.findByRole("dialog", { name: "Review inspection photos" });
+    let finishVerification!: (matched: boolean) => void;
+    replacePhotoDraftIfMatches.mockImplementationOnce(() => new Promise((resolve) => { finishVerification = resolve; }));
+    await analyzeReviewedPhotos();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel scan" }));
+    await act(async () => finishVerification(true));
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    expect(removePhotoDraft).not.toHaveBeenCalled();
+    expect(await screen.findByText("Scan canceled. Ready when you are.")).toBeInTheDocument();
+  });
+
+  it("rejects a provider transition when the account changes during draft verification", async () => {
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["engine"], "engine.jpg", { type: "image/jpeg" }));
+    await screen.findByRole("dialog", { name: "Review inspection photos" });
+    let finishVerification!: (matched: boolean) => void;
+    replacePhotoDraftIfMatches.mockImplementationOnce(() => new Promise((resolve) => { finishVerification = resolve; }));
+    await analyzeReviewedPhotos();
+    await act(async () => {
+      setActiveAccount("other-user");
+      finishVerification(true);
+    });
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    expect(removePhotoDraft).not.toHaveBeenCalled();
+  });
+
+  it("does not let a slow restored draft replace photos just saved by the user", async () => {
+    let finishRead!: (photos: ScanPhoto[]) => void;
+    readPhotoDraft.mockImplementationOnce(() => new Promise((resolve) => { finishRead = resolve; }));
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["new evidence"], "new.jpg", { type: "image/jpeg" }));
+    await screen.findByRole("dialog", { name: "Review inspection photos" });
+    const saved = savePhotoDraft.mock.calls[0][0][0];
+    await act(async () => finishRead([{ id: "old-photo", capturedAt: "2026-11-05T00:00:00Z", label: "overview", imageBase64: "data:image/jpeg;base64,old" }]));
+    expect(screen.getByRole("img", { name: "Photo 1: Overview" })).toHaveAttribute("src", saved.imageBase64);
+  });
+
   it("identifies an uploaded photo when the camera is blocked", async () => {
     cameraHookState.current = {
       cameraError: "Permission denied",
@@ -961,6 +1488,7 @@ describe("Scanner", () => {
       screen.getByLabelText("Upload photo"),
       new File(["test-image"], "alternator.jpg", { type: "image/jpeg" }),
     );
+    await analyzeReviewedPhotos();
 
     // jsdom never decodes images, so the upload's target detection always runs out its 900ms
     // decode timeout before identify is called — too close to waitFor's 1000ms default.
@@ -1030,6 +1558,7 @@ describe("Scanner", () => {
       renderBlockedScanner();
 
       chooseFile(new File(["blurry"], "blurry.jpg", { type: "image/jpeg" }));
+      await analyzeReviewedPhotos();
 
       expect(await screen.findByRole("heading", { level: 2, name: "Hold steady" }, { timeout: 3000 })).toBeInTheDocument();
       await userEvent.click(screen.getByRole("button", { name: "Upload one retake" }));
@@ -1038,6 +1567,7 @@ describe("Scanner", () => {
       expect(JSON.parse(localStorage.getItem(accountStorageKey("deep-spec:lookups")) ?? "[]")).toHaveLength(1);
       await userEvent.click(screen.getByRole("button", { name: "Upload one retake" }));
       chooseFile(new File(["blurry again"], "retake.jpg", { type: "image/jpeg" }));
+      await analyzeReviewedPhotos();
       expect(
         await screen.findByText(
           "Guided retake used. Review the evidence or start a separate scan when ready.",
@@ -1104,6 +1634,7 @@ describe("Scanner", () => {
       screen.getByLabelText("Upload photo"),
       new File(["test-image"], "front-fender.jpg", { type: "image/jpeg" }),
     );
+    await analyzeReviewedPhotos();
 
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
     expect(createFocusedScanCrop).toHaveBeenCalledWith(expect.stringMatching(/^data:image\/jpeg;base64,/), {
@@ -1286,6 +1817,7 @@ describe("Scanner", () => {
     fireEvent.change(screen.getByLabelText("Upload photo"), {
       target: { files: [new File(["second retry"], "retry.jpg", { type: "image/jpeg" })] },
     });
+    await analyzeReviewedPhotos();
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(2), { timeout: 6000 });
     expect(await screen.findByRole("heading", { level: 3, name: "Water pump" }, { timeout: 6000 })).toBeInTheDocument();
     expect(screen.queryByText("The photo is saved. Try again.")).not.toBeInTheDocument();

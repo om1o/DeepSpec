@@ -5,6 +5,13 @@ export type CapturedFrame = {
   capturedAt: string;
 };
 
+export const SCAN_PHOTO_LABELS = ["overview", "close_up", "marking", "mounting", "other"] as const;
+export type ScanPhotoLabel = (typeof SCAN_PHOTO_LABELS)[number];
+export type ScanPhoto = CapturedFrame & {
+  id: string;
+  label: ScanPhotoLabel;
+};
+
 export type VisualFocusMode = "mask" | "crop" | "full_frame";
 
 export type VisualFocusBox = {
@@ -208,13 +215,14 @@ export type SceneObject = {
   primary: boolean;
 };
 
-// A scene object that has been cut out (SlimSAM) for the multi-object AR view. In-memory
-// only (the cutout PNGs are too large to persist); a reopened scan shows the primary alone.
+// Keep the selection even when segmentation is unavailable or the user corrects its area.
 export type IsolatedObject = {
   name: string;
   category: ScanCategory | string;
   focusBox: VisualFocusBox;
   isolatedImageBase64: string;
+  focusMode?: VisualFocusMode;
+  correctedAt?: string;
   primary: boolean;
 };
 
@@ -292,6 +300,7 @@ export type IdentificationResult = {
 export type ScanAnalysisState = {
   analysisAttemptId?: string;
   frame: CapturedFrame;
+  photos?: ScanPhoto[];
   focusBox?: VisualFocusBox;
   focusMode?: VisualFocusMode;
   isolatedImageBase64?: string;
@@ -316,6 +325,7 @@ export type AIInput = {
   type: "vision" | "text";
   imageBase64?: string;
   imageBase64_2?: string;
+  photos?: ScanPhoto[];
   labelRescueTrigger?: LabelRescueTrigger;
   measurementContext?: MeasurementContext;
   userMessage: string;
@@ -376,6 +386,8 @@ export type Lookup = {
   id: string;
   createdAt: string;
   frame: CapturedFrame;
+  photos?: ScanPhoto[];
+  isolatedObjects?: IsolatedObject[];
   focusBox?: VisualFocusBox;
   focusMode?: VisualFocusMode;
   isolatedImageBase64?: string;

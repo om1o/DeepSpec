@@ -8,6 +8,7 @@ import Result from "./Result";
 import Chat from "./Chat";
 import * as aiService from "../services/aiService";
 import * as reportService from "../services/report";
+import * as cloudSync from "../services/cloudSync";
 import { getLookup, getLookups, LOOKUPS_STORAGE_KEY, updateLookup } from "../services/storage";
 import { emptyPartInspection } from "../lib/partInspection";
 import type { Lookup, ScanAnalysisState } from "../types";
@@ -100,6 +101,78 @@ describe("Result", () => {
     setActiveAccount("other-user");
     await user.click(screen.getByRole("button", { name: "Save", exact: true }));
     expect(getLookups()).toEqual([]);
+  });
+
+  it("persists a corrected area on an existing device scan and clears its stale cutout", async () => {
+    const user = userEvent.setup();
+    const local = makeLookup({
+      focusBox: { x: 0.1, y: 0.15, width: 0.3, height: 0.4, confidence: 0.9 },
+      focusMode: "mask",
+      isolatedImageBase64: "data:image/png;base64,old-cutout",
+      photos: [{ ...frame, id: "overview-photo", label: "overview" }],
+      notes: "Keep these receiving notes",
+      correction: "Technician label",
+    });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
+    renderResult({ ...successfulScan, savedLookup: local }, `/result/${local.id}`);
+
+    await user.click(screen.getByRole("button", { name: "Correct area" }));
+    fireEvent.change(screen.getByRole("slider", { name: "Selection x" }), { target: { value: "25" } });
+    await user.click(screen.getByRole("button", { name: "Apply area" }));
+
+    const persisted = JSON.parse(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY))!);
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0]).toMatchObject({
+      id: local.id,
+      focusBox: { ...local.focusBox, x: 0.25, confidence: 0 },
+      focusMode: "crop",
+      isolatedImageBase64: "",
+      photos: local.photos,
+      notes: local.notes,
+      correction: local.correction,
+      result: local.result,
+    });
+    expect(screen.getByTestId("result-focus-frame")).toHaveAttribute("data-focus-mode", "crop");
+    expect(screen.getByText("Selection saved on this device. Cloud sync is off.")).toBeInTheDocument();
+  });
+
+  it("keeps the latest correction retry when an earlier cloud save finishes", async () => {
+    const user = userEvent.setup();
+    const local = makeLookup({
+      focusBox: { x: 0.1, y: 0.15, width: 0.3, height: 0.4, confidence: 0.9 },
+      focusMode: "crop",
+    });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
+    vi.spyOn(cloudSync, "getCloudSyncStatus").mockReturnValue({ ...cloudSync.getCloudSyncStatus(), configured: true });
+    let finishFirst!: (result: cloudSync.CloudSyncResult) => void;
+    const firstSave = new Promise<cloudSync.CloudSyncResult>((resolve) => { finishFirst = resolve; });
+    const sync = vi.spyOn(cloudSync, "syncLookupToCloud")
+      .mockImplementationOnce(() => firstSave)
+      .mockResolvedValueOnce({ ok: false, message: "Another cloud save is still running. Retry once it finishes." })
+      .mockResolvedValueOnce({ ok: true, message: "Selection synced." });
+    renderResult({ ...successfulScan, savedLookup: local }, `/result/${local.id}`);
+
+    await user.click(screen.getByRole("button", { name: "Correct area" }));
+    fireEvent.change(screen.getByRole("slider", { name: "Selection x" }), { target: { value: "20" } });
+    await user.click(screen.getByRole("button", { name: "Apply area" }));
+    expect(sync).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Correct area" }));
+    fireEvent.change(screen.getByRole("slider", { name: "Selection x" }), { target: { value: "40" } });
+    await user.click(screen.getByRole("button", { name: "Apply area" }));
+    expect(await screen.findByRole("button", { name: "Retry cloud selection save" })).toBeInTheDocument();
+    expect(getLookup(local.id)?.focusBox?.x).toBe(0.4);
+
+    await act(async () => { finishFirst({ ok: true, message: "First selection synced." }); });
+    expect(screen.getByRole("button", { name: "Retry cloud selection save" })).toBeInTheDocument();
+    expect(screen.getByText(/Another cloud save is still running/)).toBeInTheDocument();
+    expect(screen.queryByText("Selection saved to cloud.")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Retry cloud selection save" }));
+    expect(await screen.findByText("Selection saved to cloud.")).toBeInTheDocument();
+    expect(sync).toHaveBeenCalledTimes(3);
+    expect(sync.mock.calls[2][0].focusBox?.x).toBe(0.4);
+    expect(screen.queryByRole("button", { name: "Retry cloud selection save" })).not.toBeInTheDocument();
   });
 
   it("opens a cloud-only inspection and saves edits under the original scan id", async () => {
