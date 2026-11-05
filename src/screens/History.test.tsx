@@ -352,7 +352,7 @@ describe("History", () => {
     renderHistory();
 
     expect(screen.getByText("Alternator")).toBeInTheDocument();
-    expect(screen.getByText("high confidence")).toBeInTheDocument();
+    expect(screen.getByText("AI estimate: high")).toBeInTheDocument();
     expect(screen.getByText("Needs review")).toBeInTheDocument();
     const scanLink = screen.getByRole("link", { name: /Alternator/ });
     expect(scanLink).toHaveAttribute("href", "/result/lookup-1");

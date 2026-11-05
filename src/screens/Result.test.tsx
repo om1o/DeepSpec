@@ -386,6 +386,9 @@ describe("Result", () => {
     );
     expect(screen.getAllByText("It charges the battery while the engine runs.").length).toBeGreaterThan(0);
     expect(screen.getByText("AI overview")).toBeInTheDocument();
+    expect(screen.getByText("AI estimate: high")).toBeInTheDocument();
+    expect(screen.getByText("AI estimate: low")).toBeInTheDocument();
+    expect(screen.getByText(/do not represent measured chances of a correct identification/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ask DeepSpec" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Other possible matches" })).toBeInTheDocument();

@@ -708,7 +708,7 @@ function AnalysisResult({
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           <MiniPill label={result.scanCategory} />
-          <MiniPill label={`${result.confidence} confidence`} />
+          <MiniPill label={`AI estimate: ${result.confidence}`} />
           {isOnDeviceResult(result) || modelRouteNotice ? <MiniPill label="Estimate" /> : null}
         </div>
         {isOnDeviceResult(result) ? (
@@ -720,6 +720,7 @@ function AnalysisResult({
             {modelRouteNotice}
           </p>
         ) : null}
+        <p className="mt-3 text-xs leading-5 text-[var(--ds-fg-3)]">Confidence labels are the model's own estimates. They do not represent measured chances of a correct identification.</p>
         <IssueLine result={result} variant="result" />
         <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-3)]">{getAnswerBody(result, summary)}</p>
         {capturedAt ? <p className="mt-3 text-xs font-semibold text-[var(--ds-fg-3)]">Captured {capturedAt}</p> : null}
@@ -773,7 +774,7 @@ function CandidateMatches({ result }: { result: IdentificationResult }) {
     <section className="mt-4 border-t border-[var(--ds-border)] pt-4" aria-label="Other possible matches">
       <h3 className="text-xs font-extrabold uppercase tracking-[0.12em] text-[var(--ds-fg-3)]">Other possible matches</h3>
       {result.candidateMatches.map((candidate) => <article key={`${candidate.partName}:${candidate.reason}`} className="mt-2 rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-surface)] p-3">
-        <p className="text-sm font-extrabold">{candidate.partName} <span className="ml-1 text-xs font-semibold text-[var(--ds-fg-3)]">{candidate.confidence} confidence</span></p>
+        <p className="text-sm font-extrabold">{candidate.partName} <span className="ml-1 text-xs font-semibold text-[var(--ds-fg-3)]">AI estimate: {candidate.confidence}</span></p>
         <p className="mt-1 text-xs leading-5 text-[var(--ds-fg-3)]">{candidate.reason}</p>
       </article>)}
     </section>

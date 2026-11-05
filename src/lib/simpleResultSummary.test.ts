@@ -7,13 +7,13 @@ function makeResult(partName: string): IdentificationResult {
   return {
     partName,
     confidence: "medium",
-    scanCategory: "part",
+    scanCategory: "unknown",
     candidateMatches: [],
     whatItDoes: "Deep Spec matched the visible item.",
     visibleObservations: ["The item is visible in the photo."],
     evidenceRegions: [],
     concerns: [],
-    safetyTriage: "normal",
+    safetyTriage: "can_help",
     isSafetyCritical: false,
     nextAction: "",
     needsBetterPhoto: false,
@@ -23,18 +23,36 @@ function makeResult(partName: string): IdentificationResult {
 }
 
 describe("getSimpleResultSummary", () => {
-  it("keeps generic scan results identified without saying object detected", () => {
-    const summary = getSimpleResultSummary(makeResult("Unknown object"));
+  it.each(["Unknown object", "Unknown component", "Unknown   component", "Unknown\nobject", "Unidentified", "Not a vehicle part", "Unknown", "Unknown part", "Unknown item", "Not identified", "  Not\n identified  ", "", "   "])("labels an unresolved identity honestly: %j", (name) => {
+    const summary = getSimpleResultSummary(makeResult(name));
+    expect(summary.eyebrow).toBe("Identity unresolved");
+    expect(summary.title).toBe("Identity unresolved");
+    expect(summary.body).toBe("The item is visible in the photo.");
+    expect(summary.nextAction).toBe("Use a closer photo of the part.");
+    expect(summary.body).not.toMatch(/matched|identified/i);
+  });
 
-    expect(summary.eyebrow).toBe("Identified");
-    expect(summary.title).toBe("Item identified");
-    expect(summary.title).not.toMatch(/object detected/i);
+  it("keeps visible damage and the complete safety action without turning an unresolved identity into a match", () => {
+    const result = makeResult("Unknown component");
+    result.visibleObservations = ["A crack-like line is visible."];
+    result.isSafetyCritical = true;
+    result.nextAction = "Do not drive. Have the mounting checked before further use.";
+    expect(getSimpleResultSummary(result)).toMatchObject({ eyebrow: "Identity unresolved", title: "Identity unresolved", body: "A crack-like line is visible.", nextAction: result.nextAction });
+  });
+
+  it("does not manufacture an identity or successful-match description from an empty result", () => {
+    const result = makeResult(""); result.visibleObservations = []; result.whatItDoes = "";
+    expect(getSimpleResultSummary(result).body).toBe("The available evidence does not establish the item's identity.");
   });
 
   it("keeps an uncertain identification qualified in the heading", () => {
     const summary = getSimpleResultSummary(makeResult("Likely alternator"));
 
     expect(summary.title).toBe("Likely alternator");
+  });
+
+  it.each(["Unknown manufacturer alternator", "Unknown-brand alternator", "Part number not identified on alternator"])("does not mistake a named candidate for an exact placeholder: %s", (name) => {
+    expect(getSimpleResultSummary(makeResult(name))).toMatchObject({ title: name, eyebrow: "Best match" });
   });
 
   it("does not promote a hypothetical concern into a visible issue", () => {

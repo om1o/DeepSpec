@@ -579,7 +579,7 @@ function getStatusLabel(lookup: Lookup) {
     return "Reshoot for a cleaner read";
   }
 
-  return `${lookup.result.confidence} confidence`;
+  return `AI estimate: ${lookup.result.confidence}`;
 }
 
 function matchesQuery(lookup: Lookup, query: string) {

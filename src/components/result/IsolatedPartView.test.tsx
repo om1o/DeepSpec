@@ -3,7 +3,8 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { IsolatedPartView } from "./IsolatedPartView";
 import { edgeSafeShift, getContainedStageStyle, getFocusLabelPlacement } from "./isolatedPartViewGeometry";
-import type { IsolatedObject, VisualFocusBox } from "../../types";
+import { deriveIssue } from "../../lib/resultFacts";
+import type { IdentificationResult, IsolatedObject, VisualFocusBox } from "../../types";
 
 const frame = "data:image/jpeg;base64,frame";
 const cutout = "data:image/png;base64,cutout";
@@ -13,6 +14,14 @@ const sceneObjects: IsolatedObject[] = [
   { name: "Xbox Controller", category: "unknown", primary: true, isolatedImageBase64: "data:image/png;base64,a", focusBox: { confidence: 0.9, height: 0.4, width: 0.4, x: 0.3, y: 0.3 } },
   { name: "Wall poster", category: "decor", primary: false, isolatedImageBase64: "data:image/png;base64,b", focusBox: { confidence: 0.6, height: 0.3, width: 0.2, x: 0.05, y: 0.1 } },
 ];
+
+function damageResult(regionLabel: string, observation = "Surface rust on the bracket."): IdentificationResult {
+  return {
+    partName: "Bracket", confidence: "medium", scanCategory: "engine", candidateMatches: [], whatItDoes: "Supports the assembly.",
+    visibleObservations: ["Surface rust on the bracket."], evidenceRegions: [{ label: "Concern", observation, regionLabel }],
+    concerns: [], safetyTriage: "can_help", isSafetyCritical: false, nextAction: "Show the other side.", needsBetterPhoto: false, evidence: [], sourceLinks: [],
+  };
+}
 
 describe("IsolatedPartView", () => {
   it.each([false, true])("can open evidence in Original view with puzzle=%s while keeping other views available", async (puzzle) => {
@@ -100,6 +109,74 @@ describe("IsolatedPartView", () => {
       <IsolatedPartView variant="scanner" frameBase64={frame} focusBox={box} focusMode="crop" label="Engine" issue={null} />,
     );
     expect(screen.queryByTestId("issue-callout")).not.toBeInTheDocument();
+  });
+
+  it.each([false, true])("shows a supported concern as a visibly approximate area rather than a point, puzzle=%s", (puzzle) => {
+    const issue = deriveIssue(damageResult("right side"));
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusBox={box} focusMode="mask" isolatedImageBase64={cutout} label="Bracket" objects={puzzle ? sceneObjects : undefined} issue={issue} />);
+    const area = screen.getByTestId("approximate-issue-area");
+    expect(area).toHaveClass("border-dashed");
+    expect(area).toHaveAccessibleName("Approximate evidence area");
+    expect(area).toHaveStyle({ top: "0%", height: "100%" });
+    expect(parseFloat(area.style.left)).toBeCloseTo(200 / 3);
+    expect(parseFloat(area.style.width)).toBeCloseTo(100 / 3);
+    expect(screen.getByText("Approximate area — not an exact damage boundary")).toBeInTheDocument();
+    expect(screen.getByTestId("issue-callout")).toHaveTextContent("Surface rust on the bracket.");
+  });
+
+  it.each([
+    { region: "lower right", text: "Oil stain around the hose." },
+    { region: "Scanned area", text: "Surface rust on the bracket." },
+    { region: "upper left or lower right", text: "Surface rust on the bracket." },
+  ])("keeps an unmatched or unlocated observation off the photo: $region / $text", ({ region, text }) => {
+    const issue = deriveIssue(damageResult(region, text));
+    expect(issue?.text).toBe("Surface rust on the bracket."); expect(issue?.anchor).toBeNull();
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusBox={box} focusMode="crop" label="Bracket" issue={issue} />);
+    expect(screen.queryByTestId("approximate-issue-area")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("issue-callout")).not.toBeInTheDocument();
+  });
+
+  it("keeps Original clean, removes first-photo issue geometry on a secondary photo and restores only the supplied original evidence", async () => {
+    const issue = deriveIssue(damageResult("upper left"));
+    const original = <IsolatedPartView variant="result" frameBase64={frame} focusBox={box} focusMode="crop" label="Bracket" issue={issue} />;
+    const { rerender } = render(original);
+    expect(screen.getByTestId("approximate-issue-area")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Original", exact: true }));
+    expect(screen.queryByTestId("approximate-issue-area")).not.toBeInTheDocument();
+    expect(screen.getByAltText("Captured car part")).toHaveAttribute("src", frame);
+    expect(screen.getByAltText("Captured car part").className).not.toMatch(/blur|brightness|contrast|saturate/);
+    rerender(<IsolatedPartView variant="result" frameBase64="data:image/jpeg;base64,secondary" focusMode="full_frame" label="Bracket" issue={null} />);
+    expect(screen.queryByTestId("approximate-issue-area")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("issue-callout")).not.toBeInTheDocument();
+    expect(screen.getByAltText("Captured car part")).toHaveAttribute("src", "data:image/jpeg;base64,secondary");
+    expect(screen.getByAltText("Captured car part").className).not.toMatch(/blur|brightness|contrast|saturate/);
+    rerender(original);
+    expect(screen.getByTestId("issue-callout")).toHaveTextContent("Surface rust on the bracket.");
+  });
+
+  it("preserves source appearance in the cutout, crop and full-frame fallback", () => {
+    const props = { variant: "result" as const, frameBase64: frame, focusBox: box, label: "Bracket" };
+    const { rerender } = render(<IsolatedPartView {...props} focusMode="mask" isolatedImageBase64={cutout} />);
+    expect(screen.getByTestId("isolated-part-image")).toHaveAttribute("src", cutout);
+    expect(screen.getByTestId("isolated-part-image").className).not.toMatch(/brightness|contrast|saturate/);
+    rerender(<IsolatedPartView {...props} focusMode="crop" />);
+    expect(screen.getByTestId("focused-part-crop")).toHaveAttribute("src", frame);
+    expect(screen.getByTestId("focused-part-crop").className).not.toMatch(/brightness|contrast|saturate/);
+    rerender(<IsolatedPartView variant="result" frameBase64={frame} focusMode="full_frame" label="Bracket" />);
+    expect(screen.getByAltText("Captured car part").className).not.toMatch(/brightness|contrast|saturate/);
+  });
+
+  it("shows overview cutouts and the selected secondary cutout with their original color and full opacity", async () => {
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusMode="mask" label="Controller" objects={sceneObjects} />);
+    for (const object of sceneObjects) {
+      const image = screen.getByAltText(`Isolated ${object.name}`);
+      expect(image).toHaveAttribute("src", object.isolatedImageBase64);
+      expect(image.className).not.toMatch(/brightness|contrast|saturate/);
+      expect(image).toHaveStyle({ opacity: "1" });
+    }
+    await userEvent.click(screen.getByRole("button", { name: "Select Wall poster" }));
+    expect(screen.getByAltText("Isolated Wall poster")).toHaveStyle({ opacity: "1" });
+    expect(screen.getByAltText("Isolated Wall poster").className).not.toMatch(/brightness|contrast|saturate/);
   });
 
   it("a busy scene labels other objects and softens (not hard-blurs) the background", () => {
