@@ -3,7 +3,7 @@ import { getAuthClient, isSupabaseAuthConfigured } from "./auth";
 import { normalizePartInspection } from "../lib/partInspection";
 import { normalizeConditionAssessment } from "../lib/conditionAssessment";
 import { normalizeVehicleContext } from "../lib/vehicleContext";
-import { evidencePaths, parseEvidenceBundle, restoreEvidenceBundle } from "./visualEvidence";
+import { evidencePaths, isOwnedEvidencePath, parseEvidenceBundle, restoreEvidenceBundle } from "./visualEvidence";
 import type {
   CandidateMatch,
   CandidatePart,
@@ -85,6 +85,11 @@ type ReadCloudLookupResult =
   | { ok: true; value: Lookup | null }
   | { ok: false; message: string };
 
+export type ReportUnavailableImage = { kind: "photo"; photoId: string } | { kind: "cutout"; selectionName?: string };
+type ReadCloudReportLookupResult =
+  | { ok: true; value: Lookup | null; unavailableImages: ReportUnavailableImage[] }
+  | { ok: false; message: string };
+
 type AuthClient = NonNullable<Awaited<ReturnType<typeof getAuthClient>>>;
 type VerifiedClientResult =
   | { ok: true; value: AuthClient }
@@ -163,6 +168,52 @@ export async function readCloudLookup(id: string): Promise<ReadCloudLookupResult
     return { ok: false, message: "The saved scan photo could not be loaded. Try again." };
   }
   return { ok: true, value: mapCloudRowToLookup(matchingRows[0], signedImageMap, 0, scope.userId!) };
+}
+
+/** Read-only export projection. Missing bytes never discard validated saved metadata.
+ * It must not be imported into normal history, whose restoration remains all-or-nothing. */
+export async function readCloudLookupForReport(id: string): Promise<ReadCloudReportLookupResult> {
+  if (!/^[A-Za-z0-9._:-]{1,160}$/.test(id) || id === "." || id === "..") return { ok: false, message: "This saved scan reference is invalid." };
+  const scope = getAccountScope();
+  const changed = () => ({ ok: false as const, message: "Account changed. Reload your saved scans." });
+  const verified = await getVerifiedCloudClient(scope);
+  if (!verified.ok) return verified;
+  const supabase = verified.value;
+  const rowsResult = await selectCloudRowsWithFallback((columns) => supabase.from("scan_lookups").select(columns)
+    .eq("user_id", scope.userId).eq("local_id", id).limit(2), scope);
+  if (!rowsResult || !isAccountScopeCurrent(scope)) return changed();
+  if (rowsResult.error) return { ok: false, message: "The saved cloud scan could not be read for this report." };
+  const rows = Array.isArray(rowsResult.data) ? (rowsResult.data as CloudHistoryRow[]).filter((row) => row.local_id === id) : [];
+  if (!rows.length) return { ok: true, value: null, unavailableImages: [] };
+  if (rows.length !== 1) return { ok: false, message: "This saved scan could not be identified uniquely." };
+  const row = rows[0];
+  const invalid = validateCloudEvidence(rows, scope.userId!);
+  if (invalid || (row.image_path != null && !isOwnedEvidencePath(row.image_path, scope.userId!, id))) {
+    return { ok: false, message: "Saved evidence has invalid metadata or an image from another account or scan. No report evidence was substituted." };
+  }
+  let signed: Map<string, string>;
+  try { signed = await getSignedImageMap(supabase, rows, scope.userId!); }
+  catch { signed = new Map(); }
+  if (!isAccountScopeCurrent(scope)) return changed();
+  for (const [path, url] of signed) if (!validReportSignedUrl(url, path)) signed.delete(path);
+  const bundle = parseEvidenceBundle(row.evidence_bundle_json, scope.userId!, id);
+  const unavailableImages: ReportUnavailableImage[] = [];
+  if (!isString(row.image_path) || !signed.has(row.image_path)) unavailableImages.push({ kind: "photo", photoId: bundle?.photos?.[0]?.id ?? "photo-1" });
+  for (const photo of bundle?.photos ?? []) if (!signed.has(photo.imagePath)) unavailableImages.push({ kind: "photo", photoId: photo.id });
+  if (bundle?.isolatedImagePath && !signed.has(bundle.isolatedImagePath)) unavailableImages.push({ kind: "cutout" });
+  for (const object of bundle?.isolatedObjects ?? []) if (object.imagePath && !signed.has(object.imagePath)) unavailableImages.push({ kind: "cutout", selectionName: object.name });
+  return { ok: true, value: mapCloudRowToLookup(row, signed, 0, scope.userId!, true), unavailableImages };
+}
+
+function validReportSignedUrl(value: string, path: string): boolean {
+  try {
+    const configured = new URL(import.meta.env.VITE_SUPABASE_URL ?? "");
+    const url = new URL(value);
+    const prefix = "/storage/v1/object/sign/scan-images/";
+    return configured.protocol === "https:" && !configured.username && !configured.password
+      && url.protocol === "https:" && url.origin === configured.origin && !url.username && !url.password && !url.hash
+      && url.pathname.startsWith(prefix) && decodeURIComponent(url.pathname.slice(prefix.length)) === path && Boolean(url.searchParams.get("token"));
+  } catch { return false; }
 }
 
 async function getVerifiedCloudClient(scope: ReturnType<typeof getAccountScope>): Promise<VerifiedClientResult> {
@@ -288,6 +339,7 @@ function mapCloudRowToLookup(
   signedImageMap: Map<string, string>,
   index: number,
   userId: string,
+  forReport = false,
 ): Lookup | null {
   const createdAt = isString(row.created_at) ? row.created_at : new Date().toISOString();
   const imagePath = isString(row.image_path) ? row.image_path : "";
@@ -296,7 +348,7 @@ function mapCloudRowToLookup(
   const evidence = parseEvidenceBundle(row.evidence_bundle_json, userId, String(row.local_id));
   const restoredEvidence = evidence ? restoreEvidenceBundle(evidence, signedImageMap) : {};
   const photoIds = restoredEvidence.photos?.map((photo) => photo.id)
-    ?? (signedImageMap.has(imagePath) ? ["photo-1"] : []);
+    ?? (forReport || signedImageMap.has(imagePath) ? ["photo-1"] : []);
   const result = parseIdentificationResult(row.result_json, scanCategory, photoIds);
 
   return {
@@ -305,7 +357,7 @@ function mapCloudRowToLookup(
     analysisAttemptId: isString(row.analysis_attempt_id) ? row.analysis_attempt_id : undefined,
     createdAt,
     frame: {
-      imageBase64: signedImageMap.get(imagePath) ?? FALLBACK_IMAGE,
+      imageBase64: signedImageMap.get(imagePath) ?? (forReport ? "" : FALLBACK_IMAGE),
       capturedAt: isString(row.captured_at) ? row.captured_at : createdAt,
     },
     ...restoredEvidence,

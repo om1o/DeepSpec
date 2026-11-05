@@ -103,7 +103,15 @@ export function getMechanicSearchUrl(lookup: Lookup) {
 }
 
 export function downloadTextFile(filename: string, content: string) {
-  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  downloadFile(filename, content, "text/plain;charset=utf-8");
+}
+
+export function downloadHtmlFile(filename: string, content: string) {
+  downloadFile(filename, content, "text/html;charset=utf-8");
+}
+
+function downloadFile(filename: string, content: string, type: string) {
+  const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -112,7 +120,7 @@ export function downloadTextFile(filename: string, content: string) {
   document.body.append(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function formatDate(value: string) {
