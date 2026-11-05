@@ -3,6 +3,7 @@ import type { ComponentMapRecord } from "./componentMap";
 import type { ServiceRecord } from "./serviceRecord";
 import type { InspectionComparison, RequestedInspectionComparison } from "./inspectionComparison";
 import type { DiagnosticBundle, ParsedDiagnosticReport } from "./diagnosticReport";
+import type { JobInspectionReportScope } from "./jobInspectionHandoff";
 
 export type InspectionReportIssue = {
   kind: "map" | "lookup" | "photo" | "cutout" | "service_records" | "comparisons" | "diagnostics";
@@ -22,6 +23,8 @@ export type InspectionReportSnapshot = {
   version: 1;
   createdAt: string;
   rootLookupId: string;
+  /** Explicit job coverage for this selected overview; never an all-job report. */
+  jobScope?: JobInspectionReportScope;
   map: ComponentMapRecord | null;
   mapOverviewEvidence?: MapOverviewReportEvidence;
   linkedPhotoEvidence?: {

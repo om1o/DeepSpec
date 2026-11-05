@@ -1,5 +1,5 @@
 import { getLookups } from "./storage";
-import { accountStorageKey } from "../lib/accountScope";
+import { accountStorageKey, getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import { normalizeVehicleContext, vehicleContextDetails } from "../lib/vehicleContext";
 import type {
   CustomerVisibleReport,
@@ -21,8 +21,10 @@ export const SHOP_PERMISSION_STORAGE_KEY = "deep-spec:shop:feedback-permission";
 const DEFAULT_ORG_ID = "00000000-0000-4000-8000-000000000001";
 const DEFAULT_OWNER_USER_ID = "local-owner";
 const MAX_SHOP_JOBS = 200;
+const SHOP_JOBS_CHANGED = "deep-spec:shop-jobs-changed";
+const validStoredId = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9._:-]{1,160}$/.test(value) && value !== "." && value !== "..";
 
-type StorageResult<T> =
+export type StorageResult<T> =
   | {
       ok: true;
       value: T;
@@ -183,6 +185,40 @@ export function getShopJob(jobId: string): ShopJob | null {
   }
 
   return getShopJobs().find((job) => job.id === normalizedId) ?? null;
+}
+
+/** An explicit read must not confuse unreadable private storage with a missing job. */
+export function readShopJob(jobId: string, scope = getAccountScope()): StorageResult<ShopJob | null> {
+  const failed = (message: string): StorageResult<ShopJob | null> => ({ ok: false, value: null, message });
+  const changed = "Account changed. Reopen the job in the account that owns it.";
+  if (!isAccountScopeCurrent(scope)) return failed(changed);
+  if (!validStoredId(jobId)) return failed("This saved job reference is invalid.");
+  try {
+    if (!hasLocalStorage()) throw new Error("Storage unavailable");
+    const raw = localStorage.getItem(accountStorageKey(SHOP_JOBS_STORAGE_KEY));
+    if (!isAccountScopeCurrent(scope)) return failed(changed);
+    if (raw === null) return { ok: true, value: null };
+    const parsed: unknown = JSON.parse(raw);
+    if (!isShopJobArray(parsed) || parsed.some((job) => !validStoredId(job.id) || !job.scanIds.every(validStoredId))
+      || new Set(parsed.map((job) => job.id)).size !== parsed.length) throw new Error("Unreadable jobs");
+    const saved = parsed.find((job) => job.id === jobId);
+    // Avoid the legacy normalizer's fallback lookup read: scan availability is
+    // checked separately by the handoff context, never silently treated as empty.
+    const value = saved ? normalizeShopJob({ ...saved, reviewStatus: isShopReviewStatus(saved.reviewStatus) ? saved.reviewStatus : "needs_review" }) : null;
+    return isAccountScopeCurrent(scope) ? { ok: true, value } : failed(changed);
+  } catch {
+    return failed("Shop jobs could not be read safely on this device. Existing records were preserved; reopen the job before preparing a handoff.");
+  }
+}
+
+/** Observe only this captured account, including changes made by another tab. */
+export function subscribeShopJobs(listener: () => void, scope: AccountScope = getAccountScope()): () => void {
+  if (!isAccountScopeCurrent(scope) || typeof window === "undefined") return () => {};
+  const key = accountStorageKey(SHOP_JOBS_STORAGE_KEY);
+  const onLocal = (event: Event) => { if (isAccountScopeCurrent(scope) && (event as CustomEvent<string>).detail === key) listener(); };
+  const onStorage = (event: StorageEvent) => { if (isAccountScopeCurrent(scope) && event.storageArea === localStorage && (event.key === key || event.key === null)) listener(); };
+  window.addEventListener(SHOP_JOBS_CHANGED, onLocal); window.addEventListener("storage", onStorage);
+  return () => { window.removeEventListener(SHOP_JOBS_CHANGED, onLocal); window.removeEventListener("storage", onStorage); };
 }
 
 export function updateShopJob(jobId: string, patch: Partial<Pick<ShopJob, "status" | "vin" | "year" | "make" | "model" | "mileage" | "mileageUnit" | "modifications" | "confirmedFields" | "engine" | "notes" | "reviewStatus">>): StorageResult<ShopJob | null> {
@@ -384,7 +420,10 @@ function writeJobs(jobs: ShopJob[]): StorageResult<ShopJob[]> {
   }
 
   try {
-    localStorage.setItem(accountStorageKey(SHOP_JOBS_STORAGE_KEY), JSON.stringify(normalized));
+    const key = accountStorageKey(SHOP_JOBS_STORAGE_KEY);
+    localStorage.setItem(key, JSON.stringify(normalized));
+    try { if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(SHOP_JOBS_CHANGED, { detail: key })); }
+    catch { /* A notification cannot undo the committed job. */ }
     return { ok: true, value: normalized };
   } catch {
     return { ok: false, message: "DeepSpec could not save this shop job on this device.", value: normalized };

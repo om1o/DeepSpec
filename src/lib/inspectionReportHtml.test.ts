@@ -78,6 +78,62 @@ function withRequestedHistory(input: InspectionReportSnapshot, records = [reques
 }
 
 describe("self-contained mechanic HTML report", () => {
+  function scopedSnapshot(): InspectionReportSnapshot {
+    const input = snapshot([lookup(), lookup("linked"), lookup("outside"), lookup("conflict")]);
+    input.scans.forEach((scan) => { scan.vehicleContext = { vin: "PRIVATE_SCOPE_VIN", customerName: "PRIVATE_SCOPE_CUSTOMER", jobTitle: "PRIVATE_SCOPE_JOB_TITLE" }; });
+    input.jobScope = { version: 1, jobId: "job-private-id", rootLookupId: "overview", jobScanIds: ["overview", "linked", "excluded", "missing", "conflict", "absent-conflict"],
+      includedJobScanIds: ["overview", "linked"], excludedJobScanIds: ["excluded"], unavailableJobScanIds: ["missing"], outsideJobScanIds: ["outside"],
+      conflictingJobScanIds: ["conflict", "absent-conflict"], vehicleDifferences: [{ lookupId: "linked", fields: ["vin", "model"] }] };
+    return input;
+  }
+
+  it("exports selected-overview coverage with exclusions, linked conflicts and field names without private values", () => {
+    const input = scopedSnapshot(), before = JSON.stringify(input), doc = parsed(input);
+    const section = doc.querySelector("#job-report-scope")!;
+    expect(section.textContent).toContain("not an all-job report");
+    expect(section.textContent).toContain("Unavailable job scans");
+    expect(section.textContent).toContain("missing");
+    expect(section.textContent).toContain("conflict: Included through linked evidence; job association conflicts.");
+    expect(section.textContent).toContain("absent-conflict: Not included; job association conflicts.");
+    expect(section.textContent).toContain("linked: vin, model");
+    expect(section.querySelector('a[href="#scan-2"]')?.textContent).toBe("linked");
+    expect(section.querySelector('a[href="#scan-3"]')?.textContent).toBe("outside");
+    expect(section.querySelectorAll("a")).toHaveLength(3);
+    for (const text of ["PRIVATE_SCOPE_VIN", "PRIVATE_SCOPE_CUSTOMER", "PRIVATE_SCOPE_JOB_TITLE", "job-private-id"]) expect(doc.body.textContent).not.toContain(text);
+    // These eight references intentionally use identical PNG bytes. The report
+    // embeds a shared asset once, but every photo must retain its own figure and
+    // resolve to those exact bytes through the duplicate-asset link.
+    expect(doc.querySelectorAll("img")).toHaveLength(1);
+    for (const [scanIndex, scan] of input.scans.entries()) for (const [photoIndex, photo] of scan.photos!.entries()) {
+      const figure = doc.querySelector(`#scan-${scanIndex + 1}-photo-${photoIndex + 1}`)!;
+      expect(figure).not.toBeNull();
+      expect(figure.querySelector("figcaption")?.textContent).toContain(photo.id);
+      const duplicateTarget = figure.querySelector<HTMLAnchorElement>('a[href^="#"]')?.getAttribute("href");
+      const image = figure.querySelector("img") ?? (duplicateTarget ? doc.querySelector(`${duplicateTarget} img`) : null);
+      expect(image?.getAttribute("src")).toBe(photo.imageBase64);
+      const actualBytes = Buffer.from(image!.getAttribute("src")!.split(",")[1], "base64");
+      const originalBytes = Buffer.from(photo.imageBase64.split(",")[1], "base64");
+      expect(actualBytes).toEqual(originalBytes);
+    }
+    expect(JSON.stringify(input)).toBe(before);
+  });
+
+  it.each(["wrong-root", "missing-included", "overlap", "outside-omission", "private-value", "malicious-id", "unknown-field"])("rejects inconsistent or unsafe job coverage: %s", (kind) => {
+    const input = scopedSnapshot(), job = input.jobScope!;
+    if (kind === "wrong-root") job.rootLookupId = "linked";
+    if (kind === "missing-included") job.includedJobScanIds.push("not-collected");
+    if (kind === "overlap") job.excludedJobScanIds.push("linked");
+    if (kind === "outside-omission") job.outsideJobScanIds = [];
+    if (kind === "private-value") job.vehicleDifferences[0].fields = ["PRIVATE_SCOPE_VIN"];
+    if (kind === "malicious-id") job.jobScanIds.push('<img src=x onerror="bad()">');
+    if (kind === "unknown-field") Object.assign(job, { customerName: "PRIVATE_CUSTOMER" });
+    expect(() => buildInspectionReportHtml(input)).toThrow("job report scope is invalid or inconsistent");
+  });
+
+  it("leaves ordinary inspection exports without a job coverage claim", () => {
+    expect(parsed(snapshot()).querySelector("#job-report-scope")).toBeNull();
+  });
+
   function linkedSnapshot(): InspectionReportSnapshot {
     const input = snapshot(), first = component(0);
     first.notes = "Human link note <script>not executable</script>";

@@ -10,6 +10,7 @@ import type { InspectionComparison } from "../types/inspectionComparison";
 import { buildDiagnosticReportSection } from "./diagnosticReportHtml";
 import { photoRelationshipDescription, photoRelationshipOrUnknown, photoRelationshipScopeDescription } from "./photoRelationship";
 import { buildPhotoReviewState, photoReviewStatusLabel } from "./photoReview";
+import { normalizeJobInspectionReportScope } from "../services/jobInspectionHandoff";
 
 export const MAX_INSPECTION_REPORT_HTML_BYTES = 64 * 1024 * 1024;
 
@@ -94,6 +95,24 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
     const entry = { scan, anchor: `scan-${entries.length + 1}`, number: entries.length + 1, photos: scanPhotos(scan) };
     entries.push(entry);
     byId.set(scan.id, entry);
+  }
+  let jobScopeHtml = "";
+  if (snapshot.jobScope !== undefined) {
+    const job = normalizeJobInspectionReportScope(snapshot.jobScope, snapshot);
+    if (!job) throw new Error("The job report scope is invalid or inconsistent with its saved scans. Prepare the report again.");
+    const jobIds = (ids: string[]) => ids.length ? `<ul>${ids.map((id) => {
+      const entry = byId.get(id);
+      return `<li>${entry ? `<a href="#${entry.anchor}">${escape(id)}</a>` : escape(id)}</li>`;
+    }).join("")}</ul>` : prose("None.");
+    jobScopeHtml = `<section id="job-report-scope"><h2>Selected-overview job report scope</h2>
+      ${prose(`Selected overview: ${job.rootLookupId}. This is not an all-job report. It contains this overview and the evidence reached through its existing links.`)}
+      ${prose("Job membership does not establish that scans show the same vehicle or component. Unlinked job scans were not silently added. Scope lists describe this prepared snapshot; unavailable photos and other gaps remain listed separately.")}
+      <h3>Included job scans</h3>${jobIds(job.includedJobScanIds)}
+      <h3>Available job scans excluded from this snapshot</h3>${jobIds(job.excludedJobScanIds)}
+      <h3>Unavailable job scans</h3>${jobIds(job.unavailableJobScanIds)}
+      <h3>Linked scans outside the job</h3>${jobIds(job.outsideJobScanIds)}
+      <h3>Conflicting job associations</h3>${job.conflictingJobScanIds.length ? `<ul>${job.conflictingJobScanIds.map((id) => `<li>${escape(id)}: ${byId.has(id) ? "Included through linked evidence; job association conflicts." : "Not included; job association conflicts."}</li>`).join("")}</ul>` : prose("None.")}
+      <h3>Different saved vehicle fields</h3>${job.vehicleDifferences.length ? `<ul>${job.vehicleDifferences.map((row) => `<li>${escape(row.lookupId)}: ${escape(row.fields.join(", "))}. No vehicle identity was inferred.</li>`).join("")}</ul>` : prose("No differences were listed for the saved fields compared. This does not establish vehicle identity.")}</section>`;
   }
   const missing = snapshot.missing.map((issue) => {
     const entry = byId.get(issue.lookupId);
@@ -378,8 +397,8 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
     <header><h1>Mechanic handoff</h1>${prose(`Snapshot created: ${snapshot.createdAt}`)}${prose(`${entries.length} saved scan${entries.length === 1 ? "" : "s"}; ${map?.components.length ?? 0} mapped components. This is a saved evidence report, not a diagnosis or certification of condition, fitment, function or safety.`)}
     <p>AI observations, possible causes and human records are labeled separately. Linked photos are not assumed to show the same part or vehicle unless that relationship was established by the user. Original images may contain identifying details or embedded metadata.</p>
     ${prose(`VIN ${options.includeVin ? "included where saved" : "excluded from dedicated fields"}; private scan and vehicle notes ${options.includePrivateNotes ? "included where saved" : "excluded"}. Component notes, human inspection notes, service-record notes, saved photo requests and extracted diagnostic text are included as inspection evidence and may contain identifiers. Saved customer, plate, job, inspector and service-recorder identity fields and chat transcripts are excluded. Original diagnostic files ${options.includeDiagnosticOriginals ? "are included unredacted and may contain identifiers regardless of the VIN setting" : "and original filenames are excluded"}.`)}
-    <nav aria-label="Report navigation"><ul><li><a href="#component-map">Component map</a></li>${entries.map((entry) => `<li><a href="#${entry.anchor}">Scan ${entry.number}</a></li>`).join("")}${unavailableServiceIds.length ? '<li><a href="#unavailable-service-history">Retained history for unavailable scans</a></li>' : ""}<li><a href="#missing-evidence">Missing evidence</a></li></ul></nav></header>
-    ${mapHtml}${scansHtml}${unavailableServiceHtml}${requestedHistoryHtml}${comparisonsHtml}${diagnosticsHtml}<section id="missing-evidence"><h2>Missing or unavailable evidence</h2>${list(missing, "No missing evidence was reported for this snapshot. This does not establish completeness of an inspection.")}</section>
+    <nav aria-label="Report navigation"><ul>${jobScopeHtml ? '<li><a href="#job-report-scope">Job report scope</a></li>' : ""}<li><a href="#component-map">Component map</a></li>${entries.map((entry) => `<li><a href="#${entry.anchor}">Scan ${entry.number}</a></li>`).join("")}${unavailableServiceIds.length ? '<li><a href="#unavailable-service-history">Retained history for unavailable scans</a></li>' : ""}<li><a href="#missing-evidence">Missing evidence</a></li></ul></nav></header>
+    ${jobScopeHtml}${mapHtml}${scansHtml}${unavailableServiceHtml}${requestedHistoryHtml}${comparisonsHtml}${diagnosticsHtml}<section id="missing-evidence"><h2>Missing or unavailable evidence</h2>${list(missing, "No missing evidence was reported for this snapshot. This does not establish completeness of an inspection.")}</section>
     <footer>Static report with embedded raster images. No scripts or remote assets. Saved outlines are display overlays, not changes to original pixels. Human-service entries retain corrections and retractions; they are self-reported records, not independently verified repairs or measurements.</footer></main></body></html>`;
   if (html.length > MAX_INSPECTION_REPORT_HTML_BYTES || new TextEncoder().encode(html).byteLength > MAX_INSPECTION_REPORT_HTML_BYTES) throw new Error("The HTML report exceeds the 64 MiB limit. Export fewer scans or smaller photos.");
   return html;
