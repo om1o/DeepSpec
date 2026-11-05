@@ -78,6 +78,21 @@ describe("component-map cloud concurrency and evidence", () => {
     expect(current?.document.components[0].status).toBe("needs_view");
   });
 
+  it("sends v2 occurrence IDs and location provenance intact and imports them without merging names", async () => {
+    current!.document.version = 2;
+    current!.document.components[0].label = "Hose";
+    current!.document.components[0].suggestedLocation = { source: "ai_scene", text: "upper left" };
+    current!.document.components.push({ ...current!.document.components[0], id: "22222222-2222-4222-8222-222222222222", suggestedLocation: { source: "ai_scene", text: "lower right" } });
+    const expected = structuredClone(current!.document);
+    expect(await syncComponentMapToCloud("overview", 1)).toMatchObject({ ok: true });
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ document_json: expected }));
+    expect(current!.document).toEqual(expected);
+    current = null;
+    remote = { data: { map_id: "overview", document_json: expected, revision: 3 }, error: null };
+    expect(await loadComponentMapFromCloud("overview")).toMatchObject({ ok: true, value: { document: expected, cloudRevision: 3 } });
+    expect(current!.document).toEqual(expected);
+  });
+
   it("CAS-filters the independent map revision and preserves notes edited while saving", async () => {
     current = { ...record(), cloudRevision: 4, syncedLocalRevision: 1 };
     write.mockImplementation(async () => {

@@ -117,6 +117,22 @@ describe("saved inspection report collection", () => {
   });
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
+  it("preserves v2 occurrence IDs and AI location provenance in the saved report snapshot", async () => {
+    vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
+    map = mapWithLinks(["root", "root"]); map.document.version = 2;
+    map.document.components.forEach((component, index) => {
+      component.label = "Hose"; component.scanGroups = [];
+      component.suggestedLocation = { source: "ai_scene", text: index ? "lower right" : "upper left" };
+    });
+    const before = structuredClone(map);
+    const report = await collectInspectionReport("root");
+    expect(report.map).toEqual(before);
+    expect(report.map).not.toBe(map);
+    expect(JSON.parse(JSON.stringify(report)).map).toEqual(before);
+    expect(report.map?.document.components.every((part) => !part.region && part.status === "needs_view" && part.notes === "human map note")).toBe(true);
+    expect(fetchSpy).not.toHaveBeenCalled(); expect(mocks.auth).not.toHaveBeenCalled();
+  });
+
   it("exports device evidence with no cloud lookup, image fetch or false cloud-history verification when disabled", async () => {
     vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
     mocks.service.mockResolvedValue([measurement()]);

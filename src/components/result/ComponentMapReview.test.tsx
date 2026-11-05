@@ -62,6 +62,62 @@ async function ready(saved = record()) {
 }
 
 describe("ComponentMapReview", () => {
+  it("creates separate same-name scene suggestions and retains their identity and provenance through editing and reopening", async () => {
+    vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
+    mocks.read.mockResolvedValue(null);
+    const source: Lookup = { ...lookup, focusBox: box, result: {
+      partName: "Alternator", sceneObjects: [
+        { name: "Alternator", category: "electrical", primary: true, regionLabel: "front center" },
+        { name: "Hose", category: "engine", primary: false, regionLabel: "upper left" },
+        { name: "Hose", category: "engine", primary: false, regionLabel: "lower right" },
+      ],
+    } as NonNullable<Lookup["result"]> };
+    const view = render(<ComponentMapReview lookup={source} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Create component map" }));
+    await screen.findByLabelText("Component label");
+    const created = (await mocks.create.mock.results[0].value) as ComponentMapRecord;
+    expect(created.document.version).toBe(2);
+    const hoses = created.document.components.filter((component) => component.label === "Hose");
+    expect(hoses).toHaveLength(2);
+    expect(new Set(hoses.map((component) => component.id)).size).toBe(2);
+    expect(hoses.every((component) => !component.region && component.status === "needs_view" && !component.notes)).toBe(true);
+    await userEvent.click(within(screen.getByRole("list", { name: "Mapped components" })).getByRole("button", { name: /Hose.*upper left/ }));
+    expect(screen.getByLabelText("AI-suggested location")).toHaveTextContent("upper left");
+    expect(screen.getByLabelText("Component notes")).toHaveValue("");
+    await userEvent.type(screen.getByLabelText("Component notes"), "Owner note: need a closer view.");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await screen.findByText("Map saved on this device.");
+    const saved = (await mocks.update.mock.results[0].value) as ComponentMapRecord;
+    expect(saved.document.components.find((component) => component.id === hoses[0].id)).toEqual({ ...hoses[0], notes: "Owner note: need a closer view." });
+    expect(saved.document.components.find((component) => component.id === hoses[1].id)).toEqual(hoses[1]);
+    view.unmount();
+    mocks.read.mockResolvedValue(saved);
+    render(<ComponentMapReview lookup={source} />);
+    await screen.findByLabelText("Component label");
+    const list = within(screen.getByRole("list", { name: "Mapped components" }));
+    await userEvent.click(list.getByRole("button", { name: /Hose.*lower right/ }));
+    expect(screen.getByLabelText("AI-suggested location")).toHaveTextContent("lower right");
+    expect(screen.getByLabelText("Component notes")).toHaveValue("");
+    await userEvent.click(list.getByRole("button", { name: /Hose.*upper left/ }));
+    expect(screen.getByLabelText("Component notes")).toHaveValue("Owner note: need a closer view.");
+    expect(screen.getByLabelText("Your review status")).toHaveValue("needs_view");
+  });
+
+  it("shows unverified AI locations in conflict previews separately from notes", async () => {
+    const saved = record(); saved.document.version = 2;
+    saved.document.components[0].suggestedLocation = { source: "ai_scene", text: "near the intake" };
+    saved.conflict = { document: structuredClone(saved.document), revision: 2 };
+    saved.conflict.document.components[0].suggestedLocation!.text = "behind the intake";
+    saved.conflict.document.components[0].notes = "Human note in the cloud version";
+    await ready(saved);
+    expect(screen.getByLabelText("AI-suggested location")).toHaveTextContent("near the intake");
+    await userEvent.click(screen.getByText("Review cloud version"));
+    expect(screen.getByText("AI-suggested location — unverified: behind the intake")).toBeVisible();
+    expect(screen.getByText("Human note in the cloud version")).toBeVisible();
+    expect(screen.getByLabelText("Component notes")).toHaveValue("");
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
   it("skips cloud fallback and creates and edits a local map when cloud sync is off", async () => {
     vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
     mocks.read.mockResolvedValue(null);
