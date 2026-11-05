@@ -5,10 +5,6 @@
     }
   },
   "functions": {
-    "api/qa-ai-check.ts": {
-      "includeFiles": "datasets/verified/hf-automotive-sources-v1/records.jsonl",
-      "maxDuration": 90
-    },
     "api/identify.ts": {
       "includeFiles": "datasets/verified/hf-automotive-sources-v1/records.jsonl",
       "maxDuration": 90

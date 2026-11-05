@@ -120,7 +120,7 @@ export function isChatEnabled(env: Record<string, string | undefined>) {
   return env.NODE_ENV !== "production" && env.VERCEL_ENV !== "production";
 }
 
-export function getChatModels(env: Record<string, string | undefined>) {
+function getChatModels(env: Record<string, string | undefined>) {
   const primaryModel = env.GEMINI_CHAT_MODEL?.trim() || env.GEMINI_TEXT_MODEL?.trim() || DEFAULT_MODEL;
   return uniqueStrings([
     primaryModel,
