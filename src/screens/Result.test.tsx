@@ -269,6 +269,71 @@ describe("Result", () => {
     expect(reportService.buildScanReport(getLookups()[0])).toContain("Automatic intake draft");
   });
 
+  it.each(["initial", "retried"])("saves and reopens every photo and corrected object from an unsaved %s result", async (source) => {
+    const user = userEvent.setup();
+    const box = { x: 0.1, y: 0.2, width: 0.3, height: 0.4, confidence: 0 };
+    const scan: ScanAnalysisState = {
+      ...successfulScan, focusBox: box, focusMode: "crop", isolatedImageBase64: "",
+      photos: [{ ...frame, id: "overview-photo", label: "overview" },
+        { ...frame, id: "detail-photo", label: "close_up", imageBase64: "data:image/jpeg;base64,ZGV0YWls" },
+        { ...frame, id: "marking-photo", label: "marking", imageBase64: "data:image/jpeg;base64,bWFya2luZw==" }],
+      isolatedObjects: [
+        { name: "Bracket", category: "engine", primary: false, focusBox: { ...box, x: 0.5 }, isolatedImageBase64: "data:image/png;base64,YnJhY2tldA==", focusMode: "mask" },
+        { name: "Alternator", category: "electrical", primary: true, focusBox: box, isolatedImageBase64: "", focusMode: "crop", correctedAt: "2026-11-05T01:00:00.000Z" },
+      ],
+    };
+    const initialScan = source === "retried" ? { ...scan, result: undefined, errorCode: "network", errorMessage: "Network error" } : scan;
+    vi.spyOn(aiService, "identifyCapturedFrame").mockResolvedValue(successfulScan.result!);
+    const mounted = render(<MemoryRouter initialEntries={[{ pathname: "/result", state: withAccountRouteState(initialScan) }]}>
+      <Routes><Route path="/result" element={<Result />} /></Routes>
+    </MemoryRouter>);
+    expect(getLookups()).toHaveLength(0);
+    if (source === "retried") {
+      await user.click(screen.getByRole("button", { name: "Try again" }));
+      await screen.findByRole("heading", { level: 1, name: "Alternator" });
+      expect(screen.queryByText("Network error")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Select Bracket" })).toBeInTheDocument();
+    }
+    await user.click(screen.getByRole("button", { name: "Save", exact: true }));
+
+    const saved = getLookups()[0];
+    expect(getLookups()).toHaveLength(1);
+    expect(saved).toMatchObject({ frame: scan.frame, photos: scan.photos, isolatedObjects: scan.isolatedObjects,
+      focusBox: box, focusMode: "crop", isolatedImageBase64: "" });
+    expect(saved.errorCode).toBeUndefined();
+    expect(saved.errorMessage).toBeUndefined();
+    mounted.unmount();
+    renderResult(null, `/result/${saved.id}`);
+    expect(screen.getByRole("button", { name: "Select Bracket" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Select Alternator" })).toBeInTheDocument();
+    expect(screen.getByAltText("Captured car part")).toHaveAttribute("src", frame.imageBase64);
+    await user.click(screen.getByRole("button", { name: "3. Label or marking" }));
+    expect(screen.getByAltText("Captured car part")).toHaveAttribute("src", scan.photos![2].imageBase64);
+    expect(getLookup(saved.id)?.isolatedObjects).toEqual(scan.isolatedObjects);
+  });
+
+  it("does not project a late retry result onto a replacement original photo", async () => {
+    const box = { x: 0.1, y: 0.2, width: 0.3, height: 0.4, confidence: 0 };
+    const failed: ScanAnalysisState = { frame, focusBox: box, focusMode: "crop",
+      errorCode: "network", errorMessage: "First photo could not be analyzed." };
+    const replacement: ScanAnalysisState = { frame: { imageBase64: "data:image/jpeg;base64,bmV3LXBob3Rv", capturedAt: "2026-11-05T02:00:00Z" },
+      errorCode: "network", errorMessage: "Replacement photo is not analyzed." };
+    let finish!: (result: NonNullable<ScanAnalysisState["result"]>) => void;
+    vi.spyOn(aiService, "identifyCapturedFrame").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    render(<MemoryRouter initialEntries={[{ pathname: "/result", state: withAccountRouteState(failed) }]}>
+      <Link to="/result" state={withAccountRouteState(replacement)}>Replace original photo</Link>
+      <Routes><Route path="/result" element={<Result />} /></Routes>
+    </MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await userEvent.click(screen.getByRole("link", { name: "Replace original photo" }));
+    await act(async () => finish(successfulScan.result!));
+    expect(screen.getByAltText("Captured car part")).toHaveAttribute("src", replacement.frame.imageBase64);
+    expect(screen.queryByTestId("focused-part-window")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 1, name: "Alternator" })).not.toBeInTheDocument();
+    expect(screen.getByText("Replacement photo is not analyzed.")).toBeInTheDocument();
+    expect(getLookups()).toHaveLength(0);
+  });
+
   it("shows the AI identification result", async () => {
     renderResult(successfulScan);
 
@@ -877,7 +942,12 @@ describe("Result", () => {
   it("retries a failed cloud-only HTTPS photo with a data URL and retains vehicle context and identity", async () => {
     const vehicleContext = { year: "2012", make: "Honda", model: "Civic" };
     const cloudFrame = { ...frame, imageBase64: "https://example.test/private-photo.png?token=signed" };
-    const failedLookup = makeLookup({ frame: cloudFrame, vehicleContext, result: undefined, errorCode: "network", errorMessage: "Network error" });
+    const focusBox = { x: 0.1, y: 0.2, width: 0.3, height: 0.4, confidence: 0 };
+    const failedLookup = makeLookup({ frame: cloudFrame, vehicleContext, result: undefined, errorCode: "network", errorMessage: "Network error",
+      photos: [{ ...cloudFrame, id: "cloud-overview", label: "overview" }],
+      focusBox, focusMode: "crop", isolatedImageBase64: "",
+      isolatedObjects: [{ name: "Alternator", category: "electrical", primary: true, focusBox, isolatedImageBase64: "", focusMode: "crop", correctedAt: "2026-11-05T01:00:00.000Z" }],
+    });
     const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9XkAAAAASUVORK5CYII=";
     const blob = new Blob([Uint8Array.from(atob(png), (char) => char.charCodeAt(0))], { type: "image/png" });
     const fetchSpy = vi.fn().mockResolvedValue({ ok: true, blob: async () => blob });
@@ -888,11 +958,14 @@ describe("Result", () => {
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
     await screen.findByRole("heading", { level: 1, name: "Alternator" });
     expect(fetchSpy).toHaveBeenCalledWith(cloudFrame.imageBase64, { signal: expect.any(AbortSignal), credentials: "omit" });
-    expect(identifySpy).toHaveBeenCalledWith({ ...cloudFrame, imageBase64: `data:image/png;base64,${png}` }, undefined, undefined, { vehicleContext });
+    expect(identifySpy).toHaveBeenCalledWith({ ...cloudFrame, imageBase64: `data:image/png;base64,${png}` }, undefined, undefined, { vehicleContext, photos: failedLookup.photos });
+    expect(screen.getByTestId("result-focus-frame")).toHaveAttribute("data-focus-mode", "crop");
+    expect(screen.getByTestId("focused-part-window")).toHaveStyle({ left: "10%", top: "20%" });
     await userEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
     expect(getLookups()).toHaveLength(1);
     expect(getLookup(failedLookup.id)).toMatchObject({
       frame: { ...cloudFrame, imageBase64: `data:image/png;base64,${png}` },
+      photos: failedLookup.photos, isolatedObjects: failedLookup.isolatedObjects, focusBox, focusMode: "crop", isolatedImageBase64: "",
       vehicleContext,
       result: { fitmentConfidence: "needs_vehicle_context" },
     });

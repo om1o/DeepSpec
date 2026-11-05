@@ -154,6 +154,117 @@ describe("Chat", () => {
     expect(sendFollowUpMock).not.toHaveBeenCalled();
   });
 
+  it("refreshes an expired local photo group and retains newer edits and fresh photos across answers", async () => {
+    const expired = cloudPhotoLookup("expired");
+    const fresh = cloudPhotoLookup("fresh");
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([expired]));
+    let finish!: (value: Awaited<ReturnType<typeof readCloudLookup>>) => void;
+    readCloudLookupMock.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    sendFollowUpMock.mockResolvedValueOnce("First fresh-photo answer.").mockResolvedValueOnce("Second fresh-photo answer.");
+    renderChat(`/result/${lookup.id}/chat`);
+    expect(screen.getByRole("heading", { name: "Loading saved scan" })).toBeInTheDocument();
+    const edited = { ...expired, notes: "New local note", correction: "New local correction", rating: "down" as const };
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([edited]));
+    await act(async () => { finish({ ok: true, value: { ...fresh, notes: "Old cloud note", result: { ...lookup.result!, partName: "Old cloud identity" } } }); });
+    expect(screen.getByRole("img", { name: "Saved photo of Alternator" })).toHaveAttribute("src", fresh.frame.imageBase64);
+    await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "Compare both views.");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("First fresh-photo answer.")).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "Which view shows the marking?");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("Second fresh-photo answer.")).toBeInTheDocument();
+    expect(readCloudLookupMock).toHaveBeenCalledExactlyOnceWith(lookup.id);
+    for (const [sent] of sendFollowUpMock.mock.calls) {
+      expect(sent).toMatchObject({ notes: edited.notes, correction: edited.correction, rating: "down", result: { partName: "Alternator" }, photos: fresh.photos });
+      expect(sent.photos?.map((photo) => photo.id)).toEqual(expired.photos?.map((photo) => photo.id));
+    }
+    expect(getLookup(lookup.id)).toMatchObject({ notes: edited.notes, correction: edited.correction, rating: "down", photos: expired.photos });
+    expect(getLookup(lookup.id)?.chatHistory).toHaveLength(4);
+  });
+
+  it.each(["missing", "identity", "path"])("rejects a %s photo mismatch without partially refreshing the group", async (change) => {
+    const expired = cloudPhotoLookup("expired");
+    const fresh = cloudPhotoLookup("fresh");
+    if (change === "missing") fresh.photos = fresh.photos!.slice(0, 1);
+    if (change === "identity") fresh.photos![1].id = "different-photo";
+    if (change === "path") fresh.photos![1].imageBase64 = "https://example.test/different-photo.jpg?token=fresh";
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([expired]));
+    readCloudLookupMock.mockResolvedValue({ ok: true, value: fresh });
+    renderChat(`/result/${lookup.id}/chat`);
+    expect(await screen.findByRole("alert")).toHaveTextContent("no partial photo group was loaded");
+    expect(screen.queryByLabelText("Ask a follow-up question")).not.toBeInTheDocument();
+    expect(getLookup(lookup.id)?.photos).toEqual(expired.photos);
+    expect(sendFollowUpMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["device", "cloud"])("keeps %s original-photo chat usable when unrelated cutout URLs are stale or missing", async (source) => {
+    const focusBox = { x: 0.1, y: 0.2, width: 0.3, height: 0.4, confidence: 0.9 };
+    const original = source === "cloud" ? cloudPhotoLookup("expired") : lookup;
+    const local: Lookup = { ...original, focusBox, focusMode: "crop", isolatedImageBase64: "https://example.test/removed-cutout.png?token=expired",
+      isolatedObjects: [{ name: "Selected part", category: "electrical", primary: true, focusBox,
+        isolatedImageBase64: "https://example.test/old-object.png?token=expired" }],
+    };
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
+    readCloudLookupMock.mockResolvedValue({ ok: true, value: cloudPhotoLookup("fresh") });
+    sendFollowUpMock.mockResolvedValue("The original photos remain available.");
+    renderChat(`/result/${lookup.id}/chat`);
+    await userEvent.type(await screen.findByLabelText("Ask a follow-up question"), "Inspect the original photo.");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("The original photos remain available.")).toBeInTheDocument();
+    expect(readCloudLookupMock).toHaveBeenCalledTimes(source === "cloud" ? 1 : 0);
+    expect(sendFollowUpMock).toHaveBeenCalledWith(expect.objectContaining({ focusBox, focusMode: "crop",
+      isolatedObjects: local.isolatedObjects,
+      ...(source === "cloud" ? { photos: cloudPhotoLookup("fresh").photos } : { frame: lookup.frame }),
+    }), "Inspect the original photo.");
+    expect(getLookup(lookup.id)?.focusBox).toEqual(focusBox);
+  });
+
+  it.each(["account", "unmount"])("ignores an existing photo group's refresh after %s changes", async (change) => {
+    const expired = cloudPhotoLookup("expired");
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([expired]));
+    let finish!: (value: Awaited<ReturnType<typeof readCloudLookup>>) => void;
+    readCloudLookupMock.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const view = renderChat(`/result/${lookup.id}/chat`);
+    if (change === "account") setActiveAccount("other-user");
+    else view.unmount();
+    await act(async () => { finish({ ok: true, value: cloudPhotoLookup("fresh") }); });
+    if (change === "account") expect(getLookup(lookup.id)).toBeNull();
+    setActiveAccount("test-user");
+    expect(getLookup(lookup.id)?.photos).toEqual(expired.photos);
+    expect(sendFollowUpMock).not.toHaveBeenCalled();
+  });
+
+  it("does not restore a local scan deleted during photo refresh", async () => {
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([cloudPhotoLookup("expired")]));
+    let finish!: (value: Awaited<ReturnType<typeof readCloudLookup>>) => void;
+    readCloudLookupMock.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    renderChat(`/result/${lookup.id}/chat`);
+    deleteLookup(lookup.id);
+    await act(async () => { finish({ ok: true, value: cloudPhotoLookup("fresh") }); });
+    expect(await screen.findByText("Scan not found")).toBeInTheDocument();
+    expect(getLookup(lookup.id)).toBeNull();
+  });
+
+  it("refreshes signed photos again before a question after the signing window ages", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    try {
+      localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([cloudPhotoLookup("expired")]));
+      readCloudLookupMock.mockResolvedValueOnce({ ok: true, value: cloudPhotoLookup("fresh") })
+        .mockResolvedValueOnce({ ok: true, value: cloudPhotoLookup("refreshed-again") });
+      sendFollowUpMock.mockResolvedValue("Still using live photo references.");
+      renderChat(`/result/${lookup.id}/chat`);
+      await screen.findByLabelText("Ask a follow-up question");
+      now.mockReturnValue(1_000_000 + 51 * 60 * 1000);
+      await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "Compare the views now.");
+      await userEvent.click(screen.getByRole("button", { name: "Send" }));
+      expect(await screen.findByText("Still using live photo references.")).toBeInTheDocument();
+      expect(readCloudLookupMock).toHaveBeenCalledTimes(2);
+      expect(sendFollowUpMock).toHaveBeenCalledWith(expect.objectContaining({ photos: cloudPhotoLookup("refreshed-again").photos }), "Compare the views now.");
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it.each(["account", "unmount"])("does not materialize a cloud scan after %s changes", async (change) => {
     let finish!: (value: Awaited<ReturnType<typeof readCloudLookup>>) => void;
     readCloudLookupMock.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
@@ -704,6 +815,14 @@ describe("Chat", () => {
     expect(sendFollowUpMock).toHaveBeenCalledTimes(2);
   });
 });
+
+function cloudPhotoLookup(token: string): Lookup {
+  const overview = `https://example.test/overview.jpg?token=${token}`;
+  return { ...lookup, cloudRevision: 1, frame: { ...lookup.frame, imageBase64: overview }, photos: [
+    { id: "overview-id", label: "overview", capturedAt: lookup.frame.capturedAt, imageBase64: overview },
+    { id: "marking-id", label: "marking", capturedAt: lookup.frame.capturedAt, imageBase64: `https://example.test/marking.jpg?token=${token}` },
+  ] };
+}
 
 function renderChat(path: string, destination = "/away") {
   return render(

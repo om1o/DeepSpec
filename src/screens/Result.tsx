@@ -59,6 +59,8 @@ function ResultView({ id }: { id: string | undefined }) {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [retrySaveLabel, setRetrySaveLabel] = useState("Retry saving feedback");
   const scanState = liveScanState ?? (lookup ? scanStateFromLookup(inspectionBase ?? lookup) : (id ? null : getScanState(routeState)));
+  const currentScanStateRef = useRef(scanState);
+  useEffect(() => { currentScanStateRef.current = scanState; }, [scanState]);
   const frame = scanState?.frame ?? (id ? undefined : readLatestCapturedFrame());
   const selectedPhoto = scanState?.photos?.find((photo) => photo.id === selectedPhotoId);
   const displayFrame = selectedPhoto ?? frame;
@@ -243,6 +245,8 @@ function ResultView({ id }: { id: string | undefined }) {
 
     const saved = inspectionLookup ? saveExistingLookup(inspectionLookup, liveScanState) : createLookup({
       frame: scanState.frame,
+      photos: scanState.photos,
+      isolatedObjects: scanState.isolatedObjects,
       focusBox: scanState.focusBox,
       focusMode: scanState.focusMode,
       isolatedImageBase64: scanState.isolatedImageBase64,
@@ -408,9 +412,18 @@ function ResultView({ id }: { id: string | undefined }) {
                 setSaveError(warning ?? null);
                 setRetrySaveLabel(warning ? "Retry saving scan result" : "Retry saving feedback");
               }}
-              onScanRetrySuccess={(nextScanState) => {
-                setLiveScanState(nextScanState);
-                saveLatestScanState(nextScanState);
+              onScanRetrySuccess={(nextScanState, sourceFrame) => {
+                const current = currentScanStateRef.current;
+                if (!current || current.frame.imageBase64 !== sourceFrame.imageBase64
+                  || current.frame.capturedAt !== sourceFrame.capturedAt
+                  || nextScanState.frame.capturedAt !== sourceFrame.capturedAt) {
+                  setSaveError("The original photo changed during retry. Reopen the scan before retrying.");
+                  return;
+                }
+                // Loading a signed original into memory changes its URL, not its coordinate space.
+                const restored = { ...current, ...nextScanState, errorCode: undefined, errorMessage: undefined };
+                setLiveScanState(restored);
+                saveLatestScanState(restored);
               }}
             />
           ) : null}
@@ -881,7 +894,7 @@ function AnalysisError({
   vehicleContext?: Lookup["vehicleContext"];
   message: string;
   onLookupRetrySuccess: (updatedLookup: Lookup, warning?: string) => void;
-  onScanRetrySuccess: (scanState: ScanAnalysisState) => void;
+  onScanRetrySuccess: (scanState: ScanAnalysisState, sourceFrame: CapturedFrame) => void;
 }) {
   const [isOnline, setIsOnline] = useState(() => typeof navigator !== "undefined" ? navigator.onLine : true);
   const [isRetrying, setIsRetrying] = useState(false);
@@ -946,7 +959,7 @@ function AnalysisError({
             captureMode,
             savedAt: new Date().toISOString(),
           },
-        });
+        }, retryFrame);
       }
     } catch (err) {
       if (isCurrentRetry()) {

@@ -273,6 +273,7 @@ export default function Scanner() {
     setQualityCoach(null);
     // Clear any multi-object focus + cached per-object analyses from the previous scan so a stale
     // index/cache can never leak onto the new scan's objects.
+    setSelectedPhotoId(undefined);
     setFocusedObjectIndex(null);
     setObjectAnalyses({});
     startedObjectAnalysisRef.current = new Set();
@@ -453,6 +454,7 @@ export default function Scanner() {
     secondFrameProvider?: () => Promise<string>,
     reviewTargetOverride?: CameraObjectTarget,
     photos?: ScanPhoto[],
+    captureEvidence?: { original: ScanPhoto; persist: (accepted: ScanPhoto[]) => Promise<boolean> },
   ) => {
     const sourceUpdatedAt = new Date().toISOString();
     const deviceRead = readLookups();
@@ -481,20 +483,21 @@ export default function Scanner() {
 
     const frame: CapturedFrame = {
       imageBase64,
-      capturedAt: photos?.[0]?.capturedAt ?? new Date().toISOString(),
+      capturedAt: photos?.[0]?.capturedAt ?? captureEvidence?.original.capturedAt ?? new Date().toISOString(),
     };
+    let evidencePhotos: ScanPhoto[] = photos ?? [captureEvidence?.original ?? { id: "photo-1", label: "overview", ...frame }];
     if (!quality.ok) {
       stopForQualityCoach(quality.issue);
       const coach = getScanQualityCoach(quality.issue);
       return persistAndShowReview({
-        frame, photos, scanQuality, errorCode: "quality_rejected",
+        frame, photos: evidencePhotos, scanQuality, errorCode: "quality_rejected",
         errorMessage: `Photo quality check: ${coach.title}. ${coach.action}${guidedRetakeUsedRef.current ? " Guided retake used; identity remains unresolved. Review the saved evidence before deciding what to do next." : " Identification was not run."}`,
         analyzedAt: sourceUpdatedAt,
         provenance: { captureMode, analysisSource: "ai_detection", savedAt: sourceUpdatedAt },
         ...buildShopScanContext(activeShopJob, activeShopVehicleContext, undefined),
       }, { captureMode, requestId, reviewTarget, source: "AI detection", analysisSource: "ai_detection", sourceUpdatedAt });
     }
-    saveLatestScanState({ frame, photos, scanQuality });
+    saveLatestScanState({ frame, photos: evidencePhotos, scanQuality });
     resetScanDebug();
 
     let focusedFrame: CapturedFrame | undefined;
@@ -557,10 +560,36 @@ export default function Scanner() {
       }
     }
 
-    setAnalysisStep("Checking saved matches");
-    const imageHash = await hashImageDataUrl(imageBase64);
+    if (!focusedFrame && !secondFrame && secondFrameProvider) {
+      await new Promise<void>((resolve) => setTimeout(resolve, SECOND_FRAME_DELAY_MS));
+      if (!isScanRequestActive(requestId)) return;
+      try {
+        const second = await secondFrameProvider();
+        if (!isScanRequestActive(requestId)) return;
+        const secondQuality = await assessImageQuality(second);
+        if (secondQuality.ok) {
+          secondFrame = { imageBase64: second, capturedAt: new Date().toISOString() };
+        }
+      } catch {
+        // A second frame helps confidence but is not required.
+      }
+    }
+
     if (!isScanRequestActive(requestId)) return;
-    if (imageHash && !activeShopJob && !photos) {
+    const identifySecondFrame = focusedFrame ?? secondFrame;
+    // Explicit groups are authoritative in aiService. Legacy requests use photo-1/photo-2;
+    // retain their exact inputs, including a derived crop, without claiming a new angle.
+    if (!photos && identifySecondFrame) {
+      evidencePhotos = [...evidencePhotos, { id: "photo-2", label: focusedFrame ? "close_up" : "other", ...identifySecondFrame }];
+    }
+    if (captureEvidence && !await captureEvidence.persist(evidencePhotos)) return;
+    if (!isScanRequestActive(requestId)) return;
+    saveLatestScanState({ frame, photos: evidencePhotos, scanQuality });
+    // Decide cache eligibility only after all accepted inputs are known and durable.
+    setAnalysisStep("Checking saved matches");
+    const imageHash = !photos && !identifySecondFrame ? await hashImageDataUrl(imageBase64) : null;
+    if (!isScanRequestActive(requestId)) return;
+    if (imageHash && !activeShopJob) {
       const cached = getCachedScanResult(imageHash);
       if (cached) {
         const contextualResult = applyShopFitmentContext(cached, activeShopVehicleContext);
@@ -570,6 +599,7 @@ export default function Scanner() {
         return persistAndShowReview(
           {
             frame,
+            photos: evidencePhotos,
             result: contextualResult,
             analyzedAt: new Date().toISOString(),
             focusBox,
@@ -596,29 +626,12 @@ export default function Scanner() {
         );
       }
     }
-
-    if (!focusedFrame && !secondFrame && secondFrameProvider) {
-      await new Promise<void>((resolve) => setTimeout(resolve, SECOND_FRAME_DELAY_MS));
-      if (!isScanRequestActive(requestId)) return;
-      try {
-        const second = await secondFrameProvider();
-        if (!isScanRequestActive(requestId)) return;
-        const secondQuality = await assessImageQuality(second);
-        if (secondQuality.ok) {
-          secondFrame = { imageBase64: second, capturedAt: new Date().toISOString() };
-        }
-      } catch {
-        // A second frame helps confidence but is not required.
-      }
-    }
-
-    if (!isScanRequestActive(requestId)) return;
     const analysisAttemptId = createAnalysisAttemptId();
     try {
       setAnalysisStep("Reading photo");
       const identifyStartedAt = performance.now();
       const result = applyShopFitmentContext(
-        await identifyCapturedFrame(frame, focusedFrame ?? secondFrame, undefined, {
+        await identifyCapturedFrame(frame, identifySecondFrame, undefined, {
           photos,
           signal,
           vehicleContext: activeShopVehicleContext,
@@ -631,7 +644,8 @@ export default function Scanner() {
       if (identifyMs > IDENTIFY_BUDGET_WARN_MS) {
         console.warn(`[DeepSpec] Identify took ${identifyMs}ms (over ${IDENTIFY_BUDGET_WARN_MS}ms budget).`);
       }
-      if (imageHash && !activeShopJob && !photos) setCachedScanResult(imageHash, result);
+      // The cache key covers only the original, so a two-photo result cannot be reused by it.
+      if (imageHash && !activeShopJob && !photos && !identifySecondFrame) setCachedScanResult(imageHash, result);
       recordScanOutcome(result);
 
       // Step 6: when the scene has several objects, cut each out (SlimSAM, one pass) for the
@@ -667,7 +681,7 @@ export default function Scanner() {
           frame,
           result,
           debug,
-          photos,
+          photos: evidencePhotos,
           analysisAttemptId,
           analyzedAt: new Date().toISOString(),
           focusBox,
@@ -700,7 +714,7 @@ export default function Scanner() {
         {
           frame,
           errorMessage: getSimpleScanErrorMessage(analysisError),
-          photos,
+          photos: evidencePhotos,
           errorCode: analysisError instanceof AIServiceError ? analysisError.code : "analysis_failed",
           analysisAttemptId,
           analyzedAt: new Date().toISOString(),
@@ -774,7 +788,7 @@ export default function Scanner() {
       const imageBase64 = await captureFrame();
       if (!isScanRequestActive(requestId)) return;
 
-      const captured: ScanPhoto[] = [{ id: crypto.randomUUID(), label: "overview", imageBase64, capturedAt: new Date().toISOString() }];
+      let captured: ScanPhoto[] = [{ id: "photo-1", label: "overview", imageBase64, capturedAt: new Date().toISOString() }];
       photoDraftRevisionRef.current += 1;
       setAnalysisStep("Saving captured photo");
       const stored = await savePhotoDraftIfEmpty(captured, accountScopeRef.current, "capture");
@@ -789,7 +803,25 @@ export default function Scanner() {
         setPhotoDraftMessage("Another capture was saved. Resume or discard it before taking another photo.");
         return;
       }
-      const saved = await analyzeImageBase64(imageBase64, requestId, "camera", activeRequest.controller.signal, captureFrame, reviewTarget);
+      const saved = await analyzeImageBase64(imageBase64, requestId, "camera", activeRequest.controller.signal, captureFrame, reviewTarget, undefined, {
+        original: captured[0],
+        persist: async (accepted) => {
+          const matched = await replacePhotoDraftIfMatches(captured, accepted, accountScopeRef.current, "capture");
+          if (!isScanRequestActive(requestId)) return false;
+          if (!matched) {
+            const pendingCapture = await readPhotoDraft(accountScopeRef.current, "capture");
+            if (!isScanRequestActive(requestId)) return false;
+            setCaptureDraft(pendingCapture);
+            setPhotoDraftKind("capture");
+            setShowPhotoDraft(Boolean(pendingCapture));
+            setCaptureError("Saved capture changed in another tab. Review its current photos before analysis.");
+            return false;
+          }
+          captured = accepted;
+          setCaptureDraft(accepted);
+          return true;
+        },
+      });
       await retireSavedCapture(captured, saved);
     } catch (error) {
       if (isScanRequestActive(requestId)) {

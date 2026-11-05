@@ -1,10 +1,13 @@
 import type { IdentificationResult } from "../types/index";
+import { IDENTIFY_PIPELINE_VERSION } from "../services/systemPrompts";
 import { accountStorageKey } from "./accountScope";
 
 export const SCAN_CACHE_KEY = "deep-spec:scan-cache";
 export const SCAN_CACHE_MAX = 20;
 
 type CacheEntry = {
+  inputVersion: "single-original-v1";
+  pipelineVersion: string;
   hash: string;
   result: IdentificationResult;
   cachedAt: string;
@@ -35,7 +38,12 @@ function loadCache(): CacheEntry[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed as CacheEntry[];
+    return parsed.filter((entry): entry is CacheEntry =>
+      entry !== null && typeof entry === "object"
+      && entry.inputVersion === "single-original-v1"
+      && entry.pipelineVersion === IDENTIFY_PIPELINE_VERSION
+      && typeof entry.hash === "string"
+      && entry.result?.modelRun?.pipelineVersion === IDENTIFY_PIPELINE_VERSION);
   } catch {
     return [];
   }
@@ -63,12 +71,12 @@ export function getCachedScanResult(hash: string): IdentificationResult | null {
 }
 
 export function setCachedScanResult(hash: string, result: IdentificationResult): void {
-  if (isOnDeviceEstimate(result)) {
+  if (isOnDeviceEstimate(result) || result.modelRun?.pipelineVersion !== IDENTIFY_PIPELINE_VERSION) {
     return;
   }
 
   const entries = loadCache().filter((e) => e.hash !== hash);
-  entries.push({ hash, result, cachedAt: new Date().toISOString() });
+  entries.push({ inputVersion: "single-original-v1", pipelineVersion: IDENTIFY_PIPELINE_VERSION, hash, result, cachedAt: new Date().toISOString() });
   if (entries.length > SCAN_CACHE_MAX) {
     entries.splice(0, entries.length - SCAN_CACHE_MAX);
   }

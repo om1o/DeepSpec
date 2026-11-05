@@ -1,4 +1,5 @@
 import { getAccountScope, isAccountScopeCurrent } from "../lib/accountScope";
+import { mergeCloudLookup } from "../lib/lookupMerge";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { BrandLockup } from "../components/BrandLockup";
@@ -14,6 +15,8 @@ import type { ChatMessage, Lookup } from "../types";
 import "./chatWorkspace.css";
 
 type ResearchOptions = { research: boolean; sourceUrls: string[] };
+// Cloud history signs photos for one hour. Refresh before that window closes.
+const CLOUD_PHOTO_REFRESH_MS = 50 * 60 * 1000;
 
 export default function Chat() {
   const { id } = useParams();
@@ -27,8 +30,9 @@ function ChatConversation({ id }: { id: string | undefined }) {
   const [searchParams] = useSearchParams();
   const [initialLookup] = useState(() => id ? getLookup(id) : null);
   const [lookup, setLookup] = useState<Lookup | null>(initialLookup);
+  const cloudEvidenceRef = useRef<{ lookup: Lookup; refreshedAt: number } | null>(null);
   const [lookupLoadState, setLookupLoadState] = useState<"loading" | "ready" | "not_found" | "error">(
-    initialLookup ? "ready" : id ? "loading" : "not_found",
+    initialLookup && !hasCloudPhotos(initialLookup) ? "ready" : id ? "loading" : "not_found",
   );
   const [lookupLoadError, setLookupLoadError] = useState<string | null>(null);
   const [lookupLoadRetry, setLookupLoadRetry] = useState(0);
@@ -58,7 +62,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
   }
 
   useEffect(() => {
-    if (!id || initialLookup) return;
+    if (!id || (initialLookup && !hasCloudPhotos(initialLookup))) return;
     let active = true;
     const isCurrentLoad = () => active && isMountedRef.current && isAccountScopeCurrent(accountScopeRef.current);
     const timeout = window.setTimeout(() => {
@@ -79,19 +83,28 @@ function ChatConversation({ id }: { id: string | undefined }) {
         setLookupLoadState("not_found");
         return;
       }
-      const saved = saveExistingLookup(result.value);
+      // Re-read after the request: a different tab may have edited or deleted
+      // the local record. Refresh only references, never replace those edits.
+      const current = getLookup(id);
+      if (initialLookup && !current) {
+        setLookupLoadState("not_found");
+        return;
+      }
+      const saved = current ? { ok: true as const, value: current } : saveExistingLookup(result.value);
       if (!isCurrentLoad()) return;
       if (!saved.ok) {
         setLookupLoadError(`This cloud scan could not be prepared for chat. ${saved.message}`);
         setLookupLoadState("error");
         return;
       }
-      setLookup(saved.value);
+      const refreshed = mergeChatPhotoReferences(saved.value, result.value);
+      cloudEvidenceRef.current = { lookup: result.value, refreshedAt: Date.now() };
+      setLookup(refreshed);
       setLookupLoadState("ready");
-    }).catch(() => {
+    }).catch((loadError: unknown) => {
       if (!isCurrentLoad()) return;
       window.clearTimeout(timeout);
-      setLookupLoadError("The saved scan could not be loaded. Check your connection and try again.");
+      setLookupLoadError(loadError instanceof AIServiceError ? loadError.message : "The saved scan could not be loaded. Check your connection and try again.");
       setLookupLoadState("error");
     });
     return () => {
@@ -150,9 +163,26 @@ function ChatConversation({ id }: { id: string | undefined }) {
     if (shouldSaveUserMessage) setPendingQuestion(trimmedQuestion);
 
     try {
+      let requestLookup = lookup;
+      if (hasCloudPhotos(lookup)) {
+        let refreshed = cloudEvidenceRef.current;
+        if (!refreshed || Date.now() - refreshed.refreshedAt >= CLOUD_PHOTO_REFRESH_MS) {
+          const cloud = await readCloudLookup(lookup.id);
+          if (!isCurrentConversation()) return;
+          if (!cloud.ok || !cloud.value || cloud.value.id !== lookup.id) {
+            throw new AIServiceError("invalid_input", cloud.ok ? "The saved scan could not be found. Reopen saved scans." : cloud.message);
+          }
+          refreshed = { lookup: cloud.value, refreshedAt: Date.now() };
+        }
+        const current = getLookup(lookup.id);
+        if (!current) throw new AIServiceError("invalid_input", "This saved scan was removed. Reopen saved scans.");
+        requestLookup = mergeChatPhotoReferences(current, refreshed.lookup);
+        cloudEvidenceRef.current = refreshed;
+        setLookup(requestLookup);
+      }
       const answer: Awaited<ReturnType<typeof sendFollowUpDetails>> = options?.research
-        ? await sendFollowUpDetails(lookup, trimmedQuestion, options)
-        : { message: await sendFollowUp(lookup, trimmedQuestion) };
+        ? await sendFollowUpDetails(requestLookup, trimmedQuestion, options)
+        : { message: await sendFollowUp(requestLookup, trimmedQuestion) };
       if (!isCurrentConversation()) return;
       const userMessage = shouldSaveUserMessage ? createChatMessage("user", trimmedQuestion) : null;
       const assistantMessage = {
@@ -188,7 +218,17 @@ function ChatConversation({ id }: { id: string | undefined }) {
       setErrorCode("storage");
       return;
     }
-    setLookup(savedConversation.value);
+    // Signed URLs are transient view state. The durable chat append retains
+    // device edits, so reapply the complete refreshed evidence to the view.
+    try {
+      setLookup(cloudEvidenceRef.current
+        ? mergeChatPhotoReferences(savedConversation.value, cloudEvidenceRef.current.lookup)
+        : savedConversation.value);
+    } catch (photoError) {
+      setError(getAIErrorMessage(photoError));
+      setErrorCode("invalid_input");
+      return;
+    }
     setPendingExchange(null);
     setError(null);
     setErrorCode(null);
@@ -409,6 +449,44 @@ function ChatConversation({ id }: { id: string | undefined }) {
       </div>
     </main>
   );
+}
+
+function cloudPhotoReferences(lookup: Lookup) {
+  // Follow-up requests send the group, or its single original frame. Cutouts
+  // are neither sent to the model nor rendered by the chat evidence panel.
+  const originals = lookup.photos?.length
+    ? lookup.photos.map((photo) => [`photo:${photo.id}`, photo.imageBase64])
+    : [["frame", lookup.frame.imageBase64]];
+  return new Map(originals.filter((entry) => /^https?:\/\//i.test(entry[1])).map(([key, value]) => [key, value] as const));
+}
+
+function hasCloudPhotos(lookup: Lookup) {
+  return cloudPhotoReferences(lookup).size > 0;
+}
+
+function mergeChatPhotoReferences(local: Lookup, remote: Lookup): Lookup {
+  const unavailable = () => new AIServiceError("invalid_input", "Saved photo evidence changed or is incomplete. Reopen saved scans before continuing; no partial photo group was loaded.");
+  if (local.id !== remote.id || local.frame.capturedAt !== remote.frame.capturedAt) throw unavailable();
+  // A subset or a different photo must never silently replace a reviewed group.
+  if (local.photos?.some((photo) => /^https?:\/\//i.test(photo.imageBase64))
+    && (local.photos.length !== remote.photos?.length || local.photos.some((photo) =>
+      !remote.photos?.some((candidate) => candidate.id === photo.id && candidate.capturedAt === photo.capturedAt)))) throw unavailable();
+
+  const merged = mergeCloudLookup(local, remote);
+  const refreshed = cloudPhotoReferences(merged);
+  const authorized = new Set(cloudPhotoReferences(remote).values());
+  for (const [key, source] of cloudPhotoReferences(local)) {
+    const replacement = refreshed.get(key);
+    if (!replacement || !authorized.has(replacement)) throw unavailable();
+    try {
+      const originalUrl = new URL(source);
+      const refreshedUrl = new URL(replacement);
+      if (originalUrl.origin !== refreshedUrl.origin || originalUrl.pathname !== refreshedUrl.pathname) throw unavailable();
+    } catch {
+      throw unavailable();
+    }
+  }
+  return merged;
 }
 
 function getLastUnansweredUserMessage(lookup: Lookup) {
