@@ -211,6 +211,24 @@ describe("frozen comparison originals", () => {
     decode = () => { local[0].notes = "Edited private note"; local[0].photos![0].imageBase64 = signed("scan", "original.png", "new-token"); };
     expect(await resolveComparisonSide({ ...historical, observedOn: "2026-11-01" })).toMatchObject({ status: "unchanged" });
   });
+  it("keeps non-token options significant after the shared original-loader extraction", async () => {
+    const historical = await comparisonSideForLookup(scan(), "photo-1");
+    local = [scan("scan", [photo("photo-1", signed() + "&download=first.png")])];
+    decode = () => { local[0].photos![0].imageBase64 = signed("scan", "original.png", "renewed") + "&download=other.png"; };
+    expect(await resolveComparisonSide(historical)).toMatchObject({ status: "source_changed" });
+    decode = undefined;
+    local = [scan("scan", [photo("photo-1", signed() + "&download=first.png")])];
+    mocks.cloud.mockResolvedValue({ ok: true, value: scan("scan", [photo("photo-1", signed("scan", "original.png", "renewed") + "&download=other.png")]) });
+    fetchSpy.mockClear(); fetchSpy.mockResolvedValue(new Response(null, { status: 403 }));
+    expect(await resolveComparisonSide(historical)).toMatchObject({ status: "source_changed" });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+  it("does not fetch transformed or ambiguous signed-token URLs through the shared loader", async () => {
+    for (const value of [signed().replace("/object/sign/", "/render/image/sign/"), signed() + "&token=other"]) {
+      await expect(comparisonSideForLookup(scan("scan", [photo("photo-1", value)]), "photo-1")).rejects.toThrow("could not be verified");
+    }
+    expect(fetchSpy).not.toHaveBeenCalled(); expect(mocks.cloud).not.toHaveBeenCalled();
+  });
   it("returns explicit missing evidence and never includes provider URLs or secrets in messages", async () => {
     const historical = await comparisonSideForLookup(scan(), "photo-1"); local = [];
     expect(await resolveComparisonSide(historical)).toMatchObject({ status: "missing_photo" });

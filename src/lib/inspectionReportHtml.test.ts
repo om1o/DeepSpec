@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import type { Lookup, PhotoRelationship, VisualFocusBox } from "../types";
 import type { ComponentMapComponent } from "../types/componentMap";
 import type { InspectionReportSnapshot } from "../types/inspectionReport";
@@ -10,6 +11,8 @@ import type { InspectionComparison, ComparisonSide } from "../types/inspectionCo
 const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/bKkAAAAASUVORK5CYII=";
 const WHEN = "2026-11-05T12:00:00Z";
 const BOX: VisualFocusBox = { x: .1, y: .2, width: .3, height: .4, confidence: .8 };
+const OVERVIEW_SOURCE = { sha256: createHash("sha256").update(Buffer.from(PNG.split(",")[1], "base64")).digest("hex"),
+  width: 1, height: 1, photoAddedAt: "2026-11-05T12:00:00.000Z", scanSavedAt: "2026-11-05T12:00:00.000Z" };
 
 function lookup(id = "overview"): Lookup {
   return {
@@ -63,6 +66,39 @@ function visualComparison(): InspectionComparison {
 }
 
 describe("self-contained mechanic HTML report", () => {
+  it.each([
+    ["source_changed", "differs from the map's recorded source"],
+    ["missing_photo", "bound overview image is missing"],
+    ["verification_unavailable", "Verification of the embedded overview is unavailable"],
+    [undefined, "Verification of the embedded overview is unavailable"],
+  ] as const)("hides v3 map overlays for %s while preserving human records, image bytes and links", (status, warning) => {
+    const input = snapshot(), componentRecord = { ...component(0), region: { sourcePhotoId: "overview-front", box: BOX },
+      status: "inspected" as const, reviewedAt: WHEN, notes: "Human checked the connection", scanGroups: [{ linkId: "detail-link", lookupId: "overview", photoIds: ["overview-label"] }] };
+    input.map = { document: { version: 3, id: "overview", overview: { lookupId: "overview", photoId: "overview-front", source: OVERVIEW_SOURCE }, components: [componentRecord] }, localRevision: 1, cloudRevision: null, syncedLocalRevision: 0 };
+    if (status) input.mapOverviewEvidence = { status, message: "Specific verification result" };
+    const before = JSON.stringify(input), doc = parsed(input);
+    expect(doc.querySelectorAll(".outline.map")).toHaveLength(0);
+    expect(doc.querySelector('[aria-label="Map overview verification"]')?.textContent).toContain(warning);
+    expect(doc.querySelector("#component-1")?.textContent).toContain("Human checked the connection");
+    expect(doc.querySelector("#component-1")?.textContent).toContain("Inspected — user review");
+    expect(doc.querySelector("#component-1 a[href='#scan-1-photo-2']")).not.toBeNull();
+    expect(doc.querySelector("#scan-1-photo-1 img")?.getAttribute("src")).toBe(PNG);
+    expect(doc.querySelector("#missing-evidence")?.textContent).toContain(warning);
+    expect(doc.body.textContent).toContain("Linked photo groups are ID-based associations; their historical image bytes are not bound");
+    expect(doc.body.textContent).toContain("matching bytes do not prove a capture angle, vehicle identity");
+    expect(JSON.stringify(input)).toBe(before);
+  });
+
+  it.each([1, 2] as const)("never treats legacy version %s as verified even when an unrelated status says unchanged", (version) => {
+    const input = snapshot(); input.map = { document: { version, id: "overview", overview: { lookupId: "overview", photoId: "overview-front" },
+      components: [{ ...component(0), region: { sourcePhotoId: "overview-front", box: BOX } }] }, localRevision: 1, cloudRevision: null, syncedLocalRevision: 0 };
+    input.mapOverviewEvidence = { status: "unchanged", message: "Unexpected old status" };
+    const doc = parsed(input);
+    expect(doc.querySelectorAll(".outline.map")).toHaveLength(0);
+    expect(doc.querySelector("#component-map")?.textContent).toContain("legacy map has no recorded overview fingerprint");
+    expect(doc.querySelector("#component-1")?.textContent).toContain("Component note 1");
+  });
+
   it("keeps same-name map occurrences and unverified AI locations separate from human notes and outlines", () => {
     const input = snapshot();
     input.map = { document: { version: 2, id: "overview", overview: { lookupId: "overview", photoId: "overview-front" }, components: [
@@ -334,7 +370,8 @@ describe("self-contained mechanic HTML report", () => {
     components[2].status = "not_visible"; components[2].region = { sourcePhotoId: "overview-front", box: BOX };
     components[11].scanGroups = [{ linkId: "first", lookupId: detail.id, photoIds: ["detail-front", "detail-label"] }, { linkId: "duplicate", lookupId: detail.id, photoIds: ["detail-label", "detail-front"] }];
     components[0].scanGroups = [{ linkId: "other-association", lookupId: detail.id, photoIds: ["detail-label"] }];
-    input.map = { document: { version: 1, id: overview.id, overview: { lookupId: overview.id, photoId: "overview-front" }, components }, localRevision: 8, cloudRevision: 3, syncedLocalRevision: 5 };
+    input.map = { document: { version: 3, id: overview.id, overview: { lookupId: overview.id, photoId: "overview-front", source: OVERVIEW_SOURCE }, components }, localRevision: 8, cloudRevision: 3, syncedLocalRevision: 5 };
+    input.mapOverviewEvidence = { status: "unchanged", message: "The embedded overview matches the bound source." };
     const document = parsed(input);
     expect(document.querySelectorAll(".component-list > li")).toHaveLength(12);
     expect(document.querySelectorAll("section[id^='scan-']")).toHaveLength(2);
@@ -345,6 +382,7 @@ describe("self-contained mechanic HTML report", () => {
     expect(document.querySelectorAll("#component-1 a[href='#scan-2-photo-2']")).toHaveLength(1);
     expect(document.querySelectorAll("figure[id*='-photo-']")).toHaveLength(4);
     expect(document.querySelector(".outline.map[href='#component-1']")).not.toBeNull();
+    expect(document.querySelector("#component-map")?.textContent).toContain("matches the map's recorded source fingerprint and timestamps");
     expect(document.querySelector(".outline.map[href='#component-3']")).toBeNull();
     expect(document.querySelector("#component-3")?.textContent).toContain("Not visible");
     expect(document.querySelector("#component-2")?.textContent).toContain("not a safety certification");

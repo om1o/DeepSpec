@@ -1,7 +1,8 @@
 import { getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
-import { ComponentMapError, linkComponentMapDocument, normalizeComponentCaptureTarget, normalizeComponentMap, normalizeComponentMapRecord } from "../lib/componentMap";
+import { ComponentMapError, linkComponentMapDocument, mapOverviewSourcesMatch, normalizeComponentCaptureTarget, normalizeComponentMap, normalizeComponentMapRecord } from "../lib/componentMap";
 import type { ComponentCaptureTarget, ComponentMap, ComponentMapRecord } from "../types/componentMap";
 import { COMPONENT_MAP_STORE, EVIDENCE_STORAGE_TIMEOUT_MS, openEvidenceDatabase } from "./evidenceDb";
+import { assertMapOverviewGuardCurrent, type MapOverviewSaveGuard } from "./mapOverviewEvidence";
 
 export { ComponentMapError } from "../lib/componentMap";
 export const COMPONENT_MAPS_CHANGED = "deep-spec:component-maps-changed";
@@ -90,6 +91,10 @@ async function transaction<T>(mapId: string, mode: IDBTransactionMode, mutate: M
           result = update.result;
           if (update.record !== null) {
             const next = normalizeComponentMapRecord(update.record);
+            if (current?.document.version === 3 && (!next || next.document.version !== 3
+              || !mapOverviewSourcesMatch(current.document.overview.source, next.document.overview.source))) {
+              throw new ComponentMapError("invalid_map", "This map's saved overview binding cannot be replaced or removed. Both map versions were preserved; reopen the original source.");
+            }
             if (mode !== "readwrite" || !next || next.document.id !== mapId
               || (current && (next.document.overview.photoId !== current.document.overview.photoId || next.localRevision < current.localRevision
                 || (JSON.stringify(next.document) !== JSON.stringify(current.document) && next.localRevision <= current.localRevision)))) {
@@ -118,12 +123,19 @@ export function readComponentMap(mapId: string, scope = getAccountScope()): Prom
   return transaction(mapId, "readonly", (current) => ({ record: null, result: current }), scope);
 }
 
-export function createComponentMap(document: ComponentMap, scope = getAccountScope()): Promise<ComponentMapRecord> {
+export function createComponentMap(document: ComponentMap, scope = getAccountScope(), sourceGuard?: MapOverviewSaveGuard): Promise<ComponentMapRecord> {
   const checked = normalizeComponentMap(document);
   if (!checked) return Promise.reject(new ComponentMapError("invalid_map", "The component map contains invalid or incomplete evidence."));
   return transactComponentMap(checked.id, (current) => {
+    if (checked.version === 3) {
+      if (!sourceGuard) throw new ComponentMapError("invalid_map", "Verify the saved overview before creating its map. The scan was preserved.");
+      assertMapOverviewGuardCurrent(sourceGuard, checked, scope);
+    }
     if (current) {
       if (current.document.overview.photoId !== checked.overview.photoId) throw new ComponentMapError("invalid_map", "This overview already has a map tied to a different original photo.");
+      if (current.document.version === 3 && (checked.version !== 3 || !mapOverviewSourcesMatch(current.document.overview.source, checked.overview.source))) {
+        throw new ComponentMapError("invalid_map", "This overview already has a map bound to different source evidence. Its existing map was preserved.");
+      }
       return { record: null, result: current };
     }
     const record: ComponentMapRecord = { document: checked, localRevision: 1, cloudRevision: null, syncedLocalRevision: 0 };
@@ -131,13 +143,17 @@ export function createComponentMap(document: ComponentMap, scope = getAccountSco
   }, scope);
 }
 
-export function updateComponentMap(mapId: string, expectedLocalRevision: number, document: ComponentMap, scope = getAccountScope()): Promise<ComponentMapRecord> {
+export function updateComponentMap(mapId: string, expectedLocalRevision: number, document: ComponentMap, scope = getAccountScope(), sourceGuard?: MapOverviewSaveGuard): Promise<ComponentMapRecord> {
   const checked = normalizeComponentMap(document);
   if (!checked || checked.id !== mapId) return Promise.reject(new ComponentMapError("invalid_map", "The component map contains invalid or incomplete evidence."));
   return transactComponentMap(mapId, (current) => {
     if (!current) throw new ComponentMapError("missing_map", "This component map is missing. Reopen its overview scan.");
     if (current.localRevision !== expectedLocalRevision) throw new ComponentMapError("stale_revision", "This map changed in another view. Your edits were not applied. Keep or copy them before loading the saved map.");
     if (checked.overview.photoId !== current.document.overview.photoId) throw new ComponentMapError("invalid_map", "A component map cannot be moved to a different original photo.");
+    if (checked.version === 3) {
+      if (!sourceGuard) throw new ComponentMapError("invalid_map", "Verify the saved overview before saving map edits. Your draft was preserved.");
+      assertMapOverviewGuardCurrent(sourceGuard, checked, scope);
+    }
     if (JSON.stringify(checked) === JSON.stringify(current.document)) return { record: null, result: current };
     const record = { ...current, document: checked, localRevision: current.localRevision + 1 };
     return { record, result: record };

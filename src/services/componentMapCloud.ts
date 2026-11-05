@@ -10,6 +10,7 @@ import { readCloudLookup } from "./cloudHistory";
 import { syncLookupToCloud } from "./cloudSync";
 import { readComponentMap, transactComponentMap } from "./componentMapStore";
 import { getLookup } from "./storage";
+import { verifyMapOverviewImage } from "./mapOverviewEvidence";
 
 export type ComponentMapCloudResult =
   | { ok: true; value: ComponentMapRecord | null; message: string }
@@ -149,16 +150,25 @@ async function ensureReferencedEvidence(document: ComponentMap, scope: AccountSc
     let cloud = await boundedRequest(() => readCloudLookup(lookupId));
     assertAccount(scope);
     if (!cloud.ok) throw new Error(`Linked scan ${lookupId} is unavailable: ${cloud.message}`);
-    if (cloud.value && hasPhotos(cloud.value, photoIds)) continue;
-    const local = getLookup(lookupId);
-    if (!local || !hasPhotos(local, photoIds)) throw new Error(`Linked scan ${lookupId} or its original photo IDs are unavailable. The map remains saved on this device.`);
-    const saved = await syncLookupToCloud(local);
-    assertAccount(scope);
-    if (!saved.ok) throw new Error(`Linked scan ${lookupId} is not cloud-saved: ${saved.message}`);
-    cloud = await boundedRequest(() => readCloudLookup(lookupId));
-    assertAccount(scope);
-    if (!cloud.ok || !cloud.value || !hasPhotos(cloud.value, photoIds)) {
-      throw new Error(`The original photos for linked scan ${lookupId} could not be verified in the cloud. The map remains saved on this device.`);
+    if (!cloud.value || !hasPhotos(cloud.value, photoIds)) {
+      const local = getLookup(lookupId);
+      if (!local || !hasPhotos(local, photoIds)) throw new Error(`Linked scan ${lookupId} or its original photo IDs are unavailable. The map remains saved on this device.`);
+      const saved = await syncLookupToCloud(local);
+      assertAccount(scope);
+      if (!saved.ok) throw new Error(`Linked scan ${lookupId} is not cloud-saved: ${saved.message}`);
+      cloud = await boundedRequest(() => readCloudLookup(lookupId));
+      assertAccount(scope);
+      if (!cloud.ok || !cloud.value || !hasPhotos(cloud.value, photoIds)) {
+        throw new Error(`The original photos for linked scan ${lookupId} could not be verified in the cloud. The map remains saved on this device.`);
+      }
+    }
+    if (document.version === 3 && lookupId === document.overview.lookupId) {
+      // Matching IDs or device bytes cannot attest to the stored cloud overview.
+      const overview = cloud.value;
+      if (!overview) throw new Error("The cloud overview image is unavailable. The device map was preserved.");
+      const verified = await boundedRequest((signal) => verifyMapOverviewImage(overview, document, scope, signal));
+      assertAccount(scope);
+      if (verified.status !== "unchanged") throw new Error(`The cloud overview image could not be verified against this map. ${verified.message} The device map was preserved.`);
     }
   }
 }

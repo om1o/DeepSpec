@@ -66,6 +66,15 @@ function mapWithLinks(ids = ["detail", "detail"]): ComponentMapRecord {
     scanGroups: [{ linkId: `10000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`, lookupId, photoIds: ["one", "two"] }],
   })) }, localRevision: 1, cloudRevision: null, syncedLocalRevision: 0 };
 }
+function boundOverviewMap(): ComponentMapRecord {
+  const record = mapWithLinks(["root"]);
+  record.document.version = 3;
+  record.document.overview.source = { sha256: createHash("sha256").update(bytes).digest("hex"), width: 1, height: 1,
+    photoAddedAt: capturedAt, scanSavedAt: capturedAt };
+  record.document.components[0].scanGroups = [];
+  record.document.components[0].region = { sourcePhotoId: "photo-1", box };
+  return record;
+}
 const rasterResponse = () => new Response(bytes.slice(), { status: 200, headers: { "Content-Type": "image/png" } });
 
 describe("saved inspection report collection", () => {
@@ -116,6 +125,66 @@ describe("saved inspection report collection", () => {
     });
   });
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+  it("verifies the exact materialized v3 overview while preserving its immutable map and human records", async () => {
+    vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false"); map = boundOverviewMap();
+    const before = structuredClone(map), report = await collectInspectionReport("root");
+    expect(report.mapOverviewEvidence).toMatchObject({ status: "unchanged" });
+    expect(report.map).toEqual(before); expect(report.scans[0].frame.imageBase64).toBe(image);
+    const embedded = Buffer.from(report.scans[0].frame.imageBase64.split(",")[1], "base64");
+    expect(createHash("sha256").update(embedded).digest("hex")).toBe(before.document.overview.source!.sha256);
+    expect(JSON.parse(JSON.stringify(report)).mapOverviewEvidence.status).toBe("unchanged");
+    expect(report.missing.filter((issue) => issue.kind === "map")).toEqual([]);
+    expect(fetchSpy).not.toHaveBeenCalled(); expect(mocks.auth).not.toHaveBeenCalled();
+  });
+
+  it.each(["bytes", "timestamp", "dimensions"])("retains component records but reports a changed bound overview when %s differ", async (change) => {
+    map = boundOverviewMap();
+    if (change === "bytes") local[0].frame.imageBase64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/bKkAAAAASUVORK5CYII=";
+    if (change === "timestamp") local[0].frame.capturedAt = "2026-11-06T15:00:00.000Z";
+    if (change === "dimensions") map.document.overview.source!.width = 2;
+    const before = structuredClone(map), report = await collectInspectionReport("root");
+    expect(report.mapOverviewEvidence).toMatchObject({ status: "source_changed" });
+    expect(report.map).toEqual(before); expect(report.scans[0].frame.imageBase64).toBe(local[0].frame.imageBase64);
+    expect(report.missing).toContainEqual(expect.objectContaining({ kind: "map", lookupId: "root", photoId: "photo-1" }));
+  });
+
+  it("does not substitute another embedded photo or frame for the missing map overview ID", async () => {
+    map = boundOverviewMap(); local[0].photos = [photo("different-original")];
+    const report = await collectInspectionReport("root");
+    expect(report.scans[0].frame.imageBase64).toBe(image);
+    expect(report.scans[0].photos?.[0].imageBase64).toBe(image);
+    expect(report.mapOverviewEvidence).toMatchObject({ status: "missing_photo" });
+    expect(report.map?.document.overview.photoId).toBe("photo-1");
+  });
+
+  it("retains embedded pixels and map records with an explicit unavailable status when fingerprinting fails", async () => {
+    map = boundOverviewMap();
+    vi.stubGlobal("crypto", { subtle: { digest: vi.fn().mockRejectedValue(new Error("PRIVATE_HASH_FAILURE token=canary")) } });
+    const before = structuredClone(map), report = await collectInspectionReport("root");
+    expect(report.mapOverviewEvidence).toMatchObject({ status: "verification_unavailable" });
+    expect(report.map).toEqual(before); expect(report.scans[0].frame.imageBase64).toBe(image);
+    expect(JSON.stringify(report.missing)).not.toMatch(/PRIVATE_HASH_FAILURE|token=canary/);
+    expect(report.missing).toContainEqual(expect.objectContaining({ kind: "map", photoId: "photo-1" }));
+  });
+
+  it.each([1, 2] as const)("keeps a legacy v%s map unverified without inventing an overview fingerprint", async (version) => {
+    map = mapWithLinks([]); map.document.version = version;
+    const before = structuredClone(map), report = await collectInspectionReport("root");
+    expect(report.map).toEqual(before);
+    expect(report.mapOverviewEvidence).toMatchObject({ status: "legacy_unverified" });
+    expect(report.map?.document.overview).not.toHaveProperty("source");
+    expect(report.missing).toContainEqual(expect.objectContaining({ kind: "map", message: expect.stringContaining("no recorded overview fingerprint") }));
+  });
+
+  it.each(["lookup", "map"])("rejects a %s edit during overview verification instead of exporting a mixed saved snapshot", async (target) => {
+    map = boundOverviewMap();
+    await expect(collectInspectionReport("root", { onProgress: (message) => {
+      if (message !== "Checking the embedded component-map overview…") return;
+      if (target === "lookup") local[0].frame.capturedAt = "2026-11-06T15:00:00.000Z";
+      else { map!.localRevision += 1; map!.document.components[0].notes = "newer human note"; }
+    } })).rejects.toThrow(/records changed/);
+  });
 
   it("preserves v2 occurrence IDs and AI location provenance in the saved report snapshot", async () => {
     vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
@@ -415,7 +484,8 @@ describe("saved inspection report collection", () => {
     expect(report.scans.map((value) => value.id)).toEqual(["root", "detail"]);
     expect(report.scans[1].photos?.map((value) => value.id)).toEqual(["one", "two"]);
     expect(report.map?.document.components).toHaveLength(2);
-    expect(report.missing).toEqual([]);
+    expect(report.mapOverviewEvidence).toMatchObject({ status: "legacy_unverified" });
+    expect(report.missing).toEqual([expect.objectContaining({ kind: "map", message: expect.stringContaining("no recorded overview fingerprint") })]);
     expect(report.embeddedBytes).toBe(bytes.byteLength * 4);
     expect(fetchSpy).not.toHaveBeenCalled(); expect(mocks.cloud).not.toHaveBeenCalled(); expect(mocks.auth).not.toHaveBeenCalled();
     expect(report.scans[0]).not.toBe(local[0]);

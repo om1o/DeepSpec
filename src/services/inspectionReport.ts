@@ -20,6 +20,7 @@ import { mergeDiagnosticBundles, normalizeDiagnosticBundle } from "../lib/diagno
 import { verifyDiagnosticDocument } from "../lib/diagnosticReport";
 import { readDiagnosticBundle } from "./diagnosticReportStore";
 import { readCloudDiagnosticBundle } from "./diagnosticReportCloud";
+import { verifyMapOverviewImage } from "./mapOverviewEvidence";
 
 export const INSPECTION_REPORT_MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 export const INSPECTION_REPORT_MAX_TOTAL_BYTES = 32 * 1024 * 1024;
@@ -311,6 +312,28 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
     }
     scans.push(scan);
   }
+  let mapOverviewEvidence: InspectionReportSnapshot["mapOverviewEvidence"];
+  if (map) {
+    progress("Checking the embedded component-map overview…");
+    const overview = scans.find((entry) => entry.id === map!.document.overview.lookupId);
+    if (map.document.version !== 3) {
+      mapOverviewEvidence = { status: "legacy_unverified", message: "This legacy map has no recorded overview fingerprint. Its component records are retained, but historical map outlines cannot be verified and are hidden." };
+    } else if (!overview) {
+      mapOverviewEvidence = { status: "missing_photo", message: "The bound component-map overview is unavailable. Component records are retained and map outlines are hidden." };
+    } else {
+      try {
+        // All image slots are already materialized. Verify the exact embedded
+        // raster, never a fresh lookup or an alternate image with the same ID.
+        const verified = await wait((signal) => verifyMapOverviewImage(overview, map!.document, scope, signal));
+        mapOverviewEvidence = { status: verified.status, message: verified.message };
+      } catch (error) {
+        rethrowFatal(error);
+        mapOverviewEvidence = { status: "verification_unavailable", message: "The embedded component-map overview could not be verified. Component records are retained and map outlines are hidden." };
+      }
+    }
+    if (mapOverviewEvidence.status !== "unchanged") missing.push({ kind: "map", lookupId: map.document.overview.lookupId,
+      photoId: map.document.overview.photoId, message: mapOverviewEvidence.message });
+  }
   progress("Checking originals used by dated comparisons…");
   for (const log of comparisonLogs) for (const record of log.records) for (const sideName of ["earlier", "current"] as const) {
     const side = record[sideName];
@@ -368,7 +391,8 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
   if (!finalRead.ok) throw staleError();
   for (const [id, before] of localSignatures) if (JSON.stringify(getLookup(id, finalRead.value)) !== before) throw staleError();
   check();
-  return { version: 1, createdAt: new Date().toISOString(), rootLookupId, map: map ? structuredClone(map) : null, scans, missing, embeddedBytes, serviceLogs, comparisonLogs, comparisonEvidence, diagnosticLogs, diagnosticEvidence };
+  return { version: 1, createdAt: new Date().toISOString(), rootLookupId, map: map ? structuredClone(map) : null,
+    ...(mapOverviewEvidence ? { mapOverviewEvidence } : {}), scans, missing, embeddedBytes, serviceLogs, comparisonLogs, comparisonEvidence, diagnosticLogs, diagnosticEvidence };
 }
 
 function storageOrigin(): string | null {

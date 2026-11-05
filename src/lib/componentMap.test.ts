@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { Lookup } from "../types";
-import type { ComponentCaptureTarget, ComponentMap, ComponentMapRecord } from "../types/componentMap";
-import { MAX_SUGGESTED_LOCATION_LENGTH, componentCaptureTargetsMatch, createMapComponent, linkComponentMapDocument, normalizeComponentCaptureTarget, normalizeComponentMap, normalizeComponentMapRecord, reviewMapComponent, seedMapFromLookup } from "./componentMap";
+import type { ComponentCaptureTarget, ComponentMap, ComponentMapRecord, MapOverviewSource } from "../types/componentMap";
+import { MAX_SUGGESTED_LOCATION_LENGTH, componentCaptureTargetsMatch, createMapComponent, linkComponentMapDocument, mapOverviewSourcesMatch, normalizeComponentCaptureTarget, normalizeComponentMap, normalizeComponentMapRecord, normalizeMapOverviewSource, reviewMapComponent, seedMapFromLookup } from "./componentMap";
 
 const componentId = "10000000-0000-4000-8000-000000000001";
 const linkId = "20000000-0000-4000-8000-000000000001";
 const box = { x: 0.1, y: 0.2, width: 0.3, height: 0.4, confidence: 0.8 };
 const now = "2026-11-05T09:00:00.000Z";
+const source = (): MapOverviewSource => ({ sha256: "a".repeat(64), width: 720, height: 420, photoAddedAt: now, scanSavedAt: now });
 const map = (): ComponentMap => ({ version: 1, id: "overview-lookup", overview: { lookupId: "overview-lookup", photoId: "overview-photo" },
   components: [{ id: componentId, label: "Alternator", status: "needs_view", notes: "", scanGroups: [] }] });
 const target = (): ComponentCaptureTarget => ({ mapId: "overview-lookup", componentId, linkAttemptId: linkId, lookupId: "detail-lookup" });
@@ -97,6 +98,65 @@ describe("component map validation", () => {
     const duplicate = structuredClone(linked);
     duplicate.components.push({ ...duplicate.components[0], id: "10000000-0000-4000-8000-000000000002" });
     expect(normalizeComponentMap(duplicate)).toBeUndefined();
+  });
+});
+
+describe("bound map overview source", () => {
+  it("preserves the exact source, human work and location hints through a v3 document round-trip", () => {
+    const input: ComponentMap = { ...map(), version: 3, overview: { ...map().overview, source: source() } };
+    input.components[0] = { ...reviewMapComponent(input.components[0], "inspected", "User review remains separate", now),
+      suggestedLocation: { source: "ai_scene", text: "left side" }, region: { sourcePhotoId: input.overview.photoId, box } };
+    expect(normalizeComponentMap(JSON.parse(JSON.stringify(input)))).toEqual(input);
+    expect(normalizeMapOverviewSource(source())).toEqual(source());
+    expect(mapOverviewSourcesMatch(source(), { ...source() })).toBe(true);
+    expect(mapOverviewSourcesMatch(undefined, undefined)).toBe(false);
+  });
+
+  it.each([
+    null, {}, { ...source(), extra: true }, { ...source(), sha256: "A".repeat(64) }, { ...source(), sha256: "a".repeat(63) },
+    { ...source(), width: 0 }, { ...source(), width: 1.5 }, { ...source(), height: 32769 }, { ...source(), width: "720" },
+    { ...source(), width: 10001, height: 10000 }, { ...source(), height: NaN },
+    { ...source(), photoAddedAt: "2026-02-30T09:00:00.000Z" }, { ...source(), scanSavedAt: "0000-01-01T00:00:00.000Z" },
+    { ...source(), photoAddedAt: "2026-11-05T09:00:00Z" }, { ...source(), scanSavedAt: "2026-11-05T10:00:00.000+01:00" },
+  ])("rejects an invalid source without dropping only its binding %#", (invalid) => {
+    expect(normalizeMapOverviewSource(invalid)).toBeUndefined();
+    expect(normalizeComponentMap({ ...map(), version: 3, overview: { ...map().overview, source: invalid } })).toBeUndefined();
+    expect(mapOverviewSourcesMatch(source(), invalid)).toBe(false);
+  });
+
+  it.each([1, 2])("rejects binding presence on legacy version %s without upgrading it", (version) => {
+    for (const value of [undefined, null, source()]) {
+      expect(normalizeComponentMap({ ...map(), version, overview: { ...map().overview, source: value } })).toBeUndefined();
+    }
+    expect(normalizeComponentMap({ ...map(), version })?.version).toBe(version);
+  });
+
+  it("bounds decoded dimensions and detects every bound source field changing", () => {
+    expect(normalizeMapOverviewSource({ ...source(), width: 32768, height: 1 })).toBeDefined();
+    expect(normalizeMapOverviewSource({ ...source(), width: 10000, height: 10000 })).toBeDefined();
+    for (const changed of [
+      { ...source(), sha256: "b".repeat(64) }, { ...source(), width: 721 }, { ...source(), height: 421 },
+      { ...source(), photoAddedAt: "2026-11-05T09:00:01.000Z" }, { ...source(), scanSavedAt: "2026-11-05T09:00:01.000Z" },
+    ]) expect(mapOverviewSourcesMatch(source(), changed)).toBe(false);
+  });
+
+  it("seeds v3 only with a valid supplied source and leaves the legacy helper unbound", () => {
+    const input = lookup(), verified = source();
+    expect(seedMapFromLookup(input).version).toBe(2);
+    expect(seedMapFromLookup(input).overview).not.toHaveProperty("source");
+    const seeded = seedMapFromLookup(input, verified);
+    expect(seeded).toMatchObject({ version: 3, overview: { lookupId: input.id, photoId: "photo-1", source: verified } });
+    expect(seeded.overview.source).not.toBe(verified);
+    expect(() => seedMapFromLookup(input, { ...verified, width: 0 })).toThrow(/no map was created/);
+    expect(input).toEqual(lookup());
+  });
+
+  it("retains a conflicting source as readable evidence rather than silently merging bindings", () => {
+    const document: ComponentMap = { ...map(), version: 3, overview: { ...map().overview, source: source() } };
+    const conflict = { ...document, overview: { ...document.overview, source: { ...source(), sha256: "b".repeat(64) } } };
+    const input = { ...record(), document, cloudRevision: 2, conflict: { document: conflict, revision: 3 } };
+    expect(normalizeComponentMapRecord(input)).toEqual(input);
+    expect(normalizeComponentMapRecord({ ...input, conflict: { document: map(), revision: 3 } })).toBeDefined();
   });
 });
 

@@ -12,12 +12,18 @@ export type InspectionReportIssue = {
   message: string;
 };
 
+export type MapOverviewReportEvidence = {
+  status: "unchanged" | "source_changed" | "missing_photo" | "verification_unavailable" | "legacy_unverified";
+  message: string;
+};
+
 /** A frozen export snapshot. Image fields contain embedded safe raster data or an empty string, never remote URLs. */
 export type InspectionReportSnapshot = {
   version: 1;
   createdAt: string;
   rootLookupId: string;
   map: ComponentMapRecord | null;
+  mapOverviewEvidence?: MapOverviewReportEvidence;
   scans: Lookup[];
   missing: InspectionReportIssue[];
   embeddedBytes: number;

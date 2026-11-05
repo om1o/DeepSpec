@@ -1,5 +1,5 @@
 import type { Lookup, VisualFocusBox } from "../types";
-import type { ComponentCaptureTarget, ComponentMap, ComponentMapComponent, ComponentMapRecord, ComponentMapStatus } from "../types/componentMap";
+import type { ComponentCaptureTarget, ComponentMap, ComponentMapComponent, ComponentMapRecord, ComponentMapStatus, MapOverviewSource } from "../types/componentMap";
 
 export const MAX_MAP_COMPONENTS = 100;
 export const MAX_COMPONENT_SCAN_GROUPS = 100;
@@ -24,6 +24,27 @@ export class ComponentMapError extends Error {
   }
 }
 
+const canonicalSourceTimestamp = (value: unknown): value is string => typeof value === "string"
+  && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) && !value.startsWith("0000-")
+  && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+
+export function normalizeMapOverviewSource(value: unknown): MapOverviewSource | undefined {
+  if (!object(value) || Object.keys(value).length !== 5
+    || Object.keys(value).some((key) => !["sha256", "width", "height", "photoAddedAt", "scanSavedAt"].includes(key))
+    || typeof value.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(value.sha256)
+    || typeof value.width !== "number" || !Number.isInteger(value.width) || value.width < 1 || value.width > 32768
+    || typeof value.height !== "number" || !Number.isInteger(value.height) || value.height < 1 || value.height > 32768
+    || value.width * value.height > 100_000_000
+    || !canonicalSourceTimestamp(value.photoAddedAt) || !canonicalSourceTimestamp(value.scanSavedAt)) return undefined;
+  return { sha256: value.sha256, width: value.width, height: value.height, photoAddedAt: value.photoAddedAt, scanSavedAt: value.scanSavedAt };
+}
+
+export function mapOverviewSourcesMatch(left: unknown, right: unknown): boolean {
+  const a = normalizeMapOverviewSource(left), b = normalizeMapOverviewSource(right);
+  return Boolean(a && b && a.sha256 === b.sha256 && a.width === b.width && a.height === b.height
+    && a.photoAddedAt === b.photoAddedAt && a.scanSavedAt === b.scanSavedAt);
+}
+
 function normalizeBox(value: unknown): VisualFocusBox | undefined {
   if (!object(value)) return undefined;
   const { x, y, width, height, confidence } = value;
@@ -43,9 +64,11 @@ function normalizeSuggestedLocation(value: unknown): ComponentMapComponent["sugg
 
 // Reject an invalid document as a whole. Never silently lose a component or its evidence links.
 export function normalizeComponentMap(value: unknown): ComponentMap | undefined {
-  if (!object(value) || (value.version !== 1 && value.version !== 2) || !id(value.id) || !object(value.overview)
+  if (!object(value) || (value.version !== 1 && value.version !== 2 && value.version !== 3) || !id(value.id) || !object(value.overview)
     || value.overview.lookupId !== value.id || !id(value.overview.photoId, PHOTO_ID)
     || !Array.isArray(value.components) || value.components.length > MAX_MAP_COMPONENTS) return undefined;
+  const source = normalizeMapOverviewSource(value.overview.source);
+  if (value.version === 3 ? !source : Object.prototype.hasOwnProperty.call(value.overview, "source")) return undefined;
   const components: ComponentMapComponent[] = [];
   const componentIds = new Set<string>();
   const linkIds = new Set<string>();
@@ -60,7 +83,7 @@ export function normalizeComponentMap(value: unknown): ComponentMap | undefined 
     componentIds.add(raw.id.toLowerCase());
     let suggestedLocation: ComponentMapComponent["suggestedLocation"];
     if (Object.prototype.hasOwnProperty.call(raw, "suggestedLocation")) {
-      if (value.version !== 2) return undefined;
+      if (value.version === 1) return undefined;
       suggestedLocation = normalizeSuggestedLocation(raw.suggestedLocation);
       if (!suggestedLocation) return undefined;
     }
@@ -83,7 +106,7 @@ export function normalizeComponentMap(value: unknown): ComponentMap | undefined 
       ...(raw.reviewedAt === undefined ? {} : { reviewedAt: raw.reviewedAt as string }), ...(region ? { region } : {}),
       ...(suggestedLocation ? { suggestedLocation } : {}), scanGroups });
   }
-  return { version: value.version, id: value.id, overview: { lookupId: value.id, photoId: value.overview.photoId }, components };
+  return { version: value.version, id: value.id, overview: { lookupId: value.id, photoId: value.overview.photoId, ...(source ? { source } : {}) }, components };
 }
 
 export function normalizeComponentCaptureTarget(value: unknown): ComponentCaptureTarget | null {
@@ -137,8 +160,10 @@ export function reviewMapComponent(component: ComponentMapComponent, status: Com
   return { ...component, status, notes, reviewedAt: now };
 }
 
-export function seedMapFromLookup(lookup: Lookup): ComponentMap {
-  const overview = { lookupId: lookup.id, photoId: lookup.photos?.[0]?.id ?? "photo-1" };
+export function seedMapFromLookup(lookup: Lookup, source?: MapOverviewSource): ComponentMap {
+  const verifiedSource = source === undefined ? undefined : normalizeMapOverviewSource(source);
+  if (source !== undefined && !verifiedSource) throw new ComponentMapError("invalid_map", "The saved overview source could not be verified. The scan was preserved; no map was created.");
+  const overview = { lookupId: lookup.id, photoId: lookup.photos?.[0]?.id ?? "photo-1", ...(verifiedSource ? { source: verifiedSource } : {}) };
   const components: ComponentMapComponent[] = [];
   const add = (label: string, box?: VisualFocusBox) => {
     if (components.length >= MAX_MAP_COMPONENTS) throw new ComponentMapError("invalid_map", "This scan has more than 100 component suggestions. The original scan was preserved; no partial map was saved.");
@@ -179,7 +204,7 @@ export function seedMapFromLookup(lookup: Lookup): ComponentMap {
       component.suggestedLocation = suggestedLocation;
     }
   }
-  const document = normalizeComponentMap({ version: 2, id: lookup.id, overview, components });
+  const document = normalizeComponentMap({ version: verifiedSource ? 3 : 2, id: lookup.id, overview, components });
   if (!document) throw new ComponentMapError("invalid_map", "This scan does not have a usable overview reference.");
   return document;
 }

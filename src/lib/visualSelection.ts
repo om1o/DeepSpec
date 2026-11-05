@@ -11,7 +11,7 @@ type SelectionSourceContext = { lookupId: string; scope?: AccountScope };
  * Supabase embeds transformation options in signed tokens, so render/image URLs are
  * deliberately excluded: https://supabase.com/docs/guides/storage/serving/image-transformations
  */
-function renewableImageReference(value: string, context: SelectionSourceContext): string | null {
+export function renewableImageReference(value: string, context: SelectionSourceContext): string | null {
   const scope = context.scope ?? getAccountScope();
   if (!isAccountScopeCurrent(scope) || !context.lookupId || /[\\\s]/.test(value)) return null;
   try {
