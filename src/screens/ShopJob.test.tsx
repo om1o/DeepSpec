@@ -119,6 +119,15 @@ it("does not render unreadable scan storage as an empty job or silently redirect
   expect(screen.getByTestId("location")).toHaveTextContent(`/shop/${job.id}`);
 });
 
+it("renders signed out without subscribing to account storage or exposing saved job details", () => {
+  setActiveAccount(null);
+  expect(() => open()).not.toThrow();
+  expect(screen.getByRole("alert")).toHaveTextContent("Account changed. Job details are hidden");
+  expect(screen.queryByRole("heading", { name: "Alternator noise" })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Notes")).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Return to jobs" })).toHaveAttribute("href", "/shop");
+});
+
 it("keys forms by route and rejects stale-account actions without writing either account", () => {
   const other = makeJob("Other vehicle"); open("", other);
   fireEvent.change(screen.getByLabelText("Notes"), { target: { value: "First job unsaved" } });

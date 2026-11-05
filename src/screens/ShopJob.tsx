@@ -38,6 +38,7 @@ function ShopJobView({ jobId, scope }: { jobId?: string; scope: AccountScope }) 
   const blocked = Boolean(saved.error || saved.missing);
 
   useEffect(() => {
+    if (!scope.userId || !isAccountScopeCurrent(scope)) return;
     const refresh = () => {
       const next = loadContext(jobId, scope);
       // A deleted/unreadable job must not erase entered form text or masquerade
