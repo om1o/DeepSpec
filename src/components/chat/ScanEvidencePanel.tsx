@@ -40,7 +40,7 @@ export function ScanEvidencePanel({ lookup, onDraftQuestion }: ScanEvidencePanel
         <Link to={`/result/${lookup.id}`} className="ds-evidence-open">Full result</Link>
       </header>
 
-      <PhotoEvidenceStrip photos={lookup.photos} selectedId={selectedPhotoId} onSelect={setSelectedPhotoId} />
+      <PhotoEvidenceStrip photos={lookup.photos} photoRelationship={lookup.photoRelationship} pipelineVersion={lookup.result ? lookup.result.modelRun?.pipelineVersion : null} selectedId={selectedPhotoId} onSelect={setSelectedPhotoId} />
 
       <div className="ds-evidence-stage" data-has-locked-target={trustedFocus ? "true" : "false"}>
         <ScanThumb alt={`Saved photo of ${partName}`} className="ds-evidence-photo" src={selectedPhoto?.imageBase64 ?? lookup.frame.imageBase64} />

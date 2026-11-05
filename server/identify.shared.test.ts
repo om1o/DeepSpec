@@ -1,4 +1,5 @@
 import { createIdentifyResponse } from "./identify.shared";
+import { IDENTIFY_PROMPT_VERSION, IDENTIFY_PIPELINE_VERSION } from "../src/services/systemPrompts";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -340,8 +341,8 @@ describe("createIdentifyResponse", () => {
     if (first.status !== 200 || !("modelRun" in first.body) || second.status !== 200 || !("modelRun" in second.body)) throw new Error("Expected model result");
     expect(first.body.modelRun.runId).toMatch(/^[a-f0-9-]{36}$/);
     expect(first.body.modelRun.runId).not.toBe(second.body.modelRun.runId);
-    expect(first.body.modelRun.promptVersion).toBe("identify-2026-11-05-confirmed-vehicle-v1");
-    expect(first.body.modelRun.pipelineVersion).toBe("identify-pipeline-2026-11-05-confirmed-vehicle-v1");
+    expect(first.body.modelRun.promptVersion).toBe(IDENTIFY_PROMPT_VERSION);
+    expect(first.body.modelRun.pipelineVersion).toBe(IDENTIFY_PIPELINE_VERSION);
     expect(first.body.result.modelRun).toEqual(first.body.modelRun);
   });
 

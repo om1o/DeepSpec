@@ -7,9 +7,31 @@ import { PhotoGroupReview } from "./PhotoGroupReview";
 const photos: ScanPhoto[] = ["overview", "close_up", "marking", "mounting"].map((label, index) => ({
   id: `photo-${index}`, label: label as ScanPhoto["label"], capturedAt: "2026-11-05T00:00:00Z", imageBase64: `data:image/jpeg;base64,photo${index}`,
 }));
-const callbacks = () => ({ onChange: vi.fn(), onAdd: vi.fn(), onAnalyze: vi.fn(), onClose: vi.fn(), onDiscard: vi.fn() });
+const callbacks = () => ({ onChange: vi.fn(), onRelationshipChange: vi.fn(), onAdd: vi.fn(), onAnalyze: vi.fn(), onClose: vi.fn(), onDiscard: vi.fn() });
 
 describe("PhotoGroupReview", () => {
+  it("leaves a legacy group unconfirmed and changes its relationship without changing photos or running AI", async () => {
+    const actions = callbacks();
+    const { rerender } = render(<PhotoGroupReview photos={photos} busy={false} message={null} {...actions} />);
+    expect(screen.getByRole("combobox", { name: "Photo relationship" })).toHaveValue("unknown");
+    expect(screen.getByText(/Relationship unknown/)).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Photo relationship" }), "independent");
+    expect(actions.onRelationshipChange).toHaveBeenCalledExactlyOnceWith("independent");
+    expect(actions.onChange).not.toHaveBeenCalled();
+    expect(actions.onAnalyze).not.toHaveBeenCalled();
+    rerender(<PhotoGroupReview photos={photos} photoRelationship="independent" busy={false} message={null} {...actions} />);
+    expect(screen.getByText(/Independent examples — do not assume/)).toBeInTheDocument();
+    expect(screen.getByText(/main identification, selected area and supplied car details or complaint apply to Photo 1/)).toBeInTheDocument();
+    rerender(<PhotoGroupReview photos={photos} photoRelationship="same_part_or_area" busy={false} message={null} {...actions} />);
+    expect(screen.getByText(/reported by the user, not independently verified/)).toBeInTheDocument();
+  });
+
+  it("does not relabel the relationship of an already saved component group", () => {
+    render(<PhotoGroupReview photos={photos} photoRelationship="independent" savedForComponent busy={false} message={null} {...callbacks()} />);
+    expect(screen.getByRole("combobox", { name: "Photo relationship" })).toHaveValue("independent");
+    expect(screen.getByRole("combobox", { name: "Photo relationship" })).toBeDisabled();
+  });
+
   it("shows four labeled source photos and changes only the chosen photo label", async () => {
     const actions = callbacks();
     render(<PhotoGroupReview photos={photos} busy={false} message={null} {...actions} />);
@@ -34,12 +56,12 @@ describe("PhotoGroupReview", () => {
     const actions = callbacks();
     const { rerender } = render(<PhotoGroupReview photos={[photos[0]]} busy={false} message={null} {...actions} />);
     expect(screen.queryByRole("button", { name: /Remove photo/ })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Add another angle" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add another photo" }));
     expect(actions.onAdd).toHaveBeenCalledTimes(1);
     await userEvent.click(screen.getByRole("button", { name: "Analyze 1 photo" }));
     expect(actions.onAnalyze).toHaveBeenCalledTimes(1);
     rerender(<PhotoGroupReview photos={photos} busy={false} message={null} {...actions} />);
-    expect(screen.getByRole("button", { name: "Add another angle" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add another photo" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Analyze 4 photos" })).toBeEnabled();
   });
 

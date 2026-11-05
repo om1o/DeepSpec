@@ -1,6 +1,7 @@
 import { getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import { comparisonSideMatches, normalizeComparisonSide, normalizeComparisonTimestamp } from "../lib/inspectionComparison";
 import { providerVehicleContext } from "../lib/vehicleContext";
+import { photoRelationshipOrUnknown } from "../lib/photoRelationship";
 import type { Lookup, ScanPhoto } from "../types";
 import type { ComparisonSide } from "../types/inspectionComparison";
 import { readCloudLookupForReport } from "./cloudHistory";
@@ -45,8 +46,13 @@ function original(lookup: Lookup, photoId: string): ScanPhoto {
 function metadata(lookup: Lookup, photo: ScanPhoto) {
   const photoAddedAt = normalizeComparisonTimestamp(photo.capturedAt), scanSavedAt = normalizeComparisonTimestamp(lookup.createdAt);
   if (!photoAddedAt || !scanSavedAt) throw unavailable();
+  // Vehicle facts belong to the first photo unless the user explicitly groups
+  // these as the same part/area. A secondary example must not inherit that car.
+  const sharesVehicleContext = comparisonPhotos(lookup)[0]?.id === photo.id
+    || photoRelationshipOrUnknown(lookup.photoRelationship) === "same_part_or_area";
   return { lookupId: lookup.id, photoId: photo.id, photoLabel: photo.label, photoAddedAt, scanSavedAt,
-    vehicleContext: providerVehicleContext(lookup.vehicleContext) ?? null, ...(lookup.analysisAttemptId === undefined ? {} : { analysisAttemptId: lookup.analysisAttemptId }) };
+    vehicleContext: sharesVehicleContext ? providerVehicleContext(lookup.vehicleContext) ?? null : null,
+    ...(lookup.analysisAttemptId === undefined ? {} : { analysisAttemptId: lookup.analysisAttemptId }) };
 }
 function ownedUrl(value: string, lookupId: string, scope: AccountScope): URL | null {
   try {

@@ -268,6 +268,7 @@ async function syncLookupForAccount(
     const deviceRead = readLookups();
     if (!deviceRead.ok) return { ok: false, message: deviceRead.message };
     lookup = getLookup(lookup.id, deviceRead.value) ?? lookup;
+    if (!normalizeVisualEvidence(lookup)) return { ok: false, message: "Evidence not synced: photo or relationship metadata is invalid. Your original photos are unchanged." };
     const mode = requestedMode === "chat" && isCloudRevision(lookup.cloudRevision) ? "chat" : "full";
     receipt = {
       attemptId: createRuntimeId(), attemptedAt: new Date().toISOString(), status: "unconfirmed",
@@ -727,7 +728,7 @@ async function uploadEvidenceBundle(supabase: SupabaseClient, userId: string, lo
     cachedPaths.set(key, saved.image_path);
     return saved.image_path;
   };
-  const bundle: EvidenceBundle = { version: 1, ...(evidence.focusBox ? { focusBox: evidence.focusBox } : {}), ...(evidence.focusMode ? { focusMode: evidence.focusMode } : {}) };
+  const bundle: EvidenceBundle = { version: 1, ...(evidence.photoRelationship !== undefined ? { photoRelationship: evidence.photoRelationship } : {}), ...(evidence.focusBox ? { focusBox: evidence.focusBox } : {}), ...(evidence.focusMode ? { focusMode: evidence.focusMode } : {}) };
   if (evidence.photos !== undefined) {
     bundle.photos = [];
     for (const { imageBase64, ...photo } of evidence.photos) bundle.photos.push({ ...photo, imagePath: await upload(imageBase64, "photo") });

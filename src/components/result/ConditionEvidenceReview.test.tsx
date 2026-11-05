@@ -46,7 +46,9 @@ it("does not display or export an assessment referencing an unavailable photo", 
   lookup.result!.conditionAssessment!.observations[0].photoIds = ["different-car"];
   const { container } = render(<ConditionEvidenceReview lookup={lookup} onSelectPhoto={vi.fn()} />);
   expect(container).toBeEmptyDOMElement();
-  expect(formatConditionHandoff(lookup)).toBe("");
+  expect(formatConditionHandoff(lookup)).toContain("Relationship unknown");
+  expect(formatConditionHandoff(lookup)).not.toContain("Brown flaking material");
+  expect(formatConditionHandoff(lookup)).not.toContain("different-car");
 });
 
 it("supports older scans without inventing photo-linked observations", () => {
@@ -54,7 +56,8 @@ it("supports older scans without inventing photo-linked observations", () => {
   delete lookup.result!.conditionAssessment;
   const { container } = render(<ConditionEvidenceReview lookup={lookup} onSelectPhoto={vi.fn()} />);
   expect(container).toBeEmptyDOMElement();
-  expect(formatConditionHandoff(lookup)).toBe("");
+  expect(formatConditionHandoff(lookup)).toContain("Relationship unknown");
+  expect(formatConditionHandoff(lookup)).not.toContain("Condition evidence (AI-reported");
 });
 
 it("does not invent legacy original evidence for a placeholder image", () => {
@@ -63,5 +66,7 @@ it("does not invent legacy original evidence for a placeholder image", () => {
   lookup.frame.imageBase64 = "/brand/deepspec-logo.webp";
   lookup.result!.conditionAssessment!.observations[0].photoIds = ["photo-1"];
   lookup.result!.conditionAssessment!.nextEvidence!.photoIds = ["photo-1"];
-  expect(formatConditionHandoff(lookup)).toBe("");
+  expect(formatConditionHandoff(lookup)).toContain("Relationship unknown");
+  expect(formatConditionHandoff(lookup)).not.toContain("Original photo [photo-1]");
+  expect(formatConditionHandoff(lookup)).not.toContain("Brown flaking material");
 });

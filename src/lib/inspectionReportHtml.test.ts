@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Lookup, VisualFocusBox } from "../types";
+import type { Lookup, PhotoRelationship, VisualFocusBox } from "../types";
 import type { ComponentMapComponent } from "../types/componentMap";
 import type { InspectionReportSnapshot } from "../types/inspectionReport";
 import { buildInspectionReportHtml, getInspectionReportFilename, MAX_INSPECTION_REPORT_HTML_BYTES } from "./inspectionReportHtml";
@@ -63,6 +63,71 @@ function visualComparison(): InspectionComparison {
 }
 
 describe("self-contained mechanic HTML report", () => {
+  it.each([
+    ["same_part_or_area", "Same part or area of one car — reported by the user, not independently verified."],
+    ["independent", "Independent examples — do not assume the same part, vehicle or before-and-after sequence."],
+    [undefined, "Relationship unknown — a shared part, vehicle or sequence has not been established."],
+  ] as const)("exports relationship %s with originals even when the AI assessment is absent", (photoRelationship, description) => {
+    const record = lookup(); record.photoRelationship = photoRelationship; record.result = undefined;
+    const input = snapshot([record]), before = JSON.stringify(input);
+    const document = parsed(input), section = document.querySelector("#scan-1")!;
+    expect(section.textContent).toContain(description);
+    expect(section.textContent).toContain("Analysis unavailable");
+    expect(section.querySelectorAll("figure[id*='-photo-']")).toHaveLength(2);
+    expect(section.querySelector("img")?.getAttribute("src")).toBe(PNG);
+    expect(section.textContent).not.toContain("Photo-linked AI condition observations");
+    expect(section.textContent).toContain("No main identification is recorded.");
+    if (photoRelationship !== "same_part_or_area") expect(section.textContent).toContain("Saved selection and supplied vehicle or complaint details, when present, refer to Photo 1.");
+    else expect(section.textContent).toContain("User-reported photo relationship");
+    expect(JSON.stringify(input)).toBe(before);
+  });
+
+  it.each([
+    ["identify-pipeline-2026-11-05-photo-relationship-v1", "The main identification refers to Photo 1."],
+    ["identify-pipeline-2026-11-05-confirmed-vehicle-v1", "The main identification's per-photo scope was not recorded."],
+    [undefined, "The main identification's per-photo scope was not recorded."],
+  ] as const)("does not infer historical identity attribution from an unknown relationship: %s", (pipelineVersion, expected) => {
+    const record = lookup(); record.result!.modelRun!.pipelineVersion = pipelineVersion;
+    const document = parsed(snapshot([record])), section = document.querySelector("#scan-1")!;
+    expect(section.textContent).toContain(expected);
+    expect(section.textContent).toContain("Saved selection and supplied vehicle or complaint details, when present, refer to Photo 1.");
+    expect(section.textContent).not.toContain("No main identification is recorded.");
+    if (pipelineVersion !== "identify-pipeline-2026-11-05-photo-relationship-v1") expect(section.textContent).not.toContain("The main identification refers to Photo 1.");
+  });
+
+  it.each(["independent", undefined] as const)("limits each group's supplied vehicle and complaint to Photo 1 when relationship is %s", (photoRelationship) => {
+    const first = lookup(), second = lookup("other-car");
+    first.result = undefined; first.photoRelationship = photoRelationship;
+    first.vehicleContext = { make: "Toyota", model: "Corolla", symptom: "First car shakes at idle" };
+    second.result = undefined; second.photoRelationship = photoRelationship;
+    second.vehicleContext = { make: "Honda", model: "Civic", symptom: "Other car makes a clicking sound" };
+    const input = snapshot([first, second]), before = JSON.stringify(input), document = parsed(input);
+    const a = document.querySelector("#scan-1")!, b = document.querySelector("#scan-2")!;
+    for (const section of [a, b]) {
+      expect([...section.querySelectorAll("h3")].some((heading) => heading.textContent === "Saved vehicle and complaint — Photo 1")).toBe(true);
+      expect(section.textContent).toContain("supplied vehicle or complaint details, when present, refer to Photo 1.");
+      expect(section.querySelectorAll("figure[id*='-photo-']")).toHaveLength(2);
+    }
+    expect(a.textContent).toContain("Corolla"); expect(a.textContent).toContain("First car shakes at idle");
+    expect(a.textContent).not.toContain("Other car makes a clicking sound");
+    expect(b.textContent).toContain("Civic"); expect(b.textContent).toContain("Other car makes a clicking sound");
+    expect(b.textContent).not.toContain("First car shakes at idle");
+    expect(JSON.stringify(input)).toBe(before);
+  });
+
+  it("does not render arbitrary relationship text as HTML or as a verified association", () => {
+    const record = lookup();
+    record.photoRelationship = '<img src="https://untrusted.invalid/relationship" onerror="alert(1)">' as PhotoRelationship;
+    record.result!.partName = "Possible part <not confirmed>";
+    const document = parsed(snapshot([record]));
+    expect(document.querySelector("#scan-1")?.textContent).toContain("Relationship unknown");
+    expect(document.body.textContent).toContain("Possible part <not confirmed>");
+    expect(document.querySelector("not")).toBeNull();
+    expect(document.querySelectorAll("script,[onerror],img[src^='https:']")).toHaveLength(0);
+    expect(document.body.textContent).not.toContain("untrusted.invalid");
+    expect(document.querySelector("#scan-1 img")?.getAttribute("src")).toBe(PNG);
+  });
+
   it("exports two verified originals, historical context, honest dates and reversible display alignment", () => {
     const record = visualComparison(); const input = snapshot([lookup(), lookup("previous")]);
     input.comparisonLogs = [{ lookupId: "overview", records: [record], cloudChecked: false }];

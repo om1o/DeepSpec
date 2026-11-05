@@ -1,4 +1,4 @@
-import { CHAT_USER_MESSAGE_MAX_CHARS, IDENTIFY_PROMPT } from "./systemPrompts";
+import { CHAT_USER_MESSAGE_MAX_CHARS, IDENTIFY_PIPELINE_VERSION, IDENTIFY_PROMPT } from "./systemPrompts";
 import { identifyOnDevice, isOnDeviceFallbackEnabled } from "./onDeviceIdentify";
 import { getAuthClient } from "./auth";
 import { getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
@@ -8,6 +8,7 @@ import { validatePhotoGroup } from "./photoDraft";
 import { normalizeConditionAssessment } from "../lib/conditionAssessment";
 import { buildConditionHandoff } from "../lib/conditionHandoff";
 import { providerVehicleContext } from "../lib/vehicleContext";
+import { isPhotoRelationship } from "../lib/photoRelationship";
 import {
   SCAN_CATEGORIES,
   type AIInput,
@@ -20,6 +21,7 @@ import {
   type Lookup,
   type MeasurementContext,
   type PartMeasurement,
+  type PhotoRelationship,
   type PossibleVehicleContext,
   type ScanCategory,
   type ScanPhoto,
@@ -104,6 +106,7 @@ export class AIServiceError extends Error {
 
 export async function runAI(input: AIInput, options: AIRequestOptions = {}): Promise<string | object> {
   throwIfAborted(options.signal);
+  const photoRelationship = validatePhotoRelationship(input.photoRelationship);
   const vehicleContext = providerVehicleContext(input.vehicleContext);
   if (input.type === "text") {
     if (!input.userMessage.trim()) {
@@ -114,6 +117,7 @@ export async function runAI(input: AIInput, options: AIRequestOptions = {}): Pro
       "/api/chat",
       {
         userMessage: input.userMessage,
+        photoRelationship,
         ...(vehicleContext ? { vehicleContext } : {}),
         ...(input.imageBase64 ? { imageBase64: input.imageBase64 } : {}),
         systemPrompt: input.systemPrompt,
@@ -131,6 +135,7 @@ export async function runAI(input: AIInput, options: AIRequestOptions = {}): Pro
       const photos = await preparePhotoGroupForRequest(input.photos, options.signal);
       const body = await postAI<IdentifyApiSuccess>("/api/identify", {
         photos,
+        photoRelationship,
         ...(vehicleContext ? { vehicleContext } : {}),
         ...(input.measurementContext ? { measurementContext: input.measurementContext } : {}),
         userMessage: input.userMessage,
@@ -160,6 +165,7 @@ export async function runAI(input: AIInput, options: AIRequestOptions = {}): Pro
       "/api/identify",
       {
         imageBase64,
+        photoRelationship,
         ...(imageBase64_2 ? { imageBase64_2 } : {}),
         ...(input.labelRescueTrigger ? { labelRescueTrigger: input.labelRescueTrigger } : {}),
         ...(vehicleContext ? { vehicleContext } : {}),
@@ -177,6 +183,12 @@ export async function runAI(input: AIInput, options: AIRequestOptions = {}): Pro
   }
 
   throw new AIServiceError("unsupported", "Deep Spec does not support that AI request yet.");
+}
+
+function validatePhotoRelationship(value: unknown): PhotoRelationship {
+  if (value === undefined) return "unknown";
+  if (isPhotoRelationship(value)) return value;
+  throw new AIServiceError("invalid_input", "Choose a supported photo relationship before analyzing or asking a question.");
 }
 
 async function postAI<TSuccess extends object>(
@@ -255,7 +267,7 @@ async function fitIdentifyImageToRequest(dataUrl: string, maxChars: number, sign
 }
 
 export async function preparePhotoGroupForRequest(photos: ScanPhoto[], signal?: AbortSignal) {
-  if (!photos.length || photos.length > 4) throw new AIServiceError("invalid_input", "Choose one to four labeled photos of the same part or area.");
+  if (!photos.length || photos.length > 4) throw new AIServiceError("invalid_input", "Choose one to four labeled photos.");
   const prepared: ScanPhoto[] = [];
   for (const photo of photos) {
     throwIfAborted(signal);
@@ -272,12 +284,14 @@ export async function identifyCapturedFrame(
   labelRescueTrigger?: LabelRescueTrigger,
   options: {
     photos?: ScanPhoto[];
+    photoRelationship?: PhotoRelationship;
     measurementContext?: MeasurementContext;
     signal?: AbortSignal;
     vehicleContext?: VehicleContext;
   } = {},
 ): Promise<IdentificationResult> {
   throwIfAborted(options.signal);
+  validatePhotoRelationship(options.photoRelationship);
   if (options.photos && typeof navigator !== "undefined" && navigator.onLine === false) {
     throw new AIServiceError("network", "Your photo group is saved on this device. Reconnect and retry to analyze every angle together.");
   }
@@ -346,6 +360,7 @@ function runCloudIdentify(
   labelRescueTrigger: LabelRescueTrigger | undefined,
   options: {
     photos?: ScanPhoto[];
+    photoRelationship?: PhotoRelationship;
     measurementContext?: MeasurementContext;
     signal?: AbortSignal;
     vehicleContext?: VehicleContext;
@@ -356,6 +371,7 @@ function runCloudIdentify(
     imageBase64: frame.imageBase64,
     imageBase64_2: secondFrame?.imageBase64,
     photos: options.photos,
+    photoRelationship: options.photoRelationship,
     labelRescueTrigger,
     measurementContext: options.measurementContext,
     userMessage: "Identify this car part from the captured photo.",
@@ -403,6 +419,11 @@ export async function sendFollowUp(lookup: Lookup, question: string): Promise<st
 }
 
 export async function sendFollowUpDetails(lookup: Lookup, question: string, options: FollowUpOptions = {}): Promise<FollowUpDetails> {
+  const photoRelationship = validatePhotoRelationship(lookup.photoRelationship);
+  const hasFirstPhotoIdentityScope = lookup.result?.modelRun?.pipelineVersion === IDENTIFY_PIPELINE_VERSION
+    && ((lookup.photos?.length ?? 1) <= 1 || photoRelationship !== "same_part_or_area");
+  const savedIdentityScope = !lookup.result ? "none"
+    : hasFirstPhotoIdentityScope ? "first_photo" : "unrecorded";
   const trimmedQuestion = question.trim().slice(0, 500);
   if (!trimmedQuestion) {
     throw new AIServiceError("invalid_input", "Ask a question first.");
@@ -416,7 +437,7 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
   if (lookup.photos?.length) {
     const photos = await preparePhotoGroupForRequest(lookup.photos);
     const result = await postAI<ChatApiSuccess>("/api/chat", {
-      userMessage: buildFollowUpContext(lookup, trimmedQuestion), photos,
+      userMessage: buildFollowUpContext(lookup, trimmedQuestion), photos, photoRelationship, savedIdentityScope,
       ...(vehicleContext ? { vehicleContext } : {}),
       ...(options.research ? { research: true, ...(options.sourceUrls?.length ? { sourceUrls: options.sourceUrls } : {}) } : {}),
     }, { timeoutMs: options.research ? 60_000 : DEFAULT_CHAT_CLIENT_TIMEOUT_MS, scope });
@@ -437,6 +458,8 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
   if (!attachPhoto) throw new AIServiceError("invalid_input", "The saved photo must be a JPEG, PNG, or WebP image small enough for chat. Reopen the scan or use a smaller photo.");
   const result = await postAI<ChatApiSuccess>("/api/chat", {
     userMessage: buildFollowUpContext(lookup, trimmedQuestion),
+    photoRelationship,
+    savedIdentityScope,
     ...(vehicleContext ? { vehicleContext } : {}),
     imageBase64,
     ...(options.research ? { research: true, ...(options.sourceUrls?.length ? { sourceUrls: options.sourceUrls } : {}) } : {}),

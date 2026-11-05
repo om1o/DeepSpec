@@ -7,6 +7,7 @@ import { vehicleContextDetails } from "./vehicleContext";
 import { normalizeServiceRecords, serviceRecordRows, serviceRecordStatus } from "./serviceRecord";
 import { normalizeInspectionComparisons, inspectionComparisonStatus } from "./inspectionComparison";
 import { buildDiagnosticReportSection } from "./diagnosticReportHtml";
+import { photoRelationshipDescription, photoRelationshipOrUnknown, photoRelationshipScopeDescription } from "./photoRelationship";
 
 export const MAX_INSPECTION_REPORT_HTML_BYTES = 64 * 1024 * 1024;
 
@@ -211,12 +212,15 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
       <h4>Unknowns and limits</h4>${list(assessment.unknowns, "No explicit unknowns recorded; absence is not confirmation of condition or safety.")}
       ${assessment.nextEvidence ? `<h4>Priority next evidence</h4>${details([["Request type", words(assessment.nextEvidence.kind)], ["Request", assessment.nextEvidence.request], ["Purpose", assessment.nextEvidence.purpose]])}${assessment.nextEvidence.photoIds?.length ? `<p>Related photos: ${assessment.nextEvidence.photoIds.map((id) => photoLink(scan.id, id)).join(", ")}</p>` : ""}` : ""}` : prose("No valid structured condition assessment was saved. Legacy AI findings, if present, are listed below.");
     const human = scan.inspection;
+    const relationshipScope = photos.length > 1 ? photoRelationshipScopeDescription(scan.photoRelationship, result ? result.modelRun?.pipelineVersion : null) : undefined;
     return `<section id="${anchor}"><h2>Scan ${number}: ${escape(draft.name)}</h2>${details([["Identity source", draft.identitySource], ["Record created", scan.createdAt], ["Saved/creation timestamp", scan.provenance.savedAt], ["Stored capture mode (may be defaulted on cloud restore)", words(scan.provenance.captureMode)], ["Stored analysis source (may be defaulted on cloud restore)", words(scan.provenance.analysisSource)], ["Cloud revision", scan.cloudRevision ?? "Not recorded"], ["Cloud save status", scan.cloudSave?.status ?? "Not recorded"]])}
       <p class="muted">Cloud scan records used by this report do not retain capture/analysis provenance. These stored fields can contain defaults and do not prove camera use or model execution, including after a cloud record was saved on this device. Separately recorded model-run details are shown below when available.</p>
       ${scan.correction ? details([["User-corrected label — not independently verified", scan.correction]]) : ""}
-      <h3>Saved vehicle and complaint</h3>${details(vehicleRows(scan, options))}
+      <h3>Saved vehicle and complaint${photos.length > 1 && photoRelationshipOrUnknown(scan.photoRelationship) !== "same_part_or_area" ? " — Photo 1" : ""}</h3>${details(vehicleRows(scan, options))}
       <p class="muted">Vehicle confirmation is self-reported. These details do not establish part fitment or condition.</p>
-      <h3>Original photo evidence</h3>${photosHtml}${selections.length ? `<h3>Saved selections and cutouts</h3>${selectionsHtml}` : prose("No isolated selections or cutouts saved.")}
+      <h3>Original photo evidence</h3>${details([[photoRelationshipOrUnknown(scan.photoRelationship) === "unknown" ? "Photo relationship" : "User-reported photo relationship", photoRelationshipDescription(scan.photoRelationship)]])}
+      ${relationshipScope ? prose(relationshipScope) : ""}
+      ${photosHtml}${selections.length ? `<h3>Saved selections and cutouts</h3>${selectionsHtml}` : prose("No isolated selections or cutouts saved.")}
       ${result ? `<h3>AI identification — unverified</h3>${details([["Suggested identity", result.partName], ["Confidence", result.confidence], ["Category", words(result.scanCategory)], ["What it does", result.whatItDoes], ["Fitment", result.fitmentConfidence ? words(result.fitmentConfidence) : "Not established"], ["Confirmation needed", result.confirmationNeed ? words(result.confirmationNeed) : "Not recorded"]])}
         ${result.modelRun ? details([["Provider", result.modelRun.provider], ["Model", result.modelRun.model], ["Prompt version", result.modelRun.promptVersion ?? "Not recorded"], ["Pipeline version", result.modelRun.pipelineVersion ?? "Not recorded"], ["Analyzed", scan.analyzedAt ?? "Not recorded"], ["OCR used", result.modelRun.ocrUsed ? "Yes" : "No"], ...(result.modelRun.fallbackReason ? [["Provider fallback", result.modelRun.fallbackReason] as const] : [])]) : prose("Model provenance not recorded.")}
         <div class="${result.isSafetyCritical || result.safetyTriage === "needs_professional" ? "safety" : "warning"}"><h4>${result.isSafetyCritical || result.safetyTriage === "needs_professional" ? "Safety action — preserve before further use" : "Saved next action"}</h4>${prose(result.nextAction || "No specific action recorded.")}${details([["Safety triage", words(result.safetyTriage)], ["Safety-critical flag", result.isSafetyCritical ? "Yes" : "No — not a safety clearance"]])}</div>

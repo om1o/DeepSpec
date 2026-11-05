@@ -40,6 +40,40 @@ const lookup: Lookup = {
 };
 
 describe("ScanEvidencePanel", () => {
+  it.each([
+    ["same_part_or_area", "Same part or area of one car — reported by the user, not independently verified."],
+    ["independent", "Independent examples — do not assume the same part, vehicle or before-and-after sequence."],
+    [undefined, "Relationship unknown — a shared part, vehicle or sequence has not been established."],
+  ] as const)("retains relationship %s in chat even without an AI result", async (photoRelationship, description) => {
+    const value: Lookup = { ...lookup, result: undefined, photoRelationship, photos: [
+      { id: "first", label: "overview", ...lookup.frame },
+      { id: "second", label: "other", capturedAt: lookup.frame.capturedAt, imageBase64: "data:image/png;base64,secondary" },
+    ] };
+    const before = JSON.stringify(value);
+    renderPanel(value);
+    expect(screen.getByLabelText("Photo relationship")).toHaveTextContent(description);
+    expect(screen.getByLabelText("Photo relationship")).toHaveTextContent("No main identification is recorded.");
+    const strip = screen.getByRole("navigation", { name: "Inspection photos" });
+    await userEvent.click(within(strip).getAllByRole("button")[1]);
+    expect(screen.getByRole("img", { name: "Saved photo of Captured frame" })).toHaveAttribute("src", "data:image/png;base64,secondary");
+    expect(screen.queryByTestId("chat-focus-target")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Photo relationship")).toHaveTextContent(description);
+    expect(JSON.stringify(value)).toBe(before);
+  });
+
+  it.each([
+    ["identify-pipeline-2026-11-05-photo-relationship-v1", "The main identification refers to Photo 1."],
+    ["identify-pipeline-2026-11-05-confirmed-vehicle-v1", "The main identification's per-photo scope was not recorded."],
+    [undefined, "The main identification's per-photo scope was not recorded."],
+  ] as const)("passes actual result provenance into the chat photo scope: %s", (pipelineVersion, expected) => {
+    const value: Lookup = { ...lookup, result: { ...lookup.result!, modelRun: { ...lookup.result!.modelRun!, pipelineVersion } }, photos: [
+      { id: "first", label: "overview", ...lookup.frame }, { id: "second", label: "other", ...lookup.frame },
+    ] };
+    renderPanel(value);
+    expect(screen.getByLabelText("Photo relationship")).toHaveTextContent(expected);
+    if (pipelineVersion !== "identify-pipeline-2026-11-05-photo-relationship-v1") expect(screen.getByLabelText("Photo relationship")).not.toHaveTextContent("The main identification refers to Photo 1.");
+  });
+
   it.each([91, 100, undefined])("does not turn the stored model score %s into a probability", (confidenceScore) => {
     const result = { ...lookup.result!, confidenceScore };
     renderPanel({ ...lookup, result });

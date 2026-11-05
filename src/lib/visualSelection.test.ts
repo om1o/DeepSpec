@@ -100,6 +100,14 @@ describe("visual selection source matching", () => {
     expect(visualSelectionSourceMatches(original, { ...original, frame: snapshot(signed("new")).frame, analysisAttemptId: "other-analysis" }, context)).toBe(false);
   });
 
+  it("compares relationship semantics and rejects invalid values before matching", () => {
+    const original = snapshot(signed("old")), renewed = snapshot(signed("new"));
+    expect(visualSelectionSourceMatches(original, { ...renewed, photoRelationship: "unknown" }, context)).toBe(true);
+    expect(visualSelectionSourceMatches({ ...original, photoRelationship: "same_part_or_area" }, { ...renewed, photoRelationship: "independent" }, context)).toBe(false);
+    const invalid = { ...original, photoRelationship: "same_car" } as unknown as ScanAnalysisState;
+    expect(visualSelectionSourceMatches(invalid, invalid, context)).toBe(false);
+  });
+
   it("does not relax insecure, credentialed or malformed URL forms", () => {
     for (const modify of [
       (url: string) => url.replace("https:", "http:"),

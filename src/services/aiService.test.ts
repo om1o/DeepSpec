@@ -3,6 +3,7 @@ import { identifyOnDevice } from "./onDeviceIdentify";
 import { setActiveAccount } from "../lib/accountScope";
 import { compressImageDataUrl } from "../lib/utils";
 import { confirmVehicleContextField } from "../lib/vehicleContext";
+import { IDENTIFY_PIPELINE_VERSION } from "./systemPrompts";
 import type { AIInput, ConditionAssessment, ScanPhoto, ShopVehicleContext } from "../types";
 
 vi.mock("./onDeviceIdentify", async (importOriginal) => {
@@ -77,6 +78,108 @@ describe("aiService", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  it.each([
+    { photoRelationship: "same_part_or_area" as const, grouped: true },
+    { photoRelationship: "independent" as const, grouped: false },
+    { photoRelationship: "unknown" as const, grouped: true },
+    { photoRelationship: undefined, grouped: false },
+  ])("sends relationship $photoRelationship separately for identify (grouped=$grouped)", async ({ photoRelationship, grouped }) => {
+    const photos: ScanPhoto[] = ["overview", "detail"].map((id) => ({ id, label: id === "overview" ? "overview" : "close_up",
+      imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" }));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ result }), { status: 200 }));
+    await identifyCapturedFrame(photos[0], grouped ? undefined : photos[1], undefined, { ...(grouped ? { photos } : {}), photoRelationship });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.photoRelationship).toBe(photoRelationship ?? "unknown");
+    if (grouped) expect(body.photos).toHaveLength(2);
+    else expect(body.imageBase64_2).toBe(photos[1].imageBase64);
+  });
+
+  it("carries relationship independently of prose through direct text requests", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "Compare only the supplied evidence." }), { status: 200 }));
+    await runAI({ type: "text", userMessage: "Q".repeat(4000), systemPrompt: "", photoRelationship: "independent" });
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toMatchObject({ photoRelationship: "independent", userMessage: "Q".repeat(4000) });
+  });
+
+  it.each([null, "", "same_part", false, {}])("rejects invalid relationship %j before any identify, image-load or chat fetch", async (invalidRelationship) => {
+    const photoRelationship = invalidRelationship as never;
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const frame = { imageBase64: "https://example.com/needs-loading.jpg", capturedAt: "2026-11-05T00:00:00.000Z" };
+    await expect(runAI({ type: "vision", imageBase64: frame.imageBase64, photoRelationship, userMessage: "Inspect", systemPrompt: "" })).rejects.toMatchObject({ code: "invalid_input" });
+    await expect(runAI({ type: "text", photoRelationship, userMessage: "Compare", systemPrompt: "" })).rejects.toMatchObject({ code: "invalid_input" });
+    await expect(identifyCapturedFrame(frame, undefined, undefined, { photoRelationship })).rejects.toMatchObject({ code: "invalid_input" });
+    const lookup = { frame, result, photoRelationship, chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    await expect(sendFollowUpDetails(lookup, "Compare")).rejects.toMatchObject({ code: "invalid_input" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(compressImageDataUrl).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("keeps saved group relationship outside the bounded follow-up context (research=%s)", async (research) => {
+    const photos: ScanPhoto[] = ["overview", "detail"].map((id) => ({ id, label: id === "overview" ? "overview" : "close_up",
+      imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" }));
+    const lookup = { frame: photos[0], photos, photoRelationship: "independent", result: { ...result, concerns: Array.from({ length: 8 }, () => "uncertain ".repeat(80)) },
+      scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "The second example does not establish the first part's condition." }), { status: 200 }));
+    await sendFollowUpDetails(lookup, "Why do the photos disagree?", { research });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.photoRelationship).toBe("independent");
+    expect(body.photos).toHaveLength(2);
+    expect(body.userMessage.length).toBeLessThanOrEqual(3000);
+    expect(body.userMessage).toContain("Why do the photos disagree?");
+    expect(Boolean(body.research)).toBe(research);
+  });
+
+  it.each([undefined, "same_part_or_area"] as const)("retains saved relationship %s on legacy single-photo follow-up", async (photoRelationship) => {
+    const lookup = { frame: { imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" }, result,
+      photoRelationship, scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "Only one view is available." }), { status: 200 }));
+    await sendFollowUpDetails(lookup, "What is visible?");
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toMatchObject({ photoRelationship: photoRelationship ?? "unknown", imageBase64: lookup.frame.imageBase64 });
+  });
+
+  it.each([
+    { pipelineVersion: undefined, hasResult: true, expected: "unrecorded" },
+    { pipelineVersion: "identify-pipeline-2026-11-03", hasResult: true, expected: "unrecorded" },
+    { pipelineVersion: IDENTIFY_PIPELINE_VERSION, hasResult: true, expected: "first_photo" },
+    { pipelineVersion: undefined, hasResult: false, expected: "none" },
+  ].flatMap((fixture) => [false, true].map((grouped) => ({ ...fixture, grouped }))))("sends $expected saved identity scope outside capped context (pipeline=$pipelineVersion, grouped=$grouped)", async ({ pipelineVersion, hasResult, expected, grouped }) => {
+    const photos: ScanPhoto[] = ["overview", "detail"].map((id) => ({ id, label: id === "overview" ? "overview" : "close_up",
+      imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" }));
+    const lookup = { frame: photos[0], ...(grouped ? { photos } : {}), photoRelationship: "unknown",
+      ...(hasResult ? { result: { ...result, concerns: ["Uncertain ".repeat(500)],
+        ...(pipelineVersion ? { modelRun: { provider: "gemini", model: "gemini-3.5-flash-lite", latencyMs: 1, ocrUsed: false, pipelineVersion } } : {}) } } : {}),
+      scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "The saved suggestion has not been independently verified." }), { status: 200 }));
+    await sendFollowUpDetails(lookup, "Which photo supports the saved name?", { research: true });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.savedIdentityScope).toBe(expected);
+    expect(body.userMessage.length).toBeLessThanOrEqual(3000);
+    expect(body.userMessage).toContain("Which photo supports the saved name?");
+    expect(body.research).toBe(true);
+    if (grouped) expect(body.photos).toHaveLength(2);
+    else expect(body.imageBase64).toBe(photos[0].imageBase64);
+  });
+
+  it.each([
+    { photoCount: 1, expected: "first_photo" },
+    { photoCount: 2, expected: "unrecorded" },
+  ])("does not retroactively assign a current same-part group identity to Photo 1 ($photoCount photos)", async ({ photoCount, expected }) => {
+    const photos: ScanPhoto[] = ["overview", "detail"].slice(0, photoCount).map((id) => ({ id, label: id === "overview" ? "overview" : "close_up",
+      imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" }));
+    const lookup = { frame: photos[0], photos, photoRelationship: "same_part_or_area", result: { ...result,
+      modelRun: { provider: "gemini", model: "gemini-3.5-flash-lite", latencyMs: 1, ocrUsed: false, pipelineVersion: IDENTIFY_PIPELINE_VERSION } },
+      scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "The saved identity does not establish which view supports it." }), { status: 200 }));
+    await sendFollowUpDetails(lookup, "Which view supports the saved identity?");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.savedIdentityScope).toBe(expected);
+    expect(body.photoRelationship).toBe("same_part_or_area");
+    expect(body.photos).toHaveLength(photoCount);
   });
 
   it("uses the on-device model when offline and the fallback is enabled", async () => {

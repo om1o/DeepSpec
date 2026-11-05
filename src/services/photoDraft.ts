@@ -1,5 +1,6 @@
 import { getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
-import { SCAN_PHOTO_LABELS, type ScanPhoto, type ShopVehicleContext } from "../types";
+import { SCAN_PHOTO_LABELS, type PhotoRelationship, type ScanPhoto, type ShopVehicleContext } from "../types";
+import { isPhotoRelationship, photoRelationshipOrUnknown } from "../lib/photoRelationship";
 import { normalizeVehicleContext, vehicleContextsMatch } from "../lib/vehicleContext";
 import type { ComponentCaptureTarget } from "../types/componentMap";
 import { normalizeComponentCaptureTarget } from "../lib/componentMap";
@@ -11,28 +12,57 @@ const STORE = "photo-drafts";
 export const MAX_INSPECTION_PHOTOS = 4;
 export type PhotoDraftKind = "upload" | "capture";
 export type PhotoDraftEnvelope = { photos: ScanPhoto[]; target?: ComponentCaptureTarget } & (
-  | { version: 2 }
-  | { version: 3; vehicleContext: ShopVehicleContext | null; jobId?: string }
-  | { version: 4; vehicleContext: ShopVehicleContext | null; jobId?: string; comparisonTarget: ComparisonCaptureTarget }
+  | { version: 2; photoRelationship?: undefined }
+  | { version: 3; photoRelationship?: undefined; vehicleContext: ShopVehicleContext | null; jobId?: string }
+  | { version: 4; photoRelationship?: undefined; vehicleContext: ShopVehicleContext | null; jobId?: string; comparisonTarget: ComparisonCaptureTarget }
+  | { version: 5; photoRelationship: PhotoRelationship }
+  | { version: 6; photoRelationship: PhotoRelationship; vehicleContext: ShopVehicleContext | null; jobId?: string }
+  | { version: 7; photoRelationship: PhotoRelationship; vehicleContext: ShopVehicleContext | null; jobId?: string; comparisonTarget: ComparisonCaptureTarget }
 );
+export type ModernPhotoDraftEnvelope = Extract<PhotoDraftEnvelope, { version: 5 | 6 | 7 }>;
+
+export function hasPhotoDraftContext(draft: PhotoDraftEnvelope | null | undefined): draft is Extract<PhotoDraftEnvelope, { version: 3 | 4 | 6 | 7 }> {
+  return Boolean(draft && [3, 4, 6, 7].includes(draft.version));
+}
+
+export function hasPhotoDraftComparison(draft: PhotoDraftEnvelope | null | undefined): draft is Extract<PhotoDraftEnvelope, { version: 4 | 7 }> {
+  return draft?.version === 4 || draft?.version === 7;
+}
 
 export function normalizePhotoDraft(value: unknown): PhotoDraftEnvelope | null {
   if (validatePhotoGroup(value)) return { version: 2, photos: value };
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const draft = value as Record<string, unknown>;
-  if (![2, 3, 4].includes(draft.version as number) || !validatePhotoGroup(draft.photos)) return null;
-  const comparisonTarget = draft.version === 4 ? normalizeComparisonCaptureTarget(draft.comparisonTarget) : undefined;
-  if ((draft.version === 4 && !comparisonTarget) || (draft.version !== 4 && draft.comparisonTarget !== undefined)) return null;
+  if (![2, 3, 4, 5, 6, 7].includes(draft.version as number) || !validatePhotoGroup(draft.photos)) return null;
+  const modern = [5, 6, 7].includes(draft.version as number);
+  if (modern ? !isPhotoRelationship(draft.photoRelationship) : draft.photoRelationship !== undefined) return null;
+  const comparison = draft.version === 4 || draft.version === 7;
+  const comparisonTarget = comparison ? normalizeComparisonCaptureTarget(draft.comparisonTarget) : undefined;
+  if ((comparison && !comparisonTarget) || (!comparison && draft.comparisonTarget !== undefined)) return null;
   const target = draft.target === undefined ? undefined : normalizeComponentCaptureTarget(draft.target);
   if (target === null || (target && comparisonTarget && target.lookupId !== comparisonTarget.lookupId)) return null;
   const common = { photos: draft.photos, ...(target ? { target } : {}) };
+  const photoRelationship = photoRelationshipOrUnknown(draft.photoRelationship);
   if (draft.version === 2) return { version: 2, ...common };
+  if (draft.version === 5) return { version: 5, ...common, photoRelationship };
   if (draft.jobId !== undefined && (typeof draft.jobId !== "string" || !/^[a-zA-Z0-9._:-]{1,120}$/.test(draft.jobId))) return null;
   const job = draft.jobId ? { jobId: draft.jobId } : {};
   const vehicleContext = draft.vehicleContext === null ? null : normalizeVehicleContext(draft.vehicleContext);
   if (vehicleContext === undefined) return null;
+  if (modern) return comparisonTarget ? { version: 7, ...common, ...job, vehicleContext, comparisonTarget, photoRelationship }
+    : { version: 6, ...common, ...job, vehicleContext, photoRelationship };
   return comparisonTarget ? { version: 4, ...common, ...job, vehicleContext, comparisonTarget }
     : { version: 3, ...common, ...job, vehicleContext };
+}
+
+/** New writes use versions older clients reject instead of dropping relationship metadata. */
+export function upgradePhotoDraft(draft: PhotoDraftEnvelope): ModernPhotoDraftEnvelope {
+  const normalized = normalizePhotoDraft(draft);
+  if (!normalized) throw new Error("The photo draft could not be upgraded safely. Its originals were preserved.");
+  const photoRelationship = photoRelationshipOrUnknown(normalized.photoRelationship);
+  if (hasPhotoDraftComparison(normalized)) return { ...normalized, version: 7, photoRelationship };
+  if (hasPhotoDraftContext(normalized)) return { ...normalized, version: 6, photoRelationship };
+  return { ...normalized, version: 5, photoRelationship };
 }
 
 export function comparisonCaptureTargetsMatch(left?: ComparisonCaptureTarget, right?: ComparisonCaptureTarget): boolean {
@@ -48,9 +78,11 @@ export function componentCaptureTargetsMatch(left?: ComponentCaptureTarget, righ
 }
 
 export function photoDraftsMatch(left: PhotoDraftEnvelope, right: PhotoDraftEnvelope): boolean {
+  if (!normalizePhotoDraft(left) || !normalizePhotoDraft(right)) return false;
   return left.version === right.version
-    && (left.version === 2 || (right.version !== 2 && left.jobId === right.jobId && vehicleContextsMatch(left.vehicleContext, right.vehicleContext)))
-    && comparisonCaptureTargetsMatch(left.version === 4 ? left.comparisonTarget : undefined, right.version === 4 ? right.comparisonTarget : undefined)
+    && photoRelationshipOrUnknown(left.photoRelationship) === photoRelationshipOrUnknown(right.photoRelationship)
+    && (!hasPhotoDraftContext(left) || (hasPhotoDraftContext(right) && left.jobId === right.jobId && vehicleContextsMatch(left.vehicleContext, right.vehicleContext)))
+    && comparisonCaptureTargetsMatch(hasPhotoDraftComparison(left) ? left.comparisonTarget : undefined, hasPhotoDraftComparison(right) ? right.comparisonTarget : undefined)
     && componentCaptureTargetsMatch(left.target, right.target) && photoGroupsMatch(left.photos, right.photos);
 }
 
@@ -121,18 +153,26 @@ export function photoGroupsMatch(left: ScanPhoto[], right: ScanPhoto[]) {
   });
 }
 
-// Compare the exact reviewed group and mutate in one transaction. Passing the same
-// group as previous/next verifies durability without rewriting another tab's work.
+// Photo-only callers may edit only unassigned, unknown-relationship drafts. Read
+// the full versioned envelope, then atomically compare that exact observed state;
+// photo equality alone never authorizes discarding context or a declaration.
 export async function replacePhotoDraftIfMatches(previous: ScanPhoto[] | null, next: ScanPhoto[] | null, scope = getAccountScope(), kind: PhotoDraftKind = "upload"): Promise<boolean> {
-  return replacePhotoDraftEnvelopeIfMatches(previous ? { version: 2, photos: previous } : null, next ? { version: 2, photos: next } : null, scope, kind);
+  const replacement: ModernPhotoDraftEnvelope | null = next ? { version: 5, photos: next, photoRelationship: "unknown" } : null;
+  if (previous === null) return replacePhotoDraftEnvelopeIfMatches(null, replacement, scope, kind);
+  const observed = await readPhotoDraftEnvelope(scope, kind);
+  if (!observed || (observed.version !== 2 && observed.version !== 5) || observed.target
+    || photoRelationshipOrUnknown(observed.photoRelationship) !== "unknown"
+    || !validatePhotoGroup(previous) || !photoGroupsMatch(previous, observed.photos)) return false;
+  return replacePhotoDraftEnvelopeIfMatches(observed, replacement, scope, kind);
 }
 
 // Compare the target as well as the evidence. An old tab cannot relabel, retarget,
 // or delete a newer component draft merely because its photo bytes are identical.
 export async function replacePhotoDraftEnvelopeIfMatches(previous: PhotoDraftEnvelope | null, next: PhotoDraftEnvelope | null, scope = getAccountScope(), kind: PhotoDraftKind = "upload"): Promise<boolean> {
   if ((previous !== null && !normalizePhotoDraft(previous)) || (next !== null && !normalizePhotoDraft(next))) {
-    throw new Error("Choose one to four valid, labeled photos of the same part or area.");
+    throw new Error("Choose one to four valid, labeled photos and a supported photo relationship. Your previous draft is preserved.");
   }
+  const nextWrite = next === null ? null : upgradePhotoDraft(next);
   let matched = false;
   await draftRequest("readwrite", (store, owner) => {
     const key = `${owner}:${kind}`;
@@ -142,10 +182,10 @@ export async function replacePhotoDraftEnvelopeIfMatches(previous: PhotoDraftEnv
       const current = normalizePhotoDraft(request.result);
       matched = previous === null ? request.result === undefined : current !== null && photoDraftsMatch(previous, current);
       if (matched) {
-        if (next === null) {
+        if (nextWrite === null) {
           if (request.result !== undefined) store.delete(key);
-        } else if (previous === null || !photoDraftsMatch(previous, next)) {
-          store.put(next, key);
+        } else if (previous === null || !photoDraftsMatch(previous, nextWrite)) {
+          store.put(nextWrite, key);
         }
       }
     };

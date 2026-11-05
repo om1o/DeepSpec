@@ -265,6 +265,7 @@ function ResultView({ id }: { id: string | undefined }) {
     const saved = inspectionLookup ? saveExistingLookup(inspectionLookup, liveScanState) : createLookup({
       frame: scanState.frame,
       photos: scanState.photos,
+      photoRelationship: scanState.photoRelationship,
       isolatedObjects: scanState.isolatedObjects,
       focusBox: scanState.focusBox,
       focusMode: scanState.focusMode,
@@ -381,7 +382,7 @@ function ResultView({ id }: { id: string | undefined }) {
               <Link to="/scan" className="ds-workbench-back">Back</Link>
             </nav>
           </header>
-          <PhotoEvidenceStrip photos={scanState?.photos} selectedId={selectedPhotoId} onSelect={(photoId) => { setSelectedPhotoId(photoId); setEvidenceViewRequest(0); }} />
+          <PhotoEvidenceStrip photos={scanState?.photos} photoRelationship={scanState?.photoRelationship} pipelineVersion={scanState?.result ? scanState.result.modelRun?.pipelineVersion : null} selectedId={selectedPhotoId} onSelect={(photoId) => { setSelectedPhotoId(photoId); setEvidenceViewRequest(0); }} />
           <div ref={photoCanvasRef} tabIndex={-1} aria-label="Selected inspection photo" data-testid="result-photo-canvas" className="relative min-h-0 flex-1">
             {displayFrame?.imageBase64 ? (
               <IsolatedPartView
@@ -435,6 +436,7 @@ function ResultView({ id }: { id: string | undefined }) {
               capturedAt={capturedAt} 
               frame={frame}
               photos={scanState.photos}
+              photoRelationship={scanState.photoRelationship}
               lookup={locallySavedLookup ? lookup : null}
               vehicleContext={lookup?.vehicleContext ?? scanState.vehicleContext}
               onLookupRetrySuccess={(updatedLookup, warning) => {
@@ -925,6 +927,7 @@ function AnalysisError({
   code,
   frame,
   photos,
+  photoRelationship,
   lookup,
   message,
   vehicleContext,
@@ -936,6 +939,7 @@ function AnalysisError({
   code?: string;
   frame: CapturedFrame | null | undefined;
   photos?: ScanAnalysisState["photos"];
+  photoRelationship?: ScanAnalysisState["photoRelationship"];
   lookup: Lookup | null;
   vehicleContext?: Lookup["vehicleContext"];
   message: string;
@@ -980,7 +984,9 @@ function AnalysisError({
     try {
       const identificationFrame = await prepareRetryFrame(retryFrame);
       if (!isCurrentRetry()) return;
-      const result = applyShopFitmentContext(await identifyCapturedFrame(identificationFrame, undefined, undefined, { vehicleContext, photos: lookup?.photos ?? photos }), vehicleContext);
+      const result = applyShopFitmentContext(await identifyCapturedFrame(identificationFrame, undefined, undefined, {
+        vehicleContext, photos: lookup?.photos ?? photos, photoRelationship: lookup ? lookup.photoRelationship : photoRelationship,
+      }), vehicleContext);
       if (!isCurrentRetry()) return;
       if (lookup) {
         const updateResult = updateLookupResult(lookup.id, result, {
@@ -996,6 +1002,7 @@ function AnalysisError({
         onScanRetrySuccess({
           frame: identificationFrame,
           photos,
+          photoRelationship,
           result,
           analysisAttemptId: attemptId,
           vehicleContext,
