@@ -37,6 +37,27 @@ const inspection: PartInspection = {
 };
 describe("durable visual evidence", () => {
   beforeEach(() => { localStorage.clear(); setActiveAccount("owner"); });
+  it("preserves per-photo AI areas across save/reopen and replaces them on retry without editing human evidence", () => {
+    const assessment = conditionAssessment("p1");
+    assessment.version = 2;
+    assessment.observations[0].areas = [{ photoId: "p1", rectangle: { x: 0.2, y: 0.3, width: 0.1, height: 0.4 } }];
+    const saved = createLookup({ ...state, result: { ...identification, conditionAssessment: assessment } }).value;
+    updateLookup(saved.id, { notes: "Human note" });
+    expect(saveExistingLookup({ ...getLookup(saved.id)!, inspection }).ok).toBe(true);
+    const reopened = getLookup(saved.id)!;
+    expect(scanStateFromLookup(reopened).result?.conditionAssessment).toEqual(assessment);
+    const next = structuredClone(assessment);
+    next.observations[0].photoIds = ["p2"];
+    next.observations[0].areas = [{ photoId: "p2", rectangle: { x: 0.5, y: 0.2, width: 0.2, height: 0.3 } }];
+    const retried = withRetriedLookupResult(reopened, { ...state, result: { ...identification, conditionAssessment: next } });
+    expect(retried.result?.conditionAssessment).toEqual(next);
+    expect(retried.inspection).toEqual(inspection);
+    expect(retried.notes).toBe("Human note");
+    expect(retried.photos).toEqual(reopened.photos);
+    expect(reopened.result?.conditionAssessment).toEqual(assessment);
+    next.observations[0].areas[0].photoId = "p0";
+    expect(updateLookupResult(saved.id, { ...identification, conditionAssessment: next }).value?.result).not.toHaveProperty("conditionAssessment");
+  });
   it("retains partial photo review and disagreement across save/reopen without marking the omitted photo reviewed", () => {
     const saved = createLookup({ ...state, result: { ...identification, photoReview } }).value;
     updateLookup(saved.id, { notes: "Human note", correction: "User label" });

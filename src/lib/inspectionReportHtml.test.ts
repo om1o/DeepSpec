@@ -7,6 +7,7 @@ import { buildInspectionReportHtml, getInspectionReportFilename, MAX_INSPECTION_
 import { confirmVehicleContextField } from "./vehicleContext";
 import type { ServiceRecord } from "../types/serviceRecord";
 import type { InspectionComparison, ComparisonSide, RequestedInspectionComparison } from "../types/inspectionComparison";
+import type { ObservationAreaRecord } from "../types/observationArea";
 
 const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/bKkAAAAASUVORK5CYII=";
 const WHEN = "2026-11-05T12:00:00Z";
@@ -85,7 +86,126 @@ function withRequestedHistory(input: InspectionReportSnapshot, records = [reques
   return input;
 }
 
+function areaMark(lookupId = "overview"): Extract<ObservationAreaRecord, { kind: "mark" }> {
+  return { version: 1, id: "70000000-0000-4000-8000-000000000001", lookupId, recordedAt: WHEN, kind: "mark", rectangle: { x: .5, y: .2, width: .25, height: .35 }, notes: "Human note <script>not executable</script> & preserved",
+    binding: { version: 1, observation: { id: "stain", text: "Historical stain <label> on the second photo.", photoIds: [`${lookupId}-label`], areas: [{ photoId: `${lookupId}-label`, rectangle: { x: .6, y: .1, width: .2, height: .3 } }] },
+      analysisSha256: "c".repeat(64), analysisAttemptId: "historical-analysis",
+      reference: { lookupId, photoId: `${lookupId}-label`, photoLabel: "marking", photoAddedAt: WHEN, scanSavedAt: WHEN, sha256: OVERVIEW_SOURCE.sha256, width: 1, height: 1, observedOn: null,
+        analysisAttemptId: "historical-analysis", vehicleContext: { vin: "PRIVATE_AREA_RECEIPT_VIN", model: "PRIVATE_AREA_RECEIPT_CONTEXT" } } } };
+}
+function areaSnapshot(records: ObservationAreaRecord[] = [areaMark()]): InspectionReportSnapshot {
+  const input = snapshot(); input.scans[0].focusBox = { ...BOX }; input.scans[0].focusMode = "crop";
+  input.scans[0].result!.conditionAssessment = { version: 2, observations: [structuredClone(areaMark().binding.observation)], possibleCauses: [], unknowns: ["Stain source is unknown."] };
+  input.observationAreaLogs = [{ lookupId: "overview", records }];
+  input.observationAreaEvidence = records.map((record) => ({ lookupId: record.lookupId, recordId: record.id, photoId: record.binding.reference.photoId, status: "unchanged", analysisMatches: true }));
+  return input;
+}
+function correctedArea(first: Extract<ObservationAreaRecord, { kind: "mark" }>, suffix = "2"): Extract<ObservationAreaRecord, { kind: "mark" }> {
+  return { ...first, id: `70000000-0000-4000-8000-00000000000${suffix}`, recordedAt: `2026-11-05T1${suffix}:30:00Z`, supersedesId: first.id,
+    correctionReason: "Adjusted <pointer> & retained history", rectangle: { x: .4, y: .3, width: .2, height: .3 } };
+}
+
 describe("self-contained mechanic HTML report", () => {
+  it("places independent AI and human outlines on exact photo two while the part selection stays on photo one", () => {
+    const input = areaSnapshot(), first = input.observationAreaLogs![0].records[0], before = JSON.stringify(input), doc = parsed(input);
+    const photoOne = doc.querySelector("#scan-1-photo-1")!, photoTwo = doc.querySelector("#scan-1-photo-2")!;
+    expect(photoOne.querySelectorAll('.outline[aria-label^="Selection "]')).toHaveLength(1);
+    expect(photoOne.querySelector('.outline[aria-label^="AI area"], .outline[aria-label^="Human area"]')).toBeNull();
+    expect(photoTwo.querySelector('.outline[aria-label^="Selection "]')).toBeNull();
+    const ai = photoTwo.querySelector<HTMLAnchorElement>('.outline[aria-label^="AI area"]')!;
+    const human = photoTwo.querySelector<HTMLAnchorElement>('.outline[aria-label^="Human area"]')!;
+    expect(ai.getAttribute("href")).toBe("#scan-1-observation-1");
+    expect(ai.getAttribute("aria-label")).toContain("unverified");
+    expect(ai.style.left).toBe("60%"); expect(ai.style.width).toBe("20%");
+    expect(human.getAttribute("href")).toBe(`#scan-1-human-area-${first.id}`);
+    expect(human.style.left).toBe("50%"); expect(human.style.width).toBe("25%");
+    expect(doc.querySelector(ai.getAttribute("href")!)?.textContent).toContain(first.binding.observation.text);
+    expect(doc.querySelector(human.getAttribute("href")!)?.textContent).toContain("embedded original bytes and saved photo context match");
+    expect(doc.body.textContent).toContain("not damage boundaries, measurements or confirmed findings");
+    expect(doc.body.textContent).toContain("does not include a provider-time image checksum");
+    for (const figure of [photoOne, photoTwo]) expect(figure.querySelector("img")?.getAttribute("src")).toBe(PNG);
+    expect(doc.querySelector("script")).toBeNull();
+    expect(doc.body.textContent).toContain(first.notes);
+    for (const marker of ["PRIVATE_AREA_RECEIPT_VIN", "PRIVATE_AREA_RECEIPT_CONTEXT", "PRIVATE_SCAN_CANARY"]) expect(doc.body.textContent).not.toContain(marker);
+    expect(parsed(input, { includeVin: true, includePrivateNotes: true }).body.textContent).not.toContain("PRIVATE_AREA_RECEIPT_VIN");
+    expect(JSON.stringify(input)).toBe(before);
+  });
+
+  it("retains superseded marks and draws only the latest correction on its cited photo", () => {
+    const first = areaMark(), correction = correctedArea(first), doc = parsed(areaSnapshot([first, correction]));
+    const outlines = doc.querySelectorAll('.outline[aria-label^="Human area"]');
+    expect(outlines).toHaveLength(1); expect(outlines[0].getAttribute("href")).toBe(`#scan-1-human-area-${correction.id}`);
+    expect(doc.querySelector(`#scan-1-human-area-${first.id} h4`)?.textContent).toContain("superseded");
+    const history = doc.querySelector(`#scan-1-human-area-${correction.id}`)!;
+    expect(history.textContent).toContain(correction.correctionReason);
+    expect(history.querySelector(`a[href="#scan-1-human-area-${first.id}"]`)).not.toBeNull();
+  });
+
+  it.each(["retracted", "forked"] as const)("keeps %s human history without choosing an active outline or removing the AI pointer", (kind) => {
+    const first = areaMark(), correction = correctedArea(first);
+    const final: ObservationAreaRecord = kind === "forked" ? correctedArea(first, "3") : { version: 1, id: "70000000-0000-4000-8000-000000000003", lookupId: first.lookupId,
+      recordedAt: "2026-11-05T14:00:00Z", kind: "retraction", binding: structuredClone(first.binding), notes: "Mark withdrawn", supersedesId: correction.id, correctionReason: "Do not rely on this mark" };
+    const doc = parsed(areaSnapshot([first, correction, final]));
+    expect(doc.querySelectorAll('.outline[aria-label^="Human area"]')).toHaveLength(0);
+    expect(doc.querySelectorAll('.outline[aria-label^="AI area"]')).toHaveLength(1);
+    for (const record of [first, correction, final]) expect(doc.querySelector(`#scan-1-human-area-${record.id}`)?.textContent).toContain(record.notes);
+    expect(doc.querySelector(`#scan-1-human-area-${final.id} h4`)?.textContent).toContain(kind === "forked" ? "conflicting" : "retracted");
+    if (kind === "forked") expect(doc.body.textContent).toContain("No active outline was chosen");
+  });
+
+  it.each(["source_changed", "missing_photo", "verification_unavailable", "absent", "duplicate", "wrong-photo", "missing-pixels", "removed-photos"] as const)("hides a human outline when the exact source proof is %s", (status) => {
+    const input = areaSnapshot(), record = input.observationAreaLogs![0].records[0];
+    if (status === "absent") input.observationAreaEvidence = [];
+    else if (status === "duplicate") input.observationAreaEvidence!.push({ ...input.observationAreaEvidence![0] });
+    else if (status === "wrong-photo") input.observationAreaEvidence![0].photoId = "overview-front";
+    else if (status === "missing-pixels") input.scans[0].photos![1].imageBase64 = "";
+    else if (status === "removed-photos") input.scans[0].photos = [];
+    else input.observationAreaEvidence![0].status = status;
+    const doc = parsed(input), history = doc.querySelector(`#scan-1-human-area-${record.id}`)!;
+    expect(doc.querySelectorAll('.outline[aria-label^="Human area"]')).toHaveLength(0);
+    expect(history.textContent).toContain("outline is not placed on the current photo");
+    expect(history.textContent).not.toContain("embedded original bytes and saved photo context match");
+    expect(history.textContent).toContain(record.binding.observation.text);
+    expect(history.textContent).toContain(record.notes);
+    if (status === "removed-photos") expect(doc.querySelectorAll("img")).toHaveLength(0);
+  });
+
+  it("labels an intact human pointer as historical after the AI answer changes instead of borrowing the new claim", () => {
+    const input = areaSnapshot(), record = input.observationAreaLogs![0].records[0];
+    input.scans[0].result!.conditionAssessment!.observations[0].text = "Current answer: a reflection, not an established leak.";
+    input.observationAreaEvidence![0].analysisMatches = false;
+    const doc = parsed(input), history = doc.querySelector(`#scan-1-human-area-${record.id}`)!;
+    expect(doc.querySelectorAll('.outline[aria-label^="Human area"]')).toHaveLength(1);
+    expect(history.textContent).toContain(record.binding.observation.text);
+    expect(history.textContent).toContain("keeps its historical claim");
+    expect(history.textContent).toContain("embedded original bytes and saved photo context match");
+    expect(history.textContent).not.toContain("saved AI answer matches");
+    expect(history.textContent).not.toContain("Current answer:");
+    expect(doc.querySelector("#scan-1-observation-1")?.textContent).toContain("Current answer:");
+  });
+
+  it("exports unavailable linked-scan area history and correction anchors without substituting another scan's images or private context", () => {
+    const first = areaMark("removed"), correction = correctedArea(first), input = snapshot();
+    input.observationAreaLogs = [{ lookupId: "removed", records: [first, correction] }];
+    input.observationAreaEvidence = [first, correction].map((record) => ({ lookupId: "removed", recordId: record.id, photoId: "removed-label", status: "missing_photo", analysisMatches: false }));
+    const before = JSON.stringify(input), doc = parsed(input), history = doc.querySelector("#unavailable-area-history")!;
+    expect(history.textContent).toContain("Unavailable scan: removed");
+    expect(history.textContent).toContain("No outline is placed on another image");
+    expect(history.textContent).toContain(first.binding.observation.text);
+    expect(history.textContent).toContain("removed-label");
+    expect(history.textContent).toContain(first.binding.analysisSha256);
+    expect(history.textContent).toContain(first.binding.reference.sha256);
+    expect(history.textContent).toContain(first.notes);
+    expect(history.textContent).toContain(correction.correctionReason);
+    expect(history.querySelectorAll("article")).toHaveLength(2);
+    const target = history.querySelector("a")?.getAttribute("href");
+    expect(target).toBe(`#unavailable-area-1-${first.id}`); expect(doc.querySelector(target!)).not.toBeNull();
+    expect(history.querySelector("img, .outline, script")).toBeNull();
+    expect(doc.querySelectorAll('.outline[aria-label^="Human area"]')).toHaveLength(0);
+    expect(doc.body.textContent).not.toMatch(/PRIVATE_AREA_RECEIPT_VIN|PRIVATE_AREA_RECEIPT_CONTEXT/);
+    expect(JSON.stringify(input)).toBe(before);
+  });
+
   it("renders historical requested measurements, exact readings, no-reading corrections and retractions without leaking receipt context", () => {
     const first = requestedServiceMeasurement();
     const corrected = { ...first, id: "10000000-0000-4000-8000-000000000002", supersedesId: first.id, recordedAt: "2026-11-05T13:00:00Z", correctionReason: "Cannot rely on original reading", reading: null, unit: "", method: "", noReadingReason: "The tool could not reach the marked edge." };

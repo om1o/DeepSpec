@@ -1,4 +1,4 @@
-import type { ConditionAssessment, ConditionObservation, NextConditionEvidence } from "../types";
+import type { ConditionAssessment, ConditionObservation, ConditionObservationArea, NextConditionEvidence } from "../types";
 
 const MAX_TEXT_LENGTH = 600;
 const MAX_ID_LENGTH = 80;
@@ -28,12 +28,32 @@ function readReferences(value: unknown, allowedIds: ReadonlySet<string>, maxCoun
   return references;
 }
 
+function readAreas(value: unknown, citedPhotoIds: readonly string[]): ConditionObservationArea[] | undefined {
+  if (!Array.isArray(value) || value.length > 4) return undefined;
+  const areas: ConditionObservationArea[] = [];
+  const seen = new Set<string>();
+  for (const area of value) {
+    if (!isRecord(area) || Object.keys(area).length !== 2 || !isId(area.photoId)
+      || !citedPhotoIds.includes(area.photoId) || seen.has(area.photoId) || !isRecord(area.rectangle)) return undefined;
+    const { x, y, width, height } = area.rectangle;
+    if (Object.keys(area.rectangle).length !== 4
+      || typeof x !== "number" || !Number.isFinite(x) || x < 0
+      || typeof y !== "number" || !Number.isFinite(y) || y < 0
+      || typeof width !== "number" || !Number.isFinite(width) || width <= 0
+      || typeof height !== "number" || !Number.isFinite(height) || height <= 0
+      || x + width > 1 || y + height > 1) return undefined;
+    seen.add(area.photoId);
+    areas.push({ photoId: area.photoId, rectangle: { x, y, width, height } });
+  }
+  return areas;
+}
+
 /** Reject the entire optional assessment when any evidence or reference is invalid. */
 export function normalizeConditionAssessment(
   value: unknown,
   allowedPhotoIds: readonly string[],
 ): ConditionAssessment | undefined {
-  if (!isRecord(value) || value.version !== 1) return undefined;
+  if (!isRecord(value) || (value.version !== 1 && value.version !== 2)) return undefined;
   if (!Array.isArray(value.observations) || value.observations.length < 1 || value.observations.length > 8) return undefined;
   if (!Array.isArray(value.possibleCauses) || value.possibleCauses.length > 4) return undefined;
   if (!Array.isArray(value.unknowns) || value.unknowns.length > 8) return undefined;
@@ -47,8 +67,11 @@ export function normalizeConditionAssessment(
     const references = readReferences(observation.photoIds, photoIds, 4);
     const regionLabel = observation.regionLabel === undefined ? undefined : readText(observation.regionLabel, 120);
     if (!text || !references || (observation.regionLabel !== undefined && !regionLabel)) return undefined;
+    if (value.version === 1 && "areas" in observation) return undefined;
+    const areas = observation.areas === undefined ? undefined : readAreas(observation.areas, references);
+    if (observation.areas !== undefined && !areas) return undefined;
     observationIds.add(observation.id);
-    observations.push({ id: observation.id, text, photoIds: references, ...(regionLabel ? { regionLabel } : {}) });
+    observations.push({ id: observation.id, text, photoIds: references, ...(regionLabel ? { regionLabel } : {}), ...(areas ? { areas } : {}) });
   }
 
   const possibleCauses: ConditionAssessment["possibleCauses"] = [];
@@ -81,5 +104,5 @@ export function normalizeConditionAssessment(
     };
   }
 
-  return { version: 1, observations, possibleCauses, unknowns, ...(nextEvidence ? { nextEvidence } : {}) };
+  return { version: value.version, observations, possibleCauses, unknowns, ...(nextEvidence ? { nextEvidence } : {}) };
 }

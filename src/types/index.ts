@@ -218,11 +218,19 @@ export type EvidenceRegion = {
   regionLabel: string;
 };
 
+/** Unverified AI location in one entire saved image, never measured geometry. */
+export type ConditionObservationArea = {
+  photoId: string;
+  rectangle: { x: number; y: number; width: number; height: number };
+};
+
 export type ConditionObservation = {
   id: string;
   text: string;
   photoIds: string[];
   regionLabel?: string;
+  /** Available only in assessment version 2; absence is not a located finding. */
+  areas?: ConditionObservationArea[];
 };
 
 export type ConditionHypothesis = {
@@ -239,7 +247,7 @@ export type NextConditionEvidence = {
 
 /** AI-reported visual evidence. Human checks remain in PartInspection. */
 export type ConditionAssessment = {
-  version: 1;
+  version: 1 | 2;
   observations: ConditionObservation[];
   possibleCauses: ConditionHypothesis[];
   unknowns: string[];

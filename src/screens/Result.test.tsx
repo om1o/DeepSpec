@@ -1,5 +1,5 @@
 import { accountStorageKey, setActiveAccount, withAccountRouteState } from "../lib/accountScope";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { StrictMode } from "react";
@@ -18,6 +18,9 @@ const cloudHistoryMocks = vi.hoisted(() => ({
 }));
 const requestedCaptureMocks = vi.hoisted(() => ({ prepare: vi.fn() }));
 const requestedHistoryMocks = vi.hoisted(() => ({ read: vi.fn() }));
+const areaMocks = vi.hoisted(() => ({ prepare: vi.fn() }));
+vi.mock("../services/observationAreaEvidence", () => ({ prepareObservationAreaBinding: areaMocks.prepare, verifyObservationAreaBinding: vi.fn(), assertObservationAreaGuardCurrent: vi.fn() }));
+vi.mock("../services/observationAreaStore", () => ({ readObservationAreas: async () => [], subscribeObservationAreas: () => () => {}, readObservationAreaDraft: async () => ({ ok: true, raw: null, draft: null, message: "" }), writeObservationAreaDraft: vi.fn(), commitObservationAreaDraft: vi.fn() }));
 vi.mock("../services/requestedEvidenceHistory", () => ({ readRequestedEvidenceHistory: requestedHistoryMocks.read }));
 vi.mock("../services/requestedEvidenceCapture", async (original) => ({ ...await original<typeof import("../services/requestedEvidenceCapture")>(), prepareRequestedEvidenceCapture: requestedCaptureMocks.prepare }));
 
@@ -86,6 +89,12 @@ describe("Result", () => {
     requestedCaptureMocks.prepare.mockReset();
     requestedHistoryMocks.read.mockReset();
     requestedHistoryMocks.read.mockResolvedValue({ records: [], complete: true, scannedBuckets: 0 });
+    areaMocks.prepare.mockReset();
+    areaMocks.prepare.mockImplementation(async (lookup: Lookup, observationId: string, photoId: string) => {
+      const photo = lookup.photos!.find((entry) => entry.id === photoId)!;
+      const binding = { version: 1, observation: lookup.result!.conditionAssessment!.observations.find((entry) => entry.id === observationId)!, analysisSha256: "a".repeat(64), reference: { lookupId: lookup.id, photoId, photoLabel: photo.label, photoAddedAt: photo.capturedAt, scanSavedAt: lookup.createdAt, sha256: "b".repeat(64), width: 400, height: 300, observedOn: null, vehicleContext: null } };
+      return { binding, image: photo.imageBase64, guard: { binding, mode: "current" } };
+    });
   });
 
   afterEach(() => {
@@ -110,7 +119,7 @@ describe("Result", () => {
     expect(getLookups()).toEqual([]);
   });
 
-  it.each(["bay", "detail"])("opens observation evidence %s as the untouched original and moves focus to the photo", async (photoId) => {
+  it.each(["bay", "detail"])("opens observation evidence %s separately without replacing first-photo part isolation", async (photoId) => {
     const local = makeLookup({
       focusBox: { x: 0.1, y: 0.15, width: 0.3, height: 0.4, confidence: 0.9 }, focusMode: "mask", isolatedImageBase64: "data:image/png;base64,cutout",
       photos: [{ ...frame, id: "bay", label: "overview" }, { ...frame, id: "detail", label: "close_up", imageBase64: "data:image/jpeg;base64,detail" }],
@@ -121,15 +130,16 @@ describe("Result", () => {
     });
     localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
     renderResult({ ...successfulScan, savedLookup: local }, `/result/${local.id}`);
-    const canvas = screen.getByTestId("result-photo-canvas");
-    const scroll = vi.fn();
-    canvas.scrollIntoView = scroll;
+    const before = localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY));
     await userEvent.click(screen.getByRole("button", { name: /for observation o1/ }));
-    expect(screen.getByRole("button", { name: "Original", exact: true })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute("src", local.photos!.find((photo) => photo.id === photoId)!.imageBase64);
-    expect(screen.queryByTestId("isolated-part-image")).not.toBeInTheDocument();
-    expect(canvas).toHaveFocus();
-    expect(scroll).toHaveBeenCalledExactlyOnceWith({ behavior: "smooth", block: "center" });
+    const panel = screen.getByRole("region", { name: "Observation areas" });
+    expect(await within(panel).findByRole("img", { name: `Original for observation o1, photo ${photoId}` })).toHaveAttribute("src", local.photos!.find((photo) => photo.id === photoId)!.imageBase64);
+    await userEvent.click(within(panel).getByRole("button", { name: "Original", exact: true }));
+    expect(within(panel).getByRole("button", { name: "Original", exact: true })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("isolated-part-image")).toHaveAttribute("src", local.isolatedImageBase64);
+    expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute("src", local.photos![0].imageBase64);
+    expect(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY))).toBe(before);
+    expect(areaMocks.prepare).toHaveBeenLastCalledWith(expect.objectContaining({ id: local.id }), "o1", photoId, expect.any(Object), expect.any(AbortSignal));
   });
 
   it("shows the complete safety action separately from a request for another photo", async () => {

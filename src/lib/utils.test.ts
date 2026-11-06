@@ -34,6 +34,22 @@ describe("latest captured frame storage", () => {
     sessionStorage.clear();
   });
 
+  it.each(["valid", "uncited-photo", "out-of-bounds"])("recovers secondary-photo AI areas only when valid: %s", (kind) => {
+    const frame = { imageBase64: "data:image/jpeg;base64,YQ==", capturedAt: "2026-11-05T00:00:00Z" };
+    const result: IdentificationResult = { partName: "Panel", confidence: "low", scanCategory: "body", candidateMatches: [], whatItDoes: "Body panel",
+      visibleObservations: [], evidenceRegions: [], concerns: [], safetyTriage: "can_help", isSafetyCritical: false, nextAction: "Inspect", needsBetterPhoto: true,
+      evidence: [], sourceLinks: [], conditionAssessment: { version: 2, observations: [{ id: "edge", text: "A dark line is visible.", photoIds: ["detail"],
+        areas: [{ photoId: kind === "uncited-photo" ? "overview" : "detail", rectangle: { x: 0.2, y: 0.3, width: 0.2, height: kind === "out-of-bounds" ? 1 : 0.2 } }] }],
+      possibleCauses: [], unknowns: [] } };
+    const photos = [{ ...frame, id: "overview", label: "overview" as const }, { ...frame, id: "detail", label: "close_up" as const }];
+    saveLatestScanState({ frame, photos, result });
+    const restored = readLatestScanState();
+    expect(restored?.photos).toEqual(photos);
+    expect(restored?.result?.partName).toBe("Panel");
+    if (kind === "valid") expect(restored?.result?.conditionAssessment).toEqual(result.conditionAssessment);
+    else expect(restored?.result).not.toHaveProperty("conditionAssessment");
+  });
+
   it.each(["valid", "missing", "wrong-photo", "duplicate"])("restores only validated partial review against the actual session originals: %s", (kind) => {
     const frame = { imageBase64: "data:image/jpeg;base64,YQ==", capturedAt: "2026-11-05T00:00:00Z" };
     const photoReview: PhotoReview = { version: 1, photos: [{ photoId: kind === "wrong-photo" ? "photo-1" : "custom-original",

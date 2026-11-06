@@ -58,7 +58,7 @@ export function formatConditionHandoff(lookup: Lookup): string {
     "",
     "Condition evidence (AI-reported, not human confirmation):",
     "Observed appearance:",
-    ...(review.observations.length ? review.observations.map((item) => `- [${item.id}] ${item.text} — ${item.photoIds.map(photoLabel).join(", ")}${item.regionLabel ? ` — area described: ${item.regionLabel}` : ""}`) : ["No photo-linked observations returned."]),
+    ...(review.observations.length ? review.observations.map((item) => `- [${item.id}] ${item.text} — ${item.photoIds.map(photoLabel).join(", ")}${item.regionLabel ? ` — area described: ${item.regionLabel}` : ""}${item.areas?.length ? ` — unverified AI area pointers on ${item.areas.map((area) => photoLabel(area.photoId)).join(", ")}; inspect the saved originals in DeepSpec or the full report` : " — no AI area returned"}`) : ["No photo-linked observations returned."]),
     "Possible causes — unconfirmed:",
     ...(review.possibleCauses.length ? review.possibleCauses.map((item) => `- ${item.text} — based on observations ${item.observationIds.join(", ")}`) : ["Cause not established."]),
     "Still unknown:",

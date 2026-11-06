@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import type { Lookup, PhotoReview } from "../types";
+import type { ConditionAssessment, Lookup, PhotoReview } from "../types";
 
 const mocks = vi.hoisted(() => ({
   createClient: vi.fn(),
@@ -24,6 +24,31 @@ describe("cloudSync", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  it.each(["valid", "uncited-photo", "out-of-bounds"])("validates v2 areas before uploading a cloud-only fallback scan: %s", async (kind) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const scanWrite = vi.fn().mockResolvedValue({ data: { revision: 1 }, error: null });
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
+      auth: { getSession: async () => ({ data: { session: { user: { id: "user-1", email_confirmed_at: "now" } } }, error: null }) },
+      from: (table: string) => table === "scan_lookups" ? makeScanWriteQuery(scanWrite) : { insert: async () => ({ error: null }), upsert: async () => ({ error: null }) },
+      storage: { from: () => ({ upload: vi.fn().mockResolvedValue({ error: null }) }) },
+    });
+    const lookup = makeLookup();
+    lookup.photos = ["overview", "detail"].map((id) => ({ ...lookup.frame, id, label: "other" }));
+    const conditionAssessment: ConditionAssessment = { version: 2, observations: [{ id: "edge", text: "A dark line is visible.", photoIds: ["detail"],
+      areas: [{ photoId: kind === "uncited-photo" ? "overview" : "detail", rectangle: { x: 0.2, y: 0.3, width: kind === "out-of-bounds" ? 1 : 0.2, height: 0.2 } }] }], possibleCauses: [], unknowns: [] };
+    lookup.result = { ...lookup.result!, conditionAssessment };
+    const original = JSON.stringify(lookup);
+    const { syncLookupToCloud } = await import("./cloudSync");
+    expect((await syncLookupToCloud(lookup)).ok).toBe(true);
+    const row = scanWrite.mock.calls[0][0];
+    if (kind === "valid") expect(row.result_json.conditionAssessment).toEqual(conditionAssessment);
+    else expect(row.result_json).not.toHaveProperty("conditionAssessment");
+    expect(row.result_json.partName).toBe(lookup.result!.partName);
+    expect(row.evidence_bundle_json.photos.map((photo: { id: string }) => photo.id)).toEqual(["overview", "detail"]);
+    expect(JSON.stringify(lookup)).toBe(original);
   });
 
   it.each(["valid", "missing", "foreign-photo", "unassessed-disagreement"])("uploads only validated optional review in result_json without changing the caller's originals: %s", async (kind) => {

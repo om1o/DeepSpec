@@ -9,6 +9,9 @@ import { normalizeDiagnosticBundle } from "../lib/diagnosticAssociation";
 import type { DiagnosticBundle } from "../types/diagnosticReport";
 import { COMPONENT_MAP_STORE, EVIDENCE_STORAGE_TIMEOUT_MS, openEvidenceDatabase, SERVICE_RECORD_STORE, INSPECTION_COMPARISON_STORE, DIAGNOSTIC_REPORT_STORE } from "./evidenceDb";
 import { queueRequestedEvidenceHistory, type RequestedEvidenceHistory } from "./requestedEvidenceHistory";
+import { OBSERVATION_AREA_STORE } from "./evidenceDb";
+import { normalizeObservationAreaRecords } from "../lib/observationArea";
+import type { ObservationAreaRecord } from "../types/observationArea";
 
 export type FinalInspectionSnapshot = {
   map: ComponentMapRecord | null;
@@ -16,6 +19,7 @@ export type FinalInspectionSnapshot = {
   serviceRecords: Map<string, ServiceRecord[] | null>;
   comparisons: Map<string, InspectionComparison[] | null>;
   diagnostics: Map<string, DiagnosticBundle | null>;
+  observationAreas: Map<string, ObservationAreaRecord[] | null>;
   requestedEvidenceHistory: RequestedEvidenceHistory;
 };
 const validId = (value: string) => /^[A-Za-z0-9._:-]{1,160}$/.test(value) && value !== "." && value !== "..";
@@ -34,7 +38,7 @@ export async function readFinalInspectionSnapshot(rootLookupId: string, lookupId
   return new Promise((resolve, reject) => {
     let transaction: IDBTransaction | undefined;
     let settled = false, mapRead = false, requestedHistoryRead = false;
-    const result: FinalInspectionSnapshot = { map: null, serviceRecords: new Map(), comparisons: new Map(), diagnostics: new Map(),
+    const result: FinalInspectionSnapshot = { map: null, serviceRecords: new Map(), comparisons: new Map(), diagnostics: new Map(), observationAreas: new Map(),
       requestedEvidenceHistory: { records: [], complete: false, scannedBuckets: 0 } };
     const finish = (error?: Error) => {
       if (settled) return;
@@ -48,7 +52,7 @@ export async function readFinalInspectionSnapshot(rootLookupId: string, lookupId
     const timer = setTimeout(() => fail(new Error("Checking saved inspection records stalled. Prepare the report again.")), EVIDENCE_STORAGE_TIMEOUT_MS);
     try {
       requireScope(scope);
-      transaction = database.transaction([COMPONENT_MAP_STORE, SERVICE_RECORD_STORE, INSPECTION_COMPARISON_STORE, DIAGNOSTIC_REPORT_STORE], "readonly");
+      transaction = database.transaction([COMPONENT_MAP_STORE, SERVICE_RECORD_STORE, INSPECTION_COMPARISON_STORE, DIAGNOSTIC_REPORT_STORE, OBSERVATION_AREA_STORE], "readonly");
       const mapRequest = transaction.objectStore(COMPONENT_MAP_STORE).get([scope.userId!, rootLookupId]);
       mapRequest.onsuccess = () => {
         try {
@@ -95,10 +99,20 @@ export async function readFinalInspectionSnapshot(rootLookupId: string, lookupId
           } catch (error) { fail(error); }
         };
       }
+      const areas = transaction.objectStore(OBSERVATION_AREA_STORE);
+      for (const id of ids) {
+        const request = areas.get([scope.userId!, id]);
+        request.onsuccess = () => {
+          try {
+            requireScope(scope);
+            result.observationAreas.set(id, normalizeObservationAreaRecords(request.result === undefined ? [] : request.result, id) ?? null);
+          } catch (error) { fail(error); }
+        };
+      }
       transaction.oncomplete = () => {
         try {
           requireScope(scope);
-          if (!mapRead || !requestedHistoryRead || result.serviceRecords.size !== ids.length || result.comparisons.size !== ids.length || result.diagnostics.size !== ids.length) throw new Error("Some saved inspection records could not be checked safely.");
+          if (!mapRead || !requestedHistoryRead || result.serviceRecords.size !== ids.length || result.comparisons.size !== ids.length || result.diagnostics.size !== ids.length || result.observationAreas.size !== ids.length) throw new Error("Some saved inspection records could not be checked safely.");
           finish();
         } catch (error) { finish(error as Error); }
       };

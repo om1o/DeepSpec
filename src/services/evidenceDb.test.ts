@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { COMPONENT_MAP_STORE, COMPARISON_DRAFT_STORE, DIAGNOSTIC_REPORT_STORE, DIAGNOSTIC_DRAFT_STORE, VEHICLE_REFERENCE_STORE, INSPECTION_COMPARISON_STORE, EVIDENCE_DATABASE_NAME, EVIDENCE_DATABASE_VERSION, EVIDENCE_STORAGE_TIMEOUT_MS, openEvidenceDatabase, PHOTO_DRAFT_STORE, SERVICE_RECORD_STORE, SERVICE_RECORD_DRAFT_STORE } from "./evidenceDb";
+import { OBSERVATION_AREA_STORE, OBSERVATION_AREA_DRAFT_STORE, COMPONENT_MAP_STORE, COMPARISON_DRAFT_STORE, DIAGNOSTIC_REPORT_STORE, DIAGNOSTIC_DRAFT_STORE, VEHICLE_REFERENCE_STORE, INSPECTION_COMPARISON_STORE, EVIDENCE_DATABASE_NAME, EVIDENCE_DATABASE_VERSION, EVIDENCE_STORAGE_TIMEOUT_MS, openEvidenceDatabase, PHOTO_DRAFT_STORE, SERVICE_RECORD_STORE, SERVICE_RECORD_DRAFT_STORE } from "./evidenceDb";
 
 // These tests exercise connection/upgrade lifecycle only. Atomic storage semantics
 // require the separate native IndexedDB browser checks, not this request stub.
@@ -28,8 +28,8 @@ describe("shared evidence database opener", () => {
     request.onsuccess?.call(request, new Event("success"));
     expect(await pending).toBe(database);
     expect(open).toHaveBeenCalledWith(EVIDENCE_DATABASE_NAME, EVIDENCE_DATABASE_VERSION);
-    expect(database.createObjectStore).toHaveBeenCalledTimes(8);
-    expect([...stores].sort()).toEqual([COMPONENT_MAP_STORE, PHOTO_DRAFT_STORE, SERVICE_RECORD_STORE, SERVICE_RECORD_DRAFT_STORE, INSPECTION_COMPARISON_STORE, COMPARISON_DRAFT_STORE, DIAGNOSTIC_REPORT_STORE, DIAGNOSTIC_DRAFT_STORE, VEHICLE_REFERENCE_STORE].sort());
+    expect(database.createObjectStore).toHaveBeenCalledTimes(10);
+    expect([...stores].sort()).toEqual([COMPONENT_MAP_STORE, PHOTO_DRAFT_STORE, SERVICE_RECORD_STORE, SERVICE_RECORD_DRAFT_STORE, INSPECTION_COMPARISON_STORE, COMPARISON_DRAFT_STORE, DIAGNOSTIC_REPORT_STORE, DIAGNOSTIC_DRAFT_STORE, VEHICLE_REFERENCE_STORE, OBSERVATION_AREA_STORE, OBSERVATION_AREA_DRAFT_STORE].sort());
     database.onversionchange?.call(database, new Event("versionchange") as IDBVersionChangeEvent);
     expect(database.close).toHaveBeenCalledTimes(1);
   });
@@ -40,10 +40,10 @@ describe("shared evidence database opener", () => {
     request.onupgradeneeded?.call(request, new Event("upgradeneeded") as IDBVersionChangeEvent);
     request.onsuccess?.call(request, new Event("success"));
     expect(await pending).toBe(database);
-    expect(database.createObjectStore).toHaveBeenCalledTimes(7);
+    expect(database.createObjectStore).toHaveBeenCalledTimes(9);
     expect(database.createObjectStore).toHaveBeenCalledWith(SERVICE_RECORD_STORE);
     expect(database.createObjectStore).toHaveBeenCalledWith(SERVICE_RECORD_DRAFT_STORE);
-    expect(stores.size).toBe(9);
+    expect(stores.size).toBe(11);
     database.close();
   });
 
@@ -53,9 +53,9 @@ describe("shared evidence database opener", () => {
     request.onupgradeneeded?.call(request, new Event("upgradeneeded") as IDBVersionChangeEvent);
     request.onsuccess?.call(request, new Event("success"));
     expect(await pending).toBe(database);
-    expect(database.createObjectStore).toHaveBeenCalledTimes(6);
+    expect(database.createObjectStore).toHaveBeenCalledTimes(8);
     expect(database.createObjectStore).toHaveBeenCalledWith(SERVICE_RECORD_DRAFT_STORE);
-    expect(stores.size).toBe(9); database.close();
+    expect(stores.size).toBe(11); database.close();
   });
 
   it("adds later evidence stores without recreating version-four drafts and histories", async () => {
@@ -63,10 +63,10 @@ describe("shared evidence database opener", () => {
     const pending = openEvidenceDatabase();
     request.onupgradeneeded?.call(request, new Event("upgradeneeded") as IDBVersionChangeEvent);
     request.onsuccess?.call(request, new Event("success"));
-    expect(await pending).toBe(database); expect(database.createObjectStore).toHaveBeenCalledTimes(5);
+    expect(await pending).toBe(database); expect(database.createObjectStore).toHaveBeenCalledTimes(7);
     expect(database.createObjectStore).toHaveBeenCalledWith(INSPECTION_COMPARISON_STORE);
     expect(database.createObjectStore).toHaveBeenCalledWith(COMPARISON_DRAFT_STORE);
-    expect(stores.size).toBe(9); database.close();
+    expect(stores.size).toBe(11); database.close();
   });
 
   it("adds diagnostic and vehicle-reference stores while preserving every version-five history/draft store", async () => {
@@ -75,12 +75,12 @@ describe("shared evidence database opener", () => {
     const pending = openEvidenceDatabase();
     request.onupgradeneeded?.call(request, new Event("upgradeneeded") as IDBVersionChangeEvent);
     request.onsuccess?.call(request, new Event("success"));
-    expect(await pending).toBe(database); expect(EVIDENCE_DATABASE_VERSION).toBe(7);
-    expect(database.createObjectStore).toHaveBeenCalledTimes(3);
+    expect(await pending).toBe(database); expect(EVIDENCE_DATABASE_VERSION).toBe(8);
+    expect(database.createObjectStore).toHaveBeenCalledTimes(5);
     expect(database.createObjectStore).toHaveBeenCalledWith(DIAGNOSTIC_REPORT_STORE);
     expect(database.createObjectStore).toHaveBeenCalledWith(DIAGNOSTIC_DRAFT_STORE);
     for (const store of prior) expect(database.createObjectStore).not.toHaveBeenCalledWith(store);
-    expect(stores.size).toBe(9); database.close();
+    expect(stores.size).toBe(11); database.close();
   });
 
   it("adds only vehicle references when upgrading version six without recreating existing evidence", async () => {
@@ -89,11 +89,11 @@ describe("shared evidence database opener", () => {
     const pending = openEvidenceDatabase();
     request.onupgradeneeded?.call(request, new Event("upgradeneeded") as IDBVersionChangeEvent);
     request.onsuccess?.call(request, new Event("success"));
-    expect(await pending).toBe(database); expect(EVIDENCE_DATABASE_VERSION).toBe(7);
-    expect(database.createObjectStore).toHaveBeenCalledTimes(1);
+    expect(await pending).toBe(database); expect(EVIDENCE_DATABASE_VERSION).toBe(8);
+    expect(database.createObjectStore).toHaveBeenCalledTimes(3);
     expect(database.createObjectStore).toHaveBeenCalledWith(VEHICLE_REFERENCE_STORE);
     for (const store of prior) expect(database.createObjectStore).not.toHaveBeenCalledWith(store);
-    expect(stores.size).toBe(9); database.close();
+    expect(stores.size).toBe(11); database.close();
   });
 
   it("creates all stores for a new account-independent database schema", async () => {
@@ -111,7 +111,29 @@ describe("shared evidence database opener", () => {
     expect(stores.has(DIAGNOSTIC_REPORT_STORE)).toBe(true);
     expect(stores.has(DIAGNOSTIC_DRAFT_STORE)).toBe(true);
     expect(stores.has(VEHICLE_REFERENCE_STORE)).toBe(true);
+    expect(stores.has(OBSERVATION_AREA_STORE)).toBe(true);
+    expect(stores.has(OBSERVATION_AREA_DRAFT_STORE)).toBe(true);
     database.close();
+  });
+
+  it("adds only observation history and recovery stores when upgrading version seven", async () => {
+    const prior = [PHOTO_DRAFT_STORE, COMPONENT_MAP_STORE, SERVICE_RECORD_STORE, SERVICE_RECORD_DRAFT_STORE, INSPECTION_COMPARISON_STORE, COMPARISON_DRAFT_STORE, DIAGNOSTIC_REPORT_STORE, DIAGNOSTIC_DRAFT_STORE, VEHICLE_REFERENCE_STORE];
+    const { request, database, stores } = opening(prior);
+    const pending = openEvidenceDatabase();
+    request.onupgradeneeded?.call(request, new Event("upgradeneeded") as IDBVersionChangeEvent);
+    request.onsuccess?.call(request, new Event("success"));
+    expect(await pending).toBe(database); expect(database.createObjectStore).toHaveBeenCalledTimes(2);
+    for (const store of prior) expect(database.createObjectStore).not.toHaveBeenCalledWith(store);
+    expect(stores.has(OBSERVATION_AREA_STORE)).toBe(true); expect(stores.has(OBSERVATION_AREA_DRAFT_STORE)).toBe(true);
+    database.close();
+  });
+
+  it("reports a newer database version without advising data deletion or storage replacement", async () => {
+    const { request, database } = opening();
+    Object.defineProperty(request, "error", { value: new DOMException("Newer version exists", "VersionError") });
+    const pending = expect(openEvidenceDatabase()).rejects.toThrow("Keep your entered work, then reload");
+    request.onerror?.call(request, new Event("error")); await pending;
+    expect(database.createObjectStore).not.toHaveBeenCalled();
   });
 
   it("rejects a blocked open and aborts a late upgrade instead of changing storage after failure", async () => {

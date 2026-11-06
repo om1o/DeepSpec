@@ -23,6 +23,9 @@ import { readCloudDiagnosticBundle } from "./diagnosticReportCloud";
 import { verifyMapOverviewImage } from "./mapOverviewEvidence";
 import { verifyLinkedPhotoGroup, type LinkedPhotoGroupVerification } from "./linkedPhotoEvidence";
 import { readRequestedEvidenceHistory, type RequestedEvidenceHistory } from "./requestedEvidenceHistory";
+import { readObservationAreas } from "./observationAreaStore";
+import { normalizeObservationAreaRecords } from "../lib/observationArea";
+import { observationAnalysisSha256, observationAreaReferenceForLookup } from "./observationAreaEvidence";
 
 export const INSPECTION_REPORT_MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 export const INSPECTION_REPORT_MAX_TOTAL_BYTES = 32 * 1024 * 1024;
@@ -142,6 +145,9 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
   const serviceLogs: NonNullable<InspectionReportSnapshot["serviceLogs"]> = [];
   const serviceEvidence: NonNullable<InspectionReportSnapshot["serviceEvidence"]> = [];
   const serviceSignatures = new Map<string, string | null>();
+  const observationAreaLogs: NonNullable<InspectionReportSnapshot["observationAreaLogs"]> = [];
+  const observationAreaEvidence: NonNullable<InspectionReportSnapshot["observationAreaEvidence"]> = [];
+  const observationAreaSignatures = new Map<string, string | null>();
   const comparisonLogs: NonNullable<InspectionReportSnapshot["comparisonLogs"]> = [];
   const comparisonEvidence: NonNullable<InspectionReportSnapshot["comparisonEvidence"]> = [];
   const comparisonSignatures = new Map<string, string | null>();
@@ -279,6 +285,15 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
       }
     }
     serviceLogs.push({ lookupId: id, records: structuredClone(serviceRecords), cloudChecked });
+    try {
+      const records = normalizeObservationAreaRecords(await wait(() => readObservationAreas(id, scope)), id);
+      if (!records) throw new Error();
+      observationAreaLogs.push({ lookupId: id, records });
+      observationAreaSignatures.set(id, JSON.stringify(records));
+    } catch (error) {
+      rethrowFatal(error); observationAreaSignatures.set(id, null);
+      missing.push({ kind: "observation_areas", lookupId: id, message: "Human observation-area history on this device could not be read. Its absence does not mean no marks or corrections exist." });
+    }
     for (const record of serviceRecords) if (record.version === 2) for (const side of record.requestedMeasurement.references) addReference(side.lookupId, [side.photoId]);
     if (!source) {
       if (id === rootLookupId) throw new ReportError(true, "This saved scan is unavailable. Reopen it from Saved scans before exporting.");
@@ -386,6 +401,36 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
       }
     }
   }
+  progress("Checking originals used by human observation areas…");
+  const areaChecks = new Map<string, NonNullable<InspectionReportSnapshot["observationAreaEvidence"]>[number]>();
+  const analysisHashes = new Map<string, string | null>();
+  for (const log of observationAreaLogs) for (const record of log.records) {
+    check();
+    const binding = record.binding, side = binding.reference, key = JSON.stringify(binding);
+    let evidence = areaChecks.get(key);
+    if (!evidence) {
+      if (areaChecks.size >= 1000) throw new ReportError(true, "This report exceeds 1,000 distinct observation-area references. Export a smaller inspection; no partial report was prepared.");
+      const scan = scans.find((entry) => entry.id === side.lookupId);
+      const photos = scan ? scan.photos !== undefined ? scan.photos : [{ ...scan.frame, id: "photo-1" }] : [];
+      const matches = photos.filter((photo) => photo.id === side.photoId);
+      let status: NonNullable<InspectionReportSnapshot["observationAreaEvidence"]>[number]["status"] = matches.length > 1 ? "verification_unavailable" : "missing_photo";
+      if (scan && matches.length === 1 && matches[0].imageBase64) {
+        try {
+          const actual = await wait((signal) => comparisonSideForLookup(scan, side.photoId, scope, signal));
+          status = comparisonSideMatches(observationAreaReferenceForLookup(binding, scan), actual) ? "unchanged" : "source_changed";
+        } catch (error) { rethrowFatal(error); status = "verification_unavailable"; }
+      }
+      if (scan && !analysisHashes.has(scan.id)) {
+        try { analysisHashes.set(scan.id, await wait((signal) => observationAnalysisSha256(scan, scope, signal))); }
+        catch (error) { rethrowFatal(error); analysisHashes.set(scan.id, null); }
+      }
+      evidence = { lookupId: record.lookupId, recordId: record.id, photoId: side.photoId, status, analysisMatches: analysisHashes.get(side.lookupId) === binding.analysisSha256 };
+      areaChecks.set(key, evidence);
+    }
+    observationAreaEvidence.push({ ...evidence, recordId: record.id });
+    if (evidence.status !== "unchanged") missing.push({ kind: "observation_areas", lookupId: side.lookupId, photoId: side.photoId,
+      message: "A human observation area's original photo or saved context could not be verified. Its history is retained, but its outline is not placed on a replacement image." });
+  }
   progress("Checking originals cited by requested measurements…");
   const verifiedServiceReferences = new Map<string, NonNullable<InspectionReportSnapshot["serviceEvidence"]>[number]["status"]>();
   for (const log of serviceLogs) for (const record of log.records) if (record.version === 2) for (const side of record.requestedMeasurement.references) {
@@ -454,6 +499,11 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
     const current = finalSnapshot.serviceRecords.get(id);
     if ((current === null ? null : JSON.stringify(current)) !== before) throw staleError();
   }
+  for (const [id, before] of observationAreaSignatures) {
+    if (!finalSnapshot.observationAreas.has(id)) throw staleError();
+    const current = finalSnapshot.observationAreas.get(id);
+    if ((current === null ? null : JSON.stringify(current)) !== before) throw staleError();
+  }
   for (const [id, before] of comparisonSignatures) {
     if (!finalSnapshot.comparisons.has(id)) throw staleError();
     const current = finalSnapshot.comparisons.get(id);
@@ -472,7 +522,7 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
   for (const [id, before] of localSignatures) if (JSON.stringify(getLookup(id, finalRead.value)) !== before) throw staleError();
   check();
   return { version: 1, createdAt: new Date().toISOString(), rootLookupId, map: map ? structuredClone(map) : null,
-    ...(mapOverviewEvidence ? { mapOverviewEvidence } : {}), ...(map ? { linkedPhotoEvidence } : {}), scans, missing, embeddedBytes, serviceLogs, serviceEvidence, comparisonLogs, comparisonEvidence, diagnosticLogs, diagnosticEvidence,
+    ...(mapOverviewEvidence ? { mapOverviewEvidence } : {}), ...(map ? { linkedPhotoEvidence } : {}), scans, missing, embeddedBytes, serviceLogs, serviceEvidence, observationAreaLogs, observationAreaEvidence, comparisonLogs, comparisonEvidence, diagnosticLogs, diagnosticEvidence,
     requestedEvidenceHistory: { ...requestedHistory, originLookupId: rootLookupId, source: "device", cloudSearched: false } };
 }
 

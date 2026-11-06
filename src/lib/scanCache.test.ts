@@ -65,6 +65,25 @@ describe("getCachedScanResult", () => {
 });
 
 describe("setCachedScanResult / getCachedScanResult", () => {
+  it.each(["valid", "foreign-photo", "out-of-bounds"])("validates AI areas at cache write and untrusted restore: %s", (kind) => {
+    const result: IdentificationResult = { ...makeResult("Brake Caliper"), conditionAssessment: { version: 2,
+      observations: [{ id: "edge", text: "A dark line is visible.", photoIds: ["photo-1"], areas: [{
+        photoId: kind === "foreign-photo" ? "photo-2" : "photo-1", rectangle: { x: 0.2, y: 0.3, width: kind === "out-of-bounds" ? 1 : 0.2, height: 0.2 },
+      }] }], possibleCauses: [], unknowns: [] } };
+    const original = structuredClone(result);
+    setCachedScanResult("area", result);
+    const written = JSON.parse(localStorage.getItem(accountStorageKey(SCAN_CACHE_KEY))!)[0].result;
+    if (kind === "valid") expect(written.conditionAssessment).toEqual(result.conditionAssessment);
+    else expect(written).not.toHaveProperty("conditionAssessment");
+    localStorage.setItem(accountStorageKey(SCAN_CACHE_KEY), JSON.stringify([{ inputVersion: "single-original-v1", pipelineVersion: IDENTIFY_PIPELINE_VERSION,
+      hash: "area", result, cachedAt: "2026-11-05T00:00:00Z" }]));
+    const restored = getCachedScanResult("area");
+    expect(restored?.partName).toBe(result.partName);
+    if (kind === "valid") expect(restored?.conditionAssessment).toEqual(result.conditionAssessment);
+    else expect(restored).not.toHaveProperty("conditionAssessment");
+    expect(result).toEqual(original);
+  });
+
   it("retains a single-original review and the original model run without inventing fresh coverage", () => {
     const result: IdentificationResult = { ...makeResult("Brake Caliper"), photoReview: { version: 1,
       photos: [{ photoId: "photo-1", status: "limited_view", summary: "Only one surface is visible." }], disagreements: [] } };

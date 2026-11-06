@@ -107,6 +107,6 @@ export function buildPhotoEvidencePrompt(photos: InspectionPhoto[], relationship
     ...photos.map(photoCaption),
     "Cite the relevant photo ids with visible observations and evidence, including evidenceRegions descriptions when returning structured identification. Keep directly visible evidence separate from possible causes, which must be labeled unconfirmed.",
     "Do not infer hidden condition, damage depth, severity, or structural integrity from appearance alone; state what remains unknown. For rust on a rocker panel, distinguish visible surface corrosion from unverified perforation or internal damage, and do not present an assumed cause as observed evidence.",
-    "Give a targeted next check or photo that resolves the main uncertainty or contradictory views. Return image coordinates only for the first photo; describe other views using their photo ids without coordinates. Measurement context and supplemental OCR, when present, apply only to the first photo.",
+    "Give a targeted next check or photo that resolves the main uncertainty or contradictory views. Main-part identification geometry applies only to the first photo. Condition-assessment version 2 may additionally return an optional observation area for any explicitly cited photo, in that entire photo's own normalized coordinate space; never transfer geometry between images. Measurement context and supplemental OCR, when present, apply only to the first photo.",
   ].join("\n");
 }

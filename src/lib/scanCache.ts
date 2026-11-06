@@ -2,6 +2,7 @@ import type { IdentificationResult } from "../types/index";
 import { IDENTIFY_PIPELINE_VERSION } from "../services/systemPrompts";
 import { accountStorageKey } from "./accountScope";
 import { normalizePhotoReview } from "./photoReview";
+import { normalizeConditionAssessment } from "./conditionAssessment";
 
 export const SCAN_CACHE_KEY = "deep-spec:scan-cache";
 export const SCAN_CACHE_MAX = 20;
@@ -67,9 +68,10 @@ function isOnDeviceEstimate(result: IdentificationResult | undefined): boolean {
 function withSingleOriginalPhotoReview(result: IdentificationResult): IdentificationResult {
   // This cache accepts only the legacy single-original request shape, whose
   // actual request ID is photo-1. Never remap a custom/group ID onto that photo.
-  const { photoReview: rawPhotoReview, ...rest } = result;
+  const { photoReview: rawPhotoReview, conditionAssessment: rawAssessment, ...rest } = result;
   const photoReview = normalizePhotoReview(rawPhotoReview, ["photo-1"]);
-  return { ...rest, ...(photoReview ? { photoReview } : {}) };
+  const conditionAssessment = normalizeConditionAssessment(rawAssessment, ["photo-1"]);
+  return { ...rest, ...(photoReview ? { photoReview } : {}), ...(conditionAssessment ? { conditionAssessment } : {}) };
 }
 
 export function getCachedScanResult(hash: string): IdentificationResult | null {

@@ -50,7 +50,7 @@ describe("normalizeConditionAssessment", () => {
     ["missing", undefined], ["null", null], ["array", []],
     ["missing version", { ...assessment(), version: undefined }],
     ["string version", { ...assessment(), version: "1" }],
-    ["unknown version", { ...assessment(), version: 2 }],
+    ["unknown version", { ...assessment(), version: 3 }],
     ["empty observations", { ...assessment(), observations: [] }],
     ["missing causes", { ...assessment(), possibleCauses: undefined }],
     ["missing unknowns", { ...assessment(), unknowns: undefined }],
@@ -107,5 +107,45 @@ describe("normalizeConditionAssessment", () => {
     const input = { version: 1, observations: [{ id: " obs ", text: "Flaking is visible.", photoIds: [" photo "] }], possibleCauses: [{ text: "Possible corrosion.", observationIds: [" obs "] }], unknowns: [] };
     expect(normalizeConditionAssessment(input, [" photo "])).toEqual(input);
     expect(normalizeConditionAssessment(input, ["photo"])).toBeUndefined();
+  });
+
+  it("retains distinct per-photo AI rectangles in v2 without inventing missing geometry", () => {
+    const input = { ...assessment(), version: 2, observations: [
+      { ...assessment().observations[0], areas: [
+        { photoId: "overview-1", rectangle: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 } },
+        { photoId: "close-up-2", rectangle: { x: 0.6, y: 0.1, width: 0.2, height: 0.2 } },
+      ] }, assessment().observations[1],
+    ] };
+    const normalized = normalizeConditionAssessment(input, allowedPhotos);
+    expect(normalized).toEqual(input);
+    expect(normalized?.observations[0].areas?.[1].rectangle).not.toBe(input.observations[0].areas?.[1].rectangle);
+    expect(normalized?.observations[1]).not.toHaveProperty("areas");
+    expect(normalized).not.toHaveProperty("humanConfirmed");
+    expect(normalizeConditionAssessment({ ...input, observations: [{ ...input.observations[0], areas: [] }, input.observations[1]] }, allowedPhotos)?.observations[0].areas).toEqual([]);
+  });
+
+  it.each([
+    null, {}, Array(1),
+    [{ photoId: "other-photo", rectangle: { x: 0, y: 0, width: 1, height: 1 } }],
+    [{ photoId: "overview-1", rectangle: { x: 0, y: 0, width: 1, height: 1 } }],
+    Array(2).fill({ photoId: "close-up-2", rectangle: { x: 0, y: 0, width: 1, height: 1 } }),
+    [{ photoId: "close-up-2", rectangle: [0, 0, 1000, 1000] }],
+    [{ photoId: "close-up-2", rectangle: { x: 200, y: 300, width: 100, height: 200 } }],
+    [{ photoId: "close-up-2", rectangle: { x: 0, y: 0, width: "0.2", height: 0.2 } }],
+    [{ photoId: "close-up-2", rectangle: { x: -0.01, y: 0, width: 0.2, height: 0.2 } }],
+    [{ photoId: "close-up-2", rectangle: { x: 0.9, y: 0, width: 0.2, height: 0.2 } }],
+    [{ photoId: "close-up-2", rectangle: { x: 0, y: 0.9, width: 0.2, height: 0.2 } }],
+    [{ photoId: "close-up-2", rectangle: { x: 0, y: 0, width: 0, height: 0.2 } }],
+    [{ photoId: "close-up-2", rectangle: { x: 0, y: NaN, width: 0.2, height: 0.2 } }],
+    [{ photoId: "close-up-2", rectangle: { x: 0, y: 0, width: Infinity, height: 0.2 } }],
+    [{ photoId: "close-up-2", rectangle: { x: 0, y: 0, width: 0.2, height: 0.2, confidence: 0.9 } }],
+  ].map((areas) => [areas]))("rejects malformed or uncited v2 areas without rescaling, clipping or reassignment (%#)", (areas) => {
+    const input = { ...assessment(), version: 2, observations: [{ ...assessment().observations[1], areas }], possibleCauses: [] };
+    expect(normalizeConditionAssessment(input, allowedPhotos)).toBeUndefined();
+  });
+
+  it("does not silently upgrade a legacy assessment or accept future geometry in v1", () => {
+    expect(normalizeConditionAssessment(assessment(), allowedPhotos)).toEqual(assessment());
+    expect(normalizeConditionAssessment({ ...assessment(), observations: [{ ...assessment().observations[0], areas: [] }] }, allowedPhotos)).toBeUndefined();
   });
 });
