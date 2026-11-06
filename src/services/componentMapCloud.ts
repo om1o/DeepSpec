@@ -222,7 +222,8 @@ export async function syncComponentMapToCloud(mapId: string, expectedLocalRevisi
       : table.update({ document_json: row.document_json, revision: row.revision }).eq("user_id", scope.userId)
         .eq("map_id", mapId).eq("revision", snapshot.cloudRevision).select("revision").abortSignal(signal).maybeSingle());
     assertAccount(scope);
-    if (response.error && !["23505", "40001"].includes(response.error.code)) throw databaseFailure(response.error);
+    const revisionConflict = response.error?.code === "P0001" && response.error.message === "component_map_revision_conflict";
+    if (response.error && !revisionConflict && !["23505", "40001"].includes(response.error.code)) throw databaseFailure(response.error);
     if (response.error || !response.data) {
       const remote = await readRemote(client, mapId, scope);
       if (remote) await transactComponentMap(mapId, (current) => {

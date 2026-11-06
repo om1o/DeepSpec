@@ -325,6 +325,50 @@ describe("component-map cloud concurrency and evidence", () => {
     expect(write).not.toHaveBeenCalled();
   });
 
+  it.each([[null, "local"], [5, "cloud"]] as const)("retains bound photo evidence on a non-retryable conflict at revision %s until choosing %s", async (cloudRevision, choice) => {
+    bindLinkedPhotos();
+    current!.cloudRevision = cloudRevision;
+    const device = structuredClone(current!.document);
+    const cloud = structuredClone(device); cloud.components[0].notes = "Other device inspection notes";
+    write.mockResolvedValue({ data: null, error: { code: "P0001", message: "component_map_revision_conflict" } });
+    remote = { data: { map_id: "overview", document_json: cloud, revision: 8 }, error: null };
+
+    expect(await syncComponentMapToCloud("overview", 1)).toMatchObject({ ok: false, message: expect.stringContaining("Both versions are preserved") });
+    expect(current).toMatchObject({ document: device, conflict: { document: cloud, revision: 8 }, cloudRevision, syncedLocalRevision: 0, localRevision: 2 });
+    expect(current?.syncAttempt).toBeUndefined();
+    expect(write).toHaveBeenCalledOnce(); expect(remoteRead).toHaveBeenCalledOnce();
+    expect(insert).toHaveBeenCalledTimes(cloudRevision === null ? 1 : 0);
+    expect(update).toHaveBeenCalledTimes(cloudRevision === null ? 0 : 1);
+    expect(mocks.syncLookup).not.toHaveBeenCalled();
+
+    expect(await syncComponentMapToCloud("overview", 2)).toMatchObject({ ok: false, message: expect.stringContaining("Both versions") });
+    expect(write).toHaveBeenCalledOnce(); expect(remoteRead).toHaveBeenCalledOnce();
+    expect(await resolveComponentMapCloudConflict("overview", 1, choice)).toMatchObject({ ok: false });
+    expect(current?.conflict?.document).toEqual(cloud);
+    expect(await resolveComponentMapCloudConflict("overview", 2, choice)).toMatchObject({ ok: true });
+    expect(current?.document).toEqual(choice === "local" ? device : cloud);
+    expect(current).toMatchObject({ cloudRevision: 8, localRevision: 3, syncedLocalRevision: choice === "cloud" ? 3 : 0 });
+    expect(current?.conflict).toBeUndefined();
+    expect(write).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { code: "P0001", message: "component_map_invalid" },
+    { code: "P0001", message: "scan_lookup_revision_conflict" },
+    { code: "P0001" },
+    { code: "23514", message: "component_map_revision_conflict" },
+  ])("does not offer conflict resolution for a different failure: %j", async (error) => {
+    bindLinkedPhotos(); current!.cloudRevision = 5;
+    const device = structuredClone(current!.document);
+    write.mockResolvedValue({ data: null, error });
+    remote = { data: { map_id: "overview", document_json: document("Unrelated remote content"), revision: 8 }, error: null };
+
+    expect(await syncComponentMapToCloud("overview", 1)).toMatchObject({ ok: false, message: expect.stringContaining("could not be saved") });
+    expect(current).toMatchObject({ document: device, cloudRevision: 5, localRevision: 1, syncedLocalRevision: 0 });
+    expect(current?.conflict).toBeUndefined(); expect(current?.syncAttempt).toBeUndefined();
+    expect(write).toHaveBeenCalledOnce(); expect(remoteRead).not.toHaveBeenCalled();
+  });
+
   it("uploads a missing referenced scan before inserting its map", async () => {
     mocks.cloudLookup.mockResolvedValueOnce({ ok: true, value: null });
     await syncComponentMapToCloud("overview", 1);

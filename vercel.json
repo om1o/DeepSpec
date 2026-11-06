@@ -27,7 +27,8 @@
       "codex/car-capture-job-context-20261105": false,
       "codex/car-report-readability-20261105": false,
       "codex/car-scene-without-primary-20261105": false,
-      "codex/car-scan-conflict-error-20261105": false
+      "codex/car-scan-conflict-error-20261105": false,
+      "codex/car-map-conflict-error-20261105": false
     }
   },
   "functions": {
