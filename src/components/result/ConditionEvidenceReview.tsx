@@ -2,7 +2,7 @@ import type { Lookup } from "../../types";
 import { buildConditionHandoff } from "../../lib/conditionHandoff";
 import { RequestedEvidenceCapture } from "./RequestedEvidenceCapture";
 
-export function ConditionEvidenceReview({ lookup, onSelectPhoto, disabled = false }: { lookup: Lookup; onSelectPhoto: (id: string) => void; disabled?: boolean }) {
+export function ConditionEvidenceReview({ lookup, onSelectPhoto, onRecordMeasurement, disabled = false }: { lookup: Lookup; onSelectPhoto: (id: string) => void; onRecordMeasurement?: () => void; disabled?: boolean }) {
   const review = buildConditionHandoff(lookup);
   if (!review.assessment) return null;
   return <section aria-label="Condition evidence" className="rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 text-sm text-[var(--ds-fg-2)]">
@@ -25,6 +25,10 @@ export function ConditionEvidenceReview({ lookup, onSelectPhoto, disabled = fals
       <p className="mt-1">{review.nextEvidence.request}</p>
       <p className="mt-1 text-xs text-[var(--ds-fg-3)]">Why: {review.nextEvidence.purpose}</p>
       <RequestedEvidenceCapture lookup={lookup} disabled={disabled} onSelectPhoto={onSelectPhoto} />
+      {review.nextEvidence.kind === "measurement" && onRecordMeasurement ? <div className="mt-3">
+        <button type="button" className="min-h-11 rounded-full border border-[var(--ds-border)] px-4 py-2 text-sm font-bold disabled:opacity-50" disabled={disabled} onClick={onRecordMeasurement}>Record requested measurement</button>
+        <p className="mt-2 text-xs">Open a human measurement entry linked to this request. A saved reading does not resolve the AI request or establish condition or safety.</p>
+      </div> : null}
     </div> : null}
     <p className="mt-4 text-xs text-[var(--ds-fg-3)]">Functional checks: {review.functionStatus}</p>
   </section>;

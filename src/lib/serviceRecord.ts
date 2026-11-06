@@ -1,6 +1,7 @@
 import type { VehicleContext } from "../types";
 import type { ServiceRecord, ServiceRecordCommon } from "../types/serviceRecord";
 import { normalizeVehicleContext, vehicleContextDetails } from "./vehicleContext";
+import { normalizeRequestedMeasurementReceipt } from "./requestedMeasurement";
 
 export const MAX_SERVICE_RECORDS = 100;
 export const MAX_SERVICE_RECORD_BYTES = 256 * 1024;
@@ -64,7 +65,8 @@ type ParsedRecord = { ok: true; value: ServiceRecord } | { ok: false; message: s
 const invalid = (message: string): ParsedRecord => ({ ok: false, message });
 
 function parseRecord(value: unknown): ParsedRecord {
-  if (!object(value) || value.version !== 1) return invalid("This service record has an unsupported version or structure.");
+  if (!object(value) || (value.version !== 1 && value.version !== 2)) return invalid("This service record has an unsupported version or structure.");
+  if (value.version === 1 && "requestedMeasurement" in value) return invalid("A legacy service record cannot contain requested-measurement evidence.");
   if (!uuid(value.id) || !lookupIdValid(value.lookupId)) return invalid("This service record needs a valid entry ID and saved scan ID.");
   if (!timestampValid(value.recordedAt)) return invalid("Recorded time must be a valid UTC ISO timestamp.");
   if (value.occurredOn !== null && !dateValid(value.occurredOn)) return invalid("Enter a valid performed date (YYYY-MM-DD), or leave it unknown.");
@@ -79,9 +81,14 @@ function parseRecord(value: unknown): ParsedRecord {
   if (value.supersedesId !== undefined && (!uuid(value.supersedesId) || value.supersedesId.toLowerCase() === value.id.toLowerCase())) return invalid("A correction must reference a different valid service entry.");
   if (value.supersedesId !== undefined ? !text(value.correctionReason, 1000, true) : value.correctionReason !== undefined) return invalid("A correction needs its prior entry and a reason of 1 to 1000 characters.");
   if (value.vehicleContext !== undefined && (!object(value.vehicleContext) || !vehicleFieldsValid(value.vehicleContext))) return invalid("The saved vehicle context is invalid or exceeds its field limits.");
+  const requestedMeasurement = value.version === 2 ? normalizeRequestedMeasurementReceipt(value.requestedMeasurement, value.lookupId) : undefined;
+  if (value.version === 2 && (!requestedMeasurement || !["measurement", "retraction"].includes(String(value.kind))
+    || requestedMeasurement.guide.analysisAttemptId !== value.analysisAttemptId
+    || requestedMeasurement.guide.photoIds.some((photoId) => !(value.photoIds as string[]).includes(photoId)))) return invalid("Keep the exact requested measurement, saved analysis and all cited original references. Only measurements and their retractions can carry this receipt.");
+  const metadata = requestedMeasurement ? { version: 2 as const, requestedMeasurement } : { version: 1 as const };
   const vehicleContext = vehicleSnapshot(value.vehicleContext);
   const common: ServiceRecordCommon = {
-    version: 1, id: value.id.toLowerCase(), lookupId: value.lookupId, recordedAt: value.recordedAt,
+    id: value.id.toLowerCase(), lookupId: value.lookupId, recordedAt: value.recordedAt,
     occurredOn: value.occurredOn, recordedBy: value.recordedBy, basis: value.basis as ServiceRecordCommon["basis"],
     subject: value.subject, photoIds: [...value.photoIds] as string[], notes: value.notes,
     ...(value.analysisAttemptId === undefined ? {} : { analysisAttemptId: value.analysisAttemptId }),
@@ -95,12 +102,12 @@ function parseRecord(value: unknown): ParsedRecord {
     if (!text(value.method, 1000, value.reading !== null)) return invalid("Describe the measurement method (or explicitly say it is unknown), using no more than 1000 characters.");
     if (!text(value.instrument, 200) || !text(value.conditions, 1000)) return invalid("Keep instrument details within 200 characters and measurement conditions within 1000 characters.");
     if (!text(value.noReadingReason, 1000, value.reading === null) || (value.reading !== null && value.noReadingReason !== "")) return invalid("Explain why no reading was obtained, or clear that explanation when recording a reading.");
-    return { ok: true, value: { ...common, kind: "measurement", quantity: value.quantity, reading: value.reading, unit: value.unit, method: value.method, instrument: value.instrument, conditions: value.conditions, noReadingReason: value.noReadingReason } };
+    return { ok: true, value: { ...common, ...metadata, kind: "measurement", quantity: value.quantity, reading: value.reading, unit: value.unit, method: value.method, instrument: value.instrument, conditions: value.conditions, noReadingReason: value.noReadingReason } };
   }
   if (value.kind === "repair") {
     if (!text(value.action, 2000, true) || !text(value.parts, 2000)) return invalid("Describe the repair work and parts using no more than 2000 characters each.");
     if (typeof value.status !== "string" || !["planned", "completed", "attempted", "unknown"].includes(value.status)) return invalid("Choose the reported repair status.");
-    return { ok: true, value: { ...common, kind: "repair", action: value.action, status: value.status as "planned" | "completed" | "attempted" | "unknown", parts: value.parts } };
+    return { ok: true, value: { ...common, version: 1, kind: "repair", action: value.action, status: value.status as "planned" | "completed" | "attempted" | "unknown", parts: value.parts } };
   }
   if (value.kind === "follow_up") {
     if (typeof value.outcome !== "string" || !["not_checked", "symptom_observed", "symptom_not_observed", "inconclusive"].includes(value.outcome)) return invalid("Choose the follow-up outcome.");
@@ -108,11 +115,11 @@ function parseRecord(value: unknown): ParsedRecord {
     if (!Array.isArray(value.relatedRecordIds) || value.relatedRecordIds.length > MAX_SERVICE_RECORDS || !value.relatedRecordIds.every(uuid)) return invalid("Follow-up references must identify saved service entries.");
     const relatedRecordIds = value.relatedRecordIds.map((id) => id.toLowerCase());
     if (new Set(relatedRecordIds).size !== relatedRecordIds.length || relatedRecordIds.includes(common.id)) return invalid("Follow-up references must be distinct and cannot reference the follow-up itself.");
-    return { ok: true, value: { ...common, kind: "follow_up", check: value.check, outcome: value.outcome as "not_checked" | "symptom_observed" | "symptom_not_observed" | "inconclusive", conditions: value.conditions, relatedRecordIds } };
+    return { ok: true, value: { ...common, version: 1, kind: "follow_up", check: value.check, outcome: value.outcome as "not_checked" | "symptom_observed" | "symptom_not_observed" | "inconclusive", conditions: value.conditions, relatedRecordIds } };
   }
   if (value.kind === "retraction") {
     if (!common.supersedesId || !common.correctionReason) return invalid("A retraction must identify its prior entry and explain why it is retracted.");
-    return { ok: true, value: { ...common, kind: "retraction", supersedesId: common.supersedesId, correctionReason: common.correctionReason } };
+    return { ok: true, value: { ...common, ...metadata, kind: "retraction", supersedesId: common.supersedesId, correctionReason: common.correctionReason } };
   }
   return invalid("Choose measurement, repair, follow-up or retraction.");
 }
@@ -153,6 +160,8 @@ function graphValid(records: readonly ServiceRecord[]): boolean {
     if (record.supersedesId) {
       const previous = byId.get(record.supersedesId)!;
       if (previous.kind === "retraction" || (record.kind !== "retraction" && record.kind !== previous.kind)) return false;
+      if (record.version !== previous.version || (previous.version === 2 && (record.version !== 2
+        || JSON.stringify(previous.requestedMeasurement) !== JSON.stringify(record.requestedMeasurement)))) return false;
     }
   }
   const visiting = new Set<string>(), visited = new Set<string>();
@@ -217,6 +226,15 @@ export function serviceRecordRows(record: ServiceRecord, options: ServiceRecordD
   ];
   if (options.includeRecorder) rows.push(["Recorded by — self-reported", record.recordedBy]);
   if (record.analysisAttemptId) rows.push(["Saved analysis reference", record.analysisAttemptId]);
+  if (record.version === 2) {
+    const receipt = record.requestedMeasurement;
+    rows.push(["Historical measurement request", receipt.guide.request], ["Request purpose", receipt.guide.purpose],
+      ["Request analysis SHA-256", receipt.analysisSha256],
+      ["Request cited originals", receipt.guide.photoIds.length ? receipt.guide.photoIds.join(", ") : "No originals cited; no original image is bound to this request"],
+      ["Request association limits", "A human response to a historical request does not establish that it is resolved, confirm a diagnosis or certify safety."]);
+    for (const reference of receipt.references) rows.push([`Request original — ${reference.photoId}`,
+      `${reference.photoLabel}; ${reference.width} × ${reference.height}; SHA-256 ${reference.sha256}; added ${reference.photoAddedAt}; scan saved ${reference.scanSavedAt}`]);
+  }
   if (record.supersedesId) rows.push(["Supersedes entry", record.supersedesId], ["Correction / retraction reason", record.correctionReason!]);
   if (record.vehicleContext) {
     const safe = vehicleSnapshot(record.vehicleContext);

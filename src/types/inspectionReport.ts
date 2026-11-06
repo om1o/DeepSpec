@@ -40,6 +40,13 @@ export type InspectionReportSnapshot = {
   missing: InspectionReportIssue[];
   embeddedBytes: number;
   serviceLogs?: { lookupId: string; records: ServiceRecord[]; cloudChecked: boolean }[];
+  /** Requested-measurement references checked against this snapshot's embedded bytes. */
+  serviceEvidence?: {
+    lookupId: string;
+    recordId: string;
+    photoId: string;
+    status: "unchanged" | "source_changed" | "missing_photo" | "verification_unavailable";
+  }[];
   comparisonLogs?: { lookupId: string; records: InspectionComparison[]; cloudChecked: boolean }[];
   /** Reverse discovery is device-only; complete never means all cloud/device history. */
   requestedEvidenceHistory?: {

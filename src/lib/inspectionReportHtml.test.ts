@@ -55,6 +55,14 @@ function humanMeasurement(): Extract<ServiceRecord, { kind: "measurement" }> {
     analysisAttemptId: "original-analysis", vehicleContext: { year: "2010", make: "Example", model: "Test", mileage: "123000", mileageUnit: "mi", vin: "1HGBH41JXMN109186" },
     kind: "measurement", quantity: "Thickness", reading: "2.00", unit: "mm", method: "Caliper across marked location", instrument: "Unverified caliper", conditions: "Dry", noReadingReason: "" };
 }
+function requestedServiceMeasurement(): Extract<ServiceRecord, { version: 2; kind: "measurement" }> {
+  const first = humanMeasurement();
+  return { ...first, version: 2, requestedMeasurement: { version: 1,
+    guide: { version: 1, kind: "measurement", request: "Measure the historical edge <script>request</script>.", purpose: "Record the reading & method, not an inferred service limit.", photoIds: [...first.photoIds], analysisAttemptId: first.analysisAttemptId },
+    analysisSha256: "d".repeat(64), references: first.photoIds.map((photoId) => ({ lookupId: first.lookupId, photoId, photoLabel: photoId.endsWith("front") ? "overview" : "marking", photoAddedAt: WHEN, scanSavedAt: WHEN,
+      sha256: OVERVIEW_SOURCE.sha256, width: 1, height: 1, observedOn: null, analysisAttemptId: first.analysisAttemptId,
+      vehicleContext: { vin: "PRIVATE_RECEIPT_VIN", model: "PRIVATE_RECEIPT_CONTEXT" } })) } };
+}
 
 function visualComparison(): InspectionComparison {
   const side = (lookupId: string): ComparisonSide => ({ lookupId, photoId: `${lookupId}-label`, photoLabel: "marking", photoAddedAt: WHEN, scanSavedAt: WHEN,
@@ -78,6 +86,63 @@ function withRequestedHistory(input: InspectionReportSnapshot, records = [reques
 }
 
 describe("self-contained mechanic HTML report", () => {
+  it("renders historical requested measurements, exact readings, no-reading corrections and retractions without leaking receipt context", () => {
+    const first = requestedServiceMeasurement();
+    const corrected = { ...first, id: "10000000-0000-4000-8000-000000000002", supersedesId: first.id, recordedAt: "2026-11-05T13:00:00Z", correctionReason: "Cannot rely on original reading", reading: null, unit: "", method: "", noReadingReason: "The tool could not reach the marked edge." };
+    const retracted: Extract<ServiceRecord, { version: 2; kind: "retraction" }> = { version: 2, kind: "retraction", id: "10000000-0000-4000-8000-000000000003", lookupId: first.lookupId,
+      recordedAt: "2026-11-05T14:00:00Z", occurredOn: null, recordedBy: first.recordedBy, basis: first.basis, subject: first.subject, photoIds: first.photoIds, notes: "Retraction preserves the original request",
+      analysisAttemptId: first.analysisAttemptId, supersedesId: corrected.id, correctionReason: "Request requires professional assessment", requestedMeasurement: structuredClone(first.requestedMeasurement) };
+    const input = snapshot(), records = [first, corrected, retracted];
+    input.serviceLogs = [{ lookupId: first.lookupId, records, cloudChecked: false }];
+    input.serviceEvidence = records.flatMap((record) => record.requestedMeasurement.references.map((side) => ({ lookupId: record.lookupId, recordId: record.id, photoId: side.photoId, status: "unchanged" })));
+    const before = JSON.stringify(input), doc = parsed(input), articles = [...doc.querySelectorAll('.service-record')];
+    expect(articles).toHaveLength(3);
+    for (const article of articles) {
+      expect(article.textContent).toContain(first.requestedMeasurement.guide.request);
+      expect(article.textContent).toContain(first.requestedMeasurement.guide.purpose);
+      expect(article.textContent).toContain(first.requestedMeasurement.analysisSha256);
+      expect(article.textContent).toContain("historical receipt data");
+      expect(article.querySelector('.requested-measurement')?.textContent).toContain("embedded original bytes and saved context match this receipt");
+      expect(article.querySelector('.requested-measurement a')?.getAttribute('href')).toBe('#scan-1-photo-1');
+    }
+    expect(articles[0].textContent).toContain("2.00 mm");
+    expect(articles[1].textContent).toContain("No reading obtained");
+    expect(articles[1].textContent).toContain(corrected.noReadingReason);
+    expect(articles[1].textContent).not.toContain("0 mm");
+    expect(articles[2].textContent).toContain("retracted");
+    expect(articles[2].querySelector('a[href="#scan-1-service-2"]')).not.toBeNull();
+    for (const marker of ["PRIVATE_RECEIPT_VIN", "PRIVATE_RECEIPT_CONTEXT", first.recordedBy, "PRIVATE_SCAN_CANARY"]) expect(doc.body.textContent).not.toContain(marker);
+    expect(parsed(input, { includeVin: true, includePrivateNotes: true }).body.textContent).not.toContain("PRIVATE_RECEIPT_VIN");
+    expect(doc.querySelector("script")).toBeNull();
+    expect(JSON.stringify(input)).toBe(before);
+  });
+
+  it.each(["source_changed", "missing_photo", "verification_unavailable", "absent", "duplicate", "missing-pixels"] as const)("does not claim a matching requested-measurement original when proof is %s", (status) => {
+    const input = snapshot(), record = requestedServiceMeasurement();
+    input.serviceLogs = [{ lookupId: record.lookupId, records: [record], cloudChecked: false }];
+    if (status !== "absent") input.serviceEvidence = [{ lookupId: record.lookupId, recordId: record.id, photoId: record.photoIds[0], status: status === "duplicate" || status === "missing-pixels" ? "unchanged" : status }];
+    if (status === "duplicate") input.serviceEvidence!.push({ ...input.serviceEvidence![0] });
+    if (status === "missing-pixels") input.scans[0].photos![0].imageBase64 = "";
+    const doc = parsed(input), evidence = doc.querySelector('.requested-measurement')!;
+    expect(evidence.textContent).not.toContain("embedded original bytes and saved context match");
+    expect(evidence.textContent).toContain("not verified as the receipt original");
+    expect(evidence.querySelector('a')?.getAttribute('href')).toBe('#scan-1-photo-1');
+    expect(doc.querySelector('#missing-evidence')?.textContent).toContain("Requested measurement");
+    expect(doc.querySelector('.service-record')?.textContent).toContain("2.00 mm");
+    if (status === "source_changed") expect(evidence.textContent).toContain("differs from this receipt");
+  });
+
+  it("does not invent a bound photo for an uncited measurement request", () => {
+    const input = snapshot(), record = requestedServiceMeasurement();
+    record.requestedMeasurement.guide.photoIds = []; record.requestedMeasurement.references = [];
+    input.serviceLogs = [{ lookupId: record.lookupId, records: [record], cloudChecked: false }];
+    const doc = parsed(input), evidence = doc.querySelector('.requested-measurement')!;
+    expect(evidence.textContent).toContain("No original photos were cited");
+    expect(evidence.textContent).toContain("do not retroactively become AI citations");
+    expect(evidence.querySelector('a')).toBeNull();
+    expect(doc.querySelector('.service-record a[href="#scan-1-photo-1"]')).not.toBeNull();
+  });
+
   function scopedSnapshot(): InspectionReportSnapshot {
     const input = snapshot([lookup(), lookup("linked"), lookup("outside"), lookup("conflict")]);
     input.scans.forEach((scan) => { scan.vehicleContext = { vin: "PRIVATE_SCOPE_VIN", customerName: "PRIVATE_SCOPE_CUSTOMER", jobTitle: "PRIVATE_SCOPE_JOB_TITLE" }; });

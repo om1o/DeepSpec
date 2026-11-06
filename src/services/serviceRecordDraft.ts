@@ -1,8 +1,10 @@
 import { accountStorageKey, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import { providerVehicleContext } from "../lib/vehicleContext";
-import { normalizeServiceRecord } from "../lib/serviceRecord";
+import { MAX_SERVICE_RECORD_BYTES, normalizeServiceRecord } from "../lib/serviceRecord";
+import { normalizeRequestedMeasurementReceipt } from "../lib/requestedMeasurement";
 import type { Lookup, VehicleContext } from "../types";
 import type { ServiceRecord, ServiceRecordKind } from "../types/serviceRecord";
+import type { RequestedMeasurementReceipt } from "../types/requestedMeasurement";
 import { EVIDENCE_STORAGE_TIMEOUT_MS, openEvidenceDatabase, SERVICE_RECORD_DRAFT_STORE } from "./evidenceDb";
 
 export type ServiceRecordFields = {
@@ -17,10 +19,14 @@ export type ServiceRecordContext = {
   lookupId: string; analysisAttemptId?: string; vehicleContext: VehicleContext | null;
   photos: { id: string; label: string; capturedAt: string; fingerprint: string }[];
 };
-export type ServiceRecordDraft = {
-  version: 1; id: string; recordedAt: string; updatedAt: string; context: ServiceRecordContext;
+type ServiceRecordDraftBase = {
+  id: string; recordedAt: string; updatedAt: string; context: ServiceRecordContext;
   fields: ServiceRecordFields; supersedesId?: string; baseRecord?: string;
 };
+export type ServiceRecordDraft = ServiceRecordDraftBase & (
+  | { version: 1; requestedMeasurement?: never }
+  | { version: 2; requestedMeasurement: RequestedMeasurementReceipt }
+);
 export const emptyServiceRecordFields: ServiceRecordFields = {
   kind: "measurement", occurredOn: "", recordedBy: "", basis: "personally_performed", subject: "", notes: "", photoIds: [],
   quantity: "", reading: "", readingState: "obtained", unit: "", method: "Unknown", instrument: "Unknown", conditions: "", noReadingReason: "",
@@ -35,7 +41,7 @@ const failed = "The service draft could not be kept on this device. Download a c
 export const serviceRecordDraftKey = (lookupId: string) => accountStorageKey(`service-record-draft:${encodeURIComponent(lookupId)}`);
 
 export function serviceRecordPhotos(lookup: Lookup) {
-  return lookup.photos?.length ? lookup.photos : [{ ...lookup.frame, id: "photo-1", label: "overview" as const }];
+  return lookup.photos !== undefined ? lookup.photos : [{ ...lookup.frame, id: "photo-1", label: "overview" as const }];
 }
 
 function evidenceIdentity(image: string) {
@@ -69,12 +75,19 @@ export function newServiceRecordDraft(context: ServiceRecordContext): ServiceRec
   return { version: 1, id: crypto.randomUUID(), recordedAt: now, updatedAt: now, context, fields: { ...emptyServiceRecordFields, photoIds: [], relatedRecordIds: [] } };
 }
 
+export function requestedServiceRecordDraft(context: ServiceRecordContext, receipt: RequestedMeasurementReceipt): ServiceRecordDraft {
+  const checked = normalizeRequestedMeasurementReceipt(receipt);
+  if (!checked || checked.references.some((side) => side.lookupId !== context.lookupId) || !checked.guide.photoIds.every((id) => context.photos.some((photo) => photo.id === id))) throw new Error("The requested measurement references do not match this saved scan.");
+  return { ...newServiceRecordDraft(context), version: 2, requestedMeasurement: checked,
+    fields: { ...emptyServiceRecordFields, subject: "Requested measurement", photoIds: [...checked.guide.photoIds], relatedRecordIds: [] } };
+}
+
 export function serviceRecordFromDraft(draft: ServiceRecordDraft): unknown {
   const f = draft.fields;
   const original = originalRecord(draft);
   const vehicleContext = original ? original.vehicleContext : draft.context.vehicleContext;
   const analysisAttemptId = original ? original.analysisAttemptId : draft.context.analysisAttemptId;
-  const common = { version: 1, id: draft.id, lookupId: draft.context.lookupId, recordedAt: draft.recordedAt,
+  const common = { version: draft.version, ...(draft.version === 2 ? { requestedMeasurement: draft.requestedMeasurement } : {}), id: draft.id, lookupId: draft.context.lookupId, recordedAt: draft.recordedAt,
     occurredOn: f.occurredOn || null, recordedBy: f.recordedBy, basis: f.basis, subject: f.subject, photoIds: f.photoIds,
     ...(analysisAttemptId ? { analysisAttemptId } : {}),
     ...(vehicleContext ? { vehicleContext } : {}), notes: f.notes,
@@ -102,39 +115,46 @@ export function correctionServiceRecordDraft(record: ServiceRecord, context: Ser
   if (record.kind === "measurement") Object.assign(draft.fields, { quantity: record.quantity, reading: record.reading ?? "", readingState: record.reading === null ? "not_obtained" : "obtained", unit: record.unit, method: record.method, instrument: record.instrument, conditions: record.conditions, noReadingReason: record.noReadingReason });
   if (record.kind === "repair") Object.assign(draft.fields, { action: record.action, repairStatus: record.status, parts: record.parts });
   if (record.kind === "follow_up") Object.assign(draft.fields, { check: record.check, outcome: record.outcome, conditions: record.conditions, relatedRecordIds: [...record.relatedRecordIds] });
-  return draft;
+  return record.version === 2 ? { ...draft, version: 2, requestedMeasurement: record.requestedMeasurement } : draft;
 }
 
 function parseDraft(raw: string): ServiceRecordDraft | null {
-  if (raw.length > 80_000) return null;
+  // The envelope holds a receipt plus an escaped immutable parent record.
+  // Image bytes never belong here; retain valid rich metadata without truncation.
+  if (raw.length > 2 * 1024 * 1024 || new TextEncoder().encode(raw).byteLength > 2 * 1024 * 1024) return null;
   try {
     const value = JSON.parse(raw) as ServiceRecordDraft;
     const c = value?.context; const f = value?.fields;
-    if (value?.version !== 1 || typeof value.id !== "string" || !uuid.test(value.id) || typeof value.recordedAt !== "string" || typeof value.updatedAt !== "string" || !Number.isFinite(Date.parse(value.recordedAt)) || !Number.isFinite(Date.parse(value.updatedAt))
+    if ((value?.version !== 1 && value?.version !== 2) || (value.version === 1 && Object.hasOwn(value, "requestedMeasurement")) || typeof value.id !== "string" || !uuid.test(value.id) || typeof value.recordedAt !== "string" || typeof value.updatedAt !== "string" || !Number.isFinite(Date.parse(value.recordedAt)) || !Number.isFinite(Date.parse(value.updatedAt))
       || !c || typeof c.lookupId !== "string" || !validOpaque(c.lookupId, attemptId) || !f
       || (c.analysisAttemptId !== undefined && (typeof c.analysisAttemptId !== "string" || !validOpaque(c.analysisAttemptId, attemptId)))
-      || !Array.isArray(c.photos) || !c.photos.length || c.photos.length > 4
+      || !Array.isArray(c.photos) || c.photos.length > 4
       || c.photos.some((p) => !p || typeof p.id !== "string" || !validOpaque(p.id, photoId) || typeof p.label !== "string" || p.label.length > 80 || typeof p.capturedAt !== "string" || p.capturedAt.length > 80 || typeof p.fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(p.fingerprint))
       || new Set(c.photos.map((p) => p.id)).size !== c.photos.length
       || !(c.vehicleContext === null || (c.vehicleContext && typeof c.vehicleContext === "object" && !Array.isArray(c.vehicleContext) && JSON.stringify(providerVehicleContext(c.vehicleContext)) === JSON.stringify(c.vehicleContext)))
-      || (value.supersedesId !== undefined && (!uuid.test(value.supersedesId) || typeof value.baseRecord !== "string" || value.baseRecord.length > 25_000))) return null;
-    if (value.supersedesId) {
-      const original = originalRecord(value);
-      if (!original || original.id !== value.supersedesId || original.lookupId !== c.lookupId) return null;
-    }
+      || (value.supersedesId !== undefined && (!uuid.test(value.supersedesId) || typeof value.baseRecord !== "string"
+        || value.baseRecord.length > MAX_SERVICE_RECORD_BYTES || new TextEncoder().encode(value.baseRecord).byteLength > MAX_SERVICE_RECORD_BYTES))) return null;
+    const original = originalRecord(value);
+    if (value.supersedesId && (!original || original.id !== value.supersedesId || original.lookupId !== c.lookupId || original.version !== value.version)) return null;
+    const receipt = value.version === 2 ? normalizeRequestedMeasurementReceipt(value.requestedMeasurement) : undefined;
+    if (value.version === 2 && (!receipt || !["measurement", "retraction"].includes(f.kind)
+      || receipt.references.some((side) => side.lookupId !== c.lookupId)
+      || (original?.version === 2 ? JSON.stringify(original.requestedMeasurement) !== JSON.stringify(receipt)
+        : receipt.guide.analysisAttemptId !== c.analysisAttemptId))) return null;
     for (const key of Object.keys(emptyServiceRecordFields) as (keyof ServiceRecordFields)[]) {
       if (key === "photoIds" || key === "relatedRecordIds") {
         const ids = f[key]; const max = key === "photoIds" ? 4 : 100;
         if (!Array.isArray(ids) || ids.length > max || ids.some((id) => typeof id !== "string" || !validOpaque(id, key === "photoIds" ? photoId : uuid)) || new Set(ids).size !== ids.length) return null;
       } else if (typeof f[key] !== "string" || f[key].length > 4000) return null;
     }
-    if (!f.photoIds.every((id) => c.photos.some((p) => p.id === id))
+    if (!f.photoIds.every((id) => c.photos.some((p) => p.id === id) || (original?.version === 2 && original.photoIds.includes(id)))
+      || (receipt && !receipt.guide.photoIds.every((id) => f.photoIds.includes(id)))
       || !["measurement", "repair", "follow_up", "retraction"].includes(f.kind)
       || !["personally_performed", "reported_by_another", "transcribed_document"].includes(f.basis)
       || !["obtained", "not_obtained"].includes(f.readingState)
       || !["planned", "completed", "attempted", "unknown"].includes(f.repairStatus)
       || !["not_checked", "symptom_observed", "symptom_not_observed", "inconclusive"].includes(f.outcome)) return null;
-    return { version: 1, id: value.id, recordedAt: value.recordedAt, updatedAt: value.updatedAt, context: c,
+    return { ...(value.version === 2 ? { version: 2 as const, requestedMeasurement: receipt! } : { version: 1 as const }), id: value.id, recordedAt: value.recordedAt, updatedAt: value.updatedAt, context: c,
       fields: Object.fromEntries(Object.keys(emptyServiceRecordFields).map((key) => [key, f[key as keyof ServiceRecordFields]])) as ServiceRecordFields,
       ...(value.supersedesId ? { supersedesId: value.supersedesId, baseRecord: value.baseRecord } : {}) };
   } catch { return null; }
@@ -153,7 +173,7 @@ function requireDraftScope(scope: AccountScope, lookupId: string) {
  * A stored null is a tombstone: a discarded legacy draft cannot be imported again.
  * Legacy localStorage is never removed, so an older tab's recovery stays downloadable.
  */
-async function transactDraft(scope: AccountScope, lookupId: string, change?: { expectedRaw: string | null; raw: string | null }): Promise<DraftRaw> {
+async function transactDraft(scope: AccountScope, lookupId: string, change?: { expectedRaw: string | null; raw: string | null; precommitGuard?: () => void }): Promise<DraftRaw> {
   requireDraftScope(scope, lookupId);
   const database = await openEvidenceDatabase();
   try { requireDraftScope(scope, lookupId); } catch (error) { database.close(); throw error; }
@@ -186,6 +206,15 @@ async function transactDraft(scope: AccountScope, lookupId: string, change?: { e
           if (current !== null && typeof current !== "string") throw new Error("Saved draft recovery cannot be read safely. It was not overwritten; reopen the scan for recovery.");
           if (change && current !== change.expectedRaw) throw new Error(stale);
           const raw = change ? change.raw : current;
+          if (change && typeof current === "string" && raw !== null) {
+            const before = parseDraft(current), after = parseDraft(raw);
+            if (before?.version === 2 && (!after || after.version !== 2 || before.id !== after.id
+              || JSON.stringify(before.requestedMeasurement) !== JSON.stringify(after.requestedMeasurement)
+              || before.baseRecord !== after.baseRecord || before.supersedesId !== after.supersedesId
+              || !serviceRecordContextsMatch(before.context, after.context))) throw new Error("The requested measurement draft cannot be replaced or detached from its original request. Download or explicitly discard it first.");
+          }
+          requireDraftScope(scope, lookupId);
+          change?.precommitGuard?.();
           requireDraftScope(scope, lookupId);
           if (request.result === undefined || raw !== current) {
             try { store.put(raw, key); } catch { throw new Error(failed); }
@@ -217,11 +246,11 @@ export async function readServiceRecordDraft(scope: AccountScope, lookupId: stri
   }
 }
 
-export async function writeServiceRecordDraft(scope: AccountScope, lookupId: string, expectedRaw: string | null, record: ServiceRecordDraft | null): Promise<ServiceRecordDraftWrite> {
+export async function writeServiceRecordDraft(scope: AccountScope, lookupId: string, expectedRaw: string | null, record: ServiceRecordDraft | null, precommitGuard?: () => void): Promise<ServiceRecordDraftWrite> {
   try {
     requireDraftScope(scope, lookupId);
     const raw = record === null ? null : JSON.stringify(record);
     if (raw !== null && (!parseDraft(raw) || record?.context.lookupId !== lookupId)) return { ok: false, message: failed };
-    return { ok: true, ...await transactDraft(scope, lookupId, { expectedRaw, raw }) };
+    return { ok: true, ...await transactDraft(scope, lookupId, { expectedRaw, raw, precommitGuard }) };
   } catch (error) { return { ok: false, message: error instanceof Error ? error.message : failed }; }
 }

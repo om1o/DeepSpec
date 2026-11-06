@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getAccountScope, isAccountScopeCurrent, setActiveAccount } from "../lib/accountScope";
-import { mergeServiceRecords } from "../lib/serviceRecord";
-import type { ServiceRecord } from "../types/serviceRecord";
+import { mergeServiceRecords, normalizeServiceRecord } from "../lib/serviceRecord";
+import type { RequestedMeasurementServiceRecord, ServiceRecord } from "../types/serviceRecord";
 const mocks = vi.hoisted(() => ({ client: vi.fn(), import: vi.fn() }));
 vi.mock("./auth", () => ({ getAuthClient: mocks.client }));
 vi.mock("./serviceRecordStore", () => ({ importServiceRecords: mocks.import }));
@@ -15,6 +15,11 @@ function record(n = 1): ServiceRecord {
 }
 type Row = { id: string; user_id: string; lookup_id: string; record_json: ServiceRecord };
 const row = (value: ServiceRecord): Row => ({ id: value.id, user_id: "owner", lookup_id: value.lookupId, record_json: value });
+function requested(): RequestedMeasurementServiceRecord {
+  return normalizeServiceRecord({ ...record(), version: 2, kind: "measurement", quantity: "Thickness", reading: "+0012.000", unit: "mm", method: "Recorded method", instrument: "", conditions: "", noReadingReason: "",
+    requestedMeasurement: { version: 1, guide: { version: 1, kind: "measurement", request: "Record the reading", purpose: "Record missing evidence", photoIds: ["photo-1"] },
+      analysisSha256: "a".repeat(64), references: [{ lookupId: "scan", photoId: "photo-1", photoLabel: "close_up", photoAddedAt: "2026-11-05T00:00:00Z", scanSavedAt: "2026-11-05T00:00:00Z", sha256: "b".repeat(64), width: 32, height: 24, observedOn: null, vehicleContext: null }] } }) as RequestedMeasurementServiceRecord;
+}
 type Response = { data: unknown; error: { code: string; message?: string } | null };
 
 describe("immutable owner-scoped human record sync", () => {
@@ -76,6 +81,30 @@ describe("immutable owner-scoped human record sync", () => {
     expect(await syncServiceRecords("scan")).toMatchObject({synced:2});
     expect(insert.mock.calls.map(([value]) => value.id)).toEqual([id(1),id(2)]);
     expect(remote).toHaveLength(2); expect(local).toHaveLength(2);
+  });
+  it("round-trips full v2 receipts and exact reading text including correction/retraction history", async () => {
+    const first = requested();
+    const second = { ...first, id: id(2), supersedesId: first.id, correctionReason: "Transcription correction", reading: "12.010" };
+    const third = normalizeServiceRecord({ ...second, id: id(3), kind: "retraction", supersedesId: second.id, correctionReason: "Withdraw recorded method" })!;
+    local = [first, second, third];
+    expect(await syncServiceRecords("scan")).toMatchObject({ synced: 3 });
+    expect(await readCloudServiceRecords("scan")).toEqual(local);
+    expect(remote.every((entry) => entry.record_json.version === 2)).toBe(true);
+    expect(remote.map((entry) => entry.record_json.requestedMeasurement)).toEqual([first.requestedMeasurement, first.requestedMeasurement, first.requestedMeasurement]);
+    expect(remote[0].record_json).toHaveProperty("reading", "+0012.000");
+  });
+  it("reports an older schema rejecting v2 and never retries a stripped legacy record", async () => {
+    local = [requested()]; const before = structuredClone(local);
+    insertOverride = () => ({ data: null, error: { code: "23514", message: "sensitive server internals" } });
+    await expect(syncServiceRecords("scan")).rejects.toThrow("requested-measurement database migration");
+    expect(insert).toHaveBeenCalledTimes(1); expect(insert.mock.calls[0][0].record_json).toEqual(before[0]);
+    expect(local).toEqual(before); expect(remote).toEqual([]);
+  });
+  it("rejects cloud correction receipt changes while retaining complete device history", async () => {
+    const first = requested(); local = [first];
+    remote = [row(first), row({ ...first, id: id(2), supersedesId: first.id, correctionReason: "Changed binding", requestedMeasurement: { ...first.requestedMeasurement, analysisSha256: "c".repeat(64) } })];
+    await expect(syncServiceRecords("scan")).rejects.toThrow("invalid");
+    expect(local).toEqual([first]); expect(insert).not.toHaveBeenCalled();
   });
   it("does not create a parent or import anything when the owned scan is not cloud-saved", async () => {
     parentExists = false;

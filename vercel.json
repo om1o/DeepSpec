@@ -21,7 +21,8 @@
       "codex/car-linked-source-20261105": false,
       "codex/car-requested-capture-20261105": false,
       "codex/car-requested-history-20261105": false,
-      "codex/car-job-handoff-20261105": false
+      "codex/car-job-handoff-20261105": false,
+      "codex/car-requested-measurement-20261105": false
     }
   },
   "functions": {

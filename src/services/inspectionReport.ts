@@ -140,6 +140,7 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
   let embeddedBytes = 0, imageSlots = 0, diagnosticBytes = 0;
   const scans: Lookup[] = [];
   const serviceLogs: NonNullable<InspectionReportSnapshot["serviceLogs"]> = [];
+  const serviceEvidence: NonNullable<InspectionReportSnapshot["serviceEvidence"]> = [];
   const serviceSignatures = new Map<string, string | null>();
   const comparisonLogs: NonNullable<InspectionReportSnapshot["comparisonLogs"]> = [];
   const comparisonEvidence: NonNullable<InspectionReportSnapshot["comparisonEvidence"]> = [];
@@ -278,6 +279,7 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
       }
     }
     serviceLogs.push({ lookupId: id, records: structuredClone(serviceRecords), cloudChecked });
+    for (const record of serviceRecords) if (record.version === 2) for (const side of record.requestedMeasurement.references) addReference(side.lookupId, [side.photoId]);
     if (!source) {
       if (id === rootLookupId) throw new ReportError(true, "This saved scan is unavailable. Reopen it from Saved scans before exporting.");
       missing.push({ kind: "lookup", lookupId: id, message: "This linked saved scan is unavailable. Its component association and any available human-service history remain listed." });
@@ -384,6 +386,33 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
       }
     }
   }
+  progress("Checking originals cited by requested measurements…");
+  const verifiedServiceReferences = new Map<string, NonNullable<InspectionReportSnapshot["serviceEvidence"]>[number]["status"]>();
+  for (const log of serviceLogs) for (const record of log.records) if (record.version === 2) for (const side of record.requestedMeasurement.references) {
+    check();
+    const key = JSON.stringify(side);
+    let status = verifiedServiceReferences.get(key);
+    if (status === undefined) {
+      if (verifiedServiceReferences.size >= 1000) throw new ReportError(true, "This report exceeds the requested-measurement verification limit (1,000 distinct photo references). Export a smaller inspection; no partial report was prepared.");
+      const scan = scans.find((entry) => entry.id === side.lookupId);
+      const photos = scan ? scan.photos !== undefined ? scan.photos : [{ ...scan.frame, id: "photo-1" }] : [];
+      const matches = photos.filter((photo) => photo.id === side.photoId);
+      status = matches.length > 1 ? "verification_unavailable" : "missing_photo";
+      if (scan && matches.length === 1 && matches[0].imageBase64) {
+        try {
+          // This supplied scan has already been materialized. Only its exact
+          // embedded original is inspected; no URL or alternate source is used.
+          const actual = await wait(() => comparisonSideForLookup(scan, side.photoId, scope));
+          status = comparisonSideMatches(side, actual) ? "unchanged" : "source_changed";
+        } catch (error) { rethrowFatal(error); status = "verification_unavailable"; }
+      }
+      verifiedServiceReferences.set(key, status);
+    }
+    serviceEvidence.push({ lookupId: record.lookupId, recordId: record.id, photoId: side.photoId, status });
+    if (status !== "unchanged") missing.push({ kind: "service_records", lookupId: side.lookupId, photoId: side.photoId,
+      message: status === "source_changed" ? "This photo or its saved context differs from the requested-measurement receipt. The human record and historical request are retained; the current image is not presented as matching original evidence."
+        : "An original cited by a requested measurement could not be verified. The historical request and human record are retained without substituting another image." });
+  }
   progress("Checking originals used by dated comparisons…");
   for (const log of comparisonLogs) for (const record of log.records) for (const sideName of ["earlier", "current"] as const) {
     const side = record[sideName];
@@ -443,7 +472,7 @@ export async function collectInspectionReport(rootLookupId: string, options: Col
   for (const [id, before] of localSignatures) if (JSON.stringify(getLookup(id, finalRead.value)) !== before) throw staleError();
   check();
   return { version: 1, createdAt: new Date().toISOString(), rootLookupId, map: map ? structuredClone(map) : null,
-    ...(mapOverviewEvidence ? { mapOverviewEvidence } : {}), ...(map ? { linkedPhotoEvidence } : {}), scans, missing, embeddedBytes, serviceLogs, comparisonLogs, comparisonEvidence, diagnosticLogs, diagnosticEvidence,
+    ...(mapOverviewEvidence ? { mapOverviewEvidence } : {}), ...(map ? { linkedPhotoEvidence } : {}), scans, missing, embeddedBytes, serviceLogs, serviceEvidence, comparisonLogs, comparisonEvidence, diagnosticLogs, diagnosticEvidence,
     requestedEvidenceHistory: { ...requestedHistory, originLookupId: rootLookupId, source: "device", cloudSearched: false } };
 }
 

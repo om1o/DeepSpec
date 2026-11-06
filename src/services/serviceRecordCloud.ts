@@ -45,9 +45,10 @@ async function verifiedClient(scope: AccountScope, signal?: AbortSignal): Promis
   }
   return client;
 }
-function databaseError(error: { code?: string }) {
+function databaseError(error: { code?: string }, requestedMeasurement = false) {
   if (["42P01", "PGRST205", "42703", "PGRST204"].includes(error.code ?? "")) return new Error("Cloud human records require the human-service-records database migration. Your device history is preserved.");
   if (error.code === "23503") return new Error("Save this scan to the cloud first, then retry syncing its human records. Your device history is preserved.");
+  if (requestedMeasurement && error.code === "23514") return new Error("Cloud rejected the complete requested-measurement record. Check the requested-measurement database migration and record validity before retrying. Your device history is preserved; no reduced record was uploaded.");
   return new Error("Cloud human records could not be loaded or saved. Check your connection and account access, then retry. Your device history is preserved.");
 }
 function checkedRow(row: unknown, lookupId: string, scope: AccountScope): ServiceRecord {
@@ -112,7 +113,7 @@ export async function syncServiceRecords(lookupId: string, scope = getAccountSco
     const inserted = await bounded(scope, undefined, (signal) => client.from(TABLE)
       .insert({ user_id: scope.userId, id: record.id, lookup_id: lookupId, record_json: record })
       .select("id,user_id,lookup_id,record_json").abortSignal(signal).maybeSingle());
-    if (inserted.error && inserted.error.code !== "23505") throw databaseError(inserted.error);
+    if (inserted.error && inserted.error.code !== "23505") throw databaseError(inserted.error, record.version === 2);
     let saved: ServiceRecord;
     if (inserted.error?.code === "23505") {
       const existing = await bounded(scope, undefined, (signal) => client.from(TABLE).select("id,user_id,lookup_id,record_json")

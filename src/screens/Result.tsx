@@ -63,6 +63,7 @@ function ResultView({ id }: { id: string | undefined }) {
   const [liveScanState, setLiveScanState] = useState<ScanAnalysisState | null>(null);
   const [selectedPhotoId, setSelectedPhotoId] = useState<string>();
   const [evidenceViewRequest, setEvidenceViewRequest] = useState(0);
+  const [requestedMeasurementIntent, setRequestedMeasurementIntent] = useState<{ id: number; lookup: Lookup }>();
   const photoCanvasRef = useRef<HTMLDivElement>(null);
   const [selectionStatus, setSelectionStatus] = useState<string | null>(null);
   const [selectionRetry, setSelectionRetry] = useState<Lookup | null>(null);
@@ -483,7 +484,7 @@ function ResultView({ id }: { id: string | undefined }) {
             photoCanvasRef.current?.focus({ preventScroll: true });
             photoCanvasRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
           }} /> : null}
-          {inspectionLookup ? <ConditionEvidenceReview lookup={inspectionLookup} disabled={!locallySavedLookup || retryInProgress || hasPendingRetryResult || Boolean(saveError || selectionRetry)} onSelectPhoto={(photoId) => {
+          {inspectionLookup ? <ConditionEvidenceReview lookup={inspectionLookup} disabled={!locallySavedLookup || retryInProgress || hasPendingRetryResult || Boolean(saveError || selectionRetry)} onRecordMeasurement={() => setRequestedMeasurementIntent((previous) => ({ id: (previous?.id ?? 0) + 1, lookup: inspectionLookup }))} onSelectPhoto={(photoId) => {
             setSelectedPhotoId(photoId);
             setEvidenceViewRequest((request) => request + 1);
             photoCanvasRef.current?.focus({ preventScroll: true });
@@ -495,7 +496,7 @@ function ResultView({ id }: { id: string | undefined }) {
             ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
             ...(pendingCorrectionRef.current !== undefined ? { correction: pendingCorrectionRef.current } : {}),
           })} /> : null}
-          {inspectionLookup ? <ServiceRecordLog key={`service-log:${inspectionLookup.id}`} lookup={inspectionLookup} disabled={hasPendingRetryResult || Boolean(saveError || selectionRetry)} /> : null}
+          {inspectionLookup ? <ServiceRecordLog key={`service-log:${inspectionLookup.id}`} lookup={inspectionLookup} requestedMeasurementIntent={requestedMeasurementIntent} disabled={retryInProgress || hasPendingRetryResult || Boolean(saveError || selectionRetry)} /> : null}
             {inspectionLookup ? <ScanComparisonReview key={`comparison:${inspectionLookup.id}`} lookup={inspectionLookup} disabled={hasPendingRetryResult || Boolean(saveError || selectionRetry)} /> : null}
             {inspectionLookup ? <RequestedEvidenceHistory key={`requested-history:${inspectionLookup.id}`} lookup={inspectionLookup} disabled={hasPendingRetryResult || Boolean(saveError || selectionRetry)} /> : null}
           {inspectionLookup ? <DiagnosticReportReview key={`diagnostics:${inspectionLookup.id}`} lookup={inspectionLookup} disabled={hasPendingRetryResult || Boolean(saveError || selectionRetry)} /> : null}
