@@ -22,19 +22,19 @@ export function assertComponentCaptureCurrent(saved: Lookup, scope = getAccountS
     || photoRelationshipOrUnknown(current.photoRelationship) !== photoRelationshipOrUnknown(saved.photoRelationship)
     || (saved.photoRelationship !== undefined && !isPhotoRelationship(saved.photoRelationship))
     || (current.photoRelationship !== undefined && !isPhotoRelationship(current.photoRelationship))
-    || !vehicleContextsMatch(current.vehicleContext, saved.vehicleContext) || current.jobId !== saved.jobId) {
+    || !vehicleContextsMatch(current.vehicleContext, saved.vehicleContext) || current.jobId !== saved.jobId || current.orgId !== saved.orgId) {
     throw new Error("The saved component photos or their context changed. Its pending draft was kept for review.");
   }
 }
 
 /** Complete only the reserved saved scan. Never analyze again or discard its draft. */
-export async function completeComponentCapture(target: ComponentCaptureTarget, saved: Lookup, scope = getAccountScope(), signal?: AbortSignal): Promise<ComponentMapRecord> {
+export async function completeComponentCapture(target: ComponentCaptureTarget, saved: Lookup, scope = getAccountScope(), signal?: AbortSignal, assertContextCurrent?: () => void): Promise<ComponentMapRecord> {
   guardOriginalEvidence(scope, signal);
   const checked = normalizeComponentCaptureTarget(target), original = structuredClone(saved);
   if (!checked || checked.lookupId !== original.id) throw new Error("The saved scan does not match this component capture. Its draft was kept.");
   if (original.photoRelationship !== undefined && !isPhotoRelationship(original.photoRelationship)) throw new Error("The saved photo relationship is invalid. Its draft was kept.");
   const sourcePhotos = photos(original), photoIds = sourcePhotos.map((photo) => photo.id);
-  const assertCurrent = () => assertComponentCaptureCurrent(original, scope, signal);
+  const assertCurrent = () => { assertComponentCaptureCurrent(original, scope, signal); assertContextCurrent?.(); };
   assertCurrent();
   const map = await readComponentMap(checked.mapId, scope);
   assertCurrent();
@@ -48,7 +48,7 @@ export async function completeComponentCapture(target: ComponentCaptureTarget, s
   if (prior?.binding && (!prepared || !componentMapGroupBindingsMatch(prior.binding, prepared.binding))) {
     throw new Error("This capture is already linked to different source evidence. The existing link and pending draft were kept.");
   }
-  const committed = await linkComponentMap(checked, photoIds, scope, prepared);
+  const committed = await linkComponentMap(checked, photoIds, scope, prepared, assertCurrent);
   assertCurrent();
   const linked = committed.document.components.find((component) => component.id === checked.componentId)?.scanGroups.find((group) => group.linkId.toLowerCase() === checked.linkAttemptId.toLowerCase());
   if (!linked || linked.lookupId !== original.id || linked.photoIds.length !== photoIds.length || linked.photoIds.some((id, index) => id !== photoIds[index])) {

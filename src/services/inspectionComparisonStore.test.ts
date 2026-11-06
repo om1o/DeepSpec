@@ -101,6 +101,15 @@ describe("immutable device dated comparisons", () => {
     db.beforeGet(() => setActiveAccount("other"));
     await expect(appendInspectionComparison(record())).rejects.toThrow("Account changed"); expect(db.rows.size).toBe(0);
   });
+  it.each(["append", "retry"])("checks capture context inside the transaction for %s", async (operation) => {
+    await appendInspectionComparison(record());
+    let sourceJob = "original-job";
+    const assertContextCurrent = vi.fn(() => { if (sourceJob !== "original-job") throw new Error("Source job changed"); });
+    db.beforeGet(() => { sourceJob = "other-job"; });
+    await expect(appendInspectionComparison(record(operation === "append" ? 2 : 1), getAccountScope(), assertContextCurrent)).rejects.toThrow("Source job changed");
+    expect(assertContextCurrent).toHaveBeenCalledOnce();
+    expect(db.rows.get(JSON.stringify(["owner", "scan"]))).toEqual([record()]);
+  });
   it("keeps the previous history after storage failure and bounded transaction timeout", async () => {
     await appendInspectionComparison(record()); db.setFailPut();
     await expect(appendInspectionComparison(record(2))).rejects.toThrow();

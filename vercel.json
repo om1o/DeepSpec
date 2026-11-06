@@ -23,7 +23,8 @@
       "codex/car-requested-history-20261105": false,
       "codex/car-job-handoff-20261105": false,
       "codex/car-requested-measurement-20261105": false,
-      "codex/car-observation-areas-20261105": false
+      "codex/car-observation-areas-20261105": false,
+      "codex/car-capture-job-context-20261105": false
     }
   },
   "functions": {

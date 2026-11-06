@@ -191,6 +191,18 @@ describe("component-map overview binding transactions", () => {
     expect(db.rows.get(key)).toEqual(record());
   });
 
+  it.each(["new link", "retry"])("checks capture context inside the transaction for %s", async (operation) => {
+    db.rows.set(key, record());
+    const proof = prepared(), scope = getAccountScope();
+    const before = operation === "retry" ? await linkComponentMap(target(), ["photo-1", "photo-2"], scope, proof) : record();
+    let sourceJob = "original-job";
+    const assertContextCurrent = vi.fn(() => { if (sourceJob !== "original-job") throw new Error("Source job changed"); });
+    db.beforeGet(() => { sourceJob = "other-job"; });
+    await expect(linkComponentMap(target(), ["photo-1", "photo-2"], scope, proof, assertContextCurrent)).rejects.toThrow("Source job changed");
+    expect(assertContextCurrent).toHaveBeenCalledOnce();
+    expect(db.rows.get(key)).toEqual(before);
+  });
+
   it("keeps old ID-only retries unbound without requiring or applying today's hash", async () => {
     const saved = record(); saved.document.components[0].scanGroups.push({ linkId, lookupId: "detail", photoIds: ["photo-1", "photo-2"] }); db.rows.set(key, saved);
     expect(await linkComponentMap(target(), ["photo-1", "photo-2"])).toEqual(saved);

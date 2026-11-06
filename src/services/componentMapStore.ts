@@ -171,10 +171,11 @@ export function updateComponentMap(mapId: string, expectedLocalRevision: number,
   }, scope);
 }
 
-export function linkComponentMap(target: ComponentCaptureTarget, photoIds: readonly string[], scope = getAccountScope(), prepared?: { binding: ComponentMapGroupBinding; guard: LinkedPhotoSaveGuard }): Promise<ComponentMapRecord> {
+export function linkComponentMap(target: ComponentCaptureTarget, photoIds: readonly string[], scope = getAccountScope(), prepared?: { binding: ComponentMapGroupBinding; guard: LinkedPhotoSaveGuard }, assertContextCurrent?: () => void): Promise<ComponentMapRecord> {
   const checked = normalizeComponentCaptureTarget(target);
   if (!checked) return Promise.reject(new ComponentMapError("invalid_map", "This component capture target is invalid."));
   return transactComponentMap(checked.mapId, (current) => {
+    assertContextCurrent?.();
     if (!current) throw new ComponentMapError("missing_map", "This component map is missing. Its saved scan is still available in history.");
     const document = linkComponentMapDocument(current.document, checked, photoIds, prepared?.binding);
     const linked = document.components.find((component) => component.id === checked.componentId)?.scanGroups.find((group) => group.linkId.toLowerCase() === checked.linkAttemptId.toLowerCase());

@@ -45,7 +45,7 @@ function sourceSnapshot(lookup: Lookup, scope: AccountScope): string {
   const allowed = buildConditionHandoff(lookup).photos;
   const photos = comparisonPhotos(lookup);
   if (allowed.length !== photos.length) throw new Error("The saved original photo references are incomplete. Reopen the inspection.");
-  return canonical({ id: lookup.id, createdAt: lookup.createdAt, analysis: analysisSnapshot(lookup),
+  return canonical({ id: lookup.id, createdAt: lookup.createdAt, jobId: lookup.jobId ?? null, orgId: lookup.orgId ?? null, analysis: analysisSnapshot(lookup),
     photos: photos.map((photo) => ({ id: photo.id, label: photo.label, capturedAt: photo.capturedAt,
       image: originalImageReference(photo.imageBase64, lookup.id, scope) ?? photo.imageBase64 })),
     photoRelationship: photoRelationshipOrUnknown(lookup.photoRelationship), vehicleContext: providerVehicleContext(lookup.vehicleContext) ?? null });
