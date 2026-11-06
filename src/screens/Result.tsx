@@ -379,7 +379,7 @@ function ResultView({ id }: { id: string | undefined }) {
   return (
     <main className="ds-result-page ds-workbench min-h-dvh bg-[var(--ds-bg)] text-[var(--ds-fg-1)]">
       <div className="mx-auto grid min-h-dvh w-full max-w-[1600px] lg:grid-cols-[minmax(0,1fr)_430px] lg:gap-5 lg:p-5">
-        <section aria-label="Scan photo" data-testid="result-photo-panel" className="relative flex h-[48dvh] min-h-[320px] flex-col overflow-hidden bg-[#020617] text-white lg:sticky lg:top-5 lg:h-[calc(100dvh-40px)] lg:min-h-0 lg:rounded-[24px]">
+        <section aria-label="Scan photo" data-testid="result-photo-panel" className="relative flex flex-col overflow-hidden bg-[#020617] text-white lg:sticky lg:top-5 lg:h-[calc(100dvh-40px)] lg:overflow-y-auto lg:rounded-[24px]">
           <header className="relative z-10 flex shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4 pb-4 pt-[max(18px,env(safe-area-inset-top))]">
             <BrandLockup size="sm" />
             <h1 className="sr-only">{simpleSummary?.title ?? "Captured frame"}</h1>
@@ -389,7 +389,7 @@ function ResultView({ id }: { id: string | undefined }) {
             </nav>
           </header>
           <PhotoEvidenceStrip photos={scanState?.photos} photoRelationship={scanState?.photoRelationship} pipelineVersion={scanState?.result ? scanState.result.modelRun?.pipelineVersion : null} selectedId={selectedPhotoId} onSelect={(photoId) => { setSelectedPhotoId(photoId); setEvidenceViewRequest(0); }} />
-          <div ref={photoCanvasRef} tabIndex={-1} aria-label="Selected inspection photo" data-testid="result-photo-canvas" className="relative min-h-0 flex-1">
+          <div ref={photoCanvasRef} tabIndex={-1} aria-label="Selected inspection photo" data-testid="result-photo-canvas" className="relative h-[60dvh] min-h-[420px] flex-none lg:h-auto lg:flex-1">
             {displayFrame?.imageBase64 ? (
               <IsolatedPartView
                 key={evidenceViewRequest}

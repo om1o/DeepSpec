@@ -26,7 +26,8 @@
       "codex/car-observation-areas-20261105": false,
       "codex/car-capture-job-context-20261105": false,
       "codex/car-report-readability-20261105": false,
-      "codex/car-scene-without-primary-20261105": false
+      "codex/car-scene-without-primary-20261105": false,
+      "codex/car-photo-controls-layout-20261105": false
     }
   },
   "functions": {
