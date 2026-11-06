@@ -279,13 +279,15 @@ function ArStage({
 
   return (
     <div
-      ref={containerRef}
       aria-label={ariaLabel}
-      className={containerClassName}
+      className={`${containerClassName} flex flex-col overflow-hidden`}
       data-focus-mode={dataFocusMode}
       data-lens={dataLens}
       data-testid={testId}
     >
+      {controls}
+      {/* Measure only the photo region; the toolbar must not cover selectable parts. */}
+      <div ref={containerRef} className="relative min-h-0 flex-1 overflow-hidden" data-testid="ar-photo-region">
       {/* Blurred, dimmed fill for the letterbox area around the aspect-locked stage. */}
       <img
         aria-hidden
@@ -301,7 +303,7 @@ function ArStage({
           {children}
         </div>
       </div>
-      {controls}
+      </div>
     </div>
   );
 }
@@ -478,7 +480,7 @@ function PhotoViewControls({ view, onView, editing, canCorrect, needsSelection, 
   selectionMessage?: string;
   onCorrect: () => void;
 }) {
-  return <div className="pointer-events-auto absolute inset-x-2 top-2 z-[60] flex flex-wrap items-center gap-1 rounded-xl border border-white/25 bg-slate-950/90 p-1 text-white" aria-label="Photo inspection controls">
+  return <div className="pointer-events-auto relative z-[60] m-2 flex shrink-0 flex-wrap items-center gap-1 rounded-xl border border-white/25 bg-slate-950/90 p-1 text-white" aria-label="Photo inspection controls">
     <div role="group" aria-label="Photo view" className="flex">
       {(["original", "outline", "cutout"] as const).map((mode) => <button key={mode} type="button" aria-pressed={view === mode} disabled={editing}
         onClick={() => onView(mode)} className={`min-h-11 rounded-lg px-3 text-xs font-bold disabled:opacity-50 ${view === mode ? "bg-white text-slate-950" : "text-white"}`}>
