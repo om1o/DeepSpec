@@ -28,7 +28,9 @@
       "codex/car-report-readability-20261105": false,
       "codex/car-scene-without-primary-20261105": false,
       "codex/car-scan-conflict-error-20261105": false,
-      "codex/car-map-conflict-error-20261105": false
+      "codex/car-map-conflict-error-20261105": false,
+      "codex/car-photo-controls-layout-20261105": false,
+      "codex/car-inspection-candidate-20261106": false
     }
   },
   "functions": {
