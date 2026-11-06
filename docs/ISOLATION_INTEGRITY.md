@@ -14,7 +14,7 @@ Renewing a signed link to the same owned, untransformed Supabase object may be a
 
 Regression coverage includes mask/crop mixtures, missing geometry, original view, editor target replacement, storage replacement/deletion and explicit analysis initiation. Native acceptance should save, reopen and export a mixed scene; verify exact original image bytes; correct a secondary object; and reject an edit after replacing or reordering its saved source.
 
-The source still requires a primary selection box to attempt the multi-object scene pass. These selections belong to the first photo only. Secondary-photo region editing, durable per-claim annotations, confidence calibration and physical iPad/Safari acceptance remain unfinished. Synthetic UI tests do not establish segmentation accuracy, mechanical condition, live Gemini compatibility or usefulness on an actual vehicle.
+The scene pass retains located secondary components even when no primary selection box exists. A lone secondary selection remains selectable and correctable; it is not relabeled as the main part. Cached results preserve the same crop selections without another analysis. Unknown locations still receive no invented box. These part selections belong to the first photo only. Human per-claim areas on other photos are a separate review feature, not secondary-photo part isolation. Confidence calibration and physical iPad/Safari acceptance remain unfinished. Synthetic UI tests do not establish segmentation accuracy, mechanical condition, live Gemini compatibility or usefulness on an actual vehicle.
 
 Automatic Vercel deployment is disabled for this branch. Credentials, migrations, deployment and Production promotion are outside this source change.
 

@@ -96,7 +96,7 @@ function IsolatedPartViewContent({
   }
 
   // Keep successful cutouts and crop-only selections together in the same photo space.
-  if (objects && objects.length >= 2) {
+  if (objects && (objects.length >= 2 || objects.some((object) => !object.primary))) {
     return (
       <LensOverview
         frameBase64={frameBase64}

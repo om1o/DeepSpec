@@ -76,8 +76,10 @@ const SECOND_FRAME_DELAY_MS = 120;
 
 function sceneSelectionInputs(result: IdentificationResult, focusBox: VisualFocusBox | undefined): SceneObjectInput[] {
   const chips = getSceneChips(result);
-  return focusBox && chips.length ? [
-    { name: getSimpleResultSummary(result).title, category: String(result.scanCategory), box: focusBox, primary: true },
+  // A missing main-part outline must not discard independently located components.
+  // Only include the main identity when its own geometry is available.
+  return chips.length ? [
+    ...(focusBox ? [{ name: getSimpleResultSummary(result).title, category: String(result.scanCategory), box: focusBox, primary: true }] : []),
     ...chips.map((chip) => ({ name: chip.object.name, category: String(chip.object.category), box: chip.box, primary: false })),
   ] : [];
 }

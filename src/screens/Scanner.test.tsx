@@ -508,6 +508,52 @@ describe("Scanner", () => {
     expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ["fresh", 1], ["fresh", 2], ["fresh", 4], ["cached", 1], ["cached", 4],
+  ] as const)("retains %s secondary selections without a primary outline (%i objects)", async (source, count) => {
+    const originalImage = mockStillImageTarget(null);
+    const objects = [
+      { name: "Reservoir", category: "engine", regionLabel: "left", primary: false },
+      { name: "Wrench", category: "tools", regionLabel: "right", primary: false },
+      { name: "Hose", category: "engine", regionLabel: "upper left", primary: false },
+      { name: "Connector", category: "electrical", regionLabel: "lower right", primary: false },
+    ].slice(0, count);
+    const result = { ...makeScanResult("Alternator"), sceneObjects: objects };
+    isolateSceneObjects.mockImplementation(async (_frame: unknown, inputs: SceneObjectInput[]) => createSceneCropFallbacks(inputs));
+    if (source === "cached") {
+      assessImageQuality.mockResolvedValueOnce(passingQuality).mockResolvedValueOnce({ ok: false });
+      vi.mocked(hashImageDataUrl).mockResolvedValue("original-only-cache-key");
+      vi.mocked(getCachedScanResult).mockReturnValue(result);
+    } else identifyCapturedFrame.mockResolvedValueOnce(result);
+
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await waitFor(() => expect(getLookups()).toHaveLength(1));
+    const saved = getLookups()[0];
+    expect(saved.focusBox).toBeUndefined();
+    expect(saved.isolatedObjects).toHaveLength(count);
+    expect(saved.isolatedObjects?.map((object) => object.name)).toEqual(objects.map((object) => object.name));
+    expect(saved.isolatedObjects?.every((object) => !object.primary && object.focusMode === "crop" && object.isolatedImageBase64 === "")).toBe(true);
+    expect(saved.frame.imageBase64).toBe(originalImage);
+    expect(saved.result).toMatchObject({ partName: result.partName, sceneObjects: objects });
+    for (const object of objects) expect(screen.getByRole("button", { name: `Select ${object.name}` })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Select Alternator" })).not.toBeInTheDocument();
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(source === "cached" ? 0 : 1);
+    expect(isolateSceneObjects).toHaveBeenCalledTimes(source === "cached" ? 0 : 1);
+
+    await userEvent.click(screen.getByRole("button", { name: "Select Reservoir" }));
+    await userEvent.click(screen.getByRole("button", { name: "Correct area" }));
+    fireEvent.change(screen.getByRole("slider", { name: "Selection x" }), { target: { value: "40" } });
+    await userEvent.click(screen.getByRole("button", { name: "Apply area" }));
+    const reopened = getLookups()[0];
+    expect(reopened.isolatedObjects?.[0]).toMatchObject({ name: "Reservoir", primary: false, focusBox: { x: 0.4, confidence: 0 }, focusMode: "crop" });
+    expect(reopened.isolatedObjects?.slice(1)).toEqual(saved.isolatedObjects?.slice(1));
+    expect(reopened.focusBox).toBeUndefined();
+    expect(reopened.frame.imageBase64).toBe(originalImage);
+    expect(reopened.result).toEqual(saved.result);
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(source === "cached" ? 0 : 1);
+  });
+
   it.each(["success", "failure"])("ignores a previous scan's late object-analysis %s", async (outcome) => {
     mockStillImageTarget({ confidence: 0.9, x: 0.2, y: 0.2, width: 0.3, height: 0.3 });
     const focusBox = { x: 0.2, y: 0.2, width: 0.3, height: 0.3, confidence: 0.9 };
