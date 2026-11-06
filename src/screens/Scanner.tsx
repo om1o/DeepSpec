@@ -12,6 +12,7 @@ import { resolveComparisonSide } from "../services/comparisonEvidence";
 import { readComponentMap } from "../services/componentMapStore";
 import { assertComponentCaptureCurrent, completeComponentCapture } from "../services/componentCaptureCompletion";
 import { readComponentMapLookup } from "../services/componentMapCloud";
+import { readCaptureSource, verifyCaptureJobContext } from "../services/captureJobContext";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import Webcam from "react-webcam";
@@ -143,6 +144,12 @@ function newCaptureDraft(photos: ScanPhoto[], snapshot: CaptureVehicleSnapshot, 
   const common = { photos, photoRelationship: "unknown" as const, ...snapshot, ...(target ? { target } : {}) };
   return comparisonTarget?.version === 2 ? { version: 8, ...common, comparisonTarget }
     : comparisonTarget ? { version: 7, ...common, comparisonTarget } : { version: 6, ...common };
+}
+
+async function verifyDraftCaptureJobs(draft: PhotoDraftEnvelope, scope: ReturnType<typeof getAccountScope>, signal?: AbortSignal): Promise<() => void> {
+  const sourceIds = [...new Set([draft.target?.mapId, hasPhotoDraftComparison(draft) ? draft.comparisonTarget.earlier.lookupId : undefined].filter((id): id is string => Boolean(id)))];
+  const checks = await Promise.all(sourceIds.map((id) => verifyCaptureJobContext(id, hasPhotoDraftContext(draft) ? draft.jobId : undefined, scope, signal)));
+  return () => checks.forEach((check) => check());
 }
 
 type ScanQualityCoachIssue = ImageQualityIssue | "object_too_small" | "needs_better_photo";
@@ -516,13 +523,14 @@ export default function Scanner() {
 
   const captureVehicleSnapshot = useCallback(async (): Promise<CaptureVehicleSnapshot> => {
     if (routeCaptureError) throw new Error(routeCaptureError);
-    if (routeComparisonTarget) return { vehicleContext: structuredClone(routeComparisonTarget.earlier.vehicleContext) };
+    if (routeComparisonTarget) {
+      const source = await readCaptureSource(routeComparisonTarget.earlier.lookupId, accountScopeRef.current);
+      return { vehicleContext: structuredClone(routeComparisonTarget.earlier.vehicleContext), ...(source.jobId ? { jobId: source.jobId } : {}) };
+    }
     if (retakeVehicleSnapshotRef.current) return retakeVehicleSnapshotRef.current;
     if (routeCaptureTarget) {
-      const overview = await readComponentMapLookup(routeCaptureTarget.mapId, accountScopeRef.current);
-      if (!isAccountScopeCurrent(accountScopeRef.current)) throw new Error("Account changed. Reopen the original account before taking photos.");
-      if (!overview.ok || !overview.value) throw new Error(overview.ok ? "Reopen the component overview before taking photos." : overview.message);
-      return { vehicleContext: normalizeVehicleContext(overview.value.vehicleContext) ?? null };
+      const overview = await readCaptureSource(routeCaptureTarget.mapId, accountScopeRef.current);
+      return { vehicleContext: normalizeVehicleContext(overview.vehicleContext) ?? null, ...(overview.jobId ? { jobId: overview.jobId } : {}) };
     }
     return { vehicleContext: normalizeVehicleContext(activeShopVehicleContext ?? vehicleProfile) ?? null, ...(activeShopJob ? { jobId: activeShopJob.id } : {}) };
   }, [routeCaptureError, routeComparisonTarget, routeCaptureTarget, activeShopVehicleContext, vehicleProfile, activeShopJob]);
@@ -543,6 +551,10 @@ export default function Scanner() {
     photoRelationship?: PhotoRelationship,
     assertCaptureCurrent?: () => void,
   ) => {
+    const persistAnalyzedReview = (...args: Parameters<typeof persistAndShowReview>) => {
+      assertCaptureCurrent?.();
+      return persistAndShowReview(...args);
+    };
     const scanPhotoRelationship = photoRelationshipOrUnknown(photoRelationship);
     if (componentTarget && comparisonTarget && componentTarget.lookupId !== comparisonTarget.lookupId) throw new Error("These capture links refer to different saved scans. Your draft was kept.");
     const reservedId = comparisonTarget?.lookupId ?? componentTarget?.lookupId;
@@ -590,7 +602,7 @@ export default function Scanner() {
     if (!quality.ok) {
       stopForQualityCoach(quality.issue);
       const coach = getScanQualityCoach(quality.issue);
-      return persistAndShowReview({
+      return persistAnalyzedReview({
         frame, photos: evidencePhotos, photoRelationship: scanPhotoRelationship, scanQuality, errorCode: "quality_rejected",
         errorMessage: `Photo quality check: ${coach.title}. ${coach.action}${guidedRetakeUsedRef.current ? " Guided retake used; identity remains unresolved. Review the saved evidence before deciding what to do next." : " Identification was not run."}`,
         analyzedAt: sourceUpdatedAt,
@@ -698,7 +710,7 @@ export default function Scanner() {
         const shopScanContext = buildShopScanContext(scanShopJob, scanVehicleContext, contextualResult);
         setAnalysisStep("Opening result");
         recordScanOutcome(contextualResult);
-        return persistAndShowReview(
+        return persistAnalyzedReview(
           {
             frame,
             photos: evidencePhotos,
@@ -777,7 +789,7 @@ export default function Scanner() {
 
       setAnalysisStep("Saving");
       const shopScanContext = buildShopScanContext(scanShopJob, scanVehicleContext, result);
-      return persistAndShowReview(
+      return persistAnalyzedReview(
         {
           frame,
           result,
@@ -812,7 +824,7 @@ export default function Scanner() {
     } catch (analysisError) {
       if (isAIRequestCanceled(analysisError)) return;
       if (!isScanRequestActive(requestId)) return;
-      return persistAndShowReview(
+      return persistAnalyzedReview(
         {
           frame,
           errorMessage: getSimpleScanErrorMessage(analysisError),
@@ -855,21 +867,28 @@ export default function Scanner() {
     if (!matchesSavedEvidence || !isAccountScopeCurrent(scope) || signal?.aborted) return false;
     try {
       const requestedTarget = hasPhotoDraftComparison(draft) && draft.comparisonTarget.version === 2 ? draft.comparisonTarget : undefined;
-      const captureSnapshot = draft.target || requestedTarget ? structuredClone(saved) : undefined;
+      const captureSnapshot = draft.target || hasPhotoDraftComparison(draft) ? structuredClone(saved) : undefined;
       if (hasPhotoDraftContext(draft) && (!vehicleContextsMatch(draft.vehicleContext, saved.vehicleContext) || draft.jobId !== saved.jobId)) throw new Error("The saved scan has different vehicle details. The original photo draft was kept for review.");
       if (photoRelationshipOrUnknown(draft.photoRelationship) !== photoRelationshipOrUnknown(saved.photoRelationship)) throw new Error("The saved scan has a different photo relationship. The original draft was kept for review.");
-      if (hasPhotoDraftComparison(draft)) await completeComparisonCapture(draft.comparisonTarget, saved, scope, signal);
+      const assertJobCurrent = await verifyDraftCaptureJobs(draft, scope, signal);
+      if (hasPhotoDraftComparison(draft)) await completeComparisonCapture(draft.comparisonTarget, saved, scope, signal, assertJobCurrent);
+      assertJobCurrent();
       if (draft.target) {
         if (saved.id !== draft.target.lookupId) throw new Error("The scan is saved but its component link is pending. Resume this draft to recover it.");
-        await completeComponentCapture(draft.target, captureSnapshot!, scope, signal);
+        await completeComponentCapture(draft.target, captureSnapshot!, scope, signal, assertJobCurrent);
       }
+      assertJobCurrent();
       // Ordinary upload drafts remain reusable. Targeted drafts retire only after
       // their idempotent link commits, leaving recovery possible at every boundary.
       if (kind === "upload" && !draft.target && !hasPhotoDraftComparison(draft)) return true;
       if (!isAccountScopeCurrent(scope) || signal?.aborted) return false;
       const requestedGuard = requestedTarget ? await verifyRequestedEvidenceCaptureReference(requestedTarget, scope, signal) : undefined;
+      const assertFinalJobCurrent = await verifyDraftCaptureJobs(draft, scope, signal);
+      assertJobCurrent();
       const removed = await replacePhotoDraftEnvelopeIfMatches(draft, null, scope, kind,
         captureSnapshot ? () => {
+          assertJobCurrent();
+          assertFinalJobCurrent();
           assertComponentCaptureCurrent(captureSnapshot, scope, signal);
           if (requestedTarget && requestedGuard) assertRequestedEvidenceCaptureCurrent(requestedGuard, requestedTarget, scope);
         } : undefined);
@@ -1135,12 +1154,15 @@ export default function Scanner() {
           return;
         }
       }
-      let assertCaptureCurrent: (() => void) | undefined;
+      const assertJobCurrent = await verifyDraftCaptureJobs(reviewedDraft, accountScopeRef.current, activeRequest.controller.signal);
+      if (!isScanRequestActive(requestId)) return;
+      let assertCaptureCurrent: () => void = assertJobCurrent;
       if (hasPhotoDraftComparison(reviewedDraft)) {
         const target = reviewedDraft.comparisonTarget, scope = accountScopeRef.current;
         if (target.version === 2) {
           const guard = await verifyRequestedEvidenceCaptureReference(target, scope, activeRequest.controller.signal);
           assertCaptureCurrent = () => {
+            assertJobCurrent();
             if (activeRequest.controller.signal.aborted) throw new DOMException("Requested photo capture canceled.", "AbortError");
             assertRequestedEvidenceCaptureCurrent(guard, target, scope);
           };

@@ -12,7 +12,7 @@ import { afterEach, expect, vi } from "vitest";
 import Scanner from "./Scanner";
 import type { Lookup, ScanPhoto, ShopVehicleContext } from "../types";
 import { saveVehicleProfile } from "../services/vehicleProfile";
-import { createShopJob, getShopJob, getVehicleContextForJob, updateShopJob } from "../services/shop";
+import { createShopJob, getShopJob, getVehicleContextForJob, SHOP_JOBS_STORAGE_KEY, updateShopJob } from "../services/shop";
 
 const createRealElement = document.createElement.bind(document);
 const captureFrame = vi.fn(async () => "data:image/jpeg;base64,compressed-frame");
@@ -313,13 +313,13 @@ describe("Scanner", () => {
     draftStore.clear();
     draftTargets.clear();
     draftEnvelopes.clear();
-    observeEnvelopeCompare.mockClear();
+    observeEnvelopeCompare.mockReset();
     readComponentMap.mockReset();
     linkComponentMap.mockReset().mockResolvedValue({});
     // Completion's real hash/CAS boundary is tested in componentCaptureCompletion.test.
     completeComponentCapture.mockReset().mockImplementation((target: ComponentCaptureTarget, saved: Lookup, scope: AccountScope) =>
       linkComponentMap(target, saved.photos?.map((photo) => photo.id) ?? ["photo-1"], scope));
-    readComponentMapLookup.mockReset().mockResolvedValue({ ok: true, value: { id: "bay-overview", vehicleContext: { year: "2015", make: "Honda", model: "Civic", engine: "1.8L" } } });
+    readComponentMapLookup.mockReset().mockImplementation(async (id: string) => ({ ok: true, value: { id, vehicleContext: { year: "2015", make: "Honda", model: "Civic", engine: "1.8L" } } }));
     completeComparisonCapture.mockReset().mockResolvedValue({});
     verifyComparisonCaptureReference.mockReset().mockResolvedValue(undefined);
     verifyRequestedEvidenceCaptureReference.mockReset().mockResolvedValue({});
@@ -1642,7 +1642,7 @@ describe("Scanner", () => {
     expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
     expect(identifyCapturedFrame.mock.calls[0][3]).toMatchObject({ photos: retained!.photos });
     expect(JSON.stringify(identifyCapturedFrame.mock.calls)).not.toContain("ZWFybGllcg==");
-    expect(completeComparisonCapture).toHaveBeenCalledWith(requestedTarget, expect.objectContaining({ id: requestedTarget.lookupId }), expect.objectContaining({ userId: "test-user" }), expect.any(AbortSignal));
+    expect(completeComparisonCapture).toHaveBeenCalledWith(requestedTarget, expect.objectContaining({ id: requestedTarget.lookupId }), expect.objectContaining({ userId: "test-user" }), expect.any(AbortSignal), expect.any(Function));
     expect(assertRequestedEvidenceCaptureCurrent).toHaveBeenCalled();
   });
 
@@ -1950,6 +1950,104 @@ describe("Scanner", () => {
     expect(getShopJob(currentJob.id)?.scanIds).not.toContain(saved.id);
   });
 
+  it.each(["requested", "comparison", "component"])("keeps %s capture membership through reload under another job", async (kind) => {
+    const originalJob = createShopJob({ title: "Original intake", technicianName: "Tester", year: "2015", make: "Honda", model: "Original car", symptom: "Rattle" }).value!;
+    const otherJob = createShopJob({ title: "Unrelated intake", technicianName: "Tester", year: "2020", make: "Toyota", model: "Other car", symptom: "Other complaint" }).value!;
+    const sourceId = repeatTarget.earlier.lookupId;
+    const source = createLookup({ frame: { imageBase64: "data:image/jpeg;base64,b3JpZ2luYWw=", capturedAt: "2026-11-04T00:00:00Z" },
+      jobId: originalJob.id, orgId: originalJob.orgId, vehicleContext: { model: "Original car" } }, sourceId).value!;
+    readComponentMapLookup.mockImplementation(async (id: string) => ({ ok: true, value: getLookups().find((lookup) => lookup.id === id) ?? null }));
+    const target = { mapId: sourceId, componentId: "00000000-0000-4000-8000-000000000001", linkAttemptId: "00000000-0000-4000-8000-000000000002", lookupId: "component-scan" };
+    readComponentMap.mockResolvedValue({ document: { components: [{ id: target.componentId }] } });
+    // A cited secondary photo has no car facts; job membership must not invent any.
+    const comparison = kind === "requested" ? { ...requestedTarget, earlier: { ...requestedTarget.earlier, vehicleContext: null } } : repeatTarget;
+    const state = { accountId: "test-user", ...(kind === "component" ? { componentCaptureTarget: target } : { comparisonCaptureTarget: comparison }) };
+    render(<MemoryRouter initialEntries={[{ pathname: "/scan", search: `?jobId=${otherJob.id}`, state }]}><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await screen.findByRole("dialog", { name: "Review inspection photos" });
+    const retained = structuredClone(draftEnvelopes.get("test-user:capture"));
+    expect(retained).toMatchObject({ jobId: originalJob.id, vehicleContext: kind === "requested" ? null : kind === "component" ? source.vehicleContext : repeatTarget.earlier.vehicleContext });
+    cleanup();
+    render(<MemoryRouter initialEntries={[`/scan?jobId=${otherJob.id}`]}><Scanner /></MemoryRouter>);
+    await userEvent.click(await screen.findByRole("button", { name: "Resume captured photo" }));
+    await analyzeReviewedPhotos();
+    await waitFor(() => expect(draftStore.has("test-user:capture")).toBe(false));
+    const saved = getLookups().find((lookup) => lookup.id === (kind === "component" ? target.lookupId : comparison.lookupId))!;
+    expect(saved).toMatchObject({ jobId: originalJob.id, orgId: originalJob.orgId });
+    expect(saved.vehicleContext).toEqual(kind === "requested" ? undefined : retained && "vehicleContext" in retained ? retained.vehicleContext : undefined);
+    expect(getShopJob(originalJob.id)?.scanIds).toContain(saved.id);
+    expect(getShopJob(otherJob.id)?.scanIds).not.toContain(saved.id);
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["requested", "component"].flatMap((kind) => ["reassigned", "removed", "missing source", "missing job", "unreadable jobs"].map((change) => [kind, change])))("keeps %s photos pending when source membership is %s", async (kind, change) => {
+    const job = createShopJob({ title: "Original intake", technicianName: "Tester", year: "2015", make: "Honda", model: "Civic", symptom: "Rattle" }).value!;
+    const source = createLookup({ frame: { imageBase64: "data:image/jpeg;base64,b3JpZ2luYWw=", capturedAt: "2026-11-04T00:00:00Z" }, jobId: job.id, orgId: job.orgId }, repeatTarget.earlier.lookupId).value!;
+    const photos: ScanPhoto[] = [{ id: "new-photo", label: "marking", imageBase64: "data:image/jpeg;base64,bmV3", capturedAt: "2026-11-05T00:00:00Z" }];
+    const componentTarget = { mapId: source.id, componentId: "00000000-0000-4000-8000-000000000001", linkAttemptId: "00000000-0000-4000-8000-000000000002", lookupId: requestedTarget.lookupId };
+    const envelope: PhotoDraftEnvelope = { ...(kind === "component" ? { version: 6, target: componentTarget } : { version: 8, comparisonTarget: requestedTarget }), photos, vehicleContext: requestedTarget.earlier.vehicleContext, jobId: job.id, photoRelationship: "unknown" };
+    draftStore.set("test-user:capture", photos); draftEnvelopes.set("test-user:capture", envelope);
+    if (kind === "component") draftTargets.set("test-user:capture", componentTarget);
+    readComponentMap.mockResolvedValue({ document: { components: [{ id: componentTarget.componentId }] } });
+    if (change === "reassigned" || change === "removed") localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([{ ...source, jobId: change === "reassigned" ? "another-job" : undefined }]));
+    if (change === "missing source") localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), "[]");
+    if (change === "missing job" || change === "unreadable jobs") localStorage.setItem(accountStorageKey(SHOP_JOBS_STORAGE_KEY), change === "missing job" ? "[]" : "broken");
+    readComponentMapLookup.mockImplementation(async (id: string) => ({ ok: true, value: getLookups().find((lookup) => lookup.id === id) ?? null }));
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(await screen.findByRole("button", { name: "Resume captured photo" }));
+    await analyzeReviewedPhotos();
+    await waitFor(() => expect(screen.getByRole("dialog")).toHaveTextContent(/membership|unavailable|could not be read/i));
+    expect(identifyCapturedFrame).not.toHaveBeenCalled();
+    expect(completeComparisonCapture).not.toHaveBeenCalled();
+    expect(completeComponentCapture).not.toHaveBeenCalled();
+    expect(draftEnvelopes.get("test-user:capture")).toEqual(envelope);
+    expect(getLookups().some((lookup) => lookup.id === requestedTarget.lookupId)).toBe(false);
+  });
+
+  it.each(["requested", "component"].flatMap((kind) => ["quality", "provider", "provider failure", "completion", "draft retirement"].map((phase) => [kind, phase])))("rechecks %s membership after asynchronous %s work", async (kind, phase) => {
+    const job = createShopJob({ title: "Original intake", technicianName: "Tester", year: "2015", make: "Honda", model: "Civic", symptom: "Rattle" }).value!;
+    const source = createLookup({ frame: { imageBase64: "data:image/jpeg;base64,b3JpZ2luYWw=", capturedAt: "2026-11-04T00:00:00Z" }, jobId: job.id, orgId: job.orgId }, repeatTarget.earlier.lookupId).value!;
+    const photos: ScanPhoto[] = [{ id: "new-photo", label: "marking", imageBase64: "data:image/jpeg;base64,bmV3", capturedAt: "2026-11-05T00:00:00Z" }];
+    const componentTarget = { mapId: source.id, componentId: "00000000-0000-4000-8000-000000000001", linkAttemptId: "00000000-0000-4000-8000-000000000002", lookupId: requestedTarget.lookupId };
+    const envelope: PhotoDraftEnvelope = { ...(kind === "component" ? { version: 6, target: componentTarget } : { version: 8, comparisonTarget: requestedTarget }), photos, vehicleContext: requestedTarget.earlier.vehicleContext, jobId: job.id, photoRelationship: "unknown" };
+    draftStore.set("test-user:capture", photos); draftEnvelopes.set("test-user:capture", envelope);
+    if (kind === "component") draftTargets.set("test-user:capture", componentTarget);
+    readComponentMap.mockResolvedValue({ document: { components: [{ id: componentTarget.componentId }] } });
+    const reassign = () => localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify(getLookups().map((lookup) => lookup.id === source.id ? { ...lookup, jobId: "another-job" } : lookup)));
+    if (phase === "quality") assessImageQuality.mockImplementationOnce(async () => { reassign(); return passingQuality; });
+    if (phase === "provider" || phase === "provider failure") identifyCapturedFrame.mockImplementationOnce(async () => { reassign(); if (phase === "provider failure") throw new Error("Provider failed"); return makeScanResult("Alternator"); });
+    if (phase === "completion") (kind === "component" ? completeComponentCapture : completeComparisonCapture).mockImplementationOnce(async (_target, _saved, _scope, _signal, assertCurrent: () => void) => { reassign(); assertCurrent(); return {}; });
+    if (phase === "draft retirement") observeEnvelopeCompare.mockImplementationOnce(() => {}).mockImplementationOnce((_previous, next) => { if (next === null) reassign(); });
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(await screen.findByRole("button", { name: "Resume captured photo" }));
+    await analyzeReviewedPhotos();
+    await waitFor(() => expect(screen.getByRole("dialog")).toHaveTextContent("job membership changed"));
+    expect(draftEnvelopes.get("test-user:capture")).toEqual(envelope);
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(phase === "quality" ? 0 : 1);
+    const saved = getLookups().find((lookup) => lookup.id === requestedTarget.lookupId);
+    if (phase === "completion" || phase === "draft retirement") {
+      expect(saved?.jobId).toBe(job.id);
+      await userEvent.click(screen.getByRole("button", { name: kind === "component" ? "Finish component link" : "Finish dated comparison" }));
+      await waitFor(() => expect(screen.getByRole("dialog")).toHaveTextContent("job membership changed"));
+      expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
+      expect(draftEnvelopes.get("test-user:capture")).toEqual(envelope);
+    } else expect(saved).toBeUndefined();
+  });
+
+  it("keeps an unassigned targeted capture unassigned under an unrelated job route", async () => {
+    const job = createShopJob({ title: "Unrelated intake", technicianName: "Tester", year: "2015", make: "Honda", model: "Civic", symptom: "Rattle" }).value!;
+    createLookup({ frame: { imageBase64: "data:image/jpeg;base64,b3JpZ2luYWw=", capturedAt: "2026-11-04T00:00:00Z" } }, repeatTarget.earlier.lookupId);
+    render(<MemoryRouter initialEntries={[{ pathname: "/scan", search: `?jobId=${job.id}`, state: { accountId: "test-user", comparisonCaptureTarget: requestedTarget } }]}><Scanner /></MemoryRouter>);
+    await userEvent.upload(screen.getByLabelText("Upload photo"), new File(["new marking"], "marking.jpg", { type: "image/jpeg" }));
+    await screen.findByRole("dialog", { name: "Review inspection photos" });
+    expect(draftEnvelopes.get("test-user:upload")).not.toHaveProperty("jobId");
+    await analyzeReviewedPhotos();
+    await waitFor(() => expect(draftStore.has("test-user:upload")).toBe(false));
+    const saved = getLookups().find((lookup) => lookup.id === requestedTarget.lookupId)!;
+    expect(saved.jobId).toBeUndefined(); expect(saved.orgId).toBeUndefined();
+    expect(getShopJob(job.id)?.scanIds).not.toContain(saved.id);
+  });
+
   it("does not append a chosen angle after another tab replaces the reviewed vehicle draft", async () => {
     const photos: ScanPhoto[] = [{ id: "same", label: "overview", capturedAt: "2026-11-05T00:00:00Z", imageBase64: "data:image/jpeg;base64,cGFydA==" }];
     draftStore.set("test-user:upload", photos);
@@ -2043,7 +2141,7 @@ describe("Scanner", () => {
     await analyzeReviewedPhotos();
     await waitFor(() => expect(completeComponentCapture).toHaveBeenCalledTimes(1));
     expect(completeComponentCapture).toHaveBeenCalledWith(target, expect.objectContaining({ id: target.lookupId, photos, photoRelationship: "independent" }),
-      expect.objectContaining({ userId: "test-user" }), expect.any(AbortSignal));
+      expect.objectContaining({ userId: "test-user" }), expect.any(AbortSignal), expect.any(Function));
     expect(draftEnvelopes.get("test-user:upload")).toEqual(upgradePhotoDraft(envelope));
     expect(draftStore.get("test-user:upload")).toEqual(photos);
     expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);

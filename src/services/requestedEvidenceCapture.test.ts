@@ -82,15 +82,36 @@ describe("requested-photo preparation and resume", () => {
     const displayed = structuredClone(saved!); saved!.result!.partName = "A replaced answer";
     await expect(prepareRequestedEvidenceCapture(displayed, guide(displayed), "detail")).rejects.toThrow("out of date");
   });
-  it.each(["result", "source", "attempt", "relationship"])("blocks a %s change during original verification", async (kind) => {
+  it.each(["result", "source", "attempt", "relationship", "job reassignment", "job removal", "organization reassignment", "organization removal"])("blocks a %s change during original verification", async (kind) => {
+    saved!.jobId = "source-job"; saved!.orgId = "source-org";
     mocks.side.mockImplementationOnce(async (lookup: Lookup, photoId: string) => {
       if (kind === "result") saved!.result!.whatItDoes = "Replacement answer";
       if (kind === "source") saved!.photos![1].imageBase64 = "data:image/png;base64,Y2hhbmdlZA==";
       if (kind === "attempt") saved!.analysisAttemptId = "answer-2";
       if (kind === "relationship") saved!.photoRelationship = "independent";
+      if (kind === "job reassignment") saved!.jobId = "other-job";
+      if (kind === "job removal") delete saved!.jobId;
+      if (kind === "organization reassignment") saved!.orgId = "other-org";
+      if (kind === "organization removal") delete saved!.orgId;
       return side(lookup, photoId);
     });
     await expect(prepareRequestedEvidenceCapture(saved!, guide(), "detail")).rejects.toThrow("changed");
+  });
+  it.each([
+    ["jobId", "other-job"], ["jobId", undefined], ["orgId", "other-org"], ["orgId", undefined],
+  ] as const)("blocks source %s changing to %s during resume and after guard issuance", async (field, value) => {
+    saved!.jobId = "source-job"; saved!.orgId = "source-org";
+    const original = structuredClone(saved!);
+    const target = await prepareRequestedEvidenceCapture(saved!, guide(), "detail");
+    mocks.resolve.mockImplementationOnce(async () => {
+      if (value === undefined) delete saved![field]; else saved![field] = value;
+      return { status: "unchanged" };
+    });
+    await expect(verifyRequestedEvidenceCaptureReference(target)).rejects.toThrow("changed");
+    saved = original;
+    const proof = await verifyRequestedEvidenceCaptureReference(target);
+    if (value === undefined) delete saved[field]; else saved[field] = value;
+    expect(() => assertRequestedEvidenceCaptureCurrent(proof, target)).toThrow("changed");
   });
   it("allows mechanic notes and ratings to change without invalidating the saved AI request", async () => {
     mocks.side.mockImplementationOnce(async (lookup: Lookup, photoId: string) => {

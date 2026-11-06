@@ -25,7 +25,7 @@ export async function verifyComparisonCaptureReference(target: ComparisonCapture
 
 function captureIdentity(lookup: Lookup) {
   const photo = comparisonPhotos(lookup)[0];
-  return JSON.stringify({ id: lookup.id, createdAt: lookup.createdAt, photo: photo && {
+  return JSON.stringify({ id: lookup.id, createdAt: lookup.createdAt, jobId: lookup.jobId ?? null, orgId: lookup.orgId ?? null, photo: photo && {
     id: photo.id, label: photo.label, capturedAt: photo.capturedAt, imageBase64: photo.imageBase64 },
     vehicleContext: providerVehicleContext(lookup.vehicleContext) ?? null, analysisAttemptId: lookup.analysisAttemptId });
 }
@@ -43,7 +43,7 @@ function comparisonMatchesExpected(record: InspectionComparison, expected: Inspe
 /** Commit the initial comparison before the exact photo draft can be retired.
  * A reserved saved scan is sufficient for recovery, including saved AI failures.
  * This operation never re-runs analysis or changes the saved scan/history. */
-export async function completeComparisonCapture(target: ComparisonCaptureTarget, saved: Lookup, scope = getAccountScope(), signal?: AbortSignal): Promise<InspectionComparison> {
+export async function completeComparisonCapture(target: ComparisonCaptureTarget, saved: Lookup, scope = getAccountScope(), signal?: AbortSignal, assertContextCurrent?: () => void): Promise<InspectionComparison> {
   requireScope(scope);
   const checked = normalizeComparisonCaptureTarget(target);
   if (!checked || saved.id !== checked.lookupId) throw new Error("The saved scan does not match this dated comparison. Both records were kept.");
@@ -54,6 +54,7 @@ export async function completeComparisonCapture(target: ComparisonCaptureTarget,
   const requireCurrentSaved = () => {
     requireScope(scope);
     if (signal?.aborted) throw new DOMException("Comparison completion canceled.", "AbortError");
+    assertContextCurrent?.();
     const current = getLookup(saved.id);
     if (!current || captureIdentity(current) !== identity) throw new Error("The saved follow-up evidence changed. Its photo draft was kept for review.");
     if (checked.version === 2 && requestedGuard) assertRequestedEvidenceCaptureCurrent(requestedGuard, checked, scope);
@@ -82,7 +83,7 @@ export async function completeComparisonCapture(target: ComparisonCaptureTarget,
   }
   await verifyComparisonCaptureReference(checked, scope, signal);
   requireCurrentSaved();
-  const committed = await appendInspectionComparison(expected, scope);
+  const committed = await appendInspectionComparison(expected, scope, requireCurrentSaved);
   requireCurrentSaved();
   const result = committed.find((record) => record.id === expected.id);
   if (!result || !comparisonMatchesExpected(result, expected)) throw new Error("The dated comparison was not confirmed saved. Resume its photo draft to retry.");

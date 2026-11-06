@@ -80,12 +80,14 @@ describe("recoverable component capture completion", () => {
     expect(map).toEqual(committed); expect(mocks.link).not.toHaveBeenCalled();
   });
 
-  it.each(["delete", "relationship", "vehicle", "account", "cancel"])("keeps the committed link but rejects retirement after %s at commit", async (kind) => {
+  it.each(["delete", "relationship", "vehicle", "job", "organization", "account", "cancel"])("keeps the committed link but rejects retirement after %s at commit", async (kind) => {
     const saved = scan(), controller = new AbortController(), scope = getAccountScope();
     afterCommit = () => {
       if (kind === "delete") local = [];
       else if (kind === "relationship") local[0].photoRelationship = "unknown";
       else if (kind === "vehicle") local[0].vehicleContext = { model: "Different car" };
+      else if (kind === "job") local[0].jobId = "different-job";
+      else if (kind === "organization") local[0].orgId = "different-org";
       else if (kind === "account") setActiveAccount("other");
       else controller.abort();
     };
@@ -99,6 +101,27 @@ describe("recoverable component capture completion", () => {
     local = [scan()]; await expect(completeComponentCapture({ ...target, lookupId: "other" }, scan())).rejects.toThrow(/does not match/);
     map.document.components = []; await expect(completeComponentCapture(target, scan())).rejects.toThrow(/removed/);
     expect(mocks.link).not.toHaveBeenCalled();
+  });
+
+  it("rechecks capture context after reading the map before linking saved photos", async () => {
+    let sourceJob = "original-job";
+    const assertContextCurrent = () => { if (sourceJob !== "original-job") throw new Error("Source job changed"); };
+    mocks.readMap.mockImplementationOnce(async () => { sourceJob = "other-job"; return structuredClone(map); });
+    await expect(completeComponentCapture(target, scan(), getAccountScope(), undefined, assertContextCurrent)).rejects.toThrow("Source job changed");
+    expect(mocks.link).not.toHaveBeenCalled();
+    expect(map.document.components[0].scanGroups).toHaveLength(0);
+  });
+
+  it("carries capture context into the map mutation guard before linking saved photos", async () => {
+    let sourceJob = "original-job";
+    const assertContextCurrent = () => { if (sourceJob !== "original-job") throw new Error("Source job changed"); };
+    mocks.link.mockImplementationOnce(async (capture, ids, _scope, prepared, assertCurrent?: () => void) => {
+      sourceJob = "other-job"; assertCurrent?.();
+      map = { ...map, document: linkComponentMapDocument(map.document, capture, ids, prepared?.binding), localRevision: map.localRevision + 1 };
+      return structuredClone(map);
+    });
+    await expect(completeComponentCapture(target, scan(), getAccountScope(), undefined, assertContextCurrent)).rejects.toThrow("Source job changed");
+    expect(map.document.components[0].scanGroups).toHaveLength(0);
   });
 
   it("retains recovery after a failed write and rejects a false acknowledgement", async () => {

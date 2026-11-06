@@ -143,6 +143,53 @@ describe("durable repeat-capture completion", () => {
     await expect(completeComparisonCapture(target, saved)).rejects.toThrow("follow-up evidence changed");
     expect(mocks.append).not.toHaveBeenCalled();
   });
+  it("rechecks capture context after asynchronous original verification before appending history", async () => {
+    let sourceJob = "original-job";
+    const assertContextCurrent = () => { if (sourceJob !== "original-job") throw new Error("Source job changed"); };
+    mocks.side.mockImplementationOnce(async () => { sourceJob = "other-job"; return current; });
+    await expect(completeComparisonCapture(target, saved, getAccountScope(), undefined, assertContextCurrent)).rejects.toThrow("Source job changed");
+    expect(mocks.append).not.toHaveBeenCalled();
+    expect(records).toHaveLength(0);
+  });
+  it("carries capture context into the comparison mutation guard before history is written", async () => {
+    let sourceJob = "original-job";
+    const assertContextCurrent = () => { if (sourceJob !== "original-job") throw new Error("Source job changed"); };
+    mocks.append.mockImplementationOnce(async (record: InspectionComparison, _scope, assertCurrent?: () => void) => {
+      sourceJob = "other-job"; assertCurrent?.();
+      records.push(structuredClone(record)); return structuredClone(records);
+    });
+    await expect(completeComparisonCapture(target, saved, getAccountScope(), undefined, assertContextCurrent)).rejects.toThrow("Source job changed");
+    expect(records).toHaveLength(0);
+  });
+  it.each([
+    ["jobId", "other-job"], ["jobId", undefined], ["orgId", "other-org"], ["orgId", undefined],
+  ] as const)("rejects destination %s changing to %s during saved original verification", async (field, value) => {
+    const captured: Lookup = { ...saved, jobId: "source-job", orgId: "source-org" };
+    const stored = structuredClone(captured);
+    mocks.lookup.mockImplementation(() => structuredClone(stored));
+    mocks.side.mockImplementationOnce(async () => {
+      if (value === undefined) delete stored[field]; else stored[field] = value;
+      return current;
+    });
+    await expect(completeComparisonCapture(target, captured)).rejects.toThrow("follow-up evidence changed");
+    expect(mocks.append).not.toHaveBeenCalled();
+    expect(captured).toMatchObject({ jobId: "source-job", orgId: "source-org" });
+  });
+  it.each([
+    ["jobId", "other-job"], ["jobId", undefined], ["orgId", "other-org"], ["orgId", undefined],
+  ] as const)("does not acknowledge destination %s changing to %s during the comparison write", async (field, value) => {
+    const captured: Lookup = { ...saved, jobId: "source-job", orgId: "source-org" };
+    const stored = structuredClone(captured);
+    mocks.lookup.mockImplementation(() => structuredClone(stored));
+    mocks.append.mockImplementationOnce(async (record: InspectionComparison) => {
+      records.push(structuredClone(record));
+      if (value === undefined) delete stored[field]; else stored[field] = value;
+      return structuredClone(records);
+    });
+    await expect(completeComparisonCapture(target, captured)).rejects.toThrow("follow-up evidence changed");
+    expect(records).toHaveLength(1);
+    expect(captured).toMatchObject({ jobId: "source-job", orgId: "source-org" });
+  });
   it("stops after an account switch rather than appending to another owner's history", async () => {
     const scope = getAccountScope();
     mocks.resolve.mockImplementationOnce(async () => { setActiveAccount("other-owner"); return { status: "unchanged", message: "Verified" }; });

@@ -89,10 +89,11 @@ export function readInspectionComparisons(lookupId: string, scope = getAccountSc
   return transact(lookupId, scope);
 }
 
-export function appendInspectionComparison(record: InspectionComparison, scope = getAccountScope()): Promise<InspectionComparison[]> {
+export function appendInspectionComparison(record: InspectionComparison, scope = getAccountScope(), assertContextCurrent?: () => void): Promise<InspectionComparison[]> {
   const checked = normalizeInspectionComparison(record);
   if (!checked) return Promise.reject(new Error("Complete this comparison and its supporting details before saving."));
   return transact(checked.lookupId, scope, (current) => {
+    assertContextCurrent?.();
     if (!current.some((entry) => entry.id === checked.id) && checked.supersedesId
       && current.some((entry) => entry.supersedesId === checked.supersedesId)) {
       throw new Error("This record was already corrected in another view. Your draft remains; reload the history before correcting its current version.");
