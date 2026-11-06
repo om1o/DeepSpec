@@ -106,6 +106,101 @@ function correctedArea(first: Extract<ObservationAreaRecord, { kind: "mark" }>, 
 }
 
 describe("self-contained mechanic HTML report", () => {
+  it("puts saved actions, observations, exact human readings and unresolved requests before full evidence", () => {
+    const input = withRequestedHistory(snapshot([lookup(), lookup("followup")]));
+    const measurement = { ...humanMeasurement(), reading: "12.40", unit: "V", quantity: "Voltage", method: "Across the marked terminals", basis: "transcribed_document" as const };
+    input.serviceLogs = [{ lookupId: "overview", records: [measurement], cloudChecked: false }];
+    const doc = parsed(input), overview = doc.querySelector("#review-overview")!;
+    for (const value of ["Do not drive until the brake fault is inspected.", "Orange-brown material is visible.", "Remaining thickness is unknown.", "Have the rotor thickness measured.", "Compare remaining thickness with its service limit.", "12.40 V", measurement.method, measurement.instrument, "transcribed document", "2026-11-04", "not reviewed", "Collection does not establish an answered request or resolved finding"]) expect(overview.textContent).toContain(value);
+    expect(overview.compareDocumentPosition(doc.querySelector("#full-evidence")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(overview.querySelector('a[href="#scan-1-service-1"]')).not.toBeNull();
+    expect(overview.querySelector('a[href="#comparison-1-1"]')).not.toBeNull();
+    for (const value of ["PRIVATE_SERVICE_RECORDER", "PRIVATE_SCAN_CANARY", "fixture-model", "fixture-prompt", "1HGBH41JXMN109186"]) expect(overview.textContent).not.toContain(value);
+  });
+
+  it("shows a corrected no-reading reason and withdrawal without presenting an old reading as current", () => {
+    const first = humanMeasurement();
+    const corrected = { ...first, id: "10000000-0000-4000-8000-000000000002", recordedAt: "2026-11-05T13:00:00Z", supersedesId: first.id, correctionReason: "Original transcription unreliable", reading: null, unit: "", method: "", noReadingReason: "Probe could not reach the contact." };
+    const input = snapshot(); input.serviceLogs = [{ lookupId: "overview", records: [first, corrected], cloudChecked: true }];
+    const before = parsed(input).querySelector("#review-overview")!;
+    expect(before.textContent).toContain("No reading obtained — Probe could not reach the contact.");
+    expect(before.textContent).not.toContain("2.00 mm");
+    const retraction: ServiceRecord = { version: 1, id: "10000000-0000-4000-8000-000000000003", lookupId: "overview", recordedAt: "2026-11-05T14:00:00Z", occurredOn: null, recordedBy: first.recordedBy, basis: "personally_performed", subject: first.subject, photoIds: [], notes: "", kind: "retraction", supersedesId: corrected.id, correctionReason: "Withdraw the unverified measurement." };
+    input.serviceLogs![0].records.push(retraction);
+    const doc = parsed(input), overview = doc.querySelector("#review-overview")!;
+    expect(overview.textContent).toContain("retracted");
+    expect(overview.textContent).toContain(retraction.correctionReason);
+    expect(overview.textContent).not.toContain("2.00 mm");
+    expect(overview.textContent).not.toContain("Probe could not reach");
+    expect(doc.querySelectorAll(".service-record")).toHaveLength(3);
+    expect(doc.querySelector("#scan-1-service-1")?.textContent).toContain("2.00 mm");
+  });
+
+  it("keeps conflicting human alternatives explicit in the overview without choosing the newest reading or area", () => {
+    const first = humanMeasurement(), mark = areaMark();
+    const input = areaSnapshot([mark, correctedArea(mark), correctedArea(mark, "3")]);
+    input.serviceLogs = [{ lookupId: "overview", cloudChecked: true, records: [first, ...["2.10", "2.20"].map((reading, index) => ({ ...first, id: `10000000-0000-4000-8000-00000000000${index + 2}`, recordedAt: `2026-11-05T1${index + 3}:00:00Z`, supersedesId: first.id, correctionReason: "Different transcription", reading }))] }];
+    const doc = parsed(input), overview = doc.querySelector("#review-overview")!;
+    for (const value of ["2.00 mm", "2.10 mm", "2.20 mm", "Conflicting corrections: no alternative has been selected.", "1: conflicting", "2: conflicting", "3: conflicting"]) expect(overview.textContent).toContain(value);
+    expect(overview.querySelectorAll(".record-summary strong")).toHaveLength(3);
+    expect([...overview.querySelectorAll(".record-summary strong")].every((item) => item.textContent === "conflicting correction")).toBe(true);
+    expect(doc.querySelectorAll('.outline[aria-label^="Human area"]')).toHaveLength(0);
+  });
+
+  it("distinguishes absent and empty histories and counts gaps discovered while rendering originals", () => {
+    const input = snapshot(); input.scans[0].photos![0].imageBase64 = "invalid";
+    let doc = parsed(input), overview = doc.querySelector("#review-overview")!;
+    expect(overview.textContent).toContain("Human measurement, repair and follow-up history was not collected.");
+    expect(overview.textContent).toContain("Human area history was not collected or could not be read.");
+    expect(overview.textContent).toContain("1 missing or unavailable evidence notice(s)");
+    expect(doc.querySelector("#missing-evidence")?.textContent).toContain("original or cutout image unavailable");
+    input.serviceLogs = [{ lookupId: "overview", records: [], cloudChecked: true }];
+    input.observationAreaLogs = [{ lookupId: "overview", records: [] }];
+    input.missing.push({ kind: "service_records", lookupId: "overview", message: "Human records on this device could not be read." });
+    input.requestedEvidenceHistory = { originLookupId: "overview", source: "device", cloudSearched: false, records: [], complete: false, reason: "The device search reached its limit.", scannedBuckets: 0 };
+    doc = parsed(input); overview = doc.querySelector("#review-overview")!;
+    for (const value of ["No current human measurement, repair or follow-up entry was found in the sources read.", "cloud history checked; this does not establish a successful device read", "No human area entries were found on this device.", "2 missing or unavailable evidence notice(s)", "device search incomplete", "The device search reached its limit."]) expect(overview.textContent).toContain(value);
+  });
+
+  it.each([
+    { x: 0, y: 0, width: .2, height: .2 },
+    { x: .8, y: .8, width: .2, height: .2 },
+    { x: .99, y: 0, width: .01, height: 1 },
+  ])("keeps annotation prose outside the original for edge or narrow rectangle %j", (rectangle) => {
+    const mark = { ...areaMark(), rectangle }, input = areaSnapshot([mark]), doc = parsed(input);
+    const figure = doc.querySelector("#scan-1-photo-2")!, stage = figure.querySelector(".stage")!;
+    for (const outline of figure.querySelectorAll<HTMLElement>(".outline")) {
+      expect(outline.textContent).toBe("");
+      const legend = doc.getElementById(outline.getAttribute("aria-describedby")!)!;
+      expect(legend.textContent).toContain(outline.getAttribute("aria-label"));
+      expect(stage.contains(legend)).toBe(false);
+      expect(stage.compareDocumentPosition(legend) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      const locator = legend.querySelector<HTMLElement>(".outline-position")!;
+      for (const property of ["left", "top", "width", "height"] as const) expect(locator.style[property]).toBe(outline.style[property]);
+    }
+    expect(figure.querySelector(".outline.ai")).not.toBeNull();
+    expect(figure.querySelector(".outline.human")).not.toBeNull();
+    expect(stage.querySelector("img")?.getAttribute("src")).toBe(PNG);
+    expect(figure.querySelector(".annotation-key")?.textContent).toContain("Dashed: AI suggestion; double: human mark");
+  });
+
+  it("collapses structural list indentation while preserving multiline saved findings and notes", () => {
+    const input = areaSnapshot(); input.observationAreaLogs![0].records[0].notes = "First note line\n\nThird note line";
+    input.scans[0].result!.conditionAssessment!.observations[0].text = "First finding line\nSecond finding line";
+    const doc = parsed(input), style = document.createElement("style"), host = document.createElement("div");
+    style.textContent = doc.querySelector("style")!.textContent;
+    host.append(doc.querySelector(".photo-review-rows")!.cloneNode(true), doc.querySelector("#scan-1-observation-1")!.cloneNode(true), doc.querySelector(`#scan-1-human-area-${areaMark().id}`)!.cloneNode(true));
+    document.head.append(style); document.body.append(host);
+    try {
+      expect(getComputedStyle(host.querySelector(".photo-review-rows li")!).whiteSpace).toBe("normal");
+      const finding = host.querySelector(".saved-text")!;
+      expect(finding.textContent).toBe("First finding line\nSecond finding line");
+      expect(getComputedStyle(finding).whiteSpace).toBe("pre-wrap");
+      const note = [...host.querySelectorAll("dd")].find((element) => element.textContent === "First note line\n\nThird note line")!;
+      expect(getComputedStyle(note).whiteSpace).toBe("pre-wrap");
+    } finally { host.remove(); style.remove(); }
+  });
+
   it("places independent AI and human outlines on exact photo two while the part selection stays on photo one", () => {
     const input = areaSnapshot(), first = input.observationAreaLogs![0].records[0], before = JSON.stringify(input), doc = parsed(input);
     const photoOne = doc.querySelector("#scan-1-photo-1")!, photoTwo = doc.querySelector("#scan-1-photo-2")!;
