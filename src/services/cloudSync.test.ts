@@ -217,12 +217,12 @@ describe("cloudSync", () => {
     } finally { read.mockRestore(); }
   });
 
-  it.each(["updated", "stale"])("syncs only chat history for an existing cloud scan: %s", async (outcome) => {
+  it.each(["updated", "stale", "nonretryable-conflict"])("syncs only chat history for an existing cloud scan: %s", async (outcome) => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
     const maybeSingle = vi.fn().mockResolvedValue({
       data: outcome === "updated" ? { revision: 3 } : null,
-      error: null,
+      error: outcome === "nonretryable-conflict" ? { code: "P0001", message: "scan_lookup_revision_conflict" } : null,
     });
     const query = { eq: vi.fn(), select: vi.fn(), maybeSingle };
     query.eq.mockReturnValue(query);
@@ -255,7 +255,31 @@ describe("cloudSync", () => {
     expect(query.eq.mock.calls).toEqual([["user_id", "user-1"], ["local_id", lookup.id], ["revision", 2]]);
     expect(storageFrom).not.toHaveBeenCalled();
     expect(getLookup(lookup.id)?.cloudRevision).toBe(outcome === "updated" ? 3 : 2);
-    if (outcome === "stale") expect(result.message).toContain("newer cloud version");
+    expect(maybeSingle).toHaveBeenCalledOnce();
+    expect(getLookup(lookup.id)?.chatHistory).toEqual(lookup.chatHistory);
+    expect(getLookup(lookup.id)?.cloudSave?.status).toBe(outcome === "updated" ? "acknowledged" : "failed");
+    if (outcome !== "updated") expect(result.message).toContain("newer cloud version");
+  });
+
+  it("keeps a P0001 revision conflict on the device without retrying or syncing child records", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const scanWrite = vi.fn().mockResolvedValue({ data: null, error: { code: "P0001", message: "scan_lookup_revision_conflict" } });
+    const from = vi.fn((table: string) => table === "scan_lookups" ? makeScanWriteQuery(scanWrite) : {});
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
+      auth: { getSession: async () => ({ data: { session: { user: { id: "user-1", email_confirmed_at: "now" } } }, error: null }) },
+      from, storage: { from: () => ({ upload: vi.fn().mockResolvedValue({ error: null }) }) },
+    });
+    const lookup = { ...makeLookup(), cloudRevision: 2, notes: "Unsynced device evidence" };
+    const { saveExistingLookup, getLookup } = await import("./storage");
+    saveExistingLookup(lookup);
+    const { syncLookupToCloud } = await import("./cloudSync");
+
+    expect(await syncLookupToCloud(lookup)).toMatchObject({ ok: false, message: expect.stringContaining("cloud scan was not overwritten") });
+    expect(scanWrite).toHaveBeenCalledOnce();
+    expect(from).toHaveBeenCalledExactlyOnceWith("scan_lookups");
+    expect(mocks.syncDetails).not.toHaveBeenCalled();
+    expect(getLookup(lookup.id)).toMatchObject({ cloudRevision: 2, notes: lookup.notes, result: lookup.result, frame: lookup.frame, cloudSave: { status: "failed" } });
   });
 
   it("falls back to one full scan sync when chat has no confirmed cloud revision", async () => {
@@ -502,12 +526,13 @@ describe("cloudSync", () => {
     expect(signInAnonymously).not.toHaveBeenCalled();
   });
 
-  it.each(["updated", "missing", "migration"])("saves a cloud-only inspection without reuploading its image: %s", async (outcome) => {
+  it.each(["updated", "missing", "migration", "nonretryable-conflict"])("saves a cloud-only inspection without reuploading its image: %s", async (outcome) => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
     const maybeSingle = vi.fn().mockResolvedValue({
       data: outcome === "updated" ? { revision: 2 } : null,
-      error: outcome === "migration" ? { message: "column inspection_json does not exist" } : null,
+      error: outcome === "migration" ? { message: "column inspection_json does not exist" }
+        : outcome === "nonretryable-conflict" ? { code: "P0001", message: "scan_lookup_revision_conflict" } : null,
     });
     const select = vi.fn().mockReturnValue({ maybeSingle });
     const eq = vi.fn();
@@ -537,7 +562,7 @@ describe("cloudSync", () => {
     const result = await syncLookupToCloud(lookup);
     expect(result.ok).toBe(outcome === "updated");
     expect(getLookup(lookup.id)?.cloudSave).toMatchObject({ scope: "inspection", status: outcome === "updated" ? "acknowledged" : "failed" });
-    if (outcome === "missing") expect(result.message).toContain("cloud scan was not overwritten");
+    if (outcome === "missing" || outcome === "nonretryable-conflict") expect(result.message).toContain("cloud scan was not overwritten");
     if (outcome === "migration") expect(result.message).toContain("database migration");
     expect(from).toHaveBeenCalledExactlyOnceWith("scan_lookups");
     expect(update).toHaveBeenCalledExactlyOnceWith({ inspection_json: lookup.inspection, revision: 2 });
@@ -545,6 +570,7 @@ describe("cloudSync", () => {
     expect(select).toHaveBeenCalledWith("revision");
     expect(maybeSingle).toHaveBeenCalledOnce();
     expect(getLookup(lookup.id)?.cloudRevision).toBe(outcome === "updated" ? 2 : 1);
+    expect(getLookup(lookup.id)?.inspection).toEqual(lookup.inspection);
     expect(storageFrom).not.toHaveBeenCalled();
   });
 
