@@ -184,6 +184,19 @@ describe("Result", () => {
     expect(requestedCaptureMocks.prepare).not.toHaveBeenCalled();
   });
 
+  it("opens the existing human service section from a measurement request without invoking AI", async () => {
+    const result = requestedResult("photo-1"); result.conditionAssessment!.nextEvidence!.kind = "measurement";
+    result.conditionAssessment!.nextEvidence!.request = "Measure the bracket thickness.";
+    const local = makeLookup({ result });
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
+    const identify = vi.spyOn(aiService, "identifyCapturedFrame");
+    renderResult(null, `/result/${local.id}`);
+    await userEvent.click(screen.getByRole("button", { name: "Record requested measurement" }));
+    expect(screen.getByText(/^Human service history/).closest("details")).toHaveAttribute("open");
+    expect(identify).not.toHaveBeenCalled();
+    expect(screen.getByRole("region", { name: "Condition evidence" })).toHaveTextContent("Measure the bracket thickness.");
+  });
+
   it("shows retained requested-photo history even when the original's current answer has no photo request", async () => {
     const identify = vi.spyOn(aiService, "identifyCapturedFrame");
     const origin = makeLookup();

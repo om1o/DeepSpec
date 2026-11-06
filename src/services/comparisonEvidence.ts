@@ -60,10 +60,10 @@ async function inspect(lookup: Lookup, photoId: string, scope: AccountScope, sig
 }
 
 /** Inspect only the chosen saved original; the caller owns saved-record race checks. */
-export async function comparisonSideForLookup(lookup: Lookup, photoId: string, scope = getAccountScope()): Promise<ComparisonSide> {
-  guard(scope);
-  try { return (await inspect(structuredClone(lookup), photoId, scope)).side; }
-  catch (error) { guard(scope); throw error instanceof EvidenceError ? error : unavailable(); }
+export async function comparisonSideForLookup(lookup: Lookup, photoId: string, scope = getAccountScope(), signal?: AbortSignal): Promise<ComparisonSide> {
+  guard(scope, signal);
+  try { return (await inspect(structuredClone(lookup), photoId, scope, signal)).side; }
+  catch (error) { guard(scope, signal); throw error instanceof EvidenceError ? error : unavailable(); }
 }
 
 export async function resolveComparisonSide(side: ComparisonSide, scope = getAccountScope(), signal?: AbortSignal): Promise<ComparisonResolution> {

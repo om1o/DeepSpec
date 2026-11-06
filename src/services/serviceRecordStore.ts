@@ -38,7 +38,7 @@ export function subscribeServiceRecords(listener: (lookupId: string) => void, sc
   return () => { if (typeof window !== "undefined") window.removeEventListener(SERVICE_RECORDS_CHANGED, onLocal); channel?.close(); };
 }
 
-async function transact(lookupId: string, scope: AccountScope, merge?: (current: ServiceRecord[]) => ServiceRecord[]): Promise<ServiceRecord[]> {
+async function transact(lookupId: string, scope: AccountScope, merge?: (current: ServiceRecord[]) => ServiceRecord[], precommitGuard?: () => void): Promise<ServiceRecord[]> {
   requireId(lookupId); requireScope(scope);
   const database = await openEvidenceDatabase();
   try { requireScope(scope); } catch (error) { database.close(); throw error; }
@@ -73,8 +73,9 @@ async function transact(lookupId: string, scope: AccountScope, merge?: (current:
           result = checked;
           // This merge always starts with the transaction's current set, never an
           // opened UI or cloud acknowledgment snapshot. Existing IDs are immutable.
-          if (merge && JSON.stringify(result) !== JSON.stringify(current)) {
-            requireScope(scope); store.put(result, key); changed = true;
+          if (merge) {
+            requireScope(scope); precommitGuard?.(); requireScope(scope);
+            if (JSON.stringify(result) !== JSON.stringify(current)) { store.put(result, key); changed = true; }
           }
         } catch (error) { fail(error); }
       };
@@ -89,7 +90,7 @@ export function readServiceRecords(lookupId: string, scope = getAccountScope()):
   return transact(lookupId, scope);
 }
 
-export function appendServiceRecord(record: ServiceRecord, scope = getAccountScope()): Promise<ServiceRecord[]> {
+export function appendServiceRecord(record: ServiceRecord, scope = getAccountScope(), precommitGuard?: () => void): Promise<ServiceRecord[]> {
   const checked = normalizeServiceRecord(record);
   if (!checked) return Promise.reject(new Error("Complete this human record and its supporting details before saving."));
   return transact(checked.lookupId, scope, (current) => {
@@ -98,7 +99,7 @@ export function appendServiceRecord(record: ServiceRecord, scope = getAccountSco
       throw new Error("This record was already corrected or retracted in another view. Your draft remains; reload the history before correcting its current version.");
     }
     return mergeServiceRecords(current, [checked], checked.lookupId);
-  });
+  }, precommitGuard);
 }
 
 /** Union remote history inside a fresh transaction; correction forks remain visible. */

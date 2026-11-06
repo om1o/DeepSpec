@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getAccountScope, setActiveAccount } from "../lib/accountScope";
-import type { ServiceRecord } from "../types/serviceRecord";
+import type { RequestedMeasurementServiceRecord, ServiceRecord } from "../types/serviceRecord";
 const mocks = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock("./evidenceDb", () => ({ openEvidenceDatabase: mocks.open, SERVICE_RECORD_STORE: "service-records", EVIDENCE_STORAGE_TIMEOUT_MS: 15_000 }));
 import { appendServiceRecord, importServiceRecords, readServiceRecords, SERVICE_RECORDS_CHANGED, subscribeServiceRecords } from "./serviceRecordStore";
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12,"0")}`;
-function record(n = 1): ServiceRecord {
+function record(n = 1): Extract<ServiceRecord, { version: 1; kind: "measurement" }> {
   return { version: 1, id: id(n), lookupId: "scan", recordedAt: "2026-11-05T00:00:00Z", occurredOn: null,
     recordedBy: "Pat", basis: "personally_performed", subject: "Bracket", photoIds: ["photo-1"], notes: "Saved evidence",
     kind: "measurement", quantity: "Thickness", reading: "3.00", unit: "mm", method: "Caliper", instrument: "Hand caliper", conditions: "Cold", noReadingReason: "" };
@@ -70,6 +70,35 @@ describe("immutable device human records", () => {
     expect(await appendServiceRecord(record())).toHaveLength(1);
     await expect(appendServiceRecord({ ...record(), notes: "different" })).rejects.toThrow("conflicting content");
     expect((await readServiceRecords("scan"))[0].notes).toBe("Saved evidence");
+  });
+  it("runs a synchronous source guard after the fresh read for writes and exact no-op retries", async () => {
+    let freshRead = false; db.beforeGet(() => { freshRead = true; });
+    const guard = vi.fn(() => { expect(freshRead).toBe(true); });
+    await appendServiceRecord(record(), getAccountScope(), guard); expect(guard).toHaveBeenCalledTimes(1);
+    const stopped = vi.fn(() => { throw new Error("Original source changed"); });
+    await expect(appendServiceRecord(record(2), getAccountScope(), stopped)).rejects.toThrow("Original source changed");
+    await expect(appendServiceRecord(record(), getAccountScope(), stopped)).rejects.toThrow("Original source changed");
+    expect(stopped).toHaveBeenCalledTimes(2); expect(await readServiceRecords("scan")).toEqual([record()]);
+  });
+  it("rechecks the account after the precommit guard before any write", async () => {
+    await expect(appendServiceRecord(record(), getAccountScope(), () => setActiveAccount("other"))).rejects.toThrow("Account changed");
+    expect(db.rows.size).toBe(0);
+  });
+  it("reopens exact v2 evidence, retains historical correction receipts, and rejects a legacy downgrade", async () => {
+    const first: RequestedMeasurementServiceRecord = { ...record(), version: 2, requestedMeasurement: { version: 1,
+      guide: { version: 1, kind: "measurement", request: "Record thickness", purpose: "Document the requested measurement", photoIds: ["photo-1"] },
+      analysisSha256: "a".repeat(64), references: [{ lookupId: "scan", photoId: "photo-1", photoLabel: "close_up", photoAddedAt: "2026-11-05T00:00:00Z", scanSavedAt: "2026-11-05T00:00:00Z", sha256: "b".repeat(64), width: 32, height: 24, observedOn: null, vehicleContext: null }] } };
+    const expected = structuredClone(first);
+    await appendServiceRecord(first);
+    first.requestedMeasurement.guide.purpose = "Changed after save";
+    expect(await readServiceRecords("scan")).toEqual([expected]);
+    const correction = { ...expected, id: id(2), supersedesId: expected.id, correctionReason: "Corrected transcription", reading: "3.010" };
+    // The history bucket intentionally does not require the old original to
+    // remain available; current-source proof belongs to the new-entry guard.
+    await appendServiceRecord(correction);
+    expect((await readServiceRecords("scan"))[1]).toMatchObject({ requestedMeasurement: expected.requestedMeasurement, reading: "3.010" });
+    await expect(importServiceRecords("scan", [{ ...record(3), supersedesId: correction.id, correctionReason: "Legacy writer omitted receipt" }])).rejects.toThrow("incompatible corrections");
+    expect(await readServiceRecords("scan")).toEqual([expected, correction]);
   });
   it("rejects a stale correction while allowing its exact retry and preserving imported forks", async () => {
     const correction = { ...record(2), supersedesId: id(1), correctionReason: "Read instrument again" };

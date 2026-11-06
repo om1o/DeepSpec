@@ -55,10 +55,15 @@ function requestedComparison(lookupId = "followup"): RequestedInspectionComparis
     requestedEvidence: { version: 1, kind: "marking", request: "Photograph the stamped number <exact historical request>.", purpose: "Read the hidden suffix, not a current AI suggestion.", photoIds: ["photo-1"] },
     analysisSha256: "c".repeat(64) };
 }
-function measurement(): ServiceRecord {
+function measurement(): Extract<ServiceRecord, { kind: "measurement" }> {
   return { version: 1, id: "20000000-0000-4000-8000-000000000001", lookupId: "root", recordedAt: capturedAt, occurredOn: "2026-11-04",
     recordedBy: "PRIVATE_RECORDER", basis: "personally_performed", subject: "Lower bracket edge", photoIds: ["photo-1"], notes: "Measure again with the specified method",
     kind: "measurement", quantity: "Thickness", reading: "2.00", unit: "mm", method: "Caliper", instrument: "Unknown calibration", conditions: "Dry", noReadingReason: "" };
+}
+function requestedMeasurementRecord(): Extract<ServiceRecord, { version: 2; kind: "measurement" }> {
+  return { ...measurement(), version: 2, photoIds: ["one", "two"], requestedMeasurement: { version: 1,
+    guide: { version: 1, kind: "measurement", request: "Measure the marked edge <historical request>.", purpose: "Record thickness without inferring a service limit.", photoIds: ["one", "two"] },
+    analysisSha256: "c".repeat(64), references: ["one", "two"].map((photoId) => ({ ...comparisonSide("root", photoId), sha256: createHash("sha256").update(bytes).digest("hex") })) } };
 }
 const box = { x: .1, y: .2, width: .3, height: .4, confidence: .8 };
 const signed = (id: string, file = "original.png", token = "old") => `https://project.supabase.co/storage/v1/object/sign/scan-images/owner/${id}/${file}?token=${token}`;
@@ -141,6 +146,67 @@ describe("saved inspection report collection", () => {
     });
   });
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+  it("preserves requested-measurement receipts and verifies exact embedded bytes for retained corrections", async () => {
+    local[0] = scan("root", [photo("one"), photo("two")]);
+    const first = requestedMeasurementRecord(), corrected = { ...first, id: "20000000-0000-4000-8000-000000000002", recordedAt: "2026-11-05T16:00:00.000Z", supersedesId: first.id, correctionReason: "Transcription corrected", reading: "2.40" };
+    mocks.service.mockResolvedValue([first]); mocks.serviceCloud.mockResolvedValue([first, corrected]);
+    const actual = await vi.importActual<typeof import("./comparisonEvidence")>("./comparisonEvidence");
+    mocks.comparisonSide.mockImplementation(actual.comparisonSideForLookup);
+    const report = await collectInspectionReport("root");
+    expect(report.serviceLogs![0].records).toEqual([first, corrected]);
+    expect(report.serviceEvidence).toEqual([first, corrected].flatMap((record) => record.requestedMeasurement.references.map((side) => ({ lookupId: "root", recordId: record.id, photoId: side.photoId, status: "unchanged" }))));
+    expect(mocks.comparisonSide).toHaveBeenCalledTimes(2);
+    for (const [supplied, photoId] of mocks.comparisonSide.mock.calls) expect(supplied.photos?.find((entry: ScanPhoto) => entry.id === photoId)?.imageBase64).toBe(image);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(report.serviceLogs![0].records[0]).not.toBe(first);
+    expect(report.missing.filter((issue) => issue.kind === "service_records")).toEqual([]);
+  });
+
+  it.each(["pixels", "context", "missing", "empty", "unavailable"] as const)("fails closed for %s receipt originals without losing human readings or substituting a source", async (change) => {
+    local[0] = scan("root", [photo("one"), photo("two")]);
+    const record = requestedMeasurementRecord(); mocks.service.mockResolvedValue([record]);
+    const actual = await vi.importActual<typeof import("./comparisonEvidence")>("./comparisonEvidence");
+    mocks.comparisonSide.mockImplementation(actual.comparisonSideForLookup);
+    if (change === "pixels") local[0].photos![0].imageBase64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/bKkAAAAASUVORK5CYII=";
+    if (change === "context") local[0].vehicleContext = { model: "Changed context" };
+    if (change === "missing") local[0].photos!.shift();
+    if (change === "empty") local[0].photos = [];
+    if (change === "unavailable") mocks.comparisonSide.mockImplementationOnce(async () => { throw new Error("https://private.example/?token=SECRET"); });
+    const report = await collectInspectionReport("root");
+    expect(report.serviceLogs![0].records).toEqual([record]);
+    const expected = change === "pixels" || change === "context" ? "source_changed" : change === "unavailable" ? "verification_unavailable" : "missing_photo";
+    expect(report.serviceEvidence?.find((row) => row.photoId === "one")?.status).toBe(expected);
+    expect(report.serviceEvidence?.find((row) => row.photoId === "two")?.status).toBe(change === "empty" ? "missing_photo" : "unchanged");
+    expect(report.missing).toContainEqual(expect.objectContaining({ kind: "service_records", lookupId: "root", photoId: "one" }));
+    expect(JSON.stringify(report.missing)).not.toMatch(/private\.example|SECRET/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    if (change === "empty") expect(mocks.comparisonSide).not.toHaveBeenCalled();
+  });
+
+  it("retains uncited no-reading receipts without inventing original verification", async () => {
+    const record = requestedMeasurementRecord();
+    record.reading = null; record.noReadingReason = "Access was unsafe; no reading obtained."; record.unit = ""; record.method = ""; record.photoIds = [];
+    record.requestedMeasurement.guide.photoIds = []; record.requestedMeasurement.references = [];
+    mocks.service.mockResolvedValue([record]);
+    const report = await collectInspectionReport("root");
+    expect(report.serviceLogs![0].records).toEqual([record]);
+    expect(report.serviceEvidence).toEqual([]);
+    expect(mocks.comparisonSide).not.toHaveBeenCalled();
+  });
+
+  it("keeps requested receipts and retractions when the linked scan itself is missing", async () => {
+    map = mapWithLinks(["missing"]);
+    const first = requestedMeasurementRecord(); first.lookupId = "missing"; first.requestedMeasurement.references.forEach((side) => { side.lookupId = "missing"; });
+    const retracted: Extract<ServiceRecord, { version: 2; kind: "retraction" }> = { version: 2, id: "20000000-0000-4000-8000-000000000002", lookupId: "missing", recordedAt: "2026-11-05T16:00:00.000Z", occurredOn: null,
+      recordedBy: first.recordedBy, basis: first.basis, subject: first.subject, photoIds: first.photoIds, notes: "Retained reason", kind: "retraction", supersedesId: first.id, correctionReason: "Reading unreliable", requestedMeasurement: structuredClone(first.requestedMeasurement) };
+    mocks.service.mockImplementation(async (id) => id === "missing" ? [first, retracted] : []);
+    const report = await collectInspectionReport("root");
+    expect(report.serviceLogs?.find((log) => log.lookupId === "missing")?.records).toEqual([first, retracted]);
+    expect(report.serviceEvidence).toHaveLength(4);
+    expect(report.serviceEvidence?.every((row) => row.status === "missing_photo")).toBe(true);
+    expect(mocks.comparisonSide).not.toHaveBeenCalled();
+  });
 
   it("verifies exact materialized linked rasters while preserving each association and historical metadata", async () => {
     map = boundLinkedMap(); const detail = scan("detail", [photo("one"), photo("two")]); detail.photoRelationship = "same_part_or_area";

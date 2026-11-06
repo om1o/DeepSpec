@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { ServiceRecord } from "../types/serviceRecord";
+import type { RequestedMeasurementServiceRecord, ServiceRecord } from "../types/serviceRecord";
 import { confirmVehicleContextField } from "./vehicleContext";
 import { MAX_SERVICE_RECORDS, mergeServiceRecords, normalizeServiceRecord, normalizeServiceRecords, serviceRecordRows, serviceRecordStatus, serviceRecordValidationError } from "./serviceRecord";
 
 const LOOKUP = "scan-original";
 const WHEN = "2026-11-05T12:00:00.000Z";
 const id = (number: number) => `00000000-0000-4000-8000-${number.toString(16).padStart(12, "0")}`;
-function measurement(number = 1): ServiceRecord {
+function measurement(number = 1): Extract<ServiceRecord, { version: 1; kind: "measurement" }> {
   return { version: 1, id: id(number), lookupId: LOOKUP, recordedAt: WHEN, occurredOn: "2026-11-04", recordedBy: "Recorder name",
     basis: "personally_performed", subject: "Recorded component / test point", photoIds: ["photo-1", "marking"], notes: "Shared evidence note",
     kind: "measurement", quantity: "Recorded thickness", reading: "12.00", unit: "mm", method: "Recorded measurement method", instrument: "Instrument as reported", conditions: "Conditions as reported", noReadingReason: "" };
@@ -23,6 +23,54 @@ function correction(previous: ServiceRecord, number = 4): ServiceRecord {
 function retraction(previous: ServiceRecord, number = 5): ServiceRecord {
   return { ...measurement(number), kind: "retraction", supersedesId: previous.id, correctionReason: "Withdrawn because the original attribution was wrong" };
 }
+
+function requested(number = 1): RequestedMeasurementServiceRecord {
+  return { ...measurement(number), version: 2, analysisAttemptId: "attempt-1", requestedMeasurement: { version: 1,
+    guide: { version: 1, kind: "measurement", request: "Record the exact reading and unit", purpose: "Document the missing thickness", photoIds: ["photo-1"], analysisAttemptId: "attempt-1" },
+    analysisSha256: "a".repeat(64), references: [{ lookupId: LOOKUP, photoId: "photo-1", photoLabel: "close_up", photoAddedAt: WHEN, scanSavedAt: WHEN,
+      sha256: "b".repeat(64), width: 32, height: 24, observedOn: null, vehicleContext: null, analysisAttemptId: "attempt-1" }] } };
+}
+
+describe("requested measurement history", () => {
+  it("preserves the complete receipt and exact numeric text through correction and retraction", () => {
+    const first = requested();
+    const corrected = { ...first, id: id(2), supersedesId: first.id, correctionReason: "Decimal transcription", reading: "  +0012.000  " };
+    const withdrawn = { ...first, kind: "retraction" as const, id: id(3), supersedesId: corrected.id, correctionReason: "Method was not documented" };
+    const records = normalizeServiceRecords([withdrawn, corrected, first], LOOKUP)!;
+    expect(records).toHaveLength(3);
+    expect(records[1]).toMatchObject({ reading: "  +0012.000  ", requestedMeasurement: first.requestedMeasurement });
+    expect(records[2]).toMatchObject({ kind: "retraction", requestedMeasurement: first.requestedMeasurement });
+  });
+  it("rejects version downgrade, legacy retrofit and changed guide/source/analysis throughout the graph", () => {
+    const first = requested();
+    const corrected = { ...first, id: id(2), supersedesId: first.id, correctionReason: "Correction" };
+    for (const requestedMeasurement of [
+      { ...first.requestedMeasurement, analysisSha256: "c".repeat(64) },
+      { ...first.requestedMeasurement, guide: { ...first.requestedMeasurement.guide, purpose: "Another purpose" } },
+      { ...first.requestedMeasurement, references: first.requestedMeasurement.references.map((side) => ({ ...side, sha256: "c".repeat(64) })) },
+    ]) expect(normalizeServiceRecords([first, { ...corrected, requestedMeasurement }], LOOKUP)).toBeUndefined();
+    expect(normalizeServiceRecords([first, { ...measurement(2), supersedesId: first.id, correctionReason: "Downgrade" }], LOOKUP)).toBeUndefined();
+    expect(normalizeServiceRecords([measurement(), corrected], LOOKUP)).toBeUndefined();
+    expect(() => mergeServiceRecords([first], [{ ...corrected, version: 1, requestedMeasurement: undefined } as unknown as ServiceRecord], LOOKUP)).toThrow();
+  });
+  it("rejects erased citations, mismatched attempts, v2 repair and hidden receipt in v1", () => {
+    const first = requested();
+    expect(normalizeServiceRecord({ ...first, photoIds: [] })).toBeUndefined();
+    expect(normalizeServiceRecord({ ...first, analysisAttemptId: "different" })).toBeUndefined();
+    expect(normalizeServiceRecord({ ...repair(), version: 2, requestedMeasurement: first.requestedMeasurement })).toBeUndefined();
+    for (const requestedMeasurement of [null, undefined, first.requestedMeasurement]) expect(normalizeServiceRecord({ ...measurement(), requestedMeasurement })).toBeUndefined();
+  });
+  it("projects exact request and fingerprints without reference VIN/private context or a resolution claim", () => {
+    const first = requested(); first.requestedMeasurement.references[0].vehicleContext = { vin: "1HGCM82633A004352", notes: "PRIVATE_CONTEXT" };
+    const rows = serviceRecordRows(first), serialized = JSON.stringify(rows);
+    expect(rows).toContainEqual(["Historical measurement request", first.requestedMeasurement.guide.request]);
+    expect(rows).toContainEqual(["Request purpose", first.requestedMeasurement.guide.purpose]);
+    expect(serialized).toContain("does not establish that it is resolved");
+    expect(serialized).not.toContain("1HGCM82633A004352"); expect(serialized).not.toContain("PRIVATE_CONTEXT");
+    first.requestedMeasurement.guide.photoIds = []; first.requestedMeasurement.references = [];
+    expect(JSON.stringify(serviceRecordRows(first))).toContain("No originals cited; no original image is bound");
+  });
+});
 
 describe("human service record validation", () => {
   it("preserves exact accepted text and numeric precision while projecting a fresh immutable record", () => {

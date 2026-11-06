@@ -143,6 +143,18 @@ it.each(["measurement", "professional_inspection"] as const)("keeps %s advice re
   expect(prepareRequestedEvidenceCapture).not.toHaveBeenCalled();
 });
 
+it("explicitly hands a valid measurement request to the human form without AI or a reading inference", async () => {
+  const lookup = record(), recordMeasurement = vi.fn(); lookup.result!.conditionAssessment!.nextEvidence!.kind = "measurement";
+  const view = render(<ConditionEvidenceReview lookup={lookup} onSelectPhoto={vi.fn()} onRecordMeasurement={recordMeasurement} />);
+  expect(recordMeasurement).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "Record requested measurement" }));
+  expect(recordMeasurement).toHaveBeenCalledTimes(1);
+  expect(screen.getByText(/saved reading does not resolve the AI request/)).toBeInTheDocument();
+  expect(identifyCapturedFrame).not.toHaveBeenCalled(); expect(prepareRequestedEvidenceCapture).not.toHaveBeenCalled();
+  view.rerender(<ConditionEvidenceReview lookup={lookup} disabled onSelectPhoto={vi.fn()} onRecordMeasurement={recordMeasurement} />);
+  expect(screen.getByRole("button", { name: "Record requested measurement" })).toBeDisabled();
+});
+
 it.each(["foreign", "duplicate", "empty", "malformed"])("does not offer capture for %s source metadata", (failure) => {
   const lookup = record();
   if (failure === "foreign") lookup.result!.conditionAssessment!.nextEvidence!.photoIds = ["other-scan"];

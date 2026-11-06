@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { getAccountScope, isAccountScopeCurrent } from "../../lib/accountScope";
 import { normalizeServiceRecord, serviceRecordRows, serviceRecordStatus, serviceRecordValidationError } from "../../lib/serviceRecord";
 import { vehicleContextDetails } from "../../lib/vehicleContext";
@@ -7,7 +7,8 @@ import { downloadTextFile } from "../../services/report";
 import { appendServiceRecord, importServiceRecords, readServiceRecords, subscribeServiceRecords } from "../../services/serviceRecordStore";
 import { readCloudServiceRecords, syncServiceRecords } from "../../services/serviceRecordCloud";
 import { isCloudSyncEnabled } from "../../services/cloudSyncPolicy";
-import { correctionServiceRecordDraft, newServiceRecordDraft, readServiceRecordDraft, serviceRecordContextForLookup, serviceRecordContextsMatch, serviceRecordDraftVehicleContext, serviceRecordFromDraft, writeServiceRecordDraft, type ServiceRecordContext, type ServiceRecordDraft, type ServiceRecordDraftRead, type ServiceRecordFields } from "../../services/serviceRecordDraft";
+import { correctionServiceRecordDraft, newServiceRecordDraft, requestedServiceRecordDraft, readServiceRecordDraft, serviceRecordContextForLookup, serviceRecordContextsMatch, serviceRecordDraftVehicleContext, serviceRecordFromDraft, writeServiceRecordDraft, type ServiceRecordContext, type ServiceRecordDraft, type ServiceRecordDraftRead, type ServiceRecordFields } from "../../services/serviceRecordDraft";
+import { assertRequestedMeasurementCurrent, prepareRequestedMeasurement, verifyRequestedMeasurement } from "../../services/requestedMeasurement";
 import type { Lookup } from "../../types";
 import type { ServiceRecord } from "../../types/serviceRecord";
 
@@ -16,7 +17,7 @@ const buttonClass = "min-h-11 rounded-full border border-[var(--ds-border)] px-4
 const kindLabels = { measurement: "Measurement", repair: "Repair / work", follow_up: "Follow-up check", retraction: "Retraction" };
 
 /** Append-only human history. Never updates AI output or PartInspection. */
-export function ServiceRecordLog({ lookup, disabled = false }: { lookup: Lookup; disabled?: boolean }) {
+export function ServiceRecordLog({ lookup, disabled = false, requestedMeasurementIntent }: { lookup: Lookup; disabled?: boolean; requestedMeasurementIntent?: { id: number; lookup: Lookup } }) {
   const [scope] = useState(getAccountScope);
   const [openedId] = useState(lookup.id);
   const [openedWithDeviceScan] = useState(() => Boolean(getLookup(lookup.id)));
@@ -40,9 +41,20 @@ export function ServiceRecordLog({ lookup, disabled = false }: { lookup: Lookup;
   const operation = useRef(false);
   const [loaded, setLoaded] = useState(false);
   const readGeneration = useRef(0);
+  const details = useRef<HTMLDetailsElement>(null);
+  const handledIntent = useRef<number | null>(null);
+  const requestController = useRef<AbortController | null>(null);
+  const initialGuard = useRef<(() => void) | undefined>(undefined);
+  const lookupSource = useMemo(() => requestSourceKey(lookup), [lookup]);
+  const latestView = useRef({ source: lookupSource, lookupId: lookup.id, disabled });
   const current = isAccountScopeCurrent(scope) && openedId === lookup.id;
 
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useLayoutEffect(() => {
+    const source = lookupSource;
+    if (latestView.current.source !== source || disabled) requestController.current?.abort();
+    latestView.current = { source, lookupId: lookup.id, disabled };
+  }, [lookup.id, lookupSource, disabled]);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; requestController.current?.abort(); }; }, []);
   useEffect(() => {
     let live = true;
     void readServiceRecordDraft(scope, openedId).then((value) => {
@@ -52,6 +64,48 @@ export function ServiceRecordLog({ lookup, disabled = false }: { lookup: Lookup;
     });
     return () => { live = false; };
   }, [openedId, scope]);
+
+  function assertView(source: string) {
+    if (!mounted.current || !isAccountScopeCurrent(scope) || latestView.current.lookupId !== openedId || latestView.current.disabled || latestView.current.source !== source) throw new Error("The scan, request or account changed. Your service draft is preserved; reopen the saved scan before continuing.");
+  }
+  const beginRequested = useEffectEvent(async (intent: { id: number; lookup: Lookup }) => {
+    await Promise.resolve();
+    if (!mounted.current || handledIntent.current === intent.id || !isAccountScopeCurrent(scope)) return;
+    handledIntent.current = intent.id;
+    if (details.current) { details.current.open = true; details.current.scrollIntoView?.({ behavior: "smooth", block: "start" }); }
+    if (dirty || recoveryPending || savedAttempt || draftRaw.current !== null || draftRef.current?.version === 2 || operation.current) {
+      setMessage("An unfinished service entry is already here. Restore, save, or explicitly discard it before starting the requested measurement; nothing was overwritten."); return;
+    }
+    if (!context || !draftReady || !loaded || disabled || intent.lookup.id !== openedId) { setMessage("Save and reopen this scan before recording its requested measurement."); return; }
+    const source = requestSourceKey(intent.lookup);
+    const active = new AbortController(); requestController.current?.abort(); requestController.current = active;
+    operation.current = true; setBusy(true); setMessage("Checking the saved measurement request and original photos…");
+    try {
+      assertView(source);
+      const receipt = await prepareRequestedMeasurement(intent.lookup, scope, active.signal);
+      assertView(source); active.signal.throwIfAborted();
+      const verified = await verifyRequestedMeasurement(openedId, receipt, scope, active.signal);
+      assertView(source); active.signal.throwIfAborted();
+      const targetContext = await serviceRecordContextForLookup(intent.lookup);
+      assertView(source); active.signal.throwIfAborted();
+      const next = requestedServiceRecordDraft(targetContext, receipt);
+      const guard = () => { assertView(source); active.signal.throwIfAborted(); assertRequestedMeasurementCurrent(verified, scope); };
+      initialGuard.current = guard;
+      draftRef.current = next; setDraft(next); setDirty(true);
+      const result = await writeServiceRecordDraft(scope, openedId, draftRaw.current, next, guard);
+      if (result.ok) { draftRaw.current = result.raw; initialGuard.current = undefined; }
+      if (!mounted.current || !isAccountScopeCurrent(scope)) return;
+      assertView(source);
+      setNotice(result.ok ? "Requested measurement draft kept on this device. Enter your own reading and method." : result.message);
+      setMessage("The request is retained below. No quantity, reading, unit or pass/fail threshold has been inferred.");
+    } catch (error) {
+      if (mounted.current && isAccountScopeCurrent(scope)) setMessage(error instanceof Error ? error.message : "The requested measurement could not be prepared. Existing entries and drafts were preserved.");
+    } finally { operation.current = false; if (mounted.current && isAccountScopeCurrent(scope)) setBusy(false); }
+  });
+  useEffect(() => {
+    if (requestedMeasurementIntent && details.current) details.current.open = true;
+    if (requestedMeasurementIntent && context && draftReady && loaded) void beginRequested(requestedMeasurementIntent);
+  }, [requestedMeasurementIntent, context, draftReady, loaded]);
 
   useEffect(() => {
     let live = true;
@@ -81,7 +135,8 @@ export function ServiceRecordLog({ lookup, disabled = false }: { lookup: Lookup;
     if (isAccountScopeCurrent(scope) && openedId === lookup.id) return true;
     setMessage("Account or scan changed. Reopen the original scan to recover its service draft."); return false;
   }
-  function keep(next: ServiceRecordDraft) {
+  function keep(next: ServiceRecordDraft, precommitGuard?: () => void) {
+    if (precommitGuard) initialGuard.current = precommitGuard;
     const updated = { ...next, updatedAt: new Date().toISOString() };
     draftRef.current = updated; setDraft(updated); setDirty(true);
     const generation = ++persistenceGeneration.current;
@@ -89,8 +144,8 @@ export function ServiceRecordLog({ lookup, disabled = false }: { lookup: Lookup;
     // Serialize this view's keystrokes. Each CAS uses the last committed raw value;
     // a competing tab still fails inside the shared database transaction.
     persistence.current = persistence.current.then(async () => {
-      const result = await writeServiceRecordDraft(scope, openedId, draftRaw.current, updated);
-      if (result.ok) draftRaw.current = result.raw;
+      const result = await writeServiceRecordDraft(scope, openedId, draftRaw.current, updated, initialGuard.current);
+      if (result.ok) { draftRaw.current = result.raw; initialGuard.current = undefined; }
       if (!mounted.current || !isAccountScopeCurrent(scope) || generation !== persistenceGeneration.current) return;
       setNotice(result.ok ? "Draft kept on this device. It is not a saved service record or cloud backup." : result.message);
       if (result.ok && result.legacyRaw) setRecovery((previous) => ({ ...previous, legacyRaw: result.legacyRaw }));
@@ -100,6 +155,7 @@ export function ServiceRecordLog({ lookup, disabled = false }: { lookup: Lookup;
   function change<K extends keyof ServiceRecordFields>(key: K, value: ServiceRecordFields[K]) {
     const previous = draftRef.current;
     if (!requireAccount() || !previous || !draftReady || recoveryPending || operation.current || savedAttempt) return;
+    if (previous.version === 2 && (key === "kind" || (key === "photoIds" && !previous.requestedMeasurement.guide.photoIds.every((id) => (value as string[]).includes(id))))) return;
     keep({ ...previous, fields: { ...previous.fields, [key]: value } });
   }
   function downloadRecovery(recovered = false, legacy = false) {
@@ -112,15 +168,25 @@ export function ServiceRecordLog({ lookup, disabled = false }: { lookup: Lookup;
   async function restore() {
     if (!requireAccount() || !context || !recovery.record || !draftReady || operation.current) return;
     operation.current = true; setBusy(true);
+    const source = requestSourceKey(lookup);
+    const active = new AbortController(); requestController.current?.abort(); requestController.current = active;
     try {
       const latest = await readServiceRecordDraft(scope, openedId);
       if (!mounted.current || !isAccountScopeCurrent(scope)) return;
       if (!latest.ok || latest.raw !== draftRaw.current || !serviceRecordContextsMatch(recovery.record.context, context)) {
         setMessage("The draft or scan context changed. Download the recovery copy before reopening; it was not overwritten."); return;
       }
+      if (recovery.record.version === 2) {
+        const verified = await verifyRequestedMeasurement(openedId, recovery.record.requestedMeasurement, scope, active.signal, Boolean(recovery.record.supersedesId));
+        assertView(source); active.signal.throwIfAborted(); assertRequestedMeasurementCurrent(verified, scope);
+        const unchanged = await readServiceRecordDraft(scope, openedId);
+        assertView(source);
+        if (!unchanged.ok || unchanged.raw !== latest.raw) throw new Error("The recovered draft changed elsewhere. Download the recovery copy; it was not overwritten.");
+      }
       draftRef.current = recovery.record; setDraft(recovery.record); setRecoveryPending(false); setDirty(true);
       setNotice("Draft restored with its original photos and vehicle snapshot. Review it before saving.");
-    } finally { operation.current = false; if (mounted.current && isAccountScopeCurrent(scope)) setBusy(false); }
+    } catch (error) { if (mounted.current && isAccountScopeCurrent(scope)) setMessage(error instanceof Error ? error.message : "This requested draft could not be verified. Its recovery copy is retained."); }
+    finally { operation.current = false; if (mounted.current && isAccountScopeCurrent(scope)) setBusy(false); }
   }
   async function discard() {
     if (!requireAccount() || !context || !draftReady || operation.current) return;
@@ -131,13 +197,23 @@ export function ServiceRecordLog({ lookup, disabled = false }: { lookup: Lookup;
       if (!mounted.current || !isAccountScopeCurrent(scope)) return;
       if (!result.ok) { setMessage(result.message); return; }
       draftRaw.current = null; setRecovery({ ...result, record: null, message: "" }); setRecoveryPending(false);
+      initialGuard.current = undefined;
       const next = newServiceRecordDraft(context); draftRef.current = next; setDraft(next);
       setDirty(false); setSavedAttempt(false); setNotice(""); setMessage("Draft discarded. Saved service history is unchanged.");
     } finally { operation.current = false; if (mounted.current && isAccountScopeCurrent(scope)) setBusy(false); }
   }
-  function correct(record: ServiceRecord, retract: boolean) {
+  async function correct(record: ServiceRecord, retract: boolean) {
     if (!requireAccount() || !context || !draftReady || dirty || recoveryPending || operation.current) return;
-    keep(correctionServiceRecordDraft(record, context, retract));
+    if (record.version === 1) { keep(correctionServiceRecordDraft(record, context, retract)); return; }
+    operation.current = true; setBusy(true);
+    const source = requestSourceKey(lookup), active = new AbortController();
+    requestController.current?.abort(); requestController.current = active;
+    try {
+      const verified = await verifyRequestedMeasurement(openedId, record.requestedMeasurement, scope, active.signal, true);
+      const guard = () => { assertView(source); active.signal.throwIfAborted(); assertRequestedMeasurementCurrent(verified, scope); };
+      guard(); keep(correctionServiceRecordDraft(record, context, retract), guard);
+    } catch (error) { if (mounted.current && isAccountScopeCurrent(scope)) setMessage(error instanceof Error ? error.message : "This historical entry could not be opened safely. Its saved history was kept."); }
+    finally { operation.current = false; if (mounted.current && isAccountScopeCurrent(scope)) setBusy(false); }
   }
   async function save() {
     if (!requireAccount() || operation.current || !draft || !context || !draftReady || recoveryPending || !loaded || disabled || savedAttempt) return;
@@ -156,7 +232,8 @@ export function ServiceRecordLog({ lookup, disabled = false }: { lookup: Lookup;
         throw new Error("The saved scan photos or vehicle context changed. Download this draft and reopen the scan; no service record was saved.");
       }
       if (!isAccountScopeCurrent(scope)) return;
-      if (record.photoIds.some((id) => !draft.context.photos.some((photo) => photo.id === id))) throw new Error("A selected photo is no longer part of this scan.");
+      const historical = draft.supersedesId && draft.baseRecord ? normalizeServiceRecord(JSON.parse(draft.baseRecord)) : undefined;
+      if (record.photoIds.some((id) => !draft.context.photos.some((photo) => photo.id === id) && !(record.version === 2 && historical?.version === 2 && historical.photoIds.includes(id)))) throw new Error("A selected photo is no longer part of this scan.");
       if (draft.supersedesId) {
         const saved = await readServiceRecords(openedId, scope);
         const target = saved.find((item) => item.id === draft.supersedesId);
@@ -164,7 +241,12 @@ export function ServiceRecordLog({ lookup, disabled = false }: { lookup: Lookup;
           throw new Error("This record was corrected or retracted elsewhere. Your draft is preserved; reload the history before making a new correction.");
         }
       }
-      const saved = await appendServiceRecord(record, scope);
+      const source = requestSourceKey(lookup);
+      const active = new AbortController(); requestController.current?.abort(); requestController.current = active;
+      const verified = record.version === 2 ? await verifyRequestedMeasurement(openedId, record.requestedMeasurement, scope, active.signal, Boolean(draft.supersedesId)) : undefined;
+      const guard = verified ? () => { assertView(source); active.signal.throwIfAborted(); assertRequestedMeasurementCurrent(verified, scope); } : undefined;
+      guard?.();
+      const saved = await appendServiceRecord(record, scope, guard);
       if (!isAccountScopeCurrent(scope)) return;
       readGeneration.current += 1; setRecords(saved); setLoaded(true);
       const cleared = await writeServiceRecordDraft(scope, openedId, draftRaw.current, null);
@@ -205,7 +287,7 @@ export function ServiceRecordLog({ lookup, disabled = false }: { lookup: Lookup;
   const input = (key: keyof ServiceRecordFields, label: string, max: number, multiline = false) => <label key={key} className="block text-sm font-semibold">{label}{multiline
     ? <textarea className={fieldClass} maxLength={max} value={String(fields?.[key] ?? "")} onChange={(event) => change(key, event.target.value)} />
     : <input className={fieldClass} maxLength={max} value={String(fields?.[key] ?? "")} onChange={(event) => change(key, event.target.value)} />}</label>;
-  return <details className="rounded-[22px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 shadow-sm">
+  return <details ref={details} className="rounded-[22px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 shadow-sm">
     <summary className="cursor-pointer text-sm font-extrabold">Human service history{recoveryPending ? " — draft available" : ` — ${records.length} record${records.length === 1 ? "" : "s"}`}</summary>
     <p className="mt-3 text-sm text-[var(--ds-fg-3)]">Record measurements, work and follow-up checks. These are self-reported history, separate from AI findings and the human inspection summary. A completed action or symptom not observed during one check is not proof of repair or roadworthiness.</p>
     <div className="mt-3 flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled={!isCloudSyncEnabled() || busy || disabled} onClick={() => void cloud("read")}>Read cloud service history</button><button type="button" className={buttonClass} disabled={!isCloudSyncEnabled() || busy || disabled || !loaded} onClick={() => void cloud("sync")}>Sync service history</button></div>
@@ -233,7 +315,8 @@ export function ServiceRecordLog({ lookup, disabled = false }: { lookup: Lookup;
     {draft ? <form className="mt-4" onSubmit={(event) => { event.preventDefault(); void save(); }}>
       <fieldset disabled={busy || disabled || !draftReady || recoveryPending || !loaded || mismatch || savedAttempt} className="space-y-3">
         <legend className="mb-3 font-bold">{draft.supersedesId ? (fields?.kind === "retraction" ? "Append a retraction" : "Append a correction") : "Add a service record"}</legend>
-        {draft.supersedesId ? <p className="text-sm">The original remains in history. Give a reason for this new entry.</p> : <label className="block text-sm font-semibold">Record type<select className={fieldClass} value={fields?.kind} onChange={(event) => change("kind", event.target.value as ServiceRecordFields["kind"])}><option value="measurement">Measurement</option><option value="repair">Repair / work</option><option value="follow_up">Follow-up check</option></select></label>}
+        {draft.supersedesId ? <p className="text-sm">The original remains in history. Give a reason for this new entry.</p> : draft.version === 2 ? <p className="font-semibold">Requested measurement</p> : <label className="block text-sm font-semibold">Record type<select className={fieldClass} value={fields?.kind} onChange={(event) => change("kind", event.target.value as ServiceRecordFields["kind"])}><option value="measurement">Measurement</option><option value="repair">Repair / work</option><option value="follow_up">Follow-up check</option></select></label>}
+        {draft.version === 2 ? <aside aria-label="Retained measurement request" className="rounded-xl border border-[var(--ds-border)] p-3 text-sm"><p className="font-bold">AI-suggested measurement request — not a diagnosis</p><p className="mt-2 whitespace-pre-wrap">{draft.requestedMeasurement.guide.request}</p><p className="mt-2 whitespace-pre-wrap">Why: {draft.requestedMeasurement.guide.purpose}</p><p className="mt-2 text-xs">{draft.supersedesId ? "Historical request retained from the original entry; a correction does not verify the current AI answer or availability of the old photos. " : ""}Enter only a reading you obtained or explicitly record why it was not obtained. This record does not resolve the request or establish a pass/fail limit or safety.</p></aside> : null}
         {input("subject", "Part or area checked", 200)}
         {input("recordedBy", "Recorded by (self-reported)", 120)}
         <label className="block text-sm font-semibold">Evidence basis<select className={fieldClass} value={fields?.basis} onChange={(event) => change("basis", event.target.value as ServiceRecordFields["basis"])}><option value="personally_performed">I personally performed this</option><option value="reported_by_another">Reported by another person</option><option value="transcribed_document">Transcribed from a document</option></select></label>
@@ -251,7 +334,7 @@ export function ServiceRecordLog({ lookup, disabled = false }: { lookup: Lookup;
         {draft.supersedesId ? input("correctionReason", "Reason for correction or retraction", 1000, true) : null}
         {input("notes", "Evidence notes (included in reports)", 2000, true)}
         <p className="text-xs text-[var(--ds-fg-3)]">Evidence notes and other service descriptions are shared in reports. Avoid entering private names or contact details into these fields.</p>
-        <fieldset className="space-y-2"><legend className="text-sm font-semibold">Supporting saved photos (optional)</legend>{draft.context.photos.map((photo, index) => <label className="flex min-h-11 items-center gap-2 text-sm" key={photo.id}><input type="checkbox" checked={fields?.photoIds.includes(photo.id)} onChange={(event) => change("photoIds", event.target.checked ? [...(fields?.photoIds ?? []), photo.id] : (fields?.photoIds ?? []).filter((id) => id !== photo.id))} />Photo {index + 1}: {photo.label.replaceAll("_", " ")} ({photo.id})</label>)}</fieldset>
+        <fieldset className="space-y-2"><legend className="text-sm font-semibold">Supporting saved photos (optional)</legend>{draft.context.photos.map((photo, index) => <label className="flex min-h-11 items-center gap-2 text-sm" key={photo.id}><input type="checkbox" disabled={draft.version === 2 && draft.requestedMeasurement.guide.photoIds.includes(photo.id)} checked={fields?.photoIds.includes(photo.id)} onChange={(event) => change("photoIds", event.target.checked ? [...(fields?.photoIds ?? []), photo.id] : (fields?.photoIds ?? []).filter((id) => id !== photo.id))} />Photo {index + 1}: {photo.label.replaceAll("_", " ")} ({photo.id})</label>)}{draft.version === 2 ? <p className="text-xs">Request photo references are retained: {draft.requestedMeasurement.guide.photoIds.join(", ") || "No photos cited"}. {draft.requestedMeasurement.guide.photoIds.some((id) => !draft.context.photos.some((photo) => photo.id === id)) ? "Some historical references are unavailable in this scan; no replacement was selected." : ""}</p> : null}</fieldset>
         <details className="text-xs"><summary>Vehicle snapshot attached to this record</summary><dl>{vehicleContextDetails(serviceRecordDraftVehicleContext(draft)).filter(([label]) => label !== "VIN").map(([label, value]) => <div key={label}><dt className="font-semibold">{label}</dt><dd>{value}</dd></div>)}</dl><p>Snapshot is frozen when this draft begins; corrections and retractions retain the original entry’s snapshot. Blank performed date remains unknown; dates and identity are self-reported.</p></details>
         <button type="submit" className="min-h-11 rounded-full bg-neutral-900 px-5 py-3 text-sm font-bold text-white">{busy ? "Saving…" : "Save service record on this device"}</button>
       </fieldset>
@@ -259,4 +342,8 @@ export function ServiceRecordLog({ lookup, disabled = false }: { lookup: Lookup;
     <p role="status" className="mt-3 text-sm">{message}</p>
     <p className="mt-2 text-xs text-[var(--ds-fg-3)]">AI result, confidence and inspection status are not changed by any entry in this log.</p>
   </details>;
+}
+
+function requestSourceKey(lookup: Lookup) {
+  return JSON.stringify({ id: lookup.id, result: lookup.result, analysisAttemptId: lookup.analysisAttemptId, frame: lookup.frame, photos: lookup.photos, photoRelationship: lookup.photoRelationship, vehicleContext: lookup.vehicleContext });
 }

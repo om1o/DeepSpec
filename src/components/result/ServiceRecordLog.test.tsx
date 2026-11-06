@@ -6,10 +6,12 @@ import { mergeServiceRecords, normalizeServiceRecord } from "../../lib/serviceRe
 import { createLookup, deleteLookup, getLookup, LOOKUPS_STORAGE_KEY } from "../../services/storage";
 import * as store from "../../services/serviceRecordStore";
 import * as cloud from "../../services/serviceRecordCloud";
+import * as requested from "../../services/requestedMeasurement";
 import { downloadTextFile } from "../../services/report";
-import { newServiceRecordDraft, readServiceRecordDraft, serviceRecordContextForLookup, serviceRecordDraftKey, serviceRecordFromDraft, writeServiceRecordDraft } from "../../services/serviceRecordDraft";
+import { newServiceRecordDraft, requestedServiceRecordDraft, readServiceRecordDraft, serviceRecordContextForLookup, serviceRecordDraftKey, serviceRecordFromDraft, writeServiceRecordDraft } from "../../services/serviceRecordDraft";
 import type { Lookup } from "../../types";
 import type { ServiceRecord } from "../../types/serviceRecord";
+import type { RequestedMeasurementReceipt } from "../../types/requestedMeasurement";
 const draftDb = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock("../../services/evidenceDb", () => ({ openEvidenceDatabase: draftDb.open, SERVICE_RECORD_DRAFT_STORE: "service-record-drafts", EVIDENCE_STORAGE_TIMEOUT_MS: 15_000 }));
 
@@ -44,6 +46,7 @@ let draftDatabase: ReturnType<typeof draftDatabaseFixture>;
 vi.mock("../../services/serviceRecordStore", () => ({ readServiceRecords: vi.fn(), appendServiceRecord: vi.fn(), importServiceRecords: vi.fn(), subscribeServiceRecords: vi.fn() }));
 vi.mock("../../services/serviceRecordCloud", () => ({ readCloudServiceRecords: vi.fn(), syncServiceRecords: vi.fn() }));
 vi.mock("../../services/report", () => ({ downloadTextFile: vi.fn() }));
+vi.mock("../../services/requestedMeasurement", () => ({ prepareRequestedMeasurement: vi.fn(), verifyRequestedMeasurement: vi.fn(), assertRequestedMeasurementCurrent: vi.fn() }));
 let history: ServiceRecord[];
 let lookup: Lookup;
 beforeEach(() => {
@@ -53,11 +56,13 @@ beforeEach(() => {
   const frame = { imageBase64: "data:image/jpeg;base64,test", capturedAt: "2026-11-05T12:00:00.000Z" };
   lookup = createLookup({ frame, photos: [{ ...frame, id: "view:1.a", label: "overview" }, { ...frame, imageBase64: "data:image/jpeg;base64,other", id: "view-2", label: "close_up" }], analysisAttemptId: "original-analysis:One", vehicleContext: { model: "Original car", mileage: "010020", mileageUnit: "mi", customerName: "Private customer", notes: "Private vehicle notes" } }, "scan-a").value;
   vi.mocked(store.readServiceRecords).mockImplementation(async () => history);
-  vi.mocked(store.appendServiceRecord).mockImplementation(async (record) => { history = mergeServiceRecords(history, [record], lookup.id); return history; });
+  vi.mocked(store.appendServiceRecord).mockImplementation(async (record, _scope, guard) => { guard?.(); history = mergeServiceRecords(history, [record], lookup.id); return history; });
   vi.mocked(store.importServiceRecords).mockImplementation(async (_id, records) => { history = mergeServiceRecords(history, records, lookup.id); return history; });
   vi.mocked(store.subscribeServiceRecords).mockReturnValue(() => {});
   vi.mocked(cloud.readCloudServiceRecords).mockResolvedValue([]);
   vi.mocked(cloud.syncServiceRecords).mockResolvedValue({ synced: 0, message: "All 1 snapshot entries confirmed in cloud." });
+  vi.mocked(requested.prepareRequestedMeasurement).mockImplementation(async () => receipt());
+  vi.mocked(requested.verifyRequestedMeasurement).mockImplementation(async (lookupId, value) => ({ lookupId, receipt: value }));
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
@@ -77,6 +82,128 @@ async function originalRecord() {
   Object.assign(draft.fields, { recordedBy: "Original recorder", subject: "Alternator", quantity: "Voltage", reading: "12.50", unit: "V" });
   return normalizeServiceRecord(serviceRecordFromDraft(draft))!;
 }
+
+function receipt(): RequestedMeasurementReceipt {
+  return { version: 1, guide: { version: 1, kind: "measurement", request: "Measure the remaining bracket thickness.", purpose: "A photo cannot establish remaining metal thickness.", photoIds: ["view-2"], analysisAttemptId: lookup.analysisAttemptId }, analysisSha256: "a".repeat(64),
+    references: [{ lookupId: lookup.id, photoId: "view-2", photoLabel: "close_up", photoAddedAt: "2026-11-05T12:00:00.000Z", scanSavedAt: lookup.createdAt, sha256: "b".repeat(64), width: 10, height: 10, observedOn: null, vehicleContext: null, analysisAttemptId: lookup.analysisAttemptId }] };
+}
+async function startRequested() {
+  const view = render(<ServiceRecordLog lookup={lookup} requestedMeasurementIntent={{ id: 1, lookup }} />);
+  await screen.findByText("Requested measurement draft kept on this device. Enter your own reading and method.");
+  return view;
+}
+
+it("opens the existing form with the exact request and cites without inventing quantity, reading or unit", async () => {
+  await startRequested();
+  expect(screen.getByText(/^Human service history/).closest("details")).toHaveAttribute("open");
+  expect(screen.getByLabelText("Part or area checked")).toHaveValue("Requested measurement");
+  for (const label of ["What was measured", "Reading (exact numeric text)", "Unit"]) expect(screen.getByLabelText(label)).toHaveValue("");
+  expect(screen.getByLabelText("Retained measurement request")).toHaveTextContent(receipt().guide.request);
+  expect(screen.getByLabelText("Photo 2: close up (view-2)")).toBeChecked();
+  expect(screen.getByLabelText("Photo 2: close up (view-2)")).toBeDisabled();
+  expect(requested.assertRequestedMeasurementCurrent).toHaveBeenCalled();
+  expect(store.appendServiceRecord).not.toHaveBeenCalled();
+  measurement(); await save();
+  expect(history[0]).toMatchObject({ version: 2, requestedMeasurement: receipt(), reading: " 12.500 ", photoIds: ["view-2"] });
+  expect(vi.mocked(store.appendServiceRecord).mock.calls[0][2]).toEqual(expect.any(Function));
+  expect(cloud.syncServiceRecords).not.toHaveBeenCalled();
+});
+
+it.each(["dirty", "recovery"])("does not replace an existing %s draft when the request is clicked", async (mode) => {
+  if (mode === "recovery") { const prior = newServiceRecordDraft(await serviceRecordContextForLookup(lookup)); prior.fields.notes = "Prior recovery text"; await writeServiceRecordDraft(getAccountScope(), lookup.id, null, prior); }
+  const view = mode === "dirty" ? await open() : render(<ServiceRecordLog lookup={lookup} />);
+  if (mode === "dirty") fill("Part or area checked", "My entered task");
+  else await screen.findByRole("button", { name: "Restore service draft" });
+  view.rerender(<ServiceRecordLog lookup={lookup} requestedMeasurementIntent={{ id: 1, lookup }} />);
+  await screen.findByText(/unfinished service entry is already here/);
+  expect(requested.prepareRequestedMeasurement).not.toHaveBeenCalled();
+  if (mode === "dirty") expect(screen.getByLabelText("Part or area checked")).toHaveValue("My entered task");
+  else expect((await readServiceRecordDraft(getAccountScope(), lookup.id)).record?.fields.notes).toBe("Prior recovery text");
+});
+
+it("preserves an initial requested draft and its stable ID when quota or save verification fails", async () => {
+  // Initial recovery read writes a tombstone. Fail later during preparation.
+  vi.mocked(requested.prepareRequestedMeasurement).mockImplementationOnce(async () => { draftDatabase.options.failPut = true; return receipt(); });
+  render(<ServiceRecordLog lookup={lookup} requestedMeasurementIntent={{ id: 1, lookup }} />);
+  await screen.findByLabelText("Retained measurement request");
+  expect(await screen.findByText(/service draft could not be kept/)).toBeInTheDocument();
+  measurement();
+  const before = screen.getByLabelText("Reading (exact numeric text)"); expect(before).toHaveValue(" 12.500 ");
+  vi.mocked(requested.verifyRequestedMeasurement).mockRejectedValueOnce(new Error("The originating AI result changed"));
+  fireEvent.click(screen.getByRole("button", { name: "Save service record on this device" }));
+  await screen.findByText("The originating AI result changed");
+  expect(before).toHaveValue(" 12.500 "); expect(store.appendServiceRecord).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Download unsaved service draft" }));
+  expect(downloadTextFile).toHaveBeenCalledWith(expect.any(String), expect.stringContaining(receipt().guide.request));
+});
+
+it("revalidates a restored request and preserves stale recovery for download", async () => {
+  const pending = requestedServiceRecordDraft(await serviceRecordContextForLookup(lookup), receipt()); pending.fields.reading = "2.50";
+  await writeServiceRecordDraft(getAccountScope(), lookup.id, null, pending);
+  vi.mocked(requested.verifyRequestedMeasurement).mockRejectedValueOnce(new Error("Saved request changed"));
+  render(<ServiceRecordLog lookup={lookup} />); fireEvent.click(screen.getByText(/^Human service history/));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Restore service draft" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Restore service draft" }));
+  await screen.findByText("Saved request changed");
+  expect((await readServiceRecordDraft(getAccountScope(), lookup.id)).record).toEqual(pending);
+  expect(screen.getByRole("button", { name: "Download recovery copy" })).toBeEnabled();
+  expect(screen.getByLabelText("Reading (exact numeric text)")).toHaveValue("");
+});
+
+it.each(["source", "disabled", "account", "unmount"])("ignores requested preparation after %s changes", async (change) => {
+  let finish!: (value: RequestedMeasurementReceipt) => void;
+  vi.mocked(requested.prepareRequestedMeasurement).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  const view = render(<ServiceRecordLog lookup={lookup} requestedMeasurementIntent={{ id: 1, lookup }} />);
+  await waitFor(() => expect(requested.prepareRequestedMeasurement).toHaveBeenCalledOnce());
+  const signal = vi.mocked(requested.prepareRequestedMeasurement).mock.calls[0][2]!;
+  if (change === "source") view.rerender(<ServiceRecordLog lookup={{ ...lookup, analysisAttemptId: "new-result" }} requestedMeasurementIntent={{ id: 1, lookup }} />);
+  if (change === "disabled") view.rerender(<ServiceRecordLog lookup={lookup} disabled requestedMeasurementIntent={{ id: 1, lookup }} />);
+  if (change === "account") { setActiveAccount("other"); view.rerender(<ServiceRecordLog lookup={lookup} />); }
+  if (change === "unmount") view.unmount();
+  await act(async () => { finish(receipt()); });
+  if (change !== "account") expect(signal.aborted).toBe(true);
+  expect(store.appendServiceRecord).not.toHaveBeenCalled();
+  expect(draftDatabase.rows.get(JSON.stringify(["service-owner", lookup.id]))).toBeNull();
+});
+
+it("aborts a requested draft CAS that reaches its callback after the view unmounts", async () => {
+  let release!: () => void, queued = false;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  vi.mocked(requested.verifyRequestedMeasurement).mockImplementationOnce(async (lookupId, value) => {
+    draftDatabase.options.beforeRead = async () => { queued = true; await held; };
+    return { lookupId, receipt: value };
+  });
+  const view = render(<ServiceRecordLog lookup={lookup} requestedMeasurementIntent={{ id: 1, lookup }} />);
+  try {
+    // Let React commit the initial loaded state before waiting for its effect's CAS.
+    // Holding that state commit inside an unresolved act() would deadlock the test.
+    await waitFor(() => expect(queued).toBe(true));
+    const signal = vi.mocked(requested.prepareRequestedMeasurement).mock.calls[0][2]!;
+    view.unmount();
+    expect(signal.aborted).toBe(true);
+  } finally { await act(async () => { release(); }); }
+  expect(draftDatabase.rows.get(JSON.stringify(["service-owner", lookup.id]))).toBeNull();
+  expect(store.appendServiceRecord).not.toHaveBeenCalled();
+});
+
+it("corrects and retracts a historical request without inferring fresh evidence after its photos disappear", async () => {
+  const pending = requestedServiceRecordDraft(await serviceRecordContextForLookup(lookup), receipt());
+  Object.assign(pending.fields, { recordedBy: "Pat", quantity: "Thickness", reading: "2.5", unit: "mm" });
+  const original = normalizeServiceRecord(serviceRecordFromDraft(pending))!; history = [original];
+  const historicalReceipt = receipt();
+  lookup = { ...lookup, analysisAttemptId: "replacement-result", photos: [] };
+  localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+  await open(); fireEvent.click(screen.getByRole("button", { name: "Correct entry" }));
+  await screen.findByLabelText("Reason for correction or retraction");
+  expect(screen.getByLabelText("Retained measurement request")).toHaveTextContent("Historical request retained");
+  expect(requested.verifyRequestedMeasurement).toHaveBeenLastCalledWith(lookup.id, historicalReceipt, expect.any(Object), expect.any(AbortSignal), true);
+  fill("Reason for correction or retraction", "Correct decimal"); fill("Reading (exact numeric text)", "2.40"); await save();
+  expect(history[1]).toMatchObject({ version: 2, requestedMeasurement: original.version === 2 ? original.requestedMeasurement : null, analysisAttemptId: original.analysisAttemptId });
+  const retract = screen.getAllByRole("button", { name: "Retract entry" }).find((button) => !button.hasAttribute("disabled"))!;
+  fireEvent.click(retract); await screen.findByLabelText("Reason for correction or retraction");
+  fill("Reason for correction or retraction", "Instrument was wrong"); await save();
+  expect(history[2]).toMatchObject({ version: 2, kind: "retraction", requestedMeasurement: historicalReceipt });
+});
 
 it("keeps local service saves available and never reads or writes cloud while sync is off", async () => {
   vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
