@@ -5,11 +5,15 @@ import type { ServiceRecord } from "../types/serviceRecord";
 import type { DiagnosticBundle } from "../types/diagnosticReport";
 import { normalizeDiagnosticBundle } from "../lib/diagnosticAssociation";
 import type { RequestedInspectionComparison } from "../types/inspectionComparison";
+import type { ObservationAreaRecord } from "../types/observationArea";
 
 const mocks = vi.hoisted(() => ({ open: vi.fn() }));
-vi.mock("./evidenceDb", () => ({ openEvidenceDatabase: mocks.open, COMPONENT_MAP_STORE: "component-maps", SERVICE_RECORD_STORE: "service-records", INSPECTION_COMPARISON_STORE: "inspection-comparisons", DIAGNOSTIC_REPORT_STORE: "diagnostic-reports", EVIDENCE_STORAGE_TIMEOUT_MS: 15_000 }));
+vi.mock("./evidenceDb", () => ({ openEvidenceDatabase: mocks.open, COMPONENT_MAP_STORE: "component-maps", SERVICE_RECORD_STORE: "service-records", INSPECTION_COMPARISON_STORE: "inspection-comparisons", DIAGNOSTIC_REPORT_STORE: "diagnostic-reports", OBSERVATION_AREA_STORE: "observation-areas", EVIDENCE_STORAGE_TIMEOUT_MS: 15_000 }));
 const map: ComponentMapRecord = { document: { version: 1, id: "root", overview: { lookupId: "root", photoId: "photo-1" }, components: [] }, localRevision: 1, cloudRevision: null, syncedLocalRevision: 0 };
 const record = (lookupId = "root"): ServiceRecord => ({ version: 1, id: "20000000-0000-4000-8000-000000000001", lookupId, recordedAt: "2026-11-05T12:00:00Z", occurredOn: null, recordedBy: "Recorder", basis: "personally_performed", subject: "Hose", photoIds: [], notes: "Record remains without image", kind: "repair", action: "Inspect clamps", status: "planned", parts: "" });
+const area = (lookupId = "root"): ObservationAreaRecord => ({ version: 1, id: "70000000-0000-4000-8000-000000000001", lookupId, recordedAt: "2026-11-05T12:00:00Z", kind: "mark", notes: "Retain even without source", rectangle: { x: .1, y: .2, width: .3, height: .4 },
+  binding: { version: 1, observation: { id: "stain", text: "A stain is visible.", photoIds: ["two"], areas: [] }, analysisSha256: "a".repeat(64),
+    reference: { lookupId, photoId: "two", photoLabel: "overview", photoAddedAt: "2026-11-05T12:00:00Z", scanSavedAt: "2026-11-05T12:00:00Z", sha256: "b".repeat(64), width: 1, height: 1, observedOn: null, vehicleContext: null } } });
 const diagnostic = (lookupId = "root"): DiagnosticBundle => normalizeDiagnosticBundle({ documents: [{ version: 1, id: "40000000-0000-4000-8000-000000000001", lookupId,
   importedAt: "2026-11-05T12:00:00Z", fileName: "synthetic.txt", mime: "text/plain", byteLength: 4, sha256: "a".repeat(64), encoding: "utf-8", sourceBase64: "VGVzdA==" }], associations: [] }, lookupId)!;
 function requested(lookupId = "followup", origin = "root"): RequestedInspectionComparison {
@@ -71,8 +75,8 @@ it("queues map and every history get in one readonly transaction before processi
   db.rows.set(db.key("diagnostic-reports", "missing"), diagnostic("missing"));
   const pending = readFinalInspectionSnapshot("root", ["root", "missing", "missing"]);
   await Promise.resolve();
-  expect(db.database.transaction).toHaveBeenCalledExactlyOnceWith(["component-maps", "service-records", "inspection-comparisons", "diagnostic-reports"], "readonly");
-  expect(db.requests.map((request) => request.key)).toEqual([db.key("component-maps", "root"), db.key("service-records", "root"), db.key("service-records", "missing"), db.key("inspection-comparisons", "root"), db.key("inspection-comparisons", "missing"), db.key("diagnostic-reports", "root"), db.key("diagnostic-reports", "missing")]);
+  expect(db.database.transaction).toHaveBeenCalledExactlyOnceWith(["component-maps", "service-records", "inspection-comparisons", "diagnostic-reports", "observation-areas"], "readonly");
+  expect(db.requests.map((request) => request.key)).toEqual([db.key("component-maps", "root"), db.key("service-records", "root"), db.key("service-records", "missing"), db.key("inspection-comparisons", "root"), db.key("inspection-comparisons", "missing"), db.key("diagnostic-reports", "root"), db.key("diagnostic-reports", "missing"), db.key("observation-areas", "root"), db.key("observation-areas", "missing")]);
   expect(db.cursors).toHaveLength(1); expect(db.cursors[0].store).toBe("inspection-comparisons");
   db.drain(); const result = await pending;
   expect(result.map).toEqual(map); expect(result.serviceRecords.get("root")).toEqual([]);
@@ -80,6 +84,7 @@ it("queues map and every history get in one readonly transaction before processi
   expect(result.comparisons.get("root")).toEqual([]); expect(result.comparisons.get("missing")).toEqual([]);
   expect(result.diagnostics.get("root")).toEqual({ documents: [], associations: [] }); expect(result.diagnostics.get("missing")).toEqual(diagnostic("missing"));
   expect(result.requestedEvidenceHistory).toEqual({ records: [], complete: true, scannedBuckets: 0 });
+  expect(result.observationAreas.get("root")).toEqual([]);
 });
 
 it("reads origin receipts outside the known scan list in the same final transaction", async () => {
@@ -119,6 +124,37 @@ it("returns one transaction snapshot when map and an earlier history are edited 
   expect(result.map?.localRevision).toBe(1); expect(result.serviceRecords.get("root")).toEqual([record()]);
   expect(result.diagnostics.get("root")).toEqual(diagnostic());
   expect(db.database.transaction).toHaveBeenCalledTimes(1);
+});
+
+it("reads missing-scan area history in the same frozen transaction and isolates owner keys", async () => {
+  const db = fixture(); mocks.open.mockResolvedValue(db.database);
+  const historical = area("missing"); db.rows.set(db.key("observation-areas", "missing"), [historical]);
+  db.rows.set(db.key("observation-areas", "root", "someone-else"), [area()]);
+  const pending = readFinalInspectionSnapshot("root", ["root", "missing"]); await Promise.resolve();
+  db.drain((index) => { if (index === 0) db.rows.set(db.key("observation-areas", "missing"), []); });
+  const result = await pending;
+  expect(result.observationAreas.get("missing")).toEqual([historical]);
+  expect(result.observationAreas.get("root")).toEqual([]);
+  expect(db.requests.filter((request) => request.store === "observation-areas").map((request) => request.key)).toEqual([db.key("observation-areas", "root"), db.key("observation-areas", "missing")]);
+  expect(db.database.transaction).toHaveBeenCalledOnce();
+});
+
+it("distinguishes unreadable and wrong-scan area histories from absent evidence", async () => {
+  const db = fixture(); mocks.open.mockResolvedValue(db.database);
+  db.rows.set(db.key("observation-areas", "corrupt"), null);
+  db.rows.set(db.key("observation-areas", "wrong-scan"), [area("other")]);
+  const pending = readFinalInspectionSnapshot("root", ["corrupt", "wrong-scan", "absent"]); await Promise.resolve(); db.drain();
+  const result = await pending;
+  expect(result.observationAreas.get("corrupt")).toBeNull();
+  expect(result.observationAreas.get("wrong-scan")).toBeNull();
+  expect(result.observationAreas.get("absent")).toEqual([]);
+});
+
+it("does not complete a final snapshot without every observation-area result", async () => {
+  const db = fixture(); mocks.open.mockResolvedValue(db.database);
+  const pending = expect(readFinalInspectionSnapshot("root", ["root"])).rejects.toThrow("Some saved inspection records");
+  await Promise.resolve(); db.requests.find((request) => request.store === "observation-areas")!.onsuccess = null;
+  db.drain(); await pending; expect(db.database.close).toHaveBeenCalledOnce();
 });
 
 it("distinguishes corrupt service history from an absent empty history", async () => {

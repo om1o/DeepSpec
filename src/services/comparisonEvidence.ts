@@ -13,7 +13,7 @@ export const MAX_COMPARISON_IMAGE_BYTES = MAX_ORIGINAL_IMAGE_BYTES;
 export type ComparisonResolution = { status: "unchanged" | "source_changed" | "missing_photo" | "verification_unavailable"; image?: string; message: string };
 
 export function comparisonPhotos(lookup: Lookup): ScanPhoto[] {
-  return lookup.photos?.length ? lookup.photos : [{ ...lookup.frame, id: "photo-1", label: "overview" }];
+  return lookup.photos === undefined ? [{ ...lookup.frame, id: "photo-1", label: "overview" }] : lookup.photos;
 }
 function original(lookup: Lookup, photoId: string): ScanPhoto {
   const matches = comparisonPhotos(lookup).filter((photo) => photo.id === photoId);

@@ -3,10 +3,12 @@ import type { PointerEvent } from "react";
 import type { VisualFocusBox } from "../../types";
 
 /** Edits geometry in the original photo's coordinate space, never a generated mask. */
-export function FocusAreaEditor({ box, onApply, onCancel }: {
+export function FocusAreaEditor({ box, onApply, onCancel, onChange }: {
   box: VisualFocusBox;
   onApply: (box: VisualFocusBox) => void;
   onCancel: () => void;
+  /** Optional durable-draft observer; changing an area never saves a human record. */
+  onChange?: (box: VisualFocusBox) => void;
 }) {
   const [draft, setDraft] = useState(box);
   const start = useRef<{ x: number; y: number; pointerId: number; previous: VisualFocusBox } | null>(null);
@@ -22,10 +24,12 @@ export function FocusAreaEditor({ box, onApply, onCancel }: {
     if (Math.abs(end.x - origin.x) < 0.005 && Math.abs(end.y - origin.y) < 0.005) return;
     const x = Math.min(origin.x, end.x);
     const y = Math.min(origin.y, end.y);
-    setDraft({ confidence: 0, x, y, width: Math.max(0.02, Math.abs(end.x - origin.x)), height: Math.max(0.02, Math.abs(end.y - origin.y)) });
+    const next = boundBox({ confidence: 0, x, y, width: Math.max(0.02, Math.abs(end.x - origin.x)), height: Math.max(0.02, Math.abs(end.y - origin.y)) });
+    setDraft(next); onChange?.(next);
   };
   const update = (field: "x" | "y" | "width" | "height", value: number) => {
-    setDraft((previous) => ({ ...previous, [field]: value }));
+    const next = boundBox({ ...draft, [field]: value, confidence: 0 });
+    setDraft(next); onChange?.(next);
   };
   const selection = boundBox(draft);
 
@@ -46,7 +50,7 @@ export function FocusAreaEditor({ box, onApply, onCancel }: {
         drag(event);
         if (start.current?.pointerId === event.pointerId) start.current = null;
       }}
-      onPointerCancel={() => { if (start.current) setDraft(start.current.previous); start.current = null; }}
+      onPointerCancel={() => { if (start.current) { setDraft(start.current.previous); onChange?.(start.current.previous); } start.current = null; }}
     >
       <div aria-hidden data-testid="focus-area-draft" className="pointer-events-none absolute border-2 border-cyan-300 bg-cyan-300/10"
         style={{ left: `${selection.x * 100}%`, top: `${selection.y * 100}%`, width: `${selection.width * 100}%`, height: `${selection.height * 100}%` }} />

@@ -53,8 +53,9 @@ const result = {
 };
 
 const conditionAssessment = (photoId: string): ConditionAssessment => ({
-  version: 1,
-  observations: [{ id: "rust-edge", text: "Orange flaking is visible along the edge.", photoIds: [photoId], regionLabel: "lower edge" }],
+  version: 2,
+  observations: [{ id: "rust-edge", text: "Orange flaking is visible along the edge.", photoIds: [photoId], regionLabel: "lower edge",
+    areas: [{ photoId, rectangle: { x: 0.1, y: 0.6, width: 0.3, height: 0.2 } }] }],
   possibleCauses: [{ text: "Moisture exposure is possible; its cause is unconfirmed.", observationIds: ["rust-edge"] }],
   unknowns: ["Depth and the condition behind the panel are unknown."],
   nextEvidence: { kind: "photo", request: "Photograph the back of this edge.", purpose: "Check whether the affected area is visible from behind.", photoIds: [photoId] },

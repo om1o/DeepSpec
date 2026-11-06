@@ -4,9 +4,10 @@ import type { ServiceRecord } from "./serviceRecord";
 import type { InspectionComparison, RequestedInspectionComparison } from "./inspectionComparison";
 import type { DiagnosticBundle, ParsedDiagnosticReport } from "./diagnosticReport";
 import type { JobInspectionReportScope } from "./jobInspectionHandoff";
+import type { ObservationAreaRecord } from "./observationArea";
 
 export type InspectionReportIssue = {
-  kind: "map" | "lookup" | "photo" | "cutout" | "service_records" | "comparisons" | "diagnostics";
+  kind: "map" | "lookup" | "photo" | "cutout" | "service_records" | "comparisons" | "diagnostics" | "observation_areas";
   lookupId: string;
   photoId?: string;
   selectionName?: string;
@@ -40,6 +41,14 @@ export type InspectionReportSnapshot = {
   missing: InspectionReportIssue[];
   embeddedBytes: number;
   serviceLogs?: { lookupId: string; records: ServiceRecord[]; cloudChecked: boolean }[];
+  /** Human area history is device-only. Missing history is never an empty log. */
+  observationAreaLogs?: { lookupId: string; records: ObservationAreaRecord[] }[];
+  observationAreaEvidence?: {
+    lookupId: string; recordId: string; photoId: string;
+    status: "unchanged" | "source_changed" | "missing_photo" | "verification_unavailable";
+    /** A historical human mark may retain matching pixels after an AI retry. */
+    analysisMatches: boolean;
+  }[];
   /** Requested-measurement references checked against this snapshot's embedded bytes. */
   serviceEvidence?: {
     lookupId: string;

@@ -8,8 +8,9 @@ const photos = ["view-overview", "view-close"].map((id, index) => ({
   imageBase64: `data:image/jpeg;base64,${Buffer.from(id).toString("base64")}`,
 }));
 const assessment = (photoId = photos[1].id): ConditionAssessment => ({
-  version: 1,
-  observations: [{ id: "surface", text: "Orange-brown patches are visible.", photoIds: [photoId], regionLabel: "lower edge" }],
+  version: 2,
+  observations: [{ id: "surface", text: "Orange-brown patches are visible.", photoIds: [photoId], regionLabel: "lower edge",
+    areas: [{ photoId, rectangle: { x: 0.6, y: 0.2, width: 0.2, height: 0.3 } }] }],
   possibleCauses: [{ text: "Corrosion may explain the patches; its cause is not confirmed.", observationIds: ["surface"] }],
   unknowns: ["Remaining metal thickness and structural strength cannot be established from the photo."],
   nextEvidence: { kind: "photo", request: "Photograph the bracket mounting point from the side.", purpose: "Show whether the affected area reaches the mounting point.", photoIds: [photoId] },
@@ -65,6 +66,9 @@ describe("condition assessment provider contract", () => {
     expect(request).toContain("unconfirmed");
     expect(request).toContain("human-confirmed");
     expect(request).toContain("view-close");
+    expect(request).toContain("Observation areas are optional unverified AI suggestions");
+    expect(request).toContain("including secondary photos");
+    expect(request).not.toContain("Return image coordinates only for the first photo");
   });
 
   it.each(providers)("omits invalid grouped-photo evidence from %s without rejecting or retrying the core result", async (provider) => {
@@ -99,6 +103,26 @@ describe("condition assessment provider contract", () => {
     expect(rescueRequest.contents[0].parts.filter((part: Record<string, unknown>) => part.inline_data)).toHaveLength(2);
     expect(JSON.stringify(rescueRequest)).toContain("conditionAssessment");
     expect(JSON.stringify(rescueRequest)).toContain("view-close");
+    expect(JSON.stringify(rescueRequest)).toContain("Observation areas are optional unverified AI suggestions");
+    expect(JSON.stringify(rescueRequest)).not.toContain("Return image coordinates only for the first photo");
+  });
+
+  it.each(providers)("retains legacy text-only v1 assessments from %s without upgrading or locating them", async (provider) => {
+    const conditionAssessment = assessment();
+    conditionAssessment.version = 1;
+    delete conditionAssessment.observations[0].areas;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => providerResponse(provider, { ...coreResult, conditionAssessment }));
+    expect(readResult(await createIdentifyResponse({ photos }, providerEnv(provider))).conditionAssessment).toEqual(conditionAssessment);
+  });
+
+  it.each(providers)("keeps the core %s answer when a rectangle targets a real but uncited photo", async (provider) => {
+    const conditionAssessment = assessment();
+    conditionAssessment.observations[0].areas![0].photoId = photos[0].id;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => providerResponse(provider, { ...coreResult, conditionAssessment }));
+    const identified = readResult(await createIdentifyResponse({ photos }, providerEnv(provider)));
+    expect(identified.partName).toBe("Bracket");
+    expect(identified).not.toHaveProperty("conditionAssessment");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it.each(providers)("uses documented photo-1 only for actual legacy single-photo input on %s", async (provider) => {

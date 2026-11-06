@@ -12,8 +12,12 @@ import { createHash, webcrypto } from "node:crypto";
 import { normalizeDiagnosticBundle } from "../lib/diagnosticAssociation";
 import { diagnosticSourceBytes, normalizeDiagnosticDocument } from "../lib/diagnosticReport";
 import type { DiagnosticAssociation, DiagnosticBundle, DiagnosticDocument } from "../types/diagnosticReport";
+import { normalizeObservationAreaRecords } from "../lib/observationArea";
+import type { ObservationAreaRecord } from "../types/observationArea";
+import { observationAnalysisSha256 } from "./observationAreaEvidence";
 
-const mocks = vi.hoisted(() => ({ lookups: vi.fn(), lookup: vi.fn(), map: vi.fn(), cloud: vi.fn(), auth: vi.fn(), service: vi.fn(), serviceCloud: vi.fn(), snapshot: vi.fn(), comparisons: vi.fn(), comparisonsCloud: vi.fn(), comparisonSide: vi.fn(), diagnostics: vi.fn(), diagnosticsCloud: vi.fn(), requested: vi.fn() }));
+const mocks = vi.hoisted(() => ({ lookups: vi.fn(), lookup: vi.fn(), map: vi.fn(), cloud: vi.fn(), auth: vi.fn(), service: vi.fn(), serviceCloud: vi.fn(), snapshot: vi.fn(), comparisons: vi.fn(), comparisonsCloud: vi.fn(), comparisonSide: vi.fn(), diagnostics: vi.fn(), diagnosticsCloud: vi.fn(), requested: vi.fn(), areas: vi.fn() }));
+vi.mock("./observationAreaStore", () => ({ readObservationAreas: mocks.areas }));
 vi.mock("./storage", () => ({ readLookups: mocks.lookups, getLookup: mocks.lookup }));
 vi.mock("./componentMapStore", () => ({ readComponentMap: mocks.map }));
 vi.mock("./cloudHistory", () => ({ readCloudLookupForReport: mocks.cloud }));
@@ -26,7 +30,7 @@ vi.mock("./inspectionComparisonCloud", () => ({ readCloudInspectionComparisons: 
 vi.mock("./requestedEvidenceHistory", () => ({ readRequestedEvidenceHistory: mocks.requested }));
 vi.mock("./diagnosticReportStore", () => ({ readDiagnosticBundle: mocks.diagnostics }));
 vi.mock("./diagnosticReportCloud", () => ({ readCloudDiagnosticBundle: mocks.diagnosticsCloud }));
-vi.mock("./comparisonEvidence", () => ({ comparisonSideForLookup: mocks.comparisonSide, comparisonPhotos: (lookup: Lookup) => lookup.photos?.length ? lookup.photos : [{ ...lookup.frame, id: "photo-1", label: "overview" }] }));
+vi.mock("./comparisonEvidence", () => ({ comparisonSideForLookup: mocks.comparisonSide, comparisonPhotos: (lookup: Lookup) => lookup.photos !== undefined ? lookup.photos : [{ ...lookup.frame, id: "photo-1", label: "overview" }] }));
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
 const image = `data:image/png;base64,${PNG}`;
 const bytes = Uint8Array.from(atob(PNG), (part) => part.charCodeAt(0));
@@ -73,6 +77,17 @@ function scan(id: string, photos?: ScanPhoto[]): Lookup {
     rating: null, correction: null, notes: "saved human notes", chatHistory: [], scanCategory: "engine", trainingLabel: "engine", trainingStatus: "raw_unreviewed" };
 }
 function photo(id: string): ScanPhoto { return { id, label: "overview", imageBase64: image, capturedAt }; }
+function observationScan(id = "root"): Lookup {
+  return { ...scan(id, [photo("one"), photo("two")]), analysisAttemptId: "original-analysis", focusBox: box,
+    result: { partName: "Bracket on photo one", confidence: "low", scanCategory: "engine", candidateMatches: [], whatItDoes: "Supports a component",
+      visibleObservations: [], evidenceRegions: [], concerns: [], safetyTriage: "can_help", isSafetyCritical: false, nextAction: "Inspect the stain", needsBetterPhoto: false, evidence: [], sourceLinks: [],
+      conditionAssessment: { version: 2, observations: [{ id: "stain", text: "A dark stain is visible on photo two.", photoIds: ["two"], areas: [{ photoId: "two", rectangle: { x: .6, y: .1, width: .2, height: .3 } }] }], possibleCauses: [], unknowns: ["The cause is unknown."] } } };
+}
+async function areaRecord(lookup: Lookup): Promise<Extract<ObservationAreaRecord, { kind: "mark" }>> {
+  return { version: 1, id: "70000000-0000-4000-8000-000000000001", lookupId: lookup.id, recordedAt: capturedAt, kind: "mark", rectangle: { x: .5, y: .2, width: .25, height: .35 }, notes: "Human pointer, not a diagnosis",
+    binding: { version: 1, observation: structuredClone(lookup.result!.conditionAssessment!.observations[0]), analysisAttemptId: lookup.analysisAttemptId,
+      analysisSha256: await observationAnalysisSha256(lookup), reference: { ...comparisonSide(lookup.id, "two"), analysisAttemptId: lookup.analysisAttemptId, sha256: createHash("sha256").update(bytes).digest("hex") } } };
+}
 function mapWithLinks(ids = ["detail", "detail"]): ComponentMapRecord {
   return { document: { version: 1, id: "root", overview: { lookupId: "root", photoId: "photo-1" }, components: ids.map((lookupId, index) => ({
     id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`, label: `Component ${index + 1}`, status: "needs_view", notes: "human map note",
@@ -113,6 +128,7 @@ describe("saved inspection report collection", () => {
     mocks.map.mockImplementation(async () => structuredClone(map));
     mocks.cloud.mockResolvedValue({ ok: true, value: null });
     mocks.service.mockResolvedValue([]); mocks.serviceCloud.mockResolvedValue([]);
+    mocks.areas.mockResolvedValue([]);
     mocks.comparisons.mockResolvedValue([]); mocks.comparisonsCloud.mockResolvedValue([]);
     mocks.requested.mockResolvedValue(emptyRequestedHistory());
     mocks.diagnostics.mockResolvedValue(emptyDiagnostics()); mocks.diagnosticsCloud.mockResolvedValue(emptyDiagnostics());
@@ -134,6 +150,10 @@ describe("saved inspection report collection", () => {
         catch { return [id, null] as const; }
       }))),
       requestedEvidenceHistory: await mocks.requested(root, scope),
+      observationAreas: new Map(await Promise.all(ids.map(async (id) => {
+        try { return [id, normalizeObservationAreaRecords(await mocks.areas(id, scope), id) ?? null] as const; }
+        catch { return [id, null] as const; }
+      }))),
     }));
     query = { select: vi.fn(), eq: vi.fn(), abortSignal: vi.fn(), maybeSingle: vi.fn(async () => ({ data: cloudMap, error: null })) };
     query.select.mockReturnValue(query); query.eq.mockReturnValue(query); query.abortSignal.mockReturnValue(query);
@@ -146,6 +166,78 @@ describe("saved inspection report collection", () => {
     });
   });
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+  it("verifies a human photo-two area from embedded bytes independently of the photo-one part selection", async () => {
+    local[0] = observationScan(); const record = await areaRecord(local[0]); mocks.areas.mockResolvedValue([record]);
+    const before = structuredClone(local[0]);
+    const actual = await vi.importActual<typeof import("./comparisonEvidence")>("./comparisonEvidence");
+    mocks.comparisonSide.mockImplementation(actual.comparisonSideForLookup);
+    const report = await collectInspectionReport("root");
+    expect(report.observationAreaLogs).toEqual([{ lookupId: "root", records: [record] }]);
+    expect(report.observationAreaEvidence).toEqual([{ lookupId: "root", recordId: record.id, photoId: "two", status: "unchanged", analysisMatches: true }]);
+    expect(mocks.comparisonSide.mock.calls.map(([, photoId]) => photoId)).toEqual(["two"]);
+    expect(report.scans[0].result?.conditionAssessment).toEqual(before.result?.conditionAssessment);
+    expect(report.scans[0].focusBox).toEqual(before.focusBox);
+    expect(report.scans[0].photos).toEqual(before.photos);
+    expect(report.missing.filter((issue) => issue.kind === "observation_areas")).toEqual([]);
+    expect(local[0]).toEqual(before); expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps the historical claim and matching pixels after a newer AI answer changes the analysis fingerprint", async () => {
+    local[0] = observationScan(); const record = await areaRecord(local[0]); mocks.areas.mockResolvedValue([record]);
+    local[0].analysisAttemptId = "retry-analysis";
+    local[0].result!.conditionAssessment!.observations[0].text = "The new answer describes a reflection instead.";
+    const actual = await vi.importActual<typeof import("./comparisonEvidence")>("./comparisonEvidence");
+    mocks.comparisonSide.mockImplementation(actual.comparisonSideForLookup);
+    const report = await collectInspectionReport("root");
+    expect(report.observationAreaEvidence).toEqual([{ lookupId: "root", recordId: record.id, photoId: "two", status: "unchanged", analysisMatches: false }]);
+    expect(report.observationAreaLogs![0].records[0]).toEqual(record);
+    expect(report.observationAreaLogs![0].records[0].binding.observation.text).toBe("A dark stain is visible on photo two.");
+    expect(report.scans[0].result?.conditionAssessment?.observations[0].text).toContain("reflection");
+    expect(report.missing.filter((issue) => issue.kind === "observation_areas")).toEqual([]);
+  });
+
+  it.each(["pixels", "context", "missing", "empty", "unavailable"] as const)("retains human history but fails closed for %s photo-two evidence", async (change) => {
+    local[0] = observationScan();
+    // Only an explicit same-part group shares photo one's supplied vehicle context.
+    if (change === "context") local[0].photoRelationship = "same_part_or_area";
+    const record = await areaRecord(local[0]); mocks.areas.mockResolvedValue([record]);
+    const actual = await vi.importActual<typeof import("./comparisonEvidence")>("./comparisonEvidence");
+    mocks.comparisonSide.mockImplementation(actual.comparisonSideForLookup);
+    if (change === "pixels") local[0].photos![1].imageBase64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/bKkAAAAASUVORK5CYII=";
+    if (change === "context") local[0].vehicleContext = { model: "Another saved context" };
+    if (change === "missing") local[0].photos!.pop();
+    if (change === "empty") local[0].photos = [];
+    if (change === "unavailable") mocks.comparisonSide.mockRejectedValue(new Error("https://private.invalid/?token=SECRET"));
+    const report = await collectInspectionReport("root");
+    const expected = change === "pixels" || change === "context" ? "source_changed" : change === "unavailable" ? "verification_unavailable" : "missing_photo";
+    expect(report.observationAreaLogs![0].records).toEqual([record]);
+    expect(report.observationAreaEvidence).toEqual([{ lookupId: "root", recordId: record.id, photoId: "two", status: expected, analysisMatches: true }]);
+    expect(report.missing).toContainEqual(expect.objectContaining({ kind: "observation_areas", lookupId: "root", photoId: "two" }));
+    expect(JSON.stringify(report.missing)).not.toMatch(/private\.invalid|SECRET/);
+    if (change === "empty" || change === "missing") expect(mocks.comparisonSide).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("retains a missing linked scan's independent area history and retraction without using the overview image", async () => {
+    map = mapWithLinks(["missing"]); const first = await areaRecord(observationScan("missing"));
+    const retracted: ObservationAreaRecord = { version: 1, id: "70000000-0000-4000-8000-000000000002", lookupId: "missing", recordedAt: "2026-11-05T16:00:00.000Z", kind: "retraction",
+      binding: structuredClone(first.binding), notes: "Kept after scan removal", supersedesId: first.id, correctionReason: "Wrong area was marked" };
+    mocks.areas.mockImplementation(async (id: string) => id === "missing" ? [first, retracted] : []);
+    const report = await collectInspectionReport("root");
+    expect(report.observationAreaLogs?.find((log) => log.lookupId === "missing")?.records).toEqual([first, retracted]);
+    expect(report.observationAreaEvidence).toEqual([first, retracted].map((record) => ({ lookupId: "missing", recordId: record.id, photoId: "two", status: "missing_photo", analysisMatches: false })));
+    expect(report.scans.map((item) => item.id)).toEqual(["root"]);
+    expect(mocks.comparisonSide).not.toHaveBeenCalled();
+  });
+
+  it("rejects an area correction appended between collection and the final joint snapshot", async () => {
+    local[0] = observationScan(); const first = await areaRecord(local[0]);
+    const correction: ObservationAreaRecord = { ...first, id: "70000000-0000-4000-8000-000000000002", recordedAt: "2026-11-05T16:00:00.000Z", supersedesId: first.id, correctionReason: "Narrowed the pointer", rectangle: { x: .6, y: .2, width: .2, height: .3 } };
+    mocks.areas.mockResolvedValueOnce([first]).mockResolvedValue([first, correction]);
+    await expect(collectInspectionReport("root")).rejects.toThrow("Saved inspection records changed");
+    expect(mocks.snapshot).toHaveBeenCalledOnce();
+  });
 
   it("preserves requested-measurement receipts and verifies exact embedded bytes for retained corrections", async () => {
     local[0] = scan("root", [photo("one"), photo("two")]);
@@ -457,7 +549,7 @@ describe("saved inspection report collection", () => {
     const populated = { documents: [diagnosticDocument()], associations: [] };
     const initial = kind === "added" ? emptyDiagnostics() : populated; mocks.diagnostics.mockResolvedValue(initial);
     mocks.snapshot.mockImplementationOnce(async () => ({ map: null, requestedEvidenceHistory: emptyRequestedHistory(), serviceRecords: new Map([["root", []]]), comparisons: new Map([["root", []]]),
-      diagnostics: kind === "omitted" ? new Map() : new Map([["root", kind === "corrupt" ? null : kind === "added" ? populated : emptyDiagnostics()]]) }));
+      observationAreas: new Map([["root", []]]), diagnostics: kind === "omitted" ? new Map() : new Map([["root", kind === "corrupt" ? null : kind === "added" ? populated : emptyDiagnostics()]]) }));
     await expect(collectInspectionReport("root")).rejects.toThrow(/records changed/);
     expect(mocks.lookups).toHaveBeenCalledTimes(1);
   });
@@ -670,7 +762,7 @@ describe("saved inspection report collection", () => {
     mocks.snapshot.mockImplementationOnce(async () => {
       await Promise.resolve();
       local[0].notes = "Edited while the final IDB snapshot was pending";
-      return { map: null, requestedEvidenceHistory: emptyRequestedHistory(), serviceRecords: new Map([["root", []]]), comparisons: new Map([["root", []]]), diagnostics: new Map([["root", emptyDiagnostics()]]) };
+      return { map: null, requestedEvidenceHistory: emptyRequestedHistory(), observationAreas: new Map([["root", []]]), serviceRecords: new Map([["root", []]]), comparisons: new Map([["root", []]]), diagnostics: new Map([["root", emptyDiagnostics()]]) };
     });
     await expect(collectInspectionReport("root")).rejects.toThrow(/records changed/);
     expect(mocks.lookups).toHaveBeenCalledTimes(2);
@@ -683,7 +775,7 @@ describe("saved inspection report collection", () => {
       const logs = new Map<string, ServiceRecord[] | null>([["root", []], ["missing", []]]);
       if (kind === "map") finalMap.localRevision += 1;
       else { const id = kind === "first-history" ? "root" : "missing"; logs.set(id, [{ ...measurement(), lookupId: id }]); }
-      return { map: finalMap, requestedEvidenceHistory: emptyRequestedHistory(), serviceRecords: logs, comparisons: new Map([["root", []], ["missing", []]]), diagnostics: new Map([["root", emptyDiagnostics()], ["missing", emptyDiagnostics()]]) };
+      return { map: finalMap, requestedEvidenceHistory: emptyRequestedHistory(), observationAreas: new Map([["root", []], ["missing", []]]), serviceRecords: logs, comparisons: new Map([["root", []], ["missing", []]]), diagnostics: new Map([["root", emptyDiagnostics()], ["missing", emptyDiagnostics()]]) };
     });
     await expect(collectInspectionReport("root")).rejects.toThrow(/records changed/);
   });

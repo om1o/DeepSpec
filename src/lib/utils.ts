@@ -2,6 +2,7 @@ import type { CapturedFrame, ScanAnalysisState, ScanQualitySnapshot } from "../t
 import { accountStorageKey } from "./accountScope";
 import { isEvidenceImage, normalizeVisualEvidence } from "../services/visualEvidence";
 import { normalizePhotoReview } from "./photoReview";
+import { normalizeConditionAssessment } from "./conditionAssessment";
 
 const LATEST_CAPTURED_FRAME_KEY = "deep-spec:latest-captured-frame";
 const LATEST_SCAN_STATE_KEY = "deep-spec:latest-scan-state";
@@ -60,9 +61,10 @@ export function readLatestScanState(): ScanAnalysisState | null {
     const allowedPhotoIds = visual.photos?.map((photo) => photo.id)
       ?? (isEvidenceImage(state.frame.imageBase64) ? ["photo-1"] : []);
     const result = state.result ? (() => {
-      const { photoReview: rawPhotoReview, ...rest } = state.result;
+      const { photoReview: rawPhotoReview, conditionAssessment: rawAssessment, ...rest } = state.result;
       const photoReview = normalizePhotoReview(rawPhotoReview, allowedPhotoIds);
-      return { ...rest, ...(photoReview ? { photoReview } : {}) };
+      const conditionAssessment = normalizeConditionAssessment(rawAssessment, allowedPhotoIds);
+      return { ...rest, ...(photoReview ? { photoReview } : {}), ...(conditionAssessment ? { conditionAssessment } : {}) };
     })() : undefined;
 
     return {

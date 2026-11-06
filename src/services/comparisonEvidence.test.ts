@@ -23,6 +23,11 @@ function scan(id = "scan", photos?: ScanPhoto[]): Lookup {
 const response = () => new Response(bytes.slice(), { status: 200, headers: { "Content-Type": "image/png" } });
 
 describe("frozen comparison originals", () => {
+  it("does not recreate a removed original from a frame when the saved photo group is explicitly empty", async () => {
+    const removed = { ...scan(), photos: [] };
+    expect(comparisonPhotos(removed)).toEqual([]);
+    await expect(comparisonSideForLookup(removed, "photo-1")).rejects.toThrow();
+  });
   let local: Lookup[];
   let fetchSpy: ReturnType<typeof vi.fn>;
   let width: number, height: number, decode: (() => void) | undefined, hungDecode: boolean;

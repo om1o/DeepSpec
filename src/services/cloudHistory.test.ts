@@ -209,9 +209,11 @@ describe("readCloudLookups", () => {
     expect(mocks.signedUrls).toHaveBeenCalledWith([`${base}original.jpg`, `${base}detail.jpg`, `${base}primary.png`, `${base}secondary.png`], 3600);
   });
 
-  it.each(["detail", "photo-1", "other-scan-photo"])("validates restored condition references against the owned evidence bundle: %s", async (photoId) => {
+  it.each(["detail", "photo-1", "other-scan-photo"])("validates restored v2 condition areas against the owned evidence bundle: %s", async (photoId) => {
     const base = "user-1/scan-1/";
     const assessment = conditionAssessment(photoId);
+    assessment.version = 2;
+    assessment.observations[0].areas = [{ photoId, rectangle: { x: 0.2, y: 0.3, width: 0.2, height: 0.4 } }];
     const bundle = { version: 1, photos: [
       { id: "overview", label: "overview", capturedAt: "now", imagePath: `${base}original.jpg` },
       { id: "detail", label: "close_up", capturedAt: "later", imagePath: `${base}detail.jpg` },

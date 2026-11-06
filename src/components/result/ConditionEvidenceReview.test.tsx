@@ -51,6 +51,20 @@ it("opens the actual evidence photo and keeps hypotheses and unknowns explicit",
   expect(exported).toContain(lookup.result!.conditionAssessment!.nextEvidence!.purpose);
 });
 
+it("passes the exact claim and cited photo to area review without reusing the main part selection", async () => {
+  const lookup = record(), select = vi.fn(), review = vi.fn();
+  lookup.result!.conditionAssessment!.observations[0].photoIds = ["bracket", "bay"];
+  render(<ConditionEvidenceReview lookup={lookup} onSelectPhoto={select} onReviewObservation={review} />);
+  await userEvent.click(screen.getByRole("button", { name: "Brown flaking material is visible." }));
+  expect(review).toHaveBeenLastCalledWith({ observationId: "o1", photoId: "bracket" });
+  await userEvent.click(screen.getByRole("button", { name: /View 1. Overview for observation o1/ }));
+  expect(review).toHaveBeenLastCalledWith({ observationId: "o1", photoId: "bay" });
+  await userEvent.click(screen.getByRole("button", { name: "Review supporting observation o1 for possible cause 1" }));
+  expect(review).toHaveBeenLastCalledWith({ observationId: "o1", photoId: "bracket" });
+  expect(screen.getByRole("heading", { name: "Possible causes — unconfirmed" })).toBeInTheDocument();
+  expect(select).not.toHaveBeenCalled(); expect(identifyCapturedFrame).not.toHaveBeenCalled();
+});
+
 it("does not display or export an assessment referencing an unavailable photo", () => {
   const lookup = record();
   lookup.result!.conditionAssessment!.observations[0].photoIds = ["different-car"];

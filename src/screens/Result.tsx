@@ -15,6 +15,7 @@ import { PhotoEvidenceStrip } from "../components/result/PhotoEvidenceStrip";
 import { ScanSources } from "../components/result/ScanSources";
 import { PartInspectionForm } from "../components/result/PartInspectionForm";
 import { ConditionEvidenceReview } from "../components/result/ConditionEvidenceReview";
+import { ObservationAreaReview, type ObservationAreaSelection } from "../components/result/ObservationAreaReview";
 import { PhotoReviewPanel } from "../components/result/PhotoReviewPanel";
 import { ComponentMapReview } from "../components/result/ComponentMapReview";
 import { InspectionReportExport } from "../components/result/InspectionReportExport";
@@ -64,6 +65,7 @@ function ResultView({ id }: { id: string | undefined }) {
   const [selectedPhotoId, setSelectedPhotoId] = useState<string>();
   const [evidenceViewRequest, setEvidenceViewRequest] = useState(0);
   const [requestedMeasurementIntent, setRequestedMeasurementIntent] = useState<{ id: number; lookup: Lookup }>();
+  const [observationAreaSelection, setObservationAreaSelection] = useState<ObservationAreaSelection>();
   const photoCanvasRef = useRef<HTMLDivElement>(null);
   const [selectionStatus, setSelectionStatus] = useState<string | null>(null);
   const [selectionRetry, setSelectionRetry] = useState<Lookup | null>(null);
@@ -484,12 +486,13 @@ function ResultView({ id }: { id: string | undefined }) {
             photoCanvasRef.current?.focus({ preventScroll: true });
             photoCanvasRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
           }} /> : null}
-          {inspectionLookup ? <ConditionEvidenceReview lookup={inspectionLookup} disabled={!locallySavedLookup || retryInProgress || hasPendingRetryResult || Boolean(saveError || selectionRetry)} onRecordMeasurement={() => setRequestedMeasurementIntent((previous) => ({ id: (previous?.id ?? 0) + 1, lookup: inspectionLookup }))} onSelectPhoto={(photoId) => {
+          {inspectionLookup ? <ConditionEvidenceReview lookup={inspectionLookup} onReviewObservation={setObservationAreaSelection} disabled={!locallySavedLookup || retryInProgress || hasPendingRetryResult || Boolean(saveError || selectionRetry)} onRecordMeasurement={() => setRequestedMeasurementIntent((previous) => ({ id: (previous?.id ?? 0) + 1, lookup: inspectionLookup }))} onSelectPhoto={(photoId) => {
             setSelectedPhotoId(photoId);
             setEvidenceViewRequest((request) => request + 1);
             photoCanvasRef.current?.focus({ preventScroll: true });
             photoCanvasRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
           }} /> : null}
+          {inspectionLookup ? <ObservationAreaReview lookup={inspectionLookup} selection={observationAreaSelection} disabled={retryInProgress || hasPendingRetryResult || Boolean(saveError || selectionRetry)} /> : null}
           {inspectionLookup ? <ComponentMapReview key={`component-map:${inspectionLookup.id}`} lookup={inspectionLookup} /> : null}
           {inspectionLookup ? <PartInspectionForm key={inspectionLookup.id} lookup={inspectionLookup} onSaved={(saved) => setLookup({
             ...saved,
