@@ -1465,13 +1465,26 @@ export default function Scanner() {
       ) : null}
 
       {scanReview ? (
-        <section aria-label="Scan analysis workspace" data-testid="scan-analysis-workspace" className="fixed inset-0 z-40 flex min-h-0 flex-col bg-[var(--ds-bg)]">
+        <section aria-label="Scan analysis workspace" data-testid="scan-analysis-workspace" className="fixed inset-0 z-40 flex min-h-0 flex-col overflow-y-auto bg-[var(--ds-bg)]">
           <header className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4 pb-3 pt-[max(16px,env(safe-area-inset-top))]">
             <BrandLockup size="sm" />
             <Link to="/history" className="rounded-full border border-white/15 px-3 py-2 text-xs font-bold">Saved scans</Link>
           </header>
           <PhotoEvidenceStrip photos={scanReview.scanState.photos} photoRelationship={scanReview.scanState.photoRelationship} pipelineVersion={scanReview.scanState.result ? scanReview.scanState.result.modelRun?.pipelineVersion : null} selectedId={selectedPhoto?.id} onSelect={(id) => { setSelectedPhotoId(id); handleFocusObject(null); }} />
-          <div className="grid min-h-0 flex-1 grid-rows-[minmax(200px,42dvh)_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_420px] lg:grid-rows-1">
+          {scanReview && ((scanReview.lookup && scanSave?.lookupId === scanReview.lookup.id) || scanReview.scanState.storageWarning) ? (
+            <aside data-testid="scan-save-status" role="status" className="relative mx-2 my-1 shrink-0 rounded-xl border border-white/20 bg-slate-950/90 px-3 py-2 text-xs text-white">
+              {scanReview.scanState.storageWarning
+                ? `Not saved on this device. ${scanReview.scanState.storageWarning}`
+                : scanSave?.status === "saved" ? "Scan saved to cloud"
+                  : scanSave?.status === "local" ? "Saved on this device. Cloud sync is off."
+                    : scanSave?.status === "failed" ? "Saved on this device. Cloud sync failed."
+                      : "Saved on this device. Saving scan to cloud…"}
+              {scanReview.lookup && scanSave?.status === "failed" ? (
+                <button type="button" className="ml-2 underline" onClick={() => { if (scanReview.lookup) syncSavedLookup(scanReview.lookup); }}>Retry cloud save</button>
+              ) : null}
+            </aside>
+          ) : null}
+          <div className="grid flex-none grid-rows-[minmax(420px,60dvh)_auto] lg:min-h-[420px] lg:flex-1 lg:grid-cols-[minmax(0,1fr)_420px] lg:grid-rows-1">
             <div aria-label="Scan photo" data-testid="scan-workspace-photo" className="relative min-h-0 overflow-hidden bg-[#020617] [&>div]:absolute">
               <IsolatedPartView
                 key={photoReviewViewRequest}
@@ -1541,20 +1554,6 @@ export default function Scanner() {
       ) : null}
       {isAnalyzing ? <AnalyzingOverlay onCancel={cancelCurrentScan} step={analysisStep} /> : null}
       <ScanDebugOverlay info={scanReview?.scanState.debug} />
-      {scanReview && ((scanReview.lookup && scanSave?.lookupId === scanReview.lookup.id) || scanReview.scanState.storageWarning) ? (
-        <aside data-testid="scan-save-status" role="status" className="fixed right-3 top-[calc(max(12px,env(safe-area-inset-top))+56px)] z-[60] max-w-[min(70vw,320px)] rounded-xl border border-white/20 bg-slate-950/90 px-3 py-2 text-xs text-white shadow-lg">
-          {scanReview.scanState.storageWarning
-            ? `Not saved on this device. ${scanReview.scanState.storageWarning}`
-            : scanSave?.status === "saved" ? "Scan saved to cloud"
-              : scanSave?.status === "local" ? "Saved on this device. Cloud sync is off."
-                : scanSave?.status === "failed" ? "Saved on this device. Cloud sync failed."
-                  : "Saved on this device. Saving scan to cloud…"}
-          {scanReview.lookup && scanSave?.status === "failed" ? (
-            <button type="button" className="ml-2 underline" onClick={() => { if (scanReview.lookup) syncSavedLookup(scanReview.lookup); }}>Retry cloud save</button>
-          ) : null}
-        </aside>
-      ) : null}
-
       <input
         ref={galleryInputRef}
         aria-label="Upload photo"
