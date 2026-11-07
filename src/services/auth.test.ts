@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const supabaseMock = vi.hoisted(() => ({
   auth: {
     exchangeCodeForSession: vi.fn(),
+    getSession: vi.fn(),
     getUser: vi.fn(),
     onAuthStateChange: vi.fn(),
     signInWithOtp: vi.fn(),
@@ -28,6 +29,7 @@ describe("auth service", () => {
     vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "publishable-key");
     window.history.pushState({}, "", "/");
     supabaseMock.auth.exchangeCodeForSession.mockReset();
+    supabaseMock.auth.getSession.mockReset();
     supabaseMock.auth.getUser.mockReset();
     supabaseMock.auth.onAuthStateChange.mockReset();
     supabaseMock.auth.signInWithOtp.mockReset();
@@ -48,6 +50,7 @@ describe("auth service", () => {
       },
     });
     supabaseMock.auth.exchangeCodeForSession.mockResolvedValue({ data: {}, error: null });
+    supabaseMock.auth.getSession.mockResolvedValue({ data: { session: null }, error: null });
     supabaseMock.auth.signInWithOtp.mockResolvedValue({ data: {}, error: null });
     supabaseMock.auth.signInWithPassword.mockResolvedValue({ data: {}, error: null });
     supabaseMock.auth.signUp.mockResolvedValue({ data: { session: { access_token: "token" } }, error: null });
@@ -687,6 +690,162 @@ describe("auth service", () => {
     supabaseMock.auth.getUser.mockResolvedValue({ data: { user: makeAuthUser("new-user") }, error: null });
     expect((await auth.signInWithPassword("a@example.com", "good")).id).toBe("new-user");
     expect(auth.hasPendingSignOut()).toBe(false);
+  });
+
+  it("verifies the exact confirmed test identity and replaces a cached account", async () => {
+    const auth = await import("./auth");
+    const previous = makeAuthUser("previous");
+    const user = { ...makeAuthUser("qa-user"), email_confirmed_at: "2026-11-05T00:00:00Z", is_anonymous: false };
+    supabaseMock.auth.getUser.mockResolvedValueOnce({ data: { user: previous }, error: null });
+    expect(await auth.getVerifiedAuthUser()).toEqual(previous);
+    supabaseMock.auth.verifyOtp.mockResolvedValue({ data: { user, session: { access_token: "synthetic" } }, error: null });
+    supabaseMock.auth.getSession.mockResolvedValue({ data: { session: { access_token: "synthetic" } }, error: null });
+    supabaseMock.auth.getUser.mockResolvedValueOnce({ data: { user }, error: null });
+    expect(await auth.signInToPreviewTestAccount("synthetic-hash", "qa-user")).toEqual(user);
+    expect(supabaseMock.auth.verifyOtp).toHaveBeenCalledWith({ token_hash: "synthetic-hash", type: "email" });
+    expect(await auth.getVerifiedAuthUser()).toEqual(user);
+  });
+
+  it.each([
+    { id: "different-user", is_anonymous: false, email_confirmed_at: "2026-11-05T00:00:00Z" },
+    { id: "qa-user", is_anonymous: true, email_confirmed_at: "2026-11-05T00:00:00Z" },
+    { id: "qa-user", is_anonymous: false, email_confirmed_at: undefined },
+  ])("rejects an unexpected or unconfirmed test identity: %j", async (fields) => {
+    const auth = await import("./auth");
+    const user = { ...makeAuthUser(fields.id), ...fields };
+    supabaseMock.auth.verifyOtp.mockResolvedValue({ data: { user, session: { access_token: "synthetic" } }, error: null });
+    await expect(auth.signInToPreviewTestAccount("synthetic-hash", "qa-user")).rejects.toThrow("could not be verified");
+    expect(supabaseMock.auth.getUser).not.toHaveBeenCalled();
+  });
+
+  it("does not expose provider errors or adopt a test login without a session", async () => {
+    const auth = await import("./auth");
+    supabaseMock.auth.verifyOtp.mockResolvedValue({ data: {}, error: { message: "sensitive-provider-details" } });
+    await expect(auth.signInToPreviewTestAccount("synthetic-hash", "qa-user")).rejects.toThrow("The temporary test session could not be verified.");
+  });
+
+  it("removes only the installed rejected test session and clears its active account", async () => {
+    const auth = await import("./auth");
+    const { getAccountScope, setActiveAccount } = await import("../lib/accountScope");
+    const user = { ...makeAuthUser("wrong-user"), email_confirmed_at: "2026-11-05T00:00:00Z" };
+    let session: { access_token: string } | null = { access_token: "rejected-test-session" };
+    supabaseMock.auth.verifyOtp.mockResolvedValue({ data: { user, session }, error: null });
+    supabaseMock.auth.getSession.mockImplementation(async () => ({ data: { session }, error: null }));
+    supabaseMock.auth.signOut.mockImplementation(async () => { session = null; return { error: null }; });
+    setActiveAccount(user.id);
+
+    await expect(auth.signInToPreviewTestAccount("synthetic-hash", "qa-user")).rejects.toThrow("could not be verified");
+
+    expect(supabaseMock.auth.signOut).toHaveBeenCalledExactlyOnceWith({ scope: "local" });
+    expect(session).toBeNull();
+    expect(getAccountScope().userId).toBeNull();
+    expect(auth.hasPendingSignOut()).toBe(false);
+  });
+
+  it("preserves a newer session and account when the rejected test session was replaced", async () => {
+    const auth = await import("./auth");
+    const { getAccountScope } = await import("../lib/accountScope");
+    const newer = { ...makeAuthUser("newer-user"), email_confirmed_at: "2026-11-05T00:00:00Z" };
+    supabaseMock.auth.getUser.mockResolvedValue({ data: { user: newer }, error: null });
+    expect(await auth.getVerifiedAuthUser()).toEqual(newer);
+    supabaseMock.auth.verifyOtp.mockResolvedValue({ data: {
+      user: { ...makeAuthUser("wrong-user"), email_confirmed_at: "2026-11-05T00:00:00Z" },
+      session: { access_token: "rejected-test-session" },
+    }, error: null });
+    supabaseMock.auth.getSession.mockResolvedValue({ data: { session: { access_token: "newer-session" } }, error: null });
+
+    await expect(auth.signInToPreviewTestAccount("synthetic-hash", "qa-user")).rejects.toThrow("could not be verified");
+
+    expect(supabaseMock.auth.signOut).not.toHaveBeenCalled();
+    expect(getAccountScope().userId).toBe(newer.id);
+    expect(await auth.getVerifiedAuthUser()).toEqual(newer);
+    expect(supabaseMock.auth.getUser).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not adopt an otherwise valid test response after a newer login replaces it", async () => {
+    const auth = await import("./auth");
+    const { getAccountScope } = await import("../lib/accountScope");
+    const newer = { ...makeAuthUser("newer-user"), email_confirmed_at: "2026-11-05T00:00:00Z" };
+    supabaseMock.auth.getUser.mockResolvedValue({ data: { user: newer }, error: null });
+    expect(await auth.getVerifiedAuthUser()).toEqual(newer);
+    supabaseMock.auth.verifyOtp.mockResolvedValue({ data: {
+      user: { ...makeAuthUser("qa-user"), email_confirmed_at: "2026-11-05T00:00:00Z" },
+      session: { access_token: "test-session" },
+    }, error: null });
+    supabaseMock.auth.getSession.mockResolvedValue({ data: { session: { access_token: "newer-session" } }, error: null });
+
+    await expect(auth.signInToPreviewTestAccount("synthetic-hash", "qa-user")).rejects.toThrow("could not be verified");
+
+    expect(supabaseMock.auth.signOut).not.toHaveBeenCalled();
+    expect(getAccountScope().userId).toBe(newer.id);
+    expect(await auth.getVerifiedAuthUser()).toEqual(newer);
+    expect(supabaseMock.auth.getUser).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a login completed while rollback reads the rejected session", async () => {
+    const auth = await import("./auth");
+    const { getAccountScope } = await import("../lib/accountScope");
+    const newer = { ...makeAuthUser("newer-user"), email_confirmed_at: "2026-11-05T00:00:00Z" };
+    let finishRead!: (value: unknown) => void;
+    supabaseMock.auth.verifyOtp.mockResolvedValue({ data: {
+      user: { ...makeAuthUser("wrong-user"), email_confirmed_at: "2026-11-05T00:00:00Z" },
+      session: { access_token: "rejected-test-session" },
+    }, error: null });
+    supabaseMock.auth.getSession.mockReturnValue(new Promise((resolve) => { finishRead = resolve; }));
+    const pending = auth.signInToPreviewTestAccount("synthetic-hash", "qa-user");
+    const rejected = expect(pending).rejects.toThrow("could not be verified");
+    await vi.waitFor(() => expect(supabaseMock.auth.getSession).toHaveBeenCalled());
+    supabaseMock.auth.signInWithPassword.mockResolvedValue({ data: { user: newer }, error: null });
+    supabaseMock.auth.getUser.mockResolvedValue({ data: { user: newer }, error: null });
+    expect(await auth.signInWithPassword("newer@example.com", "synthetic-password")).toEqual(newer);
+    finishRead({ data: { session: { access_token: "rejected-test-session" } }, error: null });
+    await rejected;
+
+    expect(supabaseMock.auth.signOut).not.toHaveBeenCalled();
+    expect(getAccountScope().userId).toBe(newer.id);
+    expect(await auth.getVerifiedAuthUser()).toEqual(newer);
+  });
+
+  it("rolls back a test session when the server verifies a different user", async () => {
+    const auth = await import("./auth");
+    const { getAccountScope } = await import("../lib/accountScope");
+    const user = { ...makeAuthUser("qa-user"), email_confirmed_at: "2026-11-05T00:00:00Z" };
+    supabaseMock.auth.verifyOtp.mockResolvedValue({ data: { user, session: { access_token: "test-session" } }, error: null });
+    supabaseMock.auth.getSession.mockResolvedValue({ data: { session: { access_token: "test-session" } }, error: null });
+    supabaseMock.auth.getUser.mockResolvedValue({ data: { user: { ...user, id: "different-user" } }, error: null });
+    supabaseMock.auth.signOut.mockResolvedValue({ error: null });
+
+    await expect(auth.signInToPreviewTestAccount("synthetic-hash", "qa-user")).rejects.toThrow("could not be verified");
+
+    expect(supabaseMock.auth.signOut).toHaveBeenCalledExactlyOnceWith({ scope: "local" });
+    expect(getAccountScope().userId).toBeNull();
+  });
+
+  it("keeps a rejected test session blocked if local revocation fails", async () => {
+    const auth = await import("./auth");
+    const { getAccountScope } = await import("../lib/accountScope");
+    supabaseMock.auth.verifyOtp.mockResolvedValue({ data: {
+      user: { ...makeAuthUser("wrong-user"), email_confirmed_at: "2026-11-05T00:00:00Z" },
+      session: { access_token: "rejected-test-session" },
+    }, error: null });
+    supabaseMock.auth.getSession.mockResolvedValue({ data: { session: { access_token: "rejected-test-session" } }, error: null });
+    supabaseMock.auth.signOut.mockResolvedValue({ error: { message: "private-revocation-error" } });
+
+    await expect(auth.signInToPreviewTestAccount("synthetic-hash", "qa-user")).rejects.toThrow("The temporary test session could not be verified.");
+
+    expect(auth.hasPendingSignOut()).toBe(true);
+    expect(getAccountScope().userId).toBeNull();
+    expect(await auth.getVerifiedAuthUser()).toBeNull();
+  });
+
+  it("rejects a test login when another tab signs out while OTP verification runs", async () => {
+    const auth = await import("./auth");
+    supabaseMock.auth.verifyOtp.mockImplementation(async () => {
+      localStorage.setItem("deep-spec:sign-out-generation", "newer-logout");
+      return { data: { user: { ...makeAuthUser("qa-user"), email_confirmed_at: "2026-11-05T00:00:00Z" }, session: {} }, error: null };
+    });
+    await expect(auth.signInToPreviewTestAccount("synthetic-hash", "qa-user")).rejects.toThrow();
+    expect(supabaseMock.auth.getUser).not.toHaveBeenCalled();
   });
 });
 
