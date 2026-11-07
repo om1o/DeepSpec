@@ -144,6 +144,7 @@ export function createShopJob(input: ShopJobInput): StorageResult<ShopJob | null
     mileageUnit: input.mileageUnit,
     modifications: input.modifications,
     confirmedFields: input.confirmedFields,
+    referenceOrigins: input.referenceOrigins,
     model: clean(input.model, 80),
     notes: clean(input.notes, 500),
     orgId: input.orgId || org.id,
@@ -221,7 +222,7 @@ export function subscribeShopJobs(listener: () => void, scope: AccountScope = ge
   return () => { window.removeEventListener(SHOP_JOBS_CHANGED, onLocal); window.removeEventListener("storage", onStorage); };
 }
 
-export function updateShopJob(jobId: string, patch: Partial<Pick<ShopJob, "status" | "vin" | "year" | "make" | "model" | "mileage" | "mileageUnit" | "modifications" | "confirmedFields" | "engine" | "notes" | "reviewStatus">>): StorageResult<ShopJob | null> {
+export function updateShopJob(jobId: string, patch: Partial<Pick<ShopJob, "status" | "vin" | "year" | "make" | "model" | "mileage" | "mileageUnit" | "modifications" | "confirmedFields" | "referenceOrigins" | "engine" | "notes" | "reviewStatus">>): StorageResult<ShopJob | null> {
   const jobs = getShopJobs();
   const index = jobs.findIndex((job) => job.id === jobId);
   if (index === -1) {
@@ -240,6 +241,7 @@ export function updateShopJob(jobId: string, patch: Partial<Pick<ShopJob, "statu
     ...("mileageUnit" in patch ? { mileageUnit: patch.mileageUnit } : {}),
     ...("modifications" in patch ? { modifications: patch.modifications } : {}),
     ...("confirmedFields" in patch ? { confirmedFields: patch.confirmedFields } : {}),
+    ...("referenceOrigins" in patch ? { referenceOrigins: patch.referenceOrigins } : {}),
     ...(typeof patch.engine === "string" ? { engine: clean(patch.engine, 120) } : {}),
     ...(typeof patch.notes === "string" ? { notes: clean(patch.notes, 500) } : {}),
     updatedAt: new Date().toISOString(),
@@ -289,6 +291,7 @@ export function getVehicleContextForJob(job: ShopJob): ShopVehicleContext {
     mileageUnit: job.mileageUnit,
     modifications: job.modifications,
     confirmedFields: job.confirmedFields,
+    referenceOrigins: job.referenceOrigins,
     model: job.model,
     notes: job.notes,
     plate: job.plate,
@@ -454,7 +457,7 @@ function normalizeShopJob(job: ShopJob): ShopJob {
   // Confirmations are bound to the saved values, including mileage units and
   // modification details. Legacy jobs stay supplied until explicitly confirmed.
   const context = normalizeVehicleContext(cleaned);
-  return { ...cleaned, mileageUnit: context?.mileageUnit, modifications: context?.modifications, confirmedFields: context?.confirmedFields };
+  return { ...cleaned, mileageUnit: context?.mileageUnit, modifications: context?.modifications, confirmedFields: context?.confirmedFields, referenceOrigins: context?.referenceOrigins };
 }
 
 function getReviewStatusForScanIds(scanIds: string[]): ShopReviewStatus {

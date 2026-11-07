@@ -1,3 +1,5 @@
+import type { VehicleReferenceOrigins } from "./vehicleReference.js";
+
 export type MotionPermissionState = "idle" | "granted" | "denied" | "unsupported";
 
 export type CapturedFrame = {
@@ -127,6 +129,7 @@ export type OrganizationMember = {
 };
 
 export type ShopVehicleContext = VehicleContext & {
+  referenceOrigins?: VehicleReferenceOrigins;
   bayOrRo?: string;
   customerName?: string;
   jobTitle?: string;
@@ -135,6 +138,7 @@ export type ShopVehicleContext = VehicleContext & {
 };
 
 export type ShopJob = {
+  referenceOrigins?: VehicleReferenceOrigins;
   id: string;
   bayOrRo?: string;
   createdAt: string;

@@ -6,6 +6,7 @@ import ScanThumb from "../ui/ScanThumb";
 import { getTrustedFocusBox } from "./scanEvidenceGeometry";
 import { PhotoEvidenceStrip } from "../result/PhotoEvidenceStrip";
 import { PhotoReviewPanel } from "../result/PhotoReviewPanel";
+import { UNLINKED_CONDITION_FLAGS_MESSAGE } from "../../lib/conditionCoverage";
 
 type EvidenceItem = {
   id: "identity" | "function" | "visible" | "concerns" | "next" | "sources";
@@ -154,7 +155,7 @@ function buildEvidenceItems(result: IdentificationResult): EvidenceItem[] {
       id: "concerns",
       label: "Concerns",
       summary: result.concerns.length ? `${result.concerns.length} item${result.concerns.length === 1 ? "" : "s"} to review` : "No visible concern returned",
-      details: result.concerns.length ? result.concerns : ["The scan did not return a visible concern. That is not a functional safety check."],
+      details: [UNLINKED_CONDITION_FLAGS_MESSAGE, ...(result.concerns.length ? result.concerns : ["The scan did not return a visible concern. That is not a functional safety check."])],
       question: `Which visible concerns in this ${result.partName} photo matter most, and what should I verify next?`,
     },
     {

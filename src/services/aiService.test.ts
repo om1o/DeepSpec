@@ -215,7 +215,7 @@ describe("aiService", () => {
   it.each([false, true])("sends normalized saved photo review outside capped follow-up prose (research=%s)", async (research) => {
     const photos: ScanPhoto[] = ["bay", "connector", "marking"].map((id) => ({ id, label: "other", imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" }));
     const review = photoReview(["bay", "connector"]);
-    const lookup = { frame: photos[0], photos, photoRelationship: "independent", result: { ...result, concerns: ["Uncertain ".repeat(500)], photoReview: { ...review, ignored: "UNTRUSTED_EXTRA" } },
+    const lookup = { frame: photos[0], photos, photoRelationship: "same_part_or_area", result: { ...result, concerns: ["Uncertain ".repeat(500)], photoReview: { ...review, ignored: "UNTRUSTED_EXTRA" } },
       scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "The connector disagreement needs another view." }), { status: 200 }));
     await sendFollowUpDetails(lookup, "Why do the connector views disagree?", { research });
@@ -419,7 +419,7 @@ describe("aiService", () => {
     vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
     vi.mocked(identifyOnDevice).mockClear();
     const photo = { id: "overview", label: "overview" as const, imageBase64: "data:image/jpeg;base64,dGVzdA==", capturedAt: "2026-11-05T00:00:00.000Z" };
-    await expect(identifyCapturedFrame(photo, undefined, undefined, { photos: [photo] })).rejects.toMatchObject({ code: "network" });
+    await expect(identifyCapturedFrame(photo, undefined, undefined, { photos: [photo] })).rejects.toMatchObject({ code: "connection_failed" });
     expect(identifyOnDevice).not.toHaveBeenCalled();
   });
 
@@ -478,8 +478,8 @@ describe("aiService", () => {
         capturedAt: "2026-05-16T00:00:00.000Z",
       }),
     ).rejects.toMatchObject({
-      code: "network",
-      message: "Scan took too long. Try again.",
+      code: "request_timeout",
+      message: "DeepSpec did not return a complete response in time. Try again.",
     });
   });
 
@@ -726,6 +726,24 @@ describe("aiService", () => {
     expect(body.research === true).toBe(research);
     expect(Boolean(body.photos)).toBe(group);
     expect(JSON.stringify(body)).not.toContain("private-");
+  });
+
+  it.each([false, true])("keeps the recorded rotor overclaim explicitly unverified in chat (research=%s)", async (research) => {
+    const claim = "Thermal cracking visible on the independent rotor example (Photo 3), compromising structural integrity.";
+    const assessment = conditionAssessment("photo-1");
+    assessment.unknowns = ["Exact depth and structural propagation of the surface cracks.", "Remaining rotor thickness compared to manufacturer specifications."];
+    const lookup = { frame: { imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-07T00:00:00Z" },
+      result: { ...result, concerns: [claim], conditionAssessment: assessment }, scanCategory: "brakes", trainingLabel: "Rotor", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    const before = JSON.stringify(lookup);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "Depth remains unknown." }), { status: 200 }));
+    await sendFollowUpDetails(lookup, "Is the thermal cause confirmed?", { research });
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.userMessage).toContain(`Original AI concerns (unverified): ${claim}`);
+    expect(body.userMessage).not.toContain("\nConcerns:");
+    expect(body.userMessage).not.toContain("\nVisible observations:");
+    expect(body.conditionAssessment.unknowns).toEqual(assessment.unknowns);
+    expect(body.userMessage).toContain("User question: Is the thermal cause confirmed?");
+    expect(JSON.stringify(lookup)).toBe(before);
   });
 
   it("retains self-reported functional results without forwarding the inspector name", async () => {

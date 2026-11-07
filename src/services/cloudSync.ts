@@ -537,6 +537,10 @@ async function upsertScanLookupRow(supabase: SupabaseClient, row: Record<string,
   guard();
   let result = await write(row);
   if (isMissingOptionalScanLookupColumn(result.error)) {
+    // Never turn a failed source-bearing write into a successful source-less scan.
+    if (row.vehicle_context && typeof row.vehicle_context === "object" && "referenceOrigins" in row.vehicle_context) {
+      throw new Error("Evidence not synced: the cloud database cannot retain this scan's vehicle reference sources yet. The scan remains on this device; retry after the cloud database is updated.");
+    }
     // A failed schema write has no committed revision to reconcile. Check the
     // deadline before starting another write, but let late successes return.
     guard();

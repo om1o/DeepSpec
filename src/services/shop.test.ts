@@ -20,6 +20,7 @@ import {
 } from "./shop";
 import type { ScanAnalysisState } from "../types";
 import { confirmVehicleContextField, isVehicleFieldConfirmed } from "../lib/vehicleContext";
+import { referenceVehicleContext } from "../test/vehicleReferenceFixture";
 
 const baseJob = {
   make: "Toyota",
@@ -33,6 +34,19 @@ const baseJob = {
 describe("shop service", () => {
   beforeEach(() => {
     localStorage.clear();
+  });
+
+  it("keeps source snapshots through job creation, reopen and scan context, pruning only changed fields", () => {
+    const context = referenceVehicleContext();
+    const created = createShopJob({ ...baseJob, ...context });
+    if (!created.ok) throw new Error(created.message);
+    if (!created.value) throw new Error("No job was created");
+    expect(getShopJob(created.value.id)?.referenceOrigins).toEqual(context.referenceOrigins);
+    expect(getVehicleContextForJob(created.value).referenceOrigins).toEqual(context.referenceOrigins);
+    const updated = updateShopJob(created.value.id, { make: "Other" });
+    expect(updated.value?.referenceOrigins?.fields).toEqual({ year: context.referenceOrigins.fields.year });
+    expect(updateShopJob(created.value.id, { referenceOrigins: undefined }).value?.referenceOrigins).toBeUndefined();
+    expect(created.value.referenceOrigins).toEqual(context.referenceOrigins);
   });
 
   it("distinguishes an absent job from unreadable owner storage without creating an organization", () => {

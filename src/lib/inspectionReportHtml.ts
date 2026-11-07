@@ -1,10 +1,10 @@
 import type { Lookup, ScanPhoto, VehicleContext, VisualFocusBox } from "../types";
 import type { ComponentMapComponent } from "../types/componentMap";
 import { DEFAULT_INSPECTION_REPORT_OPTIONS, type InspectionReportOptions, type InspectionReportSnapshot } from "../types/inspectionReport";
-import { normalizeConditionAssessment } from "./conditionAssessment";
+import { buildConditionCoverage, ORIGINAL_AI_WORDING_MESSAGE, UNLINKED_CONDITION_FLAGS_MESSAGE } from "./conditionCoverage";
 import { normalizeObservationAreaRecords, observationAreaRecordStatus } from "./observationArea";
 import { buildIntakeDraft } from "./intakeDraft";
-import { vehicleContextDetails } from "./vehicleContext";
+import { normalizeVehicleContext, vehicleContextDetails } from "./vehicleContext";
 import { normalizeServiceRecords, serviceRecordRows, serviceRecordStatus } from "./serviceRecord";
 import { normalizeInspectionComparison, normalizeInspectionComparisons, inspectionComparisonStatus } from "./inspectionComparison";
 import type { InspectionComparison } from "../types/inspectionComparison";
@@ -58,6 +58,21 @@ type Outline = { box: VisualFocusBox; label: string; target?: string; map?: bool
 
 function vehicleRows(scan: Lookup, options: InspectionReportOptions): [string, string][] {
   return contextRows(scan.vehicleContext, options);
+}
+
+function vehicleReferenceHtml(scan: Lookup, options: InspectionReportOptions): string {
+  const origins = normalizeVehicleContext(scan.vehicleContext)?.referenceOrigins;
+  if (!origins) return scan.vehicleContext?.referenceOrigins ? prose("Saved vehicle reference sources could not be matched to the current fields. No source attribution is asserted.") : "";
+  const redact = (value: string) => options.includeVin ? value : value.replace(/[A-HJ-NPR-Z0-9]{17}/gi, "[VIN excluded]");
+  return `<h4>Sources for saved vehicle fields</h4>${prose("Saved manufacturer-reported identity references, not independently rechecked for this export. These references do not establish the installed engine, modifications, part fitment, condition or a repair procedure.")}${origins.references.map(reference => {
+    const fields = Object.entries(origins.fields).filter(([, id]) => id === reference.id).map(([field]) => field);
+    return `<article><p><a href="${escape(reference.sourceUrl)}" target="_blank" rel="noopener noreferrer">NHTSA vPIC source</a></p>${details([
+      ["Fields using this source", fields.join(", ")], ["Reference ID", reference.id], ["Retrieved", reference.retrievedAt],
+      ["Original queried model year", reference.query.modelYear ?? "Not supplied"],
+      ...(options.includeVin ? [["Original queried VIN", reference.query.vin] as const] : []),
+      ["Decode codes", reference.decode.codes.join(", ")],
+    ])}${reference.query.modelYear !== undefined ? prose("NHTSA may return the model year supplied in the query; that does not independently verify the year.") : ""}${list(reference.decode.messages.map(redact), "No decode messages recorded.")}</article>`;
+  }).join("")}`;
 }
 
 function contextRows(context: VehicleContext | undefined, options: InspectionReportOptions): [string, string][] {
@@ -274,7 +289,14 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
     const { scan, anchor, number, photos } = entry;
     const result = scan.result;
     const draft = buildIntakeDraft(scan);
-    const assessment = normalizeConditionAssessment(result?.conditionAssessment, photos.map((photo) => photo.id));
+    const conditionCoverage = buildConditionCoverage(result?.conditionAssessment, photos.map((photo) => photo.id), Boolean(result));
+    const assessment = conditionCoverage.assessment;
+    if (result) {
+      if (!conditionCoverage.photos.length) noteMissing(`Scan ${number}: ${conditionCoverage.message}`);
+      conditionCoverage.photos.forEach((photo, index) => {
+        if (!photo.observationIds.length) noteMissing(`Scan ${number}, Photo ${index + 1}: ${photo.message}`);
+      });
+    }
     const areaLogs = snapshot.observationAreaLogs?.filter((log) => log.lookupId === scan.id);
     const areaRecords = areaLogs?.length === 1 ? normalizeObservationAreaRecords(areaLogs[0].records, scan.id) : undefined;
     if (areaLogs?.length && !areaRecords) noteMissing(`Scan ${number}: human observation-area history is invalid or ambiguous.`);
@@ -287,17 +309,23 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
     };
     const areaAnchor = (recordId: string) => `${anchor}-human-area-${recordId}`;
     if (result?.conditionAssessment && !assessment) noteMissing(`Scan ${number}: invalid condition-assessment references were omitted; other saved findings remain below.`);
-    const reviewState = buildPhotoReviewState(result?.photoReview, photos.map((photo, index) => ({ id: photo.id, label: `Photo ${index + 1}` })), Boolean(result));
+    const reviewState = buildPhotoReviewState(result?.photoReview, photos.map((photo, index) => ({ id: photo.id, label: `Photo ${index + 1}` })), Boolean(result), scan.photoRelationship);
     if (reviewState.invalid) noteMissing(`Scan ${number}: the saved per-photo review could not be validated; its claims were omitted.`);
     const photoReviewHtml = `<div class="photo-review" id="${anchor}-photo-review"><h3>Per-photo AI review</h3>
       ${prose("AI-reported review is not human verification or proof of condition, function, safety, fitment or agreement.")}
       ${prose(reviewState.sourceMessage)}
       ${prose(reviewState.message)}
+      ${prose(conditionCoverage.message)}
       <ol class="photo-review-rows">${reviewState.rows.map((row, index) => {
+        const condition = conditionCoverage.photos.find((photo) => photo.photoId === row.id);
         return `<li id="${anchor}-photo-review-${index + 1}"><p>${escape(row.label)}: ${photoLink(scan.id, row.id)}</p>
-          ${details([["AI review status", photoReviewStatusLabel(row.status)]])}${row.summary ? prose(row.summary) : ""}</li>`;
+          ${details([["AI review status", photoReviewStatusLabel(row.status)]])}
+          ${prose(condition?.message ?? conditionCoverage.message)}
+          ${condition?.observations.length ? `<h4>AI-reported appearance</h4>${list(condition.observations.map((item) => `[${item.id}] ${item.text}`))}
+            <h4>Possible causes — unconfirmed</h4>${condition.possibleCauses.length ? list(condition.possibleCauses.map((item) => `${item.text} — based on observations ${item.observationIds.join(", ")}`)) : prose("Cause not established.")}` : ""}
+          ${row.summary ? `<h4>Original AI summary — unverified</h4>${prose(ORIGINAL_AI_WORDING_MESSAGE)}${prose(row.summary)}` : ""}</li>`;
       }).join("")}</ol>
-      <h4>Cross-photo disagreements — AI-reported, unconfirmed</h4>
+      <h4>${escape(reviewState.comparisonHeading)}</h4>
       ${prose(reviewState.disagreementMessage)}
       ${reviewState.review?.disagreements.length ? `<ol class="photo-review-disagreements">${reviewState.review.disagreements.map((item, index) => `<li id="${anchor}-photo-disagreement-${index + 1}">
         ${prose(item.description)}<p>Referenced saved images: ${item.photoIds.map((id) => photoLink(scan.id, id)).join(", ")}</p>
@@ -357,6 +385,7 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
       ${scan.correction ? details([["User-corrected label — not independently verified", scan.correction]]) : ""}
       <h3>Saved vehicle and complaint${photos.length > 1 && photoRelationshipOrUnknown(scan.photoRelationship) !== "same_part_or_area" ? " — Photo 1" : ""}</h3>${details(vehicleRows(scan, options))}
       <p class="muted">Vehicle confirmation is self-reported. These details do not establish part fitment or condition.</p>
+      ${vehicleReferenceHtml(scan, options)}
       <h3>Saved image evidence</h3>${details([[photoRelationshipOrUnknown(scan.photoRelationship) === "unknown" ? "Photo relationship" : "User-reported photo relationship", photoRelationshipDescription(scan.photoRelationship)]])}
       ${relationshipScope ? prose(relationshipScope) : ""}
       ${photosHtml}${selections.length ? `<h3>Saved selections and cutouts</h3>${selectionsHtml}` : prose("No isolated selections or cutouts saved.")}
@@ -366,7 +395,7 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
         <div class="${result.isSafetyCritical || result.safetyTriage === "needs_professional" ? "safety" : "warning"}"><h4>${result.isSafetyCritical || result.safetyTriage === "needs_professional" ? "Safety action — preserve before further use" : "Saved next action"}</h4>${prose(result.nextAction || "No specific action recorded.")}${details([["Safety triage", words(result.safetyTriage)], ["Safety-critical flag", result.isSafetyCritical ? "Yes" : "No — not a safety clearance"]])}</div>
         ${assessmentHtml}<h4>Other saved AI visible observations</h4>${list(result.visibleObservations)}
         ${result.evidenceRegions.length ? `<h4>Textual evidence regions — no geometric claim</h4>${result.evidenceRegions.map((region) => details([["Label", region.label], ["Observation", region.observation], ["Region", region.regionLabel]])).join("")}` : ""}
-        <h4>AI concerns — unconfirmed</h4>${list(result.concerns)}<h4>Other saved AI evidence</h4>${list(result.evidence)}
+        <h4>Original AI flags — unverified</h4>${prose(UNLINKED_CONDITION_FLAGS_MESSAGE)}${prose(ORIGINAL_AI_WORDING_MESSAGE)}${list(result.concerns)}<h4>Other saved AI evidence</h4>${list(result.evidence)}
         <h4>Additional evidence requested</h4>${list(result.requiredNextEvidence ?? [])}
         ${result.candidateMatches.length ? `<h4>Alternative AI identities</h4>${result.candidateMatches.map((candidate) => details([["Candidate", candidate.partName], ["Confidence", candidate.confidence], ["Reason", candidate.reason]])).join("")}` : ""}
         ${result.measurements?.length ? `<h4>AI-reported dimensions — not human measurements</h4>${prose("These are model outputs, including estimates or interpretations of markings. No human measurement is inferred.")}${result.measurements.map((measurement) => details([["Dimension", measurement.label], ["AI-reported value", `${measurement.valueMm} mm`], ["Method", words(measurement.method)], ["AI confidence", measurement.confidence], ["Caveat", measurement.caveat]])).join("")}` : ""}
@@ -467,8 +496,9 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
   if (!byId.has(snapshot.rootLookupId)) noteMissing("The requested overview scan is unavailable in this snapshot.");
   // Build the overview last so failed image/receipt checks from the full evidence are included.
   const overviewScans = entries.map(({ scan, anchor, number, photos }) => {
-    const assessment = normalizeConditionAssessment(scan.result?.conditionAssessment, photos.map((photo) => photo.id));
-    const review = buildPhotoReviewState(scan.result?.photoReview, photos, Boolean(scan.result));
+    const conditionCoverage = buildConditionCoverage(scan.result?.conditionAssessment, photos.map((photo) => photo.id), Boolean(scan.result));
+    const assessment = conditionCoverage.assessment;
+    const review = buildPhotoReviewState(scan.result?.photoReview, photos, Boolean(scan.result), scan.photoRelationship);
     const logs = snapshot.observationAreaLogs?.filter((log) => log.lookupId === scan.id);
     const areas = logs?.length === 1 ? normalizeObservationAreaRecords(logs[0].records, scan.id) : undefined;
     const areaSummary = areas ? areas.length ? `<p>Human areas: ${areas.map((record, index) => `<a href="#${anchor}-human-area-${record.id}">${index + 1}: ${escape(observationAreaRecordStatus(record, areas))}</a>`).join("; ")}. Historical review pointers; see the source and answer checks in their records.</p>` : prose("No human area entries were found on this device.") : prose("Human area history was not collected or could not be read.");
@@ -477,6 +507,7 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
     return `<article class="scan-overview"><h3><a href="#${anchor}">Scan ${number} — full evidence and photos</a></h3>${vehicle.length ? prose(vehicle.map(([label, value]) => `${label}: ${value}`).join("; ")) : prose("Vehicle details not recorded for this scan.")}
       ${scan.result ? `<div class="safety"><strong>Saved ${scan.result.isSafetyCritical || scan.result.safetyTriage === "needs_professional" ? "safety action" : "next action"} — ${escape(words(scan.result.safetyTriage))}</strong>${prose(scan.result.nextAction || "No specific action recorded.")}</div>` : prose("No AI result or safety action is saved; this is not a safety clearance.")}
       <h4>Saved AI observations — unconfirmed</h4>${observations}
+      <h4>Photo-linked condition coverage</h4>${prose(conditionCoverage.message)}<ul>${conditionCoverage.photos.map((photo, index) => `<li>Photo ${index + 1}: ${photoLink(scan.id, photo.photoId)} — ${escape(photo.message)}</li>`).join("")}</ul>
       ${assessment?.unknowns.length ? `<p><strong>Still unknown</strong></p>${list(assessment.unknowns)}` : ""}
       ${assessment?.nextEvidence ? `<p><strong>Next evidence:</strong> <span class="saved-text">${escape(assessment.nextEvidence.request)}</span><br>Purpose: <span class="saved-text">${escape(assessment.nextEvidence.purpose)}</span></p>` : ""}
       <p><a href="#${anchor}-photo-review">Photo review:</a> ${escape(review.message)}${review.review?.disagreements.length ? ` ${review.review.disagreements.length} reported disagreement(s) need confirmation.` : ""}</p>

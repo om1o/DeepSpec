@@ -6,10 +6,11 @@ import { prepareRetryFrame } from "../lib/retryFrame";
 import { compressImageDataUrl } from "../lib/utils";
 import { validatePhotoGroup } from "./photoDraft";
 import { normalizeConditionAssessment } from "../lib/conditionAssessment";
-import { normalizePhotoReview } from "../lib/photoReview";
+import { normalizePhotoReview, photoReviewForRelationship } from "../lib/photoReview";
 import { buildConditionHandoff } from "../lib/conditionHandoff";
 import { providerVehicleContext } from "../lib/vehicleContext";
 import { hasFirstPhotoIdentityScopePipeline, isPhotoRelationship } from "../lib/photoRelationship";
+import { isAIRequestId } from "../lib/aiRequestId";
 import {
   SCAN_CATEGORIES,
   type AIInput,
@@ -31,6 +32,7 @@ import {
 } from "../types";
 
 type AIErrorCode =
+  | "connection_failed"
   | "entitlement_unavailable"
   | "feature_disabled"
   | "image_too_large"
@@ -45,12 +47,14 @@ type AIErrorCode =
   | "rate_limited"
   | "rate_limit_unavailable"
   | "response_blocked"
+  | "request_timeout"
   | "scan_limit_reached"
   | "session_unavailable"
+  | "service_response_error"
   | "timeout"
   | "unsupported";
 
-export type AIErrorCategory = "input" | "model_response" | "provider_unavailable" | "setup" | "unknown";
+export type AIErrorCategory = "connection" | "input" | "model_response" | "provider_unavailable" | "setup" | "unknown";
 
 export type AIErrorDetails = {
   category: AIErrorCategory;
@@ -73,13 +77,6 @@ type ChatApiSuccess = {
 export type FollowUpOptions = { research?: boolean; sourceUrls?: string[] };
 export type FollowUpDetails = ChatApiSuccess;
 
-type AIApiFailure = {
-  error: {
-    code: AIErrorCode | string;
-    message: string;
-  };
-};
-
 type AIRequestOptions = {
   signal?: AbortSignal;
 };
@@ -100,11 +97,13 @@ const IDENTIFY_COMPRESSION_STEPS = [
 
 export class AIServiceError extends Error {
   code: AIErrorCode | string;
+  requestId?: string;
 
-  constructor(code: AIErrorCode | string, message: string) {
+  constructor(code: AIErrorCode | string, message: string, requestId?: string) {
     super(message);
     this.name = "AIServiceError";
     this.code = code;
+    if (isAIRequestId(requestId)) this.requestId = requestId;
   }
 }
 
@@ -209,42 +208,61 @@ async function postAI<TSuccess extends object>(
   const authHeader = await getAuthHeader();
   throwIfAborted(options.signal);
   if (options.scope && !isAccountScopeCurrent(options.scope)) throw new AIServiceError("invalid_input", "Account changed. Reopen this scan before asking a question.");
+  const requestId = crypto.randomUUID();
+  const started = Date.now();
   const controller = new AbortController();
   const abortFromCaller = () => controller.abort();
   options.signal?.addEventListener("abort", abortFromCaller, { once: true });
   const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs);
-  const response = await fetch(path, {
-    method: "POST",
-    signal: controller.signal,
-    headers: {
-      ...(authHeader ? { Authorization: authHeader } : {}),
-      "Content-Type": "application/json",
-    },
-    body: requestBody,
-  }).catch((error: unknown) => {
-    if (options.signal?.aborted) {
-      throw createAbortError();
+  let stage: "fetch" | "body" = "fetch";
+  let httpStatus: number | undefined;
+  try {
+    const response = await fetch(path, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        ...(authHeader ? { Authorization: authHeader } : {}),
+        "Content-Type": "application/json",
+        "X-DeepSpec-Request-Id": requestId,
+      },
+      body: requestBody,
+    });
+    httpStatus = response.status;
+    stage = "body";
+    // fetch resolves at headers. Keep cancellation and the deadline through the body read.
+    const body: unknown = await response.json();
+    throwIfAborted(options.signal);
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      throw new AIServiceError("service_response_error", "DeepSpec could not read the service response. Try again.", requestId);
     }
-    if (isAbortError(error)) {
-      throw new AIServiceError("network", "Scan took too long. Try again.");
+    if ("error" in body) {
+      const error = body.error;
+      if (error && typeof error === "object" && "code" in error && typeof error.code === "string"
+        && "message" in error && typeof error.message === "string") {
+        throw new AIServiceError(error.code, error.message, requestId);
+      }
+      throw new AIServiceError("service_response_error", "DeepSpec could not read the service response. Try again.", requestId);
     }
-
-    throw new AIServiceError("network", "Could not reach the Deep Spec AI service.");
-  }).finally(() => {
+    if (!response.ok) {
+      throw new AIServiceError("service_response_error", "DeepSpec could not complete this request. Try again.", requestId);
+    }
+    return body as TSuccess;
+  } catch (error) {
+    if (options.signal?.aborted) throw createAbortError();
+    // Only fixed metadata is logged; no question, photo, credential or raw exception.
+    console.warn("[DeepSpec Connection]", { requestId, path, stage, httpStatus, durationMs: Date.now() - started });
+    if (error instanceof AIServiceError) throw error;
+    if (controller.signal.aborted) {
+      throw new AIServiceError("request_timeout", "DeepSpec did not return a complete response in time. Try again.", requestId);
+    }
+    if (error instanceof SyntaxError) {
+      throw new AIServiceError("service_response_error", "DeepSpec could not read the service response. Try again.", requestId);
+    }
+    throw new AIServiceError("connection_failed", "The connection to DeepSpec was interrupted before a complete response arrived. Try again.", requestId);
+  } finally {
     clearTimeout(timeoutId);
     options.signal?.removeEventListener("abort", abortFromCaller);
-  });
-
-  throwIfAborted(options.signal);
-
-  const body = (await response.json().catch(() => null)) as TSuccess | AIApiFailure | null;
-
-  if (!response.ok || !body || "error" in body) {
-    const error = body && "error" in body ? body.error : null;
-    throw new AIServiceError(error?.code ?? "network", error?.message ?? "Deep Spec could not complete that AI request.");
   }
-
-  return body;
 }
 
 async function fitIdentifyImageToRequest(dataUrl: string, maxChars: number, signal?: AbortSignal) {
@@ -297,7 +315,7 @@ export async function identifyCapturedFrame(
   throwIfAborted(options.signal);
   validatePhotoRelationship(options.photoRelationship);
   if (options.photos && typeof navigator !== "undefined" && navigator.onLine === false) {
-    throw new AIServiceError("network", "Your photo group is saved on this device. Reconnect and retry to analyze every angle together.");
+    throw new AIServiceError("connection_failed", "Your photo group is saved on this device. Reconnect and retry to analyze every angle together.");
   }
   if (!options.photos && isOnDeviceFallbackEnabled() && typeof navigator !== "undefined" && navigator.onLine === false) {
     const offlineResult = await identifyOnDevice(frame);
@@ -390,7 +408,8 @@ function shouldUseOnDeviceAfterCloudError(error: unknown) {
     return false;
   }
 
-  return getAIErrorDetails(error.code).category === "provider_unavailable";
+  const category = getAIErrorDetails(error.code).category;
+  return category === "provider_unavailable" || category === "connection";
 }
 
 async function identifyOnDeviceWithTimeout(frame: CapturedFrame, cloudError: unknown, signal?: AbortSignal) {
@@ -440,10 +459,12 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
   const vehicleContext = providerVehicleContext(lookup.vehicleContext);
   if (lookup.photos?.length) {
     const photos = await preparePhotoGroupForRequest(lookup.photos);
-    const photoReview = normalizePhotoReview(lookup.result?.photoReview, photos.map((photo) => photo.id));
+    const photoReview = photoReviewForRelationship(normalizePhotoReview(lookup.result?.photoReview, photos.map((photo) => photo.id)), photoRelationship);
+    const conditionAssessment = normalizeConditionAssessment(lookup.result?.conditionAssessment, photos.map((photo) => photo.id));
     const result = await postAI<ChatApiSuccess>("/api/chat", {
       userMessage: buildFollowUpContext(lookup, trimmedQuestion), photos, photoRelationship, savedIdentityScope,
       ...(photoReview ? { photoReview } : {}),
+      ...(conditionAssessment ? { conditionAssessment } : {}),
       ...(vehicleContext ? { vehicleContext } : {}),
       ...(options.research ? { research: true, ...(options.sourceUrls?.length ? { sourceUrls: options.sourceUrls } : {}) } : {}),
     }, { timeoutMs: options.research ? 60_000 : DEFAULT_CHAT_CLIENT_TIMEOUT_MS, scope });
@@ -462,12 +483,14 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
   }
   const attachPhoto = imageBase64.length <= 4_000_000 && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(imageBase64) && imageBase64.split(",")[1].length % 4 === 0;
   if (!attachPhoto) throw new AIServiceError("invalid_input", "The saved photo must be a JPEG, PNG, or WebP image small enough for chat. Reopen the scan or use a smaller photo.");
-  const photoReview = normalizePhotoReview(lookup.result?.photoReview, ["photo-1"]);
+  const photoReview = photoReviewForRelationship(normalizePhotoReview(lookup.result?.photoReview, ["photo-1"]), photoRelationship);
+  const conditionAssessment = normalizeConditionAssessment(lookup.result?.conditionAssessment, ["photo-1"]);
   const result = await postAI<ChatApiSuccess>("/api/chat", {
     userMessage: buildFollowUpContext(lookup, trimmedQuestion),
     photoRelationship,
     savedIdentityScope,
     ...(photoReview ? { photoReview } : {}),
+    ...(conditionAssessment ? { conditionAssessment } : {}),
     ...(vehicleContext ? { vehicleContext } : {}),
     imageBase64,
     ...(options.research ? { research: true, ...(options.sourceUrls?.length ? { sourceUrls: options.sourceUrls } : {}) } : {}),
@@ -486,7 +509,7 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
 
 export function getAIErrorMessage(error: unknown) {
   if (error instanceof AIServiceError) {
-    return error.message;
+    return error.requestId ? `${error.message} Reference: ${error.requestId}` : error.message;
   }
 
   if (error instanceof Error) {
@@ -498,6 +521,27 @@ export function getAIErrorMessage(error: unknown) {
 
 export function getAIErrorDetails(code: string | undefined | null): AIErrorDetails {
   switch (code) {
+    case "connection_failed":
+      return {
+        category: "connection",
+        description: "The app did not receive a complete response. This does not establish an AI provider failure. Your saved photos remain available for retry.",
+        retryLabel: "Try again",
+        title: "Connection to DeepSpec interrupted",
+      };
+    case "request_timeout":
+      return {
+        category: "connection",
+        description: "The app stopped waiting for a complete response. The server may still be processing it. Your saved photos remain available.",
+        retryLabel: "Try again",
+        title: "DeepSpec request timed out",
+      };
+    case "service_response_error":
+      return {
+        category: "connection",
+        description: "The service response could not be read. This is not a result about your photo. Use the reference below if the problem repeats.",
+        retryLabel: "Try again",
+        title: "DeepSpec response could not be read",
+      };
     case "feature_disabled":
       return {
         category: "setup",
@@ -785,8 +829,8 @@ function buildFollowUpContext(lookup: Lookup, question: string) {
       ...condition.possibleCauses.map((item) => `Unconfirmed possible cause, based on [${item.observationIds.join(", ")}]: ${item.text}`),
     ] : []),
     result ? `What it does: ${result.whatItDoes}` : "",
-    result ? `Visible observations: ${result.visibleObservations.join("; ") || "none"}` : "",
-    result ? `Concerns: ${result.concerns.join("; ") || "none"}` : "",
+    result ? `Original AI observations (unverified): ${result.visibleObservations.join("; ") || "none recorded"}` : "",
+    result ? `Original AI concerns (unverified): ${result.concerns.join("; ") || "none recorded"}` : "",
   ]
     .filter(Boolean)
     .join("\n")

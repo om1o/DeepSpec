@@ -14,6 +14,17 @@ const savedPhotoReview: PhotoReview = {
 };
 
 describe("createChatResponse", () => {
+  it.each([false, true])("requires reassessing saved causal claims rather than confirming them by repetition (research=%s)", async (research) => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: "The cause remains unconfirmed." }] } }],
+    }), { status: 200 }));
+    await createChatResponse({ userMessage: "Saved concerns say thermal cracking compromises structural integrity. Is that confirmed?", research }, { GEMINI_API_KEY: "test-key" });
+    const sent = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    const prompt = sent.contents[0].parts[0].text;
+    expect(prompt).toContain("Repetition in a saved summary, concern, or previous answer is not corroboration");
+    expect(prompt).toContain("Explicitly correct an unsupported saved cause or severity claim");
+  });
+
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -177,7 +188,7 @@ describe("createChatResponse", () => {
   it.each([false, true])("carries validated saved review beyond capped prose without inventing missing coverage (research=%s)", async (research) => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "The connector disagreement needs another unobstructed view." }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
     const photos = ["bay", "close-up", "rear", "marking"].map((id) => ({ id, label: "other", imageBase64: "data:image/png;base64,aGVsbG8=" }));
-    const response = await createChatResponse({ userMessage: "Q".repeat(4000), photos, photoRelationship: "independent", research,
+    const response = await createChatResponse({ userMessage: "Q".repeat(4000), photos, photoRelationship: "same_part_or_area", research,
       photoReview: { ...savedPhotoReview, ignored: "UNTRUSTED_EXTRA" } }, { GEMINI_API_KEY: "test-key" });
     expect(response.status).toBe(200);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -283,8 +294,13 @@ describe("createChatResponse", () => {
     expect(prompt).toContain("Q".repeat(3000));
     expect(prompt).not.toContain("Q".repeat(3001));
     expect(prompt).toContain(expected);
-    expect(prompt).toContain("name the conflicting photo ids");
-    expect(prompt).toContain("request one useful next view or marking");
+    if (photoRelationship === "independent") {
+      expect(prompt).toContain("Return photoReview.disagreements as []");
+      expect(prompt).not.toContain("name the conflicting photo ids");
+    } else {
+      expect(prompt).toContain("name the conflicting photo ids");
+      expect(prompt).toContain("request one useful next view or marking");
+    }
     expect(sent.contents[0].parts.filter((part: Record<string, unknown>) => part.inlineData)).toHaveLength(2);
     expect(sent.contents[0].parts[1].text).toContain(labeled ? '"id":"first"' : '"id":"photo-1"');
     expect(sent.contents[0].parts[3].text).toContain(labeled ? '"id":"second"' : '"id":"photo-2"');

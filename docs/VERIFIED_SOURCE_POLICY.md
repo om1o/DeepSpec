@@ -29,6 +29,18 @@ Deep Spec must not present exact vehicle, engine, or part identity as verified u
 
 ## Data Fields Needed
 
+### Offline reference-builder output
+
+`scripts/build-verified-vehicle-reference.mjs` emits two distinct record kinds. A fetched `vehicle_model_year` record must match both the requested make and model and remains `constrained`, not visual proof or exact-part fitment. A malformed upstream response is an error, not evidence of no matching vehicles.
+
+A `source_pointer` is an unfetched link for manual review. It is `unverified`, has no `sourceRetrievedAt`, and records only when its metadata was generated. Manufacturer portals are scoped to their manufacturer; a general source has no vehicle scope. They do not inherit the requested model or year and cannot verify fitment. Toyota portals must not appear as applicable sources for other makes. Existing generated files with `verified_source_pointer` records should be regenerated into a fresh output directory before use; the builder does not retrofit old datasets or remove stale label-index files from reused directories.
+
+Public hosting alone does not establish document applicability or unrestricted reuse. Before adding a document, review its type, vehicle/engine/VIN qualifiers, revision or expiry, conflicting/superseding instructions and reuse terms. Manufacturer communications may include research requests, warranty notices and service campaigns, not only repair procedures. Do not copy a restricted bulletin into AI retrieval storage merely because it is publicly readable. [NHTSA data definitions](https://static.nhtsa.gov/odi/ffdd/tsbs/TSBS.txt), [NHTSA terms](https://www.nhtsa.gov/about-nhtsa/terms-use)
+
+These offline datasets are not a live repair-reference integration. The current app's vehicle-reference endpoint remains NHTSA identity lookup; licensed OEM diagrams and procedures still require an appropriate source and verified applicability.
+
+### Record fields
+
 - `sourceTier`
 - `sourceName`
 - `sourceUrl`
