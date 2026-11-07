@@ -58,6 +58,12 @@
     "api/billing-portal.ts": {
       "maxDuration": 30
     },
+    "api/qa-test-session.ts": {
+      "maxDuration": 90
+    },
+    "api/qa-test-launch.ts": {
+      "maxDuration": 30
+    },
     "api/billing-webhook.ts": {
       "maxDuration": 30
     }
