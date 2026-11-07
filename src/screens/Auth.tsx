@@ -1,5 +1,5 @@
 import { ClipboardEvent, FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { BrandLockup } from "../components/BrandLockup";
 import {
   getVerifiedAuthUser,
@@ -23,6 +23,7 @@ type AuthMode = "link" | "password";
 type PasswordMode = "signin" | "signup";
 const CODE_LENGTH = 6;
 const RESEND_COOLDOWN_SECONDS = 30;
+const SIGNUP_CONFIRMATION_NOTICE = "Check your inbox for a confirmation link, then sign in. If you already have an account, use your existing password or an email sign-in link.";
 
 function formatAuthError(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
@@ -42,13 +43,14 @@ export default function Auth() {
   const oauthEnabled = googleAuthEnabled || githubAuthEnabled;
   const canSubmit = supabaseConfigured;
   const [authMode, setAuthMode] = useState<AuthMode>("password");
-  const [passwordMode, setPasswordMode] = useState<PasswordMode>("signin");
+  const passwordMode: PasswordMode = new URLSearchParams(location.search).get("mode") === "signup" ? "signup" : "signin";
   const [step, setStep] = useState<AuthStep>("email");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(() => location.state?.signupConfirmation === true ? SIGNUP_CONFIRMATION_NOTICE : null);
+  const [formLocationKey, setFormLocationKey] = useState(location.key);
   const pendingSignOut = useSyncExternalStore(subscribeToPendingSignOut, hasPendingSignOut);
   const visibleNotice = pendingSignOut
     ? "Private screens are locked. Sign-out has not been confirmed. Retry signing out, or sign in again explicitly."
@@ -67,6 +69,25 @@ export default function Auth() {
     const fromQuery = new URLSearchParams(location.search).get("next");
     return normalizePostAuthRedirectPath(fromState ?? fromQuery);
   }, [location.search, location.state]);
+  const confirmationSent = location.state?.signupConfirmation === true;
+
+  function accountModePath(mode: PasswordMode) {
+    const params = new URLSearchParams({ next: postAuthPath });
+    if (mode === "signup") params.set("mode", "signup");
+    return `/auth?${params.toString()}`;
+  }
+
+  // Reset before the new route renders, including browser back/forward. Keep
+  // the email, but never carry a password or an error into the other form.
+  if (formLocationKey !== location.key) {
+    setFormLocationKey(location.key);
+    setAuthMode("password");
+    setPassword("");
+    setStep("email");
+    setCode("");
+    setError(null);
+    setNotice(confirmationSent ? SIGNUP_CONFIRMATION_NOTICE : null);
+  }
 
   const finishVerifiedLogin = useCallback(async () => {
     // Older device records can be behind cloud edits. Retry them explicitly from
@@ -163,8 +184,10 @@ export default function Auth() {
         }
         if (passwordMode === "signup") {
           setPassword("");
-          setPasswordMode("signin");
-          setNotice("Check your inbox for a confirmation link, then sign in. If you already have an account, use your existing password or an email sign-in link.");
+          navigate(accountModePath("signin"), {
+            replace: true,
+            state: { from: postAuthPath, signupConfirmation: true },
+          });
         }
       } catch (authError) {
         setError(formatAuthError(authError));
@@ -308,7 +331,7 @@ export default function Auth() {
     setCode("");
     setError(null);
     setNotice(null);
-    setPasswordMode("signin");
+    setPassword("");
     autoSubmittedCodeRef.current = null;
   }
 
@@ -353,8 +376,8 @@ export default function Auth() {
           </div>
 
           <div className="mt-9">
-            <h1 className="ds-auth-title">Sign in to DeepSpec</h1>
-            <p className="ds-auth-intro">Open your scans, saved details, and conversations.</p>
+            <h1 className="ds-auth-title">{passwordMode === "signup" ? "Create your DeepSpec account" : "Sign in to DeepSpec"}</h1>
+            <p className="ds-auth-intro">{passwordMode === "signup" ? "Keep your scans, saved details, and conversations together." : "Open your scans, saved details, and conversations."}</p>
             <a className="ds-demo-entry" href="/intro/index.html">Back to intro</a>
           </div>
 
@@ -449,24 +472,6 @@ export default function Auth() {
 
               {authMode === "password" ? (
                 <>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      aria-pressed={passwordMode === "signin"}
-                      onClick={() => setPasswordMode("signin")}
-                      className={passwordMode === "signin" ? "h-11 rounded-[8px] border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] text-sm font-medium text-white" : "h-11 rounded-[8px] border border-white/12 bg-white/5 text-sm font-medium text-white/62"}
-                    >
-                      Sign in
-                    </button>
-                    <button
-                      type="button"
-                      aria-pressed={passwordMode === "signup"}
-                      onClick={() => setPasswordMode("signup")}
-                      className={passwordMode === "signup" ? "h-11 rounded-[8px] border border-[var(--ds-accent)] bg-[var(--ds-accent-soft)] text-sm font-medium text-white" : "h-11 rounded-[8px] border border-white/12 bg-white/5 text-sm font-medium text-white/62"}
-                    >
-                      Create
-                    </button>
-                  </div>
                   <label className="block">
                     <span className="mb-2 block text-sm font-medium text-white/84">Password</span>
                     <input
@@ -535,6 +540,16 @@ export default function Auth() {
               </button>
               </fieldset>
             </form>
+            <Link
+              to={accountModePath(passwordMode === "signup" ? "signin" : "signup")}
+              state={{ from: postAuthPath }}
+              aria-disabled={isBusy || undefined}
+              tabIndex={isBusy ? -1 : undefined}
+              onClick={(event) => { if (isBusy) event.preventDefault(); }}
+              className="inline-flex min-h-11 items-center self-start text-sm font-medium text-sky-100 underline decoration-white/30 underline-offset-4 aria-disabled:opacity-50"
+            >
+              {passwordMode === "signup" ? "I already have an account. Sign in" : "I don't have an account"}
+            </Link>
             <p className="ds-auth-footnote">Review AI suggestions before relying on them. A photo cannot confirm that a part works.</p>
 
             {authMode === "link" && step !== "email" ? (
