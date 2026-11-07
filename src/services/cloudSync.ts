@@ -321,12 +321,14 @@ async function performChatHistorySync(lookup: Lookup, scope: AccountScope, guard
     .eq("revision", revision)
     .select("revision")
     .maybeSingle();
-  guard();
   if (updated.error) throw new Error(updated.error.message);
   if (!isCloudRevision(updated.data?.revision)) throw new Error(CLOUD_CONFLICT_MESSAGE);
 
+  // A committed chat write can arrive after the UI timeout. Retain its revision
+  // before stopping, so an explicit retry does not conflict with our own write.
   assertAccount(scope);
   recordCloudRevision(lookup.id, revision, updated.data.revision);
+  guard();
   return { ok: true, message: "Conversation synced to your saved scan." };
 }
 
