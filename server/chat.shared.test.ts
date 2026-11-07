@@ -14,6 +14,22 @@ const savedPhotoReview: PhotoReview = {
 };
 
 describe("createChatResponse", () => {
+  it.each([false, true])("sends evidence limits and a single-check contract with every photo (research=%s)", async (research) => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: "A closer view could distinguish surface markings; depth remains unknown." }] } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const photos = ["mounted", "engine", "removed"].map((id) => ({ id, label: "other", imageBase64: "data:image/png;base64,aGVsbG8=" }));
+    await createChatResponse({ userMessage: "Give the single most useful next check for each photo.", photos, photoRelationship: "independent", research }, { GEMINI_API_KEY: "test-key" });
+    const sent = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    const instructions = sent.system_instruction.parts[0].text;
+    expect(instructions).toContain("exactly one next check per requested photo");
+    expect(instructions).toContain("Does not establish");
+    expect(instructions).toContain("Dye penetrant indications reveal surface-breaking discontinuities");
+    expect(instructions).toContain("do not measure crack depth");
+    expect(instructions).toContain("Extent across an image is not depth or structural severity");
+    expect(sent.contents[0].parts.filter((part: { inlineData?: unknown }) => part.inlineData)).toHaveLength(3);
+  });
+
   it.each([false, true])("requires reassessing saved causal claims rather than confirming them by repetition (research=%s)", async (research) => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
       candidates: [{ finishReason: "STOP", content: { parts: [{ text: "The cause remains unconfirmed." }] } }],
