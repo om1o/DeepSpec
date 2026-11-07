@@ -69,7 +69,8 @@ it("does not display or export an assessment referencing an unavailable photo", 
   const lookup = record();
   lookup.result!.conditionAssessment!.observations[0].photoIds = ["different-car"];
   const { container } = render(<ConditionEvidenceReview lookup={lookup} onSelectPhoto={vi.fn()} />);
-  expect(container).toBeEmptyDOMElement();
+  expect(container).toHaveTextContent("Saved condition findings could not be validated");
+  expect(container).not.toHaveTextContent("Brown flaking material");
   expect(formatConditionHandoff(lookup)).toContain("Relationship unknown");
   expect(formatConditionHandoff(lookup)).not.toContain("Brown flaking material");
   expect(formatConditionHandoff(lookup)).not.toContain("different-car");
@@ -79,7 +80,8 @@ it("supports older scans without inventing photo-linked observations", () => {
   const lookup = record();
   delete lookup.result!.conditionAssessment;
   const { container } = render(<ConditionEvidenceReview lookup={lookup} onSelectPhoto={vi.fn()} />);
-  expect(container).toBeEmptyDOMElement();
+  expect(container).toHaveTextContent("No photo-linked condition findings were returned");
+  expect(container).not.toHaveTextContent("Brown flaking material");
   expect(formatConditionHandoff(lookup)).toContain("Relationship unknown");
   expect(formatConditionHandoff(lookup)).not.toContain("Condition evidence (AI-reported");
 });

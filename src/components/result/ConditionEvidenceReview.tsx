@@ -4,10 +4,14 @@ import { RequestedEvidenceCapture } from "./RequestedEvidenceCapture";
 
 export function ConditionEvidenceReview({ lookup, onSelectPhoto, onReviewObservation, onRecordMeasurement, disabled = false }: { lookup: Lookup; onSelectPhoto: (id: string) => void; onReviewObservation?: (selection: { observationId: string; photoId: string }) => void; onRecordMeasurement?: () => void; disabled?: boolean }) {
   const review = buildConditionHandoff(lookup);
-  if (!review.assessment) return null;
+  if (!review.assessment) return <section aria-label="Condition evidence" className="rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 text-sm text-[var(--ds-fg-2)]">
+    <h2 className="font-bold">Condition evidence</h2>
+    <p className="mt-2">{review.conditionCoverage.message}</p>
+  </section>;
   return <section aria-label="Condition evidence" className="rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-4 text-sm text-[var(--ds-fg-2)]">
     <h2 className="font-bold">Condition evidence</h2>
     <p className="mt-1 text-xs text-[var(--ds-fg-3)]">AI-reported appearance. Review the original photos; record your inspection separately below.</p>
+    <p className="mt-2">{review.conditionCoverage.message}</p>
     <h3 className="mt-4 font-semibold">Observed appearance</h3>
     {review.observations.length ? <ul className="mt-2 space-y-3">{review.observations.map((item) => <li key={item.id}>
       <p><span className="font-semibold">{item.id}.</span> {onReviewObservation ? <button type="button" className="min-h-11 text-left underline underline-offset-4" onClick={() => onReviewObservation({ observationId: item.id, photoId: item.photoIds[0] })}>{item.text}</button> : item.text}</p>

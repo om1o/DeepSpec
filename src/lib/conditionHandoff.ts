@@ -1,5 +1,5 @@
 import type { Lookup } from "../types";
-import { normalizeConditionAssessment } from "./conditionAssessment";
+import { buildConditionCoverage, formatConditionCoverage } from "./conditionCoverage";
 import { PHOTO_LABEL_TEXT } from "./photoLabels";
 import { isEvidenceImage, normalizeVisualEvidence } from "../services/visualEvidence";
 import { normalizeVehicleContext, vehicleContextDetails } from "./vehicleContext";
@@ -12,7 +12,8 @@ export function buildConditionHandoff(lookup: Lookup) {
   const photos = evidence?.photos
     ? evidence.photos.map((photo, index) => ({ id: photo.id, label: `${index + 1}. ${PHOTO_LABEL_TEXT[photo.label]}` }))
     : evidence && isEvidenceImage(lookup.frame.imageBase64) ? [{ id: "photo-1", label: "Original photo" }] : [];
-  const assessment = normalizeConditionAssessment(lookup.result?.conditionAssessment, photos.map((photo) => photo.id));
+  const conditionCoverage = buildConditionCoverage(lookup.result?.conditionAssessment, photos.map((photo) => photo.id), Boolean(lookup.result));
+  const assessment = conditionCoverage.assessment;
   const vehicle = normalizeVehicleContext(lookup.vehicleContext);
   const vehicleName = vehicle ? [vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" ") : "";
   const vehicleDetails: [string, string][] = vehicle
@@ -20,6 +21,7 @@ export function buildConditionHandoff(lookup: Lookup) {
   const photoRelationship = photoRelationshipOrUnknown(lookup.photoRelationship);
   return {
     assessment,
+    conditionCoverage,
     photos,
     photoReview: photoReviewForRelationship(normalizePhotoReview(lookup.result?.photoReview, photos.map((photo) => photo.id)), photoRelationship),
     photoRelationship,
@@ -48,13 +50,15 @@ export function formatConditionHandoff(lookup: Lookup): string {
   ];
   const photoReviewText = formatPhotoReview(lookup.result?.photoReview, review.photos.map((photo, index) => ({ id: photo.id, label: `Photo ${index + 1}` })), Boolean(lookup.result), review.photoRelationship);
   // Intake, photo relationships and per-photo coverage do not require a condition assessment.
-  if (!review.assessment) return [...vehicleLines, ...relationshipLines, "", photoReviewText].join("\n");
+  if (!review.assessment) return [...vehicleLines, ...relationshipLines, "", photoReviewText, "", formatConditionCoverage(review.conditionCoverage)].join("\n");
   const photoLabel = (id: string) => `${review.photos.find((photo) => photo.id === id)!.label} [${id}]`;
   return [
     ...(vehicleLines.length ? [...vehicleLines, ""] : ["Vehicle details: not supplied.", ""]),
     ...relationshipLines,
     "",
     photoReviewText,
+    "",
+    formatConditionCoverage(review.conditionCoverage),
     "",
     "Condition evidence (AI-reported, not human confirmation):",
     "Observed appearance:",

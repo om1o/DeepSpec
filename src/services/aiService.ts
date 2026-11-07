@@ -460,9 +460,11 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
   if (lookup.photos?.length) {
     const photos = await preparePhotoGroupForRequest(lookup.photos);
     const photoReview = photoReviewForRelationship(normalizePhotoReview(lookup.result?.photoReview, photos.map((photo) => photo.id)), photoRelationship);
+    const conditionAssessment = normalizeConditionAssessment(lookup.result?.conditionAssessment, photos.map((photo) => photo.id));
     const result = await postAI<ChatApiSuccess>("/api/chat", {
       userMessage: buildFollowUpContext(lookup, trimmedQuestion), photos, photoRelationship, savedIdentityScope,
       ...(photoReview ? { photoReview } : {}),
+      ...(conditionAssessment ? { conditionAssessment } : {}),
       ...(vehicleContext ? { vehicleContext } : {}),
       ...(options.research ? { research: true, ...(options.sourceUrls?.length ? { sourceUrls: options.sourceUrls } : {}) } : {}),
     }, { timeoutMs: options.research ? 60_000 : DEFAULT_CHAT_CLIENT_TIMEOUT_MS, scope });
@@ -482,11 +484,13 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
   const attachPhoto = imageBase64.length <= 4_000_000 && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(imageBase64) && imageBase64.split(",")[1].length % 4 === 0;
   if (!attachPhoto) throw new AIServiceError("invalid_input", "The saved photo must be a JPEG, PNG, or WebP image small enough for chat. Reopen the scan or use a smaller photo.");
   const photoReview = photoReviewForRelationship(normalizePhotoReview(lookup.result?.photoReview, ["photo-1"]), photoRelationship);
+  const conditionAssessment = normalizeConditionAssessment(lookup.result?.conditionAssessment, ["photo-1"]);
   const result = await postAI<ChatApiSuccess>("/api/chat", {
     userMessage: buildFollowUpContext(lookup, trimmedQuestion),
     photoRelationship,
     savedIdentityScope,
     ...(photoReview ? { photoReview } : {}),
+    ...(conditionAssessment ? { conditionAssessment } : {}),
     ...(vehicleContext ? { vehicleContext } : {}),
     imageBase64,
     ...(options.research ? { research: true, ...(options.sourceUrls?.length ? { sourceUrls: options.sourceUrls } : {}) } : {}),
