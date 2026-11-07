@@ -968,7 +968,9 @@ function AnalysisError({
   const [mountedScope] = useState(getAccountScope);
   const isMountedRef = useRef(true);
   const [retryError, setRetryError] = useState<string | null>(null);
-  const errorDetails = getAIErrorDetails(code);
+  const [retryErrorCode, setRetryErrorCode] = useState<string | null>(null);
+  const currentCode = retryErrorCode ?? code;
+  const errorDetails = getAIErrorDetails(currentCode);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -1036,6 +1038,7 @@ function AnalysisError({
       if (isCurrentRetry()) {
         const message = getAIErrorMessage(err);
         setRetryError(message);
+        setRetryErrorCode(err instanceof AIServiceError ? err.code : null);
         if (lookup) {
           const saved = recordLookupAnalysisFailure(lookup.id, { attemptId,
             errorCode: err instanceof AIServiceError ? err.code : "analysis_failed",
@@ -1056,11 +1059,11 @@ function AnalysisError({
         {errorDetails.category === "provider_unavailable" ? "Provider unavailable" : "Identification needs another pass"}
       </p>
       <h2 className="mt-2 text-xl font-extrabold tracking-tight">{errorDetails.title}</h2>
-      <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-2)]">{message}</p>
+      <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-2)]">{retryError ?? message}</p>
       <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-2)]">{errorDetails.description}</p>
       {capturedAt ? <p className="mt-3 text-xs font-semibold text-[var(--ds-fg-3)]">Captured {capturedAt}</p> : null}
 
-      {frame ? (
+      {frame && currentCode !== "response_blocked" ? (
         <div className="mt-4 border-t border-[var(--ds-border)] pt-4">
           <p className="text-xs font-semibold text-[var(--ds-fg-3)]">
             {isOnline ? "Connection is active." : "Offline. Reconnect to retry."}
@@ -1072,9 +1075,6 @@ function AnalysisError({
           >
             {isRetrying ? "Retrying..." : errorDetails.retryLabel}
           </Button>
-          {retryError ? (
-            <p className="mt-3 text-sm font-semibold text-[var(--ds-danger-ink)]">{retryError}</p>
-          ) : null}
         </div>
       ) : null}
     </section>

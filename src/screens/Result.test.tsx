@@ -814,6 +814,33 @@ describe("Result", () => {
     expect(screen.getByRole("button", { name: "Try again later" })).toBeInTheDocument();
   });
 
+  it.each([
+    ["incomplete_response", "AI response was incomplete", true],
+    ["response_blocked", "AI could not complete this request", false],
+  ] as const)("keeps the original photo and correct recovery controls for %s", (errorCode, title, canRetry) => {
+    const identify = vi.spyOn(aiService, "identifyCapturedFrame");
+    renderResult({ frame, errorCode, errorMessage: "No complete inspection result was produced.", analyzedAt: "2026-05-16T00:00:05.000Z" });
+    expect(screen.getByText(title)).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute("src", frame.imageBase64);
+    expect(screen.queryByRole("button", { name: "Ask DeepSpec" })).not.toBeInTheDocument();
+    expect(identify).not.toHaveBeenCalled();
+    if (canRetry) expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    else expect(screen.queryByRole("button", { name: /Try again|Change request/ })).not.toBeInTheDocument();
+    expect(getLookups().every((lookup) => !lookup.result)).toBe(true);
+  });
+
+  it("stops offering a retry when an initial network failure becomes a provider block", async () => {
+    const identify = vi.spyOn(aiService, "identifyCapturedFrame").mockRejectedValue(new aiService.AIServiceError("response_blocked", "The provider declined this analysis."));
+    renderResult({ frame, errorCode: "network", errorMessage: "Initial connection failure.", analyzedAt: "2026-05-16T00:00:05.000Z" });
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("AI could not complete this request")).toBeInTheDocument();
+    expect(screen.getByText("The provider declined this analysis.")).toBeInTheDocument();
+    expect(screen.queryByText("Initial connection failure.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Try again|Change request/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute("src", frame.imageBase64);
+    expect(identify).toHaveBeenCalledTimes(1);
+  });
+
   it("saves an unsaved result before opening chat", async () => {
     render(
       <MemoryRouter
@@ -1319,7 +1346,8 @@ describe("Result", () => {
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
     await screen.findByText(/The saved photo/);
     expect(identifySpy).not.toHaveBeenCalled();
-    expect(screen.getByText("Network error")).toBeInTheDocument();
+    expect(screen.queryByText("Network error")).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Captured car part" })).toHaveAttribute("src", cloudFrame.imageBase64);
     expect(getLookup(failedLookup.id)?.result).toBeUndefined();
   });
 

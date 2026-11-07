@@ -790,9 +790,9 @@ describe("Chat", () => {
   });
 
   it.each([
-    ["incomplete_response", "AI reply was incomplete", true],
+    ["incomplete_response", "AI response was incomplete", true],
     ["timeout", "AI reply timed out", true],
-    ["response_blocked", "AI could not answer this question", false],
+    ["response_blocked", "AI could not complete this request", false],
   ] as const)("keeps saved history intact after %s and offers the appropriate recovery", async (code, title, canRetry) => {
     const messages: ChatMessage[] = [
       { id: "old-user", role: "user", content: "Earlier question", timestamp: lookup.createdAt },
