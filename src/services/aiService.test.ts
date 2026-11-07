@@ -215,7 +215,7 @@ describe("aiService", () => {
   it.each([false, true])("sends normalized saved photo review outside capped follow-up prose (research=%s)", async (research) => {
     const photos: ScanPhoto[] = ["bay", "connector", "marking"].map((id) => ({ id, label: "other", imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" }));
     const review = photoReview(["bay", "connector"]);
-    const lookup = { frame: photos[0], photos, photoRelationship: "independent", result: { ...result, concerns: ["Uncertain ".repeat(500)], photoReview: { ...review, ignored: "UNTRUSTED_EXTRA" } },
+    const lookup = { frame: photos[0], photos, photoRelationship: "same_part_or_area", result: { ...result, concerns: ["Uncertain ".repeat(500)], photoReview: { ...review, ignored: "UNTRUSTED_EXTRA" } },
       scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "The connector disagreement needs another view." }), { status: 200 }));
     await sendFollowUpDetails(lookup, "Why do the connector views disagree?", { research });

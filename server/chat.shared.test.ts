@@ -177,7 +177,7 @@ describe("createChatResponse", () => {
   it.each([false, true])("carries validated saved review beyond capped prose without inventing missing coverage (research=%s)", async (research) => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "The connector disagreement needs another unobstructed view." }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
     const photos = ["bay", "close-up", "rear", "marking"].map((id) => ({ id, label: "other", imageBase64: "data:image/png;base64,aGVsbG8=" }));
-    const response = await createChatResponse({ userMessage: "Q".repeat(4000), photos, photoRelationship: "independent", research,
+    const response = await createChatResponse({ userMessage: "Q".repeat(4000), photos, photoRelationship: "same_part_or_area", research,
       photoReview: { ...savedPhotoReview, ignored: "UNTRUSTED_EXTRA" } }, { GEMINI_API_KEY: "test-key" });
     expect(response.status).toBe(200);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -283,8 +283,13 @@ describe("createChatResponse", () => {
     expect(prompt).toContain("Q".repeat(3000));
     expect(prompt).not.toContain("Q".repeat(3001));
     expect(prompt).toContain(expected);
-    expect(prompt).toContain("name the conflicting photo ids");
-    expect(prompt).toContain("request one useful next view or marking");
+    if (photoRelationship === "independent") {
+      expect(prompt).toContain("Return photoReview.disagreements as []");
+      expect(prompt).not.toContain("name the conflicting photo ids");
+    } else {
+      expect(prompt).toContain("name the conflicting photo ids");
+      expect(prompt).toContain("request one useful next view or marking");
+    }
     expect(sent.contents[0].parts.filter((part: Record<string, unknown>) => part.inlineData)).toHaveLength(2);
     expect(sent.contents[0].parts[1].text).toContain(labeled ? '"id":"first"' : '"id":"photo-1"');
     expect(sent.contents[0].parts[3].text).toContain(labeled ? '"id":"second"' : '"id":"photo-2"');

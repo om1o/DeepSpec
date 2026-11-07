@@ -6,7 +6,7 @@ import { prepareRetryFrame } from "../lib/retryFrame";
 import { compressImageDataUrl } from "../lib/utils";
 import { validatePhotoGroup } from "./photoDraft";
 import { normalizeConditionAssessment } from "../lib/conditionAssessment";
-import { normalizePhotoReview } from "../lib/photoReview";
+import { normalizePhotoReview, photoReviewForRelationship } from "../lib/photoReview";
 import { buildConditionHandoff } from "../lib/conditionHandoff";
 import { providerVehicleContext } from "../lib/vehicleContext";
 import { hasFirstPhotoIdentityScopePipeline, isPhotoRelationship } from "../lib/photoRelationship";
@@ -459,7 +459,7 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
   const vehicleContext = providerVehicleContext(lookup.vehicleContext);
   if (lookup.photos?.length) {
     const photos = await preparePhotoGroupForRequest(lookup.photos);
-    const photoReview = normalizePhotoReview(lookup.result?.photoReview, photos.map((photo) => photo.id));
+    const photoReview = photoReviewForRelationship(normalizePhotoReview(lookup.result?.photoReview, photos.map((photo) => photo.id)), photoRelationship);
     const result = await postAI<ChatApiSuccess>("/api/chat", {
       userMessage: buildFollowUpContext(lookup, trimmedQuestion), photos, photoRelationship, savedIdentityScope,
       ...(photoReview ? { photoReview } : {}),
@@ -481,7 +481,7 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
   }
   const attachPhoto = imageBase64.length <= 4_000_000 && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(imageBase64) && imageBase64.split(",")[1].length % 4 === 0;
   if (!attachPhoto) throw new AIServiceError("invalid_input", "The saved photo must be a JPEG, PNG, or WebP image small enough for chat. Reopen the scan or use a smaller photo.");
-  const photoReview = normalizePhotoReview(lookup.result?.photoReview, ["photo-1"]);
+  const photoReview = photoReviewForRelationship(normalizePhotoReview(lookup.result?.photoReview, ["photo-1"]), photoRelationship);
   const result = await postAI<ChatApiSuccess>("/api/chat", {
     userMessage: buildFollowUpContext(lookup, trimmedQuestion),
     photoRelationship,

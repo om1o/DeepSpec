@@ -1,11 +1,11 @@
 // Bump when identification instructions or routing/normalization change.
-export const IDENTIFY_PROMPT_VERSION = "identify-2026-11-07-evidence-limits-v1";
-export const IDENTIFY_PIPELINE_VERSION = "identify-pipeline-2026-11-07-evidence-limits-v1";
+export const IDENTIFY_PROMPT_VERSION = "identify-2026-11-07-independent-review-v1";
+export const IDENTIFY_PIPELINE_VERSION = "identify-pipeline-2026-11-07-independent-review-v1";
 
 export const PHOTO_REVIEW_PROMPT = [
   'Add optional photoReview: {"version":1,"photos":[{"photoId":"supplied ID","status":"observations_returned","summary":"brief visible evidence"}],"disagreements":[{"id":"d1","photoIds":["first ID","second ID"],"description":"specific conflicting views","nextEvidence":{"request":"one useful next check","purpose":"what it resolves"}}]}.',
   "Use 1-4 unique actual photo IDs. For each supplied photo, report observations_returned for described visible evidence, limited_view for an unclear or obstructed view, or not_assessed when not assessed; give a truthful summary <=360 characters. Never fill missing coverage by guessing. An omitted photo or block means review was not reported, not that the photo was checked or agrees with another view.",
-  "Return 0-2 disagreements with unique IDs <=80 characters, 2-4 distinct photo IDs, a description <=360 characters, and nextEvidence request/purpose each <=240 characters. Every referenced photo must have a returned row other than not_assessed. Empty disagreements means no disagreements were reported, not verified agreement. Do not invent conflicts or paired evidence for one photo. Independent examples may differ without proving a change or failed part; angle, lighting and occlusion may prevent comparison.",
+  "Return 0-2 disagreements with unique IDs <=80 characters, 2-4 distinct photo IDs, a description <=360 characters, and nextEvidence request/purpose each <=240 characters. Every referenced photo must have a returned row other than not_assessed. Empty disagreements means no disagreements were reported, not verified agreement. Do not invent conflicts or paired evidence for one photo. For independent examples, return disagreements: []; different parts or conditions are not contradictory views. Keep their observations separate and do not request evidence to reconcile unrelated examples. Angle, lighting and occlusion may prevent comparison of other groups.",
   "Keep this review concise within the existing output budget; omit it if necessary rather than inventing completeness. It is AI-reported evidence, not human confirmation, proof of the declared relationship, fitment, hidden condition, or safe operation. Preserve required identification and safety fields.",
 ].join(" ");
 

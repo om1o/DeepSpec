@@ -45,12 +45,22 @@ export function photoReviewStatusLabel(status: PhotoReviewStatus | "not_reported
 }
 
 export type PhotoReviewSource = { id: string; label: string };
-export function buildPhotoReviewState(value: unknown, photos: readonly PhotoReviewSource[], hasResult: boolean) {
-  const review = hasResult ? normalizePhotoReview(value, photos.map((photo) => photo.id)) : undefined;
-  const invalid = hasResult && value !== undefined && !review;
+export const INDEPENDENT_PHOTO_COMPARISON_MESSAGE = "Cross-photo disagreements do not apply to independent examples. Review each photo separately.";
+
+/** Apply relationship semantics after structural validation; never mutate the saved model response. */
+export function photoReviewForRelationship(review: PhotoReview | undefined, relationship: unknown): PhotoReview | undefined {
+  return review && relationship === "independent" ? { ...review, disagreements: [] } : review;
+}
+
+export function buildPhotoReviewState(value: unknown, photos: readonly PhotoReviewSource[], hasResult: boolean, relationship?: unknown) {
+  const savedReview = hasResult ? normalizePhotoReview(value, photos.map((photo) => photo.id)) : undefined;
+  const review = photoReviewForRelationship(savedReview, relationship);
+  const invalid = hasResult && value !== undefined && !savedReview;
+  const independent = relationship === "independent";
   return {
     review, invalid,
-    sourceMessage: "Saved images may include crops of another image; separate capture angles are not verified.",
+    sourceMessage: independent ? "These are independent examples. A shared vehicle, part or time sequence is not established."
+      : "Saved images may include crops of another image; separate capture angles are not verified.",
     message: !hasResult ? "No AI identification or photo review is recorded."
       : invalid ? "The saved photo review could not be validated. Coverage and disagreements are unavailable."
         : !review ? "Photo-by-photo review was not reported for this result."
@@ -59,14 +69,16 @@ export function buildPhotoReviewState(value: unknown, photos: readonly PhotoRevi
       const entry = review?.photos.find((row) => row.photoId === photo.id);
       return { ...photo, status: entry?.status ?? "not_reported" as const, summary: entry?.summary };
     }),
-    disagreementMessage: !review ? "Disagreements were not recorded in a valid photo review."
+    comparisonHeading: independent ? "Independent examples" : "Reported disagreements",
+    disagreementMessage: independent ? `${INDEPENDENT_PHOTO_COMPARISON_MESSAGE}${savedReview?.disagreements.length ? " A saved AI comparison was excluded because it does not apply to this relationship." : ""}`
+      : !review ? "Disagreements were not recorded in a valid photo review."
       : !review.disagreements.length ? "No disagreements were reported. Agreement between the photos has not been verified."
         : "AI-reported disagreements need confirmation from the saved images and additional evidence.",
   };
 }
 
-export function formatPhotoReview(value: unknown, photos: readonly PhotoReviewSource[], hasResult: boolean): string {
-  const state = buildPhotoReviewState(value, photos, hasResult);
+export function formatPhotoReview(value: unknown, photos: readonly PhotoReviewSource[], hasResult: boolean, relationship?: unknown): string {
+  const state = buildPhotoReviewState(value, photos, hasResult, relationship);
   const label = (id: string) => `${photos.find((photo) => photo.id === id)!.label} [${id}]`;
   return [
     "Photo review (AI-reported, not human confirmation):", state.sourceMessage, state.message,
