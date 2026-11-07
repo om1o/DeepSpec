@@ -13,7 +13,8 @@ const NHTSA_API_BASE = "https://vpic.nhtsa.dot.gov/api/vehicles";
 const OEM_SOURCE_POINTERS = [
   {
     id: "toyota-tis",
-    labels: ["toyota", "camry", "repair manual", "service manual", "wiring diagram", "engine"],
+    make: "Toyota",
+    labels: ["toyota", "repair manual", "service manual", "wiring diagram", "engine"],
     sourceLicense:
       "OEM subscription/copyrighted service information. Store metadata and links only unless license rights permit content storage or model training.",
     sourceName: "Toyota Technical Information System",
@@ -24,7 +25,8 @@ const OEM_SOURCE_POINTERS = [
   },
   {
     id: "toyota-parts-center-online",
-    labels: ["toyota", "camry", "oem parts", "vin fitment", "part number"],
+    make: "Toyota",
+    labels: ["toyota", "oem parts", "vin fitment", "part number"],
     sourceLicense:
       "OEM commerce/catalog source. Store metadata and links only unless terms permit diagram or image storage.",
     sourceName: "Toyota Parts Center Online",
@@ -35,7 +37,8 @@ const OEM_SOURCE_POINTERS = [
   },
   {
     id: "toyota-owner-manuals",
-    labels: ["toyota", "camry", "owner manual", "maintenance", "vehicle documents"],
+    make: "Toyota",
+    labels: ["toyota", "owner manual", "maintenance", "vehicle documents"],
     sourceLicense:
       "OEM public vehicle document source. Store metadata and links only unless terms permit content storage or model training.",
     sourceName: "Toyota Warranty and Owner Manuals",
@@ -46,7 +49,8 @@ const OEM_SOURCE_POINTERS = [
   },
   {
     id: "nhtsa-vin-decoder",
-    labels: ["nhtsa", "vin", "toyota", "camry", "vehicle identity"],
+    make: null,
+    labels: ["nhtsa", "vin", "vehicle identity"],
     sourceLicense: "Public U.S. government vehicle identity source; data is manufacturer-reported through NHTSA vPIC.",
     sourceName: "NHTSA VIN Decoder",
     sourceTier: "tier_1_government",
@@ -74,10 +78,11 @@ export async function buildVerifiedVehicleReference(options = {}) {
   for (const modelYear of years) {
     const sourceUrl = buildNhtsaModelsForMakeYearUrl(make, modelYear);
     const rows = await fetchJsonResults(fetcher, sourceUrl);
-    const matches = rows.filter((row) => normalize(row.Model_Name) === normalize(model));
+    const matches = rows.filter((row) => row && typeof row === "object"
+      && normalize(row.Make_Name) === normalize(make) && normalize(row.Model_Name) === normalize(model));
 
     if (!matches.length) {
-      skipped.push({ make, model, modelYear, reason: "No exact NHTSA model match." });
+      skipped.push({ make, model, modelYear, reason: "No exact NHTSA make/model match." });
       continue;
     }
 
@@ -86,9 +91,9 @@ export async function buildVerifiedVehicleReference(options = {}) {
     }
   }
 
-  const sourceRecords = OEM_SOURCE_POINTERS.map((source) => toSourcePointerRecord({
+  const applicableSources = OEM_SOURCE_POINTERS.filter((source) => source.make === null || normalize(source.make) === normalize(make));
+  const sourceRecords = applicableSources.map((source) => toSourcePointerRecord({
     generatedAt,
-    model,
     source,
   }));
 
@@ -113,11 +118,11 @@ export async function buildVerifiedVehicleReference(options = {}) {
         sourceUrl: "https://vpic.nhtsa.dot.gov/api/",
         use: "Downloaded manufacturer-reported make/model/model-year records to constrain vehicle identity.",
       },
-      ...OEM_SOURCE_POINTERS.map((source) => ({
+      ...applicableSources.map((source) => ({
         sourceName: source.sourceName,
         sourceTier: source.sourceTier,
         sourceUrl: source.sourceUrl,
-        use: "Stored as metadata-only pointer. Content is not downloaded for training until usage rights are verified.",
+        use: "Unfetched metadata-only pointer for manual review. No document applicability or content rights have been verified.",
       })),
     ],
     totalLabels: labels.length,
@@ -176,34 +181,35 @@ function toVehicleRecord({ generatedAt, modelYear, row, sourceUrl }) {
   };
 }
 
-function toSourcePointerRecord({ generatedAt, model, source }) {
+function toSourcePointerRecord({ generatedAt, source }) {
   return {
-    id: stableId(`source:${source.id}:${model}`),
-    canonicalKind: "verified_source_pointer",
+    id: stableId(`source:${source.id}`),
+    canonicalKind: "source_pointer",
     datasetId: DATASET_ID,
     downloaded: false,
     evidenceClues: [
       source.summary,
-      "Metadata-only source pointer. Do not train on source content until license rights are confirmed.",
+      "Unfetched source pointer for manual review; no vehicle-specific document, fitment or reuse rights have been verified.",
     ],
     labels: [...new Set(source.labels.map(normalize))].sort((a, b) => a.localeCompare(b)),
     primaryLabel: source.sourceName,
-    retrievalUse: ["source_lookup", "manual_review", "fitment_verification"],
+    retrievalUse: ["source_lookup", "manual_review"],
     sourceEngineCode: null,
     sourceLicense: source.sourceLicense,
     sourceName: source.sourceName,
     sourcePartName: null,
     sourcePartNumber: null,
-    sourceRetrievedAt: generatedAt,
+    sourceRetrievedAt: null,
+    metadataGeneratedAt: generatedAt,
     sourceTier: source.sourceTier,
     sourceUrl: source.sourceUrl,
     sourceVehicle: {
-      make: "Toyota",
-      model: cleanDisplay(model),
+      make: source.make,
+      model: null,
       modelYear: null,
     },
     trainingAllowed: false,
-    verificationStatus: "verified",
+    verificationStatus: "unverified",
   };
 }
 
@@ -214,7 +220,8 @@ async function fetchJsonResults(fetcher, sourceUrl) {
   }
 
   const payload = await response.json();
-  return Array.isArray(payload.Results) ? payload.Results : [];
+  if (!payload || !Array.isArray(payload.Results)) throw new Error(`Invalid NHTSA response from ${sourceUrl}: Results must be an array.`);
+  return payload.Results;
 }
 
 function buildNhtsaModelsForMakeYearUrl(make, modelYear) {
@@ -358,6 +365,6 @@ Options:
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const result = await buildVerifiedVehicleReference(parseArgs(process.argv.slice(2)));
-  console.log(`Wrote ${result.manifest.recordCount} verified reference records.`);
+  console.log(`Wrote ${result.manifest.recordCount} vehicle reference records and source pointers; inspect each record's verificationStatus.`);
   console.log(`Manifest: ${join(result.manifest.outDir, "manifest.json")}`);
 }
