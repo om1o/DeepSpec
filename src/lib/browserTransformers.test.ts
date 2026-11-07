@@ -11,7 +11,8 @@ describe("configureSameOriginOnnxRuntime", () => {
 
     configureSameOriginOnnxRuntime({ env: { backends: { onnx: { wasm } } } });
 
-    expect(wasm.wasmPaths).toBeUndefined();
+    expect(wasm.wasmPaths).toEqual({ wasm: expect.stringContaining("ort-wasm-simd-threaded.asyncify.wasm") });
+    expect(wasm.wasmPaths.wasm).not.toContain("cdn.jsdelivr.net");
   });
 
   it("is a no-op for a mocked module without an ONNX environment", () => {

@@ -14,8 +14,10 @@ export function configureSameOriginOnnxRuntime(transformers: BrowserTransformers
   if (!("env" in transformers)) return;
   const wasm = transformers.env?.backends?.onnx?.wasm;
   if (wasm) {
-    // Transformers.js replaces the bundled Vite asset with jsDelivr by default.
-    // Clearing that override restores ONNX Runtime's emitted same-origin WASM URL.
-    wasm.wasmPaths = undefined;
+    // Pin the installed WebGPU runtime binary as a Vite asset. Clearing the CDN
+    // override alone leaves the dev optimizer looking beside its generated chunk.
+    // Keep the bundled JS factory; only override the matching Asyncify binary.
+    wasm.wasmPaths = { wasm: new URL(onnxWasmUrl, import.meta.url).href };
   }
 }
+import onnxWasmUrl from "onnxruntime-web/ort-wasm-simd-threaded.asyncify.wasm?url";
