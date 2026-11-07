@@ -59,6 +59,21 @@ function makeTempDatasetRoot(prefix: string) {
 }
 
 describe("createIdentifyResponse", () => {
+  it.each([2, 3])("prioritizes condition evidence without fabricating missing findings for %s photos", async (count) => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] }, finishReason: "STOP" }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const photos = Array.from({ length: count }, (_, index) => ({ id: `photo-${index + 1}`, label: "other", imageBase64 }));
+    const response = await createIdentifyResponse({ photos, photoRelationship: "independent" }, { GEMINI_API_KEY: "test-key" });
+    expect(response.status).toBe(200);
+    const sent = String(fetchSpy.mock.calls[0][1]?.body);
+    expect(sent).toContain("Allocate the response budget to photo-linked condition findings before optional rectangles");
+    expect(sent).toContain("Extent across an image is not depth or structural severity");
+    expect(sent).toContain("do not measure crack depth");
+    // A successful response with no findings must remain incomplete, not become healthy.
+    expect((response.body as { result: Record<string, unknown> }).result.conditionAssessment).toBeUndefined();
+  });
+
   beforeEach(() => {
     vi.restoreAllMocks();
   });
