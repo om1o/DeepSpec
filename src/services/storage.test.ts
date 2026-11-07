@@ -219,9 +219,9 @@ describe("storage", () => {
     expect(getLookup(second.id)).toBeNull();
   });
 
-  it("retains cloud receipts after reading storage and rejects obsolete completions", () => {
+  it.each(["scan", "inspection", "chat"] as const)("retains %s cloud receipts after reading storage and rejects obsolete completions", (scope) => {
     const saved = createLookup(scanState).value;
-    const receipt = { attemptId: "attempt-1", attemptedAt: new Date().toISOString(), status: "unconfirmed" as const, scope: "scan" as const };
+    const receipt = { attemptId: "attempt-1", attemptedAt: new Date().toISOString(), status: "unconfirmed" as const, scope };
     expect(recordCloudSaveAttempt(saved.id, receipt)).toBe(true);
     expect(getLookup(saved.id)?.cloudSave).toEqual(receipt);
     updateLookup(saved.id, { notes: "New bench observation" });

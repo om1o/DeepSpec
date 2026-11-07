@@ -441,7 +441,7 @@ export type Lookup = {
     attemptId: string;
     attemptedAt: string;
     status: "unconfirmed" | "acknowledged" | "failed";
-    scope: "scan" | "inspection";
+    scope: "scan" | "inspection" | "chat";
     shopAssociation?: "private" | "cloud";
   };
   inspection?: PartInspection;

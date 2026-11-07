@@ -281,7 +281,7 @@ async function syncLookupForAccount(
     const mode = requestedMode === "chat" && isCloudRevision(lookup.cloudRevision) ? "chat" : "full";
     receipt = {
       attemptId: createRuntimeId(), attemptedAt: new Date().toISOString(), status: "unconfirmed",
-      scope: lookup.inspection && !lookup.frame.imageBase64.startsWith("data:") ? "inspection" : "scan",
+      scope: mode === "chat" ? "chat" : lookup.inspection && !lookup.frame.imageBase64.startsWith("data:") ? "inspection" : "scan",
     };
     recordCloudSaveAttempt(lookup.id, receipt);
     pendingLookupSyncs.add(pendingKey);
