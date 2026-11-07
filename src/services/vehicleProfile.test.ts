@@ -1,10 +1,27 @@
 import { accountStorageKey, getAccountScope, setActiveAccount } from "../lib/accountScope";
 import { confirmVehicleContextField } from "../lib/vehicleContext";
 import { readVehicleProfile, saveVehicleProfile, VEHICLE_PROFILE_STORAGE_KEY } from "./vehicleProfile";
+import { referenceVehicleContext } from "../test/vehicleReferenceFixture";
+import { createLookup, getLookup, scanStateFromLookup } from "./storage";
 
 describe("selected vehicle profile", () => {
   beforeEach(() => { localStorage.clear(); setActiveAccount("vehicle-owner-a"); });
   afterEach(() => { vi.restoreAllMocks(); setActiveAccount(null); });
+
+  it("retains source snapshots in the selected car and saved scan after later profile edits", () => {
+    const context = referenceVehicleContext();
+    expect(saveVehicleProfile(context).ok).toBe(true);
+    const profile = readVehicleProfile();
+    expect(profile).toEqual({ ok: true, value: context });
+    const saved = createLookup({ frame: { imageBase64: "data:image/jpeg;base64,b25l", capturedAt: "2026-11-07T00:00:00Z" }, vehicleContext: profile.value });
+    if (!saved.ok) throw new Error(saved.message);
+    saveVehicleProfile({ ...context, make: "Other" });
+    expect(readVehicleProfile().value?.referenceOrigins?.fields).toEqual({ year: context.referenceOrigins.fields.year });
+    const reopened = getLookup(saved.value.id)!;
+    expect(reopened.vehicleContext).toEqual(context);
+    expect(scanStateFromLookup(reopened).vehicleContext).toEqual(context);
+    expect(context.referenceOrigins.fields.make).toBeDefined();
+  });
 
   it("round trips confirmed context and explicitly clears only the selected profile", () => {
     const context = confirmVehicleContextField({ year: "2014", mileage: "120000", mileageUnit: "mi" }, "mileage", true, "2026-11-05T12:00:00.000Z");

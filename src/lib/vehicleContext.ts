@@ -1,4 +1,6 @@
 import type { ShopVehicleContext, VehicleContext, VehicleContextField } from "../types/index.js";
+import type { VehicleIdentityReference, VehicleReferenceField } from "../types/vehicleReference.js";
+import { normalizeVehicleIdentityReference, normalizeVehicleReferenceOrigins, referenceAllowsSuggestions, VEHICLE_REFERENCE_FIELD_FACTS } from "./vehicleReference.js";
 
 export const VEHICLE_CONTEXT_FIELDS = ["year", "make", "model", "engine", "mileage", "modifications", "vin"] as const satisfies readonly VehicleContextField[];
 const TEXT_FIELDS = ["vin", "year", "make", "model", "engine", "mileage", "notes", "bayOrRo", "customerName", "jobTitle", "plate", "symptom", "technicianName"] as const;
@@ -65,6 +67,8 @@ export function normalizeVehicleContext(value: unknown): ShopVehicleContext | un
     }
     if (Object.keys(confirmedFields).length) context.confirmedFields = confirmedFields;
   }
+  const origins = normalizeVehicleReferenceOrigins(value.referenceOrigins, context);
+  if (origins) context.referenceOrigins = origins;
   return Object.keys(context).length ? context : undefined;
 }
 
@@ -72,7 +76,7 @@ export function vehicleContextsMatch(left: unknown, right: unknown): boolean {
   return JSON.stringify(normalizeVehicleContext(left) ?? null) === JSON.stringify(normalizeVehicleContext(right) ?? null);
 }
 
-type EditableVehicleField = Exclude<keyof ShopVehicleContext, "confirmedFields">;
+type EditableVehicleField = Exclude<keyof ShopVehicleContext, "confirmedFields" | "referenceOrigins">;
 
 /** Keep keystrokes intact for controlled inputs; normalize only when saving/confirming. */
 export function updateVehicleContextField<K extends EditableVehicleField>(context: ShopVehicleContext | undefined, field: K, value: ShopVehicleContext[K]): ShopVehicleContext {
@@ -82,7 +86,30 @@ export function updateVehicleContextField<K extends EditableVehicleField>(contex
   if (VEHICLE_CONTEXT_FIELDS.includes(confirmationField as VehicleContextField)) delete confirmedFields[confirmationField as VehicleContextField];
   delete next.confirmedFields;
   if (Object.keys(confirmedFields).length) next.confirmedFields = confirmedFields;
+  const origins = normalizeVehicleReferenceOrigins(context?.referenceOrigins, context ?? {});
+  delete next.referenceOrigins;
+  if (origins && field !== "vin") {
+    if (field in VEHICLE_REFERENCE_FIELD_FACTS) delete origins.fields[field as VehicleReferenceField];
+    const remaining = normalizeVehicleReferenceOrigins(origins, next);
+    if (remaining) next.referenceOrigins = remaining;
+  }
   return next;
+}
+
+/** Copy a reviewed field together with its source; the existing save action still applies. */
+export function applyVehicleReferenceField(context: ShopVehicleContext | undefined, field: VehicleReferenceField, source: VehicleIdentityReference): ShopVehicleContext | null {
+  const reference = normalizeVehicleIdentityReference(source);
+  const current = normalizeVehicleContext(context);
+  const decoded = reference?.facts[VEHICLE_REFERENCE_FIELD_FACTS[field]];
+  if (!reference || !decoded || !referenceAllowsSuggestions(reference) || reference.query.vin !== current?.vin) return null;
+  const previous = current.referenceOrigins;
+  const sameId = previous?.references.find(entry => entry.id === reference.id);
+  if (sameId && JSON.stringify(sameId) !== JSON.stringify(reference)) return null;
+  const next = updateVehicleContextField(context, field, decoded);
+  const references = new Map((next.referenceOrigins?.references ?? []).map(entry => [entry.id, entry]));
+  references.set(reference.id, reference);
+  next.referenceOrigins = normalizeVehicleReferenceOrigins({ references: [...references.values()], fields: { ...next.referenceOrigins?.fields, [field]: reference.id } }, next);
+  return next.referenceOrigins ? next : null;
 }
 
 export function confirmVehicleContextField(context: ShopVehicleContext | undefined, field: VehicleContextField, confirmed: boolean, now = new Date().toISOString()): ShopVehicleContext {

@@ -58,6 +58,29 @@ beforeEach(() => {
 afterEach(() => { cleanup(); setActiveAccount(null); });
 
 describe("VehicleReferenceReview", () => {
+  it("keeps the saved reference attached when copying a decoded field", async () => {
+    const ui = setup(); openPanel();
+    const panel = await lookupAndReview();
+    await userEvent.click(within(panel).getByRole("button", { name: "Use decoded make" }));
+    expect(ui.latest()).toMatchObject({
+      make: "HONDA", referenceOrigins: { references: [reference()], fields: { make: reference().id } },
+    });
+  });
+
+  it("opens a source carried by saved vehicle fields when this device has no lookup history", async () => {
+    const source = reference();
+    const context = { vin: VIN, make: "HONDA", referenceOrigins: { references: [source], fields: { make: source.id } } };
+    const ui = setup(context); openPanel();
+    await screen.findByText("No saved references for this VIN on this device.");
+    await userEvent.click(screen.getByRole("button", { name: "Review field source" }));
+    const panel = screen.getByRole("region", { name: "Saved NHTSA reference" });
+    expect(within(panel).getByText(/VIN decoded cleanly/)).toBeInTheDocument();
+    expect(within(panel).getByRole("link", { name: "NHTSA vPIC source" })).toHaveAttribute("href", source.sourceUrl);
+    expect(ui.latest()).toEqual(context);
+    expect(ui.changed).not.toHaveBeenCalled();
+    expect(requestVehicleReference).not.toHaveBeenCalled();
+  });
+
   it("does no automatic network lookup and loads only device history when opened", async () => {
     setup();
     expect(readVehicleReferences).not.toHaveBeenCalled(); expect(requestVehicleReference).not.toHaveBeenCalled();

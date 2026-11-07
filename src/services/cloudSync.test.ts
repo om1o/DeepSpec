@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import type { ConditionAssessment, Lookup, PhotoReview } from "../types";
+import { referenceVehicleContext } from "../test/vehicleReferenceFixture";
 
 const mocks = vi.hoisted(() => ({
   createClient: vi.fn(),
@@ -24,6 +25,32 @@ describe("cloudSync", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  it.each(["saved", "missing-column"])("retains vehicle field sources without silent cloud downgrade: %s", async (outcome) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const scanWrite = vi.fn().mockResolvedValue(outcome === "missing-column"
+      ? { data: null, error: { message: "Could not find the 'vehicle_context' column in the schema cache" } }
+      : { data: { revision: 1 }, error: null });
+    mocks.createClient.mockReturnValue({ rpc: mocks.syncDetails,
+      auth: { getSession: async () => ({ data: { session: { user: { id: "user-1", email_confirmed_at: "now" } } }, error: null }) },
+      from: (table: string) => table === "scan_lookups" ? makeScanWriteQuery(scanWrite) : { insert: async () => ({ error: null }), upsert: async () => ({ error: null }) },
+      storage: { from: () => ({ upload: vi.fn().mockResolvedValue({ error: null }) }) },
+    });
+    const lookup = { ...makeLookup(), vehicleContext: referenceVehicleContext() };
+    const original = JSON.stringify(lookup);
+    const { saveExistingLookup, getLookup } = await import("./storage");
+    saveExistingLookup(lookup);
+    const { syncLookupToCloud } = await import("./cloudSync");
+    const result = await syncLookupToCloud(lookup);
+    expect(result.ok).toBe(outcome === "saved");
+    expect(scanWrite).toHaveBeenCalledTimes(1);
+    expect(scanWrite.mock.calls[0][0].vehicle_context).toEqual(lookup.vehicleContext);
+    expect(getLookup(lookup.id)?.vehicleContext).toEqual(lookup.vehicleContext);
+    expect(getLookup(lookup.id)?.cloudSave?.status).toBe(outcome === "saved" ? "acknowledged" : "failed");
+    if (outcome === "missing-column") expect(result.message).toContain("cannot retain this scan's vehicle reference sources");
+    expect(JSON.stringify(lookup)).toBe(original);
   });
 
   it.each(["valid", "uncited-photo", "out-of-bounds"])("validates v2 areas before uploading a cloud-only fallback scan: %s", async (kind) => {

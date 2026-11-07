@@ -2,6 +2,12 @@ export const VEHICLE_REFERENCE_SOURCE_URL = "https://vpic.nhtsa.dot.gov/api/";
 export const VEHICLE_REFERENCE_ADAPTER_VERSION = "nhtsa-vpic-v1";
 
 export type VehicleReferenceQuery = { vin: string; modelYear?: number };
+export type VehicleReferenceField = "year" | "make" | "model" | "engine";
+/** Exact reviewed sources for current values; not human confirmation or repair data. */
+export type VehicleReferenceOrigins = {
+  references: VehicleIdentityReference[];
+  fields: Partial<Record<VehicleReferenceField, string>>;
+};
 export type VehicleReferenceFacts = {
   year?: string;
   make?: string;

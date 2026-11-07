@@ -394,6 +394,17 @@ describe("readCloudLookups", () => {
     expect(result.value[0].vehicleContext?.confirmedFields?.year).toBeUndefined();
   });
 
+  it("restores vehicle field sources from cloud JSON without needing device reference history", async () => {
+    const context = referenceVehicleContext();
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, vehicle_context: JSON.parse(JSON.stringify(context)) }], error: null });
+    const { readCloudLookups } = await import("./cloudHistory");
+    const { normalizeLookup } = await import("./storage");
+    const result = await readCloudLookups();
+    if (!result.ok) throw new Error(result.message);
+    expect(result.value[0].vehicleContext).toEqual(context);
+    expect(normalizeLookup(result.value[0])?.vehicleContext).toEqual(context);
+  });
+
   it("keeps cloud legacy facts but rejects changed values, units and invalid confirmation metadata", async () => {
     let context = confirmVehicleContextField({ engine: "2.0L", mileage: "120000", mileageUnit: "mi" }, "engine", true, "2026-11-05T12:00:00.000Z");
     context = confirmVehicleContextField(context, "mileage", true, "2026-11-05T12:00:00.000Z");
@@ -502,3 +513,4 @@ describe("readCloudLookup", () => {
     expect(await readCloudLookup("scan-1")).toEqual({ ok: false, message: "Account changed. Reload your saved scans." });
   });
 });
+import { referenceVehicleContext } from "../test/vehicleReferenceFixture";
