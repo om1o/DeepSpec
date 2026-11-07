@@ -106,6 +106,20 @@ function correctedArea(first: Extract<ObservationAreaRecord, { kind: "mark" }>, 
 }
 
 describe("self-contained mechanic HTML report", () => {
+  it.each([
+    ["chat", "Conversation only; other changes not confirmed"],
+    ["inspection", "Inspection only; other changes not confirmed"],
+    ["scan", "Scan record"],
+  ] as const)("limits the reported cloud acknowledgment to the saved %s scope", (scope, label) => {
+    const record = lookup();
+    record.cloudSave = { attemptId: "saved", attemptedAt: WHEN, status: "acknowledged", scope };
+    const doc = parsed(snapshot([record]));
+    const field = Array.from(doc.querySelectorAll("dt")).find((element) => element.textContent === "Cloud save scope");
+    expect(field?.nextElementSibling?.textContent).toBe(label);
+    const status = Array.from(doc.querySelectorAll("dt")).find((element) => element.textContent === "Cloud save status");
+    expect(status?.nextElementSibling?.textContent).toBe("acknowledged");
+  });
+
   it("puts saved actions, observations, exact human readings and unresolved requests before full evidence", () => {
     const input = withRequestedHistory(snapshot([lookup(), lookup("followup")]));
     const measurement = { ...humanMeasurement(), reading: "12.40", unit: "V", quantity: "Voltage", method: "Across the marked terminals", basis: "transcribed_document" as const };

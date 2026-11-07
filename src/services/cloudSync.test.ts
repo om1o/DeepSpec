@@ -310,6 +310,8 @@ describe("cloudSync", () => {
     expect((await syncLookupChatToCloud(lookup)).ok).toBe(true);
     expect(upload).toHaveBeenCalledOnce();
     expect(scanWrite).toHaveBeenCalledOnce();
+    const { getLookup } = await import("./storage");
+    expect(getLookup(lookup.id)?.cloudSave).toMatchObject({ status: "acknowledged", scope: "scan" });
   });
 
   it.each(["auth", "upload", "row"])("stops later writes after a timeout during %s and holds retries until the request settles", async (stage) => {

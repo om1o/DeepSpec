@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Lookup } from "../types";
 import { setActiveAccount } from "../lib/accountScope";
-import { appendChatMessages, getLookup, recordCloudRevision, saveExistingLookup, updateLookup } from "./storage";
+import { appendChatMessages, getLookup, recordCloudRevision, saveExistingLookup, saveLookupInspection, updateLookup } from "./storage";
 import { syncLookupChatToCloud, syncLookupToCloud } from "./cloudSync";
 import { mergeCloudLookup } from "../lib/lookupMerge";
 import { emptyPartInspection } from "../lib/partInspection";
@@ -269,6 +269,27 @@ describe("cross-device cloud saves", () => {
     expect(db.row).toMatchObject({ revision: 2, notes: "Typed during save" });
   });
 
+  it("acknowledges only chat when notes and an inspection still exist only on this device", async () => {
+    const db = cloud(); mocks.client = db.client;
+    const original = lookup(); saveExistingLookup(original);
+    expect((await syncLookupToCloud(original)).ok).toBe(true);
+    const uploadsBefore = db.upload.mock.calls.length;
+    updateLookup(original.id, { notes: "New inspection note, not yet synced" });
+    saveLookupInspection(original.id, { ...emptyPartInspection, inspectorName: "Pat", confirmedPartName: "Brake rotor", identityEvidence: "Visible marking" });
+    appendChatMessages(original.id, [{ id: "answer", role: "assistant", content: "Check both faces.", timestamp: original.createdAt }]);
+
+    expect((await syncLookupChatToCloud(original)).ok).toBe(true);
+    expect(db.row).toMatchObject({ notes: "", chat_history: [{ id: "answer" }] });
+    expect(db.row?.inspection_json).toBeUndefined();
+    expect(db.upload).toHaveBeenCalledTimes(uploadsBefore);
+    const reopened = getLookup(original.id)!;
+    expect(reopened).toMatchObject({ notes: "New inspection note, not yet synced", inspection: { inspectorName: "Pat" }, cloudSave: { status: "acknowledged", scope: "chat" } });
+
+    expect((await syncLookupToCloud(reopened)).ok).toBe(true);
+    expect(db.row).toMatchObject({ notes: reopened.notes, inspection_json: reopened.inspection });
+    expect(getLookup(original.id)?.cloudSave).toMatchObject({ status: "acknowledged", scope: "scan" });
+  });
+
   it.each(["insert", "update", "fallback", "inspection", "chat"])("reconciles a late %s commit without acknowledging unfinished details, then retries with CAS", async (mode) => {
     const db = cloud(); mocks.client = db.client;
     const original = lookup(); saveExistingLookup(original);
@@ -383,6 +404,7 @@ describe("cross-device cloud saves", () => {
     db.upload.mockClear();
     expect((await syncLookupToCloud(downloaded)).ok).toBe(true);
     expect(db.row).toMatchObject({ inspection_json: downloaded.inspection, revision: 2 });
+    expect(getLookup(original.id)?.cloudSave).toMatchObject({ status: "acknowledged", scope: "inspection" });
     expect(db.row!.image_path).toMatch(/original-/);
     localStorage.clear(); saveExistingLookup(downloaded);
     expect((await syncLookupToCloud(downloaded)).ok).toBe(false);

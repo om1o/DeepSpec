@@ -249,6 +249,7 @@ describe("History", () => {
     [{ attemptId: "one", attemptedAt: "2026-09-20T12:00:00Z", status: "failed", scope: "scan" }, "retry required"],
     [{ attemptId: "one", attemptedAt: "2026-09-20T12:00:00Z", status: "acknowledged", scope: "scan" }, "Last cloud save acknowledged"],
     [{ attemptId: "one", attemptedAt: "2026-09-20T12:00:00Z", status: "acknowledged", scope: "inspection" }, "Other changes not confirmed"],
+    [{ attemptId: "one", attemptedAt: "2026-09-20T12:00:00Z", status: "acknowledged", scope: "chat" }, "Conversation saved to cloud · Other changes not confirmed"],
   ])("shows the persisted save outcome after opening history: %s", async (cloudSave, label) => {
     localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([{ ...lookup, cloudSave }]));
     renderHistory();

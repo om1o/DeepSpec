@@ -370,6 +370,7 @@ function cloudSaveLabel(local?: Lookup, cloudSyncEnabled = true): string {
   if (!cloudSyncEnabled && local.cloudSave?.status !== "acknowledged") return "Device copy · Cloud sync is off";
   if (!local.cloudSave) return "Device copy · Cloud save not confirmed for these changes";
   if (local.cloudSave.status === "acknowledged") {
+    if (local.cloudSave.scope === "chat") return "Conversation saved to cloud · Other changes not confirmed";
     if (local.cloudSave.scope === "scan" && local.cloudSave.shopAssociation) {
       return local.cloudSave.shopAssociation === "private"
         ? "Saved privately to your account · Shop job link is device-only"
