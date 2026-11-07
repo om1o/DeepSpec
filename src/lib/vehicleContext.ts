@@ -1,4 +1,4 @@
-import type { ShopVehicleContext, VehicleContext, VehicleContextField } from "../types";
+import type { ShopVehicleContext, VehicleContext, VehicleContextField } from "../types/index.js";
 
 export const VEHICLE_CONTEXT_FIELDS = ["year", "make", "model", "engine", "mileage", "modifications", "vin"] as const satisfies readonly VehicleContextField[];
 const TEXT_FIELDS = ["vin", "year", "make", "model", "engine", "mileage", "notes", "bayOrRo", "customerName", "jobTitle", "plate", "symptom", "technicianName"] as const;

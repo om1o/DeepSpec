@@ -266,7 +266,7 @@ function parseChatRequest(body: unknown): ChatRequest | { error: ChatResponse } 
     userMessage: userMessage.slice(0, CHAT_USER_MESSAGE_MAX_CHARS),
     photos: parsedPhotos.photos,
     photoRelationship: parsedPhotos.photoRelationship,
-    savedIdentityScope: body.savedIdentityScope ?? "unrecorded",
+    savedIdentityScope: body.savedIdentityScope === "first_photo" || body.savedIdentityScope === "none" ? body.savedIdentityScope : "unrecorded",
     photoReview: normalizePhotoReview(body.photoReview, parsedPhotos.photos.map((photo) => photo.id)),
     research,
     sourceUrls,
