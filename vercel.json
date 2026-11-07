@@ -37,7 +37,8 @@
       "codex/evidence-limits-20261107": false,
       "codex/preview-test-entry-20261107": false,
       "codex/provider-response-health-20261107": false,
-      "codex/identify-response-health-20261107": false
+      "codex/identify-response-health-20261107": false,
+      "codex/reference-provenance-20261107": false
     }
   },
   "functions": {

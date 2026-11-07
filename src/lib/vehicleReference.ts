@@ -1,6 +1,6 @@
 import {
   VEHICLE_REFERENCE_ADAPTER_VERSION, VEHICLE_REFERENCE_SOURCE_URL,
-  type VehicleIdentityReference, type VehicleReferenceFacts, type VehicleReferenceQuery,
+  type VehicleIdentityReference, type VehicleReferenceFacts, type VehicleReferenceQuery, type VehicleReferenceOrigins, type VehicleReferenceField,
 } from "../types/vehicleReference.js";
 
 const VIN = /^[A-HJ-NPR-Z0-9]{17}$/;
@@ -56,4 +56,29 @@ export function normalizeVehicleIdentityReference(value: unknown): VehicleIdenti
 /** A successful decode permits review, never automatic confirmation or fitment advice. */
 export function referenceAllowsSuggestions(reference: VehicleIdentityReference): boolean {
   return reference.decode.codes.length === 1 && reference.decode.codes[0] === "0";
+}
+
+export const VEHICLE_REFERENCE_FIELD_FACTS = { year: "year", make: "make", model: "model", engine: "engineModel" } as const;
+
+/** Validate sources and prune attributions whose exact value or VIN no longer matches. */
+export function normalizeVehicleReferenceOrigins(value: unknown, context: { vin?: string } & Partial<Record<VehicleReferenceField, string>>): VehicleReferenceOrigins | undefined {
+  if (!record(value) || !onlyKeys(value, ["references", "fields"]) || !Array.isArray(value.references) || value.references.length > 4
+    || !record(value.fields) || !onlyKeys(value.fields, Object.keys(VEHICLE_REFERENCE_FIELD_FACTS))) return undefined;
+  const references = new Map<string, VehicleIdentityReference>();
+  for (const raw of value.references) {
+    const reference = normalizeVehicleIdentityReference(raw);
+    if (!reference || references.has(reference.id)) return undefined;
+    references.set(reference.id, reference);
+  }
+  const fields: VehicleReferenceOrigins["fields"] = {};
+  for (const field of Object.keys(VEHICLE_REFERENCE_FIELD_FACTS) as VehicleReferenceField[]) {
+    const id = value.fields[field];
+    if (id === undefined) continue;
+    if (typeof id !== "string" || !references.has(id)) return undefined;
+    const reference = references.get(id)!;
+    if (reference.query.vin === context.vin?.trim().toUpperCase() && referenceAllowsSuggestions(reference)
+      && context[field]?.trim() && reference.facts[VEHICLE_REFERENCE_FIELD_FACTS[field]]?.trim() === context[field]?.trim()) fields[field] = id;
+  }
+  const used = new Set(Object.values(fields));
+  return used.size ? { references: [...references.values()].filter(reference => used.has(reference.id)).sort((a, b) => a.id.localeCompare(b.id)), fields } : undefined;
 }

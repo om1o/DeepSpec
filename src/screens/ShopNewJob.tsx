@@ -82,6 +82,7 @@ export default function ShopNewJob() {
               year: context?.year ?? "", make: context?.make ?? "", model: context?.model ?? "",
               engine: context?.engine, vin: context?.vin, mileage: context?.mileage,
               mileageUnit: context?.mileageUnit, modifications: context?.modifications, confirmedFields: context?.confirmedFields,
+              referenceOrigins: context?.referenceOrigins,
             }))} />
             <h2 className="mt-5 text-lg font-black tracking-tight">Job details</h2>
             <div className="mt-4 grid gap-4 md:grid-cols-2">

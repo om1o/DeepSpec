@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ShopVehicleContext } from "../../types";
 import type { VehicleIdentityReference, VehicleReferenceQuery } from "../../types/vehicleReference";
 import { getAccountScope, isAccountScopeCurrent } from "../../lib/accountScope";
-import { isVehicleFieldConfirmed, updateVehicleContextField } from "../../lib/vehicleContext";
+import { applyVehicleReferenceField, isVehicleFieldConfirmed, normalizeVehicleContext } from "../../lib/vehicleContext";
 import { normalizeVehicleReferenceQuery, referenceAllowsSuggestions } from "../../lib/vehicleReference";
 import { requestVehicleReference } from "../../services/vehicleReference";
 import { appendVehicleReference, readVehicleReferences } from "../../services/vehicleReferenceStore";
@@ -111,17 +111,29 @@ function ReferencePanel({ value, onChange, disabled = false, vin }: Props & { vi
     const currentVin = normalizeVehicleReferenceQuery({ vin: latest.current.value?.vin })?.vin;
     const decoded = selected.facts[fact];
     if (selected.query.vin !== currentVin || !decoded) return;
-    latest.current.onChange(updateVehicleContextField(latest.current.value, field, decoded));
-    setMessage(`Decoded ${field} copied into the editor; its confirmation was cleared. Save the vehicle details when ready.`);
+    const updated = applyVehicleReferenceField(latest.current.value, field, selected);
+    if (!updated) { setMessage("This reference could not be linked to the current vehicle details. Review the VIN and saved source again."); return; }
+    latest.current.onChange(updated);
+    setMessage(`Decoded ${field} and its reference copied into the editor; its confirmation was cleared. Save the vehicle details when ready.`);
   }
 
   if (!isAccountScopeCurrent(scope)) return <p role="status" className="text-sm">Sign in and reopen vehicle details to review private device references.</p>;
   const query = queryFor(value);
   const controlsDisabled = disabled || busy;
   const canSuggest = selected ? referenceAllowsSuggestions(selected) : false;
+  const attached = normalizeVehicleContext(value)?.referenceOrigins;
   return <div className="space-y-4 text-sm">
     <p>Lookup sends only this VIN and the optional model year to NHTSA through DeepSpec. The returned reference is saved to your account&apos;s history on this device.</p>
     <p className="text-xs text-[var(--ds-fg-3)]">VIN decoding describes manufacturer-reported vehicle details. It cannot confirm the installed engine, modifications, part fitment or current condition.</p>
+    {attached ? <section aria-label="Sources saved with vehicle fields" className="space-y-2 rounded-lg border border-[var(--ds-border)] p-3">
+      <h4 className="font-semibold">Sources saved with vehicle fields</h4>
+      {attached.references.map(reference => <div key={reference.id}>
+        <p>{Object.entries(attached.fields).filter(([, id]) => id === reference.id).map(([field]) => field).join(", ")} · NHTSA vPIC · Retrieved {reference.retrievedAt}</p>
+        <button type="button" className={BUTTON} disabled={controlsDisabled || Boolean(pending)} onClick={() => {
+          if (current() && !latest.current.disabled && !busyRef.current) { setSelected(reference); setMessage("Saved field source opened. No vehicle details were changed."); }
+        }}>Review field source</button>
+      </div>)}
+    </section> : null}
     {!query ? <p>Enter a complete 17-character VIN. If you supply a model year, use four digits from 1981 to 2099.</p> : <p>Lookup query: <span className="break-all">{query.vin}</span> · Model year: {query.modelYear ?? "not supplied"}</p>}
     <button type="button" className={BUTTON} disabled={controlsDisabled || !query || Boolean(pending)} onClick={() => void lookup()}>Look up VIN with NHTSA</button>
     {busy ? <p role="status">Loading or saving reference…</p> : null}
@@ -152,7 +164,7 @@ function ReferencePanel({ value, onChange, disabled = false, vin }: Props & { vi
         </div>;
       })}</div>
       <dl className="space-y-1">{ATTRIBUTES.map(([key, label]) => <div key={key} className="flex flex-wrap gap-x-2"><dt>{label}:</dt><dd className="break-words">{selected.facts[key] || "not reported"}</dd></div>)}</dl>
-      <p className="text-xs text-[var(--ds-fg-3)]">Engine attributes are separate source facts; they do not supply a missing engine model or code. Using a field changes this editor only and clears that field&apos;s confirmation. Use the existing Save action to keep vehicle details for future photos. Saved scans and photo drafts keep their original context.</p>
+      <p className="text-xs text-[var(--ds-fg-3)]">Engine attributes are separate source facts; they do not supply a missing engine model or code. Using a field adds its source to this editor and clears that field&apos;s confirmation. Save to retain both for future photos and their cloud records. Editing the field or VIN removes its current source attribution. Saved scans and photo drafts keep their original context.</p>
     </section> : null}
     {vin !== "invalid" ? <section aria-label="Device reference history" className="space-y-2">
       <h4 className="font-semibold">Saved references on this device</h4>

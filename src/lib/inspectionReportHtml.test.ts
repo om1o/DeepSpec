@@ -5,6 +5,8 @@ import type { ComponentMapComponent } from "../types/componentMap";
 import type { InspectionReportSnapshot } from "../types/inspectionReport";
 import { buildInspectionReportHtml, getInspectionReportFilename, MAX_INSPECTION_REPORT_HTML_BYTES } from "./inspectionReportHtml";
 import { confirmVehicleContextField } from "./vehicleContext";
+import { referenceVehicleContext } from "../test/vehicleReferenceFixture";
+import { DEFAULT_INSPECTION_REPORT_OPTIONS } from "../types/inspectionReport";
 import type { ServiceRecord } from "../types/serviceRecord";
 import type { InspectionComparison, ComparisonSide, RequestedInspectionComparison } from "../types/inspectionComparison";
 import type { ObservationAreaRecord } from "../types/observationArea";
@@ -49,6 +51,44 @@ function component(index: number): ComponentMapComponent {
 function parsed(report: InspectionReportSnapshot, options?: Parameters<typeof buildInspectionReportHtml>[1]): Document {
   return new DOMParser().parseFromString(buildInspectionReportHtml(report, options), "text/html");
 }
+
+describe("vehicle field sources in mechanic reports", () => {
+  it("exports the original query, retrieval and field attribution while keeping VIN opt-in and source text inert", () => {
+    const scan = lookup();
+    const context = referenceVehicleContext();
+    const source = context.referenceOrigins.references[0];
+    source.decode.messages = [`VIN ${context.vin} decoded. <script>alert(1)</script>`];
+    scan.vehicleContext = context;
+    const report = snapshot([scan]);
+    const original = JSON.stringify(report);
+    const doc = parsed(report);
+    const heading = Array.from(doc.querySelectorAll("h4")).find(node => node.textContent === "Sources for saved vehicle fields")!;
+    expect(heading).toBeDefined();
+    const sourceArticle = heading.parentElement!.querySelector(`a[href="${source.sourceUrl}"]`)!.closest("article")!;
+    expect(sourceArticle.textContent).toContain("year, make");
+    expect(sourceArticle.textContent).toContain(source.retrievedAt);
+    expect(sourceArticle.textContent).toContain(source.id);
+    expect(sourceArticle.textContent).toContain("Original queried model year2003");
+    expect(sourceArticle.textContent).toContain("does not independently verify the year");
+    expect(sourceArticle.textContent).toContain("[VIN excluded]");
+    expect(sourceArticle.textContent).toContain("<script>alert(1)</script>");
+    expect(doc.querySelector("script")).toBeNull();
+    expect(doc.documentElement.outerHTML).not.toContain(context.vin);
+    const withVin = parsed(report, { ...DEFAULT_INSPECTION_REPORT_OPTIONS, includeVin: true });
+    expect(withVin.body.textContent).toContain(`Original queried VIN${context.vin}`);
+    expect(withVin.body.textContent).toContain(`VIN ${context.vin} decoded.`);
+    expect(JSON.stringify(report)).toBe(original);
+  });
+
+  it("does not assert source attribution when the saved VIN no longer matches", () => {
+    const scan = lookup();
+    scan.vehicleContext = { ...referenceVehicleContext(), vin: "2T1BURHE6JC003971" };
+    const doc = parsed(snapshot([scan]));
+    expect(doc.body.textContent).toContain("No source attribution is asserted");
+    expect(doc.body.textContent).not.toContain("Sources for saved vehicle fields");
+    expect(doc.querySelector('a[href="https://vpic.nhtsa.dot.gov/api/"]')).toBeNull();
+  });
+});
 
 function humanMeasurement(): Extract<ServiceRecord, { kind: "measurement" }> {
   return { version: 1, id: "10000000-0000-4000-8000-000000000001", lookupId: "overview", recordedAt: "2026-11-05T12:00:00.000Z", occurredOn: "2026-11-04",

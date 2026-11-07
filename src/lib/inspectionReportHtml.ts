@@ -4,7 +4,7 @@ import { DEFAULT_INSPECTION_REPORT_OPTIONS, type InspectionReportOptions, type I
 import { normalizeConditionAssessment } from "./conditionAssessment";
 import { normalizeObservationAreaRecords, observationAreaRecordStatus } from "./observationArea";
 import { buildIntakeDraft } from "./intakeDraft";
-import { vehicleContextDetails } from "./vehicleContext";
+import { normalizeVehicleContext, vehicleContextDetails } from "./vehicleContext";
 import { normalizeServiceRecords, serviceRecordRows, serviceRecordStatus } from "./serviceRecord";
 import { normalizeInspectionComparison, normalizeInspectionComparisons, inspectionComparisonStatus } from "./inspectionComparison";
 import type { InspectionComparison } from "../types/inspectionComparison";
@@ -58,6 +58,21 @@ type Outline = { box: VisualFocusBox; label: string; target?: string; map?: bool
 
 function vehicleRows(scan: Lookup, options: InspectionReportOptions): [string, string][] {
   return contextRows(scan.vehicleContext, options);
+}
+
+function vehicleReferenceHtml(scan: Lookup, options: InspectionReportOptions): string {
+  const origins = normalizeVehicleContext(scan.vehicleContext)?.referenceOrigins;
+  if (!origins) return scan.vehicleContext?.referenceOrigins ? prose("Saved vehicle reference sources could not be matched to the current fields. No source attribution is asserted.") : "";
+  const redact = (value: string) => options.includeVin ? value : value.replace(/[A-HJ-NPR-Z0-9]{17}/gi, "[VIN excluded]");
+  return `<h4>Sources for saved vehicle fields</h4>${prose("Saved manufacturer-reported identity references, not independently rechecked for this export. These references do not establish the installed engine, modifications, part fitment, condition or a repair procedure.")}${origins.references.map(reference => {
+    const fields = Object.entries(origins.fields).filter(([, id]) => id === reference.id).map(([field]) => field);
+    return `<article><p><a href="${escape(reference.sourceUrl)}" target="_blank" rel="noopener noreferrer">NHTSA vPIC source</a></p>${details([
+      ["Fields using this source", fields.join(", ")], ["Reference ID", reference.id], ["Retrieved", reference.retrievedAt],
+      ["Original queried model year", reference.query.modelYear ?? "Not supplied"],
+      ...(options.includeVin ? [["Original queried VIN", reference.query.vin] as const] : []),
+      ["Decode codes", reference.decode.codes.join(", ")],
+    ])}${reference.query.modelYear !== undefined ? prose("NHTSA may return the model year supplied in the query; that does not independently verify the year.") : ""}${list(reference.decode.messages.map(redact), "No decode messages recorded.")}</article>`;
+  }).join("")}`;
 }
 
 function contextRows(context: VehicleContext | undefined, options: InspectionReportOptions): [string, string][] {
@@ -357,6 +372,7 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
       ${scan.correction ? details([["User-corrected label — not independently verified", scan.correction]]) : ""}
       <h3>Saved vehicle and complaint${photos.length > 1 && photoRelationshipOrUnknown(scan.photoRelationship) !== "same_part_or_area" ? " — Photo 1" : ""}</h3>${details(vehicleRows(scan, options))}
       <p class="muted">Vehicle confirmation is self-reported. These details do not establish part fitment or condition.</p>
+      ${vehicleReferenceHtml(scan, options)}
       <h3>Saved image evidence</h3>${details([[photoRelationshipOrUnknown(scan.photoRelationship) === "unknown" ? "Photo relationship" : "User-reported photo relationship", photoRelationshipDescription(scan.photoRelationship)]])}
       ${relationshipScope ? prose(relationshipScope) : ""}
       ${photosHtml}${selections.length ? `<h3>Saved selections and cutouts</h3>${selectionsHtml}` : prose("No isolated selections or cutouts saved.")}
