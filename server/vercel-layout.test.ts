@@ -8,7 +8,6 @@ import billingWebhook from "../api/billing-webhook";
 import chat from "../api/chat";
 import identify from "../api/identify";
 import vehicleReference from "../api/vehicle-reference";
-import qaTestSession from "../api/qa-test-session";
 
 const endpoints = [
   { name: "account-entitlement", handler: accountEntitlement },
@@ -18,7 +17,6 @@ const endpoints = [
   { name: "chat", handler: chat },
   { name: "identify", handler: identify },
   { name: "vehicle-reference", handler: vehicleReference },
-  { name: "qa-test-session", handler: qaTestSession },
 ];
 
 describe("Vercel Hobby deployment layout", () => {
@@ -61,7 +59,7 @@ describe("Vercel Hobby deployment layout", () => {
   it("keeps only HTTP entry points in api, within the 12-function limit", () => {
     // Vercel discovers files in api as functions, including helpers and tests.
     const files = readdirSync(resolve(process.cwd(), "api"), { recursive: true });
-    expect(files.sort()).toEqual([...endpoints.map(({ name }) => `${name}.ts`), "qa-test-launch.ts"].sort());
+    expect(files.sort()).toEqual(endpoints.map(({ name }) => `${name}.ts`).sort());
     expect(files.length).toBeLessThanOrEqual(12);
   });
 
@@ -83,8 +81,6 @@ describe("Vercel Hobby deployment layout", () => {
     expect(config.functions["api/billing-checkout.ts"].maxDuration).toBe(30);
     expect(config.functions["api/billing-portal.ts"].maxDuration).toBe(30);
     expect(config.functions["api/billing-webhook.ts"].maxDuration).toBe(30);
-    expect(config.functions["api/qa-test-session.ts"].maxDuration).toBe(90);
-    expect(config.functions["api/qa-test-launch.ts"].maxDuration).toBe(30);
   });
 
   it("pins Vercel to the same supported Node major used by CI", () => {

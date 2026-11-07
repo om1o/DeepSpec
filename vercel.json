@@ -44,18 +44,10 @@
       "codex/photo-relationship-review-20261107": false,
       "codex/photo-condition-coverage-20261107": false,
       "codex/chat-claim-provenance-20261107": false,
-      "codex/photo-claim-presentation-20261107": false,
-      "codex/preview-condition-retest-20261107": false,
-      "codex/preview-final-retest-20261107": false
+      "codex/photo-claim-presentation-20261107": false
     }
   },
   "functions": {
-    "api/qa-test-session.ts": {
-      "maxDuration": 90
-    },
-    "api/qa-test-launch.ts": {
-      "maxDuration": 30
-    },
     "api/identify.ts": {
       "includeFiles": "datasets/verified/hf-automotive-sources-v1/records.jsonl",
       "maxDuration": 90
