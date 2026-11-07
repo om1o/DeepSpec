@@ -33,7 +33,8 @@
       "codex/car-inspection-candidate-20261106": false,
       "codex/chat-late-save-20261107": false,
       "codex/chat-save-scope-20261107": false,
-      "codex/server-build-check-20261107": false
+      "codex/server-build-check-20261107": false,
+      "codex/evidence-limits-20261107": false
     }
   },
   "functions": {

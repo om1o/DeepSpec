@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { photoRelationshipScopeDescription } from "./photoRelationship";
+import { IDENTIFY_PIPELINE_VERSION } from "../services/systemPrompts";
 
 const CURRENT_PIPELINE = "identify-pipeline-2026-11-05-photo-relationship-v1";
 
@@ -7,6 +8,7 @@ describe("photo identity scope provenance", () => {
   it("preserves the first-photo scope for the newer review pipeline", () => {
     expect(photoRelationshipScopeDescription("independent", "identify-pipeline-2026-11-05-photo-review-v1")).toContain("The main identification refers to Photo 1.");
     expect(photoRelationshipScopeDescription("independent", "identify-pipeline-2026-11-05-observation-areas-v1")).toContain("The main identification refers to Photo 1.");
+    expect(photoRelationshipScopeDescription("independent", IDENTIFY_PIPELINE_VERSION)).toContain("The main identification refers to Photo 1.");
   });
   it.each(["independent", "unknown", undefined])("attributes identity to Photo 1 for %s only with the exact new pipeline", (relationship) => {
     expect(photoRelationshipScopeDescription(relationship, CURRENT_PIPELINE)).toBe("The main identification refers to Photo 1. Saved selection and supplied vehicle or complaint details, when present, refer to Photo 1.");
