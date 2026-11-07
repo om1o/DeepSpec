@@ -247,7 +247,7 @@ describe("self-contained mechanic HTML report", () => {
     document.head.append(style); document.body.append(host);
     try {
       expect(getComputedStyle(host.querySelector(".photo-review-rows li")!).whiteSpace).toBe("normal");
-      const finding = host.querySelector(".saved-text")!;
+      const finding = host.querySelector("#scan-1-observation-1 .saved-text")!;
       expect(finding.textContent).toBe("First finding line\nSecond finding line");
       expect(getComputedStyle(finding).whiteSpace).toBe("pre-wrap");
       const note = [...host.querySelectorAll("dd")].find((element) => element.textContent === "First note line\n\nThird note line")!;

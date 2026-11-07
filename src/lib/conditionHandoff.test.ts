@@ -130,9 +130,9 @@ describe("per-photo review in text handoff", () => {
     expect(text).toContain("Photo review (AI-reported, not human confirmation):");
     expect(text).toContain("Saved images may include crops of another image; separate capture angles are not verified.");
     expect(text).toContain("3 of 4 photos have an AI review entry. This is not proof of complete or correct inspection.");
-    expect(text).toContain("[front]: Observations returned — A mounting slot is visible.");
-    expect(text).toContain("[marking]: Limited view — The last character is blurred.");
-    expect(text).toContain("[mounting]: Not assessed — No assessment was made of this view.");
+    expect(text).toContain("[front]: Observations returned — Original AI summary (unverified): A mounting slot is visible.");
+    expect(text).toContain("[marking]: Limited view — Original AI summary (unverified): The last character is blurred.");
+    expect(text).toContain("[mounting]: Not assessed — Original AI summary (unverified): No assessment was made of this view.");
     expect(text).toContain("[other]: No review returned");
     expect(text).toContain("[different-marking]");
     expect(text).toContain("Photo 1 [front] / Photo 2 [marking]");

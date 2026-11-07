@@ -82,7 +82,7 @@ export function formatPhotoReview(value: unknown, photos: readonly PhotoReviewSo
   const label = (id: string) => `${photos.find((photo) => photo.id === id)!.label} [${id}]`;
   return [
     "Photo review (AI-reported, not human confirmation):", state.sourceMessage, state.message,
-    ...state.rows.map((row) => `- ${row.label} [${row.id}]: ${photoReviewStatusLabel(row.status)}${row.summary ? ` — ${row.summary}` : ""}`),
+    ...state.rows.map((row) => `- ${row.label} [${row.id}]: ${photoReviewStatusLabel(row.status)}${row.summary ? ` — Original AI summary (unverified): ${row.summary}` : ""}`),
     state.disagreementMessage,
     ...(state.review?.disagreements.flatMap((item) => [
       `- [${item.id}] ${item.photoIds.map(label).join(" / ")}: ${item.description}`,

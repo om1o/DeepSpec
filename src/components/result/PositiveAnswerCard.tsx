@@ -1,6 +1,6 @@
 import type { IdentificationResult } from "../../types";
 import { getSimpleResultSummary } from "../../lib/simpleResultSummary";
-import { UNLINKED_CONDITION_FLAGS_MESSAGE } from "../../lib/conditionCoverage";
+import { ORIGINAL_AI_WORDING_MESSAGE, UNLINKED_CONDITION_FLAGS_MESSAGE } from "../../lib/conditionCoverage";
 import { deriveIssue, getConcernFacts, getEvidenceFacts, getSecondarySceneObjects, getVisibleFacts } from "../../lib/resultFacts";
 
 type Variant = "scanner" | "result";
@@ -93,7 +93,7 @@ export function ResultDetailSections({
   const sections = [
     { title: "What we see", facts: getVisibleFacts(result, isCompact) },
     { title: "Match clues", facts: getEvidenceFacts(result, isCompact) },
-    { title: "Flags", facts: getConcernFacts(result, isCompact), note: UNLINKED_CONDITION_FLAGS_MESSAGE },
+    { title: "Original AI flags — unverified", facts: getConcernFacts(result, isCompact), note: `${UNLINKED_CONDITION_FLAGS_MESSAGE} ${ORIGINAL_AI_WORDING_MESSAGE}` },
     { title: "Next step", facts: summary.nextAction ? [summary.nextAction] : [] },
   ].filter((section) => section.facts.length > 0);
 

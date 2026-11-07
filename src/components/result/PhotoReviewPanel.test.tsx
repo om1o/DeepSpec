@@ -14,6 +14,28 @@ const scan = (photoReview?: PhotoReview): Pick<ScanAnalysisState, "frame" | "pho
   result: { partName: "Bracket", photoReview } as IdentificationResult });
 
 describe("photo review panel", () => {
+  it("keeps the recorded causal overclaim separate from linked appearance and unconfirmed causes", async () => {
+    const originalSummary = "Close-up view of an uninstalled brake rotor exhibiting thermal cracking.";
+    const item = scan({ version: 1, photos: [{ photoId: "c", status: "observations_returned", summary: originalSummary }], disagreements: [] });
+    item.result!.conditionAssessment = { version: 1, observations: [{ id: "o1", text: "Numerous fine cracks visible across the rotor friction surface.", photoIds: ["c"] }],
+      possibleCauses: [{ text: "Severe thermal stress from high-performance use or heavy braking.", observationIds: ["o1"] }], unknowns: ["Exact depth and structural propagation of the surface cracks."] };
+    const before = JSON.stringify(item);
+    const { container } = render(<PhotoReviewPanel scan={item} onSelectPhoto={vi.fn()} />);
+    const thirdPhoto = screen.getByRole("button", { name: "View saved Photo 3 — Other angle" }).closest("li")!;
+    expect(within(thirdPhoto).getByText("AI-reported appearance")).toBeInTheDocument();
+    expect(thirdPhoto).toHaveTextContent(item.result!.conditionAssessment.observations[0].text);
+    expect(thirdPhoto).toHaveTextContent("Possible causes — unconfirmed");
+    expect(thirdPhoto).toHaveTextContent(item.result!.conditionAssessment.possibleCauses[0].text);
+    const original = within(thirdPhoto).getByText(originalSummary).closest("details")!;
+    expect(original).not.toHaveAttribute("open");
+    await userEvent.click(within(original).getByText("Original AI summary — unverified"));
+    expect(original).toHaveAttribute("open");
+    expect(container).toHaveTextContent("Unresolved across this inspection");
+    expect(container).toHaveTextContent(item.result!.conditionAssessment.unknowns[0]);
+    expect(screen.getByRole("button", { name: "View saved Photo 1 — Other angle" }).closest("li")).not.toHaveTextContent("Numerous fine cracks");
+    expect(JSON.stringify(item)).toBe(before);
+  });
+
   it("shows assessed, limited, unassessed and omitted originals without treating them as equivalent", async () => {
     const onSelectPhoto = vi.fn();
     render(<PhotoReviewPanel scan={scan(review)} onSelectPhoto={onSelectPhoto} />);
