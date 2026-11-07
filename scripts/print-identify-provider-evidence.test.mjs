@@ -4,7 +4,7 @@ import { buildIdentifyProviderEvidence, classifyIdentifyProviderReadiness } from
 const NOW = "2026-10-31T12:00:00.000Z";
 const GEMINI_ROUTE = {
   provider: "gemini",
-  model: "gemini-2.5-flash",
+  model: "gemini-3.5-flash-lite",
   endpointRoute: "https://generativelanguage.googleapis.com/v1beta/models/:model:generateContent",
   attemptedCount: 50,
   passCount: 50,
@@ -67,6 +67,29 @@ const BLOCKED_IDENTIFY_SUMMARY = {
 };
 
 describe("classifyIdentifyProviderReadiness", () => {
+  it("matches release evidence to the current default model", () => {
+    const result = classifyIdentifyProviderReadiness({
+      env: { GEMINI_API_KEY: "gemini_secret" },
+      identifySummary: passingIdentifySummary(),
+      options: { minCloudRoutes: 1, now: NOW },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.providers.find((provider) => provider.providerId === "gemini").model).toBe("gemini-3.5-flash-lite");
+  });
+
+  it("accepts legacy model evidence only when that model is explicitly selected", () => {
+    const identifySummary = passingIdentifySummary({ ...GEMINI_ROUTE, model: "gemini-2.5-flash" });
+    const options = { minCloudRoutes: 1, now: NOW };
+    const defaults = classifyIdentifyProviderReadiness({ env: { GEMINI_API_KEY: "gemini_secret" }, identifySummary, options });
+    expect(defaults.ok).toBe(false);
+    expect(defaults.blockers.join("\n")).toContain("does not match the active Gemini provider, model, and endpoint route");
+
+    const explicit = classifyIdentifyProviderReadiness({
+      env: { GEMINI_API_KEY: "gemini_secret", GEMINI_MODEL: "gemini-2.5-flash" }, identifySummary, options,
+    });
+    expect(explicit.ok).toBe(true);
+  });
+
   it("blocks when no production identify provider route is configured", () => {
     const result = classifyIdentifyProviderReadiness({
       env: {},

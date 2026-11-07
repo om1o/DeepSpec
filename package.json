@@ -8,7 +8,8 @@
   },
   "scripts": {
     "dev": "vite --host 0.0.0.0 --configLoader native",
-    "build": "node scripts/package-intro.mjs && tsc -b && vite build --configLoader native && npm run verify:public",
+    "build": "node scripts/package-intro.mjs && npm run check:server && tsc -b && vite build --configLoader native && npm run verify:public",
+    "check:server": "tsc -p tsconfig.server.json && tsc -p tsconfig.server.json --strict false",
     "check": "npm run lint && npm test && npm run build",
     "dataset:sort": "node scripts/sort-drbimmer-dataset.mjs",
     "dataset:hf-auto-sources": "node scripts/build-hf-automotive-sources.mjs",
@@ -56,7 +57,7 @@
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-markdown": "10.1.0",
-    "react-router-dom": "^6.30.6",
+    "react-router-dom": "^7.18.5",
     "react-webcam": "^7.2.0",
     "remark-gfm": "4.0.1"
   },

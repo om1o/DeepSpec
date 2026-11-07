@@ -38,6 +38,8 @@ async function runOfflineEstimateUpgrade(scope: AccountScope): Promise<number> {
     try {
       const result = applyShopFitmentContext(await identifyCapturedFrame(lookup.frame, undefined, undefined, {
         vehicleContext: lookup.vehicleContext,
+        ...(lookup.photos ? { photos: lookup.photos } : {}),
+        ...(lookup.photoRelationship ? { photoRelationship: lookup.photoRelationship } : {}),
       }), lookup.vehicleContext);
       if (!isAccountScopeCurrent(scope)) break;
       if (result.modelRun?.provider && result.modelRun.provider !== "on-device") {

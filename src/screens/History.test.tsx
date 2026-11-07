@@ -67,13 +67,28 @@ const bodyLookup: Lookup = {
 
 describe("History", () => {
   beforeEach(() => {
+    vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "true");
     localStorage.clear();
     readCloudLookupsMock.mockReset();
     vi.mocked(syncLookupToCloud).mockReset();
     readCloudLookupsMock.mockResolvedValue({ ok: true, value: [] });
   });
 
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+
+  it("shows device history without remote reads or cloud-save actions when sync is off", async () => {
+    vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    renderHistory();
+    expect(await screen.findByRole("link", { name: /Alternator/ })).toBeInTheDocument();
+    expect(screen.getByText("Cloud sync is off. Showing scans saved on this device.")).toBeInTheDocument();
+    expect(screen.getByText("Device copy · Cloud sync is off")).toBeInTheDocument();
+    expect(readCloudLookupsMock).not.toHaveBeenCalled();
+    expect(vi.mocked(syncLookupToCloud)).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /Save .* to cloud/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry cloud history" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Export JSON" })).toBeEnabled();
+  });
 
   it("requires ownership confirmation, supports cancellation, and imports only on explicit request", async () => {
     const raw = JSON.stringify([lookup]);
@@ -234,6 +249,7 @@ describe("History", () => {
     [{ attemptId: "one", attemptedAt: "2026-09-20T12:00:00Z", status: "failed", scope: "scan" }, "retry required"],
     [{ attemptId: "one", attemptedAt: "2026-09-20T12:00:00Z", status: "acknowledged", scope: "scan" }, "Last cloud save acknowledged"],
     [{ attemptId: "one", attemptedAt: "2026-09-20T12:00:00Z", status: "acknowledged", scope: "inspection" }, "Other changes not confirmed"],
+    [{ attemptId: "one", attemptedAt: "2026-09-20T12:00:00Z", status: "acknowledged", scope: "chat" }, "Conversation saved to cloud · Other changes not confirmed"],
   ])("shows the persisted save outcome after opening history: %s", async (cloudSave, label) => {
     localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([{ ...lookup, cloudSave }]));
     renderHistory();
@@ -352,7 +368,7 @@ describe("History", () => {
     renderHistory();
 
     expect(screen.getByText("Alternator")).toBeInTheDocument();
-    expect(screen.getByText("high confidence")).toBeInTheDocument();
+    expect(screen.getByText("AI estimate: high")).toBeInTheDocument();
     expect(screen.getByText("Needs review")).toBeInTheDocument();
     const scanLink = screen.getByRole("link", { name: /Alternator/ });
     expect(scanLink).toHaveAttribute("href", "/result/lookup-1");

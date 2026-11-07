@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { IsolatedPartView } from "./IsolatedPartView";
 import { edgeSafeShift, getContainedStageStyle, getFocusLabelPlacement } from "./isolatedPartViewGeometry";
-import type { IsolatedObject, VisualFocusBox } from "../../types";
+import { deriveIssue } from "../../lib/resultFacts";
+import type { IdentificationResult, IsolatedObject, VisualFocusBox } from "../../types";
 
 const frame = "data:image/jpeg;base64,frame";
 const cutout = "data:image/png;base64,cutout";
@@ -14,7 +15,96 @@ const sceneObjects: IsolatedObject[] = [
   { name: "Wall poster", category: "decor", primary: false, isolatedImageBase64: "data:image/png;base64,b", focusBox: { confidence: 0.6, height: 0.3, width: 0.2, x: 0.05, y: 0.1 } },
 ];
 
+function damageResult(regionLabel: string, observation = "Surface rust on the bracket."): IdentificationResult {
+  return {
+    partName: "Bracket", confidence: "medium", scanCategory: "engine", candidateMatches: [], whatItDoes: "Supports the assembly.",
+    visibleObservations: ["Surface rust on the bracket."], evidenceRegions: [{ label: "Concern", observation, regionLabel }],
+    concerns: [], safetyTriage: "can_help", isSafetyCritical: false, nextAction: "Show the other side.", needsBetterPhoto: false, evidence: [], sourceLinks: [],
+  };
+}
+
 describe("IsolatedPartView", () => {
+  it.each([false, true])("can open evidence in Original view with puzzle=%s while keeping other views available", async (puzzle) => {
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusBox={box} focusMode="mask" isolatedImageBase64={cutout} label="Engine" objects={puzzle ? sceneObjects : undefined} initialView="original" issue={{ text: "Crack", anchor: box }} />);
+    expect(screen.getByRole("button", { name: "Original", exact: true })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByAltText("Captured car part").className).not.toMatch(/blur|brightness|contrast|saturate/);
+    expect(screen.queryByTestId("issue-callout")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("isolated-part-image")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("lens-object")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Cutout", exact: true }));
+    expect(screen.getByRole("button", { name: "Cutout", exact: true })).toHaveAttribute("aria-pressed", "true");
+    expect(puzzle ? screen.getAllByTestId("lens-object").length : screen.getAllByTestId("isolated-part-image").length).toBeGreaterThan(0);
+  });
+
+  it("falls back to the aligned crop when a cutout fails and recovers for a new cutout", () => {
+    const props = { variant: "result" as const, frameBase64: frame, focusBox: box, focusMode: "mask" as const, label: "Engine" };
+    const { rerender } = render(<IsolatedPartView {...props} isolatedImageBase64={cutout} />);
+    fireEvent.error(screen.getByTestId("isolated-part-image"));
+    expect(screen.queryByTestId("isolated-part-image")).not.toBeInTheDocument();
+    expect(screen.getByTestId("focused-part-label")).toHaveTextContent("Focused");
+    expect(screen.getByTestId("focused-part-window")).toHaveStyle({ left: "20%", top: "20%", width: "50%", height: "50%" });
+
+    rerender(<IsolatedPartView {...props} isolatedImageBase64="data:image/png;base64,replacement" />);
+    expect(screen.getByTestId("isolated-part-image")).toHaveAttribute("src", "data:image/png;base64,replacement");
+    expect(screen.getByTestId("focused-part-label")).toHaveTextContent("Isolated");
+  });
+
+  it.each(["mask", "crop", "full_frame"] as const)("opens a photo without geometry as Original even when its mode is %s", async (focusMode) => {
+    render(<IsolatedPartView variant="result" frameBase64={frame} isolatedImageBase64={cutout} focusMode={focusMode} label="Unplaced engine identity" />);
+    expect(screen.getByRole("button", { name: "Original", exact: true })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("No saved selection for this photo. Original is available.")).toBeInTheDocument();
+    expect(screen.getByTestId("result-focus-frame")).toHaveAttribute("data-focus-mode", "full_frame");
+    expect(screen.queryByTestId("isolated-part-image")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("focused-part-window")).not.toBeInTheDocument();
+    expect(screen.queryByText("Unplaced engine identity")).not.toBeInTheDocument();
+    expect(screen.getByAltText("Captured car part")).toHaveAttribute("src", frame);
+    expect(screen.getByAltText("Captured car part").className).not.toMatch(/blur|brightness|contrast|saturate/);
+    for (const view of ["Cutout", "Outline"]) {
+      await userEvent.click(screen.getByRole("button", { name: view, exact: true }));
+      expect(screen.queryByTestId("isolated-part-image")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("focused-part-window")).not.toBeInTheDocument();
+      expect(screen.queryByText("Unplaced engine identity")).not.toBeInTheDocument();
+    }
+  });
+
+  it("creates a starter box only after explicitly opening correction and does not save it on cancel", async () => {
+    const onCorrectFocus = vi.fn();
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusMode="full_frame" label="Unplaced identity" onCorrectFocus={onCorrectFocus} />);
+    expect(screen.queryByTestId("focus-area-editor")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("focused-part-window")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Correct area" }));
+    expect(screen.getByTestId("focus-area-editor")).toBeInTheDocument();
+    expect(screen.getByRole("slider", { name: "Selection x" })).toHaveValue("16");
+    expect(onCorrectFocus).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByTestId("focus-area-editor")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("focused-part-window")).not.toBeInTheDocument();
+    expect(screen.queryByText("Unplaced identity")).not.toBeInTheDocument();
+    expect(onCorrectFocus).not.toHaveBeenCalled();
+  });
+
+  it("shows a real issue annotation on explicit Outline without inventing a main selection", async () => {
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusMode="full_frame" label="Unplaced identity" issue={{ text: "Surface rust", anchor: box }} />);
+    expect(screen.queryByTestId("issue-callout")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Outline", exact: true }));
+    expect(screen.getByTestId("issue-callout")).toHaveTextContent("Surface rust");
+    expect(screen.getByTestId("approximate-issue-area")).toHaveStyle({ left: "20%", top: "20%", width: "50%", height: "50%" });
+    expect(screen.queryByTestId("focused-part-window")).not.toBeInTheDocument();
+    expect(screen.queryByText("Unplaced identity")).not.toBeInTheDocument();
+  });
+
+  it("retains the correction callback and source box captured when the single-photo editor opened", async () => {
+    const originalCorrection = vi.fn(), replacementCorrection = vi.fn();
+    const props = { variant: "result" as const, frameBase64: frame, focusMode: "crop" as const, label: "Engine" };
+    const { rerender } = render(<IsolatedPartView {...props} focusBox={box} onCorrectFocus={originalCorrection} />);
+    await userEvent.click(screen.getByRole("button", { name: "Correct area" }));
+    rerender(<IsolatedPartView {...props} focusBox={{ ...box, x: 0.4 }} onCorrectFocus={replacementCorrection} />);
+    expect(screen.getByRole("slider", { name: "Selection x" })).toHaveValue("20");
+    await userEvent.click(screen.getByRole("button", { name: "Apply area" }));
+    expect(originalCorrection).toHaveBeenCalledExactlyOnceWith({ ...box, confidence: 0 }, null);
+    expect(replacementCorrection).not.toHaveBeenCalled();
+  });
+
   it("Tier A renders the real cutout over a blurred frame", () => {
     render(
       <IsolatedPartView
@@ -69,6 +159,74 @@ describe("IsolatedPartView", () => {
     expect(screen.queryByTestId("issue-callout")).not.toBeInTheDocument();
   });
 
+  it.each([false, true])("shows a supported concern as a visibly approximate area rather than a point, puzzle=%s", (puzzle) => {
+    const issue = deriveIssue(damageResult("right side"));
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusBox={box} focusMode="mask" isolatedImageBase64={cutout} label="Bracket" objects={puzzle ? sceneObjects : undefined} issue={issue} />);
+    const area = screen.getByTestId("approximate-issue-area");
+    expect(area).toHaveClass("border-dashed");
+    expect(area).toHaveAccessibleName("Approximate evidence area");
+    expect(area).toHaveStyle({ top: "0%", height: "100%" });
+    expect(parseFloat(area.style.left)).toBeCloseTo(200 / 3);
+    expect(parseFloat(area.style.width)).toBeCloseTo(100 / 3);
+    expect(screen.getByText("Approximate area — not an exact damage boundary")).toBeInTheDocument();
+    expect(screen.getByTestId("issue-callout")).toHaveTextContent("Surface rust on the bracket.");
+  });
+
+  it.each([
+    { region: "lower right", text: "Oil stain around the hose." },
+    { region: "Scanned area", text: "Surface rust on the bracket." },
+    { region: "upper left or lower right", text: "Surface rust on the bracket." },
+  ])("keeps an unmatched or unlocated observation off the photo: $region / $text", ({ region, text }) => {
+    const issue = deriveIssue(damageResult(region, text));
+    expect(issue?.text).toBe("Surface rust on the bracket."); expect(issue?.anchor).toBeNull();
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusBox={box} focusMode="crop" label="Bracket" issue={issue} />);
+    expect(screen.queryByTestId("approximate-issue-area")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("issue-callout")).not.toBeInTheDocument();
+  });
+
+  it("keeps Original clean, removes first-photo issue geometry on a secondary photo and restores only the supplied original evidence", async () => {
+    const issue = deriveIssue(damageResult("upper left"));
+    const original = <IsolatedPartView variant="result" frameBase64={frame} focusBox={box} focusMode="crop" label="Bracket" issue={issue} />;
+    const { rerender } = render(original);
+    expect(screen.getByTestId("approximate-issue-area")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Original", exact: true }));
+    expect(screen.queryByTestId("approximate-issue-area")).not.toBeInTheDocument();
+    expect(screen.getByAltText("Captured car part")).toHaveAttribute("src", frame);
+    expect(screen.getByAltText("Captured car part").className).not.toMatch(/blur|brightness|contrast|saturate/);
+    rerender(<IsolatedPartView variant="result" frameBase64="data:image/jpeg;base64,secondary" focusMode="full_frame" label="Bracket" issue={null} />);
+    expect(screen.queryByTestId("approximate-issue-area")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("issue-callout")).not.toBeInTheDocument();
+    expect(screen.getByAltText("Captured car part")).toHaveAttribute("src", "data:image/jpeg;base64,secondary");
+    expect(screen.getByAltText("Captured car part").className).not.toMatch(/blur|brightness|contrast|saturate/);
+    rerender(original);
+    expect(screen.getByTestId("issue-callout")).toHaveTextContent("Surface rust on the bracket.");
+  });
+
+  it("preserves source appearance in the cutout, crop and full-frame fallback", () => {
+    const props = { variant: "result" as const, frameBase64: frame, focusBox: box, label: "Bracket" };
+    const { rerender } = render(<IsolatedPartView {...props} focusMode="mask" isolatedImageBase64={cutout} />);
+    expect(screen.getByTestId("isolated-part-image")).toHaveAttribute("src", cutout);
+    expect(screen.getByTestId("isolated-part-image").className).not.toMatch(/brightness|contrast|saturate/);
+    rerender(<IsolatedPartView {...props} focusMode="crop" />);
+    expect(screen.getByTestId("focused-part-crop")).toHaveAttribute("src", frame);
+    expect(screen.getByTestId("focused-part-crop").className).not.toMatch(/brightness|contrast|saturate/);
+    rerender(<IsolatedPartView variant="result" frameBase64={frame} focusMode="full_frame" label="Bracket" />);
+    expect(screen.getByAltText("Captured car part").className).not.toMatch(/brightness|contrast|saturate/);
+  });
+
+  it("shows overview cutouts and the selected secondary cutout with their original color and full opacity", async () => {
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusMode="mask" label="Controller" objects={sceneObjects} />);
+    for (const object of sceneObjects) {
+      const image = screen.getByAltText(`Isolated ${object.name}`);
+      expect(image).toHaveAttribute("src", object.isolatedImageBase64);
+      expect(image.className).not.toMatch(/brightness|contrast|saturate/);
+      expect(image).toHaveStyle({ opacity: "1" });
+    }
+    await userEvent.click(screen.getByRole("button", { name: "Select Wall poster" }));
+    expect(screen.getByAltText("Isolated Wall poster")).toHaveStyle({ opacity: "1" });
+    expect(screen.getByAltText("Isolated Wall poster").className).not.toMatch(/brightness|contrast|saturate/);
+  });
+
   it("a busy scene labels other objects and softens (not hard-blurs) the background", () => {
     const sceneChips = [
       {
@@ -112,6 +270,179 @@ describe("IsolatedPartView", () => {
     // Overview labels give way to a single promoted "Isolated" frame for the focused object.
     expect(screen.queryAllByTestId("lens-label")).toHaveLength(0);
     expect(screen.getByTestId("lens-focused-label")).toHaveTextContent("Xbox Controller");
+  });
+
+  it("shows the untouched original without masks, outlines, scene labels, or issue callouts", async () => {
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusBox={box} focusMode="mask" isolatedImageBase64={cutout} label="Engine" issue={{ text: "Crack", anchor: box }} />);
+    await userEvent.click(screen.getByRole("button", { name: "Original", exact: true }));
+    expect(screen.getByRole("button", { name: "Original", exact: true })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByAltText("Captured car part")).toHaveAttribute("src", frame);
+    expect(screen.getByAltText("Captured car part").className).not.toMatch(/blur|brightness|contrast|saturate/);
+    expect(screen.queryByTestId("isolated-part-image")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("focused-part-window")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("issue-callout")).not.toBeInTheDocument();
+  });
+
+  it("shows an outline on the unchanged source and restores the cutout when requested", async () => {
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusBox={box} focusMode="mask" isolatedImageBase64={cutout} label="Engine" />);
+    await userEvent.click(screen.getByRole("button", { name: "Outline", exact: true }));
+    expect(screen.getByTestId("focused-part-window")).toHaveStyle({ left: "20%", top: "20%" });
+    expect(screen.getByAltText("Captured car part").className).not.toMatch(/blur|brightness|contrast/);
+    expect(screen.queryByTestId("isolated-part-image")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Cutout", exact: true }));
+    expect(screen.getByTestId("isolated-part-image")).toHaveAttribute("src", cutout);
+  });
+
+  it("labels a crop fallback explicitly and does not offer an unsaved correction without its callback", () => {
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusBox={box} focusMode="crop" label="Engine" />);
+    expect(screen.getByTestId("focused-part-label")).toHaveTextContent("Crop only");
+    expect(screen.queryByRole("button", { name: "Correct area" })).not.toBeInTheDocument();
+  });
+
+  it("applies a bounded keyboard-adjustable correction only on explicit confirmation", async () => {
+    const onCorrectFocus = vi.fn();
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusBox={box} focusMode="mask" isolatedImageBase64={cutout} label="Engine" onCorrectFocus={onCorrectFocus} />);
+    await userEvent.click(screen.getByRole("button", { name: "Correct area" }));
+    expect(screen.queryByTestId("isolated-part-image")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("slider", { name: "Selection x" }), { target: { value: "40" } });
+    fireEvent.change(screen.getByRole("slider", { name: "Selection width" }), { target: { value: "60" } });
+    expect(onCorrectFocus).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Apply area" }));
+    expect(onCorrectFocus).toHaveBeenCalledExactlyOnceWith({ ...box, x: 0.4, width: 0.6, confidence: 0 }, null);
+    expect(screen.getByRole("button", { name: "Outline", exact: true })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByTestId("focus-area-editor")).not.toBeInTheDocument();
+  });
+
+  it("cancels an edit without changing parent evidence", async () => {
+    const onCorrectFocus = vi.fn();
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusBox={box} focusMode="crop" label="Engine" onCorrectFocus={onCorrectFocus} />);
+    await userEvent.click(screen.getByRole("button", { name: "Correct area" }));
+    fireEvent.change(screen.getByRole("slider", { name: "Selection y" }), { target: { value: "30" } });
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onCorrectFocus).not.toHaveBeenCalled();
+    expect(screen.getByTestId("focused-part-window")).toHaveStyle({ top: "20%" });
+  });
+
+  it("normalizes a reversed pointer drag against the photo stage rather than the viewport", async () => {
+    const onCorrectFocus = vi.fn();
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusBox={box} focusMode="crop" label="Engine" onCorrectFocus={onCorrectFocus} />);
+    await userEvent.click(screen.getByRole("button", { name: "Correct area" }));
+    const surface = screen.getByTestId("focus-area-editor");
+    vi.spyOn(surface, "getBoundingClientRect").mockReturnValue({ left: 100, top: 200, width: 400, height: 200, right: 500, bottom: 400, x: 100, y: 200, toJSON: () => ({}) });
+    const pointer = (type: string, x: number, y: number) => {
+      const event = new MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: y });
+      Object.defineProperty(event, "pointerId", { value: 1 });
+      fireEvent(surface, event);
+    };
+    pointer("pointerdown", 420, 360);
+    pointer("pointermove", 180, 240);
+    pointer("pointerup", 180, 240);
+    await userEvent.click(screen.getByRole("button", { name: "Apply area" }));
+    const [corrected, index] = onCorrectFocus.mock.calls[0];
+    expect(index).toBeNull();
+    expect(corrected.x).toBeCloseTo(0.2);
+    expect(corrected.y).toBeCloseTo(0.2);
+    expect(corrected.width).toBeCloseTo(0.6);
+    expect(corrected.height).toBeCloseTo(0.6);
+  });
+
+  it("keeps puzzle selection while switching views and corrects the selected ordered object", async () => {
+    const onCorrectFocus = vi.fn();
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusMode="mask" label="Controller" objects={[sceneObjects[1], sceneObjects[0]]} onCorrectFocus={onCorrectFocus} />);
+    expect(screen.getByRole("button", { name: "Correct area" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Select Wall poster" }));
+    await userEvent.click(screen.getByRole("button", { name: "Original", exact: true }));
+    expect(screen.queryByTestId("lens-object")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("lens-focused-frame")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Outline", exact: true }));
+    expect(screen.getByRole("button", { name: "Select Wall poster" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByAltText("Isolated Wall poster")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Correct area" }));
+    fireEvent.change(screen.getByRole("slider", { name: "Selection x" }), { target: { value: "10" } });
+    await userEvent.click(screen.getByRole("button", { name: "Apply area" }));
+    expect(onCorrectFocus).toHaveBeenCalledExactlyOnceWith({ ...sceneObjects[1].focusBox, x: 0.1, confidence: 0 }, 1);
+  });
+
+  it("retains controlled multi-object taps and falls back honestly when a secondary mask fails", async () => {
+    const onFocusObject = vi.fn();
+    render(<IsolatedPartView variant="scanner" frameBase64={frame} focusMode="mask" label="Controller" objects={sceneObjects} focusedObjectIndex={1} onFocusObject={onFocusObject} />);
+    fireEvent.error(screen.getByAltText("Isolated Wall poster"));
+    expect(screen.queryByAltText("Isolated Wall poster")).not.toBeInTheDocument();
+    expect(screen.getByTestId("lens-focused-label")).toHaveTextContent("Crop only");
+    expect(screen.getByRole("button", { name: "Select Wall poster" }).style.backgroundImage).toContain(frame);
+    await userEvent.click(screen.getByRole("button", { name: "Select Xbox Controller" }));
+    expect(onFocusObject).toHaveBeenCalledWith(0);
+    await userEvent.click(screen.getByRole("button", { name: "Show all objects" }));
+    expect(onFocusObject).toHaveBeenCalledWith(null);
+  });
+
+  it("does not carry an unfinished correction into a different photo", async () => {
+    const onCorrectFocus = vi.fn();
+    const props = { variant: "result" as const, focusBox: box, focusMode: "crop" as const, label: "Engine", onCorrectFocus };
+    const { rerender } = render(<IsolatedPartView {...props} frameBase64={frame} />);
+    await userEvent.click(screen.getByRole("button", { name: "Correct area" }));
+    rerender(<IsolatedPartView {...props} frameBase64="data:image/jpeg;base64,new-photo" />);
+    expect(screen.queryByTestId("focus-area-editor")).not.toBeInTheDocument();
+    rerender(<IsolatedPartView {...props} frameBase64={frame} />);
+    expect(screen.queryByTestId("focus-area-editor")).not.toBeInTheDocument();
+    expect(onCorrectFocus).not.toHaveBeenCalled();
+  });
+
+  it("keeps corrected puzzle components selectable after their old cutout is discarded", async () => {
+    const objects = sceneObjects.map((object) => ({ ...object, focusMode: "crop" as const, isolatedImageBase64: "", correctedAt: "2026-11-05T00:00:00Z" }));
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusMode="crop" label="Controller" objects={objects} />);
+    expect(screen.getAllByTestId("lens-object")).toHaveLength(2);
+    expect(screen.getAllByText("Crop only")).toHaveLength(2);
+    expect(screen.queryByAltText("Isolated Xbox Controller")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Select Xbox Controller" }));
+    expect(screen.getByTestId("lens-focused-label")).toHaveTextContent("Crop only");
+  });
+
+  it("distinguishes mixed cutouts and original-photo crops while retaining their coordinates and correction controls", async () => {
+    const onCorrectFocus = vi.fn();
+    const objects = [sceneObjects[0], { ...sceneObjects[1], focusMode: "crop" as const, isolatedImageBase64: "" }];
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusMode="mask" label="Controller" objects={objects} onCorrectFocus={onCorrectFocus} />);
+    expect(screen.getByTestId("result-focus-frame")).toHaveAttribute("data-focus-mode", "mixed");
+    expect(screen.getByRole("status")).toHaveTextContent("Selections are approximate. Check the original and correct the area.");
+    expect(screen.getByRole("status")).toHaveTextContent("1 cutout; 1 crop-only selection. Crops are not segmentation masks.");
+    expect(screen.getAllByTestId("lens-object")).toHaveLength(2);
+    expect(screen.getByAltText("Isolated Xbox Controller")).toHaveAttribute("src", objects[0].isolatedImageBase64);
+    expect(screen.queryByAltText("Isolated Wall poster")).not.toBeInTheDocument();
+    const crop = screen.getByRole("button", { name: "Select Wall poster" });
+    expect(crop).toHaveStyle({ left: "5%", top: "10%", width: "20%", height: "30%" });
+    expect(crop.style.backgroundImage).toContain(frame);
+    expect(crop.className).not.toMatch(/brightness|contrast|saturate/);
+    await userEvent.click(crop);
+    expect(screen.getByTestId("lens-focused-label")).toHaveTextContent("Crop only · No cutout");
+    await userEvent.click(screen.getByRole("button", { name: "Correct area" }));
+    fireEvent.change(screen.getByRole("slider", { name: "Selection x" }), { target: { value: "10" } });
+    await userEvent.click(screen.getByRole("button", { name: "Apply area" }));
+    expect(onCorrectFocus).toHaveBeenCalledExactlyOnceWith({ ...objects[1].focusBox, x: 0.1, confidence: 0 }, 1);
+    expect(screen.getByRole("status")).toHaveTextContent("Selections are approximate. Check the original and correct the area.");
+    await userEvent.click(screen.getByRole("button", { name: "Original", exact: true }));
+    expect(screen.queryByTestId("lens-object")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("lens-focused-frame")).not.toBeInTheDocument();
+    expect(screen.getByAltText("Captured car part").className).not.toMatch(/blur|brightness|contrast|saturate/);
+  });
+
+  it("keeps an open puzzle correction bound to its original callback, index and box after an object reorder", async () => {
+    const originalCorrection = vi.fn(), replacementCorrection = vi.fn();
+    const objects = sceneObjects.map((object) => ({ ...object, primary: false }));
+    const props = { variant: "result" as const, frameBase64: frame, focusMode: "mask" as const, label: "Parts" };
+    const { rerender } = render(<IsolatedPartView {...props} objects={objects} onCorrectFocus={originalCorrection} />);
+    await userEvent.click(screen.getByRole("button", { name: "Select Wall poster" }));
+    await userEvent.click(screen.getByRole("button", { name: "Correct area" }));
+    rerender(<IsolatedPartView {...props} objects={[objects[1], objects[0]]} onCorrectFocus={replacementCorrection} />);
+    expect(screen.getByRole("slider", { name: "Selection x" })).toHaveValue("5");
+    await userEvent.click(screen.getByRole("button", { name: "Apply area" }));
+    expect(originalCorrection).toHaveBeenCalledExactlyOnceWith({ ...objects[1].focusBox, confidence: 0 }, 1);
+    expect(replacementCorrection).not.toHaveBeenCalled();
+  });
+
+  it("does not reuse stale cutout bytes for an object explicitly marked as a crop", () => {
+    render(<IsolatedPartView variant="result" frameBase64={frame} focusMode="mask" label="Controller" objects={sceneObjects.map((object) => ({ ...object, focusMode: "crop" }))} />);
+    expect(screen.queryByAltText("Isolated Xbox Controller")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Crop only")).toHaveLength(2);
   });
 });
 

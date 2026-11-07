@@ -1,5 +1,6 @@
 import type { IdentificationResult } from "../../types";
 import { getSimpleResultSummary } from "../../lib/simpleResultSummary";
+import { ORIGINAL_AI_WORDING_MESSAGE, UNLINKED_CONDITION_FLAGS_MESSAGE } from "../../lib/conditionCoverage";
 import { deriveIssue, getConcernFacts, getEvidenceFacts, getSecondarySceneObjects, getVisibleFacts } from "../../lib/resultFacts";
 
 type Variant = "scanner" | "result";
@@ -92,7 +93,7 @@ export function ResultDetailSections({
   const sections = [
     { title: "What we see", facts: getVisibleFacts(result, isCompact) },
     { title: "Match clues", facts: getEvidenceFacts(result, isCompact) },
-    { title: "Flags", facts: getConcernFacts(result, isCompact) },
+    { title: "Original AI flags — unverified", facts: getConcernFacts(result, isCompact), note: `${UNLINKED_CONDITION_FLAGS_MESSAGE} ${ORIGINAL_AI_WORDING_MESSAGE}` },
     { title: "Next step", facts: summary.nextAction ? [summary.nextAction] : [] },
   ].filter((section) => section.facts.length > 0);
 
@@ -107,6 +108,7 @@ export function ResultDetailSections({
           <p className={`text-[11px] font-extrabold uppercase tracking-[0.12em] ${theme.sectionTitle}`}>
             {section.title}
           </p>
+          {section.note ? <p className={`mt-1 text-xs leading-5 ${theme.fact}`}>{section.note}</p> : null}
           <ul className={`mt-1 space-y-1.5 text-xs leading-6 ${theme.fact}`}>
             {section.facts.map((fact) => (
               <li key={fact} className="flex gap-2">

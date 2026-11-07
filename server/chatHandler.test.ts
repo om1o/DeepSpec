@@ -83,7 +83,7 @@ it("calls the provider only after enabled-chat gates succeed", async () => {
   const fetchMock = vi.fn().mockImplementation(async () => {
     expect(enforceRateLimit).toHaveBeenCalledTimes(1);
     expect(requireSession).toHaveBeenCalledTimes(1);
-    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "Check the marking." }] } }] }), { headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "Check the marking." }] } }] }), { headers: { "Content-Type": "application/json" } });
   });
   vi.stubGlobal("fetch", fetchMock);
   const res = response();

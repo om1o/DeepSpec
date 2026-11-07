@@ -91,15 +91,12 @@ type BillingUpdateQuery = PromiseLike<{ error: unknown }> & {
   eq: (column: string, value: string | number) => BillingUpdateQuery;
   select: (columns: string) => PromiseLike<{ data: unknown; error: unknown }>;
 };
+type BillingSelectQuery = {
+  eq: (column: string, value: string) => BillingSelectQuery;
+  maybeSingle: () => PromiseLike<{ data: unknown; error: unknown }>;
+};
 type BillingSupabaseTable = {
-  select: (columns: string) => {
-    eq: (column: string, value: string) => {
-      maybeSingle: () => PromiseLike<{
-        data: unknown;
-        error: unknown;
-      }>;
-    };
-  };
+  select: (columns: string) => BillingSelectQuery;
   update: (values: Record<string, unknown>) => BillingUpdateQuery;
   upsert: (values: Record<string, unknown>, options?: { onConflict?: string }) => PromiseLike<{
     error: unknown;
@@ -200,6 +197,10 @@ export async function createCheckoutResponse(
     "metadata[supabase_user_id]": verifiedUser.userId,
     "metadata[scan_allowance]": String(plan.scanAllowance),
   });
+  if (plan.billingMode === "payment") {
+    // The purchase ledger requires a real provider customer, including one-time packs.
+    params.set("customer_creation", "always");
+  }
 
   return postStripeSession(STRIPE_CHECKOUT_URL, params, secretKey);
 }
@@ -597,7 +598,7 @@ async function handleStripeEvent(
     return { error: errorResponse(400, "invalid_event", "Billing provider event is missing its data object.") };
   }
 
-  if (event.type === "checkout.session.completed") {
+  if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
     return writeCheckoutEntitlement(stripeObject, supabase);
   }
 
@@ -639,6 +640,10 @@ async function writeCheckoutEntitlement(
   session: SupabaseRow,
   supabase: BillingSupabaseClient,
 ): Promise<{ handled: boolean } | { error: BillingErrorResponse }> {
+  const status = getCheckoutStatus(session);
+  // Completion can precede payment. Leave the purchase key available for delayed success.
+  if (status !== "active") return { handled: false };
+
   const planId = getStringValue(getMetadata(session).deepspec_plan_id);
   const plan = getRevenuePlan(planId);
   if (!plan) {
@@ -669,7 +674,7 @@ async function writeCheckoutEntitlement(
     providerCustomerId: customerId,
     providerSubscriptionId: getStringValue(session.subscription) || null,
     scanAllowance: plan.scanAllowance,
-    status: getCheckoutStatus(session),
+    status,
     userId,
   });
 }
@@ -809,7 +814,7 @@ async function updateSubscriptionEntitlement(
     return { handled: true };
   }
 
-  const updateResult = await updateEntitlementByProviderKey(supabase, subscriptionId, customerId, updatePayload);
+  const updateResult = await updateEntitlementByProviderKey(supabase, "stripe", subscriptionId, customerId, updatePayload);
   if ("error" in updateResult) {
     return updateResult;
   }
@@ -869,7 +874,7 @@ async function updatePolarSubscriptionEntitlement(
     return { handled: true };
   }
 
-  const updateResult = await updateEntitlementByProviderKey(supabase, subscriptionId, customerId, updatePayload);
+  const updateResult = await updateEntitlementByProviderKey(supabase, "polar", subscriptionId, customerId, updatePayload);
   if ("error" in updateResult) {
     return updateResult;
   }
@@ -898,31 +903,51 @@ async function readExistingEntitlement(
 
 async function updateEntitlementByProviderKey(
   supabase: BillingSupabaseClient,
+  provider: "stripe" | "polar",
   subscriptionId: string,
   customerId: string,
   payload: Record<string, unknown>,
 ): Promise<{ handled: boolean } | { error: BillingErrorResponse }> {
   const table = supabase.from("billing_entitlements");
-  const query = subscriptionId
-    ? table.update(payload).eq("provider_subscription_id", subscriptionId)
-    : table.update(payload).eq("provider_customer_id", customerId);
-  const { data, error } = await query.select("user_id");
+  const keyColumn = subscriptionId ? "provider_subscription_id" : "provider_customer_id";
+  const keyValue = subscriptionId || customerId;
+  // Customer IDs are not unique. Refuse an ambiguous match before performing any write.
+  const { data: matched, error: readError } = await table.select("user_id")
+    .eq("billing_provider", provider)
+    .eq(keyColumn, keyValue)
+    .maybeSingle();
+  if (readError && (!isRecord(readError) || readError.code !== "PGRST116")) {
+    return { error: errorResponse(502, "entitlement_read_failed", "DeepSpec could not read existing paid access.") };
+  }
+  const userId = isRecord(matched) ? getStringValue(matched.user_id) : "";
+  if (readError || !userId) return entitlementUpdateMissed();
+
+  // user_id is the primary key. Recheck identity if the row changed since the lookup.
+  const { data, error } = await table.update(payload)
+    .eq("user_id", userId)
+    .eq("billing_provider", provider)
+    .eq(keyColumn, keyValue)
+    .select("user_id");
 
   if (error) {
     return { error: errorResponse(502, "entitlement_write_failed", "DeepSpec could not update paid access.") };
   }
 
   if (!Array.isArray(data) || data.length !== 1) {
-    return {
-      error: errorResponse(
-        503,
-        "entitlement_update_missed",
-        "DeepSpec could not match the billing event to exactly one paid-access record.",
-      ),
-    };
+    return entitlementUpdateMissed();
   }
 
   return { handled: true };
+}
+
+function entitlementUpdateMissed() {
+  return {
+    error: errorResponse(
+      503,
+      "entitlement_update_missed",
+      "DeepSpec could not match the billing event to exactly one paid-access record.",
+    ),
+  };
 }
 
 function parseCheckoutBody(body: unknown): { planId: PlanId } | { error: BillingErrorResponse } {

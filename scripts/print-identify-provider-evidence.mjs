@@ -149,7 +149,7 @@ function buildProviderStatuses(env) {
       endpointRoute: "https://generativelanguage.googleapis.com/v1beta/models/:model:generateContent",
       endpointAllowed: true,
       localOnly: false,
-      model: env.GEMINI_MODEL?.trim() || "gemini-2.5-flash",
+      model: env.GEMINI_MODEL?.trim() || "gemini-3.5-flash-lite",
       name: "Gemini",
       providerId: "gemini",
       productionRoute: true,

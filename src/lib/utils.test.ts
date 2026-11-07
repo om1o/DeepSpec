@@ -1,4 +1,5 @@
 import { accountStorageKey } from "./accountScope";
+import type { IdentificationResult, PhotoReview } from "../types";
 import {
   cx,
   getScaledDimensions,
@@ -33,6 +34,39 @@ describe("latest captured frame storage", () => {
     sessionStorage.clear();
   });
 
+  it.each(["valid", "uncited-photo", "out-of-bounds"])("recovers secondary-photo AI areas only when valid: %s", (kind) => {
+    const frame = { imageBase64: "data:image/jpeg;base64,YQ==", capturedAt: "2026-11-05T00:00:00Z" };
+    const result: IdentificationResult = { partName: "Panel", confidence: "low", scanCategory: "body", candidateMatches: [], whatItDoes: "Body panel",
+      visibleObservations: [], evidenceRegions: [], concerns: [], safetyTriage: "can_help", isSafetyCritical: false, nextAction: "Inspect", needsBetterPhoto: true,
+      evidence: [], sourceLinks: [], conditionAssessment: { version: 2, observations: [{ id: "edge", text: "A dark line is visible.", photoIds: ["detail"],
+        areas: [{ photoId: kind === "uncited-photo" ? "overview" : "detail", rectangle: { x: 0.2, y: 0.3, width: 0.2, height: kind === "out-of-bounds" ? 1 : 0.2 } }] }],
+      possibleCauses: [], unknowns: [] } };
+    const photos = [{ ...frame, id: "overview", label: "overview" as const }, { ...frame, id: "detail", label: "close_up" as const }];
+    saveLatestScanState({ frame, photos, result });
+    const restored = readLatestScanState();
+    expect(restored?.photos).toEqual(photos);
+    expect(restored?.result?.partName).toBe("Panel");
+    if (kind === "valid") expect(restored?.result?.conditionAssessment).toEqual(result.conditionAssessment);
+    else expect(restored?.result).not.toHaveProperty("conditionAssessment");
+  });
+
+  it.each(["valid", "missing", "wrong-photo", "duplicate"])("restores only validated partial review against the actual session originals: %s", (kind) => {
+    const frame = { imageBase64: "data:image/jpeg;base64,YQ==", capturedAt: "2026-11-05T00:00:00Z" };
+    const photoReview: PhotoReview = { version: 1, photos: [{ photoId: kind === "wrong-photo" ? "photo-1" : "custom-original",
+      status: "limited_view", summary: "Only the front is visible." }], disagreements: [] };
+    if (kind === "duplicate") photoReview.photos.push({ ...photoReview.photos[0] });
+    const result: IdentificationResult = { partName: "Panel", confidence: "low", scanCategory: "body", candidateMatches: [], whatItDoes: "Body panel",
+      visibleObservations: [], evidenceRegions: [], concerns: [], safetyTriage: "can_help", isSafetyCritical: false, nextAction: "Inspect", needsBetterPhoto: true,
+      evidence: [], sourceLinks: [], ...(kind === "missing" ? {} : { photoReview }) };
+    const photos = [{ ...frame, id: "custom-original", label: "overview" as const }, { ...frame, id: "omitted-view", label: "close_up" as const }];
+    saveLatestScanState({ frame, photos, result });
+    const restored = readLatestScanState();
+    expect(restored?.photos).toEqual(photos);
+    expect(restored?.result?.partName).toBe("Panel");
+    if (kind === "valid") expect(restored?.result?.photoReview).toEqual(photoReview);
+    else expect(restored?.result).not.toHaveProperty("photoReview");
+  });
+
   it("saves and reads the last captured frame", () => {
     const frame = {
       imageBase64: "data:image/jpeg;base64,test",
@@ -49,6 +83,17 @@ describe("latest captured frame storage", () => {
     sessionStorage.setItem(accountStorageKey("deep-spec:latest-captured-frame"), JSON.stringify({ imageBase64: 123 }));
 
     expect(readLatestCapturedFrame()).toBeNull();
+  });
+
+  it("restores labeled photos, component cutouts, geometry and capture provenance", () => {
+    const frame = { imageBase64: "data:image/jpeg;base64,dGVzdA==", capturedAt: "2026-11-05T00:00:00.000Z" };
+    const state: import("../types").ScanAnalysisState = {
+      frame, photos: [{ ...frame, id: "photo-1", label: "overview" }, { ...frame, id: "photo-2", label: "mounting" }],
+      isolatedObjects: [{ name: "Hose", category: "engine", primary: false, isolatedImageBase64: frame.imageBase64, focusBox: { x: 0.2, y: 0.2, width: 0.2, height: 0.2, confidence: 0.5 } }],
+      provenance: { captureMode: "upload", analysisSource: "ai_detection", savedAt: frame.capturedAt },
+    };
+    saveLatestScanState(state);
+    expect(readLatestScanState()).toEqual(state);
   });
 
   it("saves and reads an analyzed scan state", () => {

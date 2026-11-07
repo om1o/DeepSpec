@@ -1,10 +1,15 @@
 import type { IdentificationResult } from "../types/index";
+import { IDENTIFY_PIPELINE_VERSION } from "../services/systemPrompts";
 import { accountStorageKey } from "./accountScope";
+import { normalizePhotoReview } from "./photoReview";
+import { normalizeConditionAssessment } from "./conditionAssessment";
 
 export const SCAN_CACHE_KEY = "deep-spec:scan-cache";
 export const SCAN_CACHE_MAX = 20;
 
 type CacheEntry = {
+  inputVersion: "single-original-v1";
+  pipelineVersion: string;
   hash: string;
   result: IdentificationResult;
   cachedAt: string;
@@ -35,7 +40,12 @@ function loadCache(): CacheEntry[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed as CacheEntry[];
+    return parsed.filter((entry): entry is CacheEntry =>
+      entry !== null && typeof entry === "object"
+      && entry.inputVersion === "single-original-v1"
+      && entry.pipelineVersion === IDENTIFY_PIPELINE_VERSION
+      && typeof entry.hash === "string"
+      && entry.result?.modelRun?.pipelineVersion === IDENTIFY_PIPELINE_VERSION);
   } catch {
     return [];
   }
@@ -55,20 +65,29 @@ function isOnDeviceEstimate(result: IdentificationResult | undefined): boolean {
   return result?.modelRun?.provider === "on-device";
 }
 
+function withSingleOriginalPhotoReview(result: IdentificationResult): IdentificationResult {
+  // This cache accepts only the legacy single-original request shape, whose
+  // actual request ID is photo-1. Never remap a custom/group ID onto that photo.
+  const { photoReview: rawPhotoReview, conditionAssessment: rawAssessment, ...rest } = result;
+  const photoReview = normalizePhotoReview(rawPhotoReview, ["photo-1"]);
+  const conditionAssessment = normalizeConditionAssessment(rawAssessment, ["photo-1"]);
+  return { ...rest, ...(photoReview ? { photoReview } : {}), ...(conditionAssessment ? { conditionAssessment } : {}) };
+}
+
 export function getCachedScanResult(hash: string): IdentificationResult | null {
   const entries = loadCache();
   const entry = entries.find((e) => e.hash === hash);
   // Also skips estimates an earlier build already cached.
-  return entry && !isOnDeviceEstimate(entry.result) ? entry.result : null;
+  return entry && !isOnDeviceEstimate(entry.result) ? withSingleOriginalPhotoReview(entry.result) : null;
 }
 
 export function setCachedScanResult(hash: string, result: IdentificationResult): void {
-  if (isOnDeviceEstimate(result)) {
+  if (isOnDeviceEstimate(result) || result.modelRun?.pipelineVersion !== IDENTIFY_PIPELINE_VERSION) {
     return;
   }
 
   const entries = loadCache().filter((e) => e.hash !== hash);
-  entries.push({ hash, result, cachedAt: new Date().toISOString() });
+  entries.push({ inputVersion: "single-original-v1", pipelineVersion: IDENTIFY_PIPELINE_VERSION, hash, result: withSingleOriginalPhotoReview(result), cachedAt: new Date().toISOString() });
   if (entries.length > SCAN_CACHE_MAX) {
     entries.splice(0, entries.length - SCAN_CACHE_MAX);
   }

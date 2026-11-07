@@ -13,6 +13,10 @@ const billingIdempotencySqlTestPath = join(process.cwd(), "supabase", "tests", "
 const publicWriteHardeningMigrationPath = join(migrationsDir, "20261101121028_harden_public_write_surfaces.sql");
 const publicWriteHardeningSqlTestPath = join(process.cwd(), "supabase", "tests", "public_write_hardening.sql");
 const releaseSecurityOptimizationMigrationPath = join(migrationsDir, "20261101121627_optimize_release_security.sql");
+const componentMapMigrationPath = join(migrationsDir, "20261105091323_component_maps.sql");
+const componentMapOccurrencesMigrationPath = join(migrationsDir, "20261105211101_component_map_occurrences.sql");
+const componentMapOverviewSourceMigrationPath = join(migrationsDir, "20261105213351_component_map_overview_source.sql");
+const componentMapLinkedSourcesMigrationPath = join(migrationsDir, "20261105221143_component_map_linked_sources.sql");
 const srcPath = join(process.cwd(), "src");
 
 describe("Supabase secure foundation migration", () => {
@@ -172,7 +176,7 @@ describe("Supabase organization membership hardening migration", () => {
 });
 
 describe("Supabase shop job identity hardening migration", () => {
-  const sql = readFileSync(shopJobIdentityMigrationPath, "utf8");
+  const sql = readFileSync(shopJobIdentityMigrationPath, "utf8").replace(/\r\n/g, "\n");
 
   it("binds every job scan to a job in the same organization", () => {
     expect(sql).toContain("constraint shop_jobs_id_org_key unique (id, org_id)");
@@ -226,6 +230,149 @@ describe("Supabase billing webhook idempotency migration", () => {
   });
 });
 
+describe("Supabase component-map linked-source migration", () => {
+  const sql = readFileSync(componentMapLinkedSourcesMigrationPath, "utf8").replace(/\r\n/g, "\n");
+  const previous = readFileSync(componentMapOverviewSourceMigrationPath, "utf8").replace(/\r\n/g, "\n");
+
+  it("allows v4 with required overview identity and exact ordered group bindings", () => {
+    expect(sql).toContain("if doc->'version' in ('3'::jsonb, '4'::jsonb) then");
+    expect(sql).toContain("doc->'version' is distinct from '4'::jsonb or jsonb_typeof(group_binding) is distinct from 'object'");
+    expect(sql).toContain("group_binding - array['version', 'photoRelationship', 'photos']");
+    expect(sql).toContain("group_binding->'version' is distinct from '1'::jsonb");
+    expect(sql).toContain("('same_part_or_area', 'independent', 'unknown')");
+    expect(sql).toContain("jsonb_array_length(group_binding->'photos') <> jsonb_array_length(link->'photoIds')");
+    expect(sql).toContain("bound_photo->'photoId' is distinct from link->'photoIds'->binding_index");
+    expect(sql).toContain("bound_photo - array['photoId', 'label', 'source']");
+    expect(sql).toContain("('overview', 'close_up', 'marking', 'mounting', 'other')");
+  });
+
+  it("validates every linked source with the same bounded fingerprint contract", () => {
+    expect(sql).toContain("bound_source - array['sha256', 'width', 'height', 'photoAddedAt', 'scanSavedAt']");
+    expect(sql).toContain("bound_source->>'sha256' ~ '^[a-f0-9]{64}$'");
+    expect(sql).toContain("(bound_source->>'width')::numeric * (bound_source->>'height')::numeric > 100000000");
+    expect(sql).toContain("source_time := bound_source->>key");
+    expect(sql).toContain("raise exception 'invalid_component_map_link_binding'");
+  });
+
+  it("preserves bindings by stable association while allowing display reorder", () => {
+    expect(sql).toContain("where value->'id' = old_component->'id'");
+    expect(sql).toContain("where value->'linkId' = old_link->'linkId'");
+    expect(sql).toContain("next_link->'photoIds' is distinct from old_link->'photoIds'");
+    expect(sql).toContain("next_link->'binding' is distinct from old_link->'binding'");
+    expect(sql).toContain("raise exception 'component_map_link_binding_immutable'");
+    expect(sql).toContain("raise exception 'component_map_legacy_link_retrofit'");
+    expect(sql).toContain("old.document_json->'version' = '4'::jsonb and doc->'version' is distinct from '4'::jsonb");
+  });
+
+  it("retains prior protections without rewriting rows or changing permissions", () => {
+    for (const [, message, code] of previous.matchAll(/raise exception '([^']+)' using errcode = '([^']+)'/g)) {
+      expect(sql).toContain(`raise exception '${message}' using errcode = '${code}'`);
+    }
+    expect(sql).toContain("security invoker set search_path = ''");
+    expect(sql).toContain("s.user_id = new.user_id and s.local_id = link->>'lookupId'");
+    expect(sql).toContain("new.revision is distinct from old.revision + 1");
+    expect(sql).toContain("revoke all on function private.guard_component_map() from public, anon, authenticated");
+    expect(sql).not.toMatch(/(?:^|\n)\s*(?:alter table|drop|grant|insert into|update public|delete from|create trigger)\b/i);
+  });
+});
+
+describe("Supabase component-map overview source migration", () => {
+  const sql = readFileSync(componentMapOverviewSourceMigrationPath, "utf8").replace(/\r\n/g, "\n");
+  const previous = readFileSync(componentMapOccurrencesMigrationPath, "utf8").replace(/\r\n/g, "\n");
+
+  it("requires an exact v3 source and rejects binding metadata on legacy documents", () => {
+    expect(sql).toContain("if doc->'version' = '3'::jsonb then");
+    expect(sql).toContain("jsonb_typeof(overview_source) is distinct from 'object'");
+    expect(sql).toContain("overview_source - array['sha256', 'width', 'height', 'photoAddedAt', 'scanSavedAt']");
+    expect(sql).toContain("overview_source->>'sha256' ~ '^[a-f0-9]{64}$'");
+    expect(sql).toContain("elsif (doc->'overview') ? 'source' then");
+    expect(sql).toContain("raise exception 'invalid_component_map_legacy_source'");
+  });
+
+  it("bounds decoded integer dimensions and canonical UTC millisecond timestamps", () => {
+    for (const field of ["width", "height"]) {
+      expect(sql).toContain(`jsonb_typeof(overview_source->'${field}') is distinct from 'number'`);
+      expect(sql).toContain(`(overview_source->>'${field}')::numeric not between 1 and 32768`);
+      expect(sql).toContain(`trunc((overview_source->>'${field}')::numeric) <> (overview_source->>'${field}')::numeric`);
+    }
+    expect(sql).toContain("(overview_source->>'width')::numeric * (overview_source->>'height')::numeric > 100000000");
+    expect(sql).toContain("foreach key in array array['photoAddedAt', 'scanSavedAt']");
+    expect(sql).toContain("left(source_time, 4) = '0000'");
+    expect(sql).toContain("'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'");
+    expect(sql).toContain("exception when sqlstate '22007' or sqlstate '22008'");
+  });
+
+  it("keeps v3 bindings immutable and blocks older-client downgrade without rewriting rows", () => {
+    expect(sql).toContain("old.document_json->'version' = '3'::jsonb and doc->'version' is distinct from '3'::jsonb");
+    expect(sql).toContain("doc#>'{overview,source}' is distinct from old.document_json#>'{overview,source}'");
+    expect(sql).toContain("raise exception 'component_map_overview_source_immutable'");
+    expect(sql).not.toMatch(/(?:^|\n)\s*(?:alter table|drop|grant|insert into|update public|delete from|create trigger)\b/i);
+  });
+
+  it("preserves prior trigger failures and ownership while allowing location hints in versions 2 and 3", () => {
+    for (const [, message, code] of previous.matchAll(/raise exception '([^']+)' using errcode = '([^']+)'/g)) {
+      expect(sql).toContain(`raise exception '${message}' using errcode = '${code}'`);
+    }
+    expect(sql).toContain("security invoker set search_path = ''");
+    expect(sql).toContain("s.user_id = new.user_id and s.local_id = link->>'lookupId'");
+    expect(sql).toContain("new.revision is distinct from old.revision + 1");
+    expect(sql).toContain("if (doc->'version' is distinct from '2'::jsonb and doc->'version' is distinct from '3'::jsonb) or jsonb_typeof(suggested_location) is distinct from 'object' then");
+    expect(sql).toContain("revoke all on function private.guard_component_map() from public, anon, authenticated");
+  });
+});
+
+describe("Supabase component-map occurrence compatibility migration", () => {
+  const sql = readFileSync(componentMapOccurrencesMigrationPath, "utf8").replace(/\r\n/g, "\n");
+  const previous = readFileSync(componentMapMigrationPath, "utf8").replace(/\r\n/g, "\n");
+
+  it("extends the existing trigger without rewriting rows or changing ownership privileges", () => {
+    expect(sql).toContain("create or replace function private.guard_component_map()");
+    expect(sql).toContain("security invoker set search_path = ''");
+    expect(sql).toContain("revoke all on function private.guard_component_map() from public, anon, authenticated");
+    expect(sql).not.toMatch(/(?:^|\n)\s*(?:alter table|drop|grant|insert into|update public|delete from|create trigger)\b/i);
+  });
+
+  it("accepts both document versions but forbids downgrading an existing occurrence map", () => {
+    expect(sql).toContain("doc->'version' is distinct from '1'::jsonb and doc->'version' is distinct from '2'::jsonb");
+    expect(sql).toContain("old.document_json->'version' = '2'::jsonb and doc->'version' is distinct from '2'::jsonb");
+    expect(sql).toContain("raise exception 'component_map_version_downgrade'");
+  });
+
+  it("requires exact version-2 AI-location metadata with canonical text bounded to 240 characters", () => {
+    expect(sql).toContain("if component ? 'suggestedLocation' then");
+    expect(sql).toContain("doc->'version' is distinct from '2'::jsonb or jsonb_typeof(suggested_location) is distinct from 'object'");
+    expect(sql).toContain("suggested_location->'source' is distinct from '\"ai_scene\"'::jsonb");
+    expect(sql).toContain("jsonb_typeof(suggested_location->'text') is distinct from 'string'");
+    expect(sql).toContain("(suggested_location - array['source', 'text']) <> '{}'::jsonb");
+    expect(sql).toContain("length(suggested_location->>'text') not between 1 and 240");
+    expect(sql).toContain("btrim(suggested_location->>'text', location_trim_characters)");
+    expect(sql).toContain("\\00A0");
+    expect(sql).toContain("\\FEFF");
+  });
+
+  it("retains every existing trigger protection for identity, revisions, review, geometry and owned photos", () => {
+    const previousErrors = [...previous.matchAll(/raise exception '([^']+)' using errcode = '([^']+)'/g)];
+    expect(previousErrors.length).toBeGreaterThan(10);
+    for (const [, message, code] of previousErrors) {
+      expect(sql).toContain(`raise exception '${message}' using errcode = '${code}'`);
+    }
+    for (const guard of [
+      "new.user_id is distinct from old.user_id or new.map_id is distinct from old.map_id",
+      "doc#>>'{overview,photoId}' is distinct from old.document_json#>>'{overview,photoId}'",
+      "new.revision is distinct from old.revision + 1",
+      "jsonb_array_length(doc->'components') > 100",
+      "lower(component->>'id') = any(component_ids)",
+      "component ? 'reviewedAt' or component->>'status' <> 'needs_view'",
+      "region->>'sourcePhotoId' is distinct from doc#>>'{overview,photoId}'",
+      "(box->>'x')::numeric + (box->>'width')::numeric > 1",
+      "lower(link->>'linkId') = any(link_ids)",
+      "jsonb_array_length(link->'photoIds') not between 1 and 4",
+      "s.user_id = new.user_id and s.local_id = link->>'lookupId'",
+      "if (photo#>>'{}' = any(photo_ids)) is not true then",
+    ]) expect(sql).toContain(guard);
+  });
+});
+
 describe("Supabase durable dataset migration", () => {
   const sql = readFileSync(durableDatasetMigrationPath, "utf8");
 
@@ -256,6 +403,21 @@ describe("Supabase durable dataset migration", () => {
     expect(sql).toContain("references public.scan_lookups (user_id, local_id)");
     expect(sql).toContain("on delete cascade");
     expect(sql).toContain("notify pgrst, 'reload schema'");
+  });
+});
+
+describe("Requested-photo history migration", () => {
+  const sql = readFileSync(join(migrationsDir, "20261105231000_requested_evidence_history.sql"), "utf8");
+  it("extends only the existing insert guard while retaining owner, source, immutable and capacity defenses", () => {
+    expect(sql).toContain("create or replace function private.guard_inspection_comparison()");
+    expect(sql).toContain("security invoker set search_path = ''");
+    for (const invariant of ["inspection_comparison_immutable", "comparison_source_not_owned_or_missing", "for update", "count_saved >= 100", "262144", "comparison_correction_target_missing", "where user_id = new.user_id and lookup_id = new.lookup_id"]) expect(sql).toContain(invariant);
+    expect(sql).not.toMatch(/^\s*(create table|alter table|create policy|grant |delete from|update public\.)/im);
+    expect(sql).not.toContain("security definer");
+  });
+  it("requires exact v2 context and forbids stripping or retargeting requested corrections", () => {
+    for (const invariant of ["legacy_comparison_cannot_carry_request", "invalid_requested_evidence_guide", "invalid_requested_evidence_text", "text_units > 600", "jsonb_array_length(guide->'photoIds') > 4", "mismatched_requested_evidence_analysis", "comparison_correction_version_changed", "requested_comparison_context_changed", "requested_comparison_source_changed", "side - array['observedOn','photoAddedAt','scanSavedAt']"]) expect(sql).toContain(invariant);
+    expect(sql).toContain("revoke all on function private.guard_inspection_comparison() from public, anon, authenticated");
   });
 });
 

@@ -1,17 +1,22 @@
 import { getLocalDateStamp } from "../lib/utils";
 import { formatIntakeDraft } from "../lib/intakeDraft";
+import { buildConditionHandoff, formatConditionHandoff } from "../lib/conditionHandoff";
+import { UNLINKED_CONDITION_FLAGS_MESSAGE } from "../lib/conditionCoverage";
 import type { CandidateMatch, EvidenceRegion, Lookup, SourceLink } from "../types";
 
 export function buildScanReport(lookup: Lookup) {
   const result = lookup.result;
   const datasetEvidence = getDatasetEvidence(result?.evidence ?? []);
   const detectedText = getDetectedTextEvidence(result?.evidence ?? []);
+  const condition = buildConditionHandoff(lookup);
+  const conditionText = formatConditionHandoff(lookup);
   const lines = [
     "Deep Spec Scan Report",
     `Created: ${formatDate(lookup.createdAt)}`,
     `Captured: ${formatDate(lookup.frame.capturedAt)}`,
     "",
     formatIntakeDraft(lookup),
+    ...(conditionText ? ["", conditionText] : []),
     "",
     "AI scan summary:",
     `${result?.partName ?? "Unidentified part"} - ${result?.confidence ?? "unknown"} confidence - ${lookup.scanCategory}`,
@@ -37,11 +42,13 @@ export function buildScanReport(lookup: Lookup) {
     "",
     "Image evidence:",
     formatEvidenceRegions(result?.evidenceRegions),
+    ...(lookup.photos?.length ? ["", "Photo group:", ...lookup.photos.map((photo, index) => `${index + 1}. ${photo.label.replaceAll("_", " ")} — ${photo.id} — ${formatDate(photo.capturedAt)}`), "This text export lists photo references; open the saved inspection to view the images."] : []),
     "",
     "Detected text:",
     formatList(detectedText, "None detected."),
     "",
     "Concerns:",
+    ...(result ? [UNLINKED_CONDITION_FLAGS_MESSAGE] : []),
     formatList(result?.concerns, "No concerns recorded; this does not establish condition."),
     "",
     "Dataset evidence:",
@@ -50,8 +57,9 @@ export function buildScanReport(lookup: Lookup) {
     "Ranked sources:",
     formatSourceLinks(result?.sourceLinks),
     "",
-    "Next action:",
-    result?.nextAction ?? "Review the saved evidence and unresolved checks before deciding on another scan or inspection.",
+    ...(condition.nextEvidence && (result?.isSafetyCritical || result?.safetyTriage === "needs_professional")
+      ? ["Safety action:", result.nextAction]
+      : !condition.nextEvidence ? ["Next action:", result?.nextAction ?? "Review the saved evidence and unresolved checks before deciding on another scan or inspection."] : []),
     "",
     "Human inspection (self-reported, separate from AI):",
     ...(lookup.inspection ? [
@@ -66,6 +74,7 @@ export function buildScanReport(lookup: Lookup) {
       `Test method and result: ${lookup.inspection.functionalNotes || "None recorded"}`,
       "No visible damage does not establish function. Recorded tests are not safety certification.",
     ] : ["No human inspection recorded. Function not verified."]),
+    "Human measurement, repair and follow-up history is not included in this quick text summary. Prepare the inspection report with photos to include that saved history and its corrections.",
     "",
     "User correction:",
     lookup.correction?.trim() || "None",
@@ -97,7 +106,15 @@ export function getMechanicSearchUrl(lookup: Lookup) {
 }
 
 export function downloadTextFile(filename: string, content: string) {
-  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  downloadFile(filename, content, "text/plain;charset=utf-8");
+}
+
+export function downloadHtmlFile(filename: string, content: string) {
+  downloadFile(filename, content, "text/html;charset=utf-8");
+}
+
+function downloadFile(filename: string, content: string, type: string) {
+  const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -106,7 +123,7 @@ export function downloadTextFile(filename: string, content: string) {
   document.body.append(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function formatDate(value: string) {

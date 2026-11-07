@@ -3,14 +3,26 @@ import { prepareRetryFrame } from "../lib/retryFrame";
 import { applyShopFitmentContext } from "../lib/shopFitmentContext";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { BrandLockup } from "../components/BrandLockup";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AIServiceError, getAIErrorDetails, getAIErrorMessage, identifyCapturedFrame } from "../services/aiService";
 import { readCloudLookup } from "../services/cloudHistory";
-import { syncAnalysisFailuresToCloud } from "../services/cloudSync";
+import { getCloudSyncStatus, syncAnalysisFailuresToCloud, syncLookupToCloud } from "../services/cloudSync";
+import { isCloudSyncEnabled } from "../services/cloudSyncPolicy";
+import { correctScanSelection, visualSelectionSourceMatches } from "../lib/visualSelection";
 import Button from "../components/ui/Button";
 import { IsolatedPartView } from "../components/result/IsolatedPartView";
+import { PhotoEvidenceStrip } from "../components/result/PhotoEvidenceStrip";
 import { ScanSources } from "../components/result/ScanSources";
 import { PartInspectionForm } from "../components/result/PartInspectionForm";
+import { ConditionEvidenceReview } from "../components/result/ConditionEvidenceReview";
+import { ObservationAreaReview, type ObservationAreaSelection } from "../components/result/ObservationAreaReview";
+import { PhotoReviewPanel } from "../components/result/PhotoReviewPanel";
+import { ComponentMapReview } from "../components/result/ComponentMapReview";
+import { InspectionReportExport } from "../components/result/InspectionReportExport";
+import { ServiceRecordLog } from "../components/result/ServiceRecordLog";
+import { ScanComparisonReview } from "../components/result/ScanComparisonReview";
+import { RequestedEvidenceHistory } from "../components/result/RequestedEvidenceHistory";
+import { DiagnosticReportReview } from "../components/result/DiagnosticReportReview";
 import { TrainingConsentPanel } from "../components/result/TrainingConsentPanel";
 import { IntakeDraft } from "../components/result/IntakeDraft";
 import { ScanDebugOverlay } from "../components/result/ScanDebugOverlay";
@@ -24,8 +36,8 @@ import { readLatestCapturedFrame, readLatestScanState, saveLatestScanState } fro
 import { buildScanReport, downloadTextFile, getScanReportFilename } from "../services/report";
 import { recordManualCorrection } from "../services/scanQualityMetrics";
 import { getShopJob } from "../services/shop";
-import { createLookup, getLookup, normalizeLookup, recordLookupAnalysisFailure, saveExistingLookup, scanStateFromLookup, updateLookup, updateLookupResult, withRetriedLookupResult } from "../services/storage";
-import type { CapturedFrame, IdentificationResult, Lookup, Rating, ScanAnalysisState, ShopJob as ShopJobRecord } from "../types";
+import { createLookup, getLookup, normalizeLookup, recordLookupAnalysisFailure, saveExistingLookup, scanStateFromLookup, updateLookup, updateLookupResult, updateLookupVisualSelection, withRetriedLookupResult } from "../services/storage";
+import type { CapturedFrame, IdentificationResult, Lookup, Rating, ScanAnalysisState, VisualFocusBox, ShopJob as ShopJobRecord } from "../types";
 
 type ResultRestoreStatus = "ready" | "loading" | "not-found" | "error";
 
@@ -35,25 +47,44 @@ export default function Result() {
 }
 
 function ResultView({ id }: { id: string | undefined }) {
+  const cloudSyncEnabled = isCloudSyncEnabled();
   const [mountedScope] = useState(getAccountScope);
   const location = useLocation();
   const routeState = isCurrentAccountRouteState(location.state) ? location.state : null;
   const navigate = useNavigate();
   const historyLookup = normalizeLookup(routeState?.savedLookup);
   const [lookup, setLookup] = useState<Lookup | null>(() => resolveRoutedLookup(id, routeState));
+  const latestLookupRef = useRef(lookup);
+  useEffect(() => { latestLookupRef.current = lookup; }, [lookup]);
+  // Captured by the area editor's callback: a deleted device scan must not be recreated.
+  const displayedDeviceLookupId = useMemo(() => lookup && getLookup(lookup.id) ? lookup.id : null, [lookup]);
   const [restoreStatus, setRestoreStatus] = useState<ResultRestoreStatus>(() => id && !resolveRoutedLookup(id, routeState) ? "loading" : "ready");
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [restoreAttempt, setRestoreAttempt] = useState(0);
   const [liveScanState, setLiveScanState] = useState<ScanAnalysisState | null>(null);
+  const [selectedPhotoId, setSelectedPhotoId] = useState<string>();
+  const [evidenceViewRequest, setEvidenceViewRequest] = useState(0);
+  const [requestedMeasurementIntent, setRequestedMeasurementIntent] = useState<{ id: number; lookup: Lookup }>();
+  const [observationAreaSelection, setObservationAreaSelection] = useState<ObservationAreaSelection>();
+  const photoCanvasRef = useRef<HTMLDivElement>(null);
+  const [selectionStatus, setSelectionStatus] = useState<string | null>(null);
+  const [selectionRetry, setSelectionRetry] = useState<Lookup | null>(null);
+  const selectionSyncGenerationRef = useRef(0);
   const inspectionBase = historyLookup && historyLookup.id === id
     ? (lookup ? mergeCloudLookup(lookup, historyLookup) : historyLookup)
     : lookup;
   const inspectionLookup = inspectionBase ? withRetriedLookupResult(inspectionBase, liveScanState) : null;
   const [hasPendingRetryResult, setHasPendingRetryResult] = useState(false);
+  const [retryInProgress, setRetryInProgress] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [retrySaveLabel, setRetrySaveLabel] = useState("Retry saving feedback");
   const scanState = liveScanState ?? (lookup ? scanStateFromLookup(inspectionBase ?? lookup) : (id ? null : getScanState(routeState)));
+  const currentScanStateRef = useRef(scanState);
+  useEffect(() => { currentScanStateRef.current = scanState; }, [scanState]);
   const frame = scanState?.frame ?? (id ? undefined : readLatestCapturedFrame());
+  const selectedPhoto = scanState?.photos?.find((photo) => photo.id === selectedPhotoId);
+  const displayFrame = selectedPhoto ?? frame;
+  const isOverviewPhoto = !selectedPhoto || selectedPhoto.id === scanState?.photos?.[0]?.id;
   const capturedAt = frame?.capturedAt ? new Date(frame.capturedAt).toLocaleString() : null;
   const storageWarning = scanState?.storageWarning;
   const shopJob = scanState?.jobId ? getShopJob(scanState.jobId) : null;
@@ -87,6 +118,11 @@ function ResultView({ id }: { id: string | undefined }) {
 
       setLookup(null);
       setLiveScanState(null);
+      if (!cloudSyncEnabled) {
+        setRestoreStatus("error");
+        setRestoreError("Cloud history is off. This scan is not saved on this device. Open saved scans to choose an available device record.");
+        return;
+      }
       setRestoreStatus("loading");
       setRestoreError(null);
 
@@ -125,7 +161,7 @@ function ResultView({ id }: { id: string | undefined }) {
     void restoreResult();
 
     return () => { cancelled = true; };
-  }, [id, location.state, mountedScope, restoreAttempt]);
+  }, [id, location.state, mountedScope, restoreAttempt, cloudSyncEnabled]);
 
   function trackManualCorrectionOnce() {
     if (manualCorrectionTrackedRef.current) {
@@ -234,6 +270,9 @@ function ResultView({ id }: { id: string | undefined }) {
 
     const saved = inspectionLookup ? saveExistingLookup(inspectionLookup, liveScanState) : createLookup({
       frame: scanState.frame,
+      photos: scanState.photos,
+      photoRelationship: scanState.photoRelationship,
+      isolatedObjects: scanState.isolatedObjects,
       focusBox: scanState.focusBox,
       focusMode: scanState.focusMode,
       isolatedImageBase64: scanState.isolatedImageBase64,
@@ -292,10 +331,55 @@ function ResultView({ id }: { id: string | undefined }) {
     }
   }
 
+  async function syncSelection(saved: Lookup) {
+    const generation = ++selectionSyncGenerationRef.current;
+    if (!getCloudSyncStatus().configured) {
+      setSelectionStatus("Selection saved on this device. Cloud sync is off.");
+      setSelectionRetry(null);
+      return;
+    }
+    setSelectionStatus("Selection saved on this device. Saving to cloud…");
+    setSelectionRetry(null);
+    const result = await syncLookupToCloud(saved).catch(() => ({ ok: false, message: "Cloud save was interrupted." }));
+    if (!isAccountScopeCurrent(mountedScope) || generation !== selectionSyncGenerationRef.current) return;
+    setSelectionStatus(result.ok ? "Selection saved to cloud." : `Selection saved on this device. ${result.message}`);
+    setSelectionRetry(result.ok ? null : saved);
+  }
+
+  function handleCorrectFocus(box: VisualFocusBox, objectIndex: number | null) {
+    if (!scanState || !isAccountScopeCurrent(mountedScope)) return;
+    try {
+      const latest = latestLookupRef.current;
+      if ((lookup && latest?.id !== lookup.id) || !currentScanStateRef.current
+        || !visualSelectionSourceMatches(currentScanStateRef.current, scanState, { lookupId: lookup?.id ?? latest?.id ?? "" })) {
+        setSelectionStatus("The displayed scan changed while you were editing. Reopen the scan before correcting the area.");
+        return;
+      }
+      const target = lookup ?? latest;
+      const local = target ? getLookup(target.id) : null;
+      if ((displayedDeviceLookupId || (!lookup && latest)) && !local) {
+        setSelectionStatus("This device scan was removed while you were editing. The area was not saved. Reopen Saved scans.");
+        return;
+      }
+      const current = local ?? target;
+      const corrected = correctScanSelection(scanState, box, objectIndex);
+      const saved = local ? updateLookupVisualSelection(local.id, box, objectIndex, scanState)
+        : current ? saveExistingLookup({ ...current, ...corrected }) : createLookup(corrected);
+      if (!saved.ok) { setSelectionStatus(`Selection was not saved. ${saved.message}`); return; }
+      if (!saved.value) { setSelectionStatus("Selection was not saved. This saved scan was not found."); return; }
+      setLookup(saved.value);
+      setLiveScanState(null);
+      saveLatestScanState(scanStateFromLookup(saved.value));
+      void syncSelection(saved.value);
+    } catch (error) {
+      setSelectionStatus(error instanceof Error ? error.message : "Selection was not saved. Try again.");
+    }
+  }
+
   return (
     <main className="ds-result-page ds-workbench min-h-dvh bg-[var(--ds-bg)] text-[var(--ds-fg-1)]">
       <div className="mx-auto grid min-h-dvh w-full max-w-[1600px] lg:grid-cols-[minmax(0,1fr)_430px] lg:gap-5 lg:p-5">
-        <section aria-label="Scan photo" data-testid="result-photo-panel" className="relative flex h-[48dvh] min-h-[320px] flex-col overflow-hidden bg-[#020617] text-white lg:sticky lg:top-5 lg:h-[calc(100dvh-40px)] lg:min-h-0 lg:rounded-[24px]">
+        <section aria-label="Scan photo" data-testid="result-photo-panel" className="relative flex flex-col overflow-hidden bg-[#020617] text-white lg:sticky lg:top-5 lg:h-[calc(100dvh-40px)] lg:overflow-y-auto lg:rounded-[24px]">
           <header className="relative z-10 flex shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4 pb-4 pt-[max(18px,env(safe-area-inset-top))]">
             <BrandLockup size="sm" />
             <h1 className="sr-only">{simpleSummary?.title ?? "Captured frame"}</h1>
@@ -304,17 +388,21 @@ function ResultView({ id }: { id: string | undefined }) {
               <Link to="/scan" className="ds-workbench-back">Back</Link>
             </nav>
           </header>
-          <div data-testid="result-photo-canvas" className="relative min-h-0 flex-1">
-            {frame?.imageBase64 ? (
+          <PhotoEvidenceStrip photos={scanState?.photos} photoRelationship={scanState?.photoRelationship} pipelineVersion={scanState?.result ? scanState.result.modelRun?.pipelineVersion : null} selectedId={selectedPhotoId} onSelect={(photoId) => { setSelectedPhotoId(photoId); setEvidenceViewRequest(0); }} />
+          <div ref={photoCanvasRef} tabIndex={-1} aria-label="Selected inspection photo" data-testid="result-photo-canvas" className="relative h-[60dvh] min-h-[420px] flex-none lg:h-auto lg:flex-1">
+            {displayFrame?.imageBase64 ? (
               <IsolatedPartView
-                frameBase64={frame.imageBase64}
-                isolatedImageBase64={scanState?.isolatedImageBase64}
-                focusBox={scanState?.focusBox}
-                focusMode={scanState?.focusMode ?? "full_frame"}
+                key={evidenceViewRequest}
+                initialView={evidenceViewRequest ? "original" : undefined}
+                frameBase64={displayFrame.imageBase64}
+                isolatedImageBase64={isOverviewPhoto ? scanState?.isolatedImageBase64 : undefined}
+                focusBox={isOverviewPhoto ? scanState?.focusBox : undefined}
+                focusMode={isOverviewPhoto ? (scanState?.focusMode ?? "full_frame") : "full_frame"}
                 label={simpleSummary?.title ?? "Captured frame"}
-                issue={scanState?.result ? deriveIssue(scanState.result) : null}
-                sceneChips={scanState?.result ? getSceneChips(scanState.result) : undefined}
-                objects={scanState?.isolatedObjects}
+                issue={isOverviewPhoto && scanState?.result ? deriveIssue(scanState.result) : null}
+                sceneChips={isOverviewPhoto && scanState?.result ? getSceneChips(scanState.result) : undefined}
+                objects={isOverviewPhoto ? scanState?.isolatedObjects : undefined}
+                onCorrectFocus={isOverviewPhoto && !hasPendingRetryResult ? handleCorrectFocus : undefined}
                 variant="result"
               />
             ) : <div className="absolute inset-0 grid place-items-center bg-[#061522] px-8 text-center text-sm text-white/62">{getRestorePhotoMessage(restoreStatus)}</div>}
@@ -327,12 +415,13 @@ function ResultView({ id }: { id: string | undefined }) {
           {restoreStatus !== "ready" ? (
             <ResultRestoreState
               message={restoreError}
-              onRetry={() => setRestoreAttempt((attempt) => attempt + 1)}
+              onRetry={cloudSyncEnabled ? () => setRestoreAttempt((attempt) => attempt + 1) : undefined}
               status={restoreStatus}
             />
           ) : <>
           {storageWarning ? <StorageWarning message={storageWarning} /> : null}
           {saveError ? <StorageWarning message={saveError} /> : null}
+          {selectionStatus ? <p role="status" className="rounded-xl border p-3 text-sm">{selectionStatus}{selectionRetry ? <button type="button" className="ml-2 underline" onClick={() => void syncSelection(selectionRetry)}>Retry cloud selection save</button> : null}</p> : null}
           {shopJob ? <ShopJobBanner job={shopJob} /> : null}
           {scanState?.result ? (
             <AnalysisResult
@@ -352,8 +441,11 @@ function ResultView({ id }: { id: string | undefined }) {
               message={scanState.errorMessage} 
               capturedAt={capturedAt} 
               frame={frame}
+              photos={scanState.photos}
+              photoRelationship={scanState.photoRelationship}
               lookup={locallySavedLookup ? lookup : null}
               vehicleContext={lookup?.vehicleContext ?? scanState.vehicleContext}
+              onRetryBusyChange={setRetryInProgress}
               onLookupRetrySuccess={(updatedLookup, warning) => {
                 pendingRetryLookupRef.current = warning ? updatedLookup : null;
                 setHasPendingRetryResult(Boolean(warning));
@@ -361,9 +453,18 @@ function ResultView({ id }: { id: string | undefined }) {
                 setSaveError(warning ?? null);
                 setRetrySaveLabel(warning ? "Retry saving scan result" : "Retry saving feedback");
               }}
-              onScanRetrySuccess={(nextScanState) => {
-                setLiveScanState(nextScanState);
-                saveLatestScanState(nextScanState);
+              onScanRetrySuccess={(nextScanState, sourceFrame) => {
+                const current = currentScanStateRef.current;
+                if (!current || current.frame.imageBase64 !== sourceFrame.imageBase64
+                  || current.frame.capturedAt !== sourceFrame.capturedAt
+                  || nextScanState.frame.capturedAt !== sourceFrame.capturedAt) {
+                  setSaveError("The original photo changed during retry. Reopen the scan before retrying.");
+                  return;
+                }
+                // Loading a signed original into memory changes its URL, not its coordinate space.
+                const restored = { ...current, ...nextScanState, errorCode: undefined, errorMessage: undefined };
+                setLiveScanState(restored);
+                saveLatestScanState(restored);
               }}
             />
           ) : null}
@@ -379,12 +480,31 @@ function ResultView({ id }: { id: string | undefined }) {
               onRetrySave={retryFeedbackSave}
             />
           ) : null}
+          {scanState ? <PhotoReviewPanel scan={scanState} onSelectPhoto={(photoId) => {
+            setSelectedPhotoId(photoId);
+            setEvidenceViewRequest((request) => request + 1);
+            photoCanvasRef.current?.focus({ preventScroll: true });
+            photoCanvasRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+          }} /> : null}
+          {inspectionLookup ? <ConditionEvidenceReview lookup={inspectionLookup} onReviewObservation={setObservationAreaSelection} disabled={!locallySavedLookup || retryInProgress || hasPendingRetryResult || Boolean(saveError || selectionRetry)} onRecordMeasurement={() => setRequestedMeasurementIntent((previous) => ({ id: (previous?.id ?? 0) + 1, lookup: inspectionLookup }))} onSelectPhoto={(photoId) => {
+            setSelectedPhotoId(photoId);
+            setEvidenceViewRequest((request) => request + 1);
+            photoCanvasRef.current?.focus({ preventScroll: true });
+            photoCanvasRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+          }} /> : null}
+          {inspectionLookup ? <ObservationAreaReview lookup={inspectionLookup} selection={observationAreaSelection} disabled={retryInProgress || hasPendingRetryResult || Boolean(saveError || selectionRetry)} /> : null}
+          {inspectionLookup ? <ComponentMapReview key={`component-map:${inspectionLookup.id}`} lookup={inspectionLookup} /> : null}
           {inspectionLookup ? <PartInspectionForm key={inspectionLookup.id} lookup={inspectionLookup} onSaved={(saved) => setLookup({
             ...saved,
             ...(pendingRatingRef.current !== undefined ? { rating: pendingRatingRef.current } : {}),
             ...(pendingCorrectionRef.current !== undefined ? { correction: pendingCorrectionRef.current } : {}),
           })} /> : null}
+          {inspectionLookup ? <ServiceRecordLog key={`service-log:${inspectionLookup.id}`} lookup={inspectionLookup} requestedMeasurementIntent={requestedMeasurementIntent} disabled={retryInProgress || hasPendingRetryResult || Boolean(saveError || selectionRetry)} /> : null}
+            {inspectionLookup ? <ScanComparisonReview key={`comparison:${inspectionLookup.id}`} lookup={inspectionLookup} disabled={hasPendingRetryResult || Boolean(saveError || selectionRetry)} /> : null}
+            {inspectionLookup ? <RequestedEvidenceHistory key={`requested-history:${inspectionLookup.id}`} lookup={inspectionLookup} disabled={hasPendingRetryResult || Boolean(saveError || selectionRetry)} /> : null}
+          {inspectionLookup ? <DiagnosticReportReview key={`diagnostics:${inspectionLookup.id}`} lookup={inspectionLookup} disabled={hasPendingRetryResult || Boolean(saveError || selectionRetry)} /> : null}
           {inspectionLookup ? <ReportActions lookup={inspectionLookup} /> : null}
+          {inspectionLookup ? <InspectionReportExport key={`report:${inspectionLookup.id}`} lookupId={inspectionLookup.id} disabled={hasPendingRetryResult || Boolean(saveError || selectionRetry)} /> : null}
           {inspectionLookup ? <TrainingConsentPanel key={`consent:${inspectionLookup.id}`} scanId={inspectionLookup.id} /> : null}
           {datasetSourceUrls.length > 0 ? <SourceFinePrint urls={datasetSourceUrls} /> : null}
           <Link
@@ -432,7 +552,7 @@ function ResultRestoreState({
   status,
 }: {
   message: string | null;
-  onRetry: () => void;
+  onRetry?: () => void;
   status: Exclude<ResultRestoreStatus, "ready">;
 }) {
   if (status === "loading") {
@@ -458,7 +578,8 @@ function ResultRestoreState({
     <section className="rounded-[22px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-5" role="alert">
       <h2 className="text-xl font-extrabold tracking-tight">Saved scan unavailable</h2>
       <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-2)]">{message ?? "DeepSpec could not load this saved scan."}</p>
-      <Button className="mt-4" onClick={onRetry}>Retry loading</Button>
+      {onRetry ? <Button className="mt-4" onClick={onRetry}>Retry loading</Button>
+        : <Link className="mt-4 inline-flex min-h-11 items-center rounded-full border border-[var(--ds-border)] px-4 text-sm font-bold" to="/history">Open saved scans</Link>}
     </section>
   );
 }
@@ -627,7 +748,7 @@ function AnalysisResult({
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           <MiniPill label={result.scanCategory} />
-          <MiniPill label={`${result.confidence} confidence`} />
+          <MiniPill label={`AI estimate: ${result.confidence}`} />
           {isOnDeviceResult(result) || modelRouteNotice ? <MiniPill label="Estimate" /> : null}
         </div>
         {isOnDeviceResult(result) ? (
@@ -639,6 +760,7 @@ function AnalysisResult({
             {modelRouteNotice}
           </p>
         ) : null}
+        <p className="mt-3 text-xs leading-5 text-[var(--ds-fg-3)]">Confidence labels are the model's own estimates. They do not represent measured chances of a correct identification.</p>
         <IssueLine result={result} variant="result" />
         <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-3)]">{getAnswerBody(result, summary)}</p>
         {capturedAt ? <p className="mt-3 text-xs font-semibold text-[var(--ds-fg-3)]">Captured {capturedAt}</p> : null}
@@ -659,8 +781,9 @@ function AnalysisResult({
       </section>
 
       {showSafetyWarning ? (
-        <section className="rounded-[22px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-4">
+        <section aria-label="Safety action" className="rounded-[22px] border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-4">
           <p className="text-sm font-extrabold text-[var(--ds-warn-ink)]">Professional check needed</p>
+          <p className="mt-2 text-sm font-semibold leading-6 text-[var(--ds-fg-2)]">{result.nextAction.trim() || "Check this safety item before driving or repairing."}</p>
           <p className="mt-2 text-sm leading-6 text-[var(--ds-fg-2)]">
             Verify before driving or repairing. The scan reads visible clues; this category affects safety.
           </p>
@@ -691,7 +814,7 @@ function CandidateMatches({ result }: { result: IdentificationResult }) {
     <section className="mt-4 border-t border-[var(--ds-border)] pt-4" aria-label="Other possible matches">
       <h3 className="text-xs font-extrabold uppercase tracking-[0.12em] text-[var(--ds-fg-3)]">Other possible matches</h3>
       {result.candidateMatches.map((candidate) => <article key={`${candidate.partName}:${candidate.reason}`} className="mt-2 rounded-2xl border border-[var(--ds-border)] bg-[var(--ds-surface)] p-3">
-        <p className="text-sm font-extrabold">{candidate.partName} <span className="ml-1 text-xs font-semibold text-[var(--ds-fg-3)]">{candidate.confidence} confidence</span></p>
+        <p className="text-sm font-extrabold">{candidate.partName} <span className="ml-1 text-xs font-semibold text-[var(--ds-fg-3)]">AI estimate: {candidate.confidence}</span></p>
         <p className="mt-1 text-xs leading-5 text-[var(--ds-fg-3)]">{candidate.reason}</p>
       </article>)}
     </section>
@@ -818,27 +941,41 @@ function AnalysisError({
   captureMode,
   code,
   frame,
+  photos,
+  photoRelationship,
   lookup,
   message,
   vehicleContext,
   onLookupRetrySuccess,
   onScanRetrySuccess,
+  onRetryBusyChange,
 }: {
   capturedAt: string | null;
   captureMode: "camera" | "upload";
   code?: string;
   frame: CapturedFrame | null | undefined;
+  photos?: ScanAnalysisState["photos"];
+  photoRelationship?: ScanAnalysisState["photoRelationship"];
   lookup: Lookup | null;
   vehicleContext?: Lookup["vehicleContext"];
   message: string;
   onLookupRetrySuccess: (updatedLookup: Lookup, warning?: string) => void;
-  onScanRetrySuccess: (scanState: ScanAnalysisState) => void;
+  onScanRetrySuccess: (scanState: ScanAnalysisState, sourceFrame: CapturedFrame) => void;
+  onRetryBusyChange: (busy: boolean) => void;
 }) {
   const [isOnline, setIsOnline] = useState(() => typeof navigator !== "undefined" ? navigator.onLine : true);
   const [isRetrying, setIsRetrying] = useState(false);
   const [mountedScope] = useState(getAccountScope);
+  const isMountedRef = useRef(true);
   const [retryError, setRetryError] = useState<string | null>(null);
-  const errorDetails = getAIErrorDetails(code);
+  const [retryErrorCode, setRetryErrorCode] = useState<string | null>(null);
+  const currentCode = retryErrorCode ?? code;
+  const errorDetails = getAIErrorDetails(currentCode);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -857,16 +994,20 @@ function AnalysisError({
   async function handleRetry() {
     const scope = mountedScope;
     const retryFrame = lookup?.frame ?? frame;
-    if (!retryFrame || isRetrying || !isAccountScopeCurrent(scope)) return;
+    const isCurrentRetry = () => isMountedRef.current && isAccountScopeCurrent(scope);
+    if (!retryFrame || isRetrying || !isCurrentRetry()) return;
     setIsRetrying(true);
+    onRetryBusyChange(true);
     setRetryError(null);
     const attemptId = createAnalysisAttemptId();
 
     try {
       const identificationFrame = await prepareRetryFrame(retryFrame);
-      if (!isAccountScopeCurrent(scope)) return;
-      const result = applyShopFitmentContext(await identifyCapturedFrame(identificationFrame, undefined, undefined, { vehicleContext }), vehicleContext);
-      if (!isAccountScopeCurrent(scope)) return;
+      if (!isCurrentRetry()) return;
+      const result = applyShopFitmentContext(await identifyCapturedFrame(identificationFrame, undefined, undefined, {
+        vehicleContext, photos: lookup?.photos ?? photos, photoRelationship: lookup ? lookup.photoRelationship : photoRelationship,
+      }), vehicleContext);
+      if (!isCurrentRetry()) return;
       if (lookup) {
         const updateResult = updateLookupResult(lookup.id, result, {
           analysisSource: "manual_retry",
@@ -880,6 +1021,8 @@ function AnalysisError({
       } else {
         onScanRetrySuccess({
           frame: identificationFrame,
+          photos,
+          photoRelationship,
           result,
           analysisAttemptId: attemptId,
           vehicleContext,
@@ -889,12 +1032,13 @@ function AnalysisError({
             captureMode,
             savedAt: new Date().toISOString(),
           },
-        });
+        }, retryFrame);
       }
     } catch (err) {
-      if (isAccountScopeCurrent(scope)) {
+      if (isCurrentRetry()) {
         const message = getAIErrorMessage(err);
         setRetryError(message);
+        setRetryErrorCode(err instanceof AIServiceError ? err.code : null);
         if (lookup) {
           const saved = recordLookupAnalysisFailure(lookup.id, { attemptId,
             errorCode: err instanceof AIServiceError ? err.code : "analysis_failed",
@@ -904,7 +1048,8 @@ function AnalysisError({
         }
       }
     } finally {
-      setIsRetrying(false);
+      onRetryBusyChange(false);
+      if (isMountedRef.current) setIsRetrying(false);
     }
   }
 
@@ -914,11 +1059,11 @@ function AnalysisError({
         {errorDetails.category === "provider_unavailable" ? "Provider unavailable" : "Identification needs another pass"}
       </p>
       <h2 className="mt-2 text-xl font-extrabold tracking-tight">{errorDetails.title}</h2>
-      <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-2)]">{message}</p>
+      <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-2)]">{retryError ?? message}</p>
       <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-2)]">{errorDetails.description}</p>
       {capturedAt ? <p className="mt-3 text-xs font-semibold text-[var(--ds-fg-3)]">Captured {capturedAt}</p> : null}
 
-      {frame ? (
+      {frame && currentCode !== "response_blocked" ? (
         <div className="mt-4 border-t border-[var(--ds-border)] pt-4">
           <p className="text-xs font-semibold text-[var(--ds-fg-3)]">
             {isOnline ? "Connection is active." : "Offline. Reconnect to retry."}
@@ -930,9 +1075,6 @@ function AnalysisError({
           >
             {isRetrying ? "Retrying..." : errorDetails.retryLabel}
           </Button>
-          {retryError ? (
-            <p className="mt-3 text-sm font-semibold text-[var(--ds-danger-ink)]">{retryError}</p>
-          ) : null}
         </div>
       ) : null}
     </section>

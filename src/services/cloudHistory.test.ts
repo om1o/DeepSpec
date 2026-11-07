@@ -1,5 +1,7 @@
 import { setActiveAccount } from "../lib/accountScope";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ConditionAssessment, PhotoReview } from "../types";
+import { confirmVehicleContextField } from "../lib/vehicleContext";
 
 type SelectResult = { data: unknown; error: { message?: string } | null };
 
@@ -48,6 +50,100 @@ const inspection = {
   inspectedAt: "2026-09-20T12:00:00.000Z",
 };
 
+const conditionAssessment = (photoId: string): ConditionAssessment => ({
+  version: 1, observations: [{ id: "edge", text: "Orange flaking is visible.", photoIds: [photoId] }],
+  possibleCauses: [{ text: "Moisture exposure is possible, but unconfirmed.", observationIds: ["edge"] }],
+  unknowns: ["Depth and hidden condition are unknown."],
+  nextEvidence: { kind: "photo", request: "Photograph the reverse of the edge.", purpose: "Show the hidden surface.", photoIds: [photoId] },
+});
+
+describe("readCloudLookupForReport", () => {
+  const base = "user-1/scan-1/";
+  const signed = (path: string) => `https://project.supabase.co/storage/v1/object/sign/scan-images/${path}?token=fresh`;
+  const box = { x: .1, y: .1, width: .3, height: .4, confidence: .8 };
+  const reportRow = () => ({ ...shopRow, image_path: `${base}original.png`, inspection_json: inspection,
+    notes: "saved review notes", correction: "Corrected part", result_json: { partName: "Rocker panel", conditionAssessment: conditionAssessment("detail") },
+    evidence_bundle_json: { version: 1,
+      photos: [{ id: "overview", label: "overview", capturedAt: "now", imagePath: `${base}original.png` }, { id: "detail", label: "close_up", capturedAt: "later", imagePath: `${base}detail.png` }],
+      isolatedImagePath: `${base}mask.png`, focusBox: box, focusMode: "mask",
+      isolatedObjects: [{ name: "Missing mask", category: "engine", primary: true, focusBox: box, imagePath: `${base}mask.png` },
+        { name: "Cleared crop", category: "engine", primary: false, focusBox: box, focusMode: "crop", correctedAt: "today", imagePath: null }],
+    } });
+  beforeEach(() => {
+    setActiveAccount("user-1"); vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
+    mocks.select.mockReset(); mocks.eq.mockReset(); mocks.limit.mockReset(); mocks.signedUrls.mockReset();
+    mocks.select.mockReturnValue({ data: [reportRow()], error: null });
+    mocks.signedUrls.mockResolvedValue({ data: [{ path: `${base}original.png`, signedUrl: signed(`${base}original.png`) }], error: null });
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("retains all saved metadata/photo identities when one photo and mask cannot be signed, while normal restoration still fails", async () => {
+    const { readCloudLookupForReport, readCloudLookup } = await import("./cloudHistory");
+    const result = await readCloudLookupForReport("scan-1");
+    expect(result.ok).toBe(true);
+    if (!result.ok || !result.value) throw new Error("expected export projection");
+    expect(result.value).toMatchObject({ inspection, notes: "saved review notes", correction: "Corrected part" });
+    expect(result.value.photos?.map(({ id, imageBase64 }) => [id, imageBase64])).toEqual([["overview", signed(`${base}original.png`)], ["detail", ""]]);
+    expect(result.value.result?.conditionAssessment).toEqual(conditionAssessment("detail"));
+    expect(result.value.isolatedObjects?.[1]).toMatchObject({ isolatedImageBase64: "", correctedAt: "today" });
+    expect(result.unavailableImages).toEqual([{ kind: "photo", photoId: "detail" }, { kind: "cutout" }, { kind: "cutout", selectionName: "Missing mask" }]);
+    expect(await readCloudLookup("scan-1")).toMatchObject({ ok: false });
+    expect(mocks.eq).toHaveBeenCalledWith("user_id", "user-1"); expect(mocks.eq).toHaveBeenCalledWith("local_id", "scan-1");
+  });
+
+  it("keeps a cloud-only legacy root and its condition references without substituting a brand image when signing fails", async () => {
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, image_path: `${base}original.png`, result_json: { partName: "Rocker", conditionAssessment: conditionAssessment("photo-1") } }], error: null });
+    mocks.signedUrls.mockRejectedValue(new Error("private signing error with token"));
+    const { readCloudLookupForReport } = await import("./cloudHistory");
+    const result = await readCloudLookupForReport("scan-1");
+    expect(result.ok && result.value?.frame.imageBase64).toBe("");
+    expect(result.ok && result.value?.result?.conditionAssessment).toEqual(conditionAssessment("photo-1"));
+    expect(result.ok && result.unavailableImages).toEqual([{ kind: "photo", photoId: "photo-1" }]);
+    expect(JSON.stringify(result)).not.toContain("private signing error");
+  });
+
+  it.each([true, false])("keeps a legacy report's review only when an original reference exists (reference: %s)", async (hasOriginal) => {
+    const photoReview: PhotoReview = { version: 1, photos: [{ photoId: "photo-1", status: "limited_view", summary: "Only the front was visible." }], disagreements: [] };
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, image_path: hasOriginal ? `${base}original.png` : null,
+      result_json: { partName: "Panel", photoReview } }], error: null });
+    mocks.signedUrls.mockRejectedValue(new Error("signing unavailable"));
+    const { readCloudLookupForReport } = await import("./cloudHistory");
+    const result = await readCloudLookupForReport("scan-1");
+    if (!result.ok || !result.value) throw new Error("expected report projection");
+    expect(result.value.frame.imageBase64).toBe("");
+    if (hasOriginal) expect(result.value.result?.photoReview).toEqual(photoReview);
+    else expect(result.value.result).not.toHaveProperty("photoReview");
+  });
+
+  it.each(["owner", "scan", "bundle"])("rejects foreign %s paths before requesting any signed asset", async (kind) => {
+    const row = reportRow();
+    if (kind === "owner") row.image_path = "other/scan-1/original.png";
+    if (kind === "scan") row.image_path = "user-1/other/original.png";
+    if (kind === "bundle") row.evidence_bundle_json.photos[1].imagePath = "other/scan-1/detail.png";
+    mocks.select.mockReturnValue({ data: [row], error: null });
+    const { readCloudLookupForReport } = await import("./cloudHistory");
+    expect(await readCloudLookupForReport("scan-1")).toMatchObject({ ok: false });
+    expect(mocks.signedUrls).not.toHaveBeenCalled();
+  });
+
+  it.each(["origin", "path"])("does not accept a signing response with the wrong %s", async (kind) => {
+    mocks.signedUrls.mockResolvedValue({ data: [{ path: `${base}original.png`, signedUrl: kind === "origin"
+      ? "https://foreign.example/photo.png" : signed("user-1/other/original.png") }], error: null });
+    const { readCloudLookupForReport } = await import("./cloudHistory");
+    const result = await readCloudLookupForReport("scan-1");
+    expect(result.ok && result.value?.frame.imageBase64).toBe("");
+    expect(result.ok && result.unavailableImages).toContainEqual({ kind: "photo", photoId: "overview" });
+  });
+
+  it("rejects a mismatched authenticated owner and a changed account during signing", async () => {
+    const { readCloudLookupForReport } = await import("./cloudHistory");
+    setActiveAccount("user-2"); expect(await readCloudLookupForReport("scan-1")).toMatchObject({ ok: false });
+    expect(mocks.select).not.toHaveBeenCalled(); expect(mocks.signedUrls).not.toHaveBeenCalled();
+    setActiveAccount("user-1"); mocks.signedUrls.mockImplementation(async () => { setActiveAccount("user-2"); return { data: [], error: null }; });
+    expect(await readCloudLookupForReport("scan-1")).toEqual({ ok: false, message: "Account changed. Reload your saved scans." });
+  });
+});
+
 describe("readCloudLookups", () => {
   beforeEach(() => {
     setActiveAccount("user-1");
@@ -56,6 +152,122 @@ describe("readCloudLookups", () => {
     mocks.limit.mockReset();
     mocks.signedUrls.mockReset();
     mocks.signedUrls.mockResolvedValue({ data: [], error: null });
+  });
+
+  it.each(["valid", "missing", "foreign-photo", "duplicate", "unassessed-disagreement"])("restores only valid photo review without synthesizing omitted coverage: %s", async (kind) => {
+    const base = "user-1/scan-1/";
+    const review: PhotoReview = { version: 1, photos: [
+      { photoId: "overview", status: "observations_returned", summary: "The edge looks smooth." },
+      { photoId: "detail", status: "limited_view", summary: "The dark line is uncertain." },
+    ], disagreements: [{ id: "edge", photoIds: ["overview", "detail"], description: "The edge differs between views.",
+      nextEvidence: { request: "Photograph in even light.", purpose: "Check whether the line is a shadow." } }] };
+    if (kind === "foreign-photo") review.photos[0].photoId = "other-scan";
+    if (kind === "duplicate") review.photos[1].photoId = "overview";
+    if (kind === "unassessed-disagreement") review.photos[1].status = "not_assessed";
+    const bundle = { version: 1, photos: ["overview", "detail", "marking"].map((id) => ({ id, label: "other", capturedAt: "now", imagePath: `${base}${id}.jpg` })) };
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, image_path: `${base}overview.jpg`, evidence_bundle_json: bundle,
+      result_json: { partName: "Rocker panel", ...(kind === "missing" ? {} : { photoReview: review }) }, inspection_json: inspection }], error: null });
+    mocks.signedUrls.mockImplementation(async (paths: string[]) => ({ data: paths.map((path) => ({ path, signedUrl: `https://images/${path}?signed=new` })), error: null }));
+    const { readCloudLookup } = await import("./cloudHistory");
+    const loaded = await readCloudLookup("scan-1");
+    if (!loaded.ok || !loaded.value) throw new Error("expected cloud scan");
+    expect(loaded.value.photos).toHaveLength(3);
+    expect(loaded.value.inspection).toEqual(inspection);
+    const { normalizeLookup, scanStateFromLookup } = await import("./storage");
+    const reopened = scanStateFromLookup(normalizeLookup(loaded.value)!);
+    if (kind === "valid") {
+      expect(reopened.result?.photoReview).toEqual(review);
+      expect(reopened.result?.photoReview?.photos).toHaveLength(2);
+    } else expect(reopened.result).not.toHaveProperty("photoReview");
+  });
+
+  it.each(["same_part_or_area", "independent", "unknown", undefined] as const)("restores relationship %s with every photo and cutout, keeping corrected crops empty", async (photoRelationship) => {
+    const base = "user-1/scan-1/";
+    const box = { x: 0.1, y: 0.1, width: 0.3, height: 0.4, confidence: 0.8 };
+    const bundle = { version: 1, ...(photoRelationship !== undefined ? { photoRelationship } : {}),
+      photos: [{ id: "overview", label: "overview", capturedAt: "now", imagePath: `${base}original.jpg` }, { id: "detail", label: "close_up", capturedAt: "later", imagePath: `${base}detail.jpg` }],
+      isolatedObjects: [{ name: "Primary", category: "engine", primary: true, focusBox: box, imagePath: `${base}primary.png` }, { name: "Secondary", category: "electrical", primary: false, focusBox: box, imagePath: `${base}secondary.png` }, { name: "Corrected", category: "engine", primary: false, focusBox: box, imagePath: null, focusMode: "crop", correctedAt: "today" }],
+      focusBox: box, focusMode: "mask", isolatedImagePath: `${base}primary.png`,
+    };
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, image_path: `${base}original.jpg`, evidence_bundle_json: bundle }], error: null });
+    mocks.signedUrls.mockImplementation(async (paths: string[]) => ({ data: paths.map((path) => ({ path, signedUrl: `https://images/${path}?signed=new` })), error: null }));
+    const { readCloudLookup } = await import("./cloudHistory");
+    const result = await readCloudLookup("scan-1");
+    expect(result.ok).toBe(true);
+    if (!result.ok || !result.value) throw new Error("expected a cloud scan");
+    expect(result.value.photos?.map((photo) => photo.id)).toEqual(["overview", "detail"]);
+    expect(result.value.photoRelationship).toBe(photoRelationship);
+    expect(result.value.photos?.[1].imageBase64).toContain("detail.jpg?signed=new");
+    expect(result.value.isolatedObjects?.[1].isolatedImageBase64).toContain("secondary.png?signed=new");
+    expect(result.value.isolatedObjects?.[2]).toMatchObject({ isolatedImageBase64: "", focusMode: "crop", correctedAt: "today" });
+    expect(result.value.isolatedImageBase64).toContain("primary.png?signed=new");
+    const { normalizeLookup, scanStateFromLookup } = await import("./storage");
+    const reopened = scanStateFromLookup(normalizeLookup(result.value)!);
+    expect(reopened.photos).toEqual(result.value.photos);
+    expect(reopened.photoRelationship).toBe(photoRelationship);
+    expect(reopened.isolatedObjects).toEqual(result.value.isolatedObjects);
+    expect(mocks.signedUrls).toHaveBeenCalledWith([`${base}original.jpg`, `${base}detail.jpg`, `${base}primary.png`, `${base}secondary.png`], 3600);
+  });
+
+  it.each(["detail", "photo-1", "other-scan-photo"])("validates restored v2 condition areas against the owned evidence bundle: %s", async (photoId) => {
+    const base = "user-1/scan-1/";
+    const assessment = conditionAssessment(photoId);
+    assessment.version = 2;
+    assessment.observations[0].areas = [{ photoId, rectangle: { x: 0.2, y: 0.3, width: 0.2, height: 0.4 } }];
+    const bundle = { version: 1, photos: [
+      { id: "overview", label: "overview", capturedAt: "now", imagePath: `${base}original.jpg` },
+      { id: "detail", label: "close_up", capturedAt: "later", imagePath: `${base}detail.jpg` },
+    ] };
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, image_path: `${base}original.jpg`, evidence_bundle_json: bundle,
+      result_json: { partName: "Rocker panel", conditionAssessment: assessment }, inspection_json: inspection }], error: null });
+    mocks.signedUrls.mockImplementation(async (paths: string[]) => ({ data: paths.map((path) => ({ path, signedUrl: `https://images/${path}?signed=new` })), error: null }));
+    const { readCloudLookup } = await import("./cloudHistory");
+    const loaded = await readCloudLookup("scan-1");
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok || !loaded.value) throw new Error("expected cloud scan");
+    expect(loaded.value.inspection).toEqual(inspection);
+    expect(loaded.value.reviewStatus).toBe("confirmed");
+    expect(loaded.value.result?.partName).toBe("Rocker panel");
+    if (photoId === "detail") {
+      expect(loaded.value.result?.conditionAssessment).toEqual(assessment);
+      const { normalizeLookup, scanStateFromLookup } = await import("./storage");
+      expect(scanStateFromLookup(normalizeLookup(loaded.value)!).result?.conditionAssessment).toEqual(assessment);
+    } else expect(loaded.value.result).not.toHaveProperty("conditionAssessment");
+  });
+
+  it.each([true, false])("allows legacy photo-1 only when an original was restored (available: %s)", async (available) => {
+    const imagePath = "user-1/scan-1/original.jpg";
+    const assessment = conditionAssessment("photo-1");
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, image_path: available ? imagePath : null,
+      result_json: { partName: "Rocker panel", conditionAssessment: assessment }, inspection_json: inspection }], error: null });
+    mocks.signedUrls.mockResolvedValue({ data: [{ path: imagePath, signedUrl: "https://images/original.jpg?signed=new" }], error: null });
+    const { readCloudLookup } = await import("./cloudHistory");
+    const loaded = await readCloudLookup("scan-1");
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok || !loaded.value) throw new Error("expected legacy cloud scan");
+    expect(loaded.value.inspection).toEqual(inspection);
+    if (available) expect(loaded.value.result?.conditionAssessment).toEqual(assessment);
+    else expect(loaded.value.result).not.toHaveProperty("conditionAssessment");
+  });
+
+  it.each(["other-owner", "other-scan", "missing-image", "malformed", "invalid-relationship"])("does not partially restore unsafe evidence: %s", async (kind) => {
+    const imagePath = kind === "other-owner" ? "user-2/scan-1/photo.jpg" : kind === "other-scan" ? "user-1/scan-2/photo.jpg" : "user-1/scan-1/photo.jpg";
+    const bundle = { version: 1, ...(kind === "invalid-relationship" ? { photoRelationship: "same_car" } : {}), photos: [{ id: "detail", label: kind === "malformed" ? "not-a-label" : "close_up", capturedAt: "now", imagePath }] };
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, evidence_bundle_json: bundle }], error: null });
+    const { readCloudLookup } = await import("./cloudHistory");
+    expect(await readCloudLookup("scan-1")).toMatchObject({ ok: false });
+    if (kind !== "missing-image") expect(mocks.signedUrls).not.toHaveBeenCalled();
+  });
+
+  it("reads old scans when the evidence column migration has not landed", async () => {
+    mocks.select.mockImplementation((columns) => columns.includes("evidence_bundle_json")
+      ? { data: null, error: { message: "column scan_lookups.evidence_bundle_json does not exist" } }
+      : { data: [shopRow], error: null });
+    const { readCloudLookups } = await import("./cloudHistory");
+    expect(await readCloudLookups()).toMatchObject({ ok: true });
+    expect(mocks.select).toHaveBeenCalledTimes(2);
+    expect(mocks.select.mock.calls[1][0]).toContain("inspection_json");
+    expect(mocks.select.mock.calls[1][0]).not.toContain("evidence_bundle_json");
   });
 
   it("reads the verified account history with its owner filter and limit despite an obsolete preview flag", async () => {
@@ -169,6 +381,42 @@ describe("readCloudLookups", () => {
     expect(result.ok && result.value.map((lookup) => lookup.id)).toEqual(["scan-1"]);
   });
 
+  it("restores confirmed vehicle facts and new metadata through cloud and local parsing", async () => {
+    let context = confirmVehicleContextField({ year: "2014", make: "Toyota", engine: "2.5L", mileage: "120000", mileageUnit: "km", modifications: { status: "none_known" }, customerName: "Customer" }, "mileage", true, "2026-11-05T12:00:00.000Z");
+    context = confirmVehicleContextField(context, "modifications", true, "2026-11-05T12:00:00.000Z");
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, vehicle_context: context }], error: null });
+    const { readCloudLookups } = await import("./cloudHistory");
+    const { normalizeLookup } = await import("./storage");
+    const result = await readCloudLookups();
+    if (!result.ok) throw new Error(result.message);
+    expect(result.value[0].vehicleContext).toEqual(context);
+    expect(normalizeLookup(result.value[0])?.vehicleContext).toEqual(context);
+    expect(result.value[0].vehicleContext?.confirmedFields?.year).toBeUndefined();
+  });
+
+  it("restores vehicle field sources from cloud JSON without needing device reference history", async () => {
+    const context = referenceVehicleContext();
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, vehicle_context: JSON.parse(JSON.stringify(context)) }], error: null });
+    const { readCloudLookups } = await import("./cloudHistory");
+    const { normalizeLookup } = await import("./storage");
+    const result = await readCloudLookups();
+    if (!result.ok) throw new Error(result.message);
+    expect(result.value[0].vehicleContext).toEqual(context);
+    expect(normalizeLookup(result.value[0])?.vehicleContext).toEqual(context);
+  });
+
+  it("keeps cloud legacy facts but rejects changed values, units and invalid confirmation metadata", async () => {
+    let context = confirmVehicleContextField({ engine: "2.0L", mileage: "120000", mileageUnit: "mi" }, "engine", true, "2026-11-05T12:00:00.000Z");
+    context = confirmVehicleContextField(context, "mileage", true, "2026-11-05T12:00:00.000Z");
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, vehicle_context: { ...context, engine: "2.5L", mileageUnit: "km", modifications: { status: "invalid" }, make: "Toyota" } }], error: null });
+    const { readCloudLookups } = await import("./cloudHistory");
+    const result = await readCloudLookups();
+    if (!result.ok) throw new Error(result.message);
+    expect(result.value[0].vehicleContext).toEqual({ make: "Toyota", engine: "2.5L", mileage: "120000", mileageUnit: "km" });
+    expect(result.value[0].reviewStatus).toBe("confirmed");
+    expect(result.value[0].vehicleContext?.confirmedFields).toBeUndefined();
+  });
+
   it("reports other errors without retrying", async () => {
     mocks.select.mockImplementation(() => ({ data: null, error: { message: "permission denied for table scan_lookups" } }));
     const { readCloudLookups } = await import("./cloudHistory");
@@ -265,3 +513,4 @@ describe("readCloudLookup", () => {
     expect(await readCloudLookup("scan-1")).toEqual({ ok: false, message: "Account changed. Reload your saved scans." });
   });
 });
+import { referenceVehicleContext } from "../test/vehicleReferenceFixture";

@@ -69,6 +69,21 @@ describe("offlineUpgrade", () => {
     onlineSpy.mockRestore();
   });
 
+  it("reattaches the complete saved photo group and its declared relationship on an explicit upgrade", async () => {
+    const photos = [
+      { ...frame, id: "first", label: "overview" as const },
+      { ...frame, id: "second", label: "other" as const, imageBase64: "data:image/jpeg;base64,b3RoZXI=" },
+    ];
+    const saved = createLookup({ frame, photos, photoRelationship: "independent", result: makeResult("on-device") });
+    expect(saved.ok).toBe(true);
+    vi.mocked(identifyCapturedFrame).mockResolvedValue(makeResult("gemini"));
+    expect(await upgradeOfflineEstimates()).toBe(1);
+    expect(identifyCapturedFrame).toHaveBeenCalledExactlyOnceWith(frame, undefined, undefined, {
+      vehicleContext: undefined, photos, photoRelationship: "independent",
+    });
+    expect(getLookup(saved.value!.id)).toMatchObject({ photos, photoRelationship: "independent" });
+  });
+
   it("keeps the estimate when the cloud retry is still on-device", async () => {
     const created = createLookup({ frame, result: makeResult("on-device") });
     vi.mocked(identifyCapturedFrame).mockResolvedValue(makeResult("on-device"));

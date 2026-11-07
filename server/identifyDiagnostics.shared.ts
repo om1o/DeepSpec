@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 const ERROR_CODES = new Set([
   "not_configured", "rate_limited", "provider_error", "network",
-  "invalid_response", "invalid_input", "image_too_large",
+  "invalid_response", "incomplete_response", "response_blocked", "invalid_input", "image_too_large",
 ]);
 
 type Outcome = { status: number; body: unknown };

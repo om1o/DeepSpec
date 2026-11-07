@@ -4,6 +4,9 @@ import type { IdentificationResult, Lookup, VisualFocusBox } from "../../types";
 import { ScanSources } from "../result/ScanSources";
 import ScanThumb from "../ui/ScanThumb";
 import { getTrustedFocusBox } from "./scanEvidenceGeometry";
+import { PhotoEvidenceStrip } from "../result/PhotoEvidenceStrip";
+import { PhotoReviewPanel } from "../result/PhotoReviewPanel";
+import { UNLINKED_CONDITION_FLAGS_MESSAGE } from "../../lib/conditionCoverage";
 
 type EvidenceItem = {
   id: "identity" | "function" | "visible" | "concerns" | "next" | "sources";
@@ -22,8 +25,10 @@ export function ScanEvidencePanel({ lookup, onDraftQuestion }: ScanEvidencePanel
   const result = lookup.result;
   const items = useMemo(() => result ? buildEvidenceItems(result) : [], [result]);
   const [selectedId, setSelectedId] = useState<EvidenceItem["id"]>("identity");
+  const [selectedPhotoId, setSelectedPhotoId] = useState<string>();
+  const selectedPhoto = lookup.photos?.find((photo) => photo.id === selectedPhotoId);
   const selected = items.find((item) => item.id === selectedId) ?? items[0];
-  const trustedFocus = getTrustedFocusBox(lookup.focusBox);
+  const trustedFocus = !selectedPhoto || selectedPhoto.id === lookup.photos?.[0]?.id ? getTrustedFocusBox(lookup.focusBox) : null;
   const partName = result?.partName ?? "Captured frame";
   const modelRun = result?.modelRun;
 
@@ -37,8 +42,10 @@ export function ScanEvidencePanel({ lookup, onDraftQuestion }: ScanEvidencePanel
         <Link to={`/result/${lookup.id}`} className="ds-evidence-open">Full result</Link>
       </header>
 
+      <PhotoEvidenceStrip photos={lookup.photos} photoRelationship={lookup.photoRelationship} pipelineVersion={lookup.result ? lookup.result.modelRun?.pipelineVersion : null} selectedId={selectedPhotoId} onSelect={setSelectedPhotoId} />
+
       <div className="ds-evidence-stage" data-has-locked-target={trustedFocus ? "true" : "false"}>
-        <ScanThumb alt={`Saved photo of ${partName}`} className="ds-evidence-photo" src={lookup.frame.imageBase64} />
+        <ScanThumb alt={`Saved photo of ${partName}`} className="ds-evidence-photo" src={selectedPhoto?.imageBase64 ?? lookup.frame.imageBase64} />
         {trustedFocus ? (
           <button
             aria-label={`Inspect detected ${partName}`}
@@ -61,6 +68,8 @@ export function ScanEvidencePanel({ lookup, onDraftQuestion }: ScanEvidencePanel
           Result: {modelRun.provider} · {modelRun.model}
         </p>
       ) : null}
+
+      <PhotoReviewPanel scan={lookup} onSelectPhoto={setSelectedPhotoId} />
 
       {selected ? (
         <>
@@ -116,15 +125,16 @@ function percentBox(box: VisualFocusBox) {
 
 function buildEvidenceItems(result: IdentificationResult): EvidenceItem[] {
   const visible = [...result.visibleObservations, ...result.evidenceRegions.map((region) => region.observation)];
-  const confidence = result.confidenceScore === undefined
-    ? `${result.confidence} confidence`
-    : `${Math.round(result.confidenceScore)}% confidence`;
+  const estimate = `AI estimate: ${result.confidence}`;
   return [
     {
       id: "identity",
       label: "Identity",
-      summary: `${result.partName} · ${confidence}`,
-      details: result.evidence.length ? result.evidence : [`DeepSpec returned ${result.partName} with ${confidence}.`],
+      summary: `${result.partName} · ${estimate}`,
+      details: [
+        ...(result.evidence.length ? result.evidence : [`DeepSpec suggests ${result.partName}; verify using visible evidence.`]),
+        "The confidence label is the model's own estimate. It does not represent a measured chance of a correct identification.",
+      ],
       question: `What visual details support the ${result.partName} identification?`,
     },
     {
@@ -145,7 +155,7 @@ function buildEvidenceItems(result: IdentificationResult): EvidenceItem[] {
       id: "concerns",
       label: "Concerns",
       summary: result.concerns.length ? `${result.concerns.length} item${result.concerns.length === 1 ? "" : "s"} to review` : "No visible concern returned",
-      details: result.concerns.length ? result.concerns : ["The scan did not return a visible concern. That is not a functional safety check."],
+      details: [UNLINKED_CONDITION_FLAGS_MESSAGE, ...(result.concerns.length ? result.concerns : ["The scan did not return a visible concern. That is not a functional safety check."])],
       question: `Which visible concerns in this ${result.partName} photo matter most, and what should I verify next?`,
     },
     {

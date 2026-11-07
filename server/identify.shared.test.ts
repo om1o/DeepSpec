@@ -1,4 +1,5 @@
 import { createIdentifyResponse } from "./identify.shared";
+import { IDENTIFY_PROMPT_VERSION, IDENTIFY_PIPELINE_VERSION } from "../src/services/systemPrompts";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -58,6 +59,21 @@ function makeTempDatasetRoot(prefix: string) {
 }
 
 describe("createIdentifyResponse", () => {
+  it.each([2, 3])("prioritizes condition evidence without fabricating missing findings for %s photos", async (count) => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] }, finishReason: "STOP" }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const photos = Array.from({ length: count }, (_, index) => ({ id: `photo-${index + 1}`, label: "other", imageBase64 }));
+    const response = await createIdentifyResponse({ photos, photoRelationship: "independent" }, { GEMINI_API_KEY: "test-key" });
+    expect(response.status).toBe(200);
+    const sent = String(fetchSpy.mock.calls[0][1]?.body);
+    expect(sent).toContain("Allocate the response budget to photo-linked condition findings before optional rectangles");
+    expect(sent).toContain("Extent across an image is not depth or structural severity");
+    expect(sent).toContain("do not measure crack depth");
+    // A successful response with no findings must remain incomplete, not become healthy.
+    expect((response.body as { result: Record<string, unknown> }).result.conditionAssessment).toBeUndefined();
+  });
+
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -207,7 +223,7 @@ describe("createIdentifyResponse", () => {
   it("drops unsupported visual measurements without scale evidence", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({
-        candidates: [{
+        candidates: [{ finishReason: "STOP",
           content: {
             parts: [{
               text: JSON.stringify({
@@ -247,7 +263,7 @@ describe("createIdentifyResponse", () => {
   it("keeps approximate measurements backed by a supplied same-plane reference", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({
-        candidates: [{
+        candidates: [{ finishReason: "STOP",
           content: {
             parts: [{
               text: JSON.stringify({
@@ -291,7 +307,7 @@ describe("createIdentifyResponse", () => {
       new Response(
         JSON.stringify({
           candidates: [
-            {
+            { finishReason: "STOP",
               content: {
                 parts: [
                   {
@@ -315,14 +331,14 @@ describe("createIdentifyResponse", () => {
         result,
         modelRun: {
           provider: "gemini",
-          model: "gemini-2.5-flash",
+          model: "gemini-3.5-flash-lite",
           ocrUsed: false,
         },
       },
     });
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      expect.stringContaining("/models/gemini-2.5-flash:generateContent"),
+      expect.stringContaining("/models/gemini-3.5-flash-lite:generateContent"),
       expect.objectContaining({
         method: "POST",
       }),
@@ -331,7 +347,7 @@ describe("createIdentifyResponse", () => {
 
   it("labels distinct successful requests with distinct run IDs and explicit current versions", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({
-      candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(result) }] } }],
     }), { status: 200, headers: { "Content-Type": "application/json" } }));
     const first = await createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" });
     const second = await createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" });
@@ -340,8 +356,8 @@ describe("createIdentifyResponse", () => {
     if (first.status !== 200 || !("modelRun" in first.body) || second.status !== 200 || !("modelRun" in second.body)) throw new Error("Expected model result");
     expect(first.body.modelRun.runId).toMatch(/^[a-f0-9-]{36}$/);
     expect(first.body.modelRun.runId).not.toBe(second.body.modelRun.runId);
-    expect(first.body.modelRun.promptVersion).toBe("identify-2026-10-10-v2");
-    expect(first.body.modelRun.pipelineVersion).toBe("identify-pipeline-2026-10-10-v2");
+    expect(first.body.modelRun.promptVersion).toBe(IDENTIFY_PROMPT_VERSION);
+    expect(first.body.modelRun.pipelineVersion).toBe(IDENTIFY_PIPELINE_VERSION);
     expect(first.body.result.modelRun).toEqual(first.body.modelRun);
   });
 
@@ -608,7 +624,7 @@ describe("createIdentifyResponse", () => {
     });
   });
 
-  it("falls back to flash lite when the default Gemini model is quota limited", async () => {
+  it("falls back to flash lite when the explicit legacy Gemini model is quota limited", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(
@@ -620,7 +636,7 @@ describe("createIdentifyResponse", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+            candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(result) }] } }],
           }),
           {
             status: 200,
@@ -629,7 +645,7 @@ describe("createIdentifyResponse", () => {
         ),
       );
 
-    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_MODEL: "gemini-2.5-flash", GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
       status: 200,
       body: {
         result,
@@ -641,7 +657,7 @@ describe("createIdentifyResponse", () => {
     expect(fetchSpy.mock.calls[1][0]).toEqual(expect.stringContaining("/models/gemini-2.5-flash-lite:generateContent"));
   });
 
-  it("falls back when the default Gemini model has a transient provider failure", async () => {
+  it("falls back when the explicit legacy Gemini model has a transient provider failure", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(
@@ -653,7 +669,7 @@ describe("createIdentifyResponse", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+            candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(result) }] } }],
           }),
           {
             status: 200,
@@ -662,7 +678,7 @@ describe("createIdentifyResponse", () => {
         ),
       );
 
-    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_MODEL: "gemini-2.5-flash", GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
       status: 200,
       body: {
         result,
@@ -707,7 +723,7 @@ describe("createIdentifyResponse", () => {
       createIdentifyResponse(
         { imageBase64 },
         {
-          GEMINI_API_KEY: "test-key",
+          GEMINI_MODEL: "gemini-2.5-flash", GEMINI_API_KEY: "test-key",
           DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK: "true",
         },
       ),
@@ -800,7 +816,7 @@ describe("createIdentifyResponse", () => {
     });
   });
 
-  it("uses comma-separated identify fallback models before the built-in fallback", async () => {
+  it("uses comma-separated identify fallback models in the configured order", async () => {
     const log = vi.spyOn(console, "info").mockImplementation(() => {});
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
@@ -813,7 +829,7 @@ describe("createIdentifyResponse", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+            candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(result) }] } }],
           }),
           {
             status: 200,
@@ -831,7 +847,7 @@ describe("createIdentifyResponse", () => {
       },
     );
 
-    expect(fetchSpy.mock.calls[0][0]).toEqual(expect.stringContaining("/models/gemini-2.5-flash:generateContent"));
+    expect(fetchSpy.mock.calls[0][0]).toEqual(expect.stringContaining("/models/gemini-3.5-flash-lite:generateContent"));
     expect(fetchSpy.mock.calls[1][0]).toEqual(expect.stringContaining("/models/gemini-custom-fast:generateContent"));
     const diagnostics = log.mock.calls.filter(([message]) => typeof message === "string" && message.startsWith("[DeepSpec diagnostics] "));
     expect(diagnostics).toHaveLength(1);
@@ -934,7 +950,7 @@ describe("createIdentifyResponse", () => {
       },
     });
 
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it("can force Hugging Face identify for provider health checks", async () => {
@@ -1075,7 +1091,7 @@ describe("createIdentifyResponse", () => {
         { imageBase64 },
         {
           DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true",
-          GEMINI_API_KEY: "test-key",
+          GEMINI_MODEL: "gemini-2.5-flash", GEMINI_API_KEY: "test-key",
           HF_TOKEN: "hf-test",
           DEEPSPEC_BACKUP_RETRY_BACKOFF_MS: "0",
         },
@@ -1132,7 +1148,7 @@ describe("createIdentifyResponse", () => {
         headers: { "Content-Type": "application/json" },
       }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
-        candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+        candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(result) }] } }],
       }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -1160,7 +1176,7 @@ describe("createIdentifyResponse", () => {
   it("continues from malformed Gemini output to the hosted HF route", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(new Response(JSON.stringify({
-        candidates: [{ content: { parts: [{ text: "not JSON" }] } }],
+        candidates: [{ finishReason: "STOP", content: { parts: [{ text: "not JSON" }] } }],
       }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -1198,7 +1214,7 @@ describe("createIdentifyResponse", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(malformedOpenAiResponse())
       .mockResolvedValueOnce(new Response(JSON.stringify({
-        candidates: [{ content: { parts: [{ text: "not JSON" }] } }],
+        candidates: [{ finishReason: "STOP", content: { parts: [{ text: "not JSON" }] } }],
       }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -1303,7 +1319,7 @@ describe("createIdentifyResponse", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+            candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(result) }] } }],
           }),
           {
             status: 200,
@@ -1326,7 +1342,7 @@ describe("createIdentifyResponse", () => {
     });
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(fetchSpy.mock.calls[0][0]).toEqual(expect.stringContaining("/models/gemini-2.5-flash:generateContent"));
+    expect(fetchSpy.mock.calls[0][0]).toEqual(expect.stringContaining("/models/gemini-3.5-flash-lite:generateContent"));
   });
 
   it("falls back to Gemini when the configured Groq provider is unavailable", async () => {
@@ -1342,7 +1358,7 @@ describe("createIdentifyResponse", () => {
         new Response(
           JSON.stringify({
             candidates: [
-              {
+              { finishReason: "STOP",
                 content: {
                   parts: [
                     {
@@ -1376,7 +1392,7 @@ describe("createIdentifyResponse", () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(fetchSpy.mock.calls[0][0]).toBe("https://api.groq.com/openai/v1/chat/completions");
-    expect(fetchSpy.mock.calls[1][0]).toEqual(expect.stringContaining("/models/gemini-2.5-flash:generateContent"));
+    expect(fetchSpy.mock.calls[1][0]).toEqual(expect.stringContaining("/models/gemini-3.5-flash-lite:generateContent"));
   });
 
   it("reaches the third online route when Groq and Gemini are unavailable", async () => {
@@ -1404,7 +1420,7 @@ describe("createIdentifyResponse", () => {
       DEEPSPEC_ENABLE_GROQ_IDENTIFY_FALLBACK: "true",
       DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true",
       DEEPSPEC_GEMINI_IDENTIFY_HEDGE_DELAY_MS: "0",
-      GEMINI_API_KEY: "gemini-test",
+      GEMINI_MODEL: "gemini-2.5-flash", GEMINI_API_KEY: "gemini-test",
       GROQ_API_KEY: "groq-test",
       HF_TOKEN: "hf-test",
     })).resolves.toMatchObject({
@@ -1455,7 +1471,7 @@ describe("createIdentifyResponse", () => {
         { imageBase64 },
         {
           DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK: "true",
-          GEMINI_API_KEY: "test-key",
+          GEMINI_MODEL: "gemini-2.5-flash", GEMINI_API_KEY: "test-key",
         },
       ),
     ).resolves.toMatchObject({
@@ -1498,7 +1514,7 @@ describe("createIdentifyResponse", () => {
         }),
       );
 
-    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
+    await expect(createIdentifyResponse({ imageBase64 }, { GEMINI_MODEL: "gemini-2.5-flash", GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
       status: 429,
       body: {
         error: {
@@ -1536,7 +1552,7 @@ describe("createIdentifyResponse", () => {
         { imageBase64 },
         {
           DEEPSPEC_ENABLE_OLLAMA_IDENTIFY_FALLBACK: "true",
-          GEMINI_API_KEY: "test-key",
+          GEMINI_MODEL: "gemini-2.5-flash", GEMINI_API_KEY: "test-key",
         },
       ),
     ).resolves.toMatchObject({
@@ -1553,7 +1569,7 @@ describe("createIdentifyResponse", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(result) }] } }],
         }),
         {
           status: 200,
@@ -1571,7 +1587,7 @@ describe("createIdentifyResponse", () => {
 
     const geminiCalls = fetchSpy.mock.calls.filter((call) => String(call[0]).includes("generativelanguage.googleapis.com"));
     expect(geminiCalls).toHaveLength(1);
-    expect(geminiCalls[0][0]).toEqual(expect.stringContaining("/models/gemini-2.5-flash:generateContent"));
+    expect(geminiCalls[0][0]).toEqual(expect.stringContaining("/models/gemini-3.5-flash-lite:generateContent"));
   });
 
   it("runs OCR on the real blurry-label fixture before Gemini and saves extracted text as evidence", async () => {
@@ -1586,7 +1602,7 @@ describe("createIdentifyResponse", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [{ content: { parts: [{ text: JSON.stringify({ ...result, evidence: Array.from({ length: 6 }, (_, index) => `Visible feature ${index + 1}`) }) }] } }],
+            candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify({ ...result, evidence: Array.from({ length: 6 }, (_, index) => `Visible feature ${index + 1}`) }) }] } }],
           }),
           {
             status: 200,
@@ -1597,7 +1613,7 @@ describe("createIdentifyResponse", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+            candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(result) }] } }],
           }),
           {
             status: 200,
@@ -1642,7 +1658,7 @@ describe("createIdentifyResponse", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(result) }] } }],
         }),
         {
           status: 200,
@@ -1655,7 +1671,7 @@ describe("createIdentifyResponse", () => {
 
     const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
     expect(body.generationConfig.maxOutputTokens).toBeGreaterThanOrEqual(2048);
-    expect(body.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
+    expect(body.generationConfig.thinkingConfig).toEqual({ thinkingLevel: "MINIMAL" });
     expect(body.generationConfig.responseSchema).toBeUndefined();
     expect(body.generationConfig.responseJsonSchema).toBeUndefined();
     expect(JSON.stringify(body)).toContain("Do not say no visible damage");
@@ -1676,7 +1692,7 @@ describe("createIdentifyResponse", () => {
       new Response(
         JSON.stringify({
           candidates: [
-            {
+            { finishReason: "STOP",
               content: {
                 parts: [
                   {
@@ -1721,7 +1737,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(bodyDamageResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(bodyDamageResult) }] } }],
         }),
         {
           status: 200,
@@ -1760,7 +1776,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(bodyPanelResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(bodyPanelResult) }] } }],
         }),
         {
           status: 200,
@@ -1799,7 +1815,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(engineAssemblyResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(engineAssemblyResult) }] } }],
         }),
         {
           status: 200,
@@ -1896,7 +1912,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(engineAssemblyResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(engineAssemblyResult) }] } }],
         }),
         {
           status: 200,
@@ -1960,7 +1976,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(engineAssemblyResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(engineAssemblyResult) }] } }],
         }),
         {
           status: 200,
@@ -2028,7 +2044,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(brandedGenericEngineResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(brandedGenericEngineResult) }] } }],
         }),
         {
           status: 200,
@@ -2081,7 +2097,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(genericEngineResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(genericEngineResult) }] } }],
         }),
         {
           status: 200,
@@ -2128,7 +2144,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(brandedValveCoverResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(brandedValveCoverResult) }] } }],
         }),
         {
           status: 200,
@@ -2185,7 +2201,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(bumperResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(bumperResult) }] } }],
         }),
         {
           status: 200,
@@ -2247,7 +2263,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(frontFenderResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(frontFenderResult) }] } }],
         }),
         {
           status: 200,
@@ -2318,7 +2334,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(unsupportedQuarterPanelResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(unsupportedQuarterPanelResult) }] } }],
         }),
         {
           status: 200,
@@ -2378,7 +2394,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(unsupportedQuarterPanelResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(unsupportedQuarterPanelResult) }] } }],
         }),
         {
           status: 200,
@@ -2438,7 +2454,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(frontFenderDentResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(frontFenderDentResult) }] } }],
         }),
         {
           status: 200,
@@ -2494,7 +2510,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(engineAssemblyResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(engineAssemblyResult) }] } }],
         }),
         {
           status: 200,
@@ -2533,7 +2549,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(usableMediumResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(usableMediumResult) }] } }],
         }),
         {
           status: 200,
@@ -2593,7 +2609,7 @@ describe("createIdentifyResponse", () => {
 
   it.each([
     ["empty", { candidates: [] }],
-    ["malformed", { candidates: [{ content: { parts: [{ text: "not JSON" }] } }] }],
+    ["malformed", { candidates: [{ finishReason: "STOP", content: { parts: [{ text: "not JSON" }] } }] }],
   ])("falls through from %s Gemini output to a successful hosted backup", async (_label, payload) => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
       new Response(JSON.stringify(String(input).includes("generativelanguage.googleapis.com")
@@ -2693,7 +2709,7 @@ describe("createIdentifyResponse", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(result) }] } }],
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
@@ -2762,7 +2778,7 @@ describe("createIdentifyResponse", () => {
       new Response(
         JSON.stringify({
           candidates: [
-            {
+            { finishReason: "STOP",
               content: {
                 parts: [
                   {
@@ -2814,7 +2830,7 @@ describe("createIdentifyResponse", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(bumperResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(bumperResult) }] } }],
         }),
         {
           status: 200,
@@ -2887,7 +2903,7 @@ describe("createIdentifyResponse", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(bumperResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(bumperResult) }] } }],
         }),
         {
           status: 200,
@@ -2965,7 +2981,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(genericBodyResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(genericBodyResult) }] } }],
         }),
         {
           status: 200,
@@ -3019,7 +3035,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(cleanResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(cleanResult) }] } }],
         }),
         {
           status: 200,

@@ -1,4 +1,5 @@
 import { getAccountScope, isAccountScopeCurrent } from "../lib/accountScope";
+import { mergeCloudLookup } from "../lib/lookupMerge";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { BrandLockup } from "../components/BrandLockup";
@@ -8,11 +9,15 @@ import { ScanSources } from "../components/result/ScanSources";
 import Button from "../components/ui/Button";
 import { AIServiceError, getAIErrorDetails, getAIErrorMessage, sendFollowUp, sendFollowUpDetails } from "../services/aiService";
 import { syncLookupChatToCloud } from "../services/cloudSync";
-import { appendChatMessages, createChatMessage, getLookup } from "../services/storage";
+import { isCloudSyncEnabled } from "../services/cloudSyncPolicy";
+import { readCloudLookup } from "../services/cloudHistory";
+import { appendChatMessages, createChatMessage, getLookup, saveExistingLookup } from "../services/storage";
 import type { ChatMessage, Lookup } from "../types";
 import "./chatWorkspace.css";
 
 type ResearchOptions = { research: boolean; sourceUrls: string[] };
+// Cloud history signs photos for one hour. Refresh before that window closes.
+const CLOUD_PHOTO_REFRESH_MS = 50 * 60 * 1000;
 
 export default function Chat() {
   const { id } = useParams();
@@ -21,10 +26,21 @@ export default function Chat() {
 }
 
 function ChatConversation({ id }: { id: string | undefined }) {
+  const cloudSyncEnabled = isCloudSyncEnabled();
   const accountScopeRef = useRef(getAccountScope());
   const isMountedRef = useRef(true);
   const [searchParams] = useSearchParams();
-  const [lookup, setLookup] = useState<Lookup | null>(() => (id ? getLookup(id) : null));
+  const [initialLookup] = useState(() => id ? getLookup(id) : null);
+  const [lookup, setLookup] = useState<Lookup | null>(initialLookup);
+  const cloudEvidenceRef = useRef<{ lookup: Lookup; refreshedAt: number } | null>(null);
+  const initialCloudHistoryUnavailable = Boolean(id && (!initialLookup || hasCloudPhotos(initialLookup)) && !cloudSyncEnabled);
+  const [lookupLoadState, setLookupLoadState] = useState<"loading" | "ready" | "not_found" | "error">(
+    initialLookup && !hasCloudPhotos(initialLookup) ? "ready" : initialCloudHistoryUnavailable ? "error" : id ? "loading" : "not_found",
+  );
+  const [lookupLoadError, setLookupLoadError] = useState<string | null>(
+    initialCloudHistoryUnavailable ? "Cloud history is off. Open a scan whose photos are saved on this device." : null,
+  );
+  const [lookupLoadRetry, setLookupLoadRetry] = useState(0);
   const [question, setQuestion] = useState(() => searchParams.get("q")?.trim().slice(0, 500) ?? "");
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
@@ -51,13 +67,65 @@ function ChatConversation({ id }: { id: string | undefined }) {
   }
 
   useEffect(() => {
+    if (!cloudSyncEnabled || !id || (initialLookup && !hasCloudPhotos(initialLookup))) return;
+    let active = true;
+    const isCurrentLoad = () => active && isMountedRef.current && isAccountScopeCurrent(accountScopeRef.current);
+    const timeout = window.setTimeout(() => {
+      if (!isCurrentLoad()) return;
+      active = false;
+      setLookupLoadError("Loading the saved scan timed out. Check your connection and try again.");
+      setLookupLoadState("error");
+    }, 15_000);
+    void readCloudLookup(id).then((result) => {
+      if (!isCurrentLoad()) return;
+      window.clearTimeout(timeout);
+      if (!result.ok) {
+        setLookupLoadError(result.message);
+        setLookupLoadState("error");
+        return;
+      }
+      if (!result.value || result.value.id !== id) {
+        setLookupLoadState("not_found");
+        return;
+      }
+      // Re-read after the request: a different tab may have edited or deleted
+      // the local record. Refresh only references, never replace those edits.
+      const current = getLookup(id);
+      if (initialLookup && !current) {
+        setLookupLoadState("not_found");
+        return;
+      }
+      const saved = current ? { ok: true as const, value: current } : saveExistingLookup(result.value);
+      if (!isCurrentLoad()) return;
+      if (!saved.ok) {
+        setLookupLoadError(`This cloud scan could not be prepared for chat. ${saved.message}`);
+        setLookupLoadState("error");
+        return;
+      }
+      const refreshed = mergeChatPhotoReferences(saved.value, result.value);
+      cloudEvidenceRef.current = { lookup: result.value, refreshedAt: Date.now() };
+      setLookup(refreshed);
+      setLookupLoadState("ready");
+    }).catch((loadError: unknown) => {
+      if (!isCurrentLoad()) return;
+      window.clearTimeout(timeout);
+      setLookupLoadError(loadError instanceof AIServiceError ? loadError.message : "The saved scan could not be loaded. Check your connection and try again.");
+      setLookupLoadState("error");
+    });
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+    };
+  }, [id, initialLookup, lookupLoadRetry, cloudSyncEnabled]);
+
+  useEffect(() => {
     const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     messagesEndRef.current?.scrollIntoView?.({ behavior: reducedMotion ? "auto" : "smooth", block: "end" });
   }, [lookup?.chatHistory.length, isSending]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!isCurrentConversation() || !lookup || !lookup.result || isSending || isChatDisabled || pendingExchange) {
+    if (!isCurrentConversation() || !lookup || !lookup.result || isSending || isCloudSyncing || isChatDisabled || pendingExchange) {
       return;
     }
 
@@ -75,7 +143,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
   }
 
   async function handleRetryLastQuestion() {
-    if (pendingExchange) return;
+    if (pendingExchange || isCloudSyncing) return;
     const lastUserMessage = lookup ? getLastUnansweredUserMessage(lookup) : null;
     const retryQuestion = pendingQuestion ?? lastUserMessage?.content;
     if (!retryQuestion || isSending) {
@@ -86,7 +154,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
   }
 
   async function sendQuestion(trimmedQuestion: string, shouldSaveUserMessage: boolean, options?: ResearchOptions) {
-    if (!isCurrentConversation() || !lookup || !lookup.result || isSending || isChatDisabled || pendingExchange) {
+    if (!isCurrentConversation() || !lookup || !lookup.result || isSending || isCloudSyncing || isChatDisabled || pendingExchange) {
       return;
     }
 
@@ -100,9 +168,26 @@ function ChatConversation({ id }: { id: string | undefined }) {
     if (shouldSaveUserMessage) setPendingQuestion(trimmedQuestion);
 
     try {
+      let requestLookup = lookup;
+      if (hasCloudPhotos(lookup)) {
+        let refreshed = cloudEvidenceRef.current;
+        if (!refreshed || Date.now() - refreshed.refreshedAt >= CLOUD_PHOTO_REFRESH_MS) {
+          const cloud = await readCloudLookup(lookup.id);
+          if (!isCurrentConversation()) return;
+          if (!cloud.ok || !cloud.value || cloud.value.id !== lookup.id) {
+            throw new AIServiceError("invalid_input", cloud.ok ? "The saved scan could not be found. Reopen saved scans." : cloud.message);
+          }
+          refreshed = { lookup: cloud.value, refreshedAt: Date.now() };
+        }
+        const current = getLookup(lookup.id);
+        if (!current) throw new AIServiceError("invalid_input", "This saved scan was removed. Reopen saved scans.");
+        requestLookup = mergeChatPhotoReferences(current, refreshed.lookup);
+        cloudEvidenceRef.current = refreshed;
+        setLookup(requestLookup);
+      }
       const answer: Awaited<ReturnType<typeof sendFollowUpDetails>> = options?.research
-        ? await sendFollowUpDetails(lookup, trimmedQuestion, options)
-        : { message: await sendFollowUp(lookup, trimmedQuestion) };
+        ? await sendFollowUpDetails(requestLookup, trimmedQuestion, options)
+        : { message: await sendFollowUp(requestLookup, trimmedQuestion) };
       if (!isCurrentConversation()) return;
       const userMessage = shouldSaveUserMessage ? createChatMessage("user", trimmedQuestion) : null;
       const assistantMessage = {
@@ -130,7 +215,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
   }
 
   function persistExchange(messages: ChatMessage[]) {
-    if (!isCurrentConversation() || !lookup || isChatDisabled) return;
+    if (!isCurrentConversation() || !lookup || isChatDisabled || isCloudSyncing) return;
     const savedConversation = appendChatMessages(lookup.id, messages);
     if (!isCurrentConversation()) return;
     if (!savedConversation.ok || !savedConversation.value) {
@@ -138,7 +223,17 @@ function ChatConversation({ id }: { id: string | undefined }) {
       setErrorCode("storage");
       return;
     }
-    setLookup(savedConversation.value);
+    // Signed URLs are transient view state. The durable chat append retains
+    // device edits, so reapply the complete refreshed evidence to the view.
+    try {
+      setLookup(cloudEvidenceRef.current
+        ? mergeChatPhotoReferences(savedConversation.value, cloudEvidenceRef.current.lookup)
+        : savedConversation.value);
+    } catch (photoError) {
+      setError(getAIErrorMessage(photoError));
+      setErrorCode("invalid_input");
+      return;
+    }
     setPendingExchange(null);
     setError(null);
     setErrorCode(null);
@@ -148,7 +243,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
   }
 
   async function syncConversation(savedLookup: Lookup) {
-    if (!isCurrentConversation() || isCloudSyncing) return;
+    if (!cloudSyncEnabled || !isCurrentConversation() || isCloudSyncing) return;
     setIsCloudSyncing(true);
     const result = await syncLookupChatToCloud(savedLookup);
     if (!isCurrentConversation()) return;
@@ -165,7 +260,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
   }
 
   async function handleRetryCloudSync() {
-    if (!isCurrentConversation() || !lookup || !cloudSyncPending || isCloudSyncing) return;
+    if (!isCurrentConversation() || !lookup || !cloudSyncPending || isSending || isCloudSyncing) return;
     const currentLookup = getLookup(lookup.id);
     if (!currentLookup) {
       setError("This saved scan was not found.");
@@ -184,13 +279,31 @@ function ChatConversation({ id }: { id: string | undefined }) {
     });
   }
 
-  if (!lookup) {
+  if (lookupLoadState === "loading" || lookupLoadState === "error") {
+    return (
+      <main className="grid min-h-dvh place-items-center bg-[var(--ds-page)] px-5 text-center text-[var(--ds-fg-1)]">
+        <section className="w-full max-w-sm rounded-[24px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-6 shadow-sm" role={lookupLoadState === "error" ? "alert" : "status"}>
+          <h1 className="text-2xl font-extrabold tracking-tight">{lookupLoadState === "error" ? "Could not load scan" : "Loading saved scan"}</h1>
+          <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-3)]">{lookupLoadState === "error" ? lookupLoadError : "Checking this device and your cloud history…"}</p>
+          {lookupLoadState === "error" && cloudSyncEnabled ? <Button className="mt-5 w-full" type="button" onClick={() => {
+            if (!isCurrentConversation()) return;
+            setLookupLoadError(null);
+            setLookupLoadState("loading");
+            setLookupLoadRetry((value) => value + 1);
+          }}>Retry loading scan</Button> : null}
+          <Link className="mt-4 block text-sm font-bold underline" to="/history">Saved scans</Link>
+        </section>
+      </main>
+    );
+  }
+
+  if (!lookup || lookupLoadState === "not_found") {
     return (
       <main className="grid min-h-dvh place-items-center bg-[var(--ds-page)] px-5 text-center text-[var(--ds-fg-1)]">
         <section className="w-full max-w-sm rounded-[24px] border border-[var(--ds-border)] bg-[var(--ds-elevated)] p-6 shadow-sm">
           <p className="text-sm font-bold text-[#a7cbd4]">Scan not found</p>
           <h1 className="mt-2 text-2xl font-extrabold tracking-tight">Open a saved scan first</h1>
-          <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-3)]">Follow-up chat only works from a scan saved on this device.</p>
+          <p className="mt-3 text-sm leading-6 text-[var(--ds-fg-3)]">This exact saved scan is not available for the current account.</p>
           <Link className="mt-5 block rounded-full bg-[var(--ds-accent)] px-5 py-3 text-sm font-bold text-white" to="/history">
             Saved scans
           </Link>
@@ -208,7 +321,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
   } : getAIErrorDetails(errorCode) : null;
   const showSafetyWarning = lookup.result?.isSafetyCritical || lookup.result?.safetyTriage === "needs_professional";
   const lastUnansweredUserMessage = getLastUnansweredUserMessage(lookup);
-  const canRetryLastQuestion = Boolean(error && errorCode !== "feature_disabled" && errorCode !== "rate_limited" && !pendingExchange && (pendingQuestion || lastUnansweredUserMessage) && canChat && !isSending);
+  const canRetryLastQuestion = Boolean(error && errorCode !== "feature_disabled" && errorCode !== "rate_limited" && errorCode !== "response_blocked" && !pendingExchange && (pendingQuestion || lastUnansweredUserMessage) && canChat && !isSending);
   const visibleMessages = [...lookup.chatHistory, ...(pendingExchange ?? []).filter((message) => !lookup.chatHistory.some((saved) => saved.id === message.id))];
 
   const inputDisabled = !canChat || isSending || isCloudSyncing || isChatDisabled || Boolean(pendingExchange);
@@ -234,6 +347,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
           <ScanEvidencePanel lookup={lookup} onDraftQuestion={draftEvidenceQuestion} />
 
           <section className="ds-chat-conversation" aria-label="Full scan conversation">
+            {!cloudSyncEnabled ? <p role="status" className="text-sm text-[var(--ds-fg-3)]">Cloud sync is off. Saved conversations stay on this device.</p> : null}
             {showSafetyWarning ? (
               <section className="ds-chat-safety rounded-2xl border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-3">
                 <p className="text-sm font-extrabold text-[var(--ds-warn-ink)]">Safety check needed</p>
@@ -285,15 +399,15 @@ function ChatConversation({ id }: { id: string | undefined }) {
                 {errorDetails.category === "provider_unavailable" ? (
                   <p className="mt-1 text-xs font-semibold leading-5 text-[var(--ds-fg-3)]">{errorDetails.description}</p>
                 ) : null}
-                {canRetryLastQuestion ? <Button className="mt-3" type="button" onClick={handleRetryLastQuestion}>Retry last question</Button> : null}
+                {canRetryLastQuestion ? <Button className="mt-3" type="button" disabled={isCloudSyncing} onClick={handleRetryLastQuestion}>Retry last question</Button> : null}
                 {pendingExchange ? (
                   <>
                     <p className="mt-2 text-sm leading-6 text-[var(--ds-fg-2)]">Your answer is kept on this page. Retry saving before leaving or reloading.</p>
-                    <Button className="mt-3" type="button" disabled={isSending} onClick={() => persistExchange(pendingExchange)}>Retry saving answer</Button>
+                    <Button className="mt-3" type="button" disabled={isSending || isCloudSyncing} onClick={() => persistExchange(pendingExchange)}>Retry saving answer</Button>
                   </>
                 ) : null}
                 {cloudSyncPending ? (
-                  <Button className="mt-3" type="button" disabled={isCloudSyncing} onClick={handleRetryCloudSync}>
+                  <Button className="mt-3" type="button" disabled={isSending || isCloudSyncing} onClick={handleRetryCloudSync}>
                     {isCloudSyncing ? "Saving to cloud…" : "Retry cloud save"}
                   </Button>
                 ) : null}
@@ -341,6 +455,44 @@ function ChatConversation({ id }: { id: string | undefined }) {
       </div>
     </main>
   );
+}
+
+function cloudPhotoReferences(lookup: Lookup) {
+  // Follow-up requests send the group, or its single original frame. Cutouts
+  // are neither sent to the model nor rendered by the chat evidence panel.
+  const originals = lookup.photos?.length
+    ? lookup.photos.map((photo) => [`photo:${photo.id}`, photo.imageBase64])
+    : [["frame", lookup.frame.imageBase64]];
+  return new Map(originals.filter((entry) => /^https?:\/\//i.test(entry[1])).map(([key, value]) => [key, value] as const));
+}
+
+function hasCloudPhotos(lookup: Lookup) {
+  return cloudPhotoReferences(lookup).size > 0;
+}
+
+function mergeChatPhotoReferences(local: Lookup, remote: Lookup): Lookup {
+  const unavailable = () => new AIServiceError("invalid_input", "Saved photo evidence changed or is incomplete. Reopen saved scans before continuing; no partial photo group was loaded.");
+  if (local.id !== remote.id || local.frame.capturedAt !== remote.frame.capturedAt) throw unavailable();
+  // A subset or a different photo must never silently replace a reviewed group.
+  if (local.photos?.some((photo) => /^https?:\/\//i.test(photo.imageBase64))
+    && (local.photos.length !== remote.photos?.length || local.photos.some((photo) =>
+      !remote.photos?.some((candidate) => candidate.id === photo.id && candidate.capturedAt === photo.capturedAt)))) throw unavailable();
+
+  const merged = mergeCloudLookup(local, remote);
+  const refreshed = cloudPhotoReferences(merged);
+  const authorized = new Set(cloudPhotoReferences(remote).values());
+  for (const [key, source] of cloudPhotoReferences(local)) {
+    const replacement = refreshed.get(key);
+    if (!replacement || !authorized.has(replacement)) throw unavailable();
+    try {
+      const originalUrl = new URL(source);
+      const refreshedUrl = new URL(replacement);
+      if (originalUrl.origin !== refreshedUrl.origin || originalUrl.pathname !== refreshedUrl.pathname) throw unavailable();
+    } catch {
+      throw unavailable();
+    }
+  }
+  return merged;
 }
 
 function getLastUnansweredUserMessage(lookup: Lookup) {
