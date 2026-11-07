@@ -302,7 +302,7 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
     };
     const areaAnchor = (recordId: string) => `${anchor}-human-area-${recordId}`;
     if (result?.conditionAssessment && !assessment) noteMissing(`Scan ${number}: invalid condition-assessment references were omitted; other saved findings remain below.`);
-    const reviewState = buildPhotoReviewState(result?.photoReview, photos.map((photo, index) => ({ id: photo.id, label: `Photo ${index + 1}` })), Boolean(result));
+    const reviewState = buildPhotoReviewState(result?.photoReview, photos.map((photo, index) => ({ id: photo.id, label: `Photo ${index + 1}` })), Boolean(result), scan.photoRelationship);
     if (reviewState.invalid) noteMissing(`Scan ${number}: the saved per-photo review could not be validated; its claims were omitted.`);
     const photoReviewHtml = `<div class="photo-review" id="${anchor}-photo-review"><h3>Per-photo AI review</h3>
       ${prose("AI-reported review is not human verification or proof of condition, function, safety, fitment or agreement.")}
@@ -312,7 +312,7 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
         return `<li id="${anchor}-photo-review-${index + 1}"><p>${escape(row.label)}: ${photoLink(scan.id, row.id)}</p>
           ${details([["AI review status", photoReviewStatusLabel(row.status)]])}${row.summary ? prose(row.summary) : ""}</li>`;
       }).join("")}</ol>
-      <h4>Cross-photo disagreements — AI-reported, unconfirmed</h4>
+      <h4>${escape(reviewState.comparisonHeading)}</h4>
       ${prose(reviewState.disagreementMessage)}
       ${reviewState.review?.disagreements.length ? `<ol class="photo-review-disagreements">${reviewState.review.disagreements.map((item, index) => `<li id="${anchor}-photo-disagreement-${index + 1}">
         ${prose(item.description)}<p>Referenced saved images: ${item.photoIds.map((id) => photoLink(scan.id, id)).join(", ")}</p>
@@ -484,7 +484,7 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
   // Build the overview last so failed image/receipt checks from the full evidence are included.
   const overviewScans = entries.map(({ scan, anchor, number, photos }) => {
     const assessment = normalizeConditionAssessment(scan.result?.conditionAssessment, photos.map((photo) => photo.id));
-    const review = buildPhotoReviewState(scan.result?.photoReview, photos, Boolean(scan.result));
+    const review = buildPhotoReviewState(scan.result?.photoReview, photos, Boolean(scan.result), scan.photoRelationship);
     const logs = snapshot.observationAreaLogs?.filter((log) => log.lookupId === scan.id);
     const areas = logs?.length === 1 ? normalizeObservationAreaRecords(logs[0].records, scan.id) : undefined;
     const areaSummary = areas ? areas.length ? `<p>Human areas: ${areas.map((record, index) => `<a href="#${anchor}-human-area-${record.id}">${index + 1}: ${escape(observationAreaRecordStatus(record, areas))}</a>`).join("; ")}. Historical review pointers; see the source and answer checks in their records.</p>` : prose("No human area entries were found on this device.") : prose("Human area history was not collected or could not be read.");

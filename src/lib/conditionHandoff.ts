@@ -4,7 +4,7 @@ import { PHOTO_LABEL_TEXT } from "./photoLabels";
 import { isEvidenceImage, normalizeVisualEvidence } from "../services/visualEvidence";
 import { normalizeVehicleContext, vehicleContextDetails } from "./vehicleContext";
 import { photoRelationshipDescription, photoRelationshipOrUnknown, photoRelationshipScopeDescription } from "./photoRelationship";
-import { formatPhotoReview, normalizePhotoReview } from "./photoReview";
+import { formatPhotoReview, normalizePhotoReview, photoReviewForRelationship } from "./photoReview";
 
 /** Derive the screen and export from the same saved evidence, never review ratings. */
 export function buildConditionHandoff(lookup: Lookup) {
@@ -21,7 +21,7 @@ export function buildConditionHandoff(lookup: Lookup) {
   return {
     assessment,
     photos,
-    photoReview: normalizePhotoReview(lookup.result?.photoReview, photos.map((photo) => photo.id)),
+    photoReview: photoReviewForRelationship(normalizePhotoReview(lookup.result?.photoReview, photos.map((photo) => photo.id)), photoRelationship),
     photoRelationship,
     photoRelationshipDescription: photoRelationshipDescription(photoRelationship),
     photoRelationshipScope: photos.length > 1
@@ -46,7 +46,7 @@ export function formatConditionHandoff(lookup: Lookup): string {
     `${review.photoRelationship === "unknown" ? "Photo relationship" : "User-reported photo relationship"}: ${review.photoRelationshipDescription}`,
     ...(review.photoRelationshipScope ? [review.photoRelationshipScope] : []),
   ];
-  const photoReviewText = formatPhotoReview(lookup.result?.photoReview, review.photos.map((photo, index) => ({ id: photo.id, label: `Photo ${index + 1}` })), Boolean(lookup.result));
+  const photoReviewText = formatPhotoReview(lookup.result?.photoReview, review.photos.map((photo, index) => ({ id: photo.id, label: `Photo ${index + 1}` })), Boolean(lookup.result), review.photoRelationship);
   // Intake, photo relationships and per-photo coverage do not require a condition assessment.
   if (!review.assessment) return [...vehicleLines, ...relationshipLines, "", photoReviewText].join("\n");
   const photoLabel = (id: string) => `${review.photos.find((photo) => photo.id === id)!.label} [${id}]`;

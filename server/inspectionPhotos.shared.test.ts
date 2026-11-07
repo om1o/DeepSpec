@@ -40,8 +40,15 @@ describe("explicit photo relationships", () => {
     expect(prompt).toContain("Supplied vehicle context applies only to the first photo");
     expect(prompt).toContain("Measurement context and supplemental OCR, when present, apply only to the first photo");
     expect(prompt).toContain("Consider every other photo separately");
-    expect(prompt).toContain("name the conflicting photo ids");
-    expect(prompt).toContain("request one useful next view or marking");
+    if (relationship === "independent") {
+      expect(prompt).toContain("Return photoReview.disagreements as []");
+      expect(prompt).toContain("report each photo's visible evidence and limits separately");
+      expect(prompt).not.toContain("If views disagree");
+      expect(prompt).not.toContain("name the conflicting photo ids");
+    } else {
+      expect(prompt).toContain("name the conflicting photo ids");
+      expect(prompt).toContain("request one useful next view or marking");
+    }
     expect(prompt).toContain("including a view that is unclear or does not support");
     expect(prompt).not.toContain("reported by the user");
   });
@@ -51,6 +58,7 @@ describe("explicit photo relationships", () => {
     expect(prompt).toContain("reported by the user, not independently verified");
     expect(prompt).toContain("treat that relationship as unverified");
     expect(prompt).toContain("Do not merge incompatible evidence");
+    expect(prompt).toContain("name the conflicting photo ids");
     expect(prompt).toContain("Do not assume a before-and-after sequence");
     expect(prompt).toContain('"id":"overview"');
     expect(prompt).toContain('"id":"detail"');
