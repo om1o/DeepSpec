@@ -37,14 +37,17 @@ type AIErrorCode =
   | "invalid_input"
   | "invalid_session"
   | "invalid_response"
+  | "incomplete_response"
   | "missing_session"
   | "network"
   | "not_configured"
   | "provider_error"
   | "rate_limited"
   | "rate_limit_unavailable"
+  | "response_blocked"
   | "scan_limit_reached"
   | "session_unavailable"
+  | "timeout"
   | "unsupported";
 
 export type AIErrorCategory = "input" | "model_response" | "provider_unavailable" | "setup" | "unknown";
@@ -515,6 +518,27 @@ export function getAIErrorDetails(code: string | undefined | null): AIErrorDetai
         description: "The photo can be retried when the Deep Spec service can reach the AI provider again.",
         retryLabel: "Try again",
         title: "AI provider could not be reached",
+      };
+    case "timeout":
+      return {
+        category: "provider_unavailable",
+        description: "The provider did not finish in time. Your saved photos remain available for another attempt.",
+        retryLabel: "Try again",
+        title: "AI reply timed out",
+      };
+    case "incomplete_response":
+      return {
+        category: "model_response",
+        description: "The provider did not return a complete result. Your saved photos remain available for another attempt.",
+        retryLabel: "Try again",
+        title: "AI response was incomplete",
+      };
+    case "response_blocked":
+      return {
+        category: "input",
+        description: "The provider declined this request. No AI result was added to your saved work.",
+        retryLabel: "Change request",
+        title: "AI could not complete this request",
       };
     case "provider_error":
       return {

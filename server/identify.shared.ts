@@ -82,6 +82,7 @@ const DEFAULT_DATASET_ROOT = "datasets/raw/drbimmer-car-parts-and-damage-dataset
 const DEFAULT_DATASET_INDEX_PATH = "datasets/derived/drbimmer-car-parts-and-damage-dataset/records.jsonl";
 const DEFAULT_HF_AUTOMOTIVE_SOURCE_INDEX_PATH = "datasets/verified/hf-automotive-sources-v1/records.jsonl";
 const RETRYABLE_PROVIDER_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+const BLOCKED_GEMINI_FINISH_REASONS = new Set(["SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "IMAGE_RECITATION"]);
 const DEFAULT_BACKUP_RATE_LIMIT_RETRIES = 1;
 const DEFAULT_BACKUP_RETRY_BACKOFF_MS = 800;
 // Credentialed image requests are restricted to exact, supported provider hosts.
@@ -158,7 +159,7 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
   let lastRouteError: IdentifyResponse | null = null;
   const recordRouteFailure = (response: IdentifyResponse) => {
     lastRouteError = response;
-    if (getIdentifyErrorCode(response) === "invalid_response") {
+    if (isIdentifyOutputFailure(response)) {
       lastInvalidResponse = response;
     }
     if (isRetryableIdentifyResponse(response)) {
@@ -217,14 +218,14 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
     sourceContext,
   });
   if (chainSignal.aborted) return identifyTimeoutResponse();
-  if (geminiResult.response.status === 200) {
+  if (geminiResult.response.status === 200 || getIdentifyErrorCode(geminiResult.response) === "response_blocked") {
     return geminiResult.response;
   }
 
   const rateLimited = geminiResult.rateLimited;
   recordRouteFailure(geminiResult.lastFailure);
 
-  if (!rateLimited && !hasGroqFallback && !hasHfFallback && !hasOllamaFallback) {
+  if (!rateLimited && !isTerminalGeminiFailure(geminiResult.response) && !hasGroqFallback && !hasHfFallback && !hasOllamaFallback) {
     const rescueResponse = await createGeminiRescueIdentifyResponse(
       models[0] ?? DEFAULT_MODEL,
       parsed,
@@ -234,7 +235,7 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
       chainSignal,
     );
     if (chainSignal.aborted) return identifyTimeoutResponse();
-    if (rescueResponse.status === 200) {
+    if (rescueResponse.status === 200 || getIdentifyErrorCode(rescueResponse) === "response_blocked") {
       return rescueResponse;
     }
     recordRouteFailure(rescueResponse);
@@ -364,7 +365,7 @@ async function createGeminiIdentifyResponse({
     }
 
     attempts.push(attempt);
-    if (attempt.response.status === 200) {
+    if (attempt.response.status === 200 || isTerminalGeminiFailure(attempt.response)) {
       for (const controller of controllers.values()) {
         controller.abort();
       }
@@ -387,7 +388,7 @@ async function createGeminiIdentifyResponse({
 }
 
 function selectBestIdentifyFailure(responses: IdentifyResponse[]) {
-  return [...responses].reverse().find((response) => getIdentifyErrorCode(response) === "invalid_response")
+  return [...responses].reverse().find(isIdentifyOutputFailure)
     ?? [...responses].reverse().find(isRetryableIdentifyResponse)
     ?? responses[responses.length - 1]
     ?? errorResponse(502, "provider_error", "The AI provider rejected this request.");
@@ -424,9 +425,15 @@ async function createGeminiIdentifyAttempt(
   const responseBody = isJson ? ((await response.json().catch(() => null)) as JsonObject | null) : null;
 
   if (!response.ok) {
-    const providerError = errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
+    const providerError = errorResponse(response.status, "provider_error", getProviderErrorMessage());
     logIdentifyAttempt("gemini", model, startedAt, providerError, fallbackAvailable);
     return { model, response: providerError, rateLimited: false };
+  }
+
+  const completionError = getGeminiCompletionError(responseBody);
+  if (completionError) {
+    logIdentifyAttempt("gemini", model, startedAt, completionError, getIdentifyErrorCode(completionError) !== "response_blocked" && fallbackAvailable);
+    return { model, response: completionError, rateLimited: false };
   }
 
   const text = extractGeminiText(responseBody);
@@ -478,10 +485,20 @@ async function createGeminiIdentifyAttempt(
 
 function isRetryableIdentifyResponse(response: IdentifyResponse) {
   // Model-quality failures use 502 too, but must remain visible to evaluation.
-  if (getIdentifyErrorCode(response) === "invalid_response") {
+  if (isIdentifyOutputFailure(response) || getIdentifyErrorCode(response) === "response_blocked") {
     return false;
   }
   return response.status === 429 || RETRYABLE_PROVIDER_STATUSES.has(response.status);
+}
+
+function isIdentifyOutputFailure(response: IdentifyResponse) {
+  const code = getIdentifyErrorCode(response);
+  return code === "invalid_response" || code === "incomplete_response";
+}
+
+function isTerminalGeminiFailure(response: IdentifyResponse) {
+  const code = getIdentifyErrorCode(response);
+  return code === "response_blocked" || (code === "provider_error" && response.status >= 400 && response.status < 500 && !RETRYABLE_PROVIDER_STATUSES.has(response.status));
 }
 
 async function createGeminiRescueIdentifyResponse(
@@ -506,9 +523,15 @@ async function createGeminiRescueIdentifyResponse(
   if (!response.ok) {
     const providerError = response.status === 429
       ? errorResponse(429, "rate_limited", "Too many AI lookups right now. Try again in a few minutes.")
-      : errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
+      : errorResponse(response.status, "provider_error", getProviderErrorMessage());
     logIdentifyAttempt("gemini", model, startedAt, providerError, false);
     return providerError;
+  }
+
+  const completionError = getGeminiCompletionError(responseBody);
+  if (completionError) {
+    logIdentifyAttempt("gemini", model, startedAt, completionError, false);
+    return completionError;
   }
 
   const text = extractGeminiText(responseBody);
@@ -734,7 +757,7 @@ async function createBackendIdentifyResponse(
   }
 
   if (!response.ok) {
-    const providerError = errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
+    const providerError = errorResponse(response.status, "provider_error", getProviderErrorMessage());
     logIdentifyAttempt(provider, model, startedAt, providerError, false);
     return providerError;
   }
@@ -1013,7 +1036,7 @@ async function createOllamaIdentifyResponse(
   const responseBody = isJson ? ((await response.json().catch(() => null)) as JsonObject | null) : null;
 
   if (!response.ok) {
-    const providerError = errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
+    const providerError = errorResponse(response.status, "provider_error", getProviderErrorMessage());
     logIdentifyAttempt("ollama", model, startedAt, providerError, false);
     return providerError;
   }
@@ -1407,6 +1430,19 @@ function clampRatio(value: number) {
   return Math.max(0, Math.min(1, value));
 }
 
+function getGeminiCompletionError(responseBody: JsonObject | null): IdentifyResponse | null {
+  const candidate = Array.isArray(responseBody?.candidates) ? responseBody.candidates[0] : null;
+  const feedback = responseBody?.promptFeedback;
+  if ((isRecord(feedback) && typeof feedback.blockReason === "string" && feedback.blockReason !== "BLOCK_REASON_UNSPECIFIED")
+    || (isRecord(candidate) && typeof candidate.finishReason === "string" && BLOCKED_GEMINI_FINISH_REASONS.has(candidate.finishReason))) {
+    return errorResponse(422, "response_blocked", "The AI provider declined this analysis. Your photos remain available, but no inspection result was produced.");
+  }
+  if (isRecord(candidate) && candidate.finishReason !== "STOP") {
+    return errorResponse(502, "incomplete_response", "The AI analysis was incomplete. Your photos remain available; try a clearer view or analyze again.");
+  }
+  return null;
+}
+
 function extractGeminiText(responseBody: JsonObject | null) {
   const candidates = Array.isArray(responseBody?.candidates) ? responseBody.candidates : [];
   const firstCandidate = candidates[0];
@@ -1415,7 +1451,7 @@ function extractGeminiText(responseBody: JsonObject | null) {
   }
 
   return firstCandidate.content.parts
-    .map((part) => (isRecord(part) && typeof part.text === "string" ? part.text : ""))
+    .map((part) => (isRecord(part) && part.thought !== true && typeof part.text === "string" ? part.text : ""))
     .join("")
     .trim();
 }
@@ -3229,12 +3265,7 @@ function isOptionalPartMeasurementArray(value: unknown) {
   )));
 }
 
-function getProviderErrorMessage(responseBody: JsonObject | null) {
-  const error = responseBody?.error;
-  if (isRecord(error) && typeof error.message === "string") {
-    return error.message;
-  }
-
+function getProviderErrorMessage() {
   return "The AI provider rejected this request.";
 }
 

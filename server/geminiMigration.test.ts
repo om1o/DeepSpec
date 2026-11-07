@@ -22,7 +22,7 @@ const identifiedPart = {
 };
 
 function answer(text: string) {
-  return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text, thoughtSignature: "opaque-signature" }] } }] }), {
+  return new Response(JSON.stringify({ candidates: [{ finishReason: "STOP", content: { parts: [{ text, thoughtSignature: "opaque-signature" }] } }] }), {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });
@@ -151,7 +151,7 @@ describe("Gemini 3.5 migration", () => {
 
   it("keeps a provider rejection of requested research visible", async () => {
     const fetchSpy = vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ error: { message: "Research is unavailable for this provider account." } }), { status: 403, headers: { "Content-Type": "application/json" } }));
-    await expect(createChatResponse({ userMessage: "Research this part", research: true }, env)).resolves.toEqual({ status: 403, body: { error: { code: "provider_error", message: "Research is unavailable for this provider account." } } });
+    await expect(createChatResponse({ userMessage: "Research this part", research: true }, env)).resolves.toEqual({ status: 502, body: { error: { code: "provider_error", message: "The AI provider could not complete this request. Try again later." } } });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)).tools).toEqual([{ googleSearch: {} }, { urlContext: {} }]);
   });

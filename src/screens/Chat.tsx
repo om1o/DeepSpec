@@ -321,7 +321,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
   } : getAIErrorDetails(errorCode) : null;
   const showSafetyWarning = lookup.result?.isSafetyCritical || lookup.result?.safetyTriage === "needs_professional";
   const lastUnansweredUserMessage = getLastUnansweredUserMessage(lookup);
-  const canRetryLastQuestion = Boolean(error && errorCode !== "feature_disabled" && errorCode !== "rate_limited" && !pendingExchange && (pendingQuestion || lastUnansweredUserMessage) && canChat && !isSending);
+  const canRetryLastQuestion = Boolean(error && errorCode !== "feature_disabled" && errorCode !== "rate_limited" && errorCode !== "response_blocked" && !pendingExchange && (pendingQuestion || lastUnansweredUserMessage) && canChat && !isSending);
   const visibleMessages = [...lookup.chatHistory, ...(pendingExchange ?? []).filter((message) => !lookup.chatHistory.some((saved) => saved.id === message.id))];
 
   const inputDisabled = !canChat || isSending || isCloudSyncing || isChatDisabled || Boolean(pendingExchange);

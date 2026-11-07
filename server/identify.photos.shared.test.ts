@@ -25,7 +25,7 @@ const jsonResponse = (body: unknown, status = 200) => new Response(JSON.stringif
   status,
   headers: { "Content-Type": "application/json" },
 });
-const geminiResponse = () => jsonResponse({ candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }] });
+const geminiResponse = () => jsonResponse({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(result) }] } }] });
 
 describe("labeled identify photos", () => {
   beforeEach(() => {
@@ -126,7 +126,7 @@ describe("labeled identify photos", () => {
 
   it("keeps all photos and labels in Gemini rescue after invalid model responses", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch")
-      .mockImplementationOnce(async () => jsonResponse({ candidates: [{ content: { parts: [{ text: "not JSON" }] } }] }))
+      .mockImplementationOnce(async () => jsonResponse({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "not JSON" }] } }] }))
       .mockImplementationOnce(async () => geminiResponse());
     const response = await createIdentifyResponse({ photos, photoRelationship: "independent" }, {
       GEMINI_API_KEY: "test-key",
@@ -212,7 +212,7 @@ describe("labeled identify photos", () => {
     const response = await createIdentifyResponse({ photos }, {
       DEEPSPEC_ENABLE_HF_IDENTIFY_FALLBACK: "true", HF_TOKEN: "test-token",
     });
-    expect(response).toMatchObject({ status: 400, body: { error: { code: "provider_error", message: "This model supports only one image" } } });
+    expect(response).toMatchObject({ status: 400, body: { error: { code: "provider_error", message: "The AI provider rejected this request." } } });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
     expect(body.messages[1].content.filter((part: Record<string, unknown>) => part.type === "image_url")).toHaveLength(4);

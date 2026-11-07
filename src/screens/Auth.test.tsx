@@ -1,7 +1,7 @@
 import { accountStorageKey, setActiveAccount } from "../lib/accountScope";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const supabaseMock = vi.hoisted(() => ({
@@ -84,14 +84,59 @@ describe("Auth", () => {
     expect(screen.getByRole("tab", { name: "Account" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "Account" })).toHaveAttribute("tabindex", "0");
     expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", "auth-password-tab");
-    expect(screen.getByRole("button", { name: "Sign in" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "Create" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByRole("button", { name: "Sign in" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "I don't have an account" })).toHaveAttribute("href", "/auth?next=%2Fscan&mode=signup");
+    expect(screen.getByLabelText("Password")).toHaveAttribute("autocomplete", "current-password");
     expect(screen.getByRole("button", { name: "Sign in to scanner" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "No email" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Continue without email" })).not.toBeInTheDocument();
     expect(screen.queryByText(/facebook/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/microsoft/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/apple/i)).not.toBeInTheDocument();
+  });
+
+  it("opens a signup page through a real link and preserves its destination through back and refresh", async () => {
+    const user = userEvent.setup();
+    const view = await renderAuth({ authState: { from: "/history?filter=recent#scan-1" } });
+    await user.type(await screen.findByPlaceholderText("you@example.com"), "tester@example.com");
+    await user.type(screen.getByLabelText("Password"), "incorrect-password");
+    supabaseMock.auth.signInWithPassword.mockResolvedValueOnce({ data: {}, error: { message: "Invalid login credentials" } });
+    await user.click(screen.getByRole("button", { name: "Sign in to scanner" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Invalid login credentials");
+
+    await user.click(screen.getByRole("link", { name: "I don't have an account" }));
+    expect(await screen.findByRole("heading", { name: "Create your DeepSpec account" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Password")).toHaveAttribute("autocomplete", "new-password");
+    expect(screen.getByLabelText("Password")).toHaveValue("");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("you@example.com")).toHaveValue("tester@example.com");
+    const signupUrl = `${view.router.state.location.pathname}${view.router.state.location.search}`;
+    expect(new URLSearchParams(view.router.state.location.search).get("next")).toBe("/history?filter=recent#scan-1");
+    await user.type(screen.getByLabelText("Password"), "new-password");
+
+    await act(async () => { await view.router.navigate(-1); });
+    expect(await screen.findByRole("heading", { name: "Sign in to DeepSpec" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Password")).toHaveValue("");
+    expect(screen.getByLabelText("Password")).toHaveAttribute("autocomplete", "current-password");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    view.unmount();
+    await renderAuth({ initialUrl: signupUrl });
+    expect(await screen.findByRole("heading", { name: "Create your DeepSpec account" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "I already have an account. Sign in" })).toHaveAttribute("href", "/auth?next=%2Fhistory%3Ffilter%3Drecent%23scan-1");
+    expect(screen.getByRole("button", { name: "Create account" })).toBeInTheDocument();
+    await user.click(screen.getByRole("link", { name: "I already have an account. Sign in" }));
+    expect(await screen.findByRole("heading", { name: "Sign in to DeepSpec" })).toBeInTheDocument();
+  });
+
+  it("keeps account navigation on the app when an external return destination is supplied", async () => {
+    const user = userEvent.setup();
+    await renderAuth({ initialUrl: "/auth?next=https%3A%2F%2Fexample.com%2Fprivate" });
+    const signup = await screen.findByRole("link", { name: "I don't have an account" });
+    expect(signup).toHaveAttribute("href", "/auth?next=%2Fscan&mode=signup");
+    await user.click(signup);
+    expect(screen.getByRole("link", { name: "I already have an account. Sign in" })).toHaveAttribute("href", "/auth?next=%2Fscan");
   });
 
   it("supports arrow-key navigation between auth method tabs", async () => {
@@ -286,6 +331,20 @@ describe("Auth", () => {
     expect(localStorage.getItem(accountStorageKey("deep-spec:lookups"))).toBe(savedRecords);
   });
 
+  it("reopens saved history from a signup URL when the returning session is verified", async () => {
+    setActiveAccount("password-user");
+    const savedRecords = JSON.stringify([makeSavedLookup("lookup-1", "Alternator")]);
+    localStorage.setItem(accountStorageKey("deep-spec:lookups"), savedRecords);
+    supabaseMock.auth.getUser.mockResolvedValue({ data: { user: makeUser("password-user") }, error: null });
+
+    await renderAuth({ initialUrl: "/auth?mode=signup&next=%2Fhistory%3Ffilter%3Drecent%23scan-1" });
+
+    expect(await screen.findByText("History opened")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Create your DeepSpec account" })).not.toBeInTheDocument();
+    expect(localStorage.getItem(accountStorageKey("deep-spec:lookups"))).toBe(savedRecords);
+    expect(cloudSyncMock.syncLookupsToCloud).not.toHaveBeenCalled();
+  });
+
   it("does not open the scanner when password auth does not verify a user", async () => {
     const user = userEvent.setup();
     supabaseMock.auth.signInWithPassword.mockResolvedValueOnce({ data: {}, error: { message: "Invalid login credentials" } });
@@ -309,7 +368,7 @@ describe("Auth", () => {
 
     await renderAuth();
 
-    await user.click(await screen.findByRole("button", { name: "Create" }));
+    await user.click(await screen.findByRole("link", { name: "I don't have an account" }));
     await user.type(await screen.findByPlaceholderText("you@example.com"), "New@Example.com");
     await user.type(screen.getByPlaceholderText("Your password"), "correct-password");
     await user.click(screen.getByRole("button", { name: "Create account" }));
@@ -332,7 +391,7 @@ describe("Auth", () => {
 
     await renderAuth();
 
-    await user.click(await screen.findByRole("button", { name: "Create" }));
+    await user.click(await screen.findByRole("link", { name: "I don't have an account" }));
     await user.type(await screen.findByPlaceholderText("you@example.com"), "new@example.com");
     await user.type(screen.getByPlaceholderText("Your password"), "correct-password");
     await user.click(screen.getByRole("button", { name: "Create account" }));
@@ -353,7 +412,10 @@ describe("Auth", () => {
     await user.type(screen.getByPlaceholderText("Your password"), "password");
     await user.click(screen.getByRole("button", { name: "Sign in to scanner" }));
     expect(screen.getByRole("tab", { name: "Email link" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
+    const signup = screen.getByRole("link", { name: "I don't have an account" });
+    expect(signup).toHaveAttribute("aria-disabled", "true");
+    await user.click(signup);
+    expect(screen.getByRole("heading", { name: "Sign in to DeepSpec" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Checking password..." }));
     expect(supabaseMock.auth.signInWithPassword).toHaveBeenCalledTimes(1);
     await act(async () => { finish({ data: {}, error: { message: "Invalid login credentials" } }); });
@@ -541,21 +603,15 @@ describe("Auth", () => {
   });
 });
 
-async function renderAuth(options?: { authState?: { from: string } }) {
+async function renderAuth(options?: { authState?: { from: string }; initialUrl?: string }) {
   const { default: Auth } = await import("./Auth");
-
-  render(
-    <MemoryRouter initialEntries={[{
-      pathname: "/auth",
-      state: options?.authState,
-    }]}>
-      <Routes>
-        <Route path="/auth" element={<Auth />} />
-        <Route path="/scan" element={<div>Scanner opened</div>} />
-        <Route path="/history" element={<div>History opened</div>} />
-      </Routes>
-    </MemoryRouter>,
-  );
+  const url = new URL(options?.initialUrl ?? "/auth", "http://localhost:3000");
+  const router = createMemoryRouter([
+    { path: "/auth", element: <Auth /> },
+    { path: "/scan", element: <div>Scanner opened</div> },
+    { path: "/history", element: <div>History opened</div> },
+  ], { initialEntries: [{ pathname: url.pathname, search: url.search, state: options?.authState }] });
+  return { ...render(<RouterProvider router={router} />), router };
 }
 
 function makeUser(id: string) {

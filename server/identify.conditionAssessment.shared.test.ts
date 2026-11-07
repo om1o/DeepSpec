@@ -33,7 +33,7 @@ const providerEnv = (provider: Provider): Record<string, string> => {
 const providerResponse = (provider: Provider, result: unknown) => {
   const content = JSON.stringify(result);
   const body = provider === "gemini"
-    ? { candidates: [{ content: { parts: [{ text: content }] } }] }
+    ? { candidates: [{ finishReason: "STOP", content: { parts: [{ text: content }] } }] }
     : provider === "ollama" ? { message: { content } }
       : { choices: [{ message: { content } }] };
   return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });

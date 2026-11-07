@@ -208,7 +208,7 @@ describe("createIdentifyResponse", () => {
   it("drops unsupported visual measurements without scale evidence", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({
-        candidates: [{
+        candidates: [{ finishReason: "STOP",
           content: {
             parts: [{
               text: JSON.stringify({
@@ -248,7 +248,7 @@ describe("createIdentifyResponse", () => {
   it("keeps approximate measurements backed by a supplied same-plane reference", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({
-        candidates: [{
+        candidates: [{ finishReason: "STOP",
           content: {
             parts: [{
               text: JSON.stringify({
@@ -292,7 +292,7 @@ describe("createIdentifyResponse", () => {
       new Response(
         JSON.stringify({
           candidates: [
-            {
+            { finishReason: "STOP",
               content: {
                 parts: [
                   {
@@ -332,7 +332,7 @@ describe("createIdentifyResponse", () => {
 
   it("labels distinct successful requests with distinct run IDs and explicit current versions", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({
-      candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(result) }] } }],
     }), { status: 200, headers: { "Content-Type": "application/json" } }));
     const first = await createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" });
     const second = await createIdentifyResponse({ imageBase64 }, { GEMINI_API_KEY: "test-key" });
@@ -621,7 +621,7 @@ describe("createIdentifyResponse", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+            candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(result) }] } }],
           }),
           {
             status: 200,
@@ -654,7 +654,7 @@ describe("createIdentifyResponse", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+            candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(result) }] } }],
           }),
           {
             status: 200,
@@ -814,7 +814,7 @@ describe("createIdentifyResponse", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+            candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(result) }] } }],
           }),
           {
             status: 200,
@@ -1133,7 +1133,7 @@ describe("createIdentifyResponse", () => {
         headers: { "Content-Type": "application/json" },
       }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
-        candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+        candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(result) }] } }],
       }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -1161,7 +1161,7 @@ describe("createIdentifyResponse", () => {
   it("continues from malformed Gemini output to the hosted HF route", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(new Response(JSON.stringify({
-        candidates: [{ content: { parts: [{ text: "not JSON" }] } }],
+        candidates: [{ finishReason: "STOP", content: { parts: [{ text: "not JSON" }] } }],
       }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -1199,7 +1199,7 @@ describe("createIdentifyResponse", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(malformedOpenAiResponse())
       .mockResolvedValueOnce(new Response(JSON.stringify({
-        candidates: [{ content: { parts: [{ text: "not JSON" }] } }],
+        candidates: [{ finishReason: "STOP", content: { parts: [{ text: "not JSON" }] } }],
       }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -1304,7 +1304,7 @@ describe("createIdentifyResponse", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+            candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(result) }] } }],
           }),
           {
             status: 200,
@@ -1343,7 +1343,7 @@ describe("createIdentifyResponse", () => {
         new Response(
           JSON.stringify({
             candidates: [
-              {
+              { finishReason: "STOP",
                 content: {
                   parts: [
                     {
@@ -1554,7 +1554,7 @@ describe("createIdentifyResponse", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(result) }] } }],
         }),
         {
           status: 200,
@@ -1587,7 +1587,7 @@ describe("createIdentifyResponse", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [{ content: { parts: [{ text: JSON.stringify({ ...result, evidence: Array.from({ length: 6 }, (_, index) => `Visible feature ${index + 1}`) }) }] } }],
+            candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify({ ...result, evidence: Array.from({ length: 6 }, (_, index) => `Visible feature ${index + 1}`) }) }] } }],
           }),
           {
             status: 200,
@@ -1598,7 +1598,7 @@ describe("createIdentifyResponse", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+            candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(result) }] } }],
           }),
           {
             status: 200,
@@ -1643,7 +1643,7 @@ describe("createIdentifyResponse", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(result) }] } }],
         }),
         {
           status: 200,
@@ -1677,7 +1677,7 @@ describe("createIdentifyResponse", () => {
       new Response(
         JSON.stringify({
           candidates: [
-            {
+            { finishReason: "STOP",
               content: {
                 parts: [
                   {
@@ -1722,7 +1722,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(bodyDamageResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(bodyDamageResult) }] } }],
         }),
         {
           status: 200,
@@ -1761,7 +1761,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(bodyPanelResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(bodyPanelResult) }] } }],
         }),
         {
           status: 200,
@@ -1800,7 +1800,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(engineAssemblyResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(engineAssemblyResult) }] } }],
         }),
         {
           status: 200,
@@ -1897,7 +1897,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(engineAssemblyResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(engineAssemblyResult) }] } }],
         }),
         {
           status: 200,
@@ -1961,7 +1961,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(engineAssemblyResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(engineAssemblyResult) }] } }],
         }),
         {
           status: 200,
@@ -2029,7 +2029,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(brandedGenericEngineResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(brandedGenericEngineResult) }] } }],
         }),
         {
           status: 200,
@@ -2082,7 +2082,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(genericEngineResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(genericEngineResult) }] } }],
         }),
         {
           status: 200,
@@ -2129,7 +2129,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(brandedValveCoverResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(brandedValveCoverResult) }] } }],
         }),
         {
           status: 200,
@@ -2186,7 +2186,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(bumperResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(bumperResult) }] } }],
         }),
         {
           status: 200,
@@ -2248,7 +2248,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(frontFenderResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(frontFenderResult) }] } }],
         }),
         {
           status: 200,
@@ -2319,7 +2319,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(unsupportedQuarterPanelResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(unsupportedQuarterPanelResult) }] } }],
         }),
         {
           status: 200,
@@ -2379,7 +2379,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(unsupportedQuarterPanelResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(unsupportedQuarterPanelResult) }] } }],
         }),
         {
           status: 200,
@@ -2439,7 +2439,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(frontFenderDentResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(frontFenderDentResult) }] } }],
         }),
         {
           status: 200,
@@ -2495,7 +2495,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(engineAssemblyResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(engineAssemblyResult) }] } }],
         }),
         {
           status: 200,
@@ -2534,7 +2534,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(usableMediumResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(usableMediumResult) }] } }],
         }),
         {
           status: 200,
@@ -2594,7 +2594,7 @@ describe("createIdentifyResponse", () => {
 
   it.each([
     ["empty", { candidates: [] }],
-    ["malformed", { candidates: [{ content: { parts: [{ text: "not JSON" }] } }] }],
+    ["malformed", { candidates: [{ finishReason: "STOP", content: { parts: [{ text: "not JSON" }] } }] }],
   ])("falls through from %s Gemini output to a successful hosted backup", async (_label, payload) => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
       new Response(JSON.stringify(String(input).includes("generativelanguage.googleapis.com")
@@ -2694,7 +2694,7 @@ describe("createIdentifyResponse", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(result) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(result) }] } }],
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
@@ -2763,7 +2763,7 @@ describe("createIdentifyResponse", () => {
       new Response(
         JSON.stringify({
           candidates: [
-            {
+            { finishReason: "STOP",
               content: {
                 parts: [
                   {
@@ -2815,7 +2815,7 @@ describe("createIdentifyResponse", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(bumperResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(bumperResult) }] } }],
         }),
         {
           status: 200,
@@ -2888,7 +2888,7 @@ describe("createIdentifyResponse", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(bumperResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(bumperResult) }] } }],
         }),
         {
           status: 200,
@@ -2966,7 +2966,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(genericBodyResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(genericBodyResult) }] } }],
         }),
         {
           status: 200,
@@ -3020,7 +3020,7 @@ describe("createIdentifyResponse", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
-          candidates: [{ content: { parts: [{ text: JSON.stringify(cleanResult) }] } }],
+          candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(cleanResult) }] } }],
         }),
         {
           status: 200,
