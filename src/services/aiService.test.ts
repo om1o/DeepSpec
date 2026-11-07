@@ -419,7 +419,7 @@ describe("aiService", () => {
     vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
     vi.mocked(identifyOnDevice).mockClear();
     const photo = { id: "overview", label: "overview" as const, imageBase64: "data:image/jpeg;base64,dGVzdA==", capturedAt: "2026-11-05T00:00:00.000Z" };
-    await expect(identifyCapturedFrame(photo, undefined, undefined, { photos: [photo] })).rejects.toMatchObject({ code: "network" });
+    await expect(identifyCapturedFrame(photo, undefined, undefined, { photos: [photo] })).rejects.toMatchObject({ code: "connection_failed" });
     expect(identifyOnDevice).not.toHaveBeenCalled();
   });
 
@@ -478,8 +478,8 @@ describe("aiService", () => {
         capturedAt: "2026-05-16T00:00:00.000Z",
       }),
     ).rejects.toMatchObject({
-      code: "network",
-      message: "Scan took too long. Try again.",
+      code: "request_timeout",
+      message: "DeepSpec did not return a complete response in time. Try again.",
     });
   });
 
