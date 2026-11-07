@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { deriveIssue, getEvidenceFacts, getSceneChips, getSecondarySceneObjects, isRelevantSceneObject, regionLabelToBox } from "./resultFacts";
+import { deriveIssue, getAnswerBody, getEvidenceFacts, getSceneChips, getSecondarySceneObjects, isRelevantSceneObject, regionLabelToBox } from "./resultFacts";
+import { getSimpleResultSummary } from "./simpleResultSummary";
 import type { SceneObject } from "../types";
 import type { IdentificationResult } from "../types";
 
@@ -24,15 +25,27 @@ function makeResult(overrides: Partial<IdentificationResult> = {}): Identificati
 }
 
 describe("resultFacts", () => {
+  it.each(["Unknown", "Unknown   component", "Not\nidentified"])("keeps an unresolved identity's visible evidence instead of restoring a successful-match description: %j", (partName) => {
+    const result = makeResult({ partName, whatItDoes: "Deep Spec matched the visible item.", visibleObservations: ["Surface rust is visible on the bracket."] });
+    const body = getAnswerBody(result, getSimpleResultSummary(result));
+    expect(body).toBe("Surface rust is visible on the bracket.");
+    expect(body).not.toMatch(/matched|identified/i);
+  });
+
+  it("retains the ordinary part explanation when a named candidate also has visible damage", () => {
+    const result = makeResult({ visibleObservations: ["Surface rust is visible on the housing."] });
+    expect(getAnswerBody(result, getSimpleResultSummary(result))).toBe(result.whatItDoes);
+  });
+
   it("deriveIssue returns null when nothing looks wrong", () => {
     expect(deriveIssue(makeResult())).toBeNull();
   });
 
-  it("deriveIssue surfaces a damage sentence with an upper-left anchor from the region label", () => {
+  it("deriveIssue locates the same observation using its own supported coarse region", () => {
     const issue = deriveIssue(
       makeResult({
-        concerns: ["A dent is visible on the housing."],
-        evidenceRegions: [{ label: "Housing", observation: "Dent on the housing.", regionLabel: "upper left" }],
+        visibleObservations: ["A dent is visible on the housing."],
+        evidenceRegions: [{ label: "Housing", observation: "  A dent is visible on the housing.  ", regionLabel: "upper left" }],
       }),
     );
     expect(issue?.text).toContain("dent");
@@ -41,15 +54,78 @@ describe("resultFacts", () => {
   });
 
   it("deriveIssue yields a null anchor when no region matches the damage", () => {
-    const issue = deriveIssue(makeResult({ concerns: ["Surface rust on the bracket."] }));
+    const issue = deriveIssue(makeResult({ visibleObservations: ["Surface rust on the bracket."] }));
     expect(issue?.text).toContain("rust");
     expect(issue?.anchor).toBeNull();
+  });
+
+  it("never pairs the first visible issue with another issue's location", () => {
+    const issue = deriveIssue(makeResult({
+      visibleObservations: ["Surface rust on the bracket.", "An oil stain is visible."],
+      evidenceRegions: [{ label: "Oil", observation: "An oil stain is visible.", regionLabel: "lower right" }],
+    }));
+    expect(issue).toEqual({ text: "Surface rust on the bracket.", anchor: null });
+  });
+
+  it("finds matching evidence later in the list without borrowing the first damage location", () => {
+    const issue = deriveIssue(makeResult({
+      visibleObservations: ["Surface rust on the bracket."],
+      evidenceRegions: [
+        { label: "Oil", observation: "An oil stain is visible.", regionLabel: "lower right" },
+        { label: "Bracket", observation: "Surface rust on the bracket.", regionLabel: "upper left" },
+      ],
+    }));
+    expect(issue?.anchor).toEqual(regionLabelToBox("upper left"));
+  });
+
+  it("keeps a paraphrased observation unlocated rather than inferring that similar damage words identify the same area", () => {
+    expect(deriveIssue(makeResult({ visibleObservations: ["A dent is visible on the housing."],
+      evidenceRegions: [{ label: "Housing", observation: "Dent on the housing.", regionLabel: "upper left" }],
+    }))?.anchor).toBeNull();
+  });
+
+  it("uses both the text and location of a region when there is no visible-observation damage sentence", () => {
+    expect(deriveIssue(makeResult({ evidenceRegions: [{ label: "Housing", observation: "Cracked housing.", regionLabel: "right side" }] })))
+      .toEqual({ text: "Cracked housing.", anchor: regionLabelToBox("right side") });
+  });
+
+  it.each(["lower right", "Scanned area", "upper left or lower right"])("keeps duplicate observation evidence unlocated when locations disagree or are unresolved: %s", (secondRegion) => {
+    expect(deriveIssue(makeResult({ visibleObservations: ["Surface rust on the bracket."], evidenceRegions: [
+      { label: "Bracket", observation: "Surface rust on the bracket.", regionLabel: "upper left" },
+      { label: "Bracket", observation: "Surface rust on the bracket.", regionLabel: secondRegion },
+    ] }))?.anchor).toBeNull();
+  });
+
+  it("permits duplicate evidence only when both refer to the same supported coarse area", () => {
+    expect(deriveIssue(makeResult({ visibleObservations: ["Surface rust on the bracket."], evidenceRegions: [
+      { label: "Bracket", observation: "Surface rust on the bracket.", regionLabel: "upper left" },
+      { label: "Bracket", observation: "SURFACE RUST ON THE BRACKET.", regionLabel: "top-left" },
+    ] }))?.anchor).toEqual(regionLabelToBox("upper left"));
+  });
+
+  it("does not turn a hypothetical concern into an observed damage headline", () => {
+    expect(deriveIssue(makeResult({ concerns: ["Possible overheating damage or hidden corrosion."] }))).toBeNull();
+    expect(deriveIssue(makeResult({
+      concerns: ["Possible overheating caused a crack."],
+      visibleObservations: ["Surface rust is visible on the bracket."],
+    }))?.text).toBe("Surface rust is visible on the bracket.");
   });
 
   it("regionLabelToBox maps coarse labels and rejects unknown ones", () => {
     expect(regionLabelToBox("center")).not.toBeNull();
     expect(regionLabelToBox("lower right")?.x).toBeGreaterThan(0.5);
     expect(regionLabelToBox("Scanned area")).toBeNull();
+  });
+
+  it.each(["upper left or lower right", "left and right", "not upper left", "upper lower left", "center of the hose on the right", "possibly left", "outside upper left", "lower-right/top-left", "Scanned area", ""])("does not fabricate a location from an ambiguous or unsupported description: %s", (label) => {
+    expect(regionLabelToBox(label)).toBeNull();
+    expect(deriveIssue(makeResult({ visibleObservations: ["Cracked housing."], evidenceRegions: [{ label: "Housing", observation: "Cracked housing.", regionLabel: label }] }))?.anchor).toBeNull();
+  });
+
+  it("keeps an unspecified axis broad instead of inventing a point at its middle", () => {
+    expect(regionLabelToBox("right side")).toMatchObject({ x: 2 / 3, y: 0, width: 1 / 3, height: 1 });
+    expect(regionLabelToBox("top")).toMatchObject({ x: 0, y: 0, width: 1, height: 1 / 3 });
+    expect(regionLabelToBox("lower right corner")).toMatchObject({ x: 2 / 3, y: 2 / 3, width: 1 / 3, height: 1 / 3 });
   });
 
   it("getEvidenceFacts hides internal provenance strings", () => {

@@ -28,6 +28,15 @@ describe("identify diagnostics", () => {
     expect(log.mock.calls[0][0]).not.toContain("aGVsbG8");
   });
 
+  it.each(["incomplete_response", "response_blocked"])("records %s without model output", async (code) => {
+    const log = vi.spyOn(console, "info").mockImplementation(() => {});
+    const response = { status: code === "response_blocked" ? 422 : 502, body: { error: { code, message: "Private model detail" } } };
+    expect(await observeIdentification(async () => response, { DEEPSPEC_DIAGNOSTICS: "1" })).toBe(response);
+    const event = JSON.parse(log.mock.calls[0][0].slice("[DeepSpec diagnostics] ".length));
+    expect(event).toMatchObject({ code, status: response.status });
+    expect(log.mock.calls[0][0]).not.toContain("Private model detail");
+  });
+
   it("drops unknown error codes, release text and all additional fields", async () => {
     const log = vi.spyOn(console, "info").mockImplementation(() => {});
     const secret = "Bearer private-token https://private.example/photo?token=secret";

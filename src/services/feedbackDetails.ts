@@ -1,4 +1,4 @@
-import type { FeedbackSubmission } from "../types";
+import type { FeedbackSubmission } from "../types/index.js";
 
 export const FEEDBACK_ISSUES = [
   { id: "wrong_part", label: "Wrong part", category: "ai_result" },

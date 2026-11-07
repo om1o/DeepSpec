@@ -2,8 +2,14 @@ import type { CandidateMatch, CandidatePart, CapturedFrame, ChatMessage, Confide
 
 import type { PartInspectionDraft } from "../types";
 import { normalizePartInspection, withLatestInspection } from "../lib/partInspection";
+import { normalizeConditionAssessment } from "../lib/conditionAssessment";
+import { normalizePhotoReview } from "../lib/photoReview";
+import { normalizeVehicleContext, vehicleContextsMatch } from "../lib/vehicleContext";
 import { accountStorageKey, getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import { inspectionDraftKey } from "./inspectionDraft";
+import { isEvidenceImage, normalizeVisualEvidence } from "./visualEvidence";
+import { correctScanSelection, visualSelectionSourceMatches } from "../lib/visualSelection";
+import { photoRelationshipOrUnknown } from "../lib/photoRelationship";
 
 export const LOOKUPS_STORAGE_KEY = "deep-spec:lookups";
 export const MAX_SAVED_LOOKUPS = 50;
@@ -35,16 +41,18 @@ type StorageResult<T> =
       value: T;
     };
 
-export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup> {
+export function createLookup(scanState: ScanAnalysisState, reservedId?: string): StorageResult<Lookup> {
   const createdAt = new Date().toISOString();
+  const evidence = normalizeVisualEvidence(scanState);
   const lookup: Lookup = {
-    id: createId(),
+    id: reservedId ?? createId(),
     createdAt,
     frame: scanState.frame,
     ...(normalizeVisualFocusBox(scanState.focusBox) ? { focusBox: normalizeVisualFocusBox(scanState.focusBox) } : {}),
     ...(isVisualFocusMode(scanState.focusMode) ? { focusMode: scanState.focusMode } : {}),
     ...(cleanImageDataUrl(scanState.isolatedImageBase64) ? { isolatedImageBase64: cleanImageDataUrl(scanState.isolatedImageBase64) } : {}),
-    result: scanState.result,
+    ...evidence,
+    result: withValidatedConditionAssessment(scanState.result, evidencePhotoIds(evidence?.photos, scanState.frame)),
     analysisAttemptId: cleanTextValue(scanState.analysisAttemptId, 160) || undefined,
     ...(scanState.errorCode && scanState.analysisAttemptId ? { analysisFailures: [{
       attemptId: scanState.analysisAttemptId, errorCode: scanState.errorCode,
@@ -70,8 +78,24 @@ export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup
     ...(normalizeShopVehicleContext(scanState.vehicleContext) ? { vehicleContext: normalizeShopVehicleContext(scanState.vehicleContext) } : {}),
   };
 
+  if (!evidence) return { ok: false, value: { ...lookup, photos: scanState.photos, photoRelationship: scanState.photoRelationship, isolatedObjects: scanState.isolatedObjects }, message: "Photo evidence could not be saved safely. Keep this scan open and retry." };
+  if (reservedId !== undefined && !/^[a-zA-Z0-9._:-]{1,160}$/.test(reservedId)) {
+    return { ok: false, value: lookup, message: "This saved component draft has an invalid scan reference. Its photos were kept for recovery." };
+  }
   const read = readLookups();
   if (!read.ok) return { ok: false, message: read.message, value: lookup };
+  const existing = reservedId ? read.value.find((item) => item.id === reservedId) : undefined;
+  if (existing) {
+    const samePhotos = existing.photos && lookup.photos
+      ? existing.photos.length === lookup.photos.length && existing.photos.every((photo, index) => {
+        const other = lookup.photos![index];
+        return photo.id === other.id && photo.label === other.label && photo.capturedAt === other.capturedAt && photo.imageBase64 === other.imageBase64;
+      }) : !existing.photos && !lookup.photos && existing.frame.imageBase64 === lookup.frame.imageBase64 && existing.frame.capturedAt === lookup.frame.capturedAt;
+    const sameContext = vehicleContextsMatch(existing.vehicleContext, lookup.vehicleContext) && existing.jobId === lookup.jobId
+      && photoRelationshipOrUnknown(existing.photoRelationship) === photoRelationshipOrUnknown(lookup.photoRelationship);
+    return samePhotos && sameContext ? { ok: true, value: existing }
+      : { ok: false, value: lookup, message: "This component draft refers to different saved photos, their relationship, vehicle details or a shop job. The saved scan was preserved; reopen the component map." };
+  }
   const lookups = [lookup, ...read.value];
   const writeResult = writeLookups(lookups);
 
@@ -79,11 +103,18 @@ export function createLookup(scanState: ScanAnalysisState): StorageResult<Lookup
 }
 
 export function saveExistingLookup(lookup: Lookup, retryState?: ScanAnalysisState | null): StorageResult<Lookup> {
+  if (!normalizeVisualEvidence(lookup) || (retryState && !normalizeVisualEvidence(retryState))) {
+    return { ok: false, value: lookup, message: "Photo evidence could not be saved safely. The existing scan and original photos were preserved." };
+  }
   const read = readLookups();
   if (!read.ok) return { ok: false, message: read.message, value: lookup };
   const lookups = read.value;
   const local = lookups.find((entry) => entry.id === lookup.id);
   const existing = local ? withLatestInspection(local, lookup) : lookup;
+  if (retryState?.result
+    && photoRelationshipOrUnknown(retryState.photoRelationship) !== photoRelationshipOrUnknown(existing.photoRelationship)) {
+    return { ok: false, value: existing, message: "The photo relationship changed since this analysis. The saved scan and original photos were preserved; reopen the scan before retrying." };
+  }
   const saved = { ...withRetriedLookupResult(existing, retryState), cloudSave: undefined };
   const write = writeLookups(local
     ? lookups.map((entry) => entry.id === saved.id ? saved : entry)
@@ -92,11 +123,16 @@ export function saveExistingLookup(lookup: Lookup, retryState?: ScanAnalysisStat
 }
 
 export function withRetriedLookupResult(existing: Lookup, retryState?: ScanAnalysisState | null): Lookup {
+  // Rendering an invalid retry must not replace retained evidence or its result.
+  // The save boundary reports the invalid metadata without writing either record.
+  if (retryState && (!normalizeVisualEvidence(retryState) || (retryState.result
+    && photoRelationshipOrUnknown(retryState.photoRelationship) !== photoRelationshipOrUnknown(existing.photoRelationship)))) return existing;
   // A cloud-only retry lives in screen state until Save; retain the original
   // record's identity and human work while replacing the failed AI attempt.
-  return retryState?.result ? {
+  const updated = retryState?.result ? {
     ...existing,
     frame: retryState.frame ?? existing.frame,
+    ...(normalizeVisualEvidence({ ...existing, ...retryState, photoRelationship: existing.photoRelationship }) ?? {}),
     result: retryState.result,
     analysisAttemptId: retryState.analysisAttemptId,
     analyzedAt: retryState.analyzedAt ?? new Date().toISOString(),
@@ -107,6 +143,8 @@ export function withRetriedLookupResult(existing: Lookup, retryState?: ScanAnaly
     trainingStatus: getTrainingStatus(existing.rating, existing.correction),
     provenance: normalizeScanProvenance({ ...existing.provenance, ...retryState.provenance }, existing.createdAt),
   } : existing;
+  const evidence = normalizeVisualEvidence(updated);
+  return { ...updated, result: withValidatedConditionAssessment(updated.result, evidencePhotoIds(evidence?.photos, updated.frame)) };
 }
 
 export function saveLookupInspection(id: string, draft: PartInspectionDraft, cloudLookup?: Lookup): StorageResult<Lookup | null> {
@@ -122,6 +160,21 @@ export function saveLookupInspection(id: string, draft: PartInspectionDraft, clo
   const write = writeLookups(lookups.some((lookup) => lookup.id === id)
     ? lookups.map((lookup) => lookup.id === id ? updated : lookup)
     : [updated, ...lookups]);
+  return write.ok ? { ok: true, value: updated } : { ok: false, value: existing, message: write.message };
+}
+
+export function updateLookupVisualSelection(id: string, focusBox: VisualFocusBox, objectIndex: number | null, expected: ScanAnalysisState): StorageResult<Lookup | null> {
+  const read = readLookups();
+  if (!read.ok) return { ok: false, value: null, message: read.message };
+  const existing = read.value.find((lookup) => lookup.id === id);
+  if (!existing) return { ok: false, value: null, message: "Saved scan not found." };
+  if (!visualSelectionSourceMatches(existing, expected, { lookupId: id })) {
+    return { ok: false, value: existing, message: "The saved photo or selected parts changed while you were editing. Reopen the scan before correcting the area. The newer version was kept." };
+  }
+  let updated: Lookup;
+  try { updated = { ...correctScanSelection(existing, focusBox, objectIndex), cloudSave: undefined }; }
+  catch (error) { return { ok: false, value: existing, message: error instanceof Error ? error.message : "Selection could not be saved." }; }
+  const write = writeLookups(read.value.map((lookup) => lookup.id === id ? updated : lookup));
   return write.ok ? { ok: true, value: updated } : { ok: false, value: existing, message: write.message };
 }
 
@@ -305,7 +358,7 @@ export function updateLookupResult(
     ...existing,
     frame: frame ?? existing.frame,
     cloudSave: undefined,
-    result,
+    result: withValidatedConditionAssessment(result, evidencePhotoIds(existing.photos, frame ?? existing.frame)),
     analysisAttemptId: result.modelRun?.runId,
     errorMessage: undefined,
     errorCode: undefined,
@@ -431,6 +484,9 @@ export function scanStateFromLookup(lookup: Lookup): ScanAnalysisState {
   return {
     analysisAttemptId: lookup.analysisAttemptId,
     frame: lookup.frame,
+    photos: lookup.photos,
+    photoRelationship: lookup.photoRelationship,
+    isolatedObjects: lookup.isolatedObjects,
     focusBox: lookup.focusBox,
     focusMode: lookup.focusMode,
     isolatedImageBase64: lookup.isolatedImageBase64,
@@ -552,7 +608,9 @@ export function normalizeLookup(value: unknown): Lookup | null {
   const rating = isRating(lookup.rating) ? lookup.rating : null;
   const correction = typeof lookup.correction === "string" ? lookup.correction : null;
   const notes = typeof lookup.notes === "string" ? lookup.notes : "";
-  const result = normalizeStoredIdentificationResult(lookup.result, correction ?? undefined);
+  const evidence = normalizeVisualEvidence(lookup);
+  if (!evidence) return null;
+  const result = normalizeStoredIdentificationResult(lookup.result, evidencePhotoIds(evidence.photos, lookup.frame), correction ?? undefined);
   const scanQuality = normalizeScanQualitySnapshot(lookup.scanQuality);
   const scanCategory = isScanCategory(lookup.scanCategory) ? lookup.scanCategory : categorizeScan(result, correction ?? undefined);
   const trainingStatus = isTrainingStatus(lookup.trainingStatus)
@@ -573,6 +631,7 @@ export function normalizeLookup(value: unknown): Lookup | null {
     ...(normalizeVisualFocusBox(lookup.focusBox) ? { focusBox: normalizeVisualFocusBox(lookup.focusBox) } : {}),
     ...(isVisualFocusMode(lookup.focusMode) ? { focusMode: lookup.focusMode } : {}),
     ...(cleanImageDataUrl(lookup.isolatedImageBase64) ? { isolatedImageBase64: cleanImageDataUrl(lookup.isolatedImageBase64) } : {}),
+    ...evidence,
     result,
     errorMessage: lookup.errorMessage,
     analysisAttemptId: cleanTextValue(lookup.analysisAttemptId, 160) || undefined,
@@ -600,7 +659,7 @@ function normalizeCloudSave(value: unknown): Lookup["cloudSave"] {
   if (!isRecord(value) || typeof value.attemptId !== "string" || !value.attemptId
     || typeof value.attemptedAt !== "string" || !Number.isFinite(Date.parse(value.attemptedAt))
     || !["unconfirmed", "acknowledged", "failed"].includes(value.status as string)
-    || !["scan", "inspection"].includes(value.scope as string)) return undefined;
+    || !["scan", "inspection", "chat"].includes(value.scope as string)) return undefined;
   return { attemptId: value.attemptId, attemptedAt: value.attemptedAt, status: value.status, scope: value.scope,
     ...(value.shopAssociation === "private" || value.shopAssociation === "cloud" ? { shopAssociation: value.shopAssociation } : {}) } as NonNullable<Lookup["cloudSave"]>;
 }
@@ -843,7 +902,19 @@ function categorizeText(text: string): ScanCategory {
   return CATEGORY_MATCHERS.find(([, pattern]) => pattern.test(text))?.[0] ?? "unknown";
 }
 
-function normalizeStoredIdentificationResult(value: unknown, correction?: string): IdentificationResult | undefined {
+function evidencePhotoIds(photos: Lookup["photos"], frame: Lookup["frame"]): string[] {
+  return photos?.map((photo) => photo.id) ?? (isEvidenceImage(frame.imageBase64) ? ["photo-1"] : []);
+}
+
+function withValidatedConditionAssessment(result: IdentificationResult | undefined, allowedPhotoIds: readonly string[]): IdentificationResult | undefined {
+  if (!result) return undefined;
+  const { conditionAssessment: rawAssessment, photoReview: rawPhotoReview, ...legacyResult } = result;
+  const conditionAssessment = normalizeConditionAssessment(rawAssessment, allowedPhotoIds);
+  const photoReview = normalizePhotoReview(rawPhotoReview, allowedPhotoIds);
+  return { ...legacyResult, ...(conditionAssessment ? { conditionAssessment } : {}), ...(photoReview ? { photoReview } : {}) };
+}
+
+function normalizeStoredIdentificationResult(value: unknown, allowedPhotoIds: readonly string[], correction?: string): IdentificationResult | undefined {
   if (typeof value !== "object" || value === null) {
     return undefined;
   }
@@ -864,6 +935,8 @@ function normalizeStoredIdentificationResult(value: unknown, correction?: string
     return undefined;
   }
 
+  const conditionAssessment = normalizeConditionAssessment(result.conditionAssessment, allowedPhotoIds);
+  const photoReview = normalizePhotoReview(result.photoReview, allowedPhotoIds);
   return {
     partName: cleanText(result.partName, 80),
     confidence: result.confidence,
@@ -881,6 +954,8 @@ function normalizeStoredIdentificationResult(value: unknown, correction?: string
     whatItDoes: cleanText(result.whatItDoes, 500),
     visibleObservations: cleanStringArray(result.visibleObservations, 6, 180),
     evidenceRegions: normalizeEvidenceRegions(result.evidenceRegions, result.visibleObservations, result.evidence),
+    ...(conditionAssessment ? { conditionAssessment } : {}),
+    ...(photoReview ? { photoReview } : {}),
     sceneObjects: normalizeSceneObjects(result.sceneObjects),
     concerns: cleanStringArray(result.concerns, 6, 180),
     safetyTriage: result.safetyTriage,
@@ -1125,20 +1200,7 @@ function cleanTextValue(value: unknown, maxLength: number) {
 }
 
 function normalizeShopVehicleContext(value: unknown): ShopVehicleContext | undefined {
-  if (!isRecord(value)) {
-    return undefined;
-  }
-
-  const context: ShopVehicleContext = {};
-  const fields: Array<keyof ShopVehicleContext> = ["bayOrRo", "customerName", "engine", "jobTitle", "make", "mileage", "model", "notes", "plate", "symptom", "technicianName", "vin", "year"];
-  for (const field of fields) {
-    const clean = cleanTextValue(value[field], field === "notes" || field === "symptom" ? 300 : 120);
-    if (clean) {
-      (context as Record<string, string>)[field] = clean;
-    }
-  }
-
-  return Object.keys(context).length ? context : undefined;
+  return normalizeVehicleContext(value);
 }
 
 function normalizeCustomerVisibleReport(value: unknown): CustomerVisibleReport | undefined {

@@ -1,5 +1,8 @@
 import type { CapturedFrame, ScanAnalysisState, ScanQualitySnapshot } from "../types";
 import { accountStorageKey } from "./accountScope";
+import { isEvidenceImage, normalizeVisualEvidence } from "../services/visualEvidence";
+import { normalizePhotoReview } from "./photoReview";
+import { normalizeConditionAssessment } from "./conditionAssessment";
 
 const LATEST_CAPTURED_FRAME_KEY = "deep-spec:latest-captured-frame";
 const LATEST_SCAN_STATE_KEY = "deep-spec:latest-scan-state";
@@ -53,10 +56,29 @@ export function readLatestScanState(): ScanAnalysisState | null {
     if (!isCapturedFrame(state.frame)) {
       return null;
     }
+    const visual = normalizeVisualEvidence(state);
+    if (!visual) return null;
+    const allowedPhotoIds = visual.photos?.map((photo) => photo.id)
+      ?? (isEvidenceImage(state.frame.imageBase64) ? ["photo-1"] : []);
+    const result = state.result ? (() => {
+      const { photoReview: rawPhotoReview, conditionAssessment: rawAssessment, ...rest } = state.result;
+      const photoReview = normalizePhotoReview(rawPhotoReview, allowedPhotoIds);
+      const conditionAssessment = normalizeConditionAssessment(rawAssessment, allowedPhotoIds);
+      return { ...rest, ...(photoReview ? { photoReview } : {}), ...(conditionAssessment ? { conditionAssessment } : {}) };
+    })() : undefined;
 
     return {
       frame: state.frame,
-      result: state.result,
+      ...visual,
+      analysisAttemptId: state.analysisAttemptId,
+      provenance: state.provenance,
+      vehicleContext: state.vehicleContext,
+      jobId: state.jobId,
+      orgId: state.orgId,
+      reviewStatus: state.reviewStatus,
+      technicianUserId: state.technicianUserId,
+      customerVisibleReport: state.customerVisibleReport,
+      result,
       errorMessage: typeof state.errorMessage === "string" ? state.errorMessage : undefined,
       errorCode: typeof state.errorCode === "string" ? state.errorCode : undefined,
       analyzedAt: typeof state.analyzedAt === "string" ? state.analyzedAt : undefined,
@@ -154,8 +176,13 @@ export function getScaledDimensions(width: number, height: number, maxLongestEdg
 function loadImage(dataUrl: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error("Could not read captured image."));
+    const timeout = setTimeout(() => {
+      image.onload = null;
+      image.onerror = null;
+      reject(new Error("Preparing this photo stalled. Select it again or use a smaller photo."));
+    }, 15_000);
+    image.onload = () => { clearTimeout(timeout); resolve(image); };
+    image.onerror = () => { clearTimeout(timeout); reject(new Error("Could not read captured image.")); };
     image.src = dataUrl;
   });
 }

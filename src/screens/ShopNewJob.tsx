@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Button from "../components/ui/Button";
+import { VehicleContextEditor } from "../components/vehicle/VehicleContextEditor";
 import { createShopJob } from "../services/shop";
 import type { ShopJobInput } from "../services/shop";
 
@@ -70,20 +71,21 @@ export default function ShopNewJob() {
             <div className="mt-4 grid gap-4 md:grid-cols-2">
               <TextField label="Job title" required value={form.title} onChange={(value) => updateField("title", value)} />
               <TextField label="Technician" required value={form.technicianName} onChange={(value) => updateField("technicianName", value)} />
-              <TextField label="Year" required value={form.year} onChange={(value) => updateField("year", value)} />
-              <TextField label="Make" required value={form.make} onChange={(value) => updateField("make", value)} />
-              <TextField label="Model" required value={form.model} onChange={(value) => updateField("model", value)} />
               <TextField label="Symptom / complaint" required value={form.symptom} onChange={(value) => updateField("symptom", value)} />
             </div>
           </section>
 
           <section className="mt-7 border-t border-slate-100 pt-5">
-            <h2 className="text-lg font-black tracking-tight">Promoted context</h2>
-            <p className="mt-1 text-sm font-semibold text-slate-500">VIN is optional, but missing context keeps fitment confidence in a needs-vehicle-context state.</p>
+            <p className="mb-3 text-sm font-semibold text-slate-500">Year, make and model are required for a shop job. Other vehicle details are optional.</p>
+            <VehicleContextEditor value={form} hideSymptom onChange={(context) => setForm((current) => ({
+              ...current, ...context,
+              year: context?.year ?? "", make: context?.make ?? "", model: context?.model ?? "",
+              engine: context?.engine, vin: context?.vin, mileage: context?.mileage,
+              mileageUnit: context?.mileageUnit, modifications: context?.modifications, confirmedFields: context?.confirmedFields,
+              referenceOrigins: context?.referenceOrigins,
+            }))} />
+            <h2 className="mt-5 text-lg font-black tracking-tight">Job details</h2>
             <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <TextField label="VIN" value={form.vin} onChange={(value) => updateField("vin", value)} />
-              <TextField label="Mileage" value={form.mileage} onChange={(value) => updateField("mileage", value)} />
-              <TextField label="Engine" value={form.engine} onChange={(value) => updateField("engine", value)} />
               <TextField label="Customer name" value={form.customerName} onChange={(value) => updateField("customerName", value)} />
               <TextField label="Plate" value={form.plate} onChange={(value) => updateField("plate", value)} />
               <TextField label="Bay / RO number" value={form.bayOrRo} onChange={(value) => updateField("bayOrRo", value)} />

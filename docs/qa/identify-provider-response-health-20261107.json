@@ -1,0 +1,49 @@
+{
+  "date": "2026-11-07",
+  "scope": "Gemini inspection completion, provider failures, and failed-analysis recovery",
+  "sources": [
+    {
+      "url": "https://ai.google.dev/api/generate-content",
+      "applied": "Check candidate completion and prompt blocks before parsing JSON; exclude thought parts from the final inspection."
+    },
+    {
+      "url": "https://ai.google.dev/gemini-api/docs/troubleshooting",
+      "applied": "Stop Gemini model attempts and compact rescue after permanent request, authentication, permission, or missing-model errors."
+    }
+  ],
+  "before": {
+    "newRegressionTests": 21,
+    "failed": 21,
+    "findings": [
+      "Parseable JSON could become a successful inspection despite an incomplete or blocked finish reason.",
+      "A prompt block could trigger additional model or compact-rescue requests.",
+      "Intermediate model notes could become inspection data.",
+      "Permanent Gemini 4xx errors could be retried and their raw diagnostic messages returned to customers."
+    ]
+  },
+  "after": {
+    "uniqueFocusedTestsPassedAcrossRuns": 490,
+    "focusedSuites": 12,
+    "newProviderTests": 21,
+    "newResultRecoveryTests": 3,
+    "newDiagnosticsTests": 2,
+    "additionalPaidHoldFailureCase": "HTTP 422",
+    "eslint": "passed",
+    "serverCompilerModes": "strict and non-strict passed",
+    "frontendCompiler": "passed",
+    "completeRescueRetainsThreePhotos": true,
+    "providerBlockAbortsStartedHedge": true,
+    "defaultModel": "gemini-3.5-flash-lite",
+    "modelAndTokenBudgetsChanged": false,
+    "credentialsChanged": false,
+    "deployed": false,
+    "liveBenchmark": "not run for this change"
+  },
+  "limitations": [
+    "Mocked provider tests do not prove live account access or inspection accuracy.",
+    "A completed response can still make incorrect visual claims; the real multi-photo benchmark remains required.",
+    "Existing structured and compact-rescue output budgets are unchanged; live multi-photo completion rates have not been measured.",
+    "Paid-hold release was tested with mocks. This does not establish a free-scan refund or a live billing change.",
+    "The temporary access deployment proposed earlier does not include this additional change."
+  ]
+}

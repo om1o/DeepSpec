@@ -21,14 +21,9 @@ a:focus-visible, button:focus-visible { outline: 2px solid #c9eaff; outline-offs
 .skip-link { position: fixed; z-index: 100; top: 10px; left: 20px; background: white; color: var(--bg); padding: 12px 20px; border-radius: 10px; transform: translateY(-200%); }
 .skip-link:focus { transform: translateY(0); }
 
-/* The electric D stays static; scanner motion remains independent. */
+/* The white identity stays static; scanner motion remains independent. */
 .brand-logo { width: 100%; height: auto; animation: none !important; transition: none !important; transform: none !important; }
-.brand-lockup { display: inline-flex; align-items: center; gap: 10px; flex-shrink: 0; }
-.brand-mark { width: 44px; height: 44px; object-fit: contain; animation: none !important; transition: none !important; transform: none !important; }
-.brand-wordmark { color: #fff; font-size: 26px; font-weight: 700; line-height: 1; white-space: nowrap; }
-.brand-wordmark span { color: #55d9ff; }
 .brand-link { width: auto; }
-.brand-link .brand-mark, .anywhere-logo { filter: none; mix-blend-mode: normal; }
 .site-header { min-height: 88px; display: flex; align-items: center; gap: 38px; padding: 0 44px; max-width: 1440px; margin: auto; border-bottom: 1px solid var(--line); }
 .site-header .brand-link { width: auto; }
 .site-header nav { display: flex; align-items: center; gap: 32px; font-size: 14px; color: #aabac9; }
@@ -157,8 +152,6 @@ a:focus-visible, button:focus-visible { outline: 2px solid #c9eaff; outline-offs
 .share-note strong { font-size: 18px; font-weight: 500; line-height: 1.4; }
 .anywhere-section { max-width: 1000px; margin: 5px auto 0; padding: 0 30px 95px; text-align: center; }
 .anywhere-logo { width: auto; justify-content: center; margin: 0 auto 35px; }
-.anywhere-logo .brand-mark { width: 72px; height: 72px; }
-.anywhere-logo .brand-wordmark { font-size: 42px; }
 .anywhere-section h2 { font-size: 48px; font-weight: 450; line-height: 1.13; letter-spacing: -.04em; text-wrap: balance; }
 .anywhere-section>p:not(.fitment-note) { font-size: 20px; line-height: 1.6; color: var(--muted); margin-top: 23px; }
 .anywhere-section>.glass-button { margin-top: 29px; }
@@ -175,8 +168,6 @@ a:focus-visible, button:focus-visible { outline: 2px solid #c9eaff; outline-offs
 .explore-card:hover { border-color: #9dbfd366; transform: translateY(-4px); box-shadow: 0 15px 32px #00081233; }
 .site-footer { padding: 25px 44px 28px; border-top: 1px solid var(--line); display: flex; gap: 30px; align-items: center; max-width: 1440px; margin: auto; }
 .site-footer .brand-link { width: auto; }
-.site-footer .brand-mark { width: 36px; height: 36px; }
-.site-footer .brand-wordmark { font-size: 22px; }
 .site-footer>p { font-size: 13px; color: #98adbd; }
 .site-footer>div { margin-left: auto; display: flex; gap: 28px; font-size: 13px; color: #b7cbd9; }
 .site-footer a:hover { color: white; }
@@ -200,8 +191,6 @@ a:focus-visible, button:focus-visible { outline: 2px solid #c9eaff; outline-offs
 @media (max-width:1100px) {
   .site-header { gap:25px; padding:0 30px; }
   .site-header nav { gap:22px; font-size:13px; }
-  .site-header .brand-mark { width:40px; height:40px; }
-  .site-header .brand-wordmark { font-size:24px; }
   .hero { gap:28px; }
   .hero h1 { font-size:57px; }
   .hero-content>p:first-of-type { font-size:18px; }
@@ -266,8 +255,6 @@ a:focus-visible, button:focus-visible { outline: 2px solid #c9eaff; outline-offs
 @media (max-width:700px) {
   html { scroll-padding-top:80px; }
   .site-header { min-height:72px; gap:15px; padding:0 20px; }
-  .site-header .brand-mark { width:34px; height:34px; }
-  .site-header .brand-wordmark { font-size:20px; }
   .site-header nav { margin-left:auto; gap:0; font-size:12px; }
   .site-header nav a:not(.current) { display:none; }
   .header-sign-in { margin-left:0; padding:10px 14px; min-height:41px; gap:11px; font-size:12px; border-radius:12px; }
@@ -327,8 +314,6 @@ a:focus-visible, button:focus-visible { outline: 2px solid #c9eaff; outline-offs
   .lower-features { margin-top:70px; }
   .anywhere-section { padding:0 7% 70px; margin-top:0; }
   .anywhere-logo { width:auto; margin-bottom:28px; }
-  .anywhere-logo .brand-mark { width:58px; height:58px; }
-  .anywhere-logo .brand-wordmark { font-size:34px; }
   .anywhere-section h2 { font-size:34px; line-height:1.16; }
   .anywhere-section>p:not(.fitment-note) { font-size:16px; line-height:1.6; margin-top:21px; }
   .anywhere-section .fitment-note { font-size:11px; line-height:1.75; margin-top:24px; max-width:360px; }
@@ -378,3 +363,9 @@ a:focus-visible, button:focus-visible { outline: 2px solid #c9eaff; outline-offs
 @media(max-width:700px){.demo-review-panel{left:16px;right:16px;width:auto;max-width:none;bottom:64px;min-height:140px;padding:13px 15px;border-radius:17px;transform:none}.demo-review-heading{font-size:11px}.demo-review-heading span:last-child{font-size:8px}.demo-review-panel>strong{font-size:18px;margin-top:6px}.demo-review-panel>p{font-size:13px;line-height:1.45;min-height:76px;margin-top:7px}}
 
 .phone-top img[src$="blue-glass-logo.svg"]{width:96px;mix-blend-mode:normal}@media(max-width:700px){.phone-top img[src$="blue-glass-logo.svg"]{width:84px}}
+
+/* Static white identity shared with the authenticated app. */
+.brand-logo { display:block; width:178px; height:auto; object-fit:contain; }
+.anywhere-logo { display:block; width:260px; max-width:80%; height:auto; margin:0 auto 35px; }
+.site-footer .brand-logo { width:148px; }
+@media (max-width:600px) { .brand-logo { width:140px; } }

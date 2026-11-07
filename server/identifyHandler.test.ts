@@ -65,7 +65,7 @@ describe("identify HTTP credit gate", () => {
     await handler({ method: "POST", body, headers: { authorization: "Bearer token" } }, response());
     expect(mocks.identify).toHaveBeenCalledOnce();
   });
-  it.each([200, 502])("finalizes paid holds after a provider response with status %i", async (status) => {
+  it.each([200, 422, 502])("finalizes paid holds after a provider response with status %i", async (status) => {
     const rpc = client({ ok: true, reservation_id: "paid-hold" });
     mocks.identify.mockResolvedValue({ status, body: {} });
     await handler({ method: "POST", body, headers: { authorization: "Bearer token" } }, response());

@@ -1119,8 +1119,9 @@ describe("billing shared", () => {
       },
     });
 
-    expect(table.updateEq).toHaveBeenCalledWith("provider_subscription_id", "sub_missing");
-    expect(table.updateSelect).toHaveBeenCalledWith("user_id");
+    expect(table.selectEq).toHaveBeenCalledWith("billing_provider", "stripe");
+    expect(table.selectEq).toHaveBeenCalledWith("provider_subscription_id", "sub_missing");
+    expect(table.update).not.toHaveBeenCalled();
   });
 
   describe("Polar webhook secrets created before the Standard Webhooks switch", () => {
@@ -1219,16 +1220,21 @@ function createBillingTableMock({
   existingRow?: Record<string, unknown> | null;
   updatedRows?: Array<Record<string, unknown>>;
 } = {}) {
-  const maybeSingle = vi.fn(async () => ({ data: existingRow, error: null }));
-  const selectEq = vi.fn(() => ({ maybeSingle }));
-  const select = vi.fn(() => ({ eq: selectEq }));
+  let selectedColumns = "";
+  const maybeSingle = vi.fn(async () => ({ data: selectedColumns === "user_id" ? updatedRows[0] ?? null : existingRow, error: null }));
+  const selectQuery = { eq: vi.fn(), maybeSingle };
+  selectQuery.eq.mockReturnValue(selectQuery);
+  const selectEq = selectQuery.eq;
+  const select = vi.fn((columns: string) => { selectedColumns = columns; return selectQuery; });
   const upsert = vi.fn(async (values: Record<string, unknown>) => {
     expect(values).not.toHaveProperty("scans_used");
     return { error: null };
   });
   const updateSelect = vi.fn(async () => ({ data: updatedRows, error: null }));
-  const updateEq = vi.fn(() => ({ select: updateSelect }));
-  const update = vi.fn(() => ({ eq: updateEq }));
+  const updateQuery = { eq: vi.fn(), select: updateSelect };
+  updateQuery.eq.mockReturnValue(updateQuery);
+  const updateEq = updateQuery.eq;
+  const update = vi.fn(() => updateQuery);
   const from = vi.fn(() => ({
     select,
     update,

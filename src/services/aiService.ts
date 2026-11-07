@@ -4,6 +4,13 @@ import { getAuthClient } from "./auth";
 import { getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import { prepareRetryFrame } from "../lib/retryFrame";
 import { compressImageDataUrl } from "../lib/utils";
+import { validatePhotoGroup } from "./photoDraft";
+import { normalizeConditionAssessment } from "../lib/conditionAssessment";
+import { normalizePhotoReview, photoReviewForRelationship } from "../lib/photoReview";
+import { buildConditionHandoff } from "../lib/conditionHandoff";
+import { providerVehicleContext } from "../lib/vehicleContext";
+import { hasFirstPhotoIdentityScopePipeline, isPhotoRelationship } from "../lib/photoRelationship";
+import { isAIRequestId } from "../lib/aiRequestId";
 import {
   SCAN_CATEGORIES,
   type AIInput,
@@ -16,30 +23,38 @@ import {
   type Lookup,
   type MeasurementContext,
   type PartMeasurement,
+  type PhotoRelationship,
   type PossibleVehicleContext,
   type ScanCategory,
+  type ScanPhoto,
   type SourceLink,
   type VehicleContext,
 } from "../types";
 
 type AIErrorCode =
+  | "connection_failed"
   | "entitlement_unavailable"
   | "feature_disabled"
   | "image_too_large"
   | "invalid_input"
   | "invalid_session"
   | "invalid_response"
+  | "incomplete_response"
   | "missing_session"
   | "network"
   | "not_configured"
   | "provider_error"
   | "rate_limited"
   | "rate_limit_unavailable"
+  | "response_blocked"
+  | "request_timeout"
   | "scan_limit_reached"
   | "session_unavailable"
+  | "service_response_error"
+  | "timeout"
   | "unsupported";
 
-export type AIErrorCategory = "input" | "model_response" | "provider_unavailable" | "setup" | "unknown";
+export type AIErrorCategory = "connection" | "input" | "model_response" | "provider_unavailable" | "setup" | "unknown";
 
 export type AIErrorDetails = {
   category: AIErrorCategory;
@@ -62,13 +77,6 @@ type ChatApiSuccess = {
 export type FollowUpOptions = { research?: boolean; sourceUrls?: string[] };
 export type FollowUpDetails = ChatApiSuccess;
 
-type AIApiFailure = {
-  error: {
-    code: AIErrorCode | string;
-    message: string;
-  };
-};
-
 type AIRequestOptions = {
   signal?: AbortSignal;
 };
@@ -89,16 +97,20 @@ const IDENTIFY_COMPRESSION_STEPS = [
 
 export class AIServiceError extends Error {
   code: AIErrorCode | string;
+  requestId?: string;
 
-  constructor(code: AIErrorCode | string, message: string) {
+  constructor(code: AIErrorCode | string, message: string, requestId?: string) {
     super(message);
     this.name = "AIServiceError";
     this.code = code;
+    if (isAIRequestId(requestId)) this.requestId = requestId;
   }
 }
 
 export async function runAI(input: AIInput, options: AIRequestOptions = {}): Promise<string | object> {
   throwIfAborted(options.signal);
+  const photoRelationship = validatePhotoRelationship(input.photoRelationship);
+  const vehicleContext = providerVehicleContext(input.vehicleContext);
   if (input.type === "text") {
     if (!input.userMessage.trim()) {
       throw new AIServiceError("invalid_input", "Ask a question first.");
@@ -108,6 +120,8 @@ export async function runAI(input: AIInput, options: AIRequestOptions = {}): Pro
       "/api/chat",
       {
         userMessage: input.userMessage,
+        photoRelationship,
+        ...(vehicleContext ? { vehicleContext } : {}),
         ...(input.imageBase64 ? { imageBase64: input.imageBase64 } : {}),
         systemPrompt: input.systemPrompt,
         responseAsJson: input.responseAsJson ?? false,
@@ -119,6 +133,22 @@ export async function runAI(input: AIInput, options: AIRequestOptions = {}): Pro
   }
 
   if (input.type === "vision") {
+    if (input.photos) {
+      const scope = getAccountScope();
+      const photos = await preparePhotoGroupForRequest(input.photos, options.signal);
+      const body = await postAI<IdentifyApiSuccess>("/api/identify", {
+        photos,
+        photoRelationship,
+        ...(vehicleContext ? { vehicleContext } : {}),
+        ...(input.measurementContext ? { measurementContext: input.measurementContext } : {}),
+        userMessage: input.userMessage,
+        responseAsJson: true,
+      }, { signal: options.signal, timeoutMs: getIdentifyClientTimeoutMs(), scope });
+      return withValidatedConditionAssessment(
+        { ...body.result, ...(body.modelRun ? { modelRun: body.modelRun } : {}) },
+        photos.map((photo) => photo.id),
+      );
+    }
     if (!input.imageBase64) {
       throw new AIServiceError("invalid_input", "No captured image was provided.");
     }
@@ -138,9 +168,10 @@ export async function runAI(input: AIInput, options: AIRequestOptions = {}): Pro
       "/api/identify",
       {
         imageBase64,
+        photoRelationship,
         ...(imageBase64_2 ? { imageBase64_2 } : {}),
         ...(input.labelRescueTrigger ? { labelRescueTrigger: input.labelRescueTrigger } : {}),
-        ...(input.vehicleContext ? { vehicleContext: input.vehicleContext } : {}),
+        ...(vehicleContext ? { vehicleContext } : {}),
         ...(input.measurementContext ? { measurementContext: input.measurementContext } : {}),
         userMessage: input.userMessage,
         responseAsJson: input.responseAsJson ?? true,
@@ -148,13 +179,19 @@ export async function runAI(input: AIInput, options: AIRequestOptions = {}): Pro
       { signal: options.signal, timeoutMs: getIdentifyClientTimeoutMs() },
     );
 
-    return {
+    return withValidatedConditionAssessment({
       ...body.result,
       ...(body.modelRun ? { modelRun: body.modelRun } : {}),
-    };
+    }, imageBase64_2 ? ["photo-1", "photo-2"] : ["photo-1"]);
   }
 
   throw new AIServiceError("unsupported", "Deep Spec does not support that AI request yet.");
+}
+
+function validatePhotoRelationship(value: unknown): PhotoRelationship {
+  if (value === undefined) return "unknown";
+  if (isPhotoRelationship(value)) return value;
+  throw new AIServiceError("invalid_input", "Choose a supported photo relationship before analyzing or asking a question.");
 }
 
 async function postAI<TSuccess extends object>(
@@ -171,42 +208,61 @@ async function postAI<TSuccess extends object>(
   const authHeader = await getAuthHeader();
   throwIfAborted(options.signal);
   if (options.scope && !isAccountScopeCurrent(options.scope)) throw new AIServiceError("invalid_input", "Account changed. Reopen this scan before asking a question.");
+  const requestId = crypto.randomUUID();
+  const started = Date.now();
   const controller = new AbortController();
   const abortFromCaller = () => controller.abort();
   options.signal?.addEventListener("abort", abortFromCaller, { once: true });
   const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs);
-  const response = await fetch(path, {
-    method: "POST",
-    signal: controller.signal,
-    headers: {
-      ...(authHeader ? { Authorization: authHeader } : {}),
-      "Content-Type": "application/json",
-    },
-    body: requestBody,
-  }).catch((error: unknown) => {
-    if (options.signal?.aborted) {
-      throw createAbortError();
+  let stage: "fetch" | "body" = "fetch";
+  let httpStatus: number | undefined;
+  try {
+    const response = await fetch(path, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        ...(authHeader ? { Authorization: authHeader } : {}),
+        "Content-Type": "application/json",
+        "X-DeepSpec-Request-Id": requestId,
+      },
+      body: requestBody,
+    });
+    httpStatus = response.status;
+    stage = "body";
+    // fetch resolves at headers. Keep cancellation and the deadline through the body read.
+    const body: unknown = await response.json();
+    throwIfAborted(options.signal);
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      throw new AIServiceError("service_response_error", "DeepSpec could not read the service response. Try again.", requestId);
     }
-    if (isAbortError(error)) {
-      throw new AIServiceError("network", "Scan took too long. Try again.");
+    if ("error" in body) {
+      const error = body.error;
+      if (error && typeof error === "object" && "code" in error && typeof error.code === "string"
+        && "message" in error && typeof error.message === "string") {
+        throw new AIServiceError(error.code, error.message, requestId);
+      }
+      throw new AIServiceError("service_response_error", "DeepSpec could not read the service response. Try again.", requestId);
     }
-
-    throw new AIServiceError("network", "Could not reach the Deep Spec AI service.");
-  }).finally(() => {
+    if (!response.ok) {
+      throw new AIServiceError("service_response_error", "DeepSpec could not complete this request. Try again.", requestId);
+    }
+    return body as TSuccess;
+  } catch (error) {
+    if (options.signal?.aborted) throw createAbortError();
+    // Only fixed metadata is logged; no question, photo, credential or raw exception.
+    console.warn("[DeepSpec Connection]", { requestId, path, stage, httpStatus, durationMs: Date.now() - started });
+    if (error instanceof AIServiceError) throw error;
+    if (controller.signal.aborted) {
+      throw new AIServiceError("request_timeout", "DeepSpec did not return a complete response in time. Try again.", requestId);
+    }
+    if (error instanceof SyntaxError) {
+      throw new AIServiceError("service_response_error", "DeepSpec could not read the service response. Try again.", requestId);
+    }
+    throw new AIServiceError("connection_failed", "The connection to DeepSpec was interrupted before a complete response arrived. Try again.", requestId);
+  } finally {
     clearTimeout(timeoutId);
     options.signal?.removeEventListener("abort", abortFromCaller);
-  });
-
-  throwIfAborted(options.signal);
-
-  const body = (await response.json().catch(() => null)) as TSuccess | AIApiFailure | null;
-
-  if (!response.ok || !body || "error" in body) {
-    const error = body && "error" in body ? body.error : null;
-    throw new AIServiceError(error?.code ?? "network", error?.message ?? "Deep Spec could not complete that AI request.");
   }
-
-  return body;
 }
 
 async function fitIdentifyImageToRequest(dataUrl: string, maxChars: number, signal?: AbortSignal) {
@@ -232,33 +288,53 @@ async function fitIdentifyImageToRequest(dataUrl: string, maxChars: number, sign
   throw new AIServiceError("image_too_large", "The captured photo is too large. Try a lower-resolution photo.");
 }
 
+export async function preparePhotoGroupForRequest(photos: ScanPhoto[], signal?: AbortSignal) {
+  if (!photos.length || photos.length > 4) throw new AIServiceError("invalid_input", "Choose one to four labeled photos.");
+  const prepared: ScanPhoto[] = [];
+  for (const photo of photos) {
+    throwIfAborted(signal);
+    const frame = await prepareRetryFrame(photo);
+    prepared.push({ ...photo, ...frame, imageBase64: await fitIdentifyImageToRequest(frame.imageBase64, Math.floor(3_700_000 / photos.length), signal) });
+  }
+  if (!validatePhotoGroup(prepared)) throw new AIServiceError("invalid_input", "The saved photo group is incomplete. Reopen it before retrying.");
+  return prepared.map(({ id, label, imageBase64 }) => ({ id, label, imageBase64 }));
+}
+
 export async function identifyCapturedFrame(
   frame: CapturedFrame,
   secondFrame?: CapturedFrame,
   labelRescueTrigger?: LabelRescueTrigger,
   options: {
+    photos?: ScanPhoto[];
+    photoRelationship?: PhotoRelationship;
     measurementContext?: MeasurementContext;
     signal?: AbortSignal;
     vehicleContext?: VehicleContext;
   } = {},
 ): Promise<IdentificationResult> {
   throwIfAborted(options.signal);
-  if (isOnDeviceFallbackEnabled() && typeof navigator !== "undefined" && navigator.onLine === false) {
+  validatePhotoRelationship(options.photoRelationship);
+  if (options.photos && typeof navigator !== "undefined" && navigator.onLine === false) {
+    throw new AIServiceError("connection_failed", "Your photo group is saved on this device. Reconnect and retry to analyze every angle together.");
+  }
+  if (!options.photos && isOnDeviceFallbackEnabled() && typeof navigator !== "undefined" && navigator.onLine === false) {
     const offlineResult = await identifyOnDevice(frame);
     throwIfAborted(options.signal);
-    return assertIdentificationResult(offlineResult);
+    return assertIdentificationResult(offlineResult, ["photo-1"]);
   }
 
   const result = await runCloudIdentify(frame, secondFrame, labelRescueTrigger, options).catch((error: unknown) => {
     throwIfAborted(options.signal);
-    if (shouldUseOnDeviceAfterCloudError(error)) {
-      return identifyOnDeviceWithTimeout(frame, error, options.signal);
+    if (!options.photos && shouldUseOnDeviceAfterCloudError(error)) {
+      return identifyOnDeviceWithTimeout(frame, error, options.signal)
+        .then((offlineResult) => assertIdentificationResult(offlineResult, ["photo-1"]));
     }
 
     throw error;
   });
 
-  return assertIdentificationResult(result);
+  return assertIdentificationResult(result, options.photos?.map((photo) => photo.id)
+    ?? (secondFrame ? ["photo-1", "photo-2"] : ["photo-1"]));
 }
 
 function getIdentifyClientTimeoutMs() {
@@ -305,6 +381,8 @@ function runCloudIdentify(
   secondFrame: CapturedFrame | undefined,
   labelRescueTrigger: LabelRescueTrigger | undefined,
   options: {
+    photos?: ScanPhoto[];
+    photoRelationship?: PhotoRelationship;
     measurementContext?: MeasurementContext;
     signal?: AbortSignal;
     vehicleContext?: VehicleContext;
@@ -314,6 +392,8 @@ function runCloudIdentify(
     type: "vision",
     imageBase64: frame.imageBase64,
     imageBase64_2: secondFrame?.imageBase64,
+    photos: options.photos,
+    photoRelationship: options.photoRelationship,
     labelRescueTrigger,
     measurementContext: options.measurementContext,
     userMessage: "Identify this car part from the captured photo.",
@@ -328,7 +408,8 @@ function shouldUseOnDeviceAfterCloudError(error: unknown) {
     return false;
   }
 
-  return getAIErrorDetails(error.code).category === "provider_unavailable";
+  const category = getAIErrorDetails(error.code).category;
+  return category === "provider_unavailable" || category === "connection";
 }
 
 async function identifyOnDeviceWithTimeout(frame: CapturedFrame, cloudError: unknown, signal?: AbortSignal) {
@@ -361,6 +442,11 @@ export async function sendFollowUp(lookup: Lookup, question: string): Promise<st
 }
 
 export async function sendFollowUpDetails(lookup: Lookup, question: string, options: FollowUpOptions = {}): Promise<FollowUpDetails> {
+  const photoRelationship = validatePhotoRelationship(lookup.photoRelationship);
+  const hasFirstPhotoIdentityScope = hasFirstPhotoIdentityScopePipeline(lookup.result?.modelRun?.pipelineVersion)
+    && ((lookup.photos?.length ?? 1) <= 1 || photoRelationship !== "same_part_or_area");
+  const savedIdentityScope = !lookup.result ? "none"
+    : hasFirstPhotoIdentityScope ? "first_photo" : "unrecorded";
   const trimmedQuestion = question.trim().slice(0, 500);
   if (!trimmedQuestion) {
     throw new AIServiceError("invalid_input", "Ask a question first.");
@@ -368,6 +454,27 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
 
   const scope = getAccountScope();
   if (!isAccountScopeCurrent(scope)) throw new AIServiceError("invalid_input", "Reopen this scan before asking a question.");
+  // Keep vehicle facts separate from the bounded question/history text, and
+  // exclude customer, registration and technician metadata at the transport edge.
+  const vehicleContext = providerVehicleContext(lookup.vehicleContext);
+  if (lookup.photos?.length) {
+    const photos = await preparePhotoGroupForRequest(lookup.photos);
+    const photoReview = photoReviewForRelationship(normalizePhotoReview(lookup.result?.photoReview, photos.map((photo) => photo.id)), photoRelationship);
+    const conditionAssessment = normalizeConditionAssessment(lookup.result?.conditionAssessment, photos.map((photo) => photo.id));
+    const result = await postAI<ChatApiSuccess>("/api/chat", {
+      userMessage: buildFollowUpContext(lookup, trimmedQuestion), photos, photoRelationship, savedIdentityScope,
+      ...(photoReview ? { photoReview } : {}),
+      ...(conditionAssessment ? { conditionAssessment } : {}),
+      ...(vehicleContext ? { vehicleContext } : {}),
+      ...(options.research ? { research: true, ...(options.sourceUrls?.length ? { sourceUrls: options.sourceUrls } : {}) } : {}),
+    }, { timeoutMs: options.research ? 60_000 : DEFAULT_CHAT_CLIENT_TIMEOUT_MS, scope });
+    if (typeof result.message !== "string" || !result.message.trim()) throw new AIServiceError("invalid_response", "Deep Spec received an unreadable chat response.");
+    return {
+      message: result.message.trim(),
+      ...(isSourceLinkArray(result.sources) ? { sources: result.sources.filter((source) => /^https:\/\//.test(source.url)).slice(0, 8) } : {}),
+      ...(typeof result.searchSuggestions === "string" && result.searchSuggestions.length <= 50_000 ? { searchSuggestions: result.searchSuggestions } : {}),
+    };
+  }
   let imageBase64: string;
   try {
     imageBase64 = (await prepareRetryFrame(lookup.frame)).imageBase64;
@@ -376,8 +483,15 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
   }
   const attachPhoto = imageBase64.length <= 4_000_000 && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(imageBase64) && imageBase64.split(",")[1].length % 4 === 0;
   if (!attachPhoto) throw new AIServiceError("invalid_input", "The saved photo must be a JPEG, PNG, or WebP image small enough for chat. Reopen the scan or use a smaller photo.");
+  const photoReview = photoReviewForRelationship(normalizePhotoReview(lookup.result?.photoReview, ["photo-1"]), photoRelationship);
+  const conditionAssessment = normalizeConditionAssessment(lookup.result?.conditionAssessment, ["photo-1"]);
   const result = await postAI<ChatApiSuccess>("/api/chat", {
     userMessage: buildFollowUpContext(lookup, trimmedQuestion),
+    photoRelationship,
+    savedIdentityScope,
+    ...(photoReview ? { photoReview } : {}),
+    ...(conditionAssessment ? { conditionAssessment } : {}),
+    ...(vehicleContext ? { vehicleContext } : {}),
     imageBase64,
     ...(options.research ? { research: true, ...(options.sourceUrls?.length ? { sourceUrls: options.sourceUrls } : {}) } : {}),
   }, { timeoutMs: options.research ? 60_000 : DEFAULT_CHAT_CLIENT_TIMEOUT_MS, scope });
@@ -395,7 +509,7 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
 
 export function getAIErrorMessage(error: unknown) {
   if (error instanceof AIServiceError) {
-    return error.message;
+    return error.requestId ? `${error.message} Reference: ${error.requestId}` : error.message;
   }
 
   if (error instanceof Error) {
@@ -407,6 +521,27 @@ export function getAIErrorMessage(error: unknown) {
 
 export function getAIErrorDetails(code: string | undefined | null): AIErrorDetails {
   switch (code) {
+    case "connection_failed":
+      return {
+        category: "connection",
+        description: "The app did not receive a complete response. This does not establish an AI provider failure. Your saved photos remain available for retry.",
+        retryLabel: "Try again",
+        title: "Connection to DeepSpec interrupted",
+      };
+    case "request_timeout":
+      return {
+        category: "connection",
+        description: "The app stopped waiting for a complete response. The server may still be processing it. Your saved photos remain available.",
+        retryLabel: "Try again",
+        title: "DeepSpec request timed out",
+      };
+    case "service_response_error":
+      return {
+        category: "connection",
+        description: "The service response could not be read. This is not a result about your photo. Use the reference below if the problem repeats.",
+        retryLabel: "Try again",
+        title: "DeepSpec response could not be read",
+      };
     case "feature_disabled":
       return {
         category: "setup",
@@ -427,6 +562,27 @@ export function getAIErrorDetails(code: string | undefined | null): AIErrorDetai
         description: "The photo can be retried when the Deep Spec service can reach the AI provider again.",
         retryLabel: "Try again",
         title: "AI provider could not be reached",
+      };
+    case "timeout":
+      return {
+        category: "provider_unavailable",
+        description: "The provider did not finish in time. Your saved photos remain available for another attempt.",
+        retryLabel: "Try again",
+        title: "AI reply timed out",
+      };
+    case "incomplete_response":
+      return {
+        category: "model_response",
+        description: "The provider did not return a complete result. Your saved photos remain available for another attempt.",
+        retryLabel: "Try again",
+        title: "AI response was incomplete",
+      };
+    case "response_blocked":
+      return {
+        category: "input",
+        description: "The provider declined this request. No AI result was added to your saved work.",
+        retryLabel: "Change request",
+        title: "AI could not complete this request",
       };
     case "provider_error":
       return {
@@ -468,12 +624,19 @@ export function getAIErrorDetails(code: string | undefined | null): AIErrorDetai
   }
 }
 
-function assertIdentificationResult(value: unknown): IdentificationResult {
+function withValidatedConditionAssessment(value: IdentificationResult, allowedPhotoIds: readonly string[]): IdentificationResult {
+  const { conditionAssessment: rawAssessment, photoReview: rawPhotoReview, ...result } = value;
+  const conditionAssessment = normalizeConditionAssessment(rawAssessment, allowedPhotoIds);
+  const photoReview = normalizePhotoReview(rawPhotoReview, allowedPhotoIds);
+  return { ...result, ...(conditionAssessment ? { conditionAssessment } : {}), ...(photoReview ? { photoReview } : {}) };
+}
+
+function assertIdentificationResult(value: unknown, allowedPhotoIds: readonly string[]): IdentificationResult {
   if (!isIdentificationResult(value)) {
     throw new AIServiceError("invalid_response", "Deep Spec received an unreadable AI response.");
   }
 
-  return value;
+  return withValidatedConditionAssessment(value, allowedPhotoIds);
 }
 
 function isIdentificationResult(value: unknown): value is IdentificationResult {
@@ -643,6 +806,10 @@ function collapseWhitespace(value: string) {
 
 function buildFollowUpContext(lookup: Lookup, question: string) {
   const result = lookup.result;
+  const condition = buildConditionHandoff(lookup);
+  const functionalChecks = lookup.inspection
+    ? `${lookup.inspection.functionalStatus.replaceAll("_", " ")} (self-reported inspection)`
+    : condition.functionStatus;
   const questionLine = `User question: ${question}`;
   const facts = [
     `Saved scan category: ${lookup.scanCategory}`,
@@ -651,11 +818,19 @@ function buildFollowUpContext(lookup: Lookup, question: string) {
     result ? `Confidence: ${result.confidence}` : "Confidence: unknown",
     result ? `Safety triage: ${result.safetyTriage}` : "Safety triage: unknown",
     result ? `Safety-critical: ${result.isSafetyCritical ? "yes" : "no"}` : "Safety-critical: unknown",
-    result ? `What it does: ${result.whatItDoes}` : "",
-    result ? `Visible observations: ${result.visibleObservations.join("; ") || "none"}` : "",
-    result ? `Concerns: ${result.concerns.join("; ") || "none"}` : "",
     result ? `Next action: ${result.nextAction}` : "",
     lookup.correction ? `User correction: ${lookup.correction}` : "",
+    ...(condition.assessment ? [
+      "Condition evidence is AI-reported, not human confirmation. Causes are hypotheses; photos do not establish hidden damage or serviceability.",
+      `Functional checks: ${functionalChecks}`,
+      `Still unknown: ${condition.unknowns.join("; ") || "No unknowns listed; condition and function are not established."}`,
+      ...(condition.nextEvidence ? [`Priority evidence: ${condition.nextEvidence.request} Why: ${condition.nextEvidence.purpose}`] : []),
+      ...condition.observations.map((item) => `Observed appearance [${item.id}] in photos [${item.photoIds.join(", ")}]: ${item.text}`),
+      ...condition.possibleCauses.map((item) => `Unconfirmed possible cause, based on [${item.observationIds.join(", ")}]: ${item.text}`),
+    ] : []),
+    result ? `What it does: ${result.whatItDoes}` : "",
+    result ? `Original AI observations (unverified): ${result.visibleObservations.join("; ") || "none recorded"}` : "",
+    result ? `Original AI concerns (unverified): ${result.concerns.join("; ") || "none recorded"}` : "",
   ]
     .filter(Boolean)
     .join("\n")

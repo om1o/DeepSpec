@@ -4,6 +4,7 @@ import { createIdentifyResponse, validateIdentifyRequest } from "../server/ident
 import { consumeReservedScanCredit, reserveScanCredit } from "../server/billing.shared.js";
 import { enforceRateLimit } from "../server/rateLimit.shared.js";
 import { requireSession } from "../server/requireSession.shared.js";
+import { withAIRequestDiagnostics } from "../server/aiRequestDiagnostics.shared.js";
 
 type VercelRequest = {
   headers?: Record<string, string | string[] | undefined>;
@@ -17,7 +18,7 @@ type VercelResponse = {
   setHeader: (name: string, value: string) => void;
 };
 
-export default async function handler(request: VercelRequest, response: VercelResponse) {
+export default withAIRequestDiagnostics("/api/identify", async function handler(request: VercelRequest, response: VercelResponse) {
   response.setHeader("Cache-Control", "no-store");
 
   if (request.method !== "POST") {
@@ -77,4 +78,4 @@ export default async function handler(request: VercelRequest, response: VercelRe
     console.warn("[DeepSpec] Could not finalize a paid scan credit.");
   }
   response.status(result.status).json(result.body);
-}
+});

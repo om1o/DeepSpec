@@ -25,12 +25,24 @@ export default defineConfig(async ({ mode }) => {
         configurePreviewServer(server: PreviewServer) {
           registerPreviewMethodGuard(server, "/api/identify", "Use POST for AI identification.");
           registerPreviewMethodGuard(server, "/api/chat", "Use POST for AI follow-up chat.");
+          registerPreviewMethodGuard(server, "/api/vehicle-reference", "Use POST to look up vehicle information.");
           registerPreviewMethodGuard(server, "/api/billing-checkout", "Use POST to start DeepSpec checkout.");
           registerPreviewMethodGuard(server, "/api/billing-portal", "Use POST to open DeepSpec billing.");
           registerPreviewMethodGuard(server, "/api/billing-webhook", "Use POST for billing provider webhooks.");
           registerPreviewMethodGuard(server, "/api/account-entitlement", "Use GET to verify DeepSpec account access.", "GET");
         },
         configureServer(server: ViteDevServer) {
+          server.middlewares.use("/api/vehicle-reference", async (request: IncomingMessage, response: ServerResponse) => {
+            response.setHeader("Cache-Control", "no-store");
+            response.setHeader("Content-Type", "application/json");
+            const { handleVehicleReference } = (await server.ssrLoadModule("/api/vehicle-reference.ts")) as typeof import("./api/vehicle-reference");
+            const body = request.method === "POST" ? await readVehicleReferenceBody(request).catch(() => null) : undefined;
+            await handleVehicleReference({ method: request.method, headers: request.headers, body }, {
+              status(code: number) { response.statusCode = code; return this; },
+              json(value: unknown) { response.end(JSON.stringify(value)); },
+              setHeader(name: string, value: string) { response.setHeader(name, value); },
+            }, serverEnv);
+          });
           server.middlewares.use("/api/identify", async (request: IncomingMessage, response: ServerResponse) => {
             response.setHeader("Cache-Control", "no-store");
 
@@ -296,14 +308,34 @@ async function readJsonBody(request: IncomingMessage) {
   return rawBody ? JSON.parse(rawBody) : null;
 }
 
+async function readVehicleReferenceBody(request: IncomingMessage) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const read = async () => {
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    for await (const chunk of request) {
+      const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), "utf8");
+      bytes += data.byteLength;
+      if (bytes > 1024) throw new Error("Vehicle lookup request is too large.");
+      chunks.push(data);
+    }
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  };
+  try {
+    return await Promise.race([read(), new Promise<never>((_, reject) => {
+      timer = setTimeout(() => { request.destroy(); reject(new Error("Vehicle lookup request timed out.")); }, 5_000);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
 async function readRawBody(request: IncomingMessage) {
-  let rawBody = "";
+  const chunks: Buffer[] = [];
 
   for await (const chunk of request) {
-    rawBody += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), "utf8"));
   }
 
-  return rawBody;
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 function registerPreviewMethodGuard(server: PreviewServer, path: string, message: string, allowedMethod = "POST") {

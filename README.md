@@ -17,13 +17,15 @@ For AI identification, create `.env` or `.env.local` with:
 
 ```bash
 GEMINI_API_KEY=your_server_key_here
-GEMINI_MODEL=gemini-2.5-flash
-GEMINI_FALLBACK_MODELS=gemini-2.5-flash-lite
-GEMINI_CHAT_MODEL=gemini-2.5-flash
-GEMINI_CHAT_FALLBACK_MODELS=gemini-2.5-flash-lite
+GEMINI_MODEL=gemini-3.5-flash-lite
+GEMINI_FALLBACK_MODELS=
+GEMINI_CHAT_MODEL=gemini-3.5-flash-lite
+GEMINI_CHAT_FALLBACK_MODELS=
 ```
 
 Do not use a `VITE_` API key. The app calls `/api/identify` and `/api/chat`, and the server-side proxies send the key to Gemini.
+
+The default model has no automatic Gemini fallback. Add comma-separated fallback models only when your project can use them. Explicit model overrides remain supported; selecting a Gemini 2.5 Flash primary retains the Gemini 2.5 Flash-Lite fallback for projects that still have access to those models.
 
 For emergency local development when Gemini is rate-limited, `/api/identify` can fall back to a local Ollama vision model after all configured Gemini identify models fail with provider availability errors:
 

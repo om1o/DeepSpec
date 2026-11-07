@@ -1,11 +1,11 @@
 # DeepSpec brand identity
 
-The electric D is the primary product identity. Use the transparent, lossless `deepspec-symbol.webp` in the shared `BrandLockup`; the white `Deep` and electric-cyan `Spec` text are rendered as accessible app UI so the mark stays crisp at every header size. Matching `icon-192.png` and `icon-512.png` files cover the favicon, Apple touch icon, manifest, and installed-app surfaces.
+White is the primary product identity. Use `deepspec-logo-horizontal.svg` in the shared `BrandLockup` and `deepspec-mark.svg` for compact placements. The intro uses the matching `white-logo-horizontal.svg`. The white symbol aliases and app icons come from the same repository's `6ab0c592495f4e964b8a42e2304421d4f4c85cc7` brand revision.
 
 Logo artwork stays static. Do not pulse, rotate, shimmer, morph or animate the mark or wordmark. Scanner progress text and camera UI may move independently.
 
-`deepspec-blue-glass-intro.webp` and the split-rotor badges are motion and marketing accents. They do not replace the electric D on product identity or app-install surfaces.
+`deepspec-blue-glass-intro.webp` and the split-rotor badges are motion and marketing accents. They do not replace the primary white identity.
 
-The horizontal white SVG and framed-rotor exports remain available for legacy marketing compositions. Runtime WebP symbol and badge exports retain lossless alpha, 3x dimensions, and byte budgets required by `verify:public`.
+Runtime WebP symbol and badge exports retain lossless alpha, 3x dimensions, and byte budgets required by `verify:public`.
 
-The auth presentation uses the app's graphite, electric blue, cyan, and slate tokens. Auth methods, validation, sessions, and redirects remain unchanged.
+The auth presentation matches the intro's graphite surfaces and white controls. Its visual reference is the same repository revision above; required authentication, keyboard navigation, validation, sessions, and redirects retain the current repaired implementation. Do not restore the older preview's guest-entry behavior when reusing its design.

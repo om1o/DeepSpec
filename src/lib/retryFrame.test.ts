@@ -1,7 +1,17 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { prepareRetryFrame } from "./retryFrame";
 
 describe("prepareRetryFrame", () => {
+  afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+
+  it("keeps local originals available and stops signed-photo recovery before fetch when cloud data is disabled", async () => {
+    vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
+    const fetchSpy = vi.fn(); vi.stubGlobal("fetch", fetchSpy);
+    const frame = { capturedAt: "2026-11-05T00:00:00.000Z", imageBase64: "data:image/jpeg;base64,YQ==" };
+    expect(await prepareRetryFrame(frame)).toBe(frame);
+    await expect(prepareRetryFrame({ ...frame, imageBase64: "https://project.supabase.co/storage/v1/object/sign/scan-images/owner/scan/photo.jpg?token=synthetic" })).rejects.toThrow("off for this build");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
   it("compresses a large recovered cloud image before returning it for persistence", async () => {
     const jpeg = new Uint8Array(800_000);
     jpeg.set([0xff, 0xd8, 0xff]);

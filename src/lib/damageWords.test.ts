@@ -8,6 +8,9 @@ describe("describesVisibleDamage", () => {
   it.each([
     "Cracked locking tab on the connector.",
     "Hairline cracks along the housing.",
+    "Crack-like line on the left bracket.",
+    "Possible crack-like marks near the mounting point.",
+    "Crack\u2011like lines are visible on the surface.",
     "The bumper is dented.",
     "Deep scratches on the cover.",
     "Oil is leaking from the gasket.",
@@ -39,6 +42,10 @@ describe("describesVisibleDamage", () => {
     "The ECU chip is visible on the board.",
     "Stain-resistant coating label.",
     "Rust-colored primer on the bracket.",
+    "No crack-like lines or marks are visible.",
+    "The coating is crack-resistant.",
+    "The coating is crack\u2010resistant.",
+    "The coating is crack\u2011resistant.",
     "Belt-driven metal housing is visible.",
   ])("does not flag: %s", (text) => {
     expect(describesVisibleDamage(text)).toBe(false);
@@ -73,5 +80,12 @@ describe("damage detection in the result summary and issue pointer", () => {
     const cracked = result(["Cracked locking tab on the connector."]);
     expect(getSimpleResultSummary(cracked).eyebrow).toBe("Visible issue");
     expect(deriveIssue(cracked)?.text).toContain("Cracked");
+  });
+
+  it("retains crack-like uncertainty and does not borrow a later corrosion region", () => {
+    const text = "Crack-like line on the left bracket.";
+    const concern = { ...result([text]), evidenceRegions: [{ label: "Other concern", observation: "Corrosion on the right pulley.", regionLabel: "lower right" }] };
+    expect(getSimpleResultSummary(concern).body).toBe(text);
+    expect(deriveIssue(concern)).toEqual({ text, anchor: null });
   });
 });

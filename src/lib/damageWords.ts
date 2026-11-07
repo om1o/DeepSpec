@@ -4,9 +4,10 @@
 // Matches the inflected forms the AI actually writes ("cracked", "leaking", "rusted", "dents"),
 // not just base words. Bare "chip" is left out on purpose: in this app it is far more often an
 // electronics part ("ECU chip") than damage; "chipped" still counts. A trailing hyphen means a
-// compound ("stain-resistant", "rust-colored"), not damage.
+// compound ("stain-resistant", "rust-colored"), not damage. Explicit crack-like
+// lines/marks remain visible concerns; their original uncertain wording is retained.
 const DAMAGE_RE =
-  /\b(dent(?:s|ed)?|scratch(?:es|ed)?|crack(?:s|ed|ing)?|broken|break(?:s|age)?|damage[sd]?|missing|detached|chipped|chipping|rust(?:s|ed|y|ing)?|corrosion|corroded|corroding|leak(?:s|ed|ing|age)?|stain(?:s|ed)?|worn|frayed|bent|torn)\b(?!-)/gi;
+  /\b(crack[-\u2010\u2011]like\s+(?:lines?|marks?)|dent(?:s|ed)?|scratch(?:es|ed)?|crack(?:s|ed|ing)?|broken|break(?:s|age)?|damage[sd]?|missing|detached|chipped|chipping|rust(?:s|ed|y|ing)?|corrosion|corroded|corroding|leak(?:s|ed|ing|age)?|stain(?:s|ed)?|worn|frayed|bent|torn)\b(?![-\u2010\u2011])/gi;
 
 // A damage word preceded by one of these in the same clause is a clean bill of health ("No visible
 // damage", "shows no signs of rust", "does not appear damaged"), not an issue.

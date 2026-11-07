@@ -1,5 +1,6 @@
 import { useState } from "react";
 import Button from "./ui/Button";
+import { isCloudSyncEnabled } from "../services/cloudSyncPolicy";
 import {
   getCloudHealthSnapshot,
   verifyCloudHealth,
@@ -18,6 +19,7 @@ const CLOUD_HEALTH_STEPS = [
 ] as const;
 
 export default function CloudHealthCard({ className = "" }: { className?: string }) {
+  const cloudSyncEnabled = isCloudSyncEnabled();
   const [report, setReport] = useState<CloudHealthReport>(() => getCloudHealthSnapshot());
   const [isChecking, setIsChecking] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
@@ -41,12 +43,12 @@ export default function CloudHealthCard({ className = "" }: { className?: string
           <p className="text-sm font-extrabold text-neutral-900">Cloud sync</p>
           <p className="mt-2 text-sm leading-6 text-neutral-500">{report.message}</p>
         </div>
-        <StatusPill status={report.overall === "ready" ? "pass" : report.overall === "unknown" ? "unknown" : "fail"} />
+        {cloudSyncEnabled ? <StatusPill status={report.overall === "ready" ? "pass" : report.overall === "unknown" ? "unknown" : "fail"} /> : <span className="text-xs font-bold text-neutral-500">Off</span>}
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-2">
         {CLOUD_HEALTH_STEPS.map((step) => (
-          <HealthRow key={step} check={report.checks[step]} />
+          <HealthRow key={step} check={report.checks[step]} disabled={step === "configured" && !cloudSyncEnabled} />
         ))}
         <div className="rounded-2xl border border-neutral-200 bg-white px-3 py-3">
           <div className="flex items-center justify-between gap-3">
@@ -71,12 +73,12 @@ export default function CloudHealthCard({ className = "" }: { className?: string
   );
 }
 
-function HealthRow({ check }: { check: CloudHealthCheck }) {
+function HealthRow({ check, disabled = false }: { check: CloudHealthCheck; disabled?: boolean }) {
   return (
     <div className="rounded-2xl border border-neutral-200 bg-white px-3 py-3">
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-neutral-400">{check.label}</p>
-        <StatusPill status={check.status} />
+        {disabled ? <span className="text-xs font-bold text-neutral-500">Off</span> : <StatusPill status={check.status} />}
       </div>
       <p className="mt-1 text-sm leading-6 text-neutral-700">{check.message}</p>
     </div>

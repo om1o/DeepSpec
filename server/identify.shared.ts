@@ -1,4 +1,7 @@
-import { IDENTIFY_PROMPT, IDENTIFY_PROMPT_VERSION, IDENTIFY_PIPELINE_VERSION } from "../src/services/systemPrompts.js";
+import { CONDITION_ASSESSMENT_PROMPT, PHOTO_REVIEW_PROMPT, IDENTIFY_PROMPT, IDENTIFY_PROMPT_VERSION, IDENTIFY_PIPELINE_VERSION } from "../src/services/systemPrompts.js";
+import { normalizeConditionAssessment } from "../src/lib/conditionAssessment.js";
+import { normalizePhotoReview } from "../src/lib/photoReview.js";
+import { formatVehicleContext, providerVehicleContext } from "../src/lib/vehicleContext.js";
 import { randomUUID } from "node:crypto";
 import { observeIdentification } from "./identifyDiagnostics.shared.js";
 import {
@@ -14,6 +17,7 @@ import {
   type IdentifyProvider,
   type MeasurementContext,
   type PartMeasurement,
+  type PhotoRelationship,
   type PossibleVehicleContext,
   type ScanCategory,
   type SourceLink,
@@ -21,14 +25,15 @@ import {
 } from "../src/types/index.js";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { parseInspectionPhotos, photoCaption, geminiPhotoParts, buildPhotoEvidencePrompt, type InspectionPhoto } from "./inspectionPhotos.shared.js";
 
 type JsonObject = Record<string, unknown>;
 type LabelRescueTrigger = "too_blurry";
 type ParsedIdentifyRequest = {
   base64: string;
   mimeType: string;
-  base64_2: string | null;
-  mimeType_2: string | null;
+  photos: InspectionPhoto[];
+  photoRelationship: PhotoRelationship;
   userMessage: string;
   labelRescueTrigger: LabelRescueTrigger | null;
   measurementContext: MeasurementContext | null;
@@ -53,8 +58,8 @@ export type IdentifyResponse =
       };
     };
 
-const DEFAULT_MODEL = "gemini-2.5-flash";
-const DEFAULT_FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
+const DEFAULT_MODEL = "gemini-3.5-flash-lite";
+const LEGACY_FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
 const DEFAULT_HF_IDENTIFY_MODEL = "Qwen/Qwen2.5-VL-7B-Instruct";
 const DEFAULT_HF_ROUTER_CHAT_COMPLETIONS_URL = "https://router.huggingface.co/v1/chat/completions";
 const DEFAULT_GROQ_IDENTIFY_MODEL = "qwen/qwen3.8-27b";
@@ -77,12 +82,9 @@ const DEFAULT_DATASET_ROOT = "datasets/raw/drbimmer-car-parts-and-damage-dataset
 const DEFAULT_DATASET_INDEX_PATH = "datasets/derived/drbimmer-car-parts-and-damage-dataset/records.jsonl";
 const DEFAULT_HF_AUTOMOTIVE_SOURCE_INDEX_PATH = "datasets/verified/hf-automotive-sources-v1/records.jsonl";
 const RETRYABLE_PROVIDER_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+const BLOCKED_GEMINI_FINISH_REASONS = new Set(["SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "IMAGE_RECITATION"]);
 const DEFAULT_BACKUP_RATE_LIMIT_RETRIES = 1;
 const DEFAULT_BACKUP_RETRY_BACKOFF_MS = 800;
-// Vercel rejects request bodies above 4.5 MB before the function runs. Keep
-// image data below that platform boundary with room for JSON and scan context.
-const MAX_IDENTIFY_IMAGE_PAYLOAD_CHARS = 4_000_000;
-
 // Credentialed image requests are restricted to exact, supported provider hosts.
 // Subdomains, lookalike suffixes, custom ports, embedded credentials, and HTTP are rejected.
 const CREDENTIALED_PROVIDER_HOSTS: Record<"gemini" | "groq" | "huggingface" | "huggingface_ocr", ReadonlySet<string>> = {
@@ -94,7 +96,7 @@ const CREDENTIALED_PROVIDER_HOSTS: Record<"gemini" | "groq" | "huggingface" | "h
 
 const GEMINI_IDENTIFY_PROMPT = [
   "Identify the main visible vehicle part or damage from the photo.",
-  `Return only JSON with: partName, confidence, confidenceScore, confidenceRange, confirmationNeed, scanCategory, whatItDoes, visibleObservations, evidence, evidenceRegions, sceneObjects, concerns, candidateMatches, primaryPart, candidateParts, possibleVehicleContexts, measurements, requiredNextEvidence, fitmentConfidence, safetyTriage, isSafetyCritical, nextAction, needsBetterPhoto, sourceLinks.`,
+  `Return only JSON with: partName, confidence, confidenceScore, confidenceRange, confirmationNeed, scanCategory, whatItDoes, visibleObservations, evidence, evidenceRegions, sceneObjects, concerns, conditionAssessment, photoReview, candidateMatches, primaryPart, candidateParts, possibleVehicleContexts, measurements, requiredNextEvidence, fitmentConfidence, safetyTriage, isSafetyCritical, nextAction, needsBetterPhoto, sourceLinks.`,
   "sceneObjects: list every distinct visible object including background items (posters, tools, hands, other parts); set primary true only for the main part; return [] when only the main subject is visible.",
   `scanCategory must be one of: ${SCAN_CATEGORIES.join(", ")}.`,
   "When visible exterior damage exists, name the damage type explicitly in visibleObservations, concerns, or evidence: dent, scratch, cracked, broken/damaged, missing/detached, paint chip, corrosion/rust. Do not say no visible damage when any of those are visible.",
@@ -102,13 +104,17 @@ const GEMINI_IDENTIFY_PROMPT = [
   "For complete engines, prefer category engine unless visible active leaking fuel/fluid or a specific safety system is the main subject.",
   "Use leak only for visible active fluid, wet staining, dripping, pooling, oil, coolant, fuel, or other fluid evidence.",
   "Keep text short for a phone UI.",
+  CONDITION_ASSESSMENT_PROMPT,
+  PHOTO_REVIEW_PROMPT,
 ].join(" ");
 
 const OLLAMA_IDENTIFY_PROMPT = [
   "Identify the main visible car part or car damage.",
-  "Return only JSON with partName, confidence, scanCategory, and visibleObservations.",
+  "Return only JSON with partName, confidence, scanCategory, visibleObservations, evidence, concerns, conditionAssessment, photoReview, and nextAction.",
   "confidence: high, medium, or low.",
   `scanCategory: ${SCAN_CATEGORIES.join(", ")}.`,
+  CONDITION_ASSESSMENT_PROMPT,
+  PHOTO_REVIEW_PROMPT,
 ].join(" ");
 
 export function validateIdentifyRequest(body: unknown, env?: Record<string, string | undefined>): IdentifyResponse | null {
@@ -153,7 +159,7 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
   let lastRouteError: IdentifyResponse | null = null;
   const recordRouteFailure = (response: IdentifyResponse) => {
     lastRouteError = response;
-    if (getIdentifyErrorCode(response) === "invalid_response") {
+    if (isIdentifyOutputFailure(response)) {
       lastInvalidResponse = response;
     }
     if (isRetryableIdentifyResponse(response)) {
@@ -212,14 +218,14 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
     sourceContext,
   });
   if (chainSignal.aborted) return identifyTimeoutResponse();
-  if (geminiResult.response.status === 200) {
+  if (geminiResult.response.status === 200 || getIdentifyErrorCode(geminiResult.response) === "response_blocked") {
     return geminiResult.response;
   }
 
   const rateLimited = geminiResult.rateLimited;
   recordRouteFailure(geminiResult.lastFailure);
 
-  if (!rateLimited && !hasGroqFallback && !hasHfFallback && !hasOllamaFallback) {
+  if (!rateLimited && !isTerminalGeminiFailure(geminiResult.response) && !hasGroqFallback && !hasHfFallback && !hasOllamaFallback) {
     const rescueResponse = await createGeminiRescueIdentifyResponse(
       models[0] ?? DEFAULT_MODEL,
       parsed,
@@ -229,7 +235,7 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
       chainSignal,
     );
     if (chainSignal.aborted) return identifyTimeoutResponse();
-    if (rescueResponse.status === 200) {
+    if (rescueResponse.status === 200 || getIdentifyErrorCode(rescueResponse) === "response_blocked") {
       return rescueResponse;
     }
     recordRouteFailure(rescueResponse);
@@ -359,7 +365,7 @@ async function createGeminiIdentifyResponse({
     }
 
     attempts.push(attempt);
-    if (attempt.response.status === 200) {
+    if (attempt.response.status === 200 || isTerminalGeminiFailure(attempt.response)) {
       for (const controller of controllers.values()) {
         controller.abort();
       }
@@ -382,7 +388,7 @@ async function createGeminiIdentifyResponse({
 }
 
 function selectBestIdentifyFailure(responses: IdentifyResponse[]) {
-  return [...responses].reverse().find((response) => getIdentifyErrorCode(response) === "invalid_response")
+  return [...responses].reverse().find(isIdentifyOutputFailure)
     ?? [...responses].reverse().find(isRetryableIdentifyResponse)
     ?? responses[responses.length - 1]
     ?? errorResponse(502, "provider_error", "The AI provider rejected this request.");
@@ -419,9 +425,15 @@ async function createGeminiIdentifyAttempt(
   const responseBody = isJson ? ((await response.json().catch(() => null)) as JsonObject | null) : null;
 
   if (!response.ok) {
-    const providerError = errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
+    const providerError = errorResponse(response.status, "provider_error", getProviderErrorMessage());
     logIdentifyAttempt("gemini", model, startedAt, providerError, fallbackAvailable);
     return { model, response: providerError, rateLimited: false };
+  }
+
+  const completionError = getGeminiCompletionError(responseBody);
+  if (completionError) {
+    logIdentifyAttempt("gemini", model, startedAt, completionError, getIdentifyErrorCode(completionError) !== "response_blocked" && fallbackAvailable);
+    return { model, response: completionError, rateLimited: false };
   }
 
   const text = extractGeminiText(responseBody);
@@ -431,7 +443,7 @@ async function createGeminiIdentifyAttempt(
     return { model, response: invalidResponse, rateLimited: false };
   }
 
-  const result = parseIdentificationResult(text);
+  const result = parseIdentificationResult(text, parsed.photos.map((photo) => photo.id));
   if (!result) {
     const invalidResponse = errorResponse(502, "invalid_response", "Gemini returned JSON that Deep Spec could not read.");
     logIdentifyAttempt("gemini", model, startedAt, invalidResponse, fallbackAvailable);
@@ -473,10 +485,20 @@ async function createGeminiIdentifyAttempt(
 
 function isRetryableIdentifyResponse(response: IdentifyResponse) {
   // Model-quality failures use 502 too, but must remain visible to evaluation.
-  if (getIdentifyErrorCode(response) === "invalid_response") {
+  if (isIdentifyOutputFailure(response) || getIdentifyErrorCode(response) === "response_blocked") {
     return false;
   }
   return response.status === 429 || RETRYABLE_PROVIDER_STATUSES.has(response.status);
+}
+
+function isIdentifyOutputFailure(response: IdentifyResponse) {
+  const code = getIdentifyErrorCode(response);
+  return code === "invalid_response" || code === "incomplete_response";
+}
+
+function isTerminalGeminiFailure(response: IdentifyResponse) {
+  const code = getIdentifyErrorCode(response);
+  return code === "response_blocked" || (code === "provider_error" && response.status >= 400 && response.status < 500 && !RETRYABLE_PROVIDER_STATUSES.has(response.status));
 }
 
 async function createGeminiRescueIdentifyResponse(
@@ -501,13 +523,19 @@ async function createGeminiRescueIdentifyResponse(
   if (!response.ok) {
     const providerError = response.status === 429
       ? errorResponse(429, "rate_limited", "Too many AI lookups right now. Try again in a few minutes.")
-      : errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
+      : errorResponse(response.status, "provider_error", getProviderErrorMessage());
     logIdentifyAttempt("gemini", model, startedAt, providerError, false);
     return providerError;
   }
 
+  const completionError = getGeminiCompletionError(responseBody);
+  if (completionError) {
+    logIdentifyAttempt("gemini", model, startedAt, completionError, false);
+    return completionError;
+  }
+
   const text = extractGeminiText(responseBody);
-  const result = text ? parseIdentificationResult(text) : null;
+  const result = text ? parseIdentificationResult(text, parsed.photos.map((photo) => photo.id)) : null;
   if (!result) {
     const invalidResponse = errorResponse(502, "invalid_response", "Gemini returned JSON that Deep Spec could not read.");
     logIdentifyAttempt("gemini", model, startedAt, invalidResponse, false);
@@ -544,10 +572,11 @@ async function createGeminiRescueIdentifyResponse(
 }
 
 function getIdentifyModels(env: Record<string, string | undefined>) {
+  const primaryModel = env.GEMINI_MODEL?.trim() || DEFAULT_MODEL;
   return uniqueStrings([
-    env.GEMINI_MODEL || DEFAULT_MODEL,
+    primaryModel,
     ...splitModelList(env.GEMINI_FALLBACK_MODELS),
-    ...DEFAULT_FALLBACK_MODELS,
+    ...(/^gemini-2\.5-flash(?:-lite)?(?:-|$)/.test(primaryModel) ? LEGACY_FALLBACK_MODELS : []),
   ]);
 }
 
@@ -703,6 +732,11 @@ async function createBackendIdentifyResponse(
       `${label} endpoint must use HTTPS on a supported provider host.`,
     );
   }
+  // https://console.groq.com/docs/vision limits this model to three images.
+  // Keep the entire group available to the next configured provider.
+  if (provider === "groq" && model === DEFAULT_GROQ_IDENTIFY_MODEL && parsed.photos.length > 3) {
+    return errorResponse(422, "unsupported_photo_count", "The configured Groq model supports at most 3 photos. Use another configured provider or submit up to 3 photos.");
+  }
 
   const startedAt = Date.now();
   const response = await fetchBackendIdentify(backend, parsed, ocr, sourceContext, signal);
@@ -723,13 +757,13 @@ async function createBackendIdentifyResponse(
   }
 
   if (!response.ok) {
-    const providerError = errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
+    const providerError = errorResponse(response.status, "provider_error", getProviderErrorMessage());
     logIdentifyAttempt(provider, model, startedAt, providerError, false);
     return providerError;
   }
 
   const text = extractOpenAiChatText(responseBody);
-  const result = text ? parseIdentificationResult(text) : null;
+  const result = text ? parseIdentificationResult(text, parsed.photos.map((photo) => photo.id)) : null;
   if (!result) {
     const invalidResponse = errorResponse(502, "invalid_response", `${label} returned JSON that Deep Spec could not read.`);
     logIdentifyAttempt(provider, model, startedAt, invalidResponse, false);
@@ -782,20 +816,10 @@ function fetchBackendIdentify(
         sourceContext ?? "",
       ].filter(Boolean).join("\n\n"),
     },
-    {
-      type: "image_url",
-      image_url: {
-        url: `data:${parsed.mimeType};base64,${parsed.base64}`,
-      },
-    },
-    ...(parsed.base64_2 && parsed.mimeType_2
-      ? [{
-          type: "image_url",
-          image_url: {
-            url: `data:${parsed.mimeType_2};base64,${parsed.base64_2}`,
-          },
-        }]
-      : []),
+    ...parsed.photos.flatMap((photo, index) => [
+      { type: "text", text: photoCaption(photo, index) },
+      { type: "image_url", image_url: { url: `data:${photo.mimeType};base64,${photo.base64}` } },
+    ]),
   ];
 
   return fetch(backend.endpoint, {
@@ -1012,13 +1036,13 @@ async function createOllamaIdentifyResponse(
   const responseBody = isJson ? ((await response.json().catch(() => null)) as JsonObject | null) : null;
 
   if (!response.ok) {
-    const providerError = errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
+    const providerError = errorResponse(response.status, "provider_error", getProviderErrorMessage());
     logIdentifyAttempt("ollama", model, startedAt, providerError, false);
     return providerError;
   }
 
   const text = extractOllamaText(responseBody);
-  const result = text ? parseOllamaIdentificationResult(text) : null;
+  const result = text ? parseOllamaIdentificationResult(text, parsed.photos.map((photo) => photo.id)) : null;
   if (!result) {
     const invalidResponse = errorResponse(502, "invalid_response", "Ollama returned JSON that Deep Spec could not read.");
     logIdentifyAttempt("ollama", model, startedAt, invalidResponse, false);
@@ -1075,7 +1099,7 @@ function fetchOllamaIdentify(
       ]
         .filter(Boolean)
         .join("\n\n"),
-      images: [parsed.base64, parsed.base64_2].filter(isString),
+      images: parsed.photos.map((photo) => photo.base64),
     },
   ];
 
@@ -1169,15 +1193,7 @@ function fetchGeminiIdentify(
         {
           role: "user",
           parts: [
-            {
-              inline_data: {
-                mime_type: parsed.mimeType,
-                data: parsed.base64,
-              },
-            },
-            ...(parsed.base64_2 && parsed.mimeType_2
-              ? [{ inline_data: { mime_type: parsed.mimeType_2, data: parsed.base64_2 } }]
-              : []),
+            ...geminiPhotoParts(parsed.photos),
             ...(ocr?.text ? [{ text: buildOcrContext(ocr.text) }] : []),
             ...(sourceContext ? [{ text: sourceContext }] : []),
             ...(buildIdentifyContextPrompt(parsed) ? [{ text: buildIdentifyContextPrompt(parsed) }] : []),
@@ -1186,12 +1202,11 @@ function fetchGeminiIdentify(
         },
       ],
       generationConfig: {
-        temperature: 0.1,
         maxOutputTokens: IDENTIFY_MAX_OUTPUT_TOKENS,
         responseMimeType: "application/json",
-        thinkingConfig: {
-          thinkingBudget: getGeminiIdentifyThinkingBudget(env),
-        },
+        ...(/^gemini-3\.5-flash-lite(?:-|$)/.test(model)
+          ? { thinkingConfig: { thinkingLevel: "MINIMAL" } }
+          : { temperature: 0.1, thinkingConfig: { thinkingBudget: getGeminiIdentifyThinkingBudget(env) } }),
       },
     }),
   }).catch(() => null);
@@ -1222,9 +1237,11 @@ function fetchGeminiRescueIdentify(
         parts: [{
           text: [
             "Identify the main visible vehicle part from the image.",
-            `Return only compact JSON with partName, confidence, confidenceScore, scanCategory, whatItDoes, visibleObservations, evidence, concerns, isSafetyCritical, safetyTriage, nextAction, needsBetterPhoto.`,
+            `Return only compact JSON with partName, confidence, confidenceScore, scanCategory, whatItDoes, visibleObservations, evidence, concerns, conditionAssessment, photoReview, isSafetyCritical, safetyTriage, nextAction, needsBetterPhoto.`,
             `scanCategory must be one of: ${SCAN_CATEGORIES.join(", ")}.`,
             "Use category engine for a complete engine assembly unless active fluid leakage is visible.",
+            CONDITION_ASSESSMENT_PROMPT,
+            PHOTO_REVIEW_PROMPT,
           ].join(" "),
         }],
       },
@@ -1232,23 +1249,18 @@ function fetchGeminiRescueIdentify(
         {
           role: "user",
           parts: [
-            {
-              inline_data: {
-                mime_type: parsed.mimeType,
-                data: parsed.base64,
-              },
-            },
+            ...geminiPhotoParts(parsed.photos),
             ...(ocr?.text ? [{ text: buildOcrContext(ocr.text) }] : []),
+            { text: buildIdentifyContextPrompt(parsed) },
             { text: parsed.userMessage },
           ],
         },
       ],
       generationConfig: {
-        temperature: 0,
         maxOutputTokens: 700,
-        thinkingConfig: {
-          thinkingBudget: 0,
-        },
+        ...(/^gemini-3\.5-flash-lite(?:-|$)/.test(model)
+          ? { thinkingConfig: { thinkingLevel: "MINIMAL" } }
+          : { temperature: 0, thinkingConfig: { thinkingBudget: 0 } }),
       },
     }),
   }).catch(() => null);
@@ -1303,76 +1315,35 @@ function identifyTimeoutResponse(): IdentifyResponse {
 }
 
 function parseIdentifyRequest(body: unknown): ParsedIdentifyRequest | { error: IdentifyResponse } {
-  if (!isRecord(body) || typeof body.imageBase64 !== "string") {
+  if (!isRecord(body)) {
     return { error: errorResponse(400, "invalid_input", "A captured image is required.") };
   }
 
-  if (body.imageBase64_2 !== undefined && typeof body.imageBase64_2 !== "string") {
-    return { error: errorResponse(400, "invalid_input", "The second captured image must be a JPEG, PNG, or WebP data URL.") };
-  }
+  const parsedPhotos = parseInspectionPhotos(body);
+  if ("error" in parsedPhotos) return parsedPhotos;
+  const { photos, photoRelationship } = parsedPhotos;
 
-  const secondImageLength = typeof body.imageBase64_2 === "string" ? body.imageBase64_2.length : 0;
-  if (body.imageBase64.length + secondImageLength > MAX_IDENTIFY_IMAGE_PAYLOAD_CHARS) {
-    return { error: errorResponse(400, "image_too_large", "The captured image is too large. Try a lower-resolution photo.") };
-  }
-
-  const parsedImage = parseDataUrl(body.imageBase64);
-  if (!parsedImage) {
-    return { error: errorResponse(400, "invalid_input", "The captured image must be a JPEG, PNG, or WebP data URL.") };
-  }
-
-  let base64_2: string | null = null;
-  let mimeType_2: string | null = null;
-  if (typeof body.imageBase64_2 === "string") {
-    const parsed2 = parseDataUrl(body.imageBase64_2);
-    if (!parsed2) {
-      return { error: errorResponse(400, "invalid_input", "The second captured image must be a JPEG, PNG, or WebP data URL.") };
-    }
-    base64_2 = parsed2.base64;
-    mimeType_2 = parsed2.mimeType;
-  }
-
-  const hasSecond = base64_2 !== null;
   const userMessage =
     typeof body.userMessage === "string" && body.userMessage.trim()
       ? body.userMessage.trim().slice(0, 500)
-      : hasSecond
-        ? "Identify this car part from two photos taken from slightly different angles."
+      : photos.length > 1
+        ? "Identify the car part in the first photo and assess the supplied photos according to their stated relationship."
         : "Identify this car part from the captured photo.";
 
   return {
-    base64: parsedImage.base64,
-    mimeType: parsedImage.mimeType,
-    base64_2,
-    mimeType_2,
+    base64: photos[0].base64,
+    mimeType: photos[0].mimeType,
+    photos,
+    photoRelationship,
     userMessage,
     labelRescueTrigger: body.labelRescueTrigger === "too_blurry" ? "too_blurry" : null,
     measurementContext: parseMeasurementContext(body.measurementContext),
-    vehicleContext: parseVehicleContext(body.vehicleContext),
+    vehicleContext: providerVehicleContext(body.vehicleContext) ?? null,
   };
 }
 
 function buildIdentifyContextPrompt(parsed: ParsedIdentifyRequest) {
-  const sections = [];
-
-  if (parsed.vehicleContext) {
-    const vehicleFacts = [
-      parsed.vehicleContext.vin ? `VIN: ${parsed.vehicleContext.vin}` : "",
-      parsed.vehicleContext.year ? `Year: ${parsed.vehicleContext.year}` : "",
-      parsed.vehicleContext.make ? `Make: ${parsed.vehicleContext.make}` : "",
-      parsed.vehicleContext.model ? `Model: ${parsed.vehicleContext.model}` : "",
-      parsed.vehicleContext.engine ? `Engine: ${parsed.vehicleContext.engine}` : "",
-      parsed.vehicleContext.notes ? `Notes: ${parsed.vehicleContext.notes}` : "",
-    ].filter(Boolean);
-
-    if (vehicleFacts.length) {
-      sections.push([
-        "Vehicle context supplied by the user or verifier:",
-        ...vehicleFacts.map((fact) => `- ${fact}`),
-        "Use this only to narrow likely candidates. Do not claim exact fitment unless visible labels or verified source context support it.",
-      ].join("\n"));
-    }
-  }
+  const sections = [buildPhotoEvidencePrompt(parsed.photos, parsed.photoRelationship), formatVehicleContext(parsed.vehicleContext ?? undefined)];
 
   if (parsed.measurementContext) {
     const context = parsed.measurementContext;
@@ -1386,29 +1357,6 @@ function buildIdentifyContextPrompt(parsed: ParsedIdentifyRequest) {
   }
 
   return sections.join("\n\n");
-}
-
-function parseVehicleContext(value: unknown): VehicleContext | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-
-  const context: VehicleContext = {};
-  const vin = cleanOptionalContextText(value.vin, 24);
-  const year = cleanOptionalContextText(value.year, 12);
-  const make = cleanOptionalContextText(value.make, 48);
-  const model = cleanOptionalContextText(value.model, 64);
-  const engine = cleanOptionalContextText(value.engine, 80);
-  const notes = cleanOptionalContextText(value.notes, 180);
-
-  if (vin) context.vin = vin;
-  if (year) context.year = year;
-  if (make) context.make = make;
-  if (model) context.model = model;
-  if (engine) context.engine = engine;
-  if (notes) context.notes = notes;
-
-  return Object.keys(context).length ? context : null;
 }
 
 function parseMeasurementContext(value: unknown): MeasurementContext | null {
@@ -1482,24 +1430,17 @@ function clampRatio(value: number) {
   return Math.max(0, Math.min(1, value));
 }
 
-function parseDataUrl(dataUrl: string) {
-  const match = dataUrl.match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/);
-  if (!match || match[2].length % 4 !== 0) {
-    return null;
+function getGeminiCompletionError(responseBody: JsonObject | null): IdentifyResponse | null {
+  const candidate = Array.isArray(responseBody?.candidates) ? responseBody.candidates[0] : null;
+  const feedback = responseBody?.promptFeedback;
+  if ((isRecord(feedback) && typeof feedback.blockReason === "string" && feedback.blockReason !== "BLOCK_REASON_UNSPECIFIED")
+    || (isRecord(candidate) && typeof candidate.finishReason === "string" && BLOCKED_GEMINI_FINISH_REASONS.has(candidate.finishReason))) {
+    return errorResponse(422, "response_blocked", "The AI provider declined this analysis. Your photos remain available, but no inspection result was produced.");
   }
-
-  try {
-    if (Buffer.from(match[2], "base64").toString("base64") !== match[2]) {
-      return null;
-    }
-  } catch {
-    return null;
+  if (isRecord(candidate) && candidate.finishReason !== "STOP") {
+    return errorResponse(502, "incomplete_response", "The AI analysis was incomplete. Your photos remain available; try a clearer view or analyze again.");
   }
-
-  return {
-    mimeType: match[1],
-    base64: match[2],
-  };
+  return null;
 }
 
 function extractGeminiText(responseBody: JsonObject | null) {
@@ -1510,22 +1451,25 @@ function extractGeminiText(responseBody: JsonObject | null) {
   }
 
   return firstCandidate.content.parts
-    .map((part) => (isRecord(part) && typeof part.text === "string" ? part.text : ""))
+    .map((part) => (isRecord(part) && part.thought !== true && typeof part.text === "string" ? part.text : ""))
     .join("")
     .trim();
 }
 
-function parseIdentificationResult(text: string): IdentificationResult | null {
-  if (containsProviderDiagnostic(text)) {
-    return null;
-  }
-
+function parseIdentificationResult(text: string, allowedPhotoIds: readonly string[]): IdentificationResult | null {
   try {
-    const parsed = JSON.parse(extractJsonObjectText(text)) as unknown;
-    if (containsProviderDiagnostic(parsed)) {
+    const jsonText = extractJsonObjectText(text);
+    const parsed = JSON.parse(jsonText) as unknown;
+    // Malformed optional evidence must not invalidate an otherwise usable result.
+    const diagnosticValue = isRecord(parsed) ? { ...parsed } : parsed;
+    if (isRecord(diagnosticValue)) {
+      delete diagnosticValue.conditionAssessment;
+      delete diagnosticValue.photoReview;
+    }
+    if (containsProviderDiagnostic(diagnosticValue) || containsProviderDiagnostic(text.replace(jsonText, ""))) {
       return null;
     }
-    return toIdentificationResult(parsed);
+    return toIdentificationResult(parsed, allowedPhotoIds);
   } catch {
     return null;
   }
@@ -1563,9 +1507,16 @@ function extractJsonObjectText(text: string) {
   return start >= 0 && end > start ? trimmed.slice(start, end + 1) : trimmed;
 }
 
-function toIdentificationResult(value: unknown): IdentificationResult | null {
+function toIdentificationResult(value: unknown, allowedPhotoIds: readonly string[]): IdentificationResult | null {
+  const photoReview = isRecord(value) ? normalizePhotoReview(value.photoReview, allowedPhotoIds) : undefined;
+  const conditionAssessment = isRecord(value)
+    ? normalizeConditionAssessment(value.conditionAssessment, allowedPhotoIds)
+    : undefined;
   if (isIdentificationResult(value)) {
-    return value;
+    const result = { ...value };
+    delete result.conditionAssessment;
+    delete result.photoReview;
+    return { ...result, ...(conditionAssessment ? { conditionAssessment } : {}), ...(photoReview ? { photoReview } : {}) };
   }
 
   if (!isRecord(value)) {
@@ -1619,6 +1570,8 @@ function toIdentificationResult(value: unknown): IdentificationResult | null {
       ? String(base.whatItDoes ?? value.whatItDoes)
       : "This is a visible vehicle component that should be verified with vehicle-specific context before ordering or repair.",
     visibleObservations,
+    ...(conditionAssessment ? { conditionAssessment } : {}),
+    ...(photoReview ? { photoReview } : {}),
     evidenceRegions: coerceEvidenceRegions(base.evidenceRegions ?? value.evidenceRegions, partName, visibleObservations),
     sceneObjects: coerceSceneObjects(value.sceneObjects),
     concerns,
@@ -1940,8 +1893,8 @@ function isOptionalFitmentConfidence(value: unknown) {
   return value === "not_applicable" || value === "needs_vehicle_context" || value === "possible" || value === "supported";
 }
 
-function parseOllamaIdentificationResult(text: string): IdentificationResult | null {
-  const fullResult = parseIdentificationResult(text);
+function parseOllamaIdentificationResult(text: string, allowedPhotoIds: readonly string[]): IdentificationResult | null {
+  const fullResult = parseIdentificationResult(text, allowedPhotoIds);
   if (fullResult) {
     return fullResult;
   }
@@ -1957,6 +1910,8 @@ function parseOllamaIdentificationResult(text: string): IdentificationResult | n
     const visibleObservations = isStringArray(parsed.visibleObservations) && parsed.visibleObservations.length > 0
       ? parsed.visibleObservations
       : [`The local vision model identified ${partName} as the main visible item.`];
+    const conditionAssessment = normalizeConditionAssessment(parsed.conditionAssessment, allowedPhotoIds);
+    const photoReview = normalizePhotoReview(parsed.photoReview, allowedPhotoIds);
 
     return {
       partName,
@@ -1965,6 +1920,8 @@ function parseOllamaIdentificationResult(text: string): IdentificationResult | n
       candidateMatches: [],
       whatItDoes: `${partName} is the main item the local vision model could identify in this scan.`,
       visibleObservations,
+      ...(conditionAssessment ? { conditionAssessment } : {}),
+      ...(photoReview ? { photoReview } : {}),
       evidenceRegions: [
         {
           label: partName,
@@ -2170,6 +2127,9 @@ function normalizeIdentificationResult(
   const candidateMatches = normalizeCandidateMatches(result, datasetMatches, partName, resolvedScanCategory);
   const evidenceRegions = normalizeEvidenceRegions(result.evidenceRegions, visibleObservations, cleanEvidence, partName);
   const sourceLinks = normalizeSourceLinks(result.sourceLinks, datasetMatches, partName);
+  const conditionEvidenceRequest = result.conditionAssessment?.nextEvidence?.request;
+  const requiredNextEvidence = normalizeRequiredNextEvidence(result.requiredNextEvidence, confirmationNeed, needsBetterPhoto);
+  const nextAction = normalizeNextAction(result.nextAction, safety.safetyTriage, needsBetterPhoto, partName);
 
   return {
     ...result,
@@ -2182,7 +2142,9 @@ function normalizeIdentificationResult(
     candidateParts: normalizeCandidateParts(result.candidateParts, candidateMatches, partName, confidence, resolvedScanCategory),
     possibleVehicleContexts: normalizePossibleVehicleContexts(result.possibleVehicleContexts),
     measurements: normalizeMeasurements(result.measurements, measurementContext),
-    requiredNextEvidence: normalizeRequiredNextEvidence(result.requiredNextEvidence, confirmationNeed, needsBetterPhoto),
+    requiredNextEvidence: conditionEvidenceRequest
+      ? [conditionEvidenceRequest, ...requiredNextEvidence.filter((item) => item !== conditionEvidenceRequest)]
+      : requiredNextEvidence,
     fitmentConfidence: normalizeFitmentConfidence(result.fitmentConfidence, result.possibleVehicleContexts),
     scanCategory: resolvedScanCategory,
     candidateMatches,
@@ -2192,7 +2154,9 @@ function normalizeIdentificationResult(
     concerns: cleanList(result.concerns),
     evidence: cleanEvidence,
     sourceLinks,
-    nextAction: normalizeNextAction(result.nextAction, safety.safetyTriage, needsBetterPhoto, partName),
+    nextAction: conditionEvidenceRequest && !safety.isSafetyCritical
+      ? conditionEvidenceRequest
+      : nextAction,
     safetyTriage: safety.safetyTriage,
     isSafetyCritical: safety.isSafetyCritical,
     needsBetterPhoto,
@@ -3213,10 +3177,6 @@ function buildOcrContext(text: string) {
 
 function ensureProfessionalNextAction(nextAction: string) {
   const cleaned = cleanText(nextAction, "Check this safety item before driving or repairing.");
-  if (/mechanic|professional|shop/i.test(cleaned)) {
-    return "Check this safety item before driving or repairing.";
-  }
-
   return /before driving|before repairing|do not drive|check this safety item/i.test(cleaned)
     ? cleaned
     : `${cleaned} Check this safety item before driving or repairing.`;
@@ -3305,12 +3265,7 @@ function isOptionalPartMeasurementArray(value: unknown) {
   )));
 }
 
-function getProviderErrorMessage(responseBody: JsonObject | null) {
-  const error = responseBody?.error;
-  if (isRecord(error) && typeof error.message === "string") {
-    return error.message;
-  }
-
+function getProviderErrorMessage() {
   return "The AI provider rejected this request.";
 }
 
@@ -3332,10 +3287,6 @@ function isRecord(value: unknown): value is JsonObject {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
-}
-
-function isString(value: unknown): value is string {
-  return typeof value === "string";
 }
 
 function isCandidateMatchArray(value: unknown): value is CandidateMatch[] {

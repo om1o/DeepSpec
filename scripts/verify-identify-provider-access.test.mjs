@@ -18,6 +18,26 @@ function response(body, status = 200) {
 }
 
 describe("verifyIdentifyProviderAccess", () => {
+  it("checks metadata for the current default model without inference", async () => {
+    const fetchImpl = vi.fn(() => response({
+      name: "models/gemini-3.5-flash-lite",
+      supportedGenerationMethods: ["generateContent"],
+    }));
+    const { evidence } = await verifyIdentifyProviderAccess({
+      env: { GEMINI_API_KEY: "test-key" }, fetchImpl, minCloudRoutes: 1,
+    });
+
+    expect(evidence).toMatchObject({ accessibleRouteCount: 1, ok: true });
+    expect(evidence.routes.find((route) => route.providerId === "gemini")).toMatchObject({
+      model: "gemini-3.5-flash-lite", modelAvailable: true,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
   it("verifies three independent online routes without inference", async () => {
     const fetchImpl = vi.fn((url) => {
       const value = String(url);

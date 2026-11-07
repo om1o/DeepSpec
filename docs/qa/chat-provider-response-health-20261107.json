@@ -1,0 +1,54 @@
+{
+  "date": "2026-11-07",
+  "scope": "Chat provider response handling; no credential or deployment changes",
+  "sources": [
+    {
+      "url": "https://ai.google.dev/api/generate-content",
+      "applied": "Require STOP before treating non-streaming candidate text as a complete answer; exclude thought parts; honor provider blocks."
+    },
+    {
+      "url": "https://ai.google.dev/gemini-api/docs/troubleshooting",
+      "applied": "Keep existing transient-status fallbacks; do not retry provider 400/401/403/404 errors. Return sanitized errors and record provider status without raw details."
+    },
+    {
+      "url": "https://ai.google.dev/gemini-api/docs/rate-limits",
+      "applied": "Do not promise a quota failure will clear in a few minutes."
+    }
+  ],
+  "before": {
+    "newRegressionTests": 25,
+    "failed": 23,
+    "passed": 2,
+    "findings": [
+      "Incomplete or blocked candidate text could be reported as a successful answer.",
+      "Answers longer than the saved-message limit were silently clipped.",
+      "Thought text could be included in the displayed answer.",
+      "Provider messages could expose internal diagnostic or account details.",
+      "Provider timeouts and interrupted body reads lost their cause."
+    ]
+  },
+  "after": {
+    "focusedTestsPassed": 259,
+    "focusedSuitesPassed": 7,
+    "newProviderTests": 27,
+    "newSavedConversationRecoveryTests": 3,
+    "eslint": "passed",
+    "serverStrictCompiler": "passed",
+    "serverNonStrictCompiler": "passed",
+    "frontendCompiler": "passed",
+    "productionBuild": "passed",
+    "publicAndBrandAssetChecks": "passed",
+    "totalProviderAttemptBudgetMs": { "chat": 25000, "research": 50000 },
+    "defaultModel": "gemini-3.5-flash-lite",
+    "modelChanged": false,
+    "credentialsChanged": false,
+    "deployed": false,
+    "liveBenchmark": "not run for this change"
+  },
+  "limitations": [
+    "Mocked provider tests establish error handling, not live provider access or answer accuracy.",
+    "A successful STOP response can still contain incorrect claims; evidence-quality evaluation remains necessary.",
+    "The real two-photo and three-photo benchmark still needs authorized authenticated Preview access.",
+    "No iPad hardware test or returning-customer browser session test was completed in this check."
+  ]
+}

@@ -12,6 +12,7 @@ import {
   buildEvalViteServerOptions,
   buildReviewLookup,
   getEvalExitCode,
+  getGeminiIdentifyModelConfig,
   isReviewableEvalFailure,
   isSafetyFalsePositive,
   loadEvalSample,
@@ -52,6 +53,18 @@ const result = {
 
 describe("identify eval scoring", () => {
   it.each([
+    [{}, "gemini-3.5-flash-lite", ""],
+    [{ GEMINI_MODEL: " " }, "gemini-3.5-flash-lite", ""],
+    [{ GEMINI_MODEL: " gemini-2.5-flash " }, "gemini-2.5-flash", "gemini-2.5-flash-lite"],
+    [{ GEMINI_MODEL: "gemini-2.5-flash-lite" }, "gemini-2.5-flash-lite", ""],
+    [{ GEMINI_MODEL: "gemini-custom" }, "gemini-custom", ""],
+    [{ GEMINI_FALLBACK_MODELS: " gemini-2.5-flash, gemini-custom, gemini-2.5-flash, gemini-3.5-flash-lite " }, "gemini-3.5-flash-lite", "gemini-2.5-flash,gemini-custom"],
+    [{ GEMINI_MODEL: "gemini-2.5-flash", GEMINI_FALLBACK_MODELS: " gemini-custom, gemini-2.5-flash-lite, gemini-custom " }, "gemini-2.5-flash", "gemini-custom,gemini-2.5-flash-lite"],
+  ])("reports the configured Gemini models and preserves fallback order for %j", (env, identifyModel, fallbackModels) => {
+    expect(getGeminiIdentifyModelConfig(env)).toEqual({ identifyModel, fallbackModels });
+  });
+
+  it.each([
     ["empty", { candidates: [] }],
     ["malformed", { candidates: [{ content: { parts: [{ text: "not JSON" }] } }] }],
   ])("keeps %s provider output as a reviewable failure after exhausting configured routes", async (_label, payload) => {
@@ -79,7 +92,11 @@ describe("identify eval scoring", () => {
         score: { ok: false, matchedLabels: [], failureReasons: ["pipeline_error"] },
       });
       expect(lookup).toMatchObject({ rating: "down", trainingLabel: "Back-bumper" });
-      expect(fetchSpy).toHaveBeenCalledTimes(3);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(fetchSpy.mock.calls.map(([url]) => url)).toEqual([
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+        "https://router.huggingface.co/v1/chat/completions",
+      ]);
     } finally {
       fetchSpy.mockRestore();
     }

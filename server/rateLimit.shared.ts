@@ -10,13 +10,13 @@ type RateLimitEnv = Record<string, string | undefined>;
 
 type RateLimitRule = { label: string; windowSeconds: number; max: number };
 
-export type RateLimitScope = "identify" | "chat";
+export type RateLimitScope = "identify" | "chat" | "vehicle-reference";
 
 export type RateLimitDecision =
   | { ok: true }
   | { ok: false; status: 429 | 503; retryAfterSeconds: number; body: { error: { code: string; message: string } } };
 
-// Approved limits: identify 15/min + 150/day, chat 30/min + 300/day (per IP).
+// Per-IP limits remain independent across AI and public-reference endpoints.
 const RULES: Record<RateLimitScope, RateLimitRule[]> = {
   identify: [
     { label: "min", windowSeconds: 60, max: 15 },
@@ -25,6 +25,10 @@ const RULES: Record<RateLimitScope, RateLimitRule[]> = {
   chat: [
     { label: "min", windowSeconds: 60, max: 30 },
     { label: "day", windowSeconds: 86_400, max: 300 },
+  ],
+  "vehicle-reference": [
+    { label: "min", windowSeconds: 60, max: 5 },
+    { label: "day", windowSeconds: 86_400, max: 50 },
   ],
 };
 

@@ -1,5 +1,6 @@
 import { getLookups } from "./storage";
-import { accountStorageKey } from "../lib/accountScope";
+import { accountStorageKey, getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
+import { normalizeVehicleContext, vehicleContextDetails } from "../lib/vehicleContext";
 import type {
   CustomerVisibleReport,
   Lookup,
@@ -20,8 +21,10 @@ export const SHOP_PERMISSION_STORAGE_KEY = "deep-spec:shop:feedback-permission";
 const DEFAULT_ORG_ID = "00000000-0000-4000-8000-000000000001";
 const DEFAULT_OWNER_USER_ID = "local-owner";
 const MAX_SHOP_JOBS = 200;
+const SHOP_JOBS_CHANGED = "deep-spec:shop-jobs-changed";
+const validStoredId = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9._:-]{1,160}$/.test(value) && value !== "." && value !== "..";
 
-type StorageResult<T> =
+export type StorageResult<T> =
   | {
       ok: true;
       value: T;
@@ -32,20 +35,13 @@ type StorageResult<T> =
       value: T;
     };
 
-export type ShopJobInput = {
-  bayOrRo?: string;
-  customerName?: string;
-  engine?: string;
+export type ShopJobInput = ShopVehicleContext & {
   make: string;
-  mileage?: string;
   model: string;
-  notes?: string;
   orgId?: string;
-  plate?: string;
   symptom: string;
   technicianName: string;
   title: string;
-  vin?: string;
   year: string;
 };
 
@@ -136,7 +132,7 @@ export function createShopJob(input: ShopJobInput): StorageResult<ShopJob | null
   }
 
   const now = new Date().toISOString();
-  const job: ShopJob = {
+  const job: ShopJob = normalizeShopJob({
     id: createId("job"),
     bayOrRo: clean(input.bayOrRo, 80),
     createdAt: now,
@@ -145,6 +141,10 @@ export function createShopJob(input: ShopJobInput): StorageResult<ShopJob | null
     engine: clean(input.engine, 120),
     make: clean(input.make, 80),
     mileage: clean(input.mileage, 40),
+    mileageUnit: input.mileageUnit,
+    modifications: input.modifications,
+    confirmedFields: input.confirmedFields,
+    referenceOrigins: input.referenceOrigins,
     model: clean(input.model, 80),
     notes: clean(input.notes, 500),
     orgId: input.orgId || org.id,
@@ -158,7 +158,7 @@ export function createShopJob(input: ShopJobInput): StorageResult<ShopJob | null
     updatedAt: now,
     vin: cleanVin(input.vin),
     year: clean(input.year, 20),
-  };
+  });
 
   const writeResult = writeJobs([job, ...getShopJobs()].slice(0, MAX_SHOP_JOBS));
   return writeResult.ok
@@ -188,23 +188,64 @@ export function getShopJob(jobId: string): ShopJob | null {
   return getShopJobs().find((job) => job.id === normalizedId) ?? null;
 }
 
-export function updateShopJob(jobId: string, patch: Partial<Pick<ShopJob, "status" | "vin" | "mileage" | "engine" | "notes" | "reviewStatus">>): StorageResult<ShopJob | null> {
+/** An explicit read must not confuse unreadable private storage with a missing job. */
+export function readShopJob(jobId: string, scope = getAccountScope()): StorageResult<ShopJob | null> {
+  const failed = (message: string): StorageResult<ShopJob | null> => ({ ok: false, value: null, message });
+  const changed = "Account changed. Reopen the job in the account that owns it.";
+  if (!isAccountScopeCurrent(scope)) return failed(changed);
+  if (!validStoredId(jobId)) return failed("This saved job reference is invalid.");
+  try {
+    if (!hasLocalStorage()) throw new Error("Storage unavailable");
+    const raw = localStorage.getItem(accountStorageKey(SHOP_JOBS_STORAGE_KEY));
+    if (!isAccountScopeCurrent(scope)) return failed(changed);
+    if (raw === null) return { ok: true, value: null };
+    const parsed: unknown = JSON.parse(raw);
+    if (!isShopJobArray(parsed) || parsed.some((job) => !validStoredId(job.id) || !job.scanIds.every(validStoredId))
+      || new Set(parsed.map((job) => job.id)).size !== parsed.length) throw new Error("Unreadable jobs");
+    const saved = parsed.find((job) => job.id === jobId);
+    // Avoid the legacy normalizer's fallback lookup read: scan availability is
+    // checked separately by the handoff context, never silently treated as empty.
+    const value = saved ? normalizeShopJob({ ...saved, reviewStatus: isShopReviewStatus(saved.reviewStatus) ? saved.reviewStatus : "needs_review" }) : null;
+    return isAccountScopeCurrent(scope) ? { ok: true, value } : failed(changed);
+  } catch {
+    return failed("Shop jobs could not be read safely on this device. Existing records were preserved; reopen the job before preparing a handoff.");
+  }
+}
+
+/** Observe only this captured account, including changes made by another tab. */
+export function subscribeShopJobs(listener: () => void, scope: AccountScope = getAccountScope()): () => void {
+  if (!isAccountScopeCurrent(scope) || typeof window === "undefined") return () => {};
+  const key = accountStorageKey(SHOP_JOBS_STORAGE_KEY);
+  const onLocal = (event: Event) => { if (isAccountScopeCurrent(scope) && (event as CustomEvent<string>).detail === key) listener(); };
+  const onStorage = (event: StorageEvent) => { if (isAccountScopeCurrent(scope) && event.storageArea === localStorage && (event.key === key || event.key === null)) listener(); };
+  window.addEventListener(SHOP_JOBS_CHANGED, onLocal); window.addEventListener("storage", onStorage);
+  return () => { window.removeEventListener(SHOP_JOBS_CHANGED, onLocal); window.removeEventListener("storage", onStorage); };
+}
+
+export function updateShopJob(jobId: string, patch: Partial<Pick<ShopJob, "status" | "vin" | "year" | "make" | "model" | "mileage" | "mileageUnit" | "modifications" | "confirmedFields" | "referenceOrigins" | "engine" | "notes" | "reviewStatus">>): StorageResult<ShopJob | null> {
   const jobs = getShopJobs();
   const index = jobs.findIndex((job) => job.id === jobId);
   if (index === -1) {
     return { ok: false, message: "Shop job was not found.", value: null };
   }
 
-  const updated: ShopJob = {
+  const updated: ShopJob = normalizeShopJob({
     ...jobs[index],
     ...(isShopJobStatus(patch.status) ? { status: patch.status } : {}),
     ...(isShopReviewStatus(patch.reviewStatus) ? { reviewStatus: patch.reviewStatus } : {}),
     ...(typeof patch.vin === "string" ? { vin: cleanVin(patch.vin) } : {}),
+    ...(typeof patch.year === "string" ? { year: clean(patch.year, 20) } : {}),
+    ...(typeof patch.make === "string" ? { make: clean(patch.make, 80) } : {}),
+    ...(typeof patch.model === "string" ? { model: clean(patch.model, 80) } : {}),
     ...(typeof patch.mileage === "string" ? { mileage: clean(patch.mileage, 40) } : {}),
+    ...("mileageUnit" in patch ? { mileageUnit: patch.mileageUnit } : {}),
+    ...("modifications" in patch ? { modifications: patch.modifications } : {}),
+    ...("confirmedFields" in patch ? { confirmedFields: patch.confirmedFields } : {}),
+    ...("referenceOrigins" in patch ? { referenceOrigins: patch.referenceOrigins } : {}),
     ...(typeof patch.engine === "string" ? { engine: clean(patch.engine, 120) } : {}),
     ...(typeof patch.notes === "string" ? { notes: clean(patch.notes, 500) } : {}),
     updatedAt: new Date().toISOString(),
-  };
+  });
 
   const next = [...jobs];
   next[index] = updated;
@@ -240,13 +281,17 @@ export function attachScanToJob(jobId: string, lookupId: string): StorageResult<
 }
 
 export function getVehicleContextForJob(job: ShopJob): ShopVehicleContext {
-  return {
+  return normalizeVehicleContext({
     bayOrRo: job.bayOrRo,
     customerName: job.customerName,
     engine: job.engine,
     jobTitle: job.title,
     make: job.make,
     mileage: job.mileage,
+    mileageUnit: job.mileageUnit,
+    modifications: job.modifications,
+    confirmedFields: job.confirmedFields,
+    referenceOrigins: job.referenceOrigins,
     model: job.model,
     notes: job.notes,
     plate: job.plate,
@@ -254,7 +299,7 @@ export function getVehicleContextForJob(job: ShopJob): ShopVehicleContext {
     technicianName: job.technicianName,
     vin: job.vin,
     year: job.year,
-  };
+  }) ?? {};
 }
 
 export function getShopJobScans(job: ShopJob): Lookup[] {
@@ -337,13 +382,10 @@ export function buildCustomerJobReport(job: ShopJob, scans = getShopJobScans(job
   const lines = [
     "DeepSpec shop report",
     `Job: ${job.title}`,
-    `Vehicle: ${job.year} ${job.make} ${job.model}`,
     `Technician: ${job.technicianName}`,
     job.customerName ? `Customer: ${job.customerName}` : "",
-    job.bayOrRo ? `Bay/RO: ${job.bayOrRo}` : "",
-    job.vin ? `VIN: ${job.vin}` : "VIN: not provided",
-    job.mileage ? `Mileage: ${job.mileage}` : "",
-    `Complaint: ${job.symptom}`,
+    "Vehicle details and intake:",
+    ...vehicleContextDetails(getVehicleContextForJob(job)).map(([label, value]) => `${label}: ${label === "VIN" && !job.vin ? "not provided — not confirmed" : value}`),
     "",
     `Scans: ${scans.length}`,
     ...scans.flatMap((scan, index) => [
@@ -381,7 +423,10 @@ function writeJobs(jobs: ShopJob[]): StorageResult<ShopJob[]> {
   }
 
   try {
-    localStorage.setItem(accountStorageKey(SHOP_JOBS_STORAGE_KEY), JSON.stringify(normalized));
+    const key = accountStorageKey(SHOP_JOBS_STORAGE_KEY);
+    localStorage.setItem(key, JSON.stringify(normalized));
+    try { if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(SHOP_JOBS_CHANGED, { detail: key })); }
+    catch { /* A notification cannot undo the committed job. */ }
     return { ok: true, value: normalized };
   } catch {
     return { ok: false, message: "DeepSpec could not save this shop job on this device.", value: normalized };
@@ -389,7 +434,7 @@ function writeJobs(jobs: ShopJob[]): StorageResult<ShopJob[]> {
 }
 
 function normalizeShopJob(job: ShopJob): ShopJob {
-  return {
+  const cleaned = {
     ...job,
     bayOrRo: clean(job.bayOrRo, 80),
     customerName: clean(job.customerName, 120),
@@ -409,6 +454,10 @@ function normalizeShopJob(job: ShopJob): ShopJob {
     vin: cleanVin(job.vin),
     year: clean(job.year, 20),
   };
+  // Confirmations are bound to the saved values, including mileage units and
+  // modification details. Legacy jobs stay supplied until explicitly confirmed.
+  const context = normalizeVehicleContext(cleaned);
+  return { ...cleaned, mileageUnit: context?.mileageUnit, modifications: context?.modifications, confirmedFields: context?.confirmedFields, referenceOrigins: context?.referenceOrigins };
 }
 
 function getReviewStatusForScanIds(scanIds: string[]): ShopReviewStatus {

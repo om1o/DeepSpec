@@ -1,0 +1,86 @@
+import type { Lookup } from "./index";
+import type { ComponentMapRecord } from "./componentMap";
+import type { ServiceRecord } from "./serviceRecord";
+import type { InspectionComparison, RequestedInspectionComparison } from "./inspectionComparison";
+import type { DiagnosticBundle, ParsedDiagnosticReport } from "./diagnosticReport";
+import type { JobInspectionReportScope } from "./jobInspectionHandoff";
+import type { ObservationAreaRecord } from "./observationArea";
+
+export type InspectionReportIssue = {
+  kind: "map" | "lookup" | "photo" | "cutout" | "service_records" | "comparisons" | "diagnostics" | "observation_areas";
+  lookupId: string;
+  photoId?: string;
+  selectionName?: string;
+  message: string;
+};
+
+export type MapOverviewReportEvidence = {
+  status: "unchanged" | "source_changed" | "missing_photo" | "verification_unavailable" | "legacy_unverified";
+  message: string;
+};
+
+/** A frozen export snapshot. Image fields contain embedded safe raster data or an empty string, never remote URLs. */
+export type InspectionReportSnapshot = {
+  version: 1;
+  createdAt: string;
+  rootLookupId: string;
+  /** Explicit job coverage for this selected overview; never an all-job report. */
+  jobScope?: JobInspectionReportScope;
+  map: ComponentMapRecord | null;
+  mapOverviewEvidence?: MapOverviewReportEvidence;
+  linkedPhotoEvidence?: {
+    componentId: string;
+    linkId: string;
+    lookupId: string;
+    photoId: string;
+    status: MapOverviewReportEvidence["status"];
+    message: string;
+    currentMetadataChanged?: boolean;
+  }[];
+  scans: Lookup[];
+  missing: InspectionReportIssue[];
+  embeddedBytes: number;
+  serviceLogs?: { lookupId: string; records: ServiceRecord[]; cloudChecked: boolean }[];
+  /** Human area history is device-only. Missing history is never an empty log. */
+  observationAreaLogs?: { lookupId: string; records: ObservationAreaRecord[] }[];
+  observationAreaEvidence?: {
+    lookupId: string; recordId: string; photoId: string;
+    status: "unchanged" | "source_changed" | "missing_photo" | "verification_unavailable";
+    /** A historical human mark may retain matching pixels after an AI retry. */
+    analysisMatches: boolean;
+  }[];
+  /** Requested-measurement references checked against this snapshot's embedded bytes. */
+  serviceEvidence?: {
+    lookupId: string;
+    recordId: string;
+    photoId: string;
+    status: "unchanged" | "source_changed" | "missing_photo" | "verification_unavailable";
+  }[];
+  comparisonLogs?: { lookupId: string; records: InspectionComparison[]; cloudChecked: boolean }[];
+  /** Reverse discovery is device-only; complete never means all cloud/device history. */
+  requestedEvidenceHistory?: {
+    originLookupId: string;
+    source: "device";
+    cloudSearched: false;
+    records: RequestedInspectionComparison[];
+    complete: boolean;
+    reason?: string;
+    scannedBuckets: number;
+  };
+  diagnosticLogs?: { lookupId: string; bundle: DiagnosticBundle; parsed: { id: string; report: ParsedDiagnosticReport }[]; cloudChecked: boolean }[];
+  diagnosticEvidence?: { lookupId: string; recordId: string; photoId: string; status: "unchanged" | "source_changed" | "missing_photo" | "verification_unavailable" }[];
+  comparisonEvidence?: {
+    lookupId: string;
+    recordId: string;
+    side: "earlier" | "current";
+    status: "unchanged" | "source_changed" | "missing_photo" | "verification_unavailable";
+  }[];
+};
+
+export type InspectionReportOptions = {
+  includeVin: boolean;
+  includePrivateNotes: boolean;
+  includeDiagnosticOriginals?: boolean;
+};
+
+export const DEFAULT_INSPECTION_REPORT_OPTIONS: InspectionReportOptions = { includeVin: false, includePrivateNotes: false, includeDiagnosticOriginals: false };

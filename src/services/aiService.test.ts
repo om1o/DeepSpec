@@ -2,6 +2,9 @@ import { getAIErrorDetails, identifyCapturedFrame, isAIRequestCanceled, runAI, s
 import { identifyOnDevice } from "./onDeviceIdentify";
 import { setActiveAccount } from "../lib/accountScope";
 import { compressImageDataUrl } from "../lib/utils";
+import { confirmVehicleContextField } from "../lib/vehicleContext";
+import { IDENTIFY_PIPELINE_VERSION } from "./systemPrompts";
+import type { AIInput, ConditionAssessment, PhotoReview, ScanPhoto, ShopVehicleContext } from "../types";
 
 vi.mock("./onDeviceIdentify", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./onDeviceIdentify")>();
@@ -49,6 +52,31 @@ const result = {
   ],
 };
 
+const conditionAssessment = (photoId: string): ConditionAssessment => ({
+  version: 2,
+  observations: [{ id: "rust-edge", text: "Orange flaking is visible along the edge.", photoIds: [photoId], regionLabel: "lower edge",
+    areas: [{ photoId, rectangle: { x: 0.1, y: 0.6, width: 0.3, height: 0.2 } }] }],
+  possibleCauses: [{ text: "Moisture exposure is possible; its cause is unconfirmed.", observationIds: ["rust-edge"] }],
+  unknowns: ["Depth and the condition behind the panel are unknown."],
+  nextEvidence: { kind: "photo", request: "Photograph the back of this edge.", purpose: "Check whether the affected area is visible from behind.", photoIds: [photoId] },
+});
+
+const photoReview = (photoIds: string[]): PhotoReview => ({
+  version: 1,
+  photos: photoIds.map((photoId, index) => ({ photoId, status: index ? "limited_view" : "observations_returned", summary: index ? "The connector is partly obscured." : "The connector outline is visible." })),
+  disagreements: photoIds.length > 1 ? [{ id: "connector-shape", photoIds: photoIds.slice(0, 2), description: "The apparent connector outlines differ.",
+    nextEvidence: { request: "Show both connector faces without the obstruction.", purpose: "Distinguish a real difference from the viewing angle." } }] : [],
+});
+
+function savedVehicleContext(): ShopVehicleContext {
+  let context: ShopVehicleContext = { year: "2018", make: "Honda", model: "Civic", engine: "2.0 L",
+    mileage: "123456", mileageUnit: "km", modifications: { status: "modified", details: "Aftermarket intake" },
+    customerName: "private-customer", plate: "private-plate", technicianName: "private-technician",
+    bayOrRo: "private-ro", jobTitle: "private-job", notes: "private-notes", symptom: "Rough idle when cold" };
+  for (const field of ["year", "mileage", "modifications"] as const) context = confirmVehicleContextField(context, field, true, "2026-11-05T12:00:00.000Z");
+  return context;
+}
+
 describe("aiService", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -58,6 +86,157 @@ describe("aiService", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  it.each([
+    { photoRelationship: "same_part_or_area" as const, grouped: true },
+    { photoRelationship: "independent" as const, grouped: false },
+    { photoRelationship: "unknown" as const, grouped: true },
+    { photoRelationship: undefined, grouped: false },
+  ])("sends relationship $photoRelationship separately for identify (grouped=$grouped)", async ({ photoRelationship, grouped }) => {
+    const photos: ScanPhoto[] = ["overview", "detail"].map((id) => ({ id, label: id === "overview" ? "overview" : "close_up",
+      imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" }));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ result }), { status: 200 }));
+    await identifyCapturedFrame(photos[0], grouped ? undefined : photos[1], undefined, { ...(grouped ? { photos } : {}), photoRelationship });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.photoRelationship).toBe(photoRelationship ?? "unknown");
+    if (grouped) expect(body.photos).toHaveLength(2);
+    else expect(body.imageBase64_2).toBe(photos[1].imageBase64);
+  });
+
+  it("carries relationship independently of prose through direct text requests", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "Compare only the supplied evidence." }), { status: 200 }));
+    await runAI({ type: "text", userMessage: "Q".repeat(4000), systemPrompt: "", photoRelationship: "independent" });
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toMatchObject({ photoRelationship: "independent", userMessage: "Q".repeat(4000) });
+  });
+
+  it.each([null, "", "same_part", false, {}])("rejects invalid relationship %j before any identify, image-load or chat fetch", async (invalidRelationship) => {
+    const photoRelationship = invalidRelationship as never;
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const frame = { imageBase64: "https://example.com/needs-loading.jpg", capturedAt: "2026-11-05T00:00:00.000Z" };
+    await expect(runAI({ type: "vision", imageBase64: frame.imageBase64, photoRelationship, userMessage: "Inspect", systemPrompt: "" })).rejects.toMatchObject({ code: "invalid_input" });
+    await expect(runAI({ type: "text", photoRelationship, userMessage: "Compare", systemPrompt: "" })).rejects.toMatchObject({ code: "invalid_input" });
+    await expect(identifyCapturedFrame(frame, undefined, undefined, { photoRelationship })).rejects.toMatchObject({ code: "invalid_input" });
+    const lookup = { frame, result, photoRelationship, chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    await expect(sendFollowUpDetails(lookup, "Compare")).rejects.toMatchObject({ code: "invalid_input" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(compressImageDataUrl).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("keeps saved group relationship outside the bounded follow-up context (research=%s)", async (research) => {
+    const photos: ScanPhoto[] = ["overview", "detail"].map((id) => ({ id, label: id === "overview" ? "overview" : "close_up",
+      imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" }));
+    const lookup = { frame: photos[0], photos, photoRelationship: "independent", result: { ...result, concerns: Array.from({ length: 8 }, () => "uncertain ".repeat(80)) },
+      scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "The second example does not establish the first part's condition." }), { status: 200 }));
+    await sendFollowUpDetails(lookup, "Why do the photos disagree?", { research });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.photoRelationship).toBe("independent");
+    expect(body.photos).toHaveLength(2);
+    expect(body.userMessage.length).toBeLessThanOrEqual(3000);
+    expect(body.userMessage).toContain("Why do the photos disagree?");
+    expect(Boolean(body.research)).toBe(research);
+  });
+
+  it.each([undefined, "same_part_or_area"] as const)("retains saved relationship %s on legacy single-photo follow-up", async (photoRelationship) => {
+    const lookup = { frame: { imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" }, result,
+      photoRelationship, scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "Only one view is available." }), { status: 200 }));
+    await sendFollowUpDetails(lookup, "What is visible?");
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toMatchObject({ photoRelationship: photoRelationship ?? "unknown", imageBase64: lookup.frame.imageBase64 });
+  });
+
+  it.each([
+    { pipelineVersion: undefined, hasResult: true, expected: "unrecorded" },
+    { pipelineVersion: "identify-pipeline-2026-11-03", hasResult: true, expected: "unrecorded" },
+    { pipelineVersion: "identify-pipeline-2026-11-05-photo-relationship-v1", hasResult: true, expected: "first_photo" },
+    { pipelineVersion: IDENTIFY_PIPELINE_VERSION, hasResult: true, expected: "first_photo" },
+    { pipelineVersion: undefined, hasResult: false, expected: "none" },
+  ].flatMap((fixture) => [false, true].map((grouped) => ({ ...fixture, grouped }))))("sends $expected saved identity scope outside capped context (pipeline=$pipelineVersion, grouped=$grouped)", async ({ pipelineVersion, hasResult, expected, grouped }) => {
+    const photos: ScanPhoto[] = ["overview", "detail"].map((id) => ({ id, label: id === "overview" ? "overview" : "close_up",
+      imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" }));
+    const lookup = { frame: photos[0], ...(grouped ? { photos } : {}), photoRelationship: "unknown",
+      ...(hasResult ? { result: { ...result, concerns: ["Uncertain ".repeat(500)],
+        ...(pipelineVersion ? { modelRun: { provider: "gemini", model: "gemini-3.5-flash-lite", latencyMs: 1, ocrUsed: false, pipelineVersion } } : {}) } } : {}),
+      scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "The saved suggestion has not been independently verified." }), { status: 200 }));
+    await sendFollowUpDetails(lookup, "Which photo supports the saved name?", { research: true });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.savedIdentityScope).toBe(expected);
+    expect(body.userMessage.length).toBeLessThanOrEqual(3000);
+    expect(body.userMessage).toContain("Which photo supports the saved name?");
+    expect(body.research).toBe(true);
+    if (grouped) expect(body.photos).toHaveLength(2);
+    else expect(body.imageBase64).toBe(photos[0].imageBase64);
+  });
+
+  it.each([
+    { photoCount: 1, expected: "first_photo" },
+    { photoCount: 2, expected: "unrecorded" },
+  ])("does not retroactively assign a current same-part group identity to Photo 1 ($photoCount photos)", async ({ photoCount, expected }) => {
+    const photos: ScanPhoto[] = ["overview", "detail"].slice(0, photoCount).map((id) => ({ id, label: id === "overview" ? "overview" : "close_up",
+      imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" }));
+    const lookup = { frame: photos[0], photos, photoRelationship: "same_part_or_area", result: { ...result,
+      modelRun: { provider: "gemini", model: "gemini-3.5-flash-lite", latencyMs: 1, ocrUsed: false, pipelineVersion: IDENTIFY_PIPELINE_VERSION } },
+      scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "The saved identity does not establish which view supports it." }), { status: 200 }));
+    await sendFollowUpDetails(lookup, "Which view supports the saved identity?");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.savedIdentityScope).toBe(expected);
+    expect(body.photoRelationship).toBe("same_part_or_area");
+    expect(body.photos).toHaveLength(photoCount);
+  });
+
+  it.each([false, true])("validates photo review against actual identify inputs (grouped=%s)", async (grouped) => {
+    const photos: ScanPhoto[] = ["bay", "connector", "marking"].map((id) => ({ id, label: "other", imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" }));
+    const review = photoReview(grouped ? ["bay", "connector"] : ["photo-1", "photo-2"]);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ result: { ...result, photoReview: review } }), { status: 200 }));
+    const identified = await identifyCapturedFrame(photos[0], grouped ? undefined : photos[1], undefined, grouped ? { photos } : {});
+    expect(identified.photoReview).toEqual(review);
+    expect(identified.photoReview?.photos).toHaveLength(2);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])("drops foreign photo-review references while preserving valid condition evidence (grouped=%s)", async (grouped) => {
+    const photos: ScanPhoto[] = [{ id: "bay", label: "overview", imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" }];
+    const assessment = conditionAssessment(grouped ? "bay" : "photo-1");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ result: { ...result, conditionAssessment: assessment, photoReview: photoReview(["not-supplied"]) } }), { status: 200 }));
+    const identified = await identifyCapturedFrame(photos[0], undefined, undefined, grouped ? { photos } : {});
+    expect(identified).not.toHaveProperty("photoReview");
+    expect(identified.conditionAssessment).toEqual(assessment);
+    expect(identified.partName).toBe(result.partName);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])("sends normalized saved photo review outside capped follow-up prose (research=%s)", async (research) => {
+    const photos: ScanPhoto[] = ["bay", "connector", "marking"].map((id) => ({ id, label: "other", imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" }));
+    const review = photoReview(["bay", "connector"]);
+    const lookup = { frame: photos[0], photos, photoRelationship: "same_part_or_area", result: { ...result, concerns: ["Uncertain ".repeat(500)], photoReview: { ...review, ignored: "UNTRUSTED_EXTRA" } },
+      scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "The connector disagreement needs another view." }), { status: 200 }));
+    await sendFollowUpDetails(lookup, "Why do the connector views disagree?", { research });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.photoReview).toEqual(review);
+    expect(body.photos).toHaveLength(3);
+    expect(body.userMessage.length).toBeLessThanOrEqual(3000);
+    expect(JSON.stringify(body)).not.toContain("UNTRUSTED_EXTRA");
+  });
+
+  it.each([false, true])("validates saved review on legacy single-photo follow-up (foreign=%s)", async (foreign) => {
+    const review = photoReview([foreign ? "another-scan" : "photo-1"]);
+    const lookup = { frame: { imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" }, result: { ...result, photoReview: review },
+      scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "Inspect the supplied original." }), { status: 200 }));
+    await sendFollowUpDetails(lookup, "What was reviewed?");
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    if (foreign) expect(body).not.toHaveProperty("photoReview");
+    else expect(body.photoReview).toEqual(review);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it("uses the on-device model when offline and the fallback is enabled", async () => {
@@ -180,6 +359,77 @@ describe("aiService", () => {
     );
   });
 
+  it("sends the complete labeled group once, without a duplicate legacy cover", async () => {
+    const photos = ["overview", "close_up", "marking", "mounting"].map((label, index) => ({
+      id: `photo-${index + 1}`, label, imageBase64: `data:image/jpeg;base64,${btoa(`view-${index}`)}`, capturedAt: "2026-11-05T00:00:00.000Z",
+    })) as import("../types").ScanPhoto[];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ result }), { status: 200 }));
+    await identifyCapturedFrame(photos[0], undefined, undefined, { photos });
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.photos).toEqual(photos.map(({ id, label, imageBase64 }) => ({ id, label, imageBase64 })));
+    expect(body).not.toHaveProperty("imageBase64");
+    expect(body).not.toHaveProperty("imageBase64_2");
+  });
+
+  it.each(["detail", "photo-1", "unsubmitted-angle"])("validates condition references against the submitted group: %s", async (photoId) => {
+    const photos: ScanPhoto[] = ["overview", "detail"].map((id) => ({ id, label: id === "overview" ? "overview" : "close_up",
+      imageBase64: "data:image/jpeg;base64,dGVzdA==", capturedAt: "2026-11-05T00:00:00.000Z" }));
+    const assessment = conditionAssessment(photoId);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ result: { ...result, conditionAssessment: assessment } }), { status: 200 }));
+    const identified = await identifyCapturedFrame(photos[0], undefined, undefined, { photos });
+    expect(identified.partName).toBe(result.partName);
+    if (photoId === "detail") expect(identified.conditionAssessment).toEqual(assessment);
+    else expect(identified).not.toHaveProperty("conditionAssessment");
+  });
+
+  it.each([
+    { second: false, photoId: "photo-1", valid: true },
+    { second: false, photoId: "photo-2", valid: false },
+    { second: true, photoId: "photo-2", valid: true },
+  ])("keeps legacy condition reference $photoId only when supplied (second photo: $second)", async ({ second, photoId, valid }) => {
+    const frame = { imageBase64: "data:image/jpeg;base64,dGVzdA==", capturedAt: "2026-11-05T00:00:00.000Z" };
+    const assessment = conditionAssessment(photoId);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ result: { ...result, conditionAssessment: assessment } }), { status: 200 }));
+    const identified = await identifyCapturedFrame(frame, second ? frame : undefined);
+    if (valid) expect(identified.conditionAssessment).toEqual(assessment);
+    else expect(identified).not.toHaveProperty("conditionAssessment");
+  });
+
+  it("drops the whole optional assessment with a dangling cause but retains the legacy response", async () => {
+    const assessment = { ...conditionAssessment("photo-1"), possibleCauses: [{ text: "Possible moisture exposure", observationIds: ["missing-observation"] }] };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ result: { ...result, conditionAssessment: assessment } }), { status: 200 }));
+    const identified = await identifyCapturedFrame({ imageBase64: "data:image/jpeg;base64,dGVzdA==", capturedAt: "now" });
+    expect(identified).toEqual(result);
+  });
+
+  it("does not ground an on-device fallback in the second photo it never received", async () => {
+    vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "true");
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network down"));
+    vi.mocked(identifyOnDevice).mockReset().mockResolvedValue({ ...result, conditionAssessment: conditionAssessment("photo-2") } as never);
+    const frame = { imageBase64: "data:image/jpeg;base64,dGVzdA==", capturedAt: "now" };
+    const identified = await identifyCapturedFrame(frame, frame);
+    expect(identified.partName).toBe(result.partName);
+    expect(identified).not.toHaveProperty("conditionAssessment");
+    expect(identifyOnDevice).toHaveBeenCalledWith(frame);
+  });
+
+  it("does not drop angles into a single-photo offline fallback", async () => {
+    vi.stubEnv("VITE_ENABLE_ON_DEVICE_FALLBACK", "true");
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    vi.mocked(identifyOnDevice).mockClear();
+    const photo = { id: "overview", label: "overview" as const, imageBase64: "data:image/jpeg;base64,dGVzdA==", capturedAt: "2026-11-05T00:00:00.000Z" };
+    await expect(identifyCapturedFrame(photo, undefined, undefined, { photos: [photo] })).rejects.toMatchObject({ code: "connection_failed" });
+    expect(identifyOnDevice).not.toHaveBeenCalled();
+  });
+
+  it("rejects duplicate evidence IDs before sending a group", async () => {
+    const photo = { id: "overview", label: "overview" as const, imageBase64: "data:image/jpeg;base64,dGVzdA==", capturedAt: "2026-11-05T00:00:00.000Z" };
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    await expect(identifyCapturedFrame(photo, undefined, undefined, { photos: [photo, photo] })).rejects.toMatchObject({ code: "invalid_input" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("compresses an oversized scan before sending it to the identify API", async () => {
     const compressed = "data:image/jpeg;base64,dGVzdA==";
     vi.mocked(compressImageDataUrl).mockResolvedValue(compressed);
@@ -228,8 +478,8 @@ describe("aiService", () => {
         capturedAt: "2026-05-16T00:00:00.000Z",
       }),
     ).rejects.toMatchObject({
-      code: "network",
-      message: "Scan took too long. Try again.",
+      code: "request_timeout",
+      message: "DeepSpec did not return a complete response in time. Try again.",
     });
   });
 
@@ -442,12 +692,90 @@ describe("aiService", () => {
     expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toHaveProperty("imageBase64", "data:image/jpeg;base64,test");
   });
 
+  it.each(["single-image", "photo-group", "text"] as const)("sends only vehicle facts and exact confirmations for %s requests", async (kind) => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(kind === "text" ? { message: "Confirm the engine." } : { result }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const vehicleContext = savedVehicleContext();
+    const input: AIInput = { type: kind === "text" ? "text" : "vision", userMessage: "Identify the visible part", systemPrompt: "test", vehicleContext,
+      ...(kind === "photo-group" ? { photos: [{ id: "saved-original", label: "overview", imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T12:00:00.000Z" }] }
+        : { imageBase64: "data:image/png;base64,aGVsbG8=" }) };
+    await runAI(input);
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.vehicleContext).toMatchObject({ year: "2018", engine: "2.0 L", mileage: "123456", mileageUnit: "km", symptom: "Rough idle when cold", modifications: { status: "modified", details: "Aftermarket intake" },
+      confirmedFields: { year: { value: "2018" }, mileage: { value: '["123456","km"]' }, modifications: { value: '["modified","Aftermarket intake"]' } } });
+    expect(JSON.stringify(body)).not.toContain("private-");
+    expect(body.vehicleContext.confirmedFields.engine).toBeUndefined();
+    expect(vehicleContext.customerName).toBe("private-customer");
+  });
+
+  it.each([
+    { group: false, research: false }, { group: true, research: false },
+    { group: false, research: true }, { group: true, research: true },
+  ])("preserves saved vehicle facts outside long chat history: group=$group research=$research", async ({ group, research }) => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "Confirm the engine before selecting a procedure." }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const frame = { imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T12:00:00.000Z" };
+    const vehicleContext = savedVehicleContext();
+    const lookup = { id: "saved-scan", frame, ...(group ? { photos: [{ ...frame, id: "saved-original", label: "overview" }] } : {}),
+      result: { ...result, visibleObservations: ["visible detail ".repeat(500)] }, scanCategory: "electrical", trainingLabel: "Alternator", vehicleContext,
+      chatHistory: [{ id: "previous-answer", role: "assistant", content: "old chat ".repeat(1000), timestamp: frame.capturedAt }] } as Parameters<typeof sendFollowUpDetails>[0];
+    await sendFollowUpDetails(lookup, "Which engine detail do you need?", { research });
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.vehicleContext).toMatchObject({ year: "2018", engine: "2.0 L", mileage: "123456", mileageUnit: "km", symptom: "Rough idle when cold",
+      modifications: { status: "modified", details: "Aftermarket intake" }, confirmedFields: vehicleContext.confirmedFields });
+    expect(body.userMessage.length).toBeLessThanOrEqual(3000);
+    expect(body.userMessage).toContain("User question: Which engine detail do you need?");
+    expect(body.research === true).toBe(research);
+    expect(Boolean(body.photos)).toBe(group);
+    expect(JSON.stringify(body)).not.toContain("private-");
+  });
+
+  it.each([false, true])("keeps the recorded rotor overclaim explicitly unverified in chat (research=%s)", async (research) => {
+    const claim = "Thermal cracking visible on the independent rotor example (Photo 3), compromising structural integrity.";
+    const assessment = conditionAssessment("photo-1");
+    assessment.unknowns = ["Exact depth and structural propagation of the surface cracks.", "Remaining rotor thickness compared to manufacturer specifications."];
+    const lookup = { frame: { imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-07T00:00:00Z" },
+      result: { ...result, concerns: [claim], conditionAssessment: assessment }, scanCategory: "brakes", trainingLabel: "Rotor", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    const before = JSON.stringify(lookup);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "Depth remains unknown." }), { status: 200 }));
+    await sendFollowUpDetails(lookup, "Is the thermal cause confirmed?", { research });
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.userMessage).toContain(`Original AI concerns (unverified): ${claim}`);
+    expect(body.userMessage).not.toContain("\nConcerns:");
+    expect(body.userMessage).not.toContain("\nVisible observations:");
+    expect(body.conditionAssessment.unknowns).toEqual(assessment.unknowns);
+    expect(body.userMessage).toContain("User question: Is the thermal cause confirmed?");
+    expect(JSON.stringify(lookup)).toBe(before);
+  });
+
+  it("retains self-reported functional results without forwarding the inspector name", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "The failed functional check needs further diagnosis." }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const lookup = { frame: { imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T12:00:00.000Z" },
+      result: { ...result, conditionAssessment: conditionAssessment("photo-1") }, scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [],
+      inspection: { confirmedPartName: "Alternator", partNumber: "", identityEvidence: "", visibleCondition: "uncertain", visibleNotes: "",
+        functionalStatus: "failed", functionalNotes: "", inspectorName: "private-inspector", inspectedAt: "2026-11-05T12:00:00.000Z" } } as Parameters<typeof sendFollowUpDetails>[0];
+    await sendFollowUpDetails(lookup, "What should I check next?");
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.userMessage).toContain("Functional checks: failed (self-reported inspection)");
+    expect(JSON.stringify(body)).not.toContain("private-inspector");
+    expect(lookup.inspection?.inspectorName).toBe("private-inspector");
+  });
+
   it("sends opt-in research references with the actual saved photo and keeps grounded response metadata", async () => {
     const sources = [{ label: "Service reference", url: "https://example.com/manual", sourceType: "reference" }];
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "Visible wear\n\nCompare the belt marking.", sources, searchSuggestions: "<div>Related searches</div>" }), { status: 200, headers: { "Content-Type": "application/json" } }));
     const lookup = { frame: { imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-05-16T00:00:00.000Z" }, result, scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
     await expect(sendFollowUpDetails(lookup, "Research this marking", { research: true, sourceUrls: ["https://example.com/manual"] })).resolves.toEqual({ message: "Visible wear\n\nCompare the belt marking.", sources, searchSuggestions: "<div>Related searches</div>" });
     expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body))).toMatchObject({ imageBase64: lookup.frame.imageBase64, research: true, sourceUrls: ["https://example.com/manual"] });
+  });
+
+  it("attaches every labeled saved angle to a follow-up question", async () => {
+    const photos = ["overview", "close_up"].map((label, index) => ({ id: `photo-${index}`, label,
+      imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00.000Z" })) as import("../types").ScanPhoto[];
+    const lookup = { frame: photos[0], photos, result, scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "The close-up does not establish depth." }), { status: 200 }));
+    await expect(sendFollowUpDetails(lookup, "Compare these views")).resolves.toMatchObject({ message: "The close-up does not establish depth." });
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.photos).toEqual(photos.map(({ id, label, imageBase64 }) => ({ id, label, imageBase64 })));
+    expect(body).not.toHaveProperty("imageBase64");
   });
 
   it("loads a signed cloud photo in the browser and sends bounded image data to chat", async () => {
@@ -460,6 +788,28 @@ describe("aiService", () => {
     expect(fetchSpy.mock.calls[0]).toEqual([lookup.frame.imageBase64, expect.objectContaining({ credentials: "omit" })]);
     expect(fetchSpy.mock.calls[1][0]).toBe("/api/chat");
     expect(JSON.parse(String(fetchSpy.mock.calls[1][1]?.body))).toHaveProperty("imageBase64", "data:image/jpeg;base64,/9j/AA==");
+  });
+
+  it("keeps photo-linked appearance, unconfirmed causes and unknown severity in follow-up context", async () => {
+    const photos = [{ id: "detail", label: "close_up" as const, imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T00:00:00Z" }];
+    const assessment = {
+      version: 1 as const,
+      observations: [{ id: "o1", text: "Short radial lines are visible.", photoIds: ["detail"] }],
+      possibleCauses: [{ text: "Heat checking is one possibility.", observationIds: ["o1"] }],
+      unknowns: ["The photos do not establish depth or severity."],
+      nextEvidence: { kind: "professional_inspection" as const, request: "Inspect both faces directly.", purpose: "Resolve whether the lines extend through the disc." },
+    };
+    const lookup = { frame: photos[0], photos, result: { ...result, conditionAssessment: assessment }, scanCategory: "brake", trainingLabel: "Rotor", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "Depth remains unknown." }), { status: 200 }));
+    await sendFollowUpDetails(lookup, "What does the second view establish?");
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.userMessage).toContain("Observed appearance [o1] in photos [detail]: Short radial lines are visible.");
+    expect(body.userMessage).toContain("Unconfirmed possible cause, based on [o1]: Heat checking is one possibility.");
+    expect(body.userMessage).toContain(assessment.unknowns[0]);
+    expect(body.userMessage).toContain(assessment.nextEvidence.purpose);
+    expect(body.userMessage).toContain("not human confirmation");
+    expect(body.userMessage).toContain("User question: What does the second view establish?");
+    expect(body.userMessage.length).toBeLessThanOrEqual(3000);
   });
 
   it("does not mix an old cloud photo with the new account's chat token after a switch", async () => {

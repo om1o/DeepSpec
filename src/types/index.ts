@@ -1,8 +1,19 @@
+import type { VehicleReferenceOrigins } from "./vehicleReference.js";
+
 export type MotionPermissionState = "idle" | "granted" | "denied" | "unsupported";
 
 export type CapturedFrame = {
   imageBase64: string;
   capturedAt: string;
+};
+
+export const SCAN_PHOTO_LABELS = ["overview", "close_up", "marking", "mounting", "other"] as const;
+export type ScanPhotoLabel = (typeof SCAN_PHOTO_LABELS)[number];
+export const PHOTO_RELATIONSHIPS = ["same_part_or_area", "independent", "unknown"] as const;
+export type PhotoRelationship = (typeof PHOTO_RELATIONSHIPS)[number];
+export type ScanPhoto = CapturedFrame & {
+  id: string;
+  label: ScanPhotoLabel;
 };
 
 export type VisualFocusMode = "mask" | "crop" | "full_frame";
@@ -79,12 +90,19 @@ export type CandidateMatch = {
   reason: string;
 };
 
+export type VehicleContextField = "vin" | "year" | "make" | "model" | "engine" | "mileage" | "modifications";
+
 export type VehicleContext = {
   vin?: string;
   year?: string;
   make?: string;
   model?: string;
   engine?: string;
+  mileage?: string;
+  mileageUnit?: "mi" | "km" | "unknown";
+  modifications?: { status: "unknown" | "none_known" | "modified"; details?: string };
+  confirmedFields?: Partial<Record<VehicleContextField, { value: string; confirmedAt: string }>>;
+  symptom?: string;
   notes?: string;
 };
 
@@ -111,16 +129,16 @@ export type OrganizationMember = {
 };
 
 export type ShopVehicleContext = VehicleContext & {
+  referenceOrigins?: VehicleReferenceOrigins;
   bayOrRo?: string;
   customerName?: string;
   jobTitle?: string;
-  mileage?: string;
   plate?: string;
-  symptom?: string;
   technicianName?: string;
 };
 
 export type ShopJob = {
+  referenceOrigins?: VehicleReferenceOrigins;
   id: string;
   bayOrRo?: string;
   createdAt: string;
@@ -129,6 +147,9 @@ export type ShopJob = {
   engine?: string;
   make: string;
   mileage?: string;
+  mileageUnit?: VehicleContext["mileageUnit"];
+  modifications?: VehicleContext["modifications"];
+  confirmedFields?: VehicleContext["confirmedFields"];
   model: string;
   notes?: string;
   orgId: string;
@@ -201,6 +222,54 @@ export type EvidenceRegion = {
   regionLabel: string;
 };
 
+/** Unverified AI location in one entire saved image, never measured geometry. */
+export type ConditionObservationArea = {
+  photoId: string;
+  rectangle: { x: number; y: number; width: number; height: number };
+};
+
+export type ConditionObservation = {
+  id: string;
+  text: string;
+  photoIds: string[];
+  regionLabel?: string;
+  /** Available only in assessment version 2; absence is not a located finding. */
+  areas?: ConditionObservationArea[];
+};
+
+export type ConditionHypothesis = {
+  text: string;
+  observationIds: string[];
+};
+
+export type NextConditionEvidence = {
+  kind: "photo" | "marking" | "measurement" | "professional_inspection";
+  request: string;
+  purpose: string;
+  photoIds?: string[];
+};
+
+/** AI-reported visual evidence. Human checks remain in PartInspection. */
+export type ConditionAssessment = {
+  version: 1 | 2;
+  observations: ConditionObservation[];
+  possibleCauses: ConditionHypothesis[];
+  unknowns: string[];
+  nextEvidence?: NextConditionEvidence;
+};
+
+export type PhotoReviewStatus = "observations_returned" | "limited_view" | "not_assessed";
+export type PhotoReview = {
+  version: 1;
+  photos: { photoId: string; status: PhotoReviewStatus; summary: string }[];
+  disagreements: {
+    id: string;
+    photoIds: string[];
+    description: string;
+    nextEvidence: { request: string; purpose: string };
+  }[];
+};
+
 export type SceneObject = {
   name: string;
   category: ScanCategory | string;
@@ -208,13 +277,14 @@ export type SceneObject = {
   primary: boolean;
 };
 
-// A scene object that has been cut out (SlimSAM) for the multi-object AR view. In-memory
-// only (the cutout PNGs are too large to persist); a reopened scan shows the primary alone.
+// Keep the selection even when segmentation is unavailable or the user corrects its area.
 export type IsolatedObject = {
   name: string;
   category: ScanCategory | string;
   focusBox: VisualFocusBox;
   isolatedImageBase64: string;
+  focusMode?: VisualFocusMode;
+  correctedAt?: string;
   primary: boolean;
 };
 
@@ -278,6 +348,8 @@ export type IdentificationResult = {
   whatItDoes: string;
   visibleObservations: string[];
   evidenceRegions: EvidenceRegion[];
+  conditionAssessment?: ConditionAssessment;
+  photoReview?: PhotoReview;
   sceneObjects?: SceneObject[];
   concerns: string[];
   safetyTriage: SafetyTriage;
@@ -292,6 +364,8 @@ export type IdentificationResult = {
 export type ScanAnalysisState = {
   analysisAttemptId?: string;
   frame: CapturedFrame;
+  photos?: ScanPhoto[];
+  photoRelationship?: PhotoRelationship;
   focusBox?: VisualFocusBox;
   focusMode?: VisualFocusMode;
   isolatedImageBase64?: string;
@@ -316,6 +390,8 @@ export type AIInput = {
   type: "vision" | "text";
   imageBase64?: string;
   imageBase64_2?: string;
+  photos?: ScanPhoto[];
+  photoRelationship?: PhotoRelationship;
   labelRescueTrigger?: LabelRescueTrigger;
   measurementContext?: MeasurementContext;
   userMessage: string;
@@ -369,13 +445,16 @@ export type Lookup = {
     attemptId: string;
     attemptedAt: string;
     status: "unconfirmed" | "acknowledged" | "failed";
-    scope: "scan" | "inspection";
+    scope: "scan" | "inspection" | "chat";
     shopAssociation?: "private" | "cloud";
   };
   inspection?: PartInspection;
   id: string;
   createdAt: string;
   frame: CapturedFrame;
+  photos?: ScanPhoto[];
+  photoRelationship?: PhotoRelationship;
+  isolatedObjects?: IsolatedObject[];
   focusBox?: VisualFocusBox;
   focusMode?: VisualFocusMode;
   isolatedImageBase64?: string;
