@@ -1,5 +1,5 @@
 import type { PhotoRelationship } from "../src/types/index.js";
-import { isPhotoRelationship, photoRelationshipDescription } from "../src/lib/photoRelationship.js";
+import { isPhotoRelationship, photoRelationshipDescription, photoRelationshipOrUnknown } from "../src/lib/photoRelationship.js";
 
 const PHOTO_LABELS = ["overview", "close_up", "marking", "mounting", "other"] as const;
 // Stay below Vercel's 4.5 MB request limit with room for JSON and context.
@@ -18,7 +18,7 @@ export function parseInspectionPhotos(body: Record<string, unknown>, required = 
   if (body.photoRelationship !== undefined && !isPhotoRelationship(body.photoRelationship)) {
     return invalid("Photo relationship must be same_part_or_area, independent, or unknown.");
   }
-  const photoRelationship = body.photoRelationship ?? "unknown";
+  const photoRelationship = photoRelationshipOrUnknown(body.photoRelationship);
   const inputs: Array<{ id: string; label: InspectionPhoto["label"]; imageBase64: string }> = [];
   let payloadChars = 0;
   if (body.photos !== undefined) {
