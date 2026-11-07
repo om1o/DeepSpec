@@ -1,6 +1,7 @@
 import { normalizeConditionAssessment } from "./conditionAssessment.js";
 
 export const UNLINKED_CONDITION_FLAGS_MESSAGE = "These saved AI flags are not linked to individual photos. They do not establish the condition of every photo or part.";
+export const ORIGINAL_AI_WORDING_MESSAGE = "Original AI wording can contain unsupported claims about cause or severity. It is not a confirmed finding; compare the linked appearance, possible causes and unresolved questions.";
 const MISSING_FINDINGS = "No photo-linked condition findings were returned for this photo. Missing findings do not mean no damage is present.";
 
 /** Count saved references, never infer inspection completeness or condition from summary text. */
@@ -9,8 +10,10 @@ export function buildConditionCoverage(value: unknown, photoIds: readonly string
     && new Set(photoIds).size === photoIds.length;
   const assessment = hasResult && validPhotos ? normalizeConditionAssessment(value, photoIds) : undefined;
   const photos = validPhotos ? photoIds.map((photoId) => {
-    const observationIds = assessment?.observations.filter((item) => item.photoIds.includes(photoId)).map((item) => item.id) ?? [];
-    return { photoId, observationIds, message: !hasResult ? "No AI condition analysis is recorded for this photo."
+    const observations = assessment?.observations.filter((item) => item.photoIds.includes(photoId)) ?? [];
+    const observationIds = observations.map((item) => item.id);
+    const possibleCauses = assessment?.possibleCauses.filter((item) => item.observationIds.some((id) => observationIds.includes(id))) ?? [];
+    return { photoId, observationIds, observations, possibleCauses, message: !hasResult ? "No AI condition analysis is recorded for this photo."
       : observationIds.length ? `${observationIds.length} linked AI condition finding${observationIds.length === 1 ? "" : "s"}. This does not establish a complete inspection of the photo.`
         : MISSING_FINDINGS };
   }) : [];

@@ -1,7 +1,7 @@
 import type { Lookup, ScanPhoto, VehicleContext, VisualFocusBox } from "../types";
 import type { ComponentMapComponent } from "../types/componentMap";
 import { DEFAULT_INSPECTION_REPORT_OPTIONS, type InspectionReportOptions, type InspectionReportSnapshot } from "../types/inspectionReport";
-import { buildConditionCoverage, UNLINKED_CONDITION_FLAGS_MESSAGE } from "./conditionCoverage";
+import { buildConditionCoverage, ORIGINAL_AI_WORDING_MESSAGE, UNLINKED_CONDITION_FLAGS_MESSAGE } from "./conditionCoverage";
 import { normalizeObservationAreaRecords, observationAreaRecordStatus } from "./observationArea";
 import { buildIntakeDraft } from "./intakeDraft";
 import { normalizeVehicleContext, vehicleContextDetails } from "./vehicleContext";
@@ -317,9 +317,13 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
       ${prose(reviewState.message)}
       ${prose(conditionCoverage.message)}
       <ol class="photo-review-rows">${reviewState.rows.map((row, index) => {
+        const condition = conditionCoverage.photos.find((photo) => photo.photoId === row.id);
         return `<li id="${anchor}-photo-review-${index + 1}"><p>${escape(row.label)}: ${photoLink(scan.id, row.id)}</p>
-          ${details([["AI review status", photoReviewStatusLabel(row.status)]])}${row.summary ? prose(row.summary) : ""}
-          ${prose(conditionCoverage.photos.find((photo) => photo.photoId === row.id)?.message ?? conditionCoverage.message)}</li>`;
+          ${details([["AI review status", photoReviewStatusLabel(row.status)]])}
+          ${prose(condition?.message ?? conditionCoverage.message)}
+          ${condition?.observations.length ? `<h4>AI-reported appearance</h4>${list(condition.observations.map((item) => `[${item.id}] ${item.text}`))}
+            <h4>Possible causes — unconfirmed</h4>${condition.possibleCauses.length ? list(condition.possibleCauses.map((item) => `${item.text} — based on observations ${item.observationIds.join(", ")}`)) : prose("Cause not established.")}` : ""}
+          ${row.summary ? `<h4>Original AI summary — unverified</h4>${prose(ORIGINAL_AI_WORDING_MESSAGE)}${prose(row.summary)}` : ""}</li>`;
       }).join("")}</ol>
       <h4>${escape(reviewState.comparisonHeading)}</h4>
       ${prose(reviewState.disagreementMessage)}
@@ -391,7 +395,7 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
         <div class="${result.isSafetyCritical || result.safetyTriage === "needs_professional" ? "safety" : "warning"}"><h4>${result.isSafetyCritical || result.safetyTriage === "needs_professional" ? "Safety action — preserve before further use" : "Saved next action"}</h4>${prose(result.nextAction || "No specific action recorded.")}${details([["Safety triage", words(result.safetyTriage)], ["Safety-critical flag", result.isSafetyCritical ? "Yes" : "No — not a safety clearance"]])}</div>
         ${assessmentHtml}<h4>Other saved AI visible observations</h4>${list(result.visibleObservations)}
         ${result.evidenceRegions.length ? `<h4>Textual evidence regions — no geometric claim</h4>${result.evidenceRegions.map((region) => details([["Label", region.label], ["Observation", region.observation], ["Region", region.regionLabel]])).join("")}` : ""}
-        <h4>AI concerns — unconfirmed</h4>${prose(UNLINKED_CONDITION_FLAGS_MESSAGE)}${list(result.concerns)}<h4>Other saved AI evidence</h4>${list(result.evidence)}
+        <h4>Original AI flags — unverified</h4>${prose(UNLINKED_CONDITION_FLAGS_MESSAGE)}${prose(ORIGINAL_AI_WORDING_MESSAGE)}${list(result.concerns)}<h4>Other saved AI evidence</h4>${list(result.evidence)}
         <h4>Additional evidence requested</h4>${list(result.requiredNextEvidence ?? [])}
         ${result.candidateMatches.length ? `<h4>Alternative AI identities</h4>${result.candidateMatches.map((candidate) => details([["Candidate", candidate.partName], ["Confidence", candidate.confidence], ["Reason", candidate.reason]])).join("")}` : ""}
         ${result.measurements?.length ? `<h4>AI-reported dimensions — not human measurements</h4>${prose("These are model outputs, including estimates or interpretations of markings. No human measurement is inferred.")}${result.measurements.map((measurement) => details([["Dimension", measurement.label], ["AI-reported value", `${measurement.valueMm} mm`], ["Method", words(measurement.method)], ["AI confidence", measurement.confidence], ["Caveat", measurement.caveat]])).join("")}` : ""}

@@ -87,6 +87,11 @@ it("keeps photo coverage, raw saved findings and original-photo links consistent
   const html = buildInspectionReportHtml({ version: 1, createdAt: scan.createdAt, rootLookupId: scan.id, map: null, scans: [reopened], missing: [], embeddedBytes: 200 });
   const doc = new DOMParser().parseFromString(html, "text/html");
   expect(doc.querySelector("#scan-1-photo-review-2")?.textContent).toContain(missing);
+  expect(doc.querySelector("#scan-1-photo-review-2")?.textContent).toContain("Original AI summary — unverified");
+  expect(doc.querySelector("#scan-1-photo-review-2")?.textContent).toContain("unsupported claims about cause or severity");
+  expect(doc.querySelector("#scan-1-photo-review-1")?.textContent).toContain("AI-reported appearance");
+  expect(doc.querySelector("#scan-1-photo-review-1")?.textContent).toContain(scan.result!.conditionAssessment!.observations[0].text);
+  expect(doc.querySelector("#scan-1-photo-review-2")?.textContent).not.toContain(scan.result!.conditionAssessment!.observations[0].text);
   expect(doc.querySelector("#review-overview")?.textContent).toContain(missing);
   expect(doc.querySelector("#missing-evidence")?.textContent).toContain(`Scan 1, Photo 2: ${missing}`);
   expect(doc.querySelector("#review-overview a[href='#scan-1-photo-2']")).not.toBeNull();
@@ -99,6 +104,7 @@ it("keeps photo coverage, raw saved findings and original-photo links consistent
 it.each(["scanner", "result"] as const)("labels unlinked legacy flags in the %s details", (variant) => {
   render(<ResultDetailSections result={photoConditionFixture().result!} variant={variant} />);
   expect(screen.getByTestId("result-details")).toHaveTextContent(flagsScope);
+  expect(screen.getByTestId("result-details")).toHaveTextContent("Original AI flags — unverified");
 });
 
 it("shows the same coverage gap and unlinked flag scope in the chat evidence panel", async () => {
