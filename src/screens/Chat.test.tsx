@@ -78,6 +78,28 @@ describe("Chat", () => {
 
   afterEach(() => vi.unstubAllEnvs());
 
+  it("keeps a failed question and shows its connection reference until a manual retry succeeds", async () => {
+    vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
+    const reference = "a5a11bb3-c67c-4b5c-9b20-e21b16655b51";
+    sendFollowUpMock.mockRejectedValueOnce(new AIServiceError("connection_failed", "Connection interrupted.", reference))
+      .mockResolvedValueOnce("Check the original marking.");
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    renderChat(`/result/${lookup.id}/chat`);
+    fireEvent.change(await screen.findByLabelText("Ask a follow-up question"), { target: { value: "Which marking?" } });
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("Connection to DeepSpec interrupted")).toBeInTheDocument();
+    expect(screen.getByText(`Connection interrupted. Reference: ${reference}`)).toBeInTheDocument();
+    expect(screen.queryByText("AI provider could not be reached")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Ask a follow-up question")).toHaveValue("Which marking?");
+    expect(getLookup(lookup.id)?.chatHistory).toHaveLength(0);
+    expect(sendFollowUpMock).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole("button", { name: "Retry last question" }));
+    expect(await screen.findByText("Check the original marking.")).toBeInTheDocument();
+    expect(sendFollowUpMock).toHaveBeenCalledTimes(2);
+    expect(sendFollowUpMock.mock.calls.map((call) => call[1])).toEqual(["Which marking?", "Which marking?"]);
+    expect(getLookup(lookup.id)?.chatHistory).toHaveLength(2);
+  });
+
   it("saves an answered exchange locally without cloud calls or a misleading retry when cloud sync is off", async () => {
     vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");
     sendFollowUpMock.mockResolvedValue("This answer stays with your saved photo.");

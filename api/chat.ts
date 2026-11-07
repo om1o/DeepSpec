@@ -3,6 +3,7 @@
 import { createChatResponse, isChatEnabled } from "../server/chat.shared.js";
 import { enforceRateLimit } from "../server/rateLimit.shared.js";
 import { requireSession } from "../server/requireSession.shared.js";
+import { withAIRequestDiagnostics } from "../server/aiRequestDiagnostics.shared.js";
 
 type VercelRequest = {
   headers?: Record<string, string | string[] | undefined>;
@@ -16,7 +17,7 @@ type VercelResponse = {
   setHeader: (name: string, value: string) => void;
 };
 
-export default async function handler(request: VercelRequest, response: VercelResponse) {
+export default withAIRequestDiagnostics("/api/chat", async function handler(request: VercelRequest, response: VercelResponse) {
   response.setHeader("Cache-Control", "no-store");
 
   if (request.method !== "POST") {
@@ -52,4 +53,4 @@ export default async function handler(request: VercelRequest, response: VercelRe
 
   const result = await createChatResponse(request.body, process.env);
   response.status(result.status).json(result.body);
-}
+});

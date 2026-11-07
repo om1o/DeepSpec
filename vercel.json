@@ -39,7 +39,8 @@
       "codex/provider-response-health-20261107": false,
       "codex/identify-response-health-20261107": false,
       "codex/reference-provenance-20261107": false,
-      "codex/reference-source-applicability-20261107": false
+      "codex/reference-source-applicability-20261107": false,
+      "codex/chat-transport-diagnostics-20261107": false
     }
   },
   "functions": {
