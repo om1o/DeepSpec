@@ -1,4 +1,4 @@
-import type { ConditionAssessment, ConditionObservation, ConditionObservationArea, NextConditionEvidence } from "../types";
+import type { ConditionAssessment, ConditionObservation, ConditionObservationArea, NextConditionEvidence } from "../types/index.js";
 
 const MAX_TEXT_LENGTH = 600;
 const MAX_ID_LENGTH = 80;

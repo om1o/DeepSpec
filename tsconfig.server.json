@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "skipLibCheck": true,
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true
+  },
+  "include": ["api/**/*.ts", "server/**/*.ts"],
+  "exclude": ["api/**/*.test.ts", "server/**/*.test.ts"]
+}
