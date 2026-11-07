@@ -30,7 +30,8 @@
       "codex/car-scan-conflict-error-20261105": false,
       "codex/car-map-conflict-error-20261105": false,
       "codex/car-photo-controls-layout-20261105": false,
-      "codex/car-inspection-candidate-20261106": false
+      "codex/car-inspection-candidate-20261106": false,
+      "codex/chat-late-save-20261107": false
     }
   },
   "functions": {
