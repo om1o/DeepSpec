@@ -1,6 +1,7 @@
 import { getLocalDateStamp } from "../lib/utils";
 import { formatIntakeDraft } from "../lib/intakeDraft";
 import { buildConditionHandoff, formatConditionHandoff } from "../lib/conditionHandoff";
+import { UNLINKED_CONDITION_FLAGS_MESSAGE } from "../lib/conditionCoverage";
 import type { CandidateMatch, EvidenceRegion, Lookup, SourceLink } from "../types";
 
 export function buildScanReport(lookup: Lookup) {
@@ -47,6 +48,7 @@ export function buildScanReport(lookup: Lookup) {
     formatList(detectedText, "None detected."),
     "",
     "Concerns:",
+    ...(result ? [UNLINKED_CONDITION_FLAGS_MESSAGE] : []),
     formatList(result?.concerns, "No concerns recorded; this does not establish condition."),
     "",
     "Dataset evidence:",
