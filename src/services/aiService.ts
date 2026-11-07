@@ -829,8 +829,8 @@ function buildFollowUpContext(lookup: Lookup, question: string) {
       ...condition.possibleCauses.map((item) => `Unconfirmed possible cause, based on [${item.observationIds.join(", ")}]: ${item.text}`),
     ] : []),
     result ? `What it does: ${result.whatItDoes}` : "",
-    result ? `Visible observations: ${result.visibleObservations.join("; ") || "none"}` : "",
-    result ? `Concerns: ${result.concerns.join("; ") || "none"}` : "",
+    result ? `Original AI observations (unverified): ${result.visibleObservations.join("; ") || "none recorded"}` : "",
+    result ? `Original AI concerns (unverified): ${result.concerns.join("; ") || "none recorded"}` : "",
   ]
     .filter(Boolean)
     .join("\n")

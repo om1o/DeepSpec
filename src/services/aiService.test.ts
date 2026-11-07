@@ -728,6 +728,24 @@ describe("aiService", () => {
     expect(JSON.stringify(body)).not.toContain("private-");
   });
 
+  it.each([false, true])("keeps the recorded rotor overclaim explicitly unverified in chat (research=%s)", async (research) => {
+    const claim = "Thermal cracking visible on the independent rotor example (Photo 3), compromising structural integrity.";
+    const assessment = conditionAssessment("photo-1");
+    assessment.unknowns = ["Exact depth and structural propagation of the surface cracks.", "Remaining rotor thickness compared to manufacturer specifications."];
+    const lookup = { frame: { imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-07T00:00:00Z" },
+      result: { ...result, concerns: [claim], conditionAssessment: assessment }, scanCategory: "brakes", trainingLabel: "Rotor", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    const before = JSON.stringify(lookup);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "Depth remains unknown." }), { status: 200 }));
+    await sendFollowUpDetails(lookup, "Is the thermal cause confirmed?", { research });
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.userMessage).toContain(`Original AI concerns (unverified): ${claim}`);
+    expect(body.userMessage).not.toContain("\nConcerns:");
+    expect(body.userMessage).not.toContain("\nVisible observations:");
+    expect(body.conditionAssessment.unknowns).toEqual(assessment.unknowns);
+    expect(body.userMessage).toContain("User question: Is the thermal cause confirmed?");
+    expect(JSON.stringify(lookup)).toBe(before);
+  });
+
   it("retains self-reported functional results without forwarding the inspector name", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "The failed functional check needs further diagnosis." }), { status: 200, headers: { "Content-Type": "application/json" } }));
     const lookup = { frame: { imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-05T12:00:00.000Z" },
