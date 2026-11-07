@@ -28,6 +28,7 @@ export type ChatResponse =
 const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 const LEGACY_FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
 const RETRYABLE_PROVIDER_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+const BLOCKED_FINISH_REASONS = new Set(["SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "IMAGE_RECITATION"]);
 type SavedIdentityScope = "first_photo" | "unrecorded" | "none";
 type ChatRequest = { userMessage: string; photos: InspectionPhoto[]; photoRelationship: PhotoRelationship; savedIdentityScope: SavedIdentityScope; photoReview?: PhotoReview; research: boolean; sourceUrls: string[]; vehicleContext?: VehicleContext };
 
@@ -47,6 +48,8 @@ export async function createChatResponse(body: unknown, env: Record<string, stri
   }
 
   const models = getChatModels(env);
+  // Leave room for auth and HTTP overhead before the 30s/60s browser limits.
+  const deadline = Date.now() + (parsed.research ? 50_000 : 25_000);
   let rateLimited = false;
   let lastRetryableError: ChatResponse | null = null;
 
@@ -54,37 +57,53 @@ export async function createChatResponse(body: unknown, env: Record<string, stri
     const model = models[index];
     const hasFallback = index < models.length - 1;
     const startedAt = Date.now();
-    const response = await fetchGeminiChat(model, parsed, apiKey);
+    const timeoutMs = Math.min(parsed.research ? 25_000 : 20_000, deadline - startedAt);
+    if (timeoutMs <= 0) {
+      const timeoutError = chatTimeoutError();
+      logChatAttempt(model, startedAt, timeoutError, false);
+      return timeoutError;
+    }
+    const attempt = await fetchGeminiChat(model, parsed, apiKey, timeoutMs);
 
-    if (!response) {
-      const networkError = errorResponse(502, "network", "Deep Spec could not reach Gemini.");
+    if ("failure" in attempt) {
+      const networkError = attempt.failure === "timeout"
+        ? chatTimeoutError()
+        : errorResponse(502, "network", "Deep Spec could not reach Gemini.");
       lastRetryableError = networkError;
       logChatAttempt(model, startedAt, networkError, hasFallback);
       if (hasFallback) continue;
       return networkError;
     }
+    const { response, responseBody } = attempt;
 
     if (response.status === 429) {
       rateLimited = true;
-      const retryError = errorResponse(429, "rate_limited", "Too many AI chat requests right now. Try again in a few minutes.");
+      const retryError = errorResponse(429, "rate_limited", "AI chat is currently limited by provider quota or traffic. Try again later.");
       lastRetryableError = retryError;
       logChatAttempt(model, startedAt, retryError, hasFallback);
       if (hasFallback) continue;
       return retryError;
     }
 
-    const isJson = (response.headers.get("content-type") ?? "").includes("application/json");
-    const responseBody = isJson ? ((await response.json().catch(() => null)) as JsonObject | null) : null;
-
     if (!response.ok) {
-      const providerError = errorResponse(response.status, "provider_error", getProviderErrorMessage(responseBody));
-      if (RETRYABLE_PROVIDER_STATUSES.has(response.status)) {
+      const providerError = errorResponse(502, "provider_error", "The AI provider could not complete this request. Try again later.");
+      const canFallback = hasFallback && RETRYABLE_PROVIDER_STATUSES.has(response.status);
+      logChatAttempt(model, startedAt, providerError, canFallback, response.status);
+      if (canFallback) {
         lastRetryableError = providerError;
-        logChatAttempt(model, startedAt, providerError, hasFallback);
-        if (hasFallback) continue;
+        continue;
       }
 
       return providerError;
+    }
+
+    const candidate = Array.isArray(responseBody?.candidates) ? responseBody.candidates[0] : null;
+    const feedback = responseBody?.promptFeedback;
+    if ((isRecord(feedback) && typeof feedback.blockReason === "string" && feedback.blockReason !== "BLOCK_REASON_UNSPECIFIED")
+      || (isRecord(candidate) && typeof candidate.finishReason === "string" && BLOCKED_FINISH_REASONS.has(candidate.finishReason))) {
+      const blocked = errorResponse(422, "response_blocked", "The AI provider declined this request. No answer was saved. Try a different question.");
+      logChatAttempt(model, startedAt, blocked, false);
+      return blocked;
     }
 
     const message = cleanChatMessage(extractGeminiText(responseBody));
@@ -94,6 +113,14 @@ export async function createChatResponse(body: unknown, env: Record<string, stri
       logChatAttempt(model, startedAt, invalidResponse, hasFallback);
       if (hasFallback) continue;
       return invalidResponse;
+    }
+    // Only a completed answer that fits saved history may become customer advice.
+    if (!isRecord(candidate) || candidate.finishReason !== "STOP" || message.length > 6000) {
+      const incomplete = errorResponse(502, "incomplete_response", "The AI reply was incomplete. It was not saved as advice. Try asking a shorter, more specific question.");
+      lastRetryableError = incomplete;
+      logChatAttempt(model, startedAt, incomplete, hasFallback);
+      if (hasFallback) continue;
+      return incomplete;
     }
 
     console.info("[DeepSpec Chat]", {
@@ -112,7 +139,7 @@ export async function createChatResponse(body: unknown, env: Record<string, stri
   }
 
   return rateLimited
-    ? errorResponse(429, "rate_limited", "Too many AI chat requests right now. Try again in a few minutes.")
+    ? errorResponse(429, "rate_limited", "AI chat is currently limited by provider quota or traffic. Try again later.")
     : lastRetryableError ?? errorResponse(502, "provider_error", "The AI provider rejected this request.");
 }
 
@@ -154,7 +181,9 @@ function uniqueStrings(values: string[]) {
   });
 }
 
-function fetchGeminiChat(model: string, request: ChatRequest, apiKey: string) {
+async function fetchGeminiChat(model: string, request: ChatRequest, apiKey: string, timeoutMs: number): Promise<
+  { response: Response; responseBody: JsonObject | null } | { failure: "timeout" | "network" }
+> {
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const researchContext = request.research
     ? [
@@ -164,41 +193,57 @@ function fetchGeminiChat(model: string, request: ChatRequest, apiKey: string) {
     ].join("\n")
     : "";
 
-  return fetch(endpoint, {
-    method: "POST",
-    signal: AbortSignal.timeout(request.research ? 25_000 : 20_000),
-    headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": apiKey,
-    },
-    body: JSON.stringify({
-      system_instruction: {
-        parts: [{ text: FOLLOWUP_PROMPT }],
+  const signal = AbortSignal.timeout(timeoutMs);
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      signal,
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
       },
-      contents: [
-        {
-          role: "user",
-          parts: [
-            { text: [request.userMessage, formatVehicleContext(request.vehicleContext), researchContext, buildPhotoEvidencePrompt(request.photos, request.photoRelationship), savedIdentityScopePrompt(request.savedIdentityScope), savedPhotoReviewPrompt(request)].filter(Boolean).join("\n\n") },
-            ...request.photos.flatMap((photo, index) => [
-              { text: photoCaption(photo, index) },
-              { inlineData: { mimeType: photo.mimeType, data: photo.base64 } },
-            ]),
-          ],
+      body: JSON.stringify({
+        system_instruction: {
+          parts: [{ text: FOLLOWUP_PROMPT }],
         },
-      ],
-      ...(request.research ? { tools: [{ googleSearch: {} }, { urlContext: {} }] } : {}),
-      generationConfig: {
-        maxOutputTokens: 1800,
-        ...(/^gemini-3\.5-flash-lite(?:-|$)/.test(model)
-          ? { thinkingConfig: { thinkingLevel: "MINIMAL" } }
-          : { temperature: 0.3, ...(/^gemini-2\.5-flash(?:-lite)?(?:-|$)/.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : {}) }),
-      },
-    }),
-  }).catch(() => null);
+        contents: [
+          {
+            role: "user",
+            parts: [
+              { text: [request.userMessage, formatVehicleContext(request.vehicleContext), researchContext, buildPhotoEvidencePrompt(request.photos, request.photoRelationship), savedIdentityScopePrompt(request.savedIdentityScope), savedPhotoReviewPrompt(request)].filter(Boolean).join("\n\n") },
+              ...request.photos.flatMap((photo, index) => [
+                { text: photoCaption(photo, index) },
+                { inlineData: { mimeType: photo.mimeType, data: photo.base64 } },
+              ]),
+            ],
+          },
+        ],
+        ...(request.research ? { tools: [{ googleSearch: {} }, { urlContext: {} }] } : {}),
+        generationConfig: {
+          maxOutputTokens: 1800,
+          ...(/^gemini-3\.5-flash-lite(?:-|$)/.test(model)
+            ? { thinkingConfig: { thinkingLevel: "MINIMAL" } }
+            : { temperature: 0.3, ...(/^gemini-2\.5-flash(?:-lite)?(?:-|$)/.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : {}) }),
+        },
+      }),
+    });
+    let responseBody: JsonObject | null = null;
+    if (response.ok && (response.headers.get("content-type") ?? "").includes("application/json")) {
+      try {
+        const value: unknown = await response.json();
+        responseBody = isRecord(value) ? value : null;
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+      }
+    }
+    return { response, responseBody };
+  } catch (error) {
+    const timedOut = signal.aborted || (isRecord(error) && (error.name === "TimeoutError" || error.name === "AbortError"));
+    return { failure: timedOut ? "timeout" : "network" };
+  }
 }
 
-function logChatAttempt(model: string, startedAt: number, response: ChatResponse, fallbackAvailable: boolean) {
+function logChatAttempt(model: string, startedAt: number, response: ChatResponse, fallbackAvailable: boolean, providerStatus?: number) {
   if (response.status === 200) {
     return;
   }
@@ -211,6 +256,7 @@ function logChatAttempt(model: string, startedAt: number, response: ChatResponse
     status: response.status,
     code,
     fallbackAvailable,
+    ...(providerStatus !== undefined ? { providerStatus } : {}),
   });
 }
 
@@ -313,7 +359,7 @@ function extractGeminiText(responseBody: JsonObject | null) {
   }
 
   return firstCandidate.content.parts
-    .map((part) => (isRecord(part) && typeof part.text === "string" ? part.text : ""))
+    .map((part) => (isRecord(part) && part.thought !== true && typeof part.text === "string" ? part.text : ""))
     .join("")
     .trim();
 }
@@ -324,16 +370,11 @@ function cleanChatMessage(value: string | null) {
   }
 
   const cleaned = value.replace(/\r\n?/g, "\n").split("\n").map((line) => line.trimEnd()).join("\n").replace(/\n{3,}/g, "\n\n").trim();
-  return cleaned ? cleaned.slice(0, 6000) : null;
+  return cleaned || null;
 }
 
-function getProviderErrorMessage(responseBody: JsonObject | null) {
-  const error = responseBody?.error;
-  if (isRecord(error) && typeof error.message === "string") {
-    return error.message;
-  }
-
-  return "The AI provider rejected this request.";
+function chatTimeoutError() {
+  return errorResponse(504, "timeout", "The AI reply took too long. Your saved photos are still available; try again.");
 }
 
 function errorResponse(status: number, code: string, message: string): ChatResponse {

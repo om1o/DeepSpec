@@ -35,7 +35,8 @@
       "codex/chat-save-scope-20261107": false,
       "codex/server-build-check-20261107": false,
       "codex/evidence-limits-20261107": false,
-      "codex/preview-test-entry-20261107": false
+      "codex/preview-test-entry-20261107": false,
+      "codex/provider-response-health-20261107": false
     }
   },
   "functions": {

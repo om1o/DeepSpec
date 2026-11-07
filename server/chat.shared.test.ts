@@ -41,7 +41,7 @@ describe("createChatResponse", () => {
   it("allows an explicitly enabled production chat request", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({
-        candidates: [{ content: { parts: [{ text: "Check the belt tension." }] } }],
+        candidates: [{ finishReason: "STOP", content: { parts: [{ text: "Check the belt tension." }] } }],
       }), { status: 200, headers: { "Content-Type": "application/json" } }),
     );
     await expect(createChatResponse(
@@ -68,6 +68,7 @@ describe("createChatResponse", () => {
         JSON.stringify({
           candidates: [
             {
+              finishReason: "STOP",
               content: {
                 parts: [
                   {
@@ -114,6 +115,7 @@ describe("createChatResponse", () => {
           JSON.stringify({
             candidates: [
               {
+                finishReason: "STOP",
                 content: {
                   parts: [
                     {
@@ -145,7 +147,7 @@ describe("createChatResponse", () => {
 
   it("sends the saved photo alongside the question to the vision-capable chat model", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
-      candidates: [{ content: { parts: [{ text: "The visible belt has frayed edges." }] } }],
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: "The visible belt has frayed edges." }] } }],
     }), { status: 200, headers: { "Content-Type": "application/json" } }));
     await expect(createChatResponse({ userMessage: "What do you see on this belt?", imageBase64: "data:image/png;base64,aGVsbG8=" }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({ status: 200 });
     const sent = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
@@ -173,7 +175,7 @@ describe("createChatResponse", () => {
   });
 
   it.each([false, true])("carries validated saved review beyond capped prose without inventing missing coverage (research=%s)", async (research) => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "The connector disagreement needs another unobstructed view." }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "The connector disagreement needs another unobstructed view." }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
     const photos = ["bay", "close-up", "rear", "marking"].map((id) => ({ id, label: "other", imageBase64: "data:image/png;base64,aGVsbG8=" }));
     const response = await createChatResponse({ userMessage: "Q".repeat(4000), photos, photoRelationship: "independent", research,
       photoReview: { ...savedPhotoReview, ignored: "UNTRUSTED_EXTRA" } }, { GEMINI_API_KEY: "test-key" });
@@ -199,7 +201,7 @@ describe("createChatResponse", () => {
     { ...savedPhotoReview, disagreements: [{ ...savedPhotoReview.disagreements[0], photoIds: ["bay", "rear"] }] },
     { ...savedPhotoReview, version: 2 },
   ])("does not promote missing or invalid review into coverage or agreement: %j", async (photoReview) => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "The saved coverage is unavailable." }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "The saved coverage is unavailable." }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
     const photos = ["bay", "close-up", "rear"].map((id) => ({ id, label: "other", imageBase64: "data:image/png;base64,aGVsbG8=" }));
     const response = await createChatResponse({ userMessage: "Were all views checked?", photos, photoReview }, { GEMINI_API_KEY: "test-key" });
     expect(response.status).toBe(200);
@@ -211,7 +213,7 @@ describe("createChatResponse", () => {
   });
 
   it("rejects photo provenance not grounded in any attached image without blocking text-only chat", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "No attached photo supports the saved review." }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "No attached photo supports the saved review." }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
     const response = await createChatResponse({ userMessage: "What was checked?", photoReview: savedPhotoReview }, { GEMINI_API_KEY: "test-key" });
     expect(response.status).toBe(200);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -222,7 +224,7 @@ describe("createChatResponse", () => {
 
   it("uses legacy image IDs for saved single-photo review and preserves empty disagreements as unverified", async () => {
     const photoReview = { version: 1, photos: [{ photoId: "photo-1", status: "limited_view", summary: "The marking is obscured." }], disagreements: [] };
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "A clearer marking is needed." }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "A clearer marking is needed." }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
     await expect(createChatResponse({ userMessage: "What is missing?", imageBase64: "data:image/png;base64,aGVsbG8=", photoReview }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({ status: 200 });
     const prompt = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)).contents[0].parts[0].text;
     expect(JSON.parse(prompt.split("Saved photoReview data: ")[1])).toEqual(photoReview);
@@ -243,7 +245,7 @@ describe("createChatResponse", () => {
     { savedIdentityScope: "first_photo", expected: "produced under the first-photo identity scope", absent: "per-photo scope was not recorded" },
     { savedIdentityScope: "none", expected: "No saved identification result is recorded", absent: "produced under the first-photo identity scope" },
   ].flatMap((fixture) => [false, true].map((research) => ({ ...fixture, research }))))("preserves $savedIdentityScope saved provenance beyond the prose cap (research=$research)", async ({ savedIdentityScope, expected, absent, research }) => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "The saved suggestion needs photo-specific verification." }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "The saved suggestion needs photo-specific verification." }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
     const imageBase64 = "data:image/png;base64,aGVsbG8=";
     const response = await createChatResponse({ userMessage: "Q".repeat(4000), research, savedIdentityScope, photoRelationship: "unknown",
       photos: [{ id: "first", label: "overview", imageBase64 }, { id: "second", label: "other", imageBase64 }],
@@ -268,7 +270,7 @@ describe("createChatResponse", () => {
     { research: false, labeled: true, photoRelationship: "same_part_or_area", expected: "reported by the user, not independently verified" },
     { research: true, labeled: true, photoRelationship: "unknown", expected: "Relationship unknown" },
   ])("keeps $photoRelationship relationship outside capped chat prose (research=$research, labeled=$labeled)", async ({ research, labeled, photoRelationship, expected }) => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "The views disagree; photograph the connector." }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "The views disagree; photograph the connector." }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
     const imageBase64 = "data:image/png;base64,aGVsbG8=";
     const response = await createChatResponse({ userMessage: "Q".repeat(4000), research, photoRelationship,
       ...(labeled ? { photos: [{ id: "first", label: "overview", imageBase64 }, { id: "second", label: "other", imageBase64 }] }
@@ -292,7 +294,7 @@ describe("createChatResponse", () => {
   it("retains the explicit relationship when a configured chat model falls back", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(new Response("temporarily unavailable", { status: 503 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "These are independent examples." }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "These are independent examples." }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
     await expect(createChatResponse({ userMessage: "Compare", imageBase64: "data:image/png;base64,aGVsbG8=", imageBase64_2: "data:image/png;base64,aGVsbG8=", photoRelationship: "independent" },
       { GEMINI_API_KEY: "test-key", GEMINI_CHAT_MODEL: "gemini-2.5-flash" })).resolves.toMatchObject({ status: 200 });
     expect(fetchSpy).toHaveBeenCalledTimes(2);
@@ -307,12 +309,13 @@ describe("createChatResponse", () => {
 
   it("keeps useful detailed paragraphs instead of flattening and cutting the answer at 1200 characters", async () => {
     const answer = "Visible observations\n\n" + "The belt has visible edge wear. ".repeat(45).trimEnd() + "\n\nNext checks\n- Read the belt marking.\n- Compare the tensioner position.";
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: answer }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: answer }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
     await expect(createChatResponse({ userMessage: "Explain the visible concerns and next checks." }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({ status: 200, body: { message: answer } });
   });
 
   it("uses real research tools only on request and returns provider-grounded sources and suggestions", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ candidates: [{
+      finishReason: "STOP",
       content: { parts: [{ text: "Compare the visible belt with the manufacturer's reference." }] },
       groundingMetadata: {
         groundingChunks: [{ web: { uri: "https://example.com/belt-guide", title: "Belt guide" } }, { web: { uri: "javascript:bad", title: "Unsafe" } }],
@@ -341,7 +344,7 @@ describe("createChatResponse", () => {
   });
 
   it("does not invent verified research sources when the provider supplies no grounding", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "See https://example.com/unverified" }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "See https://example.com/unverified" }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
     const response = await createChatResponse({ userMessage: "Research this part", research: true }, { GEMINI_API_KEY: "test-key" });
     expect(response).toMatchObject({ status: 200 });
     expect(response.body).not.toHaveProperty("sources");
@@ -361,7 +364,7 @@ describe("createChatResponse", () => {
     vehicleContext = confirmVehicleContextField(vehicleContext, "modifications", true, "2026-11-05T12:00:00.000Z");
     // A stale confirmation for a different exact value must not survive parsing.
     vehicleContext.confirmedFields = { ...vehicleContext.confirmedFields, engine: { value: "1.5 L", confirmedAt: "2026-11-05T12:00:00.000Z" } };
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "Confirm the engine variant before applying that procedure." }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "Confirm the engine variant before applying that procedure." }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
     expect((await createChatResponse({ userMessage: "Q".repeat(4000), vehicleContext, research,
       photos: [{ id: "saved-original", label: "overview", imageBase64: "data:image/png;base64,aGVsbG8=" }] }, { GEMINI_API_KEY: "test-key" })).status).toBe(200);
     const sent = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
@@ -382,7 +385,7 @@ describe("createChatResponse", () => {
   });
 
   it("keeps missing vehicle details explicit for legacy chat requests", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "What is the engine variant?" }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "What is the engine variant?" }] } }] }), { status: 200, headers: { "Content-Type": "application/json" } }));
     await createChatResponse({ userMessage: "Which torque specification applies?" }, { GEMINI_API_KEY: "test-key" });
     const prompt = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)).contents[0].parts[0].text;
     expect(prompt).toContain("Engine: Unknown — not confirmed");

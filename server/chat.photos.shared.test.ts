@@ -6,7 +6,7 @@ const photos = ["overview", "close_up", "marking", "mounting"].map((label, index
   imageBase64: `data:image/png;base64,${Buffer.from(`saved-${index + 1}`).toString("base64")}`,
 }));
 const userMessage = "Compare the corrosion in these saved views.";
-const answer = () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "[saved-2] Surface rust is visible; deeper damage remains unknown." }] } }] }), {
+const answer = () => new Response(JSON.stringify({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "[saved-2] Surface rust is visible; deeper damage remains unknown." }] } }] }), {
   status: 200, headers: { "Content-Type": "application/json" },
 });
 
@@ -79,7 +79,7 @@ describe("labeled chat photos", () => {
       status: 400, headers: { "Content-Type": "application/json" },
     }));
     await expect(createChatResponse({ userMessage, photos }, { GEMINI_API_KEY: "test-key" })).resolves.toMatchObject({
-      status: 400, body: { error: { code: "provider_error", message: "Multiple images unsupported" } },
+      status: 502, body: { error: { code: "provider_error", message: "The AI provider could not complete this request. Try again later." } },
     });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });

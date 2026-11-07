@@ -789,6 +789,43 @@ describe("Chat", () => {
     expect(screen.queryByRole("button", { name: "Retry last question" })).not.toBeInTheDocument();
   });
 
+  it.each([
+    ["incomplete_response", "AI reply was incomplete", true],
+    ["timeout", "AI reply timed out", true],
+    ["response_blocked", "AI could not answer this question", false],
+  ] as const)("keeps saved history intact after %s and offers the appropriate recovery", async (code, title, canRetry) => {
+    const messages: ChatMessage[] = [
+      { id: "old-user", role: "user", content: "Earlier question", timestamp: lookup.createdAt },
+      { id: "old-answer", role: "assistant", content: "Earlier complete answer", timestamp: lookup.createdAt },
+    ];
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([{ ...lookup, chatHistory: messages }]));
+    sendFollowUpMock.mockRejectedValueOnce(new AIServiceError(code, "The request did not produce a complete answer."))
+      .mockResolvedValueOnce("New complete answer.");
+    const view = renderChat(`/result/${lookup.id}/chat`);
+    fireEvent.change(screen.getByLabelText("Ask a follow-up question"), { target: { value: "New question" } });
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText(title)).toBeInTheDocument();
+    expect(getLookup(lookup.id)?.chatHistory).toEqual(messages);
+    expect(syncLookupChatToCloudMock).not.toHaveBeenCalled();
+    if (canRetry) {
+      await userEvent.click(screen.getByRole("button", { name: "Retry last question" }));
+    } else {
+      expect(screen.queryByRole("button", { name: "Retry last question" })).not.toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText("Ask a follow-up question"), { target: { value: "Changed question" } });
+      await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    }
+    await screen.findByText("New complete answer.");
+    const history = getLookup(lookup.id)!.chatHistory;
+    expect(history.map((message) => message.content)).toEqual([
+      "Earlier question", "Earlier complete answer", canRetry ? "New question" : "Changed question", "New complete answer.",
+    ]);
+    expect(sendFollowUpMock).toHaveBeenCalledTimes(2);
+    view.unmount();
+    renderChat(`/result/${lookup.id}/chat`);
+    expect(screen.getByText("New complete answer.")).toBeInTheDocument();
+    expect(getLookup(lookup.id)?.chatHistory).toEqual(history);
+  });
+
   it("explains when beta chat is disabled without offering a retry", async () => {
     sendFollowUpMock.mockRejectedValue(new AIServiceError("feature_disabled", "Follow-up chat is unavailable in this beta."));
     localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
