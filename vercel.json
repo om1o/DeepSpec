@@ -42,7 +42,8 @@
       "codex/reference-source-applicability-20261107": false,
       "codex/chat-transport-diagnostics-20261107": false,
       "codex/photo-relationship-review-20261107": false,
-      "codex/photo-condition-coverage-20261107": false
+      "codex/photo-condition-coverage-20261107": false,
+      "codex/chat-claim-provenance-20261107": false
     }
   },
   "functions": {

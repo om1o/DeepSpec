@@ -14,6 +14,17 @@ const savedPhotoReview: PhotoReview = {
 };
 
 describe("createChatResponse", () => {
+  it.each([false, true])("requires reassessing saved causal claims rather than confirming them by repetition (research=%s)", async (research) => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: "The cause remains unconfirmed." }] } }],
+    }), { status: 200 }));
+    await createChatResponse({ userMessage: "Saved concerns say thermal cracking compromises structural integrity. Is that confirmed?", research }, { GEMINI_API_KEY: "test-key" });
+    const sent = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    const prompt = sent.contents[0].parts[0].text;
+    expect(prompt).toContain("Repetition in a saved summary, concern, or previous answer is not corroboration");
+    expect(prompt).toContain("Explicitly correct an unsupported saved cause or severity claim");
+  });
+
   beforeEach(() => {
     vi.restoreAllMocks();
   });
