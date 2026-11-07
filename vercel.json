@@ -37,7 +37,8 @@
       "codex/evidence-limits-20261107": false,
       "codex/preview-test-entry-20261107": false,
       "codex/provider-response-health-20261107": false,
-      "codex/identify-response-health-20261107": false
+      "codex/identify-response-health-20261107": false,
+      "codex/preview-test-latest-20261107": false
     }
   },
   "functions": {
@@ -58,6 +59,12 @@
       "maxDuration": 30
     },
     "api/billing-portal.ts": {
+      "maxDuration": 30
+    },
+    "api/qa-test-session.ts": {
+      "maxDuration": 90
+    },
+    "api/qa-test-launch.ts": {
       "maxDuration": 30
     },
     "api/billing-webhook.ts": {
