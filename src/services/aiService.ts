@@ -529,16 +529,16 @@ export function getAIErrorDetails(code: string | undefined | null): AIErrorDetai
     case "incomplete_response":
       return {
         category: "model_response",
-        description: "The answer was cut off or could not be saved in full. Ask a shorter, more specific question.",
+        description: "The provider did not return a complete result. Your saved photos remain available for another attempt.",
         retryLabel: "Try again",
-        title: "AI reply was incomplete",
+        title: "AI response was incomplete",
       };
     case "response_blocked":
       return {
         category: "input",
-        description: "The provider declined this request. No AI answer was added to the conversation.",
-        retryLabel: "Change question",
-        title: "AI could not answer this question",
+        description: "The provider declined this request. No AI result was added to your saved work.",
+        retryLabel: "Change request",
+        title: "AI could not complete this request",
       };
     case "provider_error":
       return {

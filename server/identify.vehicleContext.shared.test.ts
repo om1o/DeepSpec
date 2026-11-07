@@ -23,7 +23,7 @@ const result = {
   safetyTriage: "can_help", isSafetyCritical: false, nextAction: "Read the part label before matching fitment.", needsBetterPhoto: false,
 };
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
-const gemini = (text = JSON.stringify(result)) => json({ candidates: [{ content: { parts: [{ text }] } }] });
+const gemini = (text = JSON.stringify(result)) => json({ candidates: [{ finishReason: "STOP", content: { parts: [{ text }] } }] });
 const flattenText = (body: Record<string, unknown>) => JSON.stringify(body);
 
 describe("vehicle context reaches identification providers", () => {

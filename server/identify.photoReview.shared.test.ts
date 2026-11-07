@@ -22,7 +22,7 @@ const strictResult = {
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 function providerResponse(provider: string, output: unknown) {
   const text = JSON.stringify(output);
-  return provider === "gemini" ? json({ candidates: [{ content: { parts: [{ text }] } }] })
+  return provider === "gemini" ? json({ candidates: [{ finishReason: "STOP", content: { parts: [{ text }] } }] })
     : provider === "ollama" ? json({ message: { content: text } })
       : json({ choices: [{ message: { content: text } }] });
 }
@@ -73,7 +73,7 @@ describe("identify photo review transport and normalization", () => {
 
   it.each([false, true])("preserves compact rescue review when returned without inventing it when omitted (returned=%s)", async (returned) => {
     const fetchSpy = vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(json({ candidates: [{ content: { parts: [{ text: "not JSON" }] } }] }))
+      .mockResolvedValueOnce(json({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "not JSON" }] } }] }))
       .mockImplementationOnce(async () => providerResponse("gemini", { ...strictResult, ...(returned ? { photoReview: review } : {}) }));
     const response = await createIdentifyResponse({ photos, photoRelationship: "unknown" }, environment("gemini"));
     expect(response).toMatchObject({ status: 200, body: { modelRun: { fallbackReason: "compact_rescue" } } });
