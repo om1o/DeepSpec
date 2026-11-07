@@ -1,6 +1,7 @@
 {
   "git": {
     "deploymentEnabled": {
+      "codex/isolation-gpu-recovery-20261107": false,
       "codex/pilot-assembled-20261103": false,
       "codex/evidence-next-checks-20261107": false,
       "codex/car-inspection-evidence-20261105": false,

@@ -1,6 +1,6 @@
 let cachedSupport: Promise<boolean> | null = null;
 
-/** Cached WebGPU availability check (one adapter request, reused everywhere). */
+/** Bound the initial wait, but retain a late adapter result for subsequent scans. */
 export function supportsWebGpu(): Promise<boolean> {
   if (cachedSupport) {
     return cachedSupport;
@@ -16,7 +16,13 @@ export function supportsWebGpu(): Promise<boolean> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
-        gpu.requestAdapter().then(Boolean),
+        gpu.requestAdapter().then((adapter) => {
+          const supported = Boolean(adapter);
+          // A timeout means "not ready yet", not permanent lack of support.
+          // Keep using this one probe; do not start more adapter requests on scans.
+          cachedSupport = Promise.resolve(supported);
+          return supported;
+        }),
         new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), 500); }),
       ]);
     } catch {
