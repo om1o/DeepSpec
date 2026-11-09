@@ -4,7 +4,7 @@ import { getAuthClient, signInToPreviewTestAccount, signOut } from "../services/
 
 // This marker is not a credential. The private launcher sets a server-validated,
 // Secure HttpOnly cookie; the browser never exposes that capability to this code.
-const privateTestControls = takePrivateTestMarker();
+let privateTestControls = takePrivateTestMarker();
 
 function takePrivateTestMarker(): boolean {
   const url = new URL(window.location.href);
@@ -14,7 +14,7 @@ function takePrivateTestMarker(): boolean {
   return true;
 }
 
-export function PreviewTestAccess() {
+export function PreviewTestAccess({ placement = "banner" }: { placement?: "banner" | "auth" }) {
   const location = useLocation();
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
@@ -62,6 +62,7 @@ export function PreviewTestAccess() {
         setServerCleanupConfirmed(true);
       }
       await signOut();
+      privateTestControls = false;
       setFinished(true);
       navigate("/auth", { replace: true });
     } catch {
@@ -69,14 +70,23 @@ export function PreviewTestAccess() {
     } finally { setBusy(false); }
   }
 
+  if (placement === "auth") {
+    if (location.pathname !== "/auth" || serverCleanupConfirmed) return null;
+    return (
+      <div role="group" aria-label="Private test entry" className="rounded-[8px] border border-sky-200/25 bg-sky-400/10 p-3 text-center">
+        <button type="button" disabled={busy} onClick={() => void startTest()} className="h-12 w-full rounded-[8px] border border-white/30 bg-white/10 px-4 text-sm font-semibold text-white hover:bg-white/15 disabled:opacity-50">
+          {busy ? "Opening AI…" : "Skip sign-in and try AI"}
+        </button>
+        <p className="mt-2 text-xs leading-5 text-white/70">Private preview only. Opens a temporary test account with normal scan limits.</p>
+        {notice ? <p role="status" className="mt-2 text-sm text-white">{notice}</p> : null}
+      </div>
+    );
+  }
+
+  if (location.pathname === "/auth") return null;
   return (
     <aside aria-label="Temporary private test access" className="relative z-50 border-b border-amber-400 bg-slate-950 p-3 text-sm text-white">
       <p>Temporary private test access</p>
-      {location.pathname === "/auth" && !serverCleanupConfirmed ? (
-        <button type="button" disabled={busy} onClick={() => void startTest()} className="mr-3 mt-2 rounded border border-white px-4 py-2">
-          {busy ? "Working…" : "Skip for test"}
-        </button>
-      ) : null}
       <button type="button" disabled={busy} onClick={() => void finishTest()} className="mt-2 rounded border border-white px-4 py-2">
         {serverCleanupConfirmed ? "Retry local sign-out" : "Finish test and remove test account"}
       </button>

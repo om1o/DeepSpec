@@ -1,6 +1,7 @@
 import { ClipboardEvent, FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { BrandLockup } from "../components/BrandLockup";
+import { PreviewTestAccess } from "../components/PreviewTestAccess";
 import {
   getVerifiedAuthUser,
   hasPendingSignOut,
@@ -540,6 +541,7 @@ export default function Auth() {
               </button>
               </fieldset>
             </form>
+            <PreviewTestAccess placement="auth" />
             <Link
               to={accountModePath(passwordMode === "signup" ? "signin" : "signup")}
               state={{ from: postAuthPath }}

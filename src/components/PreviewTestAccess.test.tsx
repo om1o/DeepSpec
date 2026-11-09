@@ -27,10 +27,10 @@ vi.mock("../services/auth", () => ({
   signOut: mocks.signOut,
 }));
 
-async function renderAccess(url = "/auth?private-test=1") {
+async function renderAccess(url = "/auth?private-test=1", placement: "auth" | "banner" = "auth") {
   window.history.replaceState({}, "", url);
   const { PreviewTestAccess } = await import("./PreviewTestAccess");
-  return render(<PreviewTestAccess />);
+  return render(<PreviewTestAccess placement={placement} />);
 }
 
 describe("PreviewTestAccess", () => {
@@ -57,7 +57,7 @@ describe("PreviewTestAccess", () => {
   it.each(["/auth", "/auth?private-test=0"])("hides temporary controls on %s", async (url) => {
     await renderAccess(url);
 
-    expect(screen.queryByRole("complementary", { name: "Temporary private test access" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Private test entry" })).not.toBeInTheDocument();
     expect(mocks.fetch).not.toHaveBeenCalled();
     expect(mocks.signInToPreviewTestAccount).not.toHaveBeenCalled();
     expect(mocks.navigate).not.toHaveBeenCalled();
@@ -70,7 +70,7 @@ describe("PreviewTestAccess", () => {
 
     expect(window.location.pathname + window.location.search + window.location.hash).toBe("/auth?keep=1#details");
     expect(mocks.fetch).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Skip for test" }));
+    await user.click(screen.getByRole("button", { name: "Skip sign-in and try AI" }));
 
     expect(await screen.findByRole("status")).toHaveTextContent("Test entry failed or expired");
     expect(mocks.fetch).toHaveBeenCalledExactlyOnceWith("/api/qa-test-session", {
@@ -78,7 +78,7 @@ describe("PreviewTestAccess", () => {
     });
     expect(mocks.signInToPreviewTestAccount).not.toHaveBeenCalled();
     expect(mocks.navigate).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Skip for test" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Skip sign-in and try AI" })).toBeEnabled();
   });
 
   it("waits for normal authentication before navigating and showing the account UUID", async () => {
@@ -91,10 +91,10 @@ describe("PreviewTestAccess", () => {
     mocks.fetch.mockResolvedValueOnce(Response.json({ token_hash: "mock-token-hash", userId }));
     await renderAccess();
 
-    await user.click(screen.getByRole("button", { name: "Skip for test" }));
+    await user.click(screen.getByRole("button", { name: "Skip sign-in and try AI" }));
     await waitFor(() => expect(mocks.signInToPreviewTestAccount).toHaveBeenCalledExactlyOnceWith("mock-token-hash", userId));
     expect(mocks.navigate).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Working…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Opening AI…" })).toBeDisabled();
 
     await act(async () => { completeSignIn({ id: userId }); });
 
@@ -108,7 +108,7 @@ describe("PreviewTestAccess", () => {
     mocks.signInToPreviewTestAccount.mockRejectedValueOnce(new Error("Verification failed"));
     await renderAccess();
 
-    await user.click(screen.getByRole("button", { name: "Skip for test" }));
+    await user.click(screen.getByRole("button", { name: "Skip sign-in and try AI" }));
 
     expect(await screen.findByRole("status")).toHaveTextContent("Test entry failed or expired");
     expect(mocks.signInToPreviewTestAccount).toHaveBeenCalledOnce();
@@ -120,7 +120,7 @@ describe("PreviewTestAccess", () => {
     mocks.pathname = "/scan";
     mocks.fetch.mockResolvedValueOnce(Response.json({ cleaned: true }));
     mocks.signOut.mockRejectedValueOnce(new Error("Local sign-out failed"));
-    await renderAccess("/scan?private-test=1");
+    await renderAccess("/scan?private-test=1", "banner");
 
     await user.click(screen.getByRole("button", { name: "Finish test and remove test account" }));
 

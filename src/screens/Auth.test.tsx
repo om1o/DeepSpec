@@ -66,6 +66,7 @@ describe("Auth", () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    window.history.replaceState({}, "", "/");
   });
 
   it("uses the white identity and defaults to account sign-in without unconfigured OAuth providers", async () => {
@@ -89,11 +90,24 @@ describe("Auth", () => {
     expect(screen.getByRole("link", { name: "I don't have an account" })).toHaveAttribute("href", "/auth?next=%2Fscan&mode=signup");
     expect(screen.getByLabelText("Password")).toHaveAttribute("autocomplete", "current-password");
     expect(screen.getByRole("button", { name: "Sign in to scanner" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Skip sign-in and try AI" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "No email" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Continue without email" })).not.toBeInTheDocument();
     expect(screen.queryByText(/facebook/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/microsoft/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/apple/i)).not.toBeInTheDocument();
+  });
+
+  it("puts private skip entry inside the sign-in card without revealing its launcher marker", async () => {
+    window.history.replaceState({}, "", "/auth?private-test=1");
+    const view = await renderAuth();
+
+    expect(await screen.findByRole("heading", { name: "Sign in to DeepSpec" })).toBeInTheDocument();
+    expect(view.container.querySelector(".ds-auth-card")).toContainElement(
+      screen.getByRole("group", { name: "Private test entry" }),
+    );
+    expect(screen.getByRole("button", { name: "Skip sign-in and try AI" })).toBeEnabled();
+    expect(window.location.search).not.toContain("private-test");
   });
 
   it("opens a signup page through a real link and preserves its destination through back and refresh", async () => {
