@@ -13,7 +13,16 @@ export default function handler(request: Request, response: Response) {
   if (request.method !== "POST") return reject(405, "method_not_allowed");
   const headers = request.headers ?? {};
   const deploymentHost = process.env.VERCEL_URL;
-  if (headers.origin !== "http://127.0.0.1:43129" || !deploymentHost || typeof headers.host !== "string" || headers.host !== deploymentHost) return reject(403, "invalid_origin");
+  const branchHost = process.env.VERCEL_BRANCH_URL;
+  const host = headers.host;
+  // A private link opened on a phone uses the branch alias, while the existing
+  // localhost launcher posts directly to the immutable deployment hostname.
+  // Both hosts must be supplied by Vercel and the browser POST must be same-origin.
+  const trustedHosts = [deploymentHost, branchHost].filter((candidate): candidate is string =>
+    typeof candidate === "string" && /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.vercel\.app$/.test(candidate));
+  const isSameOrigin = typeof host === "string" && trustedHosts.includes(host) && headers.origin === `https://${host}`;
+  const isLegacyLauncher = typeof host === "string" && host === deploymentHost && trustedHosts.includes(host) && headers.origin === "http://127.0.0.1:43129";
+  if (!isSameOrigin && !isLegacyLauncher) return reject(403, "invalid_origin");
   const contentType = headers["content-type"];
   const contentLength = headers["content-length"];
   if (typeof contentType !== "string" || !/^application\/x-www-form-urlencoded(?:\s*;\s*charset=utf-8)?$/i.test(contentType) ||
@@ -26,6 +35,7 @@ export default function handler(request: Request, response: Response) {
   const maxAge = Math.floor((Date.parse(QA_TEST_CLEANUP_EXPIRES_AT) - now) / 1000);
   if (!Number.isFinite(maxAge) || maxAge <= 0) return reject(404, "not_found");
   response.setHeader("Set-Cookie", `${QA_TEST_COOKIE_NAME}=${capability}; Max-Age=${maxAge}; Path=${QA_TEST_COOKIE_PATH}; HttpOnly; Secure; SameSite=Strict`);
+  if (headers.accept === "application/json") return response.status(204).end();
   response.setHeader("Location", "/auth?private-test=1");
   response.status(303).end();
 }

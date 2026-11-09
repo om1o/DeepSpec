@@ -20,7 +20,7 @@ const userId = "01234567-89ab-4cde-8fab-0123456789ab";
 const user = { id: userId, email: "deepspec-test-fixed@example.test", is_anonymous: false };
 const jwt = "header.payload.signature";
 const now = Date.parse("2026-11-05T20:00:00Z");
-const env = { VERCEL_ENV: "preview", VERCEL_GIT_COMMIT_REF: "codex/pilot-assembled-20261103", VITE_SUPABASE_URL: "https://test.supabase.co", SUPABASE_SECRET_KEY: "private-test-admin-key" };
+const env = { VERCEL_ENV: "preview", VERCEL_GIT_COMMIT_REF: "codex/private-skip-auth-20261108", VITE_SUPABASE_URL: "https://test.supabase.co", SUPABASE_SECRET_KEY: "private-test-admin-key" };
 function request(method = "POST", body?: unknown) {
   return { method, headers: { authorization: `Bearer ${capability}`, "x-qa-session": jwt }, body };
 }

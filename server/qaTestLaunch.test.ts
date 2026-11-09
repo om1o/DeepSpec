@@ -19,8 +19,9 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(now);
   vi.stubEnv("VERCEL_ENV", "preview");
-  vi.stubEnv("VERCEL_GIT_COMMIT_REF", "codex/pilot-assembled-20261103");
+  vi.stubEnv("VERCEL_GIT_COMMIT_REF", "codex/private-skip-auth-20261108");
   vi.stubEnv("VERCEL_URL", "deepspec-test-deep-spec-team.vercel.app");
+  vi.stubEnv("VERCEL_BRANCH_URL", "deepspec-git-codex-private-skip-auth-20261108-deep-spec-team.vercel.app");
   config.digest = createHash("sha256").update(capability).digest("hex");
   config.loginExpiry = "2026-11-06T04:00:00Z";
   config.cleanupExpiry = "2026-11-07T04:00:00Z";
@@ -39,6 +40,44 @@ describe("private cookie launch", () => {
     expect(res.end).toHaveBeenCalledOnce();
     expect(res.json).not.toHaveBeenCalled();
     expect(res.setHeader.mock.calls.filter(([name]) => name !== "Set-Cookie").flat().join(" ")).not.toContain(capability);
+  });
+  it("accepts a same-origin phone launch on Vercel's branch alias without redirecting fetch", async () => {
+    const host = "deepspec-git-codex-private-skip-auth-20261108-deep-spec-team.vercel.app";
+    const res = response();
+    await handler({ ...request(), headers: { ...request().headers, host, origin: `https://${host}`, accept: "application/json" } }, res);
+    expect(res.status).toHaveBeenCalledWith(204);
+    expect(res.end).toHaveBeenCalledOnce();
+    expect(res.setHeader.mock.calls.some(([name]) => name === "Location")).toBe(false);
+    expect(res.setHeader.mock.calls.find(([name]) => name === "Set-Cookie")?.[1]).toContain("; HttpOnly; Secure; SameSite=Strict");
+    expect(res.json).not.toHaveBeenCalled();
+  });
+  it("accepts the immutable deployment hostname only from its own HTTPS origin", async () => {
+    const host = "deepspec-test-deep-spec-team.vercel.app";
+    const res = response();
+    await handler({ ...request(), headers: { ...request().headers, host, origin: `https://${host}`, accept: "application/json" } }, res);
+    expect(res.status).toHaveBeenCalledWith(204);
+  });
+  it("rejects cross-origin launch attempts and untrusted Vercel aliases", async () => {
+    const host = "deepspec-git-codex-private-skip-auth-20261108-deep-spec-team.vercel.app";
+    const candidates = [
+      { host, origin: "https://attacker.example" },
+      { host, origin: "http://deepspec-git-codex-private-skip-auth-20261108-deep-spec-team.vercel.app" },
+      { host: "attacker.vercel.app", origin: "https://attacker.vercel.app" },
+      { host: "deepspec-test-deep-spec-team.vercel.app", origin: `https://${host}` },
+    ];
+    for (const headers of candidates) {
+      const res = response();
+      await handler({ ...request(), headers: { ...request().headers, ...headers, accept: "application/json" } }, res);
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.setHeader.mock.calls.some(([name]) => name === "Set-Cookie")).toBe(false);
+    }
+  });
+  it("requires Vercel to provide the branch alias for that origin", async () => {
+    const host = "deepspec-git-codex-private-skip-auth-20261108-deep-spec-team.vercel.app";
+    vi.stubEnv("VERCEL_BRANCH_URL", "");
+    const res = response();
+    await handler({ ...request(), headers: { ...request().headers, host, origin: `https://${host}` } }, res);
+    expect(res.status).toHaveBeenCalledWith(403);
   });
   it.each(["GET", "DELETE", "OPTIONS"])("rejects %s without cookies", async (method) => {
     const res = response();
@@ -78,7 +117,7 @@ describe("private cookie launch", () => {
     vi.stubEnv("VERCEL_GIT_COMMIT_REF", "main");
     await handler(request(), res);
     expect(res.status).toHaveBeenLastCalledWith(404);
-    vi.stubEnv("VERCEL_GIT_COMMIT_REF", "codex/pilot-assembled-20261103");
+    vi.stubEnv("VERCEL_GIT_COMMIT_REF", "codex/private-skip-auth-20261108");
     config.loginExpiry = new Date(now).toISOString();
     await handler(request(), res);
     expect(res.status).toHaveBeenLastCalledWith(404);

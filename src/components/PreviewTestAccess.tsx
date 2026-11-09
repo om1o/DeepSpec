@@ -2,16 +2,27 @@ import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { getAuthClient, signInToPreviewTestAccount, signOut } from "../services/auth";
 
-// This marker is not a credential. The private launcher sets a server-validated,
-// Secure HttpOnly cookie; the browser never exposes that capability to this code.
+// The legacy marker is not a credential. The localhost launcher already sets a
+// Secure HttpOnly cookie. Phone invitations carry a short-lived capability in a
+// URL fragment (not transmitted in page requests); immediately scrub it from
+// the address bar and submit it only to the same-origin cookie launcher.
+let pendingCapability: string | null = null;
 let privateTestControls = takePrivateTestMarker();
 
 function takePrivateTestMarker(): boolean {
   const url = new URL(window.location.href);
-  if (url.searchParams.get("private-test") !== "1") return false;
-  url.searchParams.delete("private-test");
-  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
-  return true;
+  const privateLink = /^#private-qa=([a-f0-9]{64})$/.exec(url.hash);
+  const hasLegacyMarker = url.searchParams.get("private-test") === "1";
+  const hadPrivateFragment = url.hash.startsWith("#private-qa=");
+  if (hadPrivateFragment) {
+    url.hash = "";
+    if (privateLink) pendingCapability = privateLink[1];
+  }
+  if (hasLegacyMarker) url.searchParams.delete("private-test");
+  if (hadPrivateFragment || hasLegacyMarker) {
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  }
+  return Boolean(privateLink || hasLegacyMarker);
 }
 
 export function PreviewTestAccess({ placement = "banner" }: { placement?: "banner" | "auth" }) {
@@ -28,6 +39,15 @@ export function PreviewTestAccess({ placement = "banner" }: { placement?: "banne
     setBusy(true);
     setNotice("");
     try {
+      if (pendingCapability) {
+        const launch = await fetch("/api/qa-test-launch", {
+          method: "POST", cache: "no-store", credentials: "same-origin",
+          headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+          body: new URLSearchParams({ capability: pendingCapability }).toString(),
+        });
+        if (launch.status !== 204) throw new Error();
+        pendingCapability = null;
+      }
       const response = await fetch("/api/qa-test-session", {
         method: "POST", cache: "no-store", credentials: "same-origin",
       });
@@ -63,6 +83,7 @@ export function PreviewTestAccess({ placement = "banner" }: { placement?: "banne
       }
       await signOut();
       privateTestControls = false;
+      pendingCapability = null;
       setFinished(true);
       navigate("/auth", { replace: true });
     } catch {

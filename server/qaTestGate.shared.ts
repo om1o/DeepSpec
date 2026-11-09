@@ -4,7 +4,7 @@ import { QA_TEST_CAPABILITY_SHA256, QA_TEST_EMAIL, QA_TEST_LOGIN_EXPIRES_AT, QA_
 export const QA_TEST_COOKIE_NAME = "__Secure-deepspec-qa-test";
 export const QA_TEST_COOKIE_PATH = "/api/qa-test-session";
 export const QA_TEST_COOKIE_CLEAR = `${QA_TEST_COOKIE_NAME}=; Max-Age=0; Path=${QA_TEST_COOKIE_PATH}; HttpOnly; Secure; SameSite=Strict`;
-const BRANCH = "codex/pilot-assembled-20261103";
+const BRANCH = "codex/private-skip-auth-20261108";
 
 export function qaTestFailure(status: number, code: string) {
   return { status, body: { error: { code, message: "Temporary test access is unavailable." } } };

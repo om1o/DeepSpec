@@ -63,6 +63,55 @@ describe("PreviewTestAccess", () => {
     expect(mocks.navigate).not.toHaveBeenCalled();
   });
 
+  it("redeems a phone invitation only after a click, scrubs its URL fragment, and signs in normally", async () => {
+    const user = userEvent.setup();
+    const capability = "a".repeat(64);
+    const userId = "11111111-2222-4333-8444-555555555555";
+    mocks.fetch.mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(Response.json({ token_hash: "mock-token-hash", userId }));
+    mocks.signInToPreviewTestAccount.mockResolvedValueOnce({ id: userId });
+    await renderAccess(`/auth?keep=1#private-qa=${capability}`);
+
+    expect(window.location.pathname + window.location.search + window.location.hash).toBe("/auth?keep=1");
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Skip sign-in and try AI" }));
+
+    await waitFor(() => expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith("/scan", { replace: true }));
+    expect(mocks.fetch).toHaveBeenNthCalledWith(1, "/api/qa-test-launch", {
+      method: "POST", cache: "no-store", credentials: "same-origin",
+      headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+      body: `capability=${capability}`,
+    });
+    expect(mocks.fetch).toHaveBeenNthCalledWith(2, "/api/qa-test-session", {
+      method: "POST", cache: "no-store", credentials: "same-origin",
+    });
+    expect(mocks.signInToPreviewTestAccount).toHaveBeenCalledExactlyOnceWith("mock-token-hash", userId);
+    expect(window.location.href).not.toContain(capability);
+  });
+
+  it("rejects an invalid invitation fragment without exposing the skip button", async () => {
+    await renderAccess("/auth#private-qa=not-a-capability");
+    expect(window.location.hash).toBe("");
+    expect(screen.queryByRole("button", { name: "Skip sign-in and try AI" })).not.toBeInTheDocument();
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+
+  it("stops before login if private cookie launch is rejected", async () => {
+    const user = userEvent.setup();
+    const capability = "b".repeat(64);
+    mocks.fetch.mockResolvedValueOnce(new Response(null, { status: 403 }));
+    await renderAccess(`/auth#private-qa=${capability}`);
+    await user.click(screen.getByRole("button", { name: "Skip sign-in and try AI" }));
+
+    const notice = await screen.findByRole("status");
+    expect(notice).toHaveTextContent("Test entry failed or expired");
+    expect(notice).not.toHaveTextContent(capability);
+    expect(mocks.fetch).toHaveBeenCalledOnce();
+    expect(mocks.signInToPreviewTestAccount).not.toHaveBeenCalled();
+    expect(mocks.navigate).not.toHaveBeenCalled();
+    expect(window.location.href).not.toContain(capability);
+  });
+
   it("removes the marker while refusing entry when the server rejects the POST", async () => {
     const user = userEvent.setup();
     mocks.fetch.mockResolvedValueOnce(new Response(null, { status: 401 }));
