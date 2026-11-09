@@ -106,6 +106,7 @@ describe("PreviewTestAccess", () => {
     const notice = await screen.findByRole("status");
     expect(notice).toHaveTextContent("Test entry failed or expired");
     expect(notice).toHaveTextContent("The private link launch was rejected");
+    expect(notice).toHaveTextContent("HTTP 403");
     expect(notice).not.toHaveTextContent(capability);
     expect(mocks.fetch).toHaveBeenCalledOnce();
     expect(mocks.signInToPreviewTestAccount).not.toHaveBeenCalled();
@@ -124,6 +125,7 @@ describe("PreviewTestAccess", () => {
 
     expect(await screen.findByRole("status")).toHaveTextContent("Test entry failed or expired");
     expect(screen.getByRole("status")).toHaveTextContent("The temporary account service did not open");
+    expect(screen.getByRole("status")).toHaveTextContent("HTTP 401");
     expect(mocks.fetch).toHaveBeenCalledExactlyOnceWith("/api/qa-test-session", {
       method: "POST", cache: "no-store", credentials: "same-origin",
     });

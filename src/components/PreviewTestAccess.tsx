@@ -39,6 +39,7 @@ export function PreviewTestAccess({ placement = "banner" }: { placement?: "banne
     setBusy(true);
     setNotice("");
     let stage: "launch" | "session" | "signin" = pendingCapability ? "launch" : "session";
+    let failureStatus: number | null = null;
     try {
       if (pendingCapability) {
         const launch = await fetch("/api/qa-test-launch", {
@@ -46,14 +47,20 @@ export function PreviewTestAccess({ placement = "banner" }: { placement?: "banne
           headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
           body: new URLSearchParams({ capability: pendingCapability }).toString(),
         });
-        if (launch.status !== 204) throw new Error();
+        if (launch.status !== 204) {
+          failureStatus = launch.status;
+          throw new Error();
+        }
         pendingCapability = null;
       }
       stage = "session";
       const response = await fetch("/api/qa-test-session", {
         method: "POST", cache: "no-store", credentials: "same-origin",
       });
-      if (!response.ok) throw new Error();
+      if (!response.ok) {
+        failureStatus = response.status;
+        throw new Error();
+      }
       const result: unknown = await response.json();
       if (!result || typeof result !== "object" || !("token_hash" in result) || !("userId" in result)
         || typeof result.token_hash !== "string" || typeof result.userId !== "string") throw new Error();
@@ -65,7 +72,8 @@ export function PreviewTestAccess({ placement = "banner" }: { placement?: "banne
       const hint = stage === "launch" ? "The private link launch was rejected."
         : stage === "session" ? "The temporary account service did not open."
           : "Account sign-in verification failed.";
-      setNotice(`Test entry failed or expired. ${hint} The normal sign-in controls remain available.`);
+      const status = failureStatus === null ? "" : ` (HTTP ${failureStatus})`;
+      setNotice(`Test entry failed or expired. ${hint}${status} The normal sign-in controls remain available.`);
     } finally { setBusy(false); }
   }
 
