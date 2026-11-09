@@ -38,6 +38,7 @@ export function PreviewTestAccess({ placement = "banner" }: { placement?: "banne
     if (busy) return;
     setBusy(true);
     setNotice("");
+    let stage: "launch" | "session" | "signin" = pendingCapability ? "launch" : "session";
     try {
       if (pendingCapability) {
         const launch = await fetch("/api/qa-test-launch", {
@@ -48,6 +49,7 @@ export function PreviewTestAccess({ placement = "banner" }: { placement?: "banne
         if (launch.status !== 204) throw new Error();
         pendingCapability = null;
       }
+      stage = "session";
       const response = await fetch("/api/qa-test-session", {
         method: "POST", cache: "no-store", credentials: "same-origin",
       });
@@ -55,11 +57,15 @@ export function PreviewTestAccess({ placement = "banner" }: { placement?: "banne
       const result: unknown = await response.json();
       if (!result || typeof result !== "object" || !("token_hash" in result) || !("userId" in result)
         || typeof result.token_hash !== "string" || typeof result.userId !== "string") throw new Error();
+      stage = "signin";
       const user = await signInToPreviewTestAccount(result.token_hash, result.userId);
       setNotice(`Test account: ${user.id}. Normal scan limits apply.`);
       navigate("/scan", { replace: true });
     } catch {
-      setNotice("Test entry failed or expired. The normal sign-in controls remain available.");
+      const hint = stage === "launch" ? "The private link launch was rejected."
+        : stage === "session" ? "The temporary account service did not open."
+          : "Account sign-in verification failed.";
+      setNotice(`Test entry failed or expired. ${hint} The normal sign-in controls remain available.`);
     } finally { setBusy(false); }
   }
 

@@ -105,6 +105,7 @@ describe("PreviewTestAccess", () => {
 
     const notice = await screen.findByRole("status");
     expect(notice).toHaveTextContent("Test entry failed or expired");
+    expect(notice).toHaveTextContent("The private link launch was rejected");
     expect(notice).not.toHaveTextContent(capability);
     expect(mocks.fetch).toHaveBeenCalledOnce();
     expect(mocks.signInToPreviewTestAccount).not.toHaveBeenCalled();
@@ -122,6 +123,7 @@ describe("PreviewTestAccess", () => {
     await user.click(screen.getByRole("button", { name: "Skip sign-in and try AI" }));
 
     expect(await screen.findByRole("status")).toHaveTextContent("Test entry failed or expired");
+    expect(screen.getByRole("status")).toHaveTextContent("The temporary account service did not open");
     expect(mocks.fetch).toHaveBeenCalledExactlyOnceWith("/api/qa-test-session", {
       method: "POST", cache: "no-store", credentials: "same-origin",
     });
@@ -160,6 +162,7 @@ describe("PreviewTestAccess", () => {
     await user.click(screen.getByRole("button", { name: "Skip sign-in and try AI" }));
 
     expect(await screen.findByRole("status")).toHaveTextContent("Test entry failed or expired");
+    expect(screen.getByRole("status")).toHaveTextContent("Account sign-in verification failed");
     expect(mocks.signInToPreviewTestAccount).toHaveBeenCalledOnce();
     expect(mocks.navigate).not.toHaveBeenCalled();
   });

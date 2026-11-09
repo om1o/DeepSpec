@@ -72,12 +72,15 @@ describe("private cookie launch", () => {
       expect(res.setHeader.mock.calls.some(([name]) => name === "Set-Cookie")).toBe(false);
     }
   });
-  it("requires Vercel to provide the branch alias for that origin", async () => {
+  it("accepts only the exact branch alias when Vercel omits VERCEL_BRANCH_URL", async () => {
     const host = "deepspec-git-codex-private-skip-auth-20261108-deep-spec-team.vercel.app";
     vi.stubEnv("VERCEL_BRANCH_URL", "");
     const res = response();
     await handler({ ...request(), headers: { ...request().headers, host, origin: `https://${host}` } }, res);
-    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.status).toHaveBeenCalledWith(303);
+    const rejected = response();
+    await handler({ ...request(), headers: { ...request().headers, host: "other-deep-spec-team.vercel.app", origin: "https://other-deep-spec-team.vercel.app" } }, rejected);
+    expect(rejected.status).toHaveBeenCalledWith(403);
   });
   it.each(["GET", "DELETE", "OPTIONS"])("rejects %s without cookies", async (method) => {
     const res = response();

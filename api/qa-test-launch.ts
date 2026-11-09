@@ -6,6 +6,9 @@ import { QA_TEST_COOKIE_NAME, QA_TEST_COOKIE_PATH, qaTestFailure, validateQaTest
 type Request = { method?: string; headers?: Record<string, string | string[] | undefined>; body?: unknown };
 type Response = { status: (code: number) => Response; json: (body: unknown) => void; setHeader: (name: string, value: string) => void; end: () => void };
 const MAX_FORM_BYTES = 256;
+// Verified, branch-scoped alias; VERCEL_BRANCH_URL can be absent if automatic
+// system environment variable exposure is disabled in project settings.
+const PRIVATE_PREVIEW_ALIAS = "deepspec-git-codex-private-skip-auth-20261108-deep-spec-team.vercel.app";
 
 export default function handler(request: Request, response: Response) {
   response.setHeader("Cache-Control", "no-store");
@@ -18,7 +21,7 @@ export default function handler(request: Request, response: Response) {
   // A private link opened on a phone uses the branch alias, while the existing
   // localhost launcher posts directly to the immutable deployment hostname.
   // Both hosts must be supplied by Vercel and the browser POST must be same-origin.
-  const trustedHosts = [deploymentHost, branchHost].filter((candidate): candidate is string =>
+  const trustedHosts = [deploymentHost, branchHost, PRIVATE_PREVIEW_ALIAS].filter((candidate): candidate is string =>
     typeof candidate === "string" && /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.vercel\.app$/.test(candidate));
   const isSameOrigin = typeof host === "string" && trustedHosts.includes(host) && headers.origin === `https://${host}`;
   const isLegacyLauncher = typeof host === "string" && host === deploymentHost && trustedHosts.includes(host) && headers.origin === "http://127.0.0.1:43129";
