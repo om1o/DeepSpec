@@ -8,7 +8,7 @@ import { validFocusBox } from "../services/visualEvidence";
 // Bump on every change to this module. Logged once at module load so the console confirms the
 // browser is actually running the latest build — not a stale Vite/HMR bundle or a cached
 // service-worker asset. If you don't see this exact version after a reload, the code is stale.
-const PROMPTABLE_SEG_VERSION = "8 (preserve scene selections with explicit crop fallback)";
+const PROMPTABLE_SEG_VERSION = "9 (reject masks outside the selected part)";
 try {
   console.info(`[DeepSpec SAM] promptableSegmentation v${PROMPTABLE_SEG_VERSION} loaded`);
 } catch {
@@ -255,7 +255,7 @@ async function isolateBoxes(
     for (let boxIndex = 0; boxIndex < boxes.length; boxIndex += 1) {
       const selected = selectMask(maskTensor, outputs.iou_scores, boxIndex, boxes.length, boxes[boxIndex]);
       if (!selected) {
-        samLog({ stage: "inference-empty", reason: `no mask tensor (dims ${maskTensor?.dims?.join("x") ?? "?"})` });
+        samLog({ stage: "inference-empty", reason: `no usable mask for target (dims ${maskTensor?.dims?.join("x") ?? "?"})` });
         results.push(null);
         continue;
       }
@@ -298,7 +298,7 @@ export function getBoxPromptPoints(box: VisualFocusBox): [number, number][] {
 }
 
 export type MaskCandidate = {
-  /** Mask bbox, full-frame normalized; null when the mask is empty. */
+  /** Full-frame normalized bounds, or null when no foreground pixel falls inside the target. */
   box: { x: number; y: number; width: number; height: number } | null;
   /** SAM's own predicted-IoU score for this mask. */
   samScore: number;
@@ -312,7 +312,7 @@ const SAM_SCORE_TIEBREAK_WEIGHT = 0.1;
  * how well each mask's bbox matches the target box (box IoU) rather than by SAM's own score.
  * SAM's score alone picked a label under a single center point (too small) and, with five
  * points, the whole engine around an engine cover (too big); the target box knows the intended
- * size and shape. Returns -1 when every candidate is empty.
+ * size and shape. Returns -1 when no candidate overlaps the target.
  */
 export function pickBestFitMask(candidates: MaskCandidate[], target: VisualFocusBox): number {
   let best = -1;
@@ -321,7 +321,9 @@ export function pickBestFitMask(candidates: MaskCandidate[], target: VisualFocus
     if (!candidate.box) {
       return;
     }
-    const score = getBoxIou(candidate.box, target) + SAM_SCORE_TIEBREAK_WEIGHT * (Number.isFinite(candidate.samScore) ? candidate.samScore : 0);
+    const overlap = getBoxIou(candidate.box, target);
+    if (overlap <= 0) return;
+    const score = overlap + SAM_SCORE_TIEBREAK_WEIGHT * (Number.isFinite(candidate.samScore) ? candidate.samScore : 0);
     if (score > bestScore) {
       best = index;
       bestScore = score;
@@ -338,16 +340,23 @@ function getBoxIou(a: NonNullable<MaskCandidate["box"]>, b: VisualFocusBox): num
   return union > 0 ? intersection / union : 0;
 }
 
-/** Bbox of one mask plane, full-frame normalized (same convention as the mask-bbox log). */
-function getMaskPlaneBox(data: ArrayLike<number>, offset: number, width: number, height: number): MaskCandidate["box"] {
+/** Keep the whole mask's bounds, provided a foreground pixel center falls in the target. */
+function getTargetedMaskBox(data: ArrayLike<number>, offset: number, width: number, height: number, target: VisualFocusBox): MaskCandidate["box"] {
   let minX = width;
   let minY = height;
   let maxX = -1;
   let maxY = -1;
+  const left = target.x * width;
+  const right = (target.x + target.width) * width;
+  const top = target.y * height;
+  const bottom = (target.y + target.height) * height;
+  let hitsTarget = false;
   for (let y = 0; y < height; y += 1) {
     const row = offset + y * width;
+    const inTargetRow = y + 0.5 >= top && y + 0.5 < bottom;
     for (let x = 0; x < width; x += 1) {
       if (Number(data[row + x]) > 0) {
+        if (inTargetRow && x + 0.5 >= left && x + 0.5 < right) hitsTarget = true;
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
         if (y < minY) minY = y;
@@ -355,7 +364,7 @@ function getMaskPlaneBox(data: ArrayLike<number>, offset: number, width: number,
       }
     }
   }
-  if (maxX < 0) {
+  if (!hitsTarget) {
     return null;
   }
   return { x: minX / width, y: minY / height, width: (maxX - minX + 1) / width, height: (maxY - minY + 1) / height };
@@ -389,27 +398,27 @@ function selectMask(
   const candidates: MaskCandidate[] = [];
   for (let mask = 0; mask < numMasks; mask += 1) {
     candidates.push({
-      box: getMaskPlaneBox(maskTensor.data, (boxIndex * numMasks + mask) * planeSize, width, height),
+      box: getTargetedMaskBox(maskTensor.data, (boxIndex * numMasks + mask) * planeSize, width, height, targetBox),
       samScore: scores ? Number(scores[scoreBase + boxIndex * numMasks + mask]) : 0,
     });
   }
   const picked = pickBestFitMask(candidates, targetBox);
-  const best = picked >= 0 ? picked : 0;
 
   // Per-candidate fit vs SAM score, so a wrong pick can be traced to the selection step.
   const format = (value: number) => value.toFixed(3);
   samLog({
     stage: "mask-select",
-    picked: best,
+    picked,
     samTop: candidates.reduce((top, candidate, index) => (candidate.samScore > candidates[top].samScore ? index : top), 0),
     candidates: candidates.map((candidate) => ({
-      box: candidate.box ? [candidate.box.x, candidate.box.y, candidate.box.width, candidate.box.height].map(format).join(",") : "empty",
+      box: candidate.box ? [candidate.box.x, candidate.box.y, candidate.box.width, candidate.box.height].map(format).join(",") : "empty or outside target",
       boxIou: candidate.box ? format(getBoxIou(candidate.box, targetBox)) : "0",
       samScore: format(candidate.samScore),
     })),
   });
 
-  return { data: maskTensor.data, width, height, offset: (boxIndex * numMasks + best) * planeSize };
+  if (picked < 0) return null;
+  return { data: maskTensor.data, width, height, offset: (boxIndex * numMasks + picked) * planeSize };
 }
 
 function compositeMaskedCutout(

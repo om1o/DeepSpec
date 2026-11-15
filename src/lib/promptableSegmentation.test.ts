@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createSceneCropFallbacks, getBoxPromptPoints, getPromptableSegmentationModel, isPromptableSegmentationEnabled, isolateSceneObjects, pickBestFitMask, resetPromptableSegmentationForTests, type SceneObjectInput } from "./promptableSegmentation";
+import { createPromptedProductIsolation, createSceneCropFallbacks, getBoxPromptPoints, getPromptableSegmentationModel, isPromptableSegmentationEnabled, isolateSceneObjects, pickBestFitMask, resetPromptableSegmentationForTests, type SceneObjectInput } from "./promptableSegmentation";
 
 const { loadModel, loadProcessor, readImage, supportsWebGpu } = vi.hoisted(() => ({
   loadModel: vi.fn(), loadProcessor: vi.fn(), readImage: vi.fn(), supportsWebGpu: vi.fn(),
@@ -95,10 +95,11 @@ describe("pickBestFitMask", () => {
     expect(picked).toBe(1);
   });
 
-  it("skips empty masks and returns -1 when all are empty", () => {
+  it("skips empty and disjoint masks, even at high confidence", () => {
     const target = { ...box(0.2, 0.2, 0.4, 0.4), confidence: 1 };
-    expect(pickBestFitMask([{ box: null, samScore: 0.99 }, { box: box(0.9, 0.9, 0.05, 0.05), samScore: 0.1 }], target)).toBe(1);
-    expect(pickBestFitMask([{ box: null, samScore: 0.99 }], target)).toBe(-1);
+    const rejected = [{ box: null, samScore: 0.99 }, { box: box(0.9, 0.9, 0.05, 0.05), samScore: 0.99 }];
+    expect(pickBestFitMask(rejected, target)).toBe(-1);
+    expect(pickBestFitMask([...rejected, { box: box(0.3, 0.3, 0.05, 0.05), samScore: 0.1 }], target)).toBe(2);
   });
 });
 
@@ -251,6 +252,29 @@ describe("scene selection preservation", () => {
     expect(await isolateSceneObjects(frame, inputs)).toEqual(expectedCrops());
     expect(model).toHaveBeenCalledTimes(1);
     expect(postProcess).toHaveBeenCalledTimes(1);
+    expect(HTMLCanvasElement.prototype.toDataURL).not.toHaveBeenCalled();
+  });
+
+  it("keeps the bracket crop when both model masks cover the alternator", async () => {
+    const masks = maskTensor([0]);
+    masks.data.copyWithin(400, 0, 400);
+    postProcess.mockResolvedValue([masks]);
+
+    const [alternator, bracket] = await isolateSceneObjects(frame, inputs);
+    expect(alternator.focusMode).toBe("mask");
+    expect(bracket).toEqual(expectedCrops()[1]);
+    expect(HTMLCanvasElement.prototype.toDataURL).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a mask whose bounding box surrounds the target but whose pixels miss it", async () => {
+    const mask = maskTensor([], 1);
+    for (let y = 0; y < 20; y += 1) {
+      mask.data.fill(1, y * 20, y * 20 + 2);
+      mask.data.fill(1, y * 20 + 18, y * 20 + 20);
+    }
+    postProcess.mockResolvedValue([mask]);
+    const target = { x: 0.25, y: 0.25, width: 0.5, height: 0.5, confidence: 1 };
+    expect(await createPromptedProductIsolation(frame, target)).toBeNull();
     expect(HTMLCanvasElement.prototype.toDataURL).not.toHaveBeenCalled();
   });
 
