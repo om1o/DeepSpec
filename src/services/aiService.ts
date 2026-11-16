@@ -11,6 +11,7 @@ import { buildConditionHandoff } from "../lib/conditionHandoff";
 import { providerVehicleContext } from "../lib/vehicleContext";
 import { hasFirstPhotoIdentityScopePipeline, isPhotoRelationship } from "../lib/photoRelationship";
 import { isAIRequestId } from "../lib/aiRequestId";
+import { normalizeSelectedPart } from "../lib/selectedPart";
 import {
   SCAN_CATEGORIES,
   type AIInput,
@@ -27,6 +28,7 @@ import {
   type PossibleVehicleContext,
   type ScanCategory,
   type ScanPhoto,
+  type SelectedPartReference,
   type SourceLink,
   type VehicleContext,
 } from "../types";
@@ -110,6 +112,8 @@ export class AIServiceError extends Error {
 export async function runAI(input: AIInput, options: AIRequestOptions = {}): Promise<string | object> {
   throwIfAborted(options.signal);
   const photoRelationship = validatePhotoRelationship(input.photoRelationship);
+  const selectedPart = selectedPartForRequest(input.selectedPart, (input.type === "vision" ? input.photos?.map((photo) => photo.id) : undefined)
+    ?? (input.type === "vision" && input.imageBase64_2 ? ["photo-1", "photo-2"] : input.imageBase64 ? ["photo-1"] : []));
   const vehicleContext = providerVehicleContext(input.vehicleContext);
   if (input.type === "text") {
     if (!input.userMessage.trim()) {
@@ -121,6 +125,7 @@ export async function runAI(input: AIInput, options: AIRequestOptions = {}): Pro
       {
         userMessage: input.userMessage,
         photoRelationship,
+        ...(selectedPart ? { selectedPart } : {}),
         ...(vehicleContext ? { vehicleContext } : {}),
         ...(input.imageBase64 ? { imageBase64: input.imageBase64 } : {}),
         systemPrompt: input.systemPrompt,
@@ -139,6 +144,7 @@ export async function runAI(input: AIInput, options: AIRequestOptions = {}): Pro
       const body = await postAI<IdentifyApiSuccess>("/api/identify", {
         photos,
         photoRelationship,
+        ...(selectedPart ? { selectedPart } : {}),
         ...(vehicleContext ? { vehicleContext } : {}),
         ...(input.measurementContext ? { measurementContext: input.measurementContext } : {}),
         userMessage: input.userMessage,
@@ -169,6 +175,7 @@ export async function runAI(input: AIInput, options: AIRequestOptions = {}): Pro
       {
         imageBase64,
         photoRelationship,
+        ...(selectedPart ? { selectedPart } : {}),
         ...(imageBase64_2 ? { imageBase64_2 } : {}),
         ...(input.labelRescueTrigger ? { labelRescueTrigger: input.labelRescueTrigger } : {}),
         ...(vehicleContext ? { vehicleContext } : {}),
@@ -192,6 +199,13 @@ function validatePhotoRelationship(value: unknown): PhotoRelationship {
   if (value === undefined) return "unknown";
   if (isPhotoRelationship(value)) return value;
   throw new AIServiceError("invalid_input", "Choose a supported photo relationship before analyzing or asking a question.");
+}
+
+function selectedPartForRequest(value: unknown, photoIds: string[]): SelectedPartReference | undefined {
+  if (value === undefined) return undefined;
+  const selectedPart = normalizeSelectedPart(value, photoIds);
+  if (!selectedPart) throw new AIServiceError("invalid_input", "The selected part no longer matches these photos. Reopen the scan and select its area again.");
+  return selectedPart;
 }
 
 async function postAI<TSuccess extends object>(
@@ -306,6 +320,7 @@ export async function identifyCapturedFrame(
   labelRescueTrigger?: LabelRescueTrigger,
   options: {
     photos?: ScanPhoto[];
+    selectedPart?: SelectedPartReference;
     photoRelationship?: PhotoRelationship;
     measurementContext?: MeasurementContext;
     signal?: AbortSignal;
@@ -314,10 +329,11 @@ export async function identifyCapturedFrame(
 ): Promise<IdentificationResult> {
   throwIfAborted(options.signal);
   validatePhotoRelationship(options.photoRelationship);
+  selectedPartForRequest(options.selectedPart, options.photos?.map((photo) => photo.id) ?? (secondFrame ? ["photo-1", "photo-2"] : ["photo-1"]));
   if (options.photos && typeof navigator !== "undefined" && navigator.onLine === false) {
     throw new AIServiceError("connection_failed", "Your photo group is saved on this device. Reconnect and retry to analyze every angle together.");
   }
-  if (!options.photos && isOnDeviceFallbackEnabled() && typeof navigator !== "undefined" && navigator.onLine === false) {
+  if (!options.photos && !options.selectedPart && isOnDeviceFallbackEnabled() && typeof navigator !== "undefined" && navigator.onLine === false) {
     const offlineResult = await identifyOnDevice(frame);
     throwIfAborted(options.signal);
     return assertIdentificationResult(offlineResult, ["photo-1"]);
@@ -325,7 +341,7 @@ export async function identifyCapturedFrame(
 
   const result = await runCloudIdentify(frame, secondFrame, labelRescueTrigger, options).catch((error: unknown) => {
     throwIfAborted(options.signal);
-    if (!options.photos && shouldUseOnDeviceAfterCloudError(error)) {
+    if (!options.photos && !options.selectedPart && shouldUseOnDeviceAfterCloudError(error)) {
       return identifyOnDeviceWithTimeout(frame, error, options.signal)
         .then((offlineResult) => assertIdentificationResult(offlineResult, ["photo-1"]));
     }
@@ -382,6 +398,7 @@ function runCloudIdentify(
   labelRescueTrigger: LabelRescueTrigger | undefined,
   options: {
     photos?: ScanPhoto[];
+    selectedPart?: SelectedPartReference;
     photoRelationship?: PhotoRelationship;
     measurementContext?: MeasurementContext;
     signal?: AbortSignal;
@@ -393,6 +410,7 @@ function runCloudIdentify(
     imageBase64: frame.imageBase64,
     imageBase64_2: secondFrame?.imageBase64,
     photos: options.photos,
+    selectedPart: options.selectedPart,
     photoRelationship: options.photoRelationship,
     labelRescueTrigger,
     measurementContext: options.measurementContext,
@@ -443,6 +461,10 @@ export async function sendFollowUp(lookup: Lookup, question: string): Promise<st
 
 export async function sendFollowUpDetails(lookup: Lookup, question: string, options: FollowUpOptions = {}): Promise<FollowUpDetails> {
   const photoRelationship = validatePhotoRelationship(lookup.photoRelationship);
+  const photoIds = lookup.photos?.map((photo) => photo.id) ?? ["photo-1"];
+  const selectedPart = selectedPartForRequest(lookup.selectedPart !== undefined ? lookup.selectedPart : (lookup.focusBox ? {
+    photoId: photoIds[0], rectangle: { x: lookup.focusBox.x, y: lookup.focusBox.y, width: lookup.focusBox.width, height: lookup.focusBox.height },
+  } : undefined), photoIds);
   const hasFirstPhotoIdentityScope = hasFirstPhotoIdentityScopePipeline(lookup.result?.modelRun?.pipelineVersion)
     && ((lookup.photos?.length ?? 1) <= 1 || photoRelationship !== "same_part_or_area");
   const savedIdentityScope = !lookup.result ? "none"
@@ -463,6 +485,7 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
     const conditionAssessment = normalizeConditionAssessment(lookup.result?.conditionAssessment, photos.map((photo) => photo.id));
     const result = await postAI<ChatApiSuccess>("/api/chat", {
       userMessage: buildFollowUpContext(lookup, trimmedQuestion), photos, photoRelationship, savedIdentityScope,
+      ...(selectedPart ? { selectedPart } : {}),
       ...(photoReview ? { photoReview } : {}),
       ...(conditionAssessment ? { conditionAssessment } : {}),
       ...(vehicleContext ? { vehicleContext } : {}),
@@ -489,6 +512,7 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
     userMessage: buildFollowUpContext(lookup, trimmedQuestion),
     photoRelationship,
     savedIdentityScope,
+    ...(selectedPart ? { selectedPart } : {}),
     ...(photoReview ? { photoReview } : {}),
     ...(conditionAssessment ? { conditionAssessment } : {}),
     ...(vehicleContext ? { vehicleContext } : {}),

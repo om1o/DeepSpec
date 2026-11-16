@@ -1,10 +1,12 @@
 import { SCAN_PHOTO_LABELS, type ScanAnalysisState, type ScanPhoto, type IsolatedObject, type VisualFocusBox } from "../types";
 import { isPhotoRelationship } from "../lib/photoRelationship";
+import { normalizeSelectedPart } from "../lib/selectedPart";
 
-export type VisualEvidence = Pick<ScanAnalysisState, "photos" | "photoRelationship" | "isolatedObjects" | "focusBox" | "focusMode" | "isolatedImageBase64">;
+export type VisualEvidence = Pick<ScanAnalysisState, "photos" | "photoRelationship" | "selectedPart" | "isolatedObjects" | "focusBox" | "focusMode" | "isolatedImageBase64"> & Partial<Pick<ScanAnalysisState, "frame">>;
 export type EvidenceBundle = {
   version: 1;
   photoRelationship?: ScanAnalysisState["photoRelationship"];
+  selectedPart?: ScanAnalysisState["selectedPart"];
   photos?: Array<Omit<ScanPhoto, "imageBase64"> & { imagePath: string }>;
   isolatedObjects?: Array<Omit<IsolatedObject, "isolatedImageBase64"> & { imagePath: string | null }>;
   focusBox?: VisualFocusBox;
@@ -34,6 +36,13 @@ export function normalizeVisualEvidence(value: VisualEvidence): VisualEvidence |
       || new Set(value.photos.map((p) => p.id)).size !== value.photos.length) return null;
     result.photos = value.photos.map(({ id, label, capturedAt, imageBase64 }) => ({ id, label, capturedAt, imageBase64 }));
   }
+  if (value.selectedPart !== undefined) {
+    const photoIds = result.photos?.map((photo) => photo.id)
+      ?? (!value.frame || isEvidenceImage(value.frame.imageBase64) ? ["photo-1"] : []);
+    const selectedPart = normalizeSelectedPart(value.selectedPart, photoIds);
+    if (!selectedPart) return null;
+    result.selectedPart = selectedPart;
+  }
   if (value.isolatedObjects !== undefined) {
     if (!Array.isArray(value.isolatedObjects) || value.isolatedObjects.some((o) => !record(o) || typeof o.name !== "string"
       || typeof o.category !== "string" || typeof o.primary !== "boolean" || !validFocusBox(o.focusBox)
@@ -51,7 +60,7 @@ export function normalizeVisualEvidence(value: VisualEvidence): VisualEvidence |
 
 export function hasVisualEvidence(value: VisualEvidence) {
   return value.photoRelationship !== undefined || value.photos !== undefined || value.isolatedObjects !== undefined || value.focusBox !== undefined
-    || value.focusMode !== undefined || value.isolatedImageBase64 !== undefined;
+    || value.focusMode !== undefined || value.isolatedImageBase64 !== undefined || value.selectedPart !== undefined;
 }
 
 export function isOwnedEvidencePath(path: unknown, userId: string, lookupId: string): path is string {
@@ -82,6 +91,7 @@ export function parseEvidenceBundle(value: unknown, userId: string, lookupId: st
 export function restoreEvidenceBundle(bundle: EvidenceBundle, signed: Map<string, string>): VisualEvidence {
   return {
     ...(bundle.photoRelationship !== undefined ? { photoRelationship: bundle.photoRelationship } : {}),
+    ...(bundle.selectedPart !== undefined ? { selectedPart: bundle.selectedPart } : {}),
     ...(bundle.photos !== undefined ? { photos: bundle.photos.map(({ imagePath, ...p }) => ({ ...p, imageBase64: signed.get(imagePath) ?? "" })) } : {}),
     ...(bundle.isolatedObjects !== undefined ? { isolatedObjects: bundle.isolatedObjects.map(({ imagePath, ...o }) => ({ ...o, isolatedImageBase64: imagePath ? signed.get(imagePath) ?? "" : "" })) } : {}),
     ...(bundle.focusBox ? { focusBox: bundle.focusBox } : {}), ...(bundle.focusMode ? { focusMode: bundle.focusMode } : {}),

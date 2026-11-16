@@ -361,11 +361,18 @@ export type IdentificationResult = {
   modelRun?: IdentifyModelRun;
 };
 
+export type SelectedPartReference = {
+  photoId: string;
+  rectangle: { x: number; y: number; width: number; height: number };
+  cropPhotoId?: string;
+};
+
 export type ScanAnalysisState = {
   analysisAttemptId?: string;
   frame: CapturedFrame;
   photos?: ScanPhoto[];
   photoRelationship?: PhotoRelationship;
+  selectedPart?: SelectedPartReference;
   focusBox?: VisualFocusBox;
   focusMode?: VisualFocusMode;
   isolatedImageBase64?: string;
@@ -392,6 +399,7 @@ export type AIInput = {
   imageBase64_2?: string;
   photos?: ScanPhoto[];
   photoRelationship?: PhotoRelationship;
+  selectedPart?: SelectedPartReference;
   labelRescueTrigger?: LabelRescueTrigger;
   measurementContext?: MeasurementContext;
   userMessage: string;
@@ -454,6 +462,7 @@ export type Lookup = {
   frame: CapturedFrame;
   photos?: ScanPhoto[];
   photoRelationship?: PhotoRelationship;
+  selectedPart?: SelectedPartReference;
   isolatedObjects?: IsolatedObject[];
   focusBox?: VisualFocusBox;
   focusMode?: VisualFocusMode;

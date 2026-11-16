@@ -12,10 +12,13 @@ export function mergeCloudLookup(local: Lookup, remote: Lookup): Lookup {
   // frame while preserving device pixels and the intentional empty cutouts below.
   const frameImage = !/^(data:|blob:)/i.test(local.frame.imageBase64) && /^https?:\/\//i.test(remote.frame.imageBase64)
     ? remote.frame.imageBase64 : local.frame.imageBase64;
-  const sameSelection = (a: Pick<Lookup, "focusBox" | "focusMode">, b: Pick<Lookup, "focusBox" | "focusMode">) => JSON.stringify(a.focusBox) === JSON.stringify(b.focusBox) && a.focusMode === b.focusMode;
+  const sameSelection = (a: Pick<Lookup, "focusBox" | "focusMode" | "selectedPart">, b: Pick<Lookup, "focusBox" | "focusMode" | "selectedPart">) => JSON.stringify(a.focusBox) === JSON.stringify(b.focusBox) && a.focusMode === b.focusMode
+    && JSON.stringify(a.selectedPart) === JSON.stringify(b.selectedPart);
+  const sameSelectedPart = JSON.stringify(local.selectedPart) === JSON.stringify(remote.selectedPart);
   return { ...merged,
     frame: { ...local.frame, imageBase64: frameImage },
     ...(local.photos ? { photos: local.photos.map((photo) => {
+      if (photo.id === local.selectedPart?.cropPhotoId && !sameSelectedPart) return photo;
       const match = remote.photos?.find((p) => p.id === photo.id && p.capturedAt === photo.capturedAt);
       return { ...photo, imageBase64: refresh(photo.imageBase64, match?.imageBase64) };
     }) } : {}),

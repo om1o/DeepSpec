@@ -38,6 +38,7 @@ async function runOfflineEstimateUpgrade(scope: AccountScope): Promise<number> {
     try {
       const result = applyShopFitmentContext(await identifyCapturedFrame(lookup.frame, undefined, undefined, {
         vehicleContext: lookup.vehicleContext,
+        selectedPart: lookup.selectedPart,
         ...(lookup.photos ? { photos: lookup.photos } : {}),
         ...(lookup.photoRelationship ? { photoRelationship: lookup.photoRelationship } : {}),
       }), lookup.vehicleContext);
@@ -46,7 +47,7 @@ async function runOfflineEstimateUpgrade(scope: AccountScope): Promise<number> {
         const saved = updateLookupResult(lookup.id, result, {
           analysisSource: "offline_upgrade",
           savedAt: new Date().toISOString(),
-        });
+        }, undefined, lookup);
         if (saved.ok && saved.value) upgraded += 1;
       }
     } catch {

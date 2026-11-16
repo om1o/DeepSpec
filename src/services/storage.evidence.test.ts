@@ -37,6 +37,102 @@ const inspection: PartInspection = {
 };
 describe("durable visual evidence", () => {
   beforeEach(() => { localStorage.clear(); setActiveAccount("owner"); });
+  const selectedPart = { photoId: "p0", rectangle: { x: box.x, y: box.y, width: box.width, height: box.height }, cropPhotoId: "p1" };
+  it("retains the selected source, rectangle and linked crop through save/reopen/retry", () => {
+    const saved = createLookup({ ...state, selectedPart, result: identification }).value;
+    expect(scanStateFromLookup(getLookup(saved.id)!)).toMatchObject({ selectedPart });
+    const retried = withRetriedLookupResult(saved, { frame: state.frame, result: { ...identification, partName: "Alternator" } });
+    expect(retried).toMatchObject({ selectedPart, photos: state.photos, result: { partName: "Alternator" } });
+    expect(saveExistingLookup(retried).ok).toBe(true);
+    expect(getLookup(saved.id)).toMatchObject({ selectedPart });
+  });
+  it("retains a legacy single-photo target without inventing an attached crop", () => {
+    const legacyTarget = { photoId: "photo-1", rectangle: selectedPart.rectangle };
+    const saved = createLookup({ frame: state.frame, selectedPart: legacyTarget });
+    expect(saved.ok).toBe(true);
+    const reopened = scanStateFromLookup(getLookup(saved.value.id)!);
+    expect(reopened.selectedPart).toEqual(legacyTarget);
+    expect(reopened.photos).toBeUndefined();
+    expect(createLookup({ frame: { ...state.frame, imageBase64: "/brand/deepspec-symbol.webp" }, selectedPart: legacyTarget }).ok).toBe(false);
+  });
+  it.each([
+    { ...selectedPart, photoId: "missing" },
+    { ...selectedPart, photoId: "p1" },
+    { ...selectedPart, cropPhotoId: "missing" },
+    { ...selectedPart, rectangle: { ...selectedPart.rectangle, x: 0.9 } },
+    null,
+  ])("rejects a damaged selected-part reference without discarding saved evidence: %j", (invalid) => {
+    const saved = createLookup({ ...state, selectedPart }).value;
+    const raw = localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY));
+    const damaged = { ...state, selectedPart: invalid } as unknown as ScanAnalysisState;
+    expect(createLookup(damaged).ok).toBe(false);
+    expect(saveExistingLookup({ ...saved, selectedPart: invalid } as unknown as typeof saved).ok).toBe(false);
+    expect(withRetriedLookupResult(saved, { ...damaged, result: identification })).toBe(saved);
+    expect(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY))).toBe(raw);
+    const unreadable = JSON.stringify([{ ...saved, selectedPart: invalid }]);
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), unreadable);
+    expect(readLookups().ok).toBe(false);
+    expect(createLookup(state).ok).toBe(false);
+    expect(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY))).toBe(unreadable);
+  });
+  it("rejects a retry that orphans the saved target and preserves the original result", () => {
+    const saved = createLookup({ ...state, selectedPart, result: identification }).value;
+    const raw = localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY));
+    const retry = { frame: state.frame, photos: [{ ...state.photos![0], id: "replacement" }], result: { ...identification, partName: "Different" } };
+    expect(withRetriedLookupResult(saved, retry)).toBe(saved);
+    expect(saveExistingLookup(saved, retry).ok).toBe(false);
+    expect(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY))).toBe(raw);
+  });
+  it("corrects the main target rectangle, detaches its old crop, and leaves the saved answer intact", () => {
+    const saved = createLookup({ ...state, selectedPart, result: identification }).value;
+    const originalResult = getLookup(saved.id)!.result;
+    const nextBox = { ...box, x: 0.4 };
+    expect(updateLookupVisualSelection(saved.id, nextBox, 0, saved).ok).toBe(true);
+    expect(scanStateFromLookup(getLookup(saved.id)!)).toMatchObject({ selectedPart: { photoId: "p0", rectangle: { x: 0.4, y: box.y, width: box.width, height: box.height } }, result: originalResult, photos: state.photos });
+    expect(getLookup(saved.id)?.selectedPart).not.toHaveProperty("cropPhotoId");
+  });
+  it("preserves the main selected part when correcting a secondary object and detects a stale target", () => {
+    const saved = createLookup({ ...state, selectedPart, result: identification }).value;
+    expect(updateLookupVisualSelection(saved.id, { ...box, x: 0.4 }, 1, saved).ok).toBe(true);
+    expect(getLookup(saved.id)?.selectedPart).toEqual(selectedPart);
+    const current = getLookup(saved.id)!;
+    const changed = { ...current, selectedPart: { ...selectedPart, rectangle: { ...selectedPart.rectangle, x: 0.3 } } };
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([changed]));
+    expect(updateLookupVisualSelection(saved.id, box, null, current)).toMatchObject({ ok: false, message: expect.stringContaining("changed while you were editing") });
+    expect(getLookup(saved.id)).toMatchObject(changed);
+  });
+  it("does not reuse a reserved scan ID for a different selected part", () => {
+    const saved = createLookup({ ...state, selectedPart }, "selected-reserved").value;
+    expect(createLookup({ ...state, selectedPart: { ...selectedPart, rectangle: { ...selectedPart.rectangle, x: 0.4 } } }, saved.id).ok).toBe(false);
+    expect(getLookup(saved.id)).toEqual(saved);
+  });
+  it("does not overwrite a newer target correction with a stale retry snapshot", () => {
+    const saved = createLookup({ ...state, selectedPart, result: identification }).value;
+    expect(updateLookupVisualSelection(saved.id, { ...box, x: 0.4 }, null, saved).ok).toBe(true);
+    const raw = localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY));
+    const staleRetry = { ...state, selectedPart, result: { ...identification, partName: "Stale retry answer" } };
+    expect(saveExistingLookup(saved, staleRetry)).toMatchObject({ ok: false, message: expect.stringContaining("selected part changed") });
+    expect(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY))).toBe(raw);
+  });
+  it.each([true, false])("rejects an in-flight result after another tab changes its target (original target: %s)", (hasTarget) => {
+    const saved = createLookup({ ...state, ...(hasTarget ? { selectedPart } : {}), result: identification }).value;
+    expect(updateLookupVisualSelection(saved.id, { ...box, x: 0.4 }, null, saved).ok).toBe(true);
+    const raw = localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY));
+    const result = updateLookupResult(saved.id, { ...identification, partName: "Stale answer" }, undefined,
+      { ...state.frame, imageBase64: "data:image/jpeg;base64,Yg==" }, saved);
+    expect(result).toMatchObject({ ok: false, message: expect.stringContaining("selected part changed") });
+    expect(localStorage.getItem(accountStorageKey(LOOKUPS_STORAGE_KEY))).toBe(raw);
+  });
+  it("accepts a completed result for the same target and keeps optional legacy updates compatible", () => {
+    const saved = createLookup({ ...state, selectedPart, result: identification }).value;
+    const expected = { selectedPart: { ...selectedPart, rectangle: { height: box.height, width: box.width, y: box.y, x: box.x } } };
+    expect(updateLookupResult(saved.id, { ...identification, partName: "Fresh answer" }, undefined, undefined, expected).ok).toBe(true);
+    expect(getLookup(saved.id)).toMatchObject({ selectedPart, result: { partName: "Fresh answer" } });
+    const legacy = createLookup({ frame: state.frame }).value;
+    expect(updateLookupResult(legacy.id, identification, undefined, undefined, {}).ok).toBe(true);
+    expect(updateLookupResult(legacy.id, { ...identification, partName: "Legacy answer" }).ok).toBe(true);
+    expect(getLookup(legacy.id)?.result?.partName).toBe("Legacy answer");
+  });
   it("preserves per-photo AI areas across save/reopen and replaces them on retry without editing human evidence", () => {
     const assessment = conditionAssessment("p1");
     assessment.version = 2;

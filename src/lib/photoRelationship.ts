@@ -24,7 +24,8 @@ export function hasFirstPhotoIdentityScopePipeline(version?: string | null): boo
     || version === "identify-pipeline-2026-11-07-evidence-limits-v1"
     || version === "identify-pipeline-2026-11-07-independent-review-v1"
     || version === "identify-pipeline-2026-11-07-condition-coverage-v1"
-    || version === "identify-pipeline-2026-11-07-evidence-next-checks-v1";
+    || version === "identify-pipeline-2026-11-07-evidence-next-checks-v1"
+    || version === "identify-pipeline-2026-11-16-selected-part-v1";
 }
 
 /** null means no identification result; undefined means its pipeline was not recorded. */

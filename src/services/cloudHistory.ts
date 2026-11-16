@@ -326,14 +326,20 @@ async function getSignedImageMap(
 }
 
 function validateCloudEvidence(rows: CloudHistoryRow[], userId: string): string | null {
-  return rows.some((row) => row.evidence_bundle_json != null && !parseEvidenceBundle(row.evidence_bundle_json, userId, String(row.local_id)))
+  return rows.some((row) => {
+    if (row.evidence_bundle_json == null) return false;
+    const bundle = parseEvidenceBundle(row.evidence_bundle_json, userId, String(row.local_id));
+    return !bundle || (bundle.selectedPart && !bundle.photos
+      && !isOwnedEvidencePath(row.image_path, userId, String(row.local_id)));
+  })
     ? "Saved evidence has invalid metadata or an image from another account or scan. Nothing was restored; your cloud record is unchanged." : null;
 }
 
 function hasMissingEvidenceImages(rows: CloudHistoryRow[], signed: Map<string, string>, userId: string) {
   return rows.some((row) => {
     const bundle = parseEvidenceBundle(row.evidence_bundle_json, userId, String(row.local_id));
-    return bundle && evidencePaths(bundle).some((path) => !signed.has(path));
+    return bundle && (evidencePaths(bundle).some((path) => !signed.has(path))
+      || (bundle.selectedPart && !bundle.photos && (!isString(row.image_path) || !signed.has(row.image_path))));
   });
 }
 

@@ -63,13 +63,13 @@ import {
   recordScanQualityRetake,
 } from "../services/scanQualityMetrics";
 import { createLookup, DEVICE_SCAN_LIMIT_MESSAGE, getLookup, readLookups, scanStateFromLookup, MAX_SAVED_LOOKUPS, updateLookup, updateLookupVisualSelection } from "../services/storage";
-import type { IdentificationResult, CapturedFrame, IsolatedObject, Lookup, PhotoRelationship, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanDebugInfo, ScanPhoto, ScanQualitySnapshot, ShopJob, ShopVehicleContext, VisualFocusBox, VisualFocusMode } from "../types";
+import type { IdentificationResult, CapturedFrame, IsolatedObject, Lookup, PhotoRelationship, ScanAnalysisSource, ScanAnalysisState, ScanCaptureMode, ScanDebugInfo, ScanPhoto, ScanQualitySnapshot, SelectedPartReference, ShopJob, ShopVehicleContext, VisualFocusBox, VisualFocusMode } from "../types";
 
 // Build-freshness stamp for the Scanner UI chunk. ScanResultCard, the collapse toggle, and the
 // Item view panel all live in THIS module. If after a reload you see the SAM chunk's "v5" log but
 // NOT this line, the render bundle is stale (service-worker precache) even though the SAM chunk
 // updated — which means UI fixes never actually reached the screen. Bump the tag on each UI change.
-const SCANNER_UI_TRACE = "ui-trace-v3 (abortable scan recovery)";
+const SCANNER_UI_TRACE = "ui-trace-v4 (selected part follow-up)";
 console.info(`[DeepSpec UI] Scanner chunk ${SCANNER_UI_TRACE} loaded`);
 
 const SECOND_FRAME_DELAY_MS = 120;
@@ -692,6 +692,11 @@ export default function Scanner() {
 
     if (!isScanRequestActive(requestId)) return;
     const identifySecondFrame = focusedFrame ?? secondFrame;
+    const selectedPart: SelectedPartReference | undefined = focusedCropTarget ? {
+      photoId: evidencePhotos[0].id,
+      rectangle: { x: focusedCropTarget.x, y: focusedCropTarget.y, width: focusedCropTarget.width, height: focusedCropTarget.height },
+      ...(!photos && focusedFrame ? { cropPhotoId: "photo-2" } : {}),
+    } : undefined;
     // Explicit groups are authoritative in aiService. Legacy requests use photo-1/photo-2;
     // retain their exact inputs, including a derived crop, without claiming a new angle.
     if (!photos && identifySecondFrame) {
@@ -702,7 +707,7 @@ export default function Scanner() {
     saveLatestScanState({ frame, photos: evidencePhotos, photoRelationship: scanPhotoRelationship, scanQuality, ...buildShopScanContext(scanShopJob, scanVehicleContext, undefined) });
     // Decide cache eligibility only after all accepted inputs are known and durable.
     setAnalysisStep("Checking saved matches");
-    const imageHash = !photos && !identifySecondFrame && !scanVehicleContext ? await hashImageDataUrl(imageBase64) : null;
+    const imageHash = !selectedPart && !photos && !identifySecondFrame && !scanVehicleContext ? await hashImageDataUrl(imageBase64) : null;
     if (!isScanRequestActive(requestId)) return;
     if (imageHash && !scanShopJob) {
       const cached = getCachedScanResult(imageHash);
@@ -717,6 +722,7 @@ export default function Scanner() {
             frame,
             photos: evidencePhotos,
             photoRelationship: scanPhotoRelationship,
+            selectedPart,
             result: contextualResult,
             analyzedAt: new Date().toISOString(),
             focusBox,
@@ -755,6 +761,7 @@ export default function Scanner() {
         await identifyCapturedFrame(frame, identifySecondFrame, undefined, {
           photos,
           photoRelationship: scanPhotoRelationship,
+          selectedPart,
           signal,
           vehicleContext: scanVehicleContext,
         }),
@@ -798,6 +805,7 @@ export default function Scanner() {
           debug,
           photos: evidencePhotos,
           photoRelationship: scanPhotoRelationship,
+          selectedPart,
           analysisAttemptId,
           analyzedAt: new Date().toISOString(),
           focusBox,
@@ -832,6 +840,7 @@ export default function Scanner() {
           errorMessage: getSimpleScanErrorMessage(analysisError),
           photos: evidencePhotos,
           photoRelationship: scanPhotoRelationship,
+          selectedPart,
           errorCode: analysisError instanceof AIServiceError ? analysisError.code : "analysis_failed",
           analysisAttemptId,
           analyzedAt: new Date().toISOString(),
@@ -1312,21 +1321,49 @@ export default function Scanner() {
           ? await optionalVisual(createFocusedScanCrop(original.imageBase64, object.focusBox), 1000, null)
           : null;
       if (!stillCurrent()) return;
-      if (!hasImage(imageBase64)) {
+      if (!hasImage(imageBase64) || !original || !hasImage(original.imageBase64)) {
         setObjectAnalyses((prev) => ({ ...prev, [index]: { status: "error", message: "This selected area is unavailable. Keep the original photo and adjust the outline or retake it before analyzing this part." } }));
         return;
       }
-      return identifyCapturedFrame({ imageBase64, capturedAt: original?.capturedAt ?? new Date().toISOString() }, undefined, undefined, { vehicleContext: scanReview?.scanState.vehicleContext });
+      const photoId = scanReview?.scanState.photos?.[0]?.id ?? "photo-1";
+      const cropPhotoId = photoId === "photo-2" ? "selected-crop" : "photo-2";
+      const photos: ScanPhoto[] = [
+        { ...original, id: photoId, label: "overview" },
+        { imageBase64, capturedAt: original.capturedAt, id: cropPhotoId, label: "close_up" },
+      ];
+      const selectedPart: SelectedPartReference = { photoId,
+        rectangle: { x: object.focusBox.x, y: object.focusBox.y, width: object.focusBox.width, height: object.focusBox.height }, cropPhotoId };
+      const analysisAttemptId = createAnalysisAttemptId();
+      const result = await identifyCapturedFrame(original, photos[1], undefined, { selectedPart, vehicleContext: scanReview?.scanState.vehicleContext,
+        photos, photoRelationship: "unknown" });
+      return { result, scanState: { frame: original, photos, photoRelationship: "unknown" as const, selectedPart,
+        focusBox: { ...object.focusBox }, focusMode: "crop" as const, result, analysisAttemptId,
+        analyzedAt: new Date().toISOString(), vehicleContext: scanReview?.scanState.vehicleContext,
+        provenance: { analysisSource: "ai_detection" as const, captureMode: scanReview?.scanState.provenance?.captureMode ?? "upload", savedAt: new Date().toISOString() } } };
     })()
-      .then((result) => {
-        if (!result || !stillCurrent()) return;
-        setObjectAnalyses((prev) => ({ ...prev, [index]: { status: "done", result } }));
+      .then((analysis) => {
+        if (!analysis || !stillCurrent()) return;
+        setObjectAnalyses((prev) => ({ ...prev, [index]: { status: "done", ...analysis } }));
       })
       .catch((error) => {
         if (!isAccountScopeCurrent(accountScopeRef.current) || startedObjectAnalysisRef.current !== analysisSession) return;
         setObjectAnalyses((prev) => ({ ...prev, [index]: { status: "error", message: getSimpleScanErrorMessage(error) } }));
       });
-  }, [scanReview?.scanState.frame, scanReview?.scanState.vehicleContext]);
+  }, [scanReview?.scanState.frame, scanReview?.scanState.photos, scanReview?.scanState.provenance?.captureMode, scanReview?.scanState.vehicleContext]);
+
+  function openFocusedObjectChat() {
+    if (!isAccountScopeCurrent(accountScopeRef.current) || focusedObjectIndex === null) return;
+    const analysis = objectAnalyses[focusedObjectIndex];
+    if (analysis?.status !== "done") return;
+    const saved = createLookup(analysis.scanState, analysis.lookupId);
+    if (!saved.ok) {
+      setObjectAnalyses((prev) => ({ ...prev, [focusedObjectIndex]: { ...analysis, saveError: saved.message } }));
+      return;
+    }
+    setObjectAnalyses((prev) => ({ ...prev, [focusedObjectIndex]: { ...analysis, lookupId: saved.value.id } }));
+    if (!analysis.lookupId) syncSavedLookup(saved.value);
+    navigate(`/result/${encodeURIComponent(saved.value.id)}/chat`);
+  }
 
   const handleFocusObject = useCallback((index: number | null) => {
     setFocusedObjectIndex(index);
@@ -1529,6 +1566,7 @@ export default function Scanner() {
                 prefs={scanCardPrefs}
                 onBack={() => handleFocusObject(null)}
                 onRetry={retryFocusedObject}
+                onAsk={openFocusedObjectChat}
               /> : <ScanResultCard
                 isExpanded={false}
                 isMismatch={false}
@@ -2100,7 +2138,7 @@ function ScanResultCard({
 
 type ObjectAnalysis =
   | { status: "loading" }
-  | { status: "done"; result: IdentificationResult }
+  | { status: "done"; result: IdentificationResult; scanState: ScanAnalysisState; lookupId?: string; saveError?: string }
   | { status: "error"; message: string };
 
 /** Detail card for a tapped secondary object — same sections as the primary card, fed by the
@@ -2112,6 +2150,7 @@ function FocusedObjectCard({
   prefs,
   onBack,
   onRetry,
+  onAsk,
 }: {
   object: IsolatedObject;
   analysis: ObjectAnalysis | undefined;
@@ -2119,6 +2158,7 @@ function FocusedObjectCard({
   prefs: ScanCardPreferences;
   onBack: () => void;
   onRetry: () => void;
+  onAsk: () => void;
 }) {
   const result = analysis?.status === "done" ? analysis.result : null;
   const summary = result ? getSimpleResultSummary(result) : null;
@@ -2160,7 +2200,7 @@ function FocusedObjectCard({
 
       <div className="mt-3">
         {!analysis ? <div className="space-y-2 text-sm text-white/80">
-          <p>Inspect or correct the selected area above. Another AI analysis uses your normal scan allowance and is shown only in this view.</p>
+          <p>Inspect or correct the selected area above. Another AI analysis uses your normal scan allowance. You can save its result to ask follow-up questions.</p>
           <button type="button" className="min-h-11 rounded-lg bg-[var(--ds-accent)] px-3 font-bold text-white" onClick={onRetry}>Analyze selected area</button>
         </div> : analysis.status === "loading" ? (
           <div
@@ -2187,6 +2227,8 @@ function FocusedObjectCard({
               <SceneCategoryList result={result} variant="scanner" />
               <ResultDetailSections result={result} variant="scanner" compact={prefs.compactCardsByDefault} />
             </div>
+            <button type="button" className="mt-3 min-h-11 rounded-lg bg-[var(--ds-accent)] px-3 font-bold text-white" onClick={onAsk}>Ask DeepSpec</button>
+            {analysis.status === "done" && analysis.saveError ? <p role="alert" className="mt-2 text-sm">{analysis.saveError}</p> : null}
           </>
         ) : null}
       </div>

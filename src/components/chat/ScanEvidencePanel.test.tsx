@@ -40,6 +40,10 @@ const lookup: Lookup = {
 };
 
 describe("ScanEvidencePanel", () => {
+  it("shows the saved selected part instead of a later display-mask box", () => {
+    renderPanel({ ...lookup, selectedPart: { photoId: "photo-1", rectangle: { x: 0.1, y: 0.6, width: 0.2, height: 0.3 } } });
+    expect(screen.getByTestId("chat-focus-target")).toHaveStyle({ left: "10%", top: "60%", width: "20%", height: "30%" });
+  });
   it("opens a disagreement's exact original without drafting a message or inferring missing coverage", async () => {
     const value: Lookup = { ...lookup, photos: [
       { ...lookup.frame, id: "bay", label: "overview" },

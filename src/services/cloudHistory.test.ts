@@ -185,6 +185,7 @@ describe("readCloudLookups", () => {
     const base = "user-1/scan-1/";
     const box = { x: 0.1, y: 0.1, width: 0.3, height: 0.4, confidence: 0.8 };
     const bundle = { version: 1, ...(photoRelationship !== undefined ? { photoRelationship } : {}),
+      selectedPart: { photoId: "overview", rectangle: { x: box.x, y: box.y, width: box.width, height: box.height }, cropPhotoId: "detail" },
       photos: [{ id: "overview", label: "overview", capturedAt: "now", imagePath: `${base}original.jpg` }, { id: "detail", label: "close_up", capturedAt: "later", imagePath: `${base}detail.jpg` }],
       isolatedObjects: [{ name: "Primary", category: "engine", primary: true, focusBox: box, imagePath: `${base}primary.png` }, { name: "Secondary", category: "electrical", primary: false, focusBox: box, imagePath: `${base}secondary.png` }, { name: "Corrected", category: "engine", primary: false, focusBox: box, imagePath: null, focusMode: "crop", correctedAt: "today" }],
       focusBox: box, focusMode: "mask", isolatedImagePath: `${base}primary.png`,
@@ -197,6 +198,7 @@ describe("readCloudLookups", () => {
     if (!result.ok || !result.value) throw new Error("expected a cloud scan");
     expect(result.value.photos?.map((photo) => photo.id)).toEqual(["overview", "detail"]);
     expect(result.value.photoRelationship).toBe(photoRelationship);
+    expect(result.value.selectedPart).toEqual(bundle.selectedPart);
     expect(result.value.photos?.[1].imageBase64).toContain("detail.jpg?signed=new");
     expect(result.value.isolatedObjects?.[1].isolatedImageBase64).toContain("secondary.png?signed=new");
     expect(result.value.isolatedObjects?.[2]).toMatchObject({ isolatedImageBase64: "", focusMode: "crop", correctedAt: "today" });
@@ -205,6 +207,7 @@ describe("readCloudLookups", () => {
     const reopened = scanStateFromLookup(normalizeLookup(result.value)!);
     expect(reopened.photos).toEqual(result.value.photos);
     expect(reopened.photoRelationship).toBe(photoRelationship);
+    expect(reopened.selectedPart).toEqual(bundle.selectedPart);
     expect(reopened.isolatedObjects).toEqual(result.value.isolatedObjects);
     expect(mocks.signedUrls).toHaveBeenCalledWith([`${base}original.jpg`, `${base}detail.jpg`, `${base}primary.png`, `${base}secondary.png`], 3600);
   });
@@ -250,9 +253,28 @@ describe("readCloudLookups", () => {
     else expect(loaded.value.result).not.toHaveProperty("conditionAssessment");
   });
 
-  it.each(["other-owner", "other-scan", "missing-image", "malformed", "invalid-relationship"])("does not partially restore unsafe evidence: %s", async (kind) => {
+  it.each(["available", "missing-path", "foreign-path", "unavailable-image"])("restores a legacy selected part only with its owned original: %s", async (kind) => {
+    const imagePath = kind === "foreign-path" ? "user-2/scan-1/original.jpg" : "user-1/scan-1/original.jpg";
+    const selectedPart = { photoId: "photo-1", rectangle: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 } };
+    mocks.select.mockReturnValue({ data: [{ ...shopRow, image_path: kind === "missing-path" ? null : imagePath,
+      evidence_bundle_json: { version: 1, selectedPart } }], error: null });
+    mocks.signedUrls.mockResolvedValue({ data: kind === "unavailable-image" ? [] : [{ path: imagePath, signedUrl: "https://images/original.jpg?signed=new" }], error: null });
+    const { readCloudLookups } = await import("./cloudHistory");
+    const loaded = await readCloudLookups();
+    expect(loaded.ok).toBe(kind === "available");
+    if (loaded.ok) {
+      expect(loaded.value[0].selectedPart).toEqual(selectedPart);
+      const { normalizeLookup, scanStateFromLookup } = await import("./storage");
+      expect(scanStateFromLookup(normalizeLookup(loaded.value[0])!).selectedPart).toEqual(selectedPart);
+    }
+    if (kind === "missing-path" || kind === "foreign-path") expect(mocks.signedUrls).not.toHaveBeenCalled();
+  });
+
+  it.each(["other-owner", "other-scan", "missing-image", "malformed", "invalid-relationship", "invalid-selection"])("does not partially restore unsafe evidence: %s", async (kind) => {
     const imagePath = kind === "other-owner" ? "user-2/scan-1/photo.jpg" : kind === "other-scan" ? "user-1/scan-2/photo.jpg" : "user-1/scan-1/photo.jpg";
-    const bundle = { version: 1, ...(kind === "invalid-relationship" ? { photoRelationship: "same_car" } : {}), photos: [{ id: "detail", label: kind === "malformed" ? "not-a-label" : "close_up", capturedAt: "now", imagePath }] };
+    const bundle = { version: 1, ...(kind === "invalid-relationship" ? { photoRelationship: "same_car" } : {}),
+      ...(kind === "invalid-selection" ? { selectedPart: { photoId: "missing", rectangle: { x: 0, y: 0, width: 0.2, height: 0.2 } } } : {}),
+      photos: [{ id: "detail", label: kind === "malformed" ? "not-a-label" : "close_up", capturedAt: "now", imagePath }] };
     mocks.select.mockReturnValue({ data: [{ ...shopRow, evidence_bundle_json: bundle }], error: null });
     const { readCloudLookup } = await import("./cloudHistory");
     expect(await readCloudLookup("scan-1")).toMatchObject({ ok: false });

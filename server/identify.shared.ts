@@ -18,6 +18,7 @@ import {
   type MeasurementContext,
   type PartMeasurement,
   type PhotoRelationship,
+  type SelectedPartReference,
   type PossibleVehicleContext,
   type ScanCategory,
   type SourceLink,
@@ -34,6 +35,7 @@ type ParsedIdentifyRequest = {
   mimeType: string;
   photos: InspectionPhoto[];
   photoRelationship: PhotoRelationship;
+  selectedPart?: SelectedPartReference;
   userMessage: string;
   labelRescueTrigger: LabelRescueTrigger | null;
   measurementContext: MeasurementContext | null;
@@ -140,7 +142,8 @@ async function identifyResponse(body: unknown, env: Record<string, string | unde
   }
 
   const chainSignal = AbortSignal.timeout(getIdentifyTotalTimeoutMs(env));
-  const ocr = shouldRunOcr(parsed) ? await runOcrFallback(parsed, env, chainSignal) : null;
+  // Whole-photo OCR has no object location. Do not attach a neighboring label to a selected part.
+  const ocr = !parsed.selectedPart && shouldRunOcr(parsed) ? await runOcrFallback(parsed, env, chainSignal) : null;
   if (chainSignal.aborted) return identifyTimeoutResponse();
   const sourceContext = buildDatasetSourceContext(env);
   const forceHfIdentify = isHfIdentifyForced(env);
@@ -1321,7 +1324,7 @@ function parseIdentifyRequest(body: unknown): ParsedIdentifyRequest | { error: I
 
   const parsedPhotos = parseInspectionPhotos(body);
   if ("error" in parsedPhotos) return parsedPhotos;
-  const { photos, photoRelationship } = parsedPhotos;
+  const { photos, photoRelationship, selectedPart } = parsedPhotos;
 
   const userMessage =
     typeof body.userMessage === "string" && body.userMessage.trim()
@@ -1335,6 +1338,7 @@ function parseIdentifyRequest(body: unknown): ParsedIdentifyRequest | { error: I
     mimeType: photos[0].mimeType,
     photos,
     photoRelationship,
+    ...(selectedPart ? { selectedPart } : {}),
     userMessage,
     labelRescueTrigger: body.labelRescueTrigger === "too_blurry" ? "too_blurry" : null,
     measurementContext: parseMeasurementContext(body.measurementContext),
@@ -1343,7 +1347,7 @@ function parseIdentifyRequest(body: unknown): ParsedIdentifyRequest | { error: I
 }
 
 function buildIdentifyContextPrompt(parsed: ParsedIdentifyRequest) {
-  const sections = [buildPhotoEvidencePrompt(parsed.photos, parsed.photoRelationship), formatVehicleContext(parsed.vehicleContext ?? undefined)];
+  const sections = [buildPhotoEvidencePrompt(parsed.photos, parsed.photoRelationship, parsed.selectedPart), formatVehicleContext(parsed.vehicleContext ?? undefined)];
 
   if (parsed.measurementContext) {
     const context = parsed.measurementContext;

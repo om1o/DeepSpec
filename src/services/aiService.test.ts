@@ -88,6 +88,48 @@ describe("aiService", () => {
     vi.unstubAllEnvs();
   });
 
+  it.each([false, true])("retains the selected part through identify and both follow-ups (research=%s)", async (research) => {
+    const photos: ScanPhoto[] = ["source", "derived"].map((id) => ({ id, label: id === "source" ? "overview" : "close_up",
+      imageBase64: `data:image/png;base64,${btoa(id)}`, capturedAt: "2026-11-15T00:00:00.000Z" }));
+    const selectedPart = { photoId: "source", rectangle: { x: 0.2, y: 0.6, width: 0.3, height: 0.25 }, cropPhotoId: "derived" };
+    const requests: Record<string, unknown>[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (path, init) => {
+      requests.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify(String(path) === "/api/identify" ? { result } : { message: "Fixture response only." }), { status: 200 });
+    });
+    await identifyCapturedFrame(photos[0], undefined, undefined, { photos, selectedPart } as Parameters<typeof identifyCapturedFrame>[3]);
+    const lookup = { frame: photos[0], photos, selectedPart, result: { ...result, concerns: ["Unverified ".repeat(500)] },
+      scanCategory: "electrical", trainingLabel: "Alternator", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    for (const question of ["What part is this?", "Can you tell its part number?"]) {
+      await sendFollowUpDetails(lookup, question, { research });
+    }
+    expect(requests).toHaveLength(3);
+    for (const request of requests) {
+      expect(request.selectedPart).toEqual(selectedPart);
+      expect(request.photos).toEqual(photos.map(({ id, label, imageBase64 }) => ({ id, label, imageBase64 })));
+    }
+    expect(requests[1].userMessage).toContain("User question: What part is this?");
+    expect(requests[2].userMessage).toContain("User question: Can you tell its part number?");
+    expect(String(requests[2].userMessage).length).toBeLessThanOrEqual(3000);
+  });
+
+  it.each([null, { photoId: "missing", rectangle: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 } },
+    { photoId: "photo-1", rectangle: { x: 0.9, y: 0.2, width: 0.3, height: 0.4 } }])("rejects a damaged target before loading photos or requesting a provider: %j", async (selectedPart) => {
+    const frame = { imageBase64: "https://example.com/owned-original.jpg", capturedAt: "2026-11-16T00:00:00Z" };
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    await expect(identifyCapturedFrame(frame, undefined, undefined, { selectedPart } as never)).rejects.toMatchObject({ code: "invalid_input" });
+    await expect(sendFollowUpDetails({ frame, result, selectedPart } as never, "What part is this?")).rejects.toMatchObject({ code: "invalid_input" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("carries a legacy saved selection on a single original without inventing a crop", async () => {
+    const frame = { imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-16T00:00:00Z" };
+    const focusBox = { x: 0.2, y: 0.3, width: 0.4, height: 0.5, confidence: 0 };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "Fixture reply." }), { status: 200 }));
+    await sendFollowUpDetails({ frame, result, focusBox, chatHistory: [] } as never, "Can you tell its part number?");
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)).selectedPart).toEqual({ photoId: "photo-1", rectangle: { x: 0.2, y: 0.3, width: 0.4, height: 0.5 } });
+  });
+
   it.each([
     { photoRelationship: "same_part_or_area" as const, grouped: true },
     { photoRelationship: "independent" as const, grouped: false },

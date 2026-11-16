@@ -78,7 +78,7 @@ export function createLookup(scanState: ScanAnalysisState, reservedId?: string):
     ...(normalizeShopVehicleContext(scanState.vehicleContext) ? { vehicleContext: normalizeShopVehicleContext(scanState.vehicleContext) } : {}),
   };
 
-  if (!evidence) return { ok: false, value: { ...lookup, photos: scanState.photos, photoRelationship: scanState.photoRelationship, isolatedObjects: scanState.isolatedObjects }, message: "Photo evidence could not be saved safely. Keep this scan open and retry." };
+  if (!evidence) return { ok: false, value: { ...lookup, photos: scanState.photos, photoRelationship: scanState.photoRelationship, selectedPart: scanState.selectedPart, isolatedObjects: scanState.isolatedObjects }, message: "Photo evidence could not be saved safely. Keep this scan open and retry." };
   if (reservedId !== undefined && !/^[a-zA-Z0-9._:-]{1,160}$/.test(reservedId)) {
     return { ok: false, value: lookup, message: "This saved component draft has an invalid scan reference. Its photos were kept for recovery." };
   }
@@ -92,7 +92,8 @@ export function createLookup(scanState: ScanAnalysisState, reservedId?: string):
         return photo.id === other.id && photo.label === other.label && photo.capturedAt === other.capturedAt && photo.imageBase64 === other.imageBase64;
       }) : !existing.photos && !lookup.photos && existing.frame.imageBase64 === lookup.frame.imageBase64 && existing.frame.capturedAt === lookup.frame.capturedAt;
     const sameContext = vehicleContextsMatch(existing.vehicleContext, lookup.vehicleContext) && existing.jobId === lookup.jobId
-      && photoRelationshipOrUnknown(existing.photoRelationship) === photoRelationshipOrUnknown(lookup.photoRelationship);
+      && photoRelationshipOrUnknown(existing.photoRelationship) === photoRelationshipOrUnknown(lookup.photoRelationship)
+      && JSON.stringify(existing.selectedPart) === JSON.stringify(lookup.selectedPart);
     return samePhotos && sameContext ? { ok: true, value: existing }
       : { ok: false, value: lookup, message: "This component draft refers to different saved photos, their relationship, vehicle details or a shop job. The saved scan was preserved; reopen the component map." };
   }
@@ -103,7 +104,8 @@ export function createLookup(scanState: ScanAnalysisState, reservedId?: string):
 }
 
 export function saveExistingLookup(lookup: Lookup, retryState?: ScanAnalysisState | null): StorageResult<Lookup> {
-  if (!normalizeVisualEvidence(lookup) || (retryState && !normalizeVisualEvidence(retryState))) {
+  const lookupEvidence = normalizeVisualEvidence(lookup);
+  if (!lookupEvidence || (retryState && !normalizeVisualEvidence(retryState))) {
     return { ok: false, value: lookup, message: "Photo evidence could not be saved safely. The existing scan and original photos were preserved." };
   }
   const read = readLookups();
@@ -111,9 +113,15 @@ export function saveExistingLookup(lookup: Lookup, retryState?: ScanAnalysisStat
   const lookups = read.value;
   const local = lookups.find((entry) => entry.id === lookup.id);
   const existing = local ? withLatestInspection(local, lookup) : lookup;
+  if (retryState?.result && local && JSON.stringify(local.selectedPart) !== JSON.stringify(lookupEvidence.selectedPart)) {
+    return { ok: false, value: existing, message: "The selected part changed while this analysis was running. The newer selection and original photos were preserved; reopen the scan before retrying." };
+  }
   if (retryState?.result
     && photoRelationshipOrUnknown(retryState.photoRelationship) !== photoRelationshipOrUnknown(existing.photoRelationship)) {
     return { ok: false, value: existing, message: "The photo relationship changed since this analysis. The saved scan and original photos were preserved; reopen the scan before retrying." };
+  }
+  if (retryState?.result && !normalizeVisualEvidence({ ...existing, ...retryState, photoRelationship: existing.photoRelationship })) {
+    return { ok: false, value: existing, message: "The selected part no longer refers to these photos. The existing scan and original photos were preserved; reopen the scan before retrying." };
   }
   const saved = { ...withRetriedLookupResult(existing, retryState), cloudSave: undefined };
   const write = writeLookups(local
@@ -127,12 +135,14 @@ export function withRetriedLookupResult(existing: Lookup, retryState?: ScanAnaly
   // The save boundary reports the invalid metadata without writing either record.
   if (retryState && (!normalizeVisualEvidence(retryState) || (retryState.result
     && photoRelationshipOrUnknown(retryState.photoRelationship) !== photoRelationshipOrUnknown(existing.photoRelationship)))) return existing;
+  const retryEvidence = retryState?.result ? normalizeVisualEvidence({ ...existing, ...retryState, photoRelationship: existing.photoRelationship }) : null;
+  if (retryState?.result && !retryEvidence) return existing;
   // A cloud-only retry lives in screen state until Save; retain the original
   // record's identity and human work while replacing the failed AI attempt.
   const updated = retryState?.result ? {
     ...existing,
     frame: retryState.frame ?? existing.frame,
-    ...(normalizeVisualEvidence({ ...existing, ...retryState, photoRelationship: existing.photoRelationship }) ?? {}),
+    ...retryEvidence,
     result: retryState.result,
     analysisAttemptId: retryState.analysisAttemptId,
     analyzedAt: retryState.analyzedAt ?? new Date().toISOString(),
@@ -343,6 +353,7 @@ export function updateLookupResult(
   result: IdentificationResult,
   provenance?: Partial<ScanProvenance>,
   frame?: CapturedFrame,
+  expectedSelection?: Pick<Lookup, "selectedPart">,
 ): StorageResult<Lookup | null> {
   const read = readLookups();
   if (!read.ok) return { ok: false, message: read.message, value: null };
@@ -354,6 +365,12 @@ export function updateLookupResult(
   }
 
   const existing = lookups[index];
+  if (expectedSelection !== undefined) {
+    const expectedEvidence = normalizeVisualEvidence({ ...existing, selectedPart: expectedSelection.selectedPart });
+    if (!expectedEvidence || JSON.stringify(existing.selectedPart) !== JSON.stringify(expectedEvidence.selectedPart)) {
+      return { ok: false, value: existing, message: "The selected part changed while this analysis was running. The newer selection and original photos were preserved; reopen the scan before retrying." };
+    }
+  }
   const updatedLookup: Lookup = {
     ...existing,
     frame: frame ?? existing.frame,
@@ -486,6 +503,7 @@ export function scanStateFromLookup(lookup: Lookup): ScanAnalysisState {
     frame: lookup.frame,
     photos: lookup.photos,
     photoRelationship: lookup.photoRelationship,
+    selectedPart: lookup.selectedPart,
     isolatedObjects: lookup.isolatedObjects,
     focusBox: lookup.focusBox,
     focusMode: lookup.focusMode,

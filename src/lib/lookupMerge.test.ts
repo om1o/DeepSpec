@@ -8,6 +8,19 @@ const lookup = (token: string) => ({ id: "scan", cloudRevision: 1, frame: { capt
   isolatedObjects: [{ name: "Part", category: "engine", primary: true, focusBox: box, focusMode: "mask", isolatedImageBase64: `https://images/object?${token}` }],
 } as Lookup);
 describe("cloud evidence URL refresh", () => {
+  it("keeps the local selected-part reference and rejects stale target cutout URLs", () => {
+    const selectedPart = { photoId: "overview", rectangle: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 } };
+    const local = { ...lookup("old"), selectedPart: { ...selectedPart, cropPhotoId: "crop" } };
+    local.photos!.push({ ...local.photos![0], id: "crop", imageBase64: "https://images/target-crop?old" });
+    const remote = { ...lookup("new"), selectedPart: { ...selectedPart, cropPhotoId: "crop", rectangle: { ...selectedPart.rectangle, x: 0.4 } } };
+    remote.photos!.push({ ...remote.photos![0], id: "crop", imageBase64: "https://images/target-crop?new" });
+    const merged = mergeCloudLookup(local, remote);
+    expect(merged.selectedPart).toEqual(local.selectedPart);
+    expect(merged.isolatedImageBase64).toBe(local.isolatedImageBase64);
+    expect(merged.photos?.[0].imageBase64).toBe(remote.photos?.[0].imageBase64);
+    expect(merged.photos?.[1].imageBase64).toBe(local.photos![1].imageBase64);
+    expect(mergeCloudLookup(lookup("old"), remote)).not.toHaveProperty("selectedPart");
+  });
   it.each([true, false])("keeps local review coverage from its own attempt when refreshing URLs (local review: %s)", (hasReview) => {
     const result: IdentificationResult = { partName: "Panel", confidence: "low", scanCategory: "body", candidateMatches: [], whatItDoes: "Body panel",
       visibleObservations: [], evidenceRegions: [], concerns: [], safetyTriage: "can_help", isSafetyCritical: false, nextAction: "Inspect", needsBetterPhoto: true,

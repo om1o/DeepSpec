@@ -1,5 +1,5 @@
 import { CHAT_USER_MESSAGE_MAX_CHARS, FOLLOWUP_PROMPT } from "../src/services/systemPrompts.js";
-import type { PhotoRelationship, PhotoReview, SourceLink, VehicleContext } from "../src/types/index.js";
+import type { PhotoRelationship, PhotoReview, SelectedPartReference, SourceLink, VehicleContext } from "../src/types/index.js";
 import { formatVehicleContext, providerVehicleContext } from "../src/lib/vehicleContext.js";
 import { INDEPENDENT_PHOTO_COMPARISON_MESSAGE, normalizePhotoReview, photoReviewForRelationship } from "../src/lib/photoReview.js";
 import { buildConditionCoverage, formatConditionCoverage, UNLINKED_CONDITION_FLAGS_MESSAGE } from "../src/lib/conditionCoverage.js";
@@ -31,7 +31,7 @@ const LEGACY_FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
 const RETRYABLE_PROVIDER_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 const BLOCKED_FINISH_REASONS = new Set(["SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "IMAGE_RECITATION"]);
 type SavedIdentityScope = "first_photo" | "unrecorded" | "none";
-type ChatRequest = { userMessage: string; photos: InspectionPhoto[]; photoRelationship: PhotoRelationship; savedIdentityScope: SavedIdentityScope; photoReview?: PhotoReview; conditionCoverage: ReturnType<typeof buildConditionCoverage>; research: boolean; sourceUrls: string[]; vehicleContext?: VehicleContext };
+type ChatRequest = { userMessage: string; photos: InspectionPhoto[]; photoRelationship: PhotoRelationship; selectedPart?: SelectedPartReference; savedIdentityScope: SavedIdentityScope; photoReview?: PhotoReview; conditionCoverage: ReturnType<typeof buildConditionCoverage>; research: boolean; sourceUrls: string[]; vehicleContext?: VehicleContext };
 
 export async function createChatResponse(body: unknown, env: Record<string, string | undefined>): Promise<ChatResponse> {
   if (!isChatEnabled(env)) {
@@ -211,7 +211,7 @@ async function fetchGeminiChat(model: string, request: ChatRequest, apiKey: stri
           {
             role: "user",
             parts: [
-              { text: [request.userMessage, formatVehicleContext(request.vehicleContext), researchContext, buildPhotoEvidencePrompt(request.photos, request.photoRelationship), savedIdentityScopePrompt(request.savedIdentityScope), savedConditionPrompt(request), savedPhotoReviewPrompt(request)].filter(Boolean).join("\n\n") },
+              { text: [request.userMessage, formatVehicleContext(request.vehicleContext), researchContext, buildPhotoEvidencePrompt(request.photos, request.photoRelationship, request.selectedPart), savedIdentityScopePrompt(request.savedIdentityScope), savedConditionPrompt(request), savedPhotoReviewPrompt(request)].filter(Boolean).join("\n\n") },
               ...request.photos.flatMap((photo, index) => [
                 { text: photoCaption(photo, index) },
                 { inlineData: { mimeType: photo.mimeType, data: photo.base64 } },
@@ -324,6 +324,7 @@ function parseChatRequest(body: unknown): ChatRequest | { error: ChatResponse } 
     userMessage: userMessage.slice(0, CHAT_USER_MESSAGE_MAX_CHARS),
     photos: parsedPhotos.photos,
     photoRelationship: parsedPhotos.photoRelationship,
+    ...(parsedPhotos.selectedPart ? { selectedPart: parsedPhotos.selectedPart } : {}),
     savedIdentityScope: body.savedIdentityScope === "first_photo" || body.savedIdentityScope === "none" ? body.savedIdentityScope : "unrecorded",
     photoReview: photoReviewForRelationship(normalizePhotoReview(body.photoReview, parsedPhotos.photos.map((photo) => photo.id)), parsedPhotos.photoRelationship),
     conditionCoverage: buildConditionCoverage(body.conditionAssessment, parsedPhotos.photos.map((photo) => photo.id), body.savedIdentityScope !== "none"),

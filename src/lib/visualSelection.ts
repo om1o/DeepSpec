@@ -56,6 +56,7 @@ export function visualSelectionSourceMatches(current: ScanAnalysisState, expecte
     && current.analysisAttemptId === expected.analysisAttemptId
     && current.analyzedAt === expected.analyzedAt
     && current.result?.partName === expected.result?.partName
+    && JSON.stringify(currentEvidence.selectedPart) === JSON.stringify(expectedEvidence.selectedPart)
     && sameBox(currentEvidence.focusBox, expectedEvidence.focusBox)
     && currentEvidence.focusMode === expectedEvidence.focusMode
     && sameImageReference(currentEvidence.isolatedImageBase64, expectedEvidence.isolatedImageBase64, context)
@@ -76,7 +77,9 @@ export function correctScanSelection<T extends ScanAnalysisState>(state: T, box:
   if (objectIndex !== null && !selected) throw new Error("The selected part is no longer available. Reopen the scan.");
   const updatePrimary = objectIndex === null || selected?.primary;
   return { ...state,
-    ...(updatePrimary ? { focusBox, focusMode: "crop", isolatedImageBase64: "" } : {}),
+    ...(updatePrimary ? { focusBox, focusMode: "crop", isolatedImageBase64: "",
+      selectedPart: { photoId: state.photos?.[0]?.id ?? "photo-1", rectangle: { x: focusBox.x, y: focusBox.y, width: focusBox.width, height: focusBox.height } },
+    } : {}),
     ...(selected ? { isolatedObjects: state.isolatedObjects!.map((o) => o === selected
       ? { ...o, focusBox, focusMode: "crop" as const, isolatedImageBase64: "", correctedAt: new Date().toISOString() } : o) } : {}),
   };

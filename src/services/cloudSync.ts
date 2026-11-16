@@ -743,7 +743,7 @@ async function uploadEvidenceBundle(supabase: SupabaseClient, userId: string, lo
     cachedPaths.set(key, saved.image_path);
     return saved.image_path;
   };
-  const bundle: EvidenceBundle = { version: 1, ...(evidence.photoRelationship !== undefined ? { photoRelationship: evidence.photoRelationship } : {}), ...(evidence.focusBox ? { focusBox: evidence.focusBox } : {}), ...(evidence.focusMode ? { focusMode: evidence.focusMode } : {}) };
+  const bundle: EvidenceBundle = { version: 1, ...(evidence.photoRelationship !== undefined ? { photoRelationship: evidence.photoRelationship } : {}), ...(evidence.selectedPart ? { selectedPart: evidence.selectedPart } : {}), ...(evidence.focusBox ? { focusBox: evidence.focusBox } : {}), ...(evidence.focusMode ? { focusMode: evidence.focusMode } : {}) };
   if (evidence.photos !== undefined) {
     bundle.photos = [];
     for (const { imageBase64, ...photo } of evidence.photos) bundle.photos.push({ ...photo, imagePath: await upload(imageBase64, "photo") });

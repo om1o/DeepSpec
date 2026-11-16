@@ -28,7 +28,8 @@ export function ScanEvidencePanel({ lookup, onDraftQuestion }: ScanEvidencePanel
   const [selectedPhotoId, setSelectedPhotoId] = useState<string>();
   const selectedPhoto = lookup.photos?.find((photo) => photo.id === selectedPhotoId);
   const selected = items.find((item) => item.id === selectedId) ?? items[0];
-  const trustedFocus = !selectedPhoto || selectedPhoto.id === lookup.photos?.[0]?.id ? getTrustedFocusBox(lookup.focusBox) : null;
+  const trustedFocus = !selectedPhoto || selectedPhoto.id === lookup.photos?.[0]?.id
+    ? lookup.selectedPart?.rectangle ?? getTrustedFocusBox(lookup.focusBox) : null;
   const partName = result?.partName ?? "Captured frame";
   const modelRun = result?.modelRun;
 
@@ -114,7 +115,7 @@ export function ScanEvidencePanel({ lookup, onDraftQuestion }: ScanEvidencePanel
   );
 }
 
-function percentBox(box: VisualFocusBox) {
+function percentBox(box: Pick<VisualFocusBox, "x" | "y" | "width" | "height">) {
   return {
     height: `${box.height * 100}%`,
     left: `${box.x * 100}%`,

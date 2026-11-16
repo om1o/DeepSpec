@@ -125,6 +125,7 @@ describe("cloudSync", () => {
     lookup.photoRelationship = "independent";
     const box = { x: 0.1, y: 0.1, width: 0.3, height: 0.4, confidence: 0.8 };
     lookup.photos = [{ ...lookup.frame, id: "overview", label: "overview" }, { ...lookup.frame, id: "detail", label: "close_up", imageBase64: "data:image/jpeg;base64,Ynll" }];
+    lookup.selectedPart = { photoId: "overview", rectangle: { x: box.x, y: box.y, width: box.width, height: box.height }, cropPhotoId: "detail" };
     lookup.isolatedObjects = [
       { name: "Primary", category: "engine", primary: true, focusBox: box, isolatedImageBase64: "data:image/png;base64,YQ==" },
       { name: "Secondary", category: "electrical", primary: false, focusBox: box, isolatedImageBase64: "data:image/png;base64,Yg==" },
@@ -141,6 +142,7 @@ describe("cloudSync", () => {
     if (outcome === "failed-cutout") { expect(scanWrite).not.toHaveBeenCalled(); return; }
     const row = scanWrite.mock.calls[0][0];
     expect(row.result_json).toEqual(savedAiResult);
+    expect(row.evidence_bundle_json.selectedPart).toEqual(lookup.selectedPart);
     expect(row.evidence_bundle_json).toMatchObject({ version: 1, photoRelationship: "independent", photos: [{ id: "overview" }, { id: "detail" }], isolatedObjects: [{ name: "Primary" }, { name: "Secondary" }, { name: "Corrected", imagePath: null, focusMode: "crop" }] });
     expect(JSON.stringify(row.evidence_bundle_json)).not.toContain("base64");
     expect(row.evidence_bundle_json.photos[0].imagePath).toBe(row.image_path);
@@ -150,6 +152,7 @@ describe("cloudSync", () => {
     expect(bundle).not.toBeNull();
     const restored = restoreEvidenceBundle(bundle!, new Map(evidencePaths(bundle!).map((path) => [path, `https://images/${path}?token=new`])));
     expect(restored.photoRelationship).toBe("independent");
+    expect(restored.selectedPart).toEqual(lookup.selectedPart);
     expect(restored.photos?.map(({ id, label, capturedAt }) => ({ id, label, capturedAt })))
       .toEqual(lookup.photos.map(({ id, label, capturedAt }) => ({ id, label, capturedAt })));
     if (outcome === "missing-column") {
@@ -166,6 +169,19 @@ describe("cloudSync", () => {
     const original = JSON.stringify(lookup);
     const { syncLookupToCloud } = await import("./cloudSync");
     expect(await syncLookupToCloud(lookup)).toMatchObject({ ok: false, message: expect.stringContaining("relationship metadata is invalid") });
+    expect(mocks.createClient).not.toHaveBeenCalled();
+    expect(JSON.stringify(lookup)).toBe(original);
+  });
+
+  it.each(["missing-source", "missing-crop", "out-of-bounds", "missing-original"])("rejects invalid selected part before uploading originals: %s", async (kind) => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://example.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+    const lookup = makeLookup();
+    lookup.selectedPart = { photoId: kind === "missing-source" ? "absent" : "photo-1", rectangle: { x: 0.1, y: 0.1, width: kind === "out-of-bounds" ? 1 : 0.3, height: 0.4 }, ...(kind === "missing-crop" ? { cropPhotoId: "absent" } : {}) };
+    if (kind === "missing-original") lookup.frame.imageBase64 = "/brand/deepspec-symbol.webp";
+    const original = JSON.stringify(lookup);
+    const { syncLookupToCloud } = await import("./cloudSync");
+    expect((await syncLookupToCloud(lookup)).ok).toBe(false);
     expect(mocks.createClient).not.toHaveBeenCalled();
     expect(JSON.stringify(lookup)).toBe(original);
   });

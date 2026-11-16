@@ -1,5 +1,6 @@
-import type { PhotoRelationship } from "../src/types/index.js";
+import type { PhotoRelationship, SelectedPartReference } from "../src/types/index.js";
 import { isPhotoRelationship, photoRelationshipDescription, photoRelationshipOrUnknown } from "../src/lib/photoRelationship.js";
+import { normalizeSelectedPart } from "../src/lib/selectedPart.js";
 
 const PHOTO_LABELS = ["overview", "close_up", "marking", "mounting", "other"] as const;
 // Stay below Vercel's 4.5 MB request limit with room for JSON and context.
@@ -14,7 +15,7 @@ export type InspectionPhoto = {
 type PhotoError = { error: { status: 400; body: { error: { code: string; message: string } } } };
 const invalid = (message: string, code = "invalid_input"): PhotoError => ({ error: { status: 400, body: { error: { code, message } } } });
 
-export function parseInspectionPhotos(body: Record<string, unknown>, required = true): { photos: InspectionPhoto[]; photoRelationship: PhotoRelationship } | PhotoError {
+export function parseInspectionPhotos(body: Record<string, unknown>, required = true): { photos: InspectionPhoto[]; photoRelationship: PhotoRelationship; selectedPart?: SelectedPartReference } | PhotoError {
   if (body.photoRelationship !== undefined && !isPhotoRelationship(body.photoRelationship)) {
     return invalid("Photo relationship must be same_part_or_area, independent, or unknown.");
   }
@@ -47,7 +48,9 @@ export function parseInspectionPhotos(body: Record<string, unknown>, required = 
       payloadChars += inputs[0].imageBase64.length;
     }
   } else {
-    if (!required && body.imageBase64 === undefined && body.imageBase64_2 === undefined) return { photos: [], photoRelationship };
+    if (!required && body.imageBase64 === undefined && body.imageBase64_2 === undefined) {
+      return body.selectedPart !== undefined ? invalid("A selected part requires its original photo.") : { photos: [], photoRelationship };
+    }
     if (typeof body.imageBase64 !== "string") return invalid("A captured image is required.");
     if (body.imageBase64_2 !== undefined && typeof body.imageBase64_2 !== "string") {
       return invalid("The second captured image must be a JPEG, PNG, or WebP data URL.");
@@ -66,7 +69,9 @@ export function parseInspectionPhotos(body: Record<string, unknown>, required = 
     if (!image) return invalid("Each captured image must be a JPEG, PNG, or WebP data URL.");
     photos.push({ id: input.id, label: input.label, ...image });
   }
-  return { photos, photoRelationship };
+  const selectedPart = body.selectedPart === undefined ? undefined : normalizeSelectedPart(body.selectedPart, photos.map((photo) => photo.id));
+  if (selectedPart === null) return invalid("The selected part must reference a valid region of the first original photo and an available, distinct crop when supplied.");
+  return { photos, photoRelationship, ...(selectedPart ? { selectedPart } : {}) };
 }
 
 function parseDataUrl(dataUrl: string) {
@@ -91,7 +96,7 @@ export function geminiPhotoParts(photos: InspectionPhoto[]) {
   ]);
 }
 
-export function buildPhotoEvidencePrompt(photos: InspectionPhoto[], relationship: PhotoRelationship = "unknown") {
+export function buildPhotoEvidencePrompt(photos: InspectionPhoto[], relationship: PhotoRelationship = "unknown", selectedPart?: SelectedPartReference) {
   if (!photos.length) return "";
   return [
     ...(photos.length === 1 ? [
@@ -100,7 +105,9 @@ export function buildPhotoEvidencePrompt(photos: InspectionPhoto[], relationship
       `Photo relationship: ${photoRelationshipDescription(relationship)}`,
       relationship === "same_part_or_area"
         ? "Compare the reported views of the same part or area, but treat that relationship as unverified. Do not merge incompatible evidence or let the user's grouping override visible disagreement."
-        : "Use the first photo for the main identification and its geometry. Consider every other photo separately; do not merge its identity, markings, condition or fitment into the first photo. Supplied vehicle context applies only to the first photo, not to independent or unlinked examples.",
+        : selectedPart?.cropPhotoId
+          ? "Use the first photo for the main identification and its geometry. Consider every other original photo separately; do not merge its identity, markings, condition or fitment into the first photo. Only the explicitly declared cropPhotoId supplies derived detail of the selected region. Supplied vehicle context applies only to the first photo, not to independent or unlinked originals."
+          : "Use the first photo for the main identification and its geometry. Consider every other photo separately; do not merge its identity, markings, condition or fitment into the first photo. Supplied vehicle context applies only to the first photo, not to independent or unlinked examples.",
       "Describe evidence from each photo using its id, including a view that is unclear or does not support the proposed identity. Do not assume a before-and-after sequence.",
       relationship === "independent"
         ? "Independent examples can show different parts or conditions without disagreement. Return photoReview.disagreements as []; report each photo's visible evidence and limits separately. Do not ask for another view merely to reconcile independent examples."
@@ -111,5 +118,11 @@ export function buildPhotoEvidencePrompt(photos: InspectionPhoto[], relationship
     "Cite the relevant photo ids with visible observations and evidence, including evidenceRegions descriptions when returning structured identification. Keep directly visible evidence separate from possible causes, which must be labeled unconfirmed.",
     "Do not infer hidden condition, damage depth, severity, or structural integrity from appearance alone; state what remains unknown. For rust on a rocker panel, distinguish visible surface corrosion from unverified perforation or internal damage, and do not present an assumed cause as observed evidence.",
     "Give a targeted next check or photo that resolves the main uncertainty or contradictory views. Main-part identification geometry applies only to the first photo. Condition-assessment version 2 may additionally return an optional observation area for any explicitly cited photo, in that entire photo's own normalized coordinate space; never transfer geometry between images. Measurement context and supplemental OCR, when present, apply only to the first photo.",
+    ...(selectedPart ? [
+      `Selected part reference: ${JSON.stringify(selectedPart)}`,
+      "Identify and answer about the selected region of the first original photo as the main subject, even when another object has a clearer label. The rectangle uses normalized 0-1 coordinates on that entire original: origin top-left, x rightward, y downward. Cite at least one visible clue in that selected part; a selection is a pointer, not confirmation of identity or condition.",
+      ...(selectedPart.cropPhotoId ? ["The cropPhotoId image is a declared derived crop of that region, not a new camera angle or an independent example. It is the sole exception to instructions separating independent or unknown photos: use it only to inspect the same selected part, including its visibly readable markings. All other originals retain their stated relationship. Keep identity and geometry anchored to the first original photo, never the crop coordinate system."] : []),
+      "Keep markings on the object that visibly bears them. Do not attach another object's label to the selected component. For example, when selecting an alternator beside a hose, the hose's markings belong to the hose. Do not transfer nearby readable text to the selected part or infer an exact number from shape. Transcribe a marking only when it is clearly readable on the selected part; literal text is not verified OEM identity, fitment or compatibility. If that part's number is unreadable, say so and request one straight-on close-up of that part's label with the text filling the frame and in focus.",
+    ] : []),
   ].join("\n");
 }

@@ -231,6 +231,7 @@ function ResultView({ id }: { id: string | undefined }) {
         pendingRetry.result,
         pendingRetry.provenance,
         pendingRetry.frame,
+        pendingRetry,
       );
       if (!resultWrite.ok) {
         const retryLookup = {
@@ -1006,13 +1007,14 @@ function AnalysisError({
       if (!isCurrentRetry()) return;
       const result = applyShopFitmentContext(await identifyCapturedFrame(identificationFrame, undefined, undefined, {
         vehicleContext, photos: lookup?.photos ?? photos, photoRelationship: lookup ? lookup.photoRelationship : photoRelationship,
+        selectedPart: lookup?.selectedPart,
       }), vehicleContext);
       if (!isCurrentRetry()) return;
       if (lookup) {
         const updateResult = updateLookupResult(lookup.id, result, {
           analysisSource: "manual_retry",
           savedAt: new Date().toISOString(),
-        }, identificationFrame);
+        }, identificationFrame, lookup);
         if (updateResult.value) {
           onLookupRetrySuccess(updateResult.value, updateResult.ok ? undefined : updateResult.message);
         } else {

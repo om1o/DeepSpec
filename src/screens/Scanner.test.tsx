@@ -508,6 +508,53 @@ describe("Scanner", () => {
     expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
   });
 
+  it("saves the tapped part's exact analysis for chat without replacing the overview", async () => {
+    const originalImage = mockStillImageTarget({ confidence: 0.9, x: 0.2, y: 0.2, width: 0.3, height: 0.3 });
+    const box = { x: 0.5, y: 0.4, width: 0.25, height: 0.25, confidence: 1 };
+    isolateSceneObjects.mockResolvedValue([
+      { name: "Alternator", category: "electrical", focusBox: box, isolatedImageBase64: "", focusMode: "crop", primary: false },
+    ]);
+    identifyCapturedFrame.mockResolvedValueOnce({ ...makeScanResult("Engine assembly"), sceneObjects: [{ name: "Alternator", category: "electrical", regionLabel: "right", confidence: "high" }] })
+      .mockResolvedValueOnce(makeScanResult("Selected alternator"));
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Select Alternator" }));
+    const overview = JSON.stringify(getLookups()[0]);
+    await userEvent.click(screen.getByRole("button", { name: "Analyze selected area" }));
+    await waitFor(() => expect(screen.getByTestId("focused-object-card")).toHaveTextContent("Selected alternator"));
+    const request = identifyCapturedFrame.mock.calls[1];
+    expect(request[0]).toMatchObject({ imageBase64: originalImage });
+    expect(request[3]).toMatchObject({ selectedPart: {
+      photoId: "photo-1", rectangle: { x: 0.5, y: 0.4, width: 0.25, height: 0.25 }, cropPhotoId: "photo-2",
+    } });
+    await userEvent.click(within(screen.getByTestId("focused-object-card")).getByRole("button", { name: "Ask DeepSpec" }));
+    expect(getLookups()).toHaveLength(2);
+    const child = getLookups()[0];
+    expect(JSON.stringify(getLookups()[1])).toBe(overview);
+    expect(child.result?.partName).toBe("Selected alternator");
+    expect(child.frame.imageBase64).toBe(originalImage);
+    expect(child.photos?.map((photo) => photo.imageBase64)).toEqual([originalImage, "data:image/jpeg;base64,target-crop"]);
+    expect(child.selectedPart).toEqual(request[3]?.selectedPart);
+    expect(child.chatHistory).toEqual([]);
+    // The scanner stays mounted in this route-less harness; repeated clicks reuse the record.
+    await userEvent.click(within(screen.getByTestId("focused-object-card")).getByRole("button", { name: "Ask DeepSpec" }));
+    expect(getLookups()).toHaveLength(2);
+  });
+
+  it("does not reuse a whole-photo cache entry when a selected crop is unavailable", async () => {
+    mockStillImageTarget({ confidence: 0.9, x: 0.2, y: 0.2, width: 0.3, height: 0.3 });
+    createFocusedScanCrop.mockResolvedValue(null);
+    vi.mocked(hashImageDataUrl).mockResolvedValue("original-only-cache-key");
+    vi.mocked(getCachedScanResult).mockReturnValue(makeScanResult("Cached overview"));
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(1));
+    expect(getCachedScanResult).not.toHaveBeenCalled();
+    expect(identifyCapturedFrame.mock.calls[0][3]).toMatchObject({ selectedPart: {
+      photoId: "photo-1", rectangle: { x: 0.2, y: 0.2, width: 0.3, height: 0.3 },
+    } });
+  });
+
   it.each([
     ["fresh", 1], ["fresh", 2], ["fresh", 4], ["cached", 1], ["cached", 4],
   ] as const)("retains %s secondary selections without a primary outline (%i objects)", async (source, count) => {
@@ -646,8 +693,11 @@ describe("Scanner", () => {
     });
     if (outcome === "available") {
       await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(2));
-      expect(identifyCapturedFrame.mock.calls[1][0]).toMatchObject({ imageBase64: "data:image/jpeg;base64,corrected-crop" });
-      expect(identifyCapturedFrame.mock.calls[1][3]).toMatchObject({ vehicleContext: vehicle });
+      expect(identifyCapturedFrame.mock.calls[1][0]).toMatchObject({ imageBase64: originalImage });
+      expect(identifyCapturedFrame.mock.calls[1][1]).toMatchObject({ imageBase64: "data:image/jpeg;base64,corrected-crop" });
+      expect(identifyCapturedFrame.mock.calls[1][3]).toMatchObject({ vehicleContext: vehicle, selectedPart: {
+        photoId: "photo-1", rectangle: { x: correctedBox.x, y: correctedBox.y, width: correctedBox.width, height: correctedBox.height }, cropPhotoId: "photo-2",
+      } });
       expect(await screen.findByText("Socket wrench")).toBeInTheDocument();
     } else {
       expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
@@ -684,7 +734,11 @@ describe("Scanner", () => {
     await userEvent.click(screen.getByRole("button", { name: "Analyze selected area" }));
     await waitFor(() => expect(identifyCapturedFrame).toHaveBeenCalledTimes(3));
     expect(createFocusedScanCrop).toHaveBeenCalledWith(originalImage, { ...focusBox, x: 0.4, confidence: 0 });
-    expect(identifyCapturedFrame.mock.calls[2][0]).toMatchObject({ imageBase64: "data:image/jpeg;base64,target-crop" });
+    expect(identifyCapturedFrame.mock.calls[2][0]).toMatchObject({ imageBase64: originalImage });
+    expect(identifyCapturedFrame.mock.calls[2][1]).toMatchObject({ imageBase64: "data:image/jpeg;base64,target-crop" });
+    expect(identifyCapturedFrame.mock.calls[2][3]).toMatchObject({ selectedPart: {
+      photoId: "photo-1", rectangle: { x: 0.4, y: 0.2, width: 0.3, height: 0.3 }, cropPhotoId: "photo-2",
+    } });
   });
 
   it("opens a simple captured-item review when AI analysis fails", async () => {
