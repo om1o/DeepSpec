@@ -130,10 +130,11 @@ export async function createChatResponse(body: unknown, env: Record<string, stri
       success: true,
     });
 
+    const groundedMessage = guardSelectedPartIdentifierAnswer(message, parsed);
     return {
       status: 200,
       body: {
-        message,
+        message: groundedMessage,
         ...(parsed.research ? getResearchSources(responseBody) : {}),
       },
     };
@@ -385,6 +386,32 @@ function cleanChatMessage(value: string | null) {
 
   const cleaned = value.replace(/\r\n?/g, "\n").split("\n").map((line) => line.trimEnd()).join("\n").replace(/\n{3,}/g, "\n\n").trim();
   return cleaned || null;
+}
+
+function guardSelectedPartIdentifierAnswer(message: string, request: ChatRequest) {
+  if (!request.selectedPart || !asksForExactIdentifier(request.userMessage)) {
+    return message;
+  }
+
+  if (statesIdentifierLimit(message) || citesReadableSelectedPartMarking(message)) {
+    return message;
+  }
+
+  return "I can\u2019t verify an exact part or serial number from the selected part\u2019s visible evidence. Take one straight-on close-up of that part\u2019s label with the text filling the frame and in focus.";
+}
+
+function asksForExactIdentifier(message: string) {
+  return /\b(?:part|serial|model|oem|casting|catalog)\s*(?:number|no\.?|#|code|id|identifier)\b|\bexact\s+(?:part|serial|model|oem|casting|catalog)\b/i.test(message);
+}
+
+function statesIdentifierLimit(message: string) {
+  return /\b(?:can(?:not|'t|\u2019t)|unable)\b.{0,100}\b(?:read|verify|confirm|identify)|\b(?:unreadable|illegible|not\s+(?:clear|legible|readable|visible|verified|confirmed))\b|\b(?:need|take|provide|request)\b.{0,100}\b(?:close[- ]up|label|marking)\b/i.test(message);
+}
+
+function citesReadableSelectedPartMarking(message: string) {
+  const selectedPart = /\b(?:selected|this|the)\s+(?:part|component|item|alternator)\b/i;
+  const readableMarking = /\b(?:clearly|visibly)\s+(?:readable|legible)\b.{0,100}\b(?:label|marking|stamp|tag|text)\b|\b(?:label|marking|stamp|tag)\b.{0,100}\b(?:clearly|visibly)\s+(?:reads?|shows?|says?|states?|transcribes?)\b/i;
+  return selectedPart.test(message) && readableMarking.test(message);
 }
 
 function chatTimeoutError() {
