@@ -133,7 +133,9 @@ export function classifyWebsiteQa(report) {
   if (failed.length > 0) {
     return {
       ok: false,
-      message: `Website QA has failures: ${failed.join(", ")}.`,
+      message: `Website QA has unresolved scenarios: ${failed.map((scenario) =>
+        typeof scenario === "string" ? scenario : `${scenario.name} (${scenario.status})`
+      ).join(", ")}.`,
     };
   }
 
