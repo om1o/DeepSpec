@@ -131,6 +131,70 @@ describe("selected-part provider transport", () => {
   });
 
   it.each([
+    {
+      partName: "Alternator HOSE-123",
+      evidence: ["The neighboring hose label says HOSE-123; the alternator label is unreadable."],
+    },
+    {
+      partName: "Alternator ALT-987",
+      evidence: ["A vented housing and pulley are visible."],
+    },
+    {
+      partName: "Alternator",
+      primaryPartName: "Alternator HOSE-123",
+      evidence: ["The neighboring hose label says HOSE-123; the alternator label is unreadable."],
+    },
+    {
+      partName: "Alternator HOSE-123",
+      evidence: ["The selected part label clearly reads ALT-456; the neighboring hose label says HOSE-123."],
+    },
+  ])("does not promote an unsupported selected-part number into the primary identity: $partName", async (unsafe) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify({
+        ...identification,
+        ...unsafe,
+        primaryPart: { partName: "primaryPartName" in unsafe ? unsafe.primaryPartName : unsafe.partName, confidence: "high", scanCategory: "electrical", evidence: unsafe.evidence },
+        confidence: "high",
+        fitmentConfidence: "supported",
+        needsBetterPhoto: false,
+      }) }] } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+
+    const response = await createIdentifyResponse({ photos, selectedPart }, { GEMINI_API_KEY: "test-key" });
+    expect(response.status).toBe(200);
+    if (response.status !== 200) return;
+    expect(response.body.result.partName).toBe("Alternator");
+    expect(response.body.result.primaryPart?.partName).toBe("Alternator");
+    expect(response.body.result.needsBetterPhoto).toBe(true);
+    expect(response.body.result.fitmentConfidence).toBe("needs_vehicle_context");
+    expect(response.body.result.nextAction).toContain("close-up");
+    expect(response.body.result.requiredNextEvidence).toEqual([response.body.result.nextAction]);
+    if (unsafe.evidence[0].includes("ALT-456")) {
+      expect(response.body.result.evidence.some((item) => item.includes("ALT-456"))).toBe(true);
+    }
+  });
+
+  it("retains a readable selected-label transcription as evidence without treating it as verified fitment", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify({
+        ...identification,
+        partName: "Alternator 104210-1230",
+        evidence: ["The clearly readable label on the selected part says 104210-1230."],
+        needsBetterPhoto: false,
+        fitmentConfidence: "needs_vehicle_context",
+      }) }] } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+
+    const response = await createIdentifyResponse({ photos, selectedPart }, { GEMINI_API_KEY: "test-key" });
+    expect(response.status).toBe(200);
+    if (response.status !== 200) return;
+    expect(response.body.result.partName).toBe("Alternator");
+    expect(response.body.result.evidence).toContain("The clearly readable label on the selected part says 104210-1230.");
+    expect(response.body.result.fitmentConfidence).toBe("needs_vehicle_context");
+    expect(response.body.result.needsBetterPhoto).toBe(false);
+  });
+
+  it.each([
     null,
     { ...selectedPart, photoId: "another-original" },
     { ...selectedPart, photoId: "missing" },

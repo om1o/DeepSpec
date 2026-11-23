@@ -453,7 +453,7 @@ async function createGeminiIdentifyAttempt(
     return { model, response: invalidResponse, rateLimited: false };
   }
 
-  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env, parsed.measurementContext);
+  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env, parsed.measurementContext, parsed.selectedPart);
   const latencyMs = Date.now() - startedAt;
 
   console.info("[DeepSpec AI]", {
@@ -545,7 +545,7 @@ async function createGeminiRescueIdentifyResponse(
     return invalidResponse;
   }
 
-  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env, parsed.measurementContext);
+  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env, parsed.measurementContext, parsed.selectedPart);
   const latencyMs = Date.now() - startedAt;
 
   console.info("[DeepSpec AI]", {
@@ -773,7 +773,7 @@ async function createBackendIdentifyResponse(
     return invalidResponse;
   }
 
-  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env, parsed.measurementContext);
+  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env, parsed.measurementContext, parsed.selectedPart);
   const latencyMs = Date.now() - startedAt;
 
   console.info("[DeepSpec AI]", {
@@ -1052,7 +1052,7 @@ async function createOllamaIdentifyResponse(
     return invalidResponse;
   }
 
-  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env, parsed.measurementContext);
+  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env, parsed.measurementContext, parsed.selectedPart);
   const latencyMs = Date.now() - startedAt;
 
   console.info("[DeepSpec AI]", {
@@ -2114,7 +2114,10 @@ function normalizeIdentificationResult(
   ocrText: string | null = null,
   env: Record<string, string | undefined> = {},
   measurementContext: MeasurementContext | null = null,
+  selectedPart?: SelectedPartReference,
 ): IdentificationResult {
+  const selectedIdentity = selectedPart ? guardSelectedPartIdentity(result) : null;
+  if (selectedIdentity) result = selectedIdentity.result;
   const datasetMatches = findDatasetMatches(result, env);
   const cleanEvidence = appendDatasetEvidence(appendOcrEvidence(cleanList(result.evidence), ocrText), datasetMatches);
   const originalPartName = cleanText(result.partName, "Unidentified car part");
@@ -2127,7 +2130,7 @@ function normalizeIdentificationResult(
   const confidenceScore = normalizeConfidenceScore(result.confidenceScore);
   const confidenceRange = normalizeConfidenceRange(result.confidenceRange);
   const confirmationNeed = normalizeConfirmationNeed(result.confirmationNeed);
-  const needsBetterPhoto = normalizeNeedsBetterPhoto(result, safety.safetyTriage, partName, confidence);
+  const needsBetterPhoto = Boolean(selectedIdentity?.needsCloseUp) || normalizeNeedsBetterPhoto(result, safety.safetyTriage, partName, confidence);
   const candidateMatches = normalizeCandidateMatches(result, datasetMatches, partName, resolvedScanCategory);
   const evidenceRegions = normalizeEvidenceRegions(result.evidenceRegions, visibleObservations, cleanEvidence, partName);
   const sourceLinks = normalizeSourceLinks(result.sourceLinks, datasetMatches, partName);
@@ -2165,6 +2168,50 @@ function normalizeIdentificationResult(
     isSafetyCritical: safety.isSafetyCritical,
     needsBetterPhoto,
   };
+}
+
+function guardSelectedPartIdentity(result: IdentificationResult): { result: IdentificationResult; needsCloseUp: boolean } {
+  const identifierPattern = /\b(?:[A-Za-z]{2,}[-/])?[A-Za-z]*\d[A-Za-z0-9-]{2,}\b|\b\d{4,}\b/;
+  const identifier = identifierPattern.exec(result.partName)?.[0] ?? identifierPattern.exec(result.primaryPart?.partName ?? "")?.[0];
+  if (!identifier) return { result, needsCloseUp: false };
+
+  const partName = result.partName.replace(identifier, "").replace(/\s+/g, " ").trim() || "Unidentified car part";
+  const readableSelectedLabel = [...result.evidence, ...result.visibleObservations, ...(result.primaryPart?.evidence ?? [])]
+    .some((item) => item.split(/[.!?;\n]/).some((clause) =>
+      /(?:selected|this)\s+(?:part|component|alternator)(?:'s|\u2019s)?\s+(?:label|marking|stamp|tag)|(?:label|marking|stamp|tag)\s+(?:on|of)\s+(?:the\s+)?(?:selected|this)\s+(?:part|component|alternator)/i.test(clause)
+      && /\b(?:clearly|visibly)\s+(?:readable|legible|reads?|shows?|says?)\b/i.test(clause)
+      && !/\b(?:unreadable|illegible|not\s+(?:readable|legible|visible))\b/i.test(clause)
+      && clause.includes(identifier)));
+  const keepEvidence = (item: string) => readableSelectedLabel || !item.includes(identifier);
+  const filterEvidence = (items: string[]) => items.flatMap((item) =>
+    readableSelectedLabel ? [item] : item.split(/[;\n]/).map((clause) => clause.trim()).filter((clause) => clause && !clause.includes(identifier)));
+  const request = "Take one straight-on close-up of the selected part's label with the text filling the frame and in focus.";
+
+  return { needsCloseUp: !readableSelectedLabel, result: {
+    ...result,
+    partName,
+    primaryPart: result.primaryPart ? {
+      ...result.primaryPart,
+      partName: result.primaryPart.partName.replace(identifier, "").replace(/\s+/g, " ").trim() || partName,
+      evidence: filterEvidence(result.primaryPart.evidence),
+    } : undefined,
+    candidateParts: result.candidateParts?.map((part) => part.partName.includes(identifier)
+      ? { ...part, partName: part.partName.replace(identifier, "").trim() || partName, evidence: filterEvidence(part.evidence) }
+      : part),
+    candidateMatches: result.candidateMatches.filter((match) => !match.partName.includes(identifier)),
+    evidence: filterEvidence(result.evidence),
+    visibleObservations: filterEvidence(result.visibleObservations),
+    evidenceRegions: result.evidenceRegions.filter((region) => keepEvidence(`${region.label} ${region.observation} ${region.regionLabel}`)),
+    sourceLinks: result.sourceLinks.filter((link) => keepEvidence(`${link.label} ${link.url}`)),
+    ...(!readableSelectedLabel ? {
+      whatItDoes: result.whatItDoes.includes(identifier) ? "The visible part family needs confirmation before ordering or repair." : result.whatItDoes,
+      nextAction: request,
+      requiredNextEvidence: [request],
+      needsBetterPhoto: true,
+      fitmentConfidence: "needs_vehicle_context" as const,
+      confirmationNeed: "reference_needed" as const,
+    } : {}),
+  } };
 }
 
 function resolvePrimaryPartName(

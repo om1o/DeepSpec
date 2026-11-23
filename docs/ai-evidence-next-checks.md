@@ -172,3 +172,39 @@ assets; those generated changes were restored to their clean baseline, then
 public/brand asset checks passed again. Repository CI uses Node 22 and still
 needs to run on the pushed exact commit. These checks do not prove the hosted
 private beta flow or physical-device behavior.
+
+## Initial selected-part identifier checkpoint — November 23
+
+The initial identify response had a separate exact-ID escape path: the provider
+could place an unsupported code in `partName` or `primaryPart.partName`, even
+though follow-up chat had an identifier guard. The same two fixed mocked
+provider replies used before this edit returned unsupported primary identities
+for 2/2 baseline cases and 0/2 candidate cases. A third fixed mock exercised
+the separate `primaryPart` field: it failed before that field was guarded and
+passed afterward. Four unsupported-ID fixtures now return 0/4 unsupported
+primary identities, and one readable-label fixture retains its transcription.
+These are deterministic response checks, not photo accuracy.
+
+For selected-part results, the displayed primary identity now retains the
+part-family name. If a code in the primary name lacks an explicitly readable
+marking on the selected part, the result requests one straight-on label
+close-up and does not promote that code into the primary identity. A separate
+mock confirms that a readable selected-label string remains as literal
+evidence while fitment stays unverified. Unsupported codes also cannot retain
+the provider's `supported` fitment claim. This code checks the provider's
+attribution text; it cannot establish that the pixels actually show the label.
+
+The frozen real held-out set is still 0 eligible/0 scored in this checkout:
+part-family accuracy, exact-ID precision/coverage, confident wrong answers,
+useful abstentions and time to result remain unmeasured. The generated engine
+fixture remains tune-up only. No model, default provider, hosted data, schema,
+account, billing or release destination changed.
+
+Final-source local checks on Node 24.14.0 passed: 4,325 tests across 206 files
+using the serial Windows runner, ESLint, strict/non-strict server TypeScript,
+frontend TypeScript, production build, public/brand asset integrity and
+`git diff --check`. The build-regenerated intro assets were restored to their
+pre-build tracked state. QA doctor failed because this checkout has no
+configured app URL, Supabase public settings or authorized QA account; its
+localhost fallback was not running. Authenticated provider, save/reopen,
+two-account and physical-device acceptance remain unverified.
