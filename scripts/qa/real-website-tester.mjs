@@ -370,16 +370,18 @@ async function runScanner() {
   await requireAuthForProtectedRoute("scanner");
   const startedAtMs = Date.now();
   await gotoPath("/scan");
+  const navigationReadyMs = Date.now() - startedAtMs;
   await waitForAny([
     page.getByRole("button", { name: /Scan now/i }),
     getUploadPhotoButton(),
   ], "scanner controls");
   const controlsReadyMs = Date.now() - startedAtMs;
+  const hydrationMs = controlsReadyMs - navigationReadyMs;
 
   if (controlsReadyMs > 5_000) {
     throw new QaIssue(
       "frontend",
-      `Scanner controls took ${controlsReadyMs}ms to become usable; expected <= 5000ms.`,
+      `Scanner controls took ${controlsReadyMs}ms to become usable (navigation ${navigationReadyMs}ms, client ${hydrationMs}ms); expected <= 5000ms.`,
       {
         likelyFiles: ["src/screens/Scanner.tsx", "src/components/scanner/IdentifyButton.tsx"],
         suggestedFix: "Profile scanner route startup, camera fallback state, and heavy client modules before adding scanner UI scope.",
@@ -778,6 +780,7 @@ function contrastAgainstMain(heading) {
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     const luminance = (color) => {
       // Canvas converts CSS colors (including Tailwind's OKLCH) to sRGB bytes.
+      ctx.clearRect(0, 0, 1, 1);
       ctx.fillStyle = color;
       ctx.fillRect(0, 0, 1, 1);
       const channels = Array.from(ctx.getImageData(0, 0, 1, 1).data).slice(0, 3).map((value) => {
@@ -787,7 +790,11 @@ function contrastAgainstMain(heading) {
       return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
     };
     const foreground = luminance(globalThis.getComputedStyle(heading).color);
-    const background = luminance(globalThis.getComputedStyle(heading.closest("main")).backgroundColor);
+    const mainBackground = globalThis.getComputedStyle(heading.closest("main")).backgroundColor;
+    const backgroundColor = mainBackground === "rgba(0, 0, 0, 0)"
+      ? globalThis.getComputedStyle(globalThis.document.body).backgroundColor
+      : mainBackground;
+    const background = luminance(backgroundColor);
     return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
 }
 
@@ -1066,8 +1073,9 @@ async function runResultChat() {
   await page.getByTestId("chat-focus-target").waitFor({ state: "visible" });
   await page.getByRole("button", { name: /Function/ }).click();
   await page.getByRole("button", { name: "Ask about this", exact: true }).click();
-  await page.getByLabel(/Ask a follow-up question/i).waitFor({ state: "focused" });
-  const draft = await page.getByLabel(/Ask a follow-up question/i).inputValue();
+  const composer = page.getByLabel(/Ask a follow-up question/i);
+  await page.waitForFunction((element) => globalThis.document.activeElement === element, await composer.elementHandle());
+  const draft = await composer.inputValue();
   if (!/What does this QA Alternator do/i.test(draft)) {
     throw new QaIssue("frontend", "The selected evidence section did not create its linked chat draft.", {
       likelyFiles: ["src/components/chat/ScanEvidencePanel.tsx", "src/screens/Chat.tsx"],

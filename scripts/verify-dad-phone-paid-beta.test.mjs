@@ -60,6 +60,20 @@ describe("classifyWebsiteQa", () => {
     expect(result.ok).toBe(false);
     expect(result.message).toContain("scanner-ai-engine");
   });
+
+  it("names failed and blocked scenarios from a real website QA report", () => {
+    const result = classifyWebsiteQa({
+      ...PASSING_WEBSITE_QA,
+      failed: [
+        { name: "scanner", status: "fail" },
+        { name: "scanner-ai-engine", status: "blocked" },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("scanner (fail), scanner-ai-engine (blocked)");
+    expect(result.message).not.toContain("[object Object]");
+  });
 });
 
 describe("classifyDadPhonePaidBetaReadiness", () => {
