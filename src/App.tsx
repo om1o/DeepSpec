@@ -2,18 +2,18 @@ import type { ReactNode } from "react";
 import { Fragment, lazy, Suspense, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import Auth from "./screens/Auth";
-import Chat from "./screens/Chat";
-import EarlyAccess from "./screens/EarlyAccess";
-import History from "./screens/History";
-import Account from "./screens/Account";
-import Pricing from "./screens/Pricing";
-import Result from "./screens/Result";
-import Shop from "./screens/Shop";
-import ShopJob from "./screens/ShopJob";
-import ShopNewJob from "./screens/ShopNewJob";
 import { getVerifiedAuthUser, subscribeToAuthChanges } from "./services/auth";
 import { getAccountScope, setActiveAccount } from "./lib/accountScope";
 
+const Chat = lazy(() => import("./screens/Chat"));
+const EarlyAccess = lazy(() => import("./screens/EarlyAccess"));
+const History = lazy(() => import("./screens/History"));
+const Account = lazy(() => import("./screens/Account"));
+const Pricing = lazy(() => import("./screens/Pricing"));
+const Result = lazy(() => import("./screens/Result"));
+const Shop = lazy(() => import("./screens/Shop"));
+const ShopJob = lazy(() => import("./screens/ShopJob"));
+const ShopNewJob = lazy(() => import("./screens/ShopNewJob"));
 const loadScanner = () => import("./screens/Scanner");
 const Scanner = lazy(loadScanner);
 // Load capture tools on app routes after the intro.
@@ -142,7 +142,8 @@ function ScannerRouteFallback() {
 
 export default function App() {
   return (
-    <Routes>
+    <Suspense fallback={<ScannerRouteFallback />}>
+      <Routes>
       <Route path="/auth" element={<Auth />} />
       <Route path="/demo" element={<Navigate to="/scan" replace />} />
       <Route path="/intro" element={<IntroEntry />} />
@@ -238,6 +239,7 @@ export default function App() {
         }
       />
       <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+      </Routes>
+    </Suspense>
   );
 }
