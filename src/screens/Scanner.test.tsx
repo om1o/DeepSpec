@@ -541,6 +541,44 @@ describe("Scanner", () => {
     expect(getLookups()).toHaveLength(2);
   });
 
+  it("starts a separate answer and conversation for a second selected component", async () => {
+    const originalImage = mockStillImageTarget({ confidence: 0.9, x: 0.2, y: 0.2, width: 0.3, height: 0.3 });
+    const alternatorBox = { x: 0.5, y: 0.4, width: 0.25, height: 0.25, confidence: 1 };
+    const hoseBox = { x: 0.1, y: 0.7, width: 0.3, height: 0.15, confidence: 1 };
+    isolateSceneObjects.mockResolvedValue([
+      { name: "Alternator", category: "electrical", focusBox: alternatorBox, isolatedImageBase64: "", focusMode: "crop", primary: false },
+      { name: "Hose", category: "engine", focusBox: hoseBox, isolatedImageBase64: "", focusMode: "crop", primary: false },
+    ]);
+    identifyCapturedFrame.mockResolvedValueOnce({ ...makeScanResult("Engine assembly"), sceneObjects: [
+      { name: "Alternator", category: "electrical", regionLabel: "right", confidence: "high" },
+      { name: "Hose", category: "engine", regionLabel: "lower left", confidence: "medium" },
+    ] }).mockResolvedValueOnce(makeScanResult("Selected alternator")).mockResolvedValueOnce(makeScanResult("Selected hose"));
+    render(<MemoryRouter><Scanner /></MemoryRouter>);
+    await userEvent.click(screen.getByRole("button", { name: "Scan now" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Select Alternator" }));
+    await userEvent.click(screen.getByRole("button", { name: "Analyze selected area" }));
+    await waitFor(() => expect(screen.getByTestId("focused-object-card")).toHaveTextContent("Selected alternator"));
+    await userEvent.click(within(screen.getByTestId("focused-object-card")).getByRole("button", { name: "Ask DeepSpec" }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Select Hose" }));
+    await userEvent.click(screen.getByRole("button", { name: "Analyze selected area" }));
+    await waitFor(() => expect(screen.getByTestId("focused-object-card")).toHaveTextContent("Selected hose"));
+    await userEvent.click(within(screen.getByTestId("focused-object-card")).getByRole("button", { name: "Ask DeepSpec" }));
+
+    expect(identifyCapturedFrame).toHaveBeenCalledTimes(3);
+    expect(getLookups()).toHaveLength(3);
+    const [hose, alternator, overview] = getLookups();
+    expect(hose.result?.partName).toBe("Selected hose");
+    expect(alternator.result?.partName).toBe("Selected alternator");
+    expect(overview.result?.partName).toBe("Engine assembly");
+    expect(hose.frame.imageBase64).toBe(originalImage);
+    expect(alternator.frame.imageBase64).toBe(originalImage);
+    expect(hose.selectedPart?.rectangle).toEqual({ x: 0.1, y: 0.7, width: 0.3, height: 0.15 });
+    expect(alternator.selectedPart?.rectangle).toEqual({ x: 0.5, y: 0.4, width: 0.25, height: 0.25 });
+    expect(hose.chatHistory).toEqual([]);
+    expect(alternator.chatHistory).toEqual([]);
+  });
+
   it("does not reuse a whole-photo cache entry when a selected crop is unavailable", async () => {
     mockStillImageTarget({ confidence: 0.9, x: 0.2, y: 0.2, width: 0.3, height: 0.3 });
     createFocusedScanCrop.mockResolvedValue(null);
@@ -2280,7 +2318,7 @@ describe("Scanner", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Resume 2-photo draft" }));
     await analyzeReviewedPhotos();
 
-    await userEvent.click(await screen.findByRole("button", { name: "Outline", exact: true }));
+    await userEvent.click(await screen.findByRole("button", { name: "Areas", exact: true }));
     expect(screen.getByTestId("issue-callout")).toHaveTextContent(issue);
     expect(screen.getByAltText("Reviewed scan photo")).toHaveAttribute("src", photos[0].imageBase64);
     await userEvent.click(screen.getByRole("button", { name: "2. Close-up" }));
@@ -2289,7 +2327,7 @@ describe("Scanner", () => {
     expect(screen.queryByTestId("issue-callout")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "1. Overview" }));
     expect(screen.getByAltText("Reviewed scan photo")).toHaveAttribute("src", photos[0].imageBase64);
-    await userEvent.click(screen.getByRole("button", { name: "Outline", exact: true }));
+    await userEvent.click(screen.getByRole("button", { name: "Areas", exact: true }));
     expect(screen.getByTestId("issue-callout")).toHaveTextContent(issue);
     expect(identifyCapturedFrame).toHaveBeenCalledTimes(1);
   });
@@ -2320,7 +2358,7 @@ describe("Scanner", () => {
     const review = await screen.findByRole("region", { name: "Photo review" });
     await waitFor(() => expect(getLookups()[0]?.result?.photoReview).toEqual(photoReview));
     const saved = JSON.stringify(getLookups());
-    await userEvent.click(screen.getByRole("button", { name: "Outline", exact: true }));
+    await userEvent.click(screen.getByRole("button", { name: "Areas", exact: true }));
     await userEvent.click(within(review).getByRole("button", { name: "View Photo 1 — Overview for disagreement d1" }));
     expect(screen.getByRole("button", { name: "Original", exact: true })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByAltText("Reviewed scan photo")).toHaveAttribute("src", photos[0].imageBase64);

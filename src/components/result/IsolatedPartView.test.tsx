@@ -59,7 +59,7 @@ describe("IsolatedPartView", () => {
     expect(screen.queryByText("Unplaced engine identity")).not.toBeInTheDocument();
     expect(screen.getByAltText("Captured car part")).toHaveAttribute("src", frame);
     expect(screen.getByAltText("Captured car part").className).not.toMatch(/blur|brightness|contrast|saturate/);
-    for (const view of ["Cutout", "Outline"]) {
+    for (const view of ["Cutout", "Areas"]) {
       await userEvent.click(screen.getByRole("button", { name: view, exact: true }));
       expect(screen.queryByTestId("isolated-part-image")).not.toBeInTheDocument();
       expect(screen.queryByTestId("focused-part-window")).not.toBeInTheDocument();
@@ -86,7 +86,7 @@ describe("IsolatedPartView", () => {
   it("shows a real issue annotation on explicit Outline without inventing a main selection", async () => {
     render(<IsolatedPartView variant="result" frameBase64={frame} focusMode="full_frame" label="Unplaced identity" issue={{ text: "Surface rust", anchor: box }} />);
     expect(screen.queryByTestId("issue-callout")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Outline", exact: true }));
+    await userEvent.click(screen.getByRole("button", { name: "Areas", exact: true }));
     expect(screen.getByTestId("issue-callout")).toHaveTextContent("Surface rust");
     expect(screen.getByTestId("approximate-issue-area")).toHaveStyle({ left: "20%", top: "20%", width: "50%", height: "50%" });
     expect(screen.queryByTestId("focused-part-window")).not.toBeInTheDocument();
@@ -285,7 +285,7 @@ describe("IsolatedPartView", () => {
 
   it("shows an outline on the unchanged source and restores the cutout when requested", async () => {
     render(<IsolatedPartView variant="result" frameBase64={frame} focusBox={box} focusMode="mask" isolatedImageBase64={cutout} label="Engine" />);
-    await userEvent.click(screen.getByRole("button", { name: "Outline", exact: true }));
+    await userEvent.click(screen.getByRole("button", { name: "Areas", exact: true }));
     expect(screen.getByTestId("focused-part-window")).toHaveStyle({ left: "20%", top: "20%" });
     expect(screen.getByAltText("Captured car part").className).not.toMatch(/blur|brightness|contrast/);
     expect(screen.queryByTestId("isolated-part-image")).not.toBeInTheDocument();
@@ -309,7 +309,7 @@ describe("IsolatedPartView", () => {
     expect(onCorrectFocus).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Apply area" }));
     expect(onCorrectFocus).toHaveBeenCalledExactlyOnceWith({ ...box, x: 0.4, width: 0.6, confidence: 0 }, null);
-    expect(screen.getByRole("button", { name: "Outline", exact: true })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Areas", exact: true })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByTestId("focus-area-editor")).not.toBeInTheDocument();
   });
 
@@ -354,7 +354,7 @@ describe("IsolatedPartView", () => {
     await userEvent.click(screen.getByRole("button", { name: "Original", exact: true }));
     expect(screen.queryByTestId("lens-object")).not.toBeInTheDocument();
     expect(screen.queryByTestId("lens-focused-frame")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Outline", exact: true }));
+    await userEvent.click(screen.getByRole("button", { name: "Areas", exact: true }));
     expect(screen.getByRole("button", { name: "Select Wall poster" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByAltText("Isolated Wall poster")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Correct area" }));
@@ -403,7 +403,7 @@ describe("IsolatedPartView", () => {
     const objects = [sceneObjects[0], { ...sceneObjects[1], focusMode: "crop" as const, isolatedImageBase64: "" }];
     render(<IsolatedPartView variant="result" frameBase64={frame} focusMode="mask" label="Controller" objects={objects} onCorrectFocus={onCorrectFocus} />);
     expect(screen.getByTestId("result-focus-frame")).toHaveAttribute("data-focus-mode", "mixed");
-    expect(screen.getByRole("status")).toHaveTextContent("Selections are approximate. Check the original and correct the area.");
+    expect(screen.getByRole("status")).toHaveTextContent("Boxes mark approximate selected areas, not part outlines. Check the original and correct the area.");
     expect(screen.getByRole("status")).toHaveTextContent("1 cutout; 1 crop-only selection. Crops are not segmentation masks.");
     expect(screen.getAllByTestId("lens-object")).toHaveLength(2);
     expect(screen.getByAltText("Isolated Xbox Controller")).toHaveAttribute("src", objects[0].isolatedImageBase64);
@@ -418,7 +418,7 @@ describe("IsolatedPartView", () => {
     fireEvent.change(screen.getByRole("slider", { name: "Selection x" }), { target: { value: "10" } });
     await userEvent.click(screen.getByRole("button", { name: "Apply area" }));
     expect(onCorrectFocus).toHaveBeenCalledExactlyOnceWith({ ...objects[1].focusBox, x: 0.1, confidence: 0 }, 1);
-    expect(screen.getByRole("status")).toHaveTextContent("Selections are approximate. Check the original and correct the area.");
+    expect(screen.getByRole("status")).toHaveTextContent("Boxes mark approximate selected areas, not part outlines. Check the original and correct the area.");
     await userEvent.click(screen.getByRole("button", { name: "Original", exact: true }));
     expect(screen.queryByTestId("lens-object")).not.toBeInTheDocument();
     expect(screen.queryByTestId("lens-focused-frame")).not.toBeInTheDocument();

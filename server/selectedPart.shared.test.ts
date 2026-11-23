@@ -80,6 +80,26 @@ describe("selected-part provider transport", () => {
   });
 
   it.each([
+    "The selected alternator label is unreadable, but its part number is HOSE-123.",
+    "The selected alternator is visible. The neighboring hose label clearly says HOSE-123, so the alternator part number is HOSE-123.",
+  ])("does not return an unsupported neighboring or contradictory identifier: %s", async (message) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: message }] } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+
+    const response = await createChatResponse({
+      userMessage: "What is the selected alternator's exact part number?",
+      photos,
+      selectedPart,
+    }, { GEMINI_API_KEY: "test-key" });
+
+    expect(response.status).toBe(200);
+    if (response.status !== 200) return;
+    expect(response.body.message).not.toContain("HOSE-123");
+    expect(response.body.message).toContain("straight-on close-up");
+  });
+
+  it.each([
     "The clearly readable label on the selected part says DENSO 104210-1230; this is a literal transcription, not verified fitment.",
     "I can\u2019t read the selected part\u2019s number. Please take a straight-on close-up of its label.",
   ])("keeps a selected-part identifier answer with explicit evidence or abstention: %s", async (message) => {

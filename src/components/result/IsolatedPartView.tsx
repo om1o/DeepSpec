@@ -139,7 +139,8 @@ function IsolatedPartViewContent({
       testId={testId}
       controls={<PhotoViewControls view={view} onView={setView} editing={editing} canCorrect={Boolean(onCorrectFocus)}
         selectionMessage={!hasBox && !editing ? "No saved selection for this photo. Original is available."
-          : view === "cutout" && hasBox && !showCutout && !showCropWindow && !editing ? "No cutout is available. The saved area is shown as an outline." : undefined}
+          : view === "outline" && hasBox && !editing ? "The box marks an approximate selected area, not the part's outline."
+          : view === "cutout" && hasBox && !showCutout && !showCropWindow && !editing ? "No cutout is available. The saved area is shown as a selection box." : undefined}
         onCorrect={() => {
           if (!onCorrectFocus) return;
           setView("outline");
@@ -373,7 +374,7 @@ function LensOverview({
       controls={<PhotoViewControls view={view} onView={setView} editing={editing}
         canCorrect={Boolean(onCorrectFocus)} needsSelection={!focusedObject}
         selectionMessage={view !== "original" && !editing
-          ? `Selections are approximate. Check the original and correct the area.${view === "cutout" && cropCount ? ` ${cutoutCount} cutout${cutoutCount === 1 ? "" : "s"}; ${cropCount} crop-only selection${cropCount === 1 ? "" : "s"}. Crops are not segmentation masks.` : ""}`
+          ? `Boxes mark approximate selected areas, not part outlines. Check the original and correct the area.${view === "cutout" && cropCount ? ` ${cutoutCount} cutout${cutoutCount === 1 ? "" : "s"}; ${cropCount} crop-only selection${cropCount === 1 ? "" : "s"}. Crops are not segmentation masks.` : ""}`
           : undefined}
         onCorrect={() => {
           if (focusedIndex === null || !focusedObject || !onCorrectFocus) return;
@@ -484,11 +485,11 @@ function PhotoViewControls({ view, onView, editing, canCorrect, needsSelection, 
     <div role="group" aria-label="Photo view" className="flex">
       {(["original", "outline", "cutout"] as const).map((mode) => <button key={mode} type="button" aria-pressed={view === mode} disabled={editing}
         onClick={() => onView(mode)} className={`min-h-11 rounded-lg px-3 text-xs font-bold disabled:opacity-50 ${view === mode ? "bg-white text-slate-950" : "text-white"}`}>
-        {{ original: "Original", outline: "Outline", cutout: "Cutout" }[mode]}
+        {{ original: "Original", outline: "Areas", cutout: "Cutout" }[mode]}
       </button>)}
     </div>
     {canCorrect ? <button type="button" disabled={editing || needsSelection} onClick={onCorrect}
-      title={needsSelection ? "Select a part in Outline or Cutout first" : undefined}
+      title={needsSelection ? "Select a part in Areas or Cutout first" : undefined}
       className="min-h-11 rounded-lg border border-white/30 px-3 text-xs font-bold disabled:opacity-50">Correct area</button> : null}
     {canCorrect && needsSelection ? <span className="px-2 text-[11px]">Select a part to correct its area.</span> : null}
     {selectionMessage ? <p role="status" className="w-full px-2 text-[11px]">{selectionMessage}</p> : null}

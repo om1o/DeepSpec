@@ -331,7 +331,7 @@ describe("Result", () => {
 
     expect(screen.getByAltText("Captured car part")).toHaveAttribute("src", frame.imageBase64);
     expect(screen.queryByTestId("issue-callout")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Outline", exact: true }));
+    await user.click(screen.getByRole("button", { name: "Areas", exact: true }));
     expect(screen.getByTestId("issue-callout")).toHaveTextContent(issue);
     await user.click(screen.getByRole("button", { name: "2. Close-up" }));
     expect(screen.getByAltText("Captured car part")).toHaveAttribute("src", detailImage);
@@ -341,7 +341,7 @@ describe("Result", () => {
     expect(screen.getByRole("button", { name: "Original", exact: true })).toHaveAttribute("aria-pressed", "true");
     await user.click(screen.getByRole("button", { name: "1. Overview" }));
     expect(screen.getByAltText("Captured car part")).toHaveAttribute("src", frame.imageBase64);
-    await user.click(screen.getByRole("button", { name: "Outline", exact: true }));
+    await user.click(screen.getByRole("button", { name: "Areas", exact: true }));
     expect(screen.getByTestId("issue-callout")).toHaveTextContent(issue);
     expect(getLookup(local.id)?.result?.evidenceRegions).toEqual(local.result?.evidenceRegions);
   });

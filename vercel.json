@@ -1,6 +1,7 @@
 {
   "git": {
     "deploymentEnabled": {
+      "codex/selected-part-accuracy-20261123": false,
       "codex/selected-part-followup-20261116": false,
       "codex/cutout-ipad-preview-20261115": false,
       "codex/isolation-runtime-asset-20261107": false,

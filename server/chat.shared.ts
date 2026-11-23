@@ -393,7 +393,7 @@ function guardSelectedPartIdentifierAnswer(message: string, request: ChatRequest
     return message;
   }
 
-  if (statesIdentifierLimit(message) || citesReadableSelectedPartMarking(message)) {
+  if (citesReadableSelectedPartMarking(message) || (statesIdentifierLimit(message) && !containsPossibleIdentifier(message))) {
     return message;
   }
 
@@ -409,9 +409,13 @@ function statesIdentifierLimit(message: string) {
 }
 
 function citesReadableSelectedPartMarking(message: string) {
-  const selectedPart = /\b(?:selected|this|the)\s+(?:part|component|item|alternator)\b/i;
-  const readableMarking = /\b(?:clearly|visibly)\s+(?:readable|legible)\b.{0,100}\b(?:label|marking|stamp|tag|text)\b|\b(?:label|marking|stamp|tag)\b.{0,100}\b(?:clearly|visibly)\s+(?:reads?|shows?|says?|states?|transcribes?)\b/i;
-  return selectedPart.test(message) && readableMarking.test(message);
+  const selectedMarking = /\b(?:selected|this)\s+(?:part|component|item|alternator)(?:'s|\u2019s)?\s+(?:label|marking|stamp|tag)\b|\b(?:label|marking|stamp|tag)\s+(?:on|of)\s+(?:the\s+)?(?:selected|this)\s+(?:part|component|item|alternator)\b/i;
+  const readableMarking = /\b(?:clearly|visibly)\s+(?:readable|legible)\b|\b(?:label|marking|stamp|tag)\b.{0,100}\b(?:clearly|visibly)\s+(?:reads?|shows?|says?|states?|transcribes?)\b/i;
+  return message.split(/[.!?;\n]/).some((clause) => selectedMarking.test(clause) && readableMarking.test(clause));
+}
+
+function containsPossibleIdentifier(message: string) {
+  return /\b(?:[A-Za-z]+[-/])?[A-Za-z]*\d[A-Za-z0-9-]{2,}\b|\b\d{4,}\b/.test(message);
 }
 
 function chatTimeoutError() {

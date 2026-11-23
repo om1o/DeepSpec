@@ -112,3 +112,63 @@ then open Ask DeepSpec and ask both exact questions. Save/reopen before the seco
 Verify hose markings remain on the hose; an unreadable alternator number must request the
 single focused label close-up. Record exact answers, source commit, provider/model and
 request references. Precise masks and broader accuracy remain separate acceptance checks.
+
+## Selected-part private beta checkpoint — November 22
+
+The clean editing lane is `codex/selected-part-accuracy-20261123`, based on
+`9b30f3df`; the pre-change head was `ae343053`. The HUSHPOINT checkout and
+divergent draft PR #126 were not edited or merged. The current branch is excluded
+from automatic Vercel Git deployment in `vercel.json`; the actual remote
+deployment setting still needs confirmation after the push.
+
+The repository contains one generated, committed development image,
+`public/test-fixtures/engine-scan-test.jpg` (SHA-256
+`799c53e3793796f5854da01e5144a7408d8864fc3ebbd61c33f043c8f78c42df`).
+It shows an engine bay and a visible alternator, but has no verified exact part
+number. It is a tune-up/flow fixture, not a held-out accuracy case. The raw
+DrBimmer image set is absent from this checkout, and the last read-only reviewed
+export check found zero eligible cases. No new eligible reviewed export was made.
+
+| Measure | Baseline | Candidate | Meaning |
+| --- | --- | --- | --- |
+| Real held-out part-family accuracy | 0 eligible / 0 scored | 0 eligible / 0 scored | Not measured |
+| Real held-out exact-ID precision and coverage | 0 supported IDs / 0 cases | 0 supported IDs / 0 cases | Not measured |
+| Real held-out confident wrong answers | 0 cases evaluated | 0 cases evaluated | Not measured |
+| Real held-out useful abstentions | 0 cases evaluated | 0 cases evaluated | Not measured |
+| Real held-out time to result | 0 timed requests | 0 timed requests | Not measured |
+| Frozen mocked unsafe exact-ID replies returned | 2 / 2 | 0 / 2 | Deterministic guard regression only |
+| Frozen mocked useful close-up requests | 0 / 2 | 2 / 2 | Deterministic guard regression only |
+
+The two mocked failures were (1) an unreadable alternator label followed by an
+invented `HOSE-123` part number, and (2) the neighboring hose's readable
+`HOSE-123` label assigned to the alternator. Both passed through the old
+follow-up guard. The candidate requires the readable marking to be attributed
+to the selected part in the same clause, and rejects an abstention that still
+contains a possible identifier. It retains a literal selected-part label
+transcription with an explicit fitment caveat. This text check cannot verify
+that a model actually read the correct pixels; a real labeled test is still
+required.
+
+The scanner regression now exercises selecting and saving two different
+components from one unchanged original. Each has its own selected rectangle,
+answer and empty starting chat. Area boxes are labeled as approximate
+selections; the UI reserves actual cutout presentation for a usable mask and
+labels crop-only fallback. These are local fixture checks, not successful
+real-device segmentation or hosted provider acceptance. The 78% goal remains
+a target, with no measured before/after accuracy claim.
+
+Release gate: the exact candidate still needs a frozen, rights-cleared reviewed
+held-out set, authorized hosted sign-in/provider/save/reopen/follow-up and
+two-account isolation checks, and physical-device mask/capture acceptance.
+The local QA doctor found no configured app URL, Supabase settings or approved
+QA accounts in this worktree; its localhost fallback was not running. No test
+access, account, credit, schema or hosted data was changed.
+
+Local final-source checks used Node 24.14.0: 4,320 tests in 206 files passed
+with the serial Windows Vitest runner; ESLint, strict/non-strict server
+TypeScript, frontend TypeScript, the production build, public/brand asset
+checks, and `git diff --check` passed. The build regenerated tracked intro
+assets; those generated changes were restored to their clean baseline, then
+public/brand asset checks passed again. Repository CI uses Node 22 and still
+needs to run on the pushed exact commit. These checks do not prove the hosted
+private beta flow or physical-device behavior.
