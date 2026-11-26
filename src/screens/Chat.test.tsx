@@ -11,6 +11,7 @@ import { readCloudLookup } from "../services/cloudHistory";
 import { LOOKUPS_STORAGE_KEY } from "../services/storage";
 import type { ChatMessage } from "../types";
 import type { Lookup } from "../types";
+import { PROFESSIONAL_SAFETY_ACTION } from "../lib/safetyGuidance";
 
 vi.mock("../services/aiService", async () => {
   const actual = await vi.importActual<typeof import("../services/aiService")>("../services/aiService");
@@ -77,6 +78,14 @@ describe("Chat", () => {
   });
 
   afterEach(() => vi.unstubAllEnvs());
+
+  it("shows the professional safety action on a safety-critical conversation", async () => {
+    const critical = { ...lookup, result: { ...lookup.result!, scanCategory: "brakes" as const, isSafetyCritical: true, safetyTriage: "needs_professional" as const } };
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([critical]));
+    renderChat(`/result/${lookup.id}/chat`);
+    const warning = (await screen.findByText("Safety check needed")).closest("section")!;
+    expect(within(warning).getByText(PROFESSIONAL_SAFETY_ACTION)).toBeInTheDocument();
+  });
 
   it("keeps a failed question and shows its connection reference until a manual retry succeeds", async () => {
     vi.stubEnv("VITE_ENABLE_CLOUD_SYNC", "false");

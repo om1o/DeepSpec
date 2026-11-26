@@ -1,5 +1,6 @@
 import { getAccountScope, isAccountScopeCurrent } from "../lib/accountScope";
 import { mergeCloudLookup } from "../lib/lookupMerge";
+import { PROFESSIONAL_SAFETY_ACTION } from "../lib/safetyGuidance";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { BrandLockup } from "../components/BrandLockup";
@@ -351,7 +352,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
             {showSafetyWarning ? (
               <section className="ds-chat-safety rounded-2xl border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-3">
                 <p className="text-sm font-extrabold text-[var(--ds-warn-ink)]">Safety check needed</p>
-                <p className="mt-1 text-sm leading-6 text-[var(--ds-fg-2)]">Confirm this before driving or repairing.</p>
+                <p className="mt-1 text-sm leading-6 text-[var(--ds-fg-2)]">{PROFESSIONAL_SAFETY_ACTION}</p>
               </section>
             ) : null}
 

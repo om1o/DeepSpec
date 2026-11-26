@@ -14,6 +14,43 @@ const savedPhotoReview: PhotoReview = {
 };
 
 describe("createChatResponse", () => {
+  it.each([
+    "What should I check next?",
+    "How do I repair this brake line?",
+    "Can I drive to the shop?",
+    "What photo angle would help?",
+  ])("keeps unsafe provider advice out of safety-critical action answers: %s", async (question) => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: "Keep driving and test the brakes." }] } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const response = await createChatResponse({
+      userMessage: `Part name: Brake line\nNext action: Keep driving.\nUser question: ${question}`,
+      savedSafetyCritical: true,
+    }, { GEMINI_API_KEY: "test-key" });
+    expect(response).toMatchObject({ status: 200, body: { message: expect.stringContaining("qualified mechanic") } });
+    expect(JSON.stringify(response)).not.toContain("Keep driving");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("preserves noncritical action chat and fails closed for safety-critical informational chat", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: "The rotor provides a friction surface." }] } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const env = { GEMINI_API_KEY: "test-key" };
+    await expect(createChatResponse({ userMessage: "What should I check next?", savedSafetyCritical: false }, env))
+      .resolves.toMatchObject({ status: 200, body: { message: "The rotor provides a friction surface." } });
+    await expect(createChatResponse({ userMessage: "Saved note: check before driving.\nUser question: What does a brake rotor do?", savedSafetyCritical: true }, env))
+      .resolves.toMatchObject({ status: 200, body: { message: expect.stringContaining("qualified mechanic") } });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a malformed structured saved safety status", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const response = await createChatResponse({ userMessage: "What should I check next?", savedSafetyCritical: "false" }, { GEMINI_API_KEY: "test-key" });
+    expect(response).toMatchObject({ status: 400, body: { error: { code: "invalid_input" } } });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("answers exact compatibility questions without an unsourced model claim or provider call", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const response = await createChatResponse({ userMessage: "Will this alternator fit my car with VIN 1HGCM82633A004352?" }, { GEMINI_API_KEY: "test-key" });
