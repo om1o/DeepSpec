@@ -111,6 +111,14 @@ describe("Result", () => {
     expect(screen.getByRole("region", { name: "Replacement fitment" })).toHaveTextContent("photo label, or AI answer alone does not verify fitment");
   });
 
+  it("offers an official VIN recall check without treating the scan as recall clearance", () => {
+    renderResult(successfulScan);
+    const panel = screen.getByRole("region", { name: "Safety recalls" });
+    expect(within(panel).getByRole("link", { name: /Check this vehicle's VIN at NHTSA/ })).toHaveAttribute("href", "https://www.nhtsa.gov/recalls");
+    expect(panel).toHaveTextContent("A model-wide campaign may not apply to this vehicle");
+    expect(within(panel).queryByRole("button", { name: "Search model-wide recalls" })).not.toBeInTheDocument();
+  });
+
   it("rejects a previous account's result retained in browser history", () => {
     const oldState = withAccountRouteState(successfulScan);
     setActiveAccount("other-user");
