@@ -59,6 +59,16 @@ describe("ModelRecallReview", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("NHTSA is unavailable.");
   });
 
+  it("does not revive an old result when vehicle details change away and back", async () => {
+    vi.mocked(requestModelRecalls).mockResolvedValue(result);
+    const view = render(<ModelRecallReview vehicleContext={vehicle} />);
+    await userEvent.click(screen.getByRole("button", { name: "Search model-wide recalls" }));
+    await screen.findByText(/NHTSA returned 1 model-wide campaign/);
+    view.rerender(<ModelRecallReview vehicleContext={{ ...vehicle, year: "2013" }} />);
+    view.rerender(<ModelRecallReview vehicleContext={vehicle} />);
+    expect(screen.queryByText(/NHTSA returned 1 model-wide campaign/)).not.toBeInTheDocument();
+  });
+
   it("ignores an older lookup that finishes while a new vehicle query is pending", async () => {
     let resolveFirst!: (value: ModelRecallResult) => void;
     let resolveSecond!: (value: ModelRecallResult) => void;

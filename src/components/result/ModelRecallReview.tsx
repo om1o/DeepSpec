@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { isVehicleFieldConfirmed } from "../../lib/vehicleContext";
-import { NHTSA_VIN_RECALL_URL, normalizeModelRecallQuery, requestModelRecalls, type ModelRecallResult } from "../../services/modelRecalls";
+import { NHTSA_VIN_RECALL_URL, normalizeModelRecallQuery, requestModelRecalls, type ModelRecallQuery, type ModelRecallResult } from "../../services/modelRecalls";
 import type { VehicleContext } from "../../types";
 
 type Props = { vehicleContext?: VehicleContext };
@@ -9,10 +9,13 @@ type State = { queryKey: string; status: "loading" | "ready" | "error"; result?:
 export function ModelRecallReview({ vehicleContext }: Props) {
   const query = normalizeModelRecallQuery(vehicleContext);
   const queryKey = query ? `${query.year}\n${query.make}\n${query.model}` : "";
-  const latestQueryKey = useRef(queryKey);
-  useEffect(() => { latestQueryKey.current = queryKey; }, [queryKey]);
+  return <ModelRecallLookup key={queryKey} vehicleContext={vehicleContext} query={query} queryKey={queryKey} />;
+}
+
+function ModelRecallLookup({ vehicleContext, query, queryKey }: Props & { query: ModelRecallQuery | null; queryKey: string }) {
   const requestGeneration = useRef(0);
   const [state, setState] = useState<State | null>(null);
+  useEffect(() => () => { requestGeneration.current += 1; }, []);
   const current = state?.queryKey === queryKey ? state : null;
   const confirmed = (["year", "make", "model"] as const).every((field) => isVehicleFieldConfirmed(vehicleContext, field));
 
@@ -22,13 +25,13 @@ export function ModelRecallReview({ vehicleContext }: Props) {
     setState({ queryKey, status: "loading" });
     try {
       const result = await requestModelRecalls(vehicleContext);
-      if (generation === requestGeneration.current && queryKey === latestQueryKey.current) setState({ queryKey, status: "ready", result });
+      if (generation === requestGeneration.current) setState({ queryKey, status: "ready", result });
     } catch (error) {
-      if (generation === requestGeneration.current && queryKey === latestQueryKey.current) setState({ queryKey, status: "error", message: error instanceof Error ? error.message : "Recall lookup failed." });
+      if (generation === requestGeneration.current) setState({ queryKey, status: "error", message: error instanceof Error ? error.message : "Recall lookup failed." });
     }
   }
 
-  return <section aria-label="Safety recalls" className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-surface)] p-4 text-sm">
+  return <section aria-label="Safety recalls" className="break-words rounded-xl border border-[var(--ds-border)] bg-[var(--ds-surface)] p-4 text-sm">
     <h2 className="font-bold">Safety recalls</h2>
     <p className="mt-1 text-[var(--ds-fg-3)]">A model-wide campaign may not apply to this vehicle. Use NHTSA&apos;s VIN lookup to check listed unrepaired recalls for a specific VIN; its coverage has limits.</p>
     <a className="mt-2 inline-block min-h-11 content-center font-semibold underline" href={NHTSA_VIN_RECALL_URL} target="_blank" rel="noopener noreferrer">Check this vehicle&apos;s VIN at NHTSA</a>
