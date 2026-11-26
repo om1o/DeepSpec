@@ -23,6 +23,7 @@ import {
 import type { ScanAnalysisState } from "../types";
 import { emptyPartInspection } from "../lib/partInspection";
 import { confirmVehicleContextField } from "../lib/vehicleContext";
+import { PROFESSIONAL_SAFETY_ACTION } from "../lib/safetyGuidance";
 
 describe("reserved component scan identities", () => {
   it("recovers the same saved evidence without duplicating or replacing the original analysis", () => {
@@ -459,6 +460,18 @@ describe("storage", () => {
     expect(getLookup(saved.id)).toMatchObject({ result: { partName: "Alternator" }, vehicleContext: { engine: "2.5L", mileage: "120000" } });
     expect(getLookup(saved.id)?.vehicleContext?.confirmedFields).toBeUndefined();
     expect(getLookup(saved.id)?.vehicleContext?.mileageUnit).toBeUndefined();
+  });
+
+  it("replaces unsafe action fields when reading a legacy safety-critical scan", () => {
+    const saved = createLookup(scanState).value;
+    const result = { ...scanState.result!, scanCategory: "brakes", isSafetyCritical: false, safetyTriage: "can_help", nextAction: "Keep driving before driving.", requiredNextEvidence: ["Keep driving."] };
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([{ ...saved, result }]));
+    expect(getLookup(saved.id)?.result).toMatchObject({
+      isSafetyCritical: true,
+      safetyTriage: "needs_professional",
+      nextAction: PROFESSIONAL_SAFETY_ACTION,
+      requiredNextEvidence: [PROFESSIONAL_SAFETY_ACTION],
+    });
   });
 
   it("updates AI result on successful retry", () => {

@@ -164,7 +164,7 @@ function buildEvidenceItems(result: IdentificationResult): EvidenceItem[] {
       label: "Next check",
       summary: result.nextAction,
       details: [result.nextAction, ...(result.requiredNextEvidence ?? [])],
-      question: `Give me a safe step-by-step plan for the next check on this ${result.partName}.`,
+      question: `What is the one observational next check for this ${result.partName}? State what it can and cannot establish, and when a qualified mechanic should inspect it before driving. Do not give repair or driving-test steps.`,
     },
     {
       id: "sources",

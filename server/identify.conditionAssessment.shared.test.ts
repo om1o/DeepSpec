@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConditionAssessment, IdentificationResult } from "../src/types";
 import { IDENTIFY_PIPELINE_VERSION, IDENTIFY_PROMPT_VERSION } from "../src/services/systemPrompts";
 import { createIdentifyResponse, type IdentifyResponse } from "./identify.shared";
+import { PROFESSIONAL_SAFETY_ACTION } from "../src/lib/safetyGuidance";
 
 const photos = ["view-overview", "view-close"].map((id, index) => ({
   id, label: index === 0 ? "overview" : "close_up",
@@ -139,17 +140,18 @@ describe("condition assessment provider contract", () => {
     expect(result.conditionAssessment).toEqual(conditionAssessment);
   });
 
-  it.each(["checked.", "checked by a qualified mechanic."])("retains a specific stop-driving action ending %s separately from the priority photo request", async (ending) => {
-    const conditionAssessment = assessment();
-    const safetyAction = `Do not drive until the cracked brake mounting bracket has been ${ending}`;
+  it("replaces model-written checks with a professional inspection for safety-critical scans", async () => {
+    const conditionAssessment = { ...assessment(), nextEvidence: { kind: "photo" as const, request: "Keep driving to check the warning.", purpose: "Check safety while moving.", photoIds: [photos[1].id] } };
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => providerResponse("gemini", {
       ...coreResult, partName: "Brake mounting bracket", scanCategory: "brakes",
-      isSafetyCritical: true, safetyTriage: "needs_professional", nextAction: safetyAction, conditionAssessment,
+      isSafetyCritical: true, safetyTriage: "needs_professional", nextAction: "Keep driving before driving.",
+      requiredNextEvidence: ["Keep driving to check the warning."], conditionAssessment,
     }));
     const result = readResult(await createIdentifyResponse({ photos }, providerEnv("gemini")));
-    expect(result).toMatchObject({ isSafetyCritical: true, safetyTriage: "needs_professional", nextAction: safetyAction });
-    expect(result.conditionAssessment?.nextEvidence?.request).toBe(conditionAssessment.nextEvidence?.request);
-    expect(result.requiredNextEvidence).toEqual([conditionAssessment.nextEvidence?.request, ...coreResult.requiredNextEvidence]);
+    expect(result).toMatchObject({ isSafetyCritical: true, safetyTriage: "needs_professional", nextAction: PROFESSIONAL_SAFETY_ACTION });
+    expect(result.conditionAssessment?.nextEvidence).toMatchObject({ kind: "professional_inspection", request: PROFESSIONAL_SAFETY_ACTION });
+    expect(result.requiredNextEvidence).toEqual([PROFESSIONAL_SAFETY_ACTION]);
+    expect(JSON.stringify(result)).not.toContain("Keep driving");
   });
 
   it("moves the priority evidence request first without duplicating it or dropping other requirements", async () => {

@@ -141,6 +141,15 @@ describe("ScanEvidencePanel", () => {
     expect(onDraftQuestion).toHaveBeenCalledWith(expect.stringContaining("What does this Alternator do"));
   });
 
+  it("asks for one observational next check without requesting a repair procedure", async () => {
+    const onDraftQuestion = vi.fn();
+    renderPanel(lookup, onDraftQuestion);
+    await userEvent.click(screen.getByRole("button", { name: /Next check/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Ask about this" }));
+    expect(onDraftQuestion).toHaveBeenCalledWith(expect.stringContaining("one observational next check"));
+    expect(onDraftQuestion.mock.calls[0][0]).not.toContain("step-by-step");
+  });
+
   it("keeps text-only evidence in the detail list instead of inventing image boxes", async () => {
     renderPanel(lookup);
     await userEvent.click(screen.getByRole("button", { name: /Visible evidence/ }));

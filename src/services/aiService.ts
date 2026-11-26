@@ -8,6 +8,7 @@ import { validatePhotoGroup } from "./photoDraft";
 import { normalizeConditionAssessment } from "../lib/conditionAssessment";
 import { normalizePhotoReview, photoReviewForRelationship } from "../lib/photoReview";
 import { buildConditionHandoff } from "../lib/conditionHandoff";
+import { withSafeGuidance } from "../lib/safetyGuidance";
 import { providerVehicleContext } from "../lib/vehicleContext";
 import { hasFirstPhotoIdentityScopePipeline, isPhotoRelationship } from "../lib/photoRelationship";
 import { isAIRequestId } from "../lib/aiRequestId";
@@ -660,7 +661,7 @@ function assertIdentificationResult(value: unknown, allowedPhotoIds: readonly st
     throw new AIServiceError("invalid_response", "Deep Spec received an unreadable AI response.");
   }
 
-  return withValidatedConditionAssessment(value, allowedPhotoIds);
+  return withSafeGuidance(withValidatedConditionAssessment(value, allowedPhotoIds));
 }
 
 function isIdentificationResult(value: unknown): value is IdentificationResult {

@@ -208,3 +208,14 @@ pre-build tracked state. QA doctor failed because this checkout has no
 configured app URL, Supabase public settings or authorized QA account; its
 localhost fallback was not running. Authenticated provider, save/reopen,
 two-account and physical-device acceptance remain unverified.
+
+## Safety action normalization (2026-11-26)
+
+For safety-critical categories or a professional safety triage, DeepSpec replaces
+model-written next actions and next-evidence requests with a fixed qualified-mechanic
+inspection action. The same rule applies when older device or cloud scans are read.
+This deliberately suppresses even harmless targeted-photo requests in those action
+fields: an in-person safety check takes priority, and a photo cannot clear the
+vehicle for use. Observations and original photos remain available for review.
+The saved answer is the normalized product answer, not a raw provider completion;
+the identification pipeline version records this behavior for later evaluation.

@@ -5,6 +5,7 @@ import { normalizePartInspection } from "../lib/partInspection";
 import { normalizeConditionAssessment } from "../lib/conditionAssessment";
 import { normalizePhotoReview } from "../lib/photoReview";
 import { normalizeVehicleContext } from "../lib/vehicleContext";
+import { withSafeGuidance } from "../lib/safetyGuidance";
 import { evidencePaths, isOwnedEvidencePath, parseEvidenceBundle, restoreEvidenceBundle } from "./visualEvidence";
 import type {
   CandidateMatch,
@@ -410,7 +411,7 @@ function parseIdentificationResult(value: unknown, fallbackCategory: ScanCategor
 
   const conditionAssessment = normalizeConditionAssessment(value.conditionAssessment, allowedPhotoIds);
   const photoReview = normalizePhotoReview(value.photoReview, allowedPhotoIds);
-  return {
+  return withSafeGuidance({
     partName,
     confidence: parseConfidence(value.confidence),
     confidenceScore: parseConfidenceScore(value.confidenceScore, parseConfidence(value.confidence)),
@@ -438,7 +439,7 @@ function parseIdentificationResult(value: unknown, fallbackCategory: ScanCategor
     evidence: parseStringList(value.evidence, 12, 320),
     sourceLinks: parseSourceLinks(value.sourceLinks),
     ...(parseIdentifyModelRun(value.modelRun) ? { modelRun: parseIdentifyModelRun(value.modelRun) } : {}),
-  };
+  });
 }
 
 function parseIdentifyModelRun(value: unknown): IdentifyModelRun | undefined {
