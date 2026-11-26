@@ -14,6 +14,29 @@ const savedPhotoReview: PhotoReview = {
 };
 
 describe("createChatResponse", () => {
+  it("answers exact compatibility questions without an unsourced model claim or provider call", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const response = await createChatResponse({ userMessage: "Will this alternator fit my car with VIN 1HGCM82633A004352?" }, { GEMINI_API_KEY: "test-key" });
+    expect(response).toMatchObject({ status: 200, body: { message: expect.stringContaining("Exact replacement fitment is unverified") } });
+    expect(response.body).toMatchObject({ message: expect.stringContaining("authorized OEM or licensed parts catalog") });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+  it("does not treat saved fitment context as the current question", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: "It charges the battery while the engine runs." }] } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const response = await createChatResponse({
+      userMessage: "Part name: Alternator\nNext action: Verify exact replacement fitment.\nRecent chat:\nuser: Will it fit my car?\nUser question: What does an alternator do?",
+    }, { GEMINI_API_KEY: "test-key" });
+    expect(response).toMatchObject({ status: 200, body: { message: "It charges the battery while the engine runs." } });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+  it("keeps a driving safety reminder with compound fitment questions", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const response = await createChatResponse({ userMessage: "Will this brake part fit my car, and is it safe to drive?" }, { GEMINI_API_KEY: "test-key" });
+    expect(response).toMatchObject({ status: 200, body: { message: expect.stringContaining("driving safety") } });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
   it.each([false, true])("sends evidence limits and a single-check contract with every photo (research=%s)", async (research) => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
       candidates: [{ finishReason: "STOP", content: { parts: [{ text: "A closer view could distinguish surface markings; depth remains unknown." }] } }],

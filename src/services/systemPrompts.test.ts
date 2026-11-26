@@ -13,6 +13,12 @@ describe("identify prompt truthfulness", () => {
     expect(IDENTIFY_PROMPT).not.toContain("likely 13 mm wrench size");
   });
 
+  it("separates readable labels and VIN identity from replacement fitment", () => {
+    expect(IDENTIFY_PROMPT).toContain("A VIN decode or readable marking does not verify fitment");
+    expect(IDENTIFY_PROMPT).toContain("authorized OEM or licensed parts-catalog application");
+    expect(FOLLOWUP_PROMPT).toContain("fitment is unverified until an authorized OEM or licensed parts-catalog application matches the exact part");
+  });
+
   it("never asserts a shared part merely because photos were supplied", () => {
     expect(IDENTIFY_PROMPT).toContain("when absent it is unknown");
     expect(IDENTIFY_PROMPT).toContain("Only an explicit same_part_or_area choice is a user report");

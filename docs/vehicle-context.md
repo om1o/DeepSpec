@@ -2,7 +2,8 @@
 
 Vehicle details are supplied by the user. A field becomes user-confirmed only
 after an explicit action against its exact value. Changing a field clears that
-confirmation; mileage confirmation includes the unit, and modification
+confirmation; mileage confirmation includes the unit, build/option details
+have their own confirmation, and modification
 confirmation includes both status and details. Missing, unknown and legacy
 values do not become confirmed automatically. A VIN is entered information,
 not a decoder result or proof of fitment.
@@ -51,12 +52,13 @@ condition or serviceability. Advice that depends on an uncertain vehicle detail
 must request that detail first. General visual identification remains possible
 without a complete profile.
 
-Regression checks cover stale confirmations, changed units/modifications,
+Regression checks cover stale confirmations, changed units/build details/modifications,
 legacy records, account changes, metadata loss, provider transport, vehicle/job
 switches, concurrent draft replacement and exports. Native browser acceptance,
 hosted AI accuracy, real same-part photographs and physical iPad behavior remain
 separate checks. This change uses existing JSON persistence; it adds no hosted
-migration, provider/model change or external vehicle lookup service.
+migration or provider/model change. The separate explicit NHTSA VIN reference
+can help review identity fields, but it does not provide parts-catalog fitment.
 
 The existing [Google generate-content request contract](https://aistudio.google.com/api-reference/generate-content)
 was checked on 2026-11-05; the endpoint and model configuration are unchanged.

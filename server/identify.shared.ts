@@ -2,6 +2,7 @@ import { CONDITION_ASSESSMENT_PROMPT, PHOTO_REVIEW_PROMPT, IDENTIFY_PROMPT, IDEN
 import { normalizeConditionAssessment } from "../src/lib/conditionAssessment.js";
 import { normalizePhotoReview } from "../src/lib/photoReview.js";
 import { formatVehicleContext, providerVehicleContext } from "../src/lib/vehicleContext.js";
+import { getFitmentStatus } from "../src/lib/shopFitmentContext.js";
 import { randomUUID } from "node:crypto";
 import { observeIdentification } from "./identifyDiagnostics.shared.js";
 import {
@@ -453,7 +454,7 @@ async function createGeminiIdentifyAttempt(
     return { model, response: invalidResponse, rateLimited: false };
   }
 
-  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env, parsed.measurementContext, parsed.selectedPart);
+  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env, parsed.measurementContext, parsed.selectedPart, parsed.vehicleContext);
   const latencyMs = Date.now() - startedAt;
 
   console.info("[DeepSpec AI]", {
@@ -545,7 +546,7 @@ async function createGeminiRescueIdentifyResponse(
     return invalidResponse;
   }
 
-  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env, parsed.measurementContext, parsed.selectedPart);
+  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env, parsed.measurementContext, parsed.selectedPart, parsed.vehicleContext);
   const latencyMs = Date.now() - startedAt;
 
   console.info("[DeepSpec AI]", {
@@ -773,7 +774,7 @@ async function createBackendIdentifyResponse(
     return invalidResponse;
   }
 
-  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env, parsed.measurementContext, parsed.selectedPart);
+  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env, parsed.measurementContext, parsed.selectedPart, parsed.vehicleContext);
   const latencyMs = Date.now() - startedAt;
 
   console.info("[DeepSpec AI]", {
@@ -1052,7 +1053,7 @@ async function createOllamaIdentifyResponse(
     return invalidResponse;
   }
 
-  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env, parsed.measurementContext, parsed.selectedPart);
+  const normalizedResult = normalizeIdentificationResult(result, ocr?.text ?? null, env, parsed.measurementContext, parsed.selectedPart, parsed.vehicleContext);
   const latencyMs = Date.now() - startedAt;
 
   console.info("[DeepSpec AI]", {
@@ -1548,7 +1549,7 @@ function toIdentificationResult(value: unknown, allowedPhotoIds: readonly string
     ? value.nextAction
     : typeof base.nextAction === "string" && base.nextAction.trim()
       ? base.nextAction
-    : "Use the visible identification as a starting point and verify fitment with vehicle context.";
+    : "Use the visible identification as a starting point; check the exact replacement in an authorized parts catalog.";
 
   return {
     partName,
@@ -1894,7 +1895,7 @@ function coerceSourceLinks(value: unknown, partName: string): SourceLink[] {
 }
 
 function isOptionalFitmentConfidence(value: unknown) {
-  return value === "not_applicable" || value === "needs_vehicle_context" || value === "possible" || value === "supported";
+  return value === "not_applicable" || value === "needs_vehicle_context" || value === "needs_catalog_verification" || value === "possible" || value === "supported";
 }
 
 function parseOllamaIdentificationResult(text: string, allowedPhotoIds: readonly string[]): IdentificationResult | null {
@@ -2115,6 +2116,7 @@ function normalizeIdentificationResult(
   env: Record<string, string | undefined> = {},
   measurementContext: MeasurementContext | null = null,
   selectedPart?: SelectedPartReference,
+  vehicleContext?: VehicleContext | null,
 ): IdentificationResult {
   const selectedIdentity = selectedPart ? guardSelectedPartIdentity(result) : null;
   if (selectedIdentity) result = selectedIdentity.result;
@@ -2152,7 +2154,7 @@ function normalizeIdentificationResult(
     requiredNextEvidence: conditionEvidenceRequest
       ? [conditionEvidenceRequest, ...requiredNextEvidence.filter((item) => item !== conditionEvidenceRequest)]
       : requiredNextEvidence,
-    fitmentConfidence: normalizeFitmentConfidence(result.fitmentConfidence, result.possibleVehicleContexts),
+    fitmentConfidence: getFitmentStatus(result, vehicleContext ?? undefined),
     scanCategory: resolvedScanCategory,
     candidateMatches,
     whatItDoes: normalizeWhatItDoes(result.whatItDoes, partName, resolvedScanCategory),
@@ -2624,22 +2626,6 @@ function normalizeRequiredNextEvidence(
   }
 
   return [];
-}
-
-function normalizeFitmentConfidence(
-  value: IdentificationResult["fitmentConfidence"],
-  possibleVehicleContexts: IdentificationResult["possibleVehicleContexts"],
-) {
-  if (
-    value === "not_applicable" ||
-    value === "needs_vehicle_context" ||
-    value === "possible" ||
-    value === "supported"
-  ) {
-    return value;
-  }
-
-  return possibleVehicleContexts?.length ? "possible" : "needs_vehicle_context";
 }
 
 function normalizeEvidenceRegions(

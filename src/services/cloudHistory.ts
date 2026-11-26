@@ -732,7 +732,7 @@ function parseShopReviewStatus(value: unknown): ShopReviewStatus | undefined {
 }
 
 function parseFitmentConfidence(value: unknown): FitmentConfidence | undefined {
-  return value === "not_applicable" || value === "needs_vehicle_context" || value === "possible" || value === "supported"
+  return value === "not_applicable" || value === "needs_vehicle_context" || value === "needs_catalog_verification" || value === "possible" || value === "supported"
     ? value
     : undefined;
 }

@@ -67,6 +67,12 @@ describe("owner-scoped job inspection context", () => {
 });
 
 describe("one-snapshot job report scope", () => {
+  it("flags differing build options between a job and its frozen scan", () => {
+    updateShopJob(job.id, { buildDetails: "LE, AWD" });
+    const root = scan("root", job.id, { buildDetails: "LE, FWD" });
+    const context = readJobInspectionContext(job.id)!;
+    expect(buildJobInspectionReportScope(context, snapshot(root.id, [root])).vehicleDifferences).toEqual([{ lookupId: root.id, fields: ["buildDetails"] }]);
+  });
   function fixture() {
     const root = scan("root", job.id, { make: " toyota ", model: " CAMRY", engine: "2.5   l" });
     const excluded = scan("excluded", job.id);

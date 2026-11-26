@@ -1116,7 +1116,7 @@ function normalizePartMeasurements(value: unknown): PartMeasurement[] {
 }
 
 function isFitmentConfidence(value: unknown): value is FitmentConfidence {
-  return value === "not_applicable" || value === "needs_vehicle_context" || value === "possible" || value === "supported";
+  return value === "not_applicable" || value === "needs_vehicle_context" || value === "needs_catalog_verification" || value === "possible" || value === "supported";
 }
 
 function normalizeEvidenceRegions(regions: unknown, observations: unknown[], evidence: unknown[]): EvidenceRegion[] {

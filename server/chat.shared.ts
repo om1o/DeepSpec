@@ -48,6 +48,18 @@ export async function createChatResponse(body: unknown, env: Record<string, stri
     return parsed.error;
   }
 
+  // The client appends the current question after saved facts and prior chat.
+  const questionMarker = "\nUser question: ";
+  const questionIndex = parsed.userMessage.lastIndexOf(questionMarker);
+  const currentQuestion = questionIndex < 0 ? parsed.userMessage : parsed.userMessage.slice(questionIndex + questionMarker.length);
+  // No authorized catalog application is available to this endpoint.
+  if (asksForExactFitment(currentQuestion)) {
+    const safetyReminder = /\b(?:safe|unsafe|dangerous|drive|driving)\b/i.test(currentQuestion)
+      ? " I cannot assess driving safety from this request; have a qualified mechanic inspect the vehicle before driving."
+      : "";
+    return { status: 200, body: { message: `Exact replacement fitment is unverified. Confirm the vehicle VIN and build/options, then check the exact part number in an authorized OEM or licensed parts catalog before ordering. A photo, VIN decode, or visible label alone cannot establish compatibility. This answer addresses fitment only.${safetyReminder}` } };
+  }
+
   const models = getChatModels(env);
   // Leave room for auth and HTTP overhead before the 30s/60s browser limits.
   const deadline = Date.now() + (parsed.research ? 50_000 : 25_000);
@@ -402,6 +414,12 @@ function guardSelectedPartIdentifierAnswer(message: string, request: ChatRequest
 
 function asksForExactIdentifier(message: string) {
   return /\b(?:part|serial|model|oem|casting|catalog)\s*(?:number|no\.?|#|code|id|identifier)\b|\bexact\s+(?:part|serial|model|oem|casting|catalog)\b/i.test(message);
+}
+
+function asksForExactFitment(message: string) {
+  return (/\b(?:fit|fits|fitment|compatible|compatibility|interchangeable)\b/i.test(message)
+    && /\b(?:this|that|my|your|vin|vehicle|car|truck|part|component|model|engine)\b/i.test(message))
+    || /\b(?:replacement|part number)\b.{0,120}\b(?:for|fit|compatible)\b/i.test(message);
 }
 
 function statesIdentifierLimit(message: string) {

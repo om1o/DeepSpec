@@ -262,11 +262,11 @@ function ComparisonText({ title, value, onChange, max, multiline = false }: { ti
 }
 
 function OriginalPair({ earlier, current, alignment }: Pick<InspectionComparison, "earlier" | "current" | "alignment">) {
-  const contradictions = (["vin", "year", "make", "model", "engine"] as const).filter((key) => {
+  const contradictions = (["vin", "year", "make", "model", "engine", "buildDetails"] as const).filter((key) => {
     const left = earlier.vehicleContext?.[key]?.trim(); const right = current.vehicleContext?.[key]?.trim();
     return left && right && left.toLocaleLowerCase() !== right.toLocaleLowerCase();
   });
-  return <div className="mt-3 min-w-0">{contradictions.length ? <p className="mb-2 rounded-xl border border-amber-500 p-3 text-sm" role="status">Saved vehicle details differ: {contradictions.map((key) => key === "vin" ? "VIN" : key).join(", ")}. Check the records and explain any same-vehicle confirmation; do not assume these photographs belong to the same car.</p> : null}<div className="grid min-w-0 gap-3 sm:grid-cols-2"><Original side={earlier} title="Earlier original" /><Original side={current} title="Current original" alignment={alignment} /></div></div>;
+  return <div className="mt-3 min-w-0">{contradictions.length ? <p className="mb-2 rounded-xl border border-amber-500 p-3 text-sm" role="status">Saved vehicle details differ: {contradictions.map((key) => key === "vin" ? "VIN" : key === "buildDetails" ? "build / option details" : key).join(", ")}. Check the records and explain any same-vehicle confirmation; do not assume these photographs belong to the same car.</p> : null}<div className="grid min-w-0 gap-3 sm:grid-cols-2"><Original side={earlier} title="Earlier original" /><Original side={current} title="Current original" alignment={alignment} /></div></div>;
 }
 function Original({ side, title, alignment }: { side: ComparisonSide; title: string; alignment?: InspectionComparison["alignment"] }) {
   const [scope] = useState(getAccountScope); const sourceKey = JSON.stringify(side);

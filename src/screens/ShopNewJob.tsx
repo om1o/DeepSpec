@@ -80,7 +80,7 @@ export default function ShopNewJob() {
             <VehicleContextEditor value={form} hideSymptom onChange={(context) => setForm((current) => ({
               ...current, ...context,
               year: context?.year ?? "", make: context?.make ?? "", model: context?.model ?? "",
-              engine: context?.engine, vin: context?.vin, mileage: context?.mileage,
+              engine: context?.engine, buildDetails: context?.buildDetails, vin: context?.vin, mileage: context?.mileage,
               mileageUnit: context?.mileageUnit, modifications: context?.modifications, confirmedFields: context?.confirmedFields,
               referenceOrigins: context?.referenceOrigins,
             }))} />

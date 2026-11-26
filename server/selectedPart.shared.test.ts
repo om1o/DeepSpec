@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createIdentifyResponse } from "./identify.shared";
 import { createChatResponse } from "./chat.shared";
+import { confirmVehicleContextField } from "../src/lib/vehicleContext";
 
 const imageBase64 = "data:image/png;base64,aGVsbG8=";
 const photos = ["original", "another-original", "selected-crop"].map((id) => ({ id, label: "other", imageBase64 }));
@@ -17,6 +18,20 @@ const providerAnswer = () => new Response(JSON.stringify({ candidates: [{ finish
 afterEach(() => vi.restoreAllMocks());
 
 describe("selected-part provider transport", () => {
+  it("does not accept model-supported fitment with only a confirmed VIN and readable label", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify({
+        ...identification,
+        evidence: ["The selected part label reads ALT-456."],
+        fitmentConfidence: "supported",
+      }) }] } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const vehicleContext = confirmVehicleContextField({ vin: "1HGCM82633A004352", year: "2003", buildDetails: "LX, 2WD" }, "vin", true);
+    const response = await createIdentifyResponse({ photos, vehicleContext }, { GEMINI_API_KEY: "test-key" });
+    expect(response.status).toBe(200);
+    if (response.status !== 200) return;
+    expect(response.body.result.fitmentConfidence).toBe("needs_catalog_verification");
+  });
   it("retains the original selected region and derived crop on Gemini identify and fallback", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(new Response("{}", { status: 503 }))

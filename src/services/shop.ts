@@ -1,6 +1,7 @@
 import { getLookups } from "./storage";
 import { accountStorageKey, getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import { normalizeVehicleContext, vehicleContextDetails } from "../lib/vehicleContext";
+import { fitmentStatusLabel, getFitmentStatus } from "../lib/shopFitmentContext";
 import type {
   CustomerVisibleReport,
   Lookup,
@@ -139,6 +140,7 @@ export function createShopJob(input: ShopJobInput): StorageResult<ShopJob | null
     createdByUserId: DEFAULT_OWNER_USER_ID,
     customerName: clean(input.customerName, 120),
     engine: clean(input.engine, 120),
+    buildDetails: clean(input.buildDetails, 120),
     make: clean(input.make, 80),
     mileage: clean(input.mileage, 40),
     mileageUnit: input.mileageUnit,
@@ -222,7 +224,7 @@ export function subscribeShopJobs(listener: () => void, scope: AccountScope = ge
   return () => { window.removeEventListener(SHOP_JOBS_CHANGED, onLocal); window.removeEventListener("storage", onStorage); };
 }
 
-export function updateShopJob(jobId: string, patch: Partial<Pick<ShopJob, "status" | "vin" | "year" | "make" | "model" | "mileage" | "mileageUnit" | "modifications" | "confirmedFields" | "referenceOrigins" | "engine" | "notes" | "reviewStatus">>): StorageResult<ShopJob | null> {
+export function updateShopJob(jobId: string, patch: Partial<Pick<ShopJob, "status" | "vin" | "year" | "make" | "model" | "mileage" | "mileageUnit" | "modifications" | "confirmedFields" | "referenceOrigins" | "engine" | "buildDetails" | "notes" | "reviewStatus">>): StorageResult<ShopJob | null> {
   const jobs = getShopJobs();
   const index = jobs.findIndex((job) => job.id === jobId);
   if (index === -1) {
@@ -243,6 +245,7 @@ export function updateShopJob(jobId: string, patch: Partial<Pick<ShopJob, "statu
     ...("confirmedFields" in patch ? { confirmedFields: patch.confirmedFields } : {}),
     ...("referenceOrigins" in patch ? { referenceOrigins: patch.referenceOrigins } : {}),
     ...(typeof patch.engine === "string" ? { engine: clean(patch.engine, 120) } : {}),
+    ...(typeof patch.buildDetails === "string" ? { buildDetails: clean(patch.buildDetails, 120) } : {}),
     ...(typeof patch.notes === "string" ? { notes: clean(patch.notes, 500) } : {}),
     updatedAt: new Date().toISOString(),
   });
@@ -285,6 +288,7 @@ export function getVehicleContextForJob(job: ShopJob): ShopVehicleContext {
     bayOrRo: job.bayOrRo,
     customerName: job.customerName,
     engine: job.engine,
+    buildDetails: job.buildDetails,
     jobTitle: job.title,
     make: job.make,
     mileage: job.mileage,
@@ -373,7 +377,7 @@ export function buildCustomerVisibleReport(
   const confidence = latestScan?.result?.confidence ? `${latestScan.result.confidence} confidence` : "needs review";
   return {
     generatedAt: new Date().toISOString(),
-    summary: `${job.year} ${job.make} ${job.model}: ${job.symptom}. Latest DeepSpec result: ${topPart} (${confidence}). Verify fitment with VIN, label/OCR, or a second angle before ordering parts.`,
+    summary: `${job.year} ${job.make} ${job.model}: ${job.symptom}. Latest DeepSpec result: ${topPart} (${confidence}). Check the exact part number and vehicle options in an authorized parts catalog before ordering.`,
     title: `${job.title} customer report`,
   };
 }
@@ -391,13 +395,13 @@ export function buildCustomerJobReport(job: ShopJob, scans = getShopJobScans(job
     ...scans.flatMap((scan, index) => [
       `${index + 1}. ${scan.correction?.trim() || scan.result?.partName || "Unidentified scan"}`,
       `   Status: ${scan.reviewStatus ?? "needs_review"}`,
-      `   Fitment confidence: ${scan.result?.fitmentConfidence ?? "needs_vehicle_context"}`,
+      `   Fitment: ${scan.result ? fitmentStatusLabel(getFitmentStatus(scan.result, scan.vehicleContext)) : "Not established"}`,
       scan.result?.requiredNextEvidence?.length
         ? `   Required next evidence: ${scan.result.requiredNextEvidence.join(", ")}`
-        : "   Required next evidence: VIN, label photo, second angle, or measurement reference if fitment is uncertain.",
+        : "   Required next evidence: confirm VIN and check exact part and required options in an authorized parts catalog.",
     ]),
     "",
-    "Do not treat this as exact OEM fitment unless VIN, OCR label, or a verified source supports it.",
+    "Exact replacement fitment requires an authorized OEM or licensed parts-catalog application matched to the vehicle and required options. A VIN or photographed label alone is insufficient.",
   ].filter(Boolean);
 
   return `${lines.join("\n")}\n`;
@@ -439,6 +443,7 @@ function normalizeShopJob(job: ShopJob): ShopJob {
     bayOrRo: clean(job.bayOrRo, 80),
     customerName: clean(job.customerName, 120),
     engine: clean(job.engine, 120),
+    buildDetails: clean(job.buildDetails, 120),
     make: clean(job.make, 80),
     mileage: clean(job.mileage, 40),
     model: clean(job.model, 80),

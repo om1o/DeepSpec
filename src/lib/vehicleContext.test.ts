@@ -16,6 +16,14 @@ describe("vehicle context confirmation", () => {
     expect(restored?.confirmedFields).toEqual({ year: { value: "2014", confirmedAt: now }, mileage: { value: '["120000","mi"]', confirmedAt: now }, modifications: { value: '["modified","Aftermarket intake"]', confirmedAt: now } });
   });
 
+  it("retains reviewed build options in scans and provider context without implying catalog fitment", () => {
+    const context = confirmVehicleContextField({ year: "2014", buildDetails: "Limited, AWD, built 06/2014" }, "buildDetails", true, now);
+    expect(normalizeVehicleContext(JSON.parse(JSON.stringify(context)))).toEqual(context);
+    expect(providerVehicleContext(context)).toMatchObject({ buildDetails: "Limited, AWD, built 06/2014" });
+    expect(formatVehicleContext(context)).toContain("Build / option details: Limited, AWD, built 06/2014 — user-confirmed (self-reported)");
+    expect(updateVehicleContextField(context, "buildDetails", "Base, FWD").confirmedFields?.buildDetails).toBeUndefined();
+  });
+
   it.each(["year", "engine"] as const)("invalidates only the edited %s and preserves raw multiword typing", (field) => {
     let context = confirmVehicleContextField({ year: "2014", engine: "2.5L inline four" }, "year", true, now);
     context = confirmVehicleContextField(context, "engine", true, now);

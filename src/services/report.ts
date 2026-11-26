@@ -2,6 +2,7 @@ import { getLocalDateStamp } from "../lib/utils";
 import { formatIntakeDraft } from "../lib/intakeDraft";
 import { buildConditionHandoff, formatConditionHandoff } from "../lib/conditionHandoff";
 import { UNLINKED_CONDITION_FLAGS_MESSAGE } from "../lib/conditionCoverage";
+import { fitmentStatusLabel, getFitmentStatus } from "../lib/shopFitmentContext";
 import type { CandidateMatch, EvidenceRegion, Lookup, SourceLink } from "../types";
 
 export function buildScanReport(lookup: Lookup) {
@@ -30,6 +31,8 @@ export function buildScanReport(lookup: Lookup) {
     `Safety triage: ${result?.safetyTriage ?? "unknown"}`,
     `Training label: ${lookup.trainingLabel}`,
     `Review status: ${lookup.trainingStatus.replaceAll("_", " ")}`,
+    `Replacement fitment: ${result ? fitmentStatusLabel(getFitmentStatus(result, lookup.vehicleContext)) : "Not established"}`,
+    "Check the exact part number and required vehicle options in an authorized parts catalog before ordering.",
     "",
     "What it does:",
     result?.whatItDoes ?? "No AI explanation saved.",

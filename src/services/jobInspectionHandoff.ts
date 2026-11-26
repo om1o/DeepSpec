@@ -5,7 +5,7 @@ import type { JobInspectionContext, JobInspectionReportScope } from "../types/jo
 import { readShopJob } from "./shop";
 import { readLookups } from "./storage";
 
-const fields = ["vin", "year", "make", "model", "engine"] as const;
+const fields = ["vin", "year", "make", "model", "engine", "buildDetails"] as const;
 const validId = (value: unknown): value is string => typeof value === "string" && /^[A-Za-z0-9._:-]{1,160}$/.test(value) && value !== "." && value !== "..";
 const unique = (values: readonly string[]) => [...new Set(values)].sort();
 const issued = new WeakMap<JobInspectionContext, { scope: AccountScope; signature: string }>();

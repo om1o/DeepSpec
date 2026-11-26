@@ -12,7 +12,7 @@ type Props = {
 
 const TEXT_FIELDS = [
   ["year", "Year", 20], ["make", "Make", 120], ["model", "Model", 120],
-  ["engine", "Engine", 120], ["vin", "VIN", 17],
+  ["engine", "Engine", 120], ["buildDetails", "Build / option details", 120], ["vin", "VIN", 17],
 ] as const;
 const FIELD = "mt-1 block min-h-11 w-full rounded-lg border border-[var(--ds-border)] bg-[var(--ds-surface)] px-3 py-2 text-sm text-[var(--ds-fg-1)]";
 

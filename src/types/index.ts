@@ -90,7 +90,7 @@ export type CandidateMatch = {
   reason: string;
 };
 
-export type VehicleContextField = "vin" | "year" | "make" | "model" | "engine" | "mileage" | "modifications";
+export type VehicleContextField = "vin" | "year" | "make" | "model" | "engine" | "buildDetails" | "mileage" | "modifications";
 
 export type VehicleContext = {
   vin?: string;
@@ -98,6 +98,7 @@ export type VehicleContext = {
   make?: string;
   model?: string;
   engine?: string;
+  buildDetails?: string;
   mileage?: string;
   mileageUnit?: "mi" | "km" | "unknown";
   modifications?: { status: "unknown" | "none_known" | "modified"; details?: string };
@@ -145,6 +146,7 @@ export type ShopJob = {
   createdByUserId?: string;
   customerName?: string;
   engine?: string;
+  buildDetails?: string;
   make: string;
   mileage?: string;
   mileageUnit?: VehicleContext["mileageUnit"];
@@ -214,7 +216,7 @@ export type PartMeasurement = {
   caveat: string;
 };
 
-export type FitmentConfidence = "not_applicable" | "needs_vehicle_context" | "possible" | "supported";
+export type FitmentConfidence = "not_applicable" | "needs_vehicle_context" | "needs_catalog_verification" | "possible" | "supported";
 
 export type EvidenceRegion = {
   label: string;

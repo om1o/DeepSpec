@@ -34,13 +34,13 @@ function payloadFits(value: unknown): boolean {
 function vehicleSnapshot(value: unknown): VehicleContext | undefined {
   if (!object(value)) return undefined;
   const normalized = normalizeVehicleContext({
-    vin: value.vin, year: value.year, make: value.make, model: value.model, engine: value.engine,
+    vin: value.vin, year: value.year, make: value.make, model: value.model, engine: value.engine, buildDetails: value.buildDetails,
     mileage: value.mileage, mileageUnit: value.mileageUnit, modifications: value.modifications,
     confirmedFields: value.confirmedFields, symptom: value.symptom,
   });
   if (!normalized) return undefined;
   const result: VehicleContext = {};
-  for (const key of ["vin", "year", "make", "model", "engine", "mileage", "symptom"] as const) if (normalized[key] !== undefined) result[key] = normalized[key];
+  for (const key of ["vin", "year", "make", "model", "engine", "buildDetails", "mileage", "symptom"] as const) if (normalized[key] !== undefined) result[key] = normalized[key];
   if (normalized.mileageUnit !== undefined) result.mileageUnit = normalized.mileageUnit;
   if (normalized.modifications !== undefined) result.modifications = normalized.modifications;
   if (normalized.confirmedFields !== undefined) result.confirmedFields = normalized.confirmedFields;
@@ -48,7 +48,7 @@ function vehicleSnapshot(value: unknown): VehicleContext | undefined {
 }
 
 function vehicleFieldsValid(value: Record<string, unknown>): boolean {
-  for (const field of ["vin", "year", "make", "model", "engine", "mileage", "symptom"] as const) {
+  for (const field of ["vin", "year", "make", "model", "engine", "buildDetails", "mileage", "symptom"] as const) {
     if (value[field] !== undefined && !text(value[field], field === "symptom" ? 500 : 120)) return false;
   }
   if (value.mileageUnit !== undefined && (typeof value.mileageUnit !== "string" || !["mi", "km", "unknown"].includes(value.mileageUnit))) return false;
