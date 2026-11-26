@@ -91,18 +91,18 @@ function displayDate(value: string) { const date = new Date(value); return Numbe
 function savedVehicleFacts(scan: Lookup) {
   const vehicle = normalizeVehicleContext(scan.vehicleContext);
   if (!vehicle) return "No vehicle details retained; same vehicle is unconfirmed.";
-  const facts = (["year", "make", "model", "engine"] as const).flatMap((field) => vehicle[field] ? [`${field}: ${vehicle[field]} (${isVehicleFieldConfirmed(vehicle, field) ? "user confirmed" : "supplied, unconfirmed"})`] : []);
+  const facts = (["year", "make", "model", "engine", "buildDetails"] as const).flatMap((field) => vehicle[field] ? [`${field === "buildDetails" ? "build / option details" : field}: ${vehicle[field]} (${isVehicleFieldConfirmed(vehicle, field) ? "user confirmed" : "supplied, unconfirmed"})`] : []);
   if (vehicle.mileage) facts.push(`mileage: ${vehicle.mileage} ${vehicle.mileageUnit ?? "unit unknown"}`);
   return facts.join("; ") || "No vehicle identity details retained; same vehicle is unconfirmed.";
 }
 function VehicleDifference({ context, scan }: { context: JobInspectionContext; scan: Lookup }) {
   const saved = normalizeVehicleContext(scan.vehicleContext), job = normalizeVehicleContext(context.job);
-  const different = (["vin", "year", "make", "model", "engine"] as const).filter((field) => {
+  const different = (["vin", "year", "make", "model", "engine", "buildDetails"] as const).filter((field) => {
     const first = suppliedFact(saved?.[field]), second = suppliedFact(job?.[field]);
     return Boolean(first && second && first !== second);
   });
   return different.length
-    ? <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">Saved vehicle details differ from this job: {different.join(", ")}. Review the originals and vehicle identity before handoff; membership does not resolve this difference.</p>
+    ? <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">Saved vehicle details differ from this job: {different.map((field) => field === "buildDetails" ? "build / option details" : field).join(", ")}. Review the originals and vehicle identity before handoff; membership does not resolve this difference.</p>
     : <p className="text-sm text-slate-600">Job membership and matching or missing vehicle details do not establish that this inspection shows the same vehicle.</p>;
 }
 function suppliedFact(value: unknown) {

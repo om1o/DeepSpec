@@ -767,6 +767,7 @@ function isOptionalFitmentConfidence(value: unknown) {
   return value === undefined ||
     value === "not_applicable" ||
     value === "needs_vehicle_context" ||
+    value === "needs_catalog_verification" ||
     value === "possible" ||
     value === "supported";
 }

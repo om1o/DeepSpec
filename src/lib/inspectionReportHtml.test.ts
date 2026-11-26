@@ -53,6 +53,19 @@ function parsed(report: InspectionReportSnapshot, options?: Parameters<typeof bu
 }
 
 describe("vehicle field sources in mechanic reports", () => {
+  it("exports reviewed build details and does not repeat a legacy supported fitment claim", () => {
+    const scan = lookup();
+    let vehicleContext = confirmVehicleContextField({ vin: "1HGCM82633A004352", buildDetails: "LX, 2WD, built 03/2003" }, "vin", true, WHEN);
+    vehicleContext = confirmVehicleContextField(vehicleContext, "buildDetails", true, WHEN);
+    scan.vehicleContext = vehicleContext;
+    scan.result!.fitmentConfidence = "supported";
+    const doc = parsed(snapshot([scan]));
+    const field = Array.from(doc.querySelectorAll("dt")).find((element) => element.textContent === "Build / option details");
+    expect(field?.nextElementSibling?.textContent).toContain("LX, 2WD, built 03/2003 — user-confirmed");
+    const fitment = Array.from(doc.querySelectorAll("dt")).find((element) => element.textContent === "Fitment");
+    expect(fitment?.nextElementSibling?.textContent).toBe("Catalog verification needed");
+    expect(doc.body.textContent).toContain("authorized OEM or licensed parts-catalog application");
+  });
   it("exports the original query, retrieval and field attribution while keeping VIN opt-in and source text inert", () => {
     const scan = lookup();
     const context = referenceVehicleContext();

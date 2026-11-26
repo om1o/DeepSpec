@@ -91,10 +91,10 @@ describe("immutable dated comparisons", () => {
     expect(comparisonSideMatches(original.earlier, { ...original.earlier, photoAddedAt: "2026-11-05T00:00:00.001Z" })).toBe(false);
   });
   it("preserves exact human text, canonicalizes IDs and excludes private vehicle fields", () => {
-    const input = { ...record(), id: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", subject: "  Bracket  ", earlier: { ...side("earlier"), sha256: "B".repeat(64), vehicleContext: { make: "Toyota", mileage: "12345", mileageUnit: "km", customer: "PRIVATE", notes: "PRIVATE", plate: "PRIVATE", confirmedFields: { make: { value: "Different", confirmedAt: "2026-11-05T00:00:00Z" } } } } };
+    const input = { ...record(), id: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", subject: "  Bracket  ", earlier: { ...side("earlier"), sha256: "B".repeat(64), vehicleContext: { make: "Toyota", buildDetails: "LE, FWD", mileage: "12345", mileageUnit: "km", customer: "PRIVATE", notes: "PRIVATE", plate: "PRIVATE", confirmedFields: { make: { value: "Different", confirmedAt: "2026-11-05T00:00:00Z" } } } } };
     const checked = normalizeInspectionComparison(input)!;
     expect(checked.id).toBe(input.id.toLowerCase()); expect(checked.subject).toBe("  Bracket  "); expect(checked.earlier.sha256).toBe("b".repeat(64));
-    expect(checked.earlier.vehicleContext).toMatchObject({ make: "Toyota", mileage: "12345", mileageUnit: "km" });
+    expect(checked.earlier.vehicleContext).toMatchObject({ make: "Toyota", buildDetails: "LE, FWD", mileage: "12345", mileageUnit: "km" });
     expect(JSON.stringify(checked)).not.toContain("PRIVATE"); expect(checked.earlier.vehicleContext?.confirmedFields).toBeUndefined();
   });
   it("requires a real calendar date and preserves unknown versus user-reported dates", () => {

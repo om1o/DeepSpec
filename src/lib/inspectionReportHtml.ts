@@ -5,6 +5,7 @@ import { buildConditionCoverage, ORIGINAL_AI_WORDING_MESSAGE, UNLINKED_CONDITION
 import { normalizeObservationAreaRecords, observationAreaRecordStatus } from "./observationArea";
 import { buildIntakeDraft } from "./intakeDraft";
 import { normalizeVehicleContext, vehicleContextDetails } from "./vehicleContext";
+import { fitmentStatusLabel, getFitmentStatus } from "./shopFitmentContext";
 import { normalizeServiceRecords, serviceRecordRows, serviceRecordStatus } from "./serviceRecord";
 import { normalizeInspectionComparison, normalizeInspectionComparisons, inspectionComparisonStatus } from "./inspectionComparison";
 import type { InspectionComparison } from "../types/inspectionComparison";
@@ -78,7 +79,7 @@ function vehicleReferenceHtml(scan: Lookup, options: InspectionReportOptions): s
 function contextRows(context: VehicleContext | undefined, options: InspectionReportOptions): [string, string][] {
   // An allowlist prevents the display helper's optional shop fields from leaking into an export.
   const safe: VehicleContext = {
-    year: context?.year, make: context?.make, model: context?.model, engine: context?.engine,
+    year: context?.year, make: context?.make, model: context?.model, engine: context?.engine, buildDetails: context?.buildDetails,
     mileage: context?.mileage, mileageUnit: context?.mileageUnit, modifications: context?.modifications,
     confirmedFields: context?.confirmedFields, symptom: context?.symptom,
     ...(options.includeVin ? { vin: context?.vin } : {}),
@@ -131,7 +132,7 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
       <h3>Unavailable job scans</h3>${jobIds(job.unavailableJobScanIds)}
       <h3>Linked scans outside the job</h3>${jobIds(job.outsideJobScanIds)}
       <h3>Conflicting job associations</h3>${job.conflictingJobScanIds.length ? `<ul>${job.conflictingJobScanIds.map((id) => `<li>${escape(id)}: ${byId.has(id) ? "Included through linked evidence; job association conflicts." : "Not included; job association conflicts."}</li>`).join("")}</ul>` : prose("None.")}
-      <h3>Different saved vehicle fields</h3>${job.vehicleDifferences.length ? `<ul>${job.vehicleDifferences.map((row) => `<li>${escape(row.lookupId)}: ${escape(row.fields.join(", "))}. No vehicle identity was inferred.</li>`).join("")}</ul>` : prose("No differences were listed for the saved fields compared. This does not establish vehicle identity.")}</section>`;
+      <h3>Different saved vehicle fields</h3>${job.vehicleDifferences.length ? `<ul>${job.vehicleDifferences.map((row) => `<li>${escape(row.lookupId)}: ${escape(row.fields.map((field) => field === "buildDetails" ? "build / option details" : field).join(", "))}. No vehicle identity was inferred.</li>`).join("")}</ul>` : prose("No differences were listed for the saved fields compared. This does not establish vehicle identity.")}</section>`;
   }
   const missing = snapshot.missing.map((issue) => {
     const entry = byId.get(issue.lookupId);
@@ -390,7 +391,8 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
       ${relationshipScope ? prose(relationshipScope) : ""}
       ${photosHtml}${selections.length ? `<h3>Saved selections and cutouts</h3>${selectionsHtml}` : prose("No isolated selections or cutouts saved.")}
       ${photoReviewHtml}
-      ${result ? `<h3>AI identification — unverified</h3>${details([["Suggested identity", result.partName], ["Confidence", result.confidence], ["Category", words(result.scanCategory)], ["What it does", result.whatItDoes], ["Fitment", result.fitmentConfidence ? words(result.fitmentConfidence) : "Not established"], ["Confirmation needed", result.confirmationNeed ? words(result.confirmationNeed) : "Not recorded"]])}
+      ${result ? `<h3>AI identification — unverified</h3>${details([["Suggested identity", result.partName], ["Confidence", result.confidence], ["Category", words(result.scanCategory)], ["What it does", result.whatItDoes], ["Fitment", fitmentStatusLabel(getFitmentStatus(result, scan.vehicleContext))], ["Confirmation needed", result.confirmationNeed ? words(result.confirmationNeed) : "Not recorded"]])}
+        ${prose("Exact replacement fitment needs an authorized OEM or licensed parts-catalog application for this part, vehicle and required options. A VIN, model answer or readable label alone is insufficient.")}
         ${result.modelRun ? details([["Provider", result.modelRun.provider], ["Model", result.modelRun.model], ["Prompt version", result.modelRun.promptVersion ?? "Not recorded"], ["Pipeline version", result.modelRun.pipelineVersion ?? "Not recorded"], ["Analyzed", scan.analyzedAt ?? "Not recorded"], ["OCR used", result.modelRun.ocrUsed ? "Yes" : "No"], ...(result.modelRun.fallbackReason ? [["Provider fallback", result.modelRun.fallbackReason] as const] : [])]) : prose("Model provenance not recorded.")}
         <div class="${result.isSafetyCritical || result.safetyTriage === "needs_professional" ? "safety" : "warning"}"><h4>${result.isSafetyCritical || result.safetyTriage === "needs_professional" ? "Safety action — preserve before further use" : "Saved next action"}</h4>${prose(result.nextAction || "No specific action recorded.")}${details([["Safety triage", words(result.safetyTriage)], ["Safety-critical flag", result.isSafetyCritical ? "Yes" : "No — not a safety clearance"]])}</div>
         ${assessmentHtml}<h4>Other saved AI visible observations</h4>${list(result.visibleObservations)}
@@ -502,7 +504,7 @@ export function buildInspectionReportHtml(snapshot: InspectionReportSnapshot, op
     const logs = snapshot.observationAreaLogs?.filter((log) => log.lookupId === scan.id);
     const areas = logs?.length === 1 ? normalizeObservationAreaRecords(logs[0].records, scan.id) : undefined;
     const areaSummary = areas ? areas.length ? `<p>Human areas: ${areas.map((record, index) => `<a href="#${anchor}-human-area-${record.id}">${index + 1}: ${escape(observationAreaRecordStatus(record, areas))}</a>`).join("; ")}. Historical review pointers; see the source and answer checks in their records.</p>` : prose("No human area entries were found on this device.") : prose("Human area history was not collected or could not be read.");
-    const vehicle = contextRows(scan.vehicleContext, options).filter(([label, value]) => ["Year", "Make", "Model", "Engine", "Mileage", "User-supplied complaint — unconfirmed, not visual evidence"].includes(label) && !value.startsWith("Unknown —"));
+    const vehicle = contextRows(scan.vehicleContext, options).filter(([label, value]) => ["Year", "Make", "Model", "Engine", "Build / option details", "Mileage", "User-supplied complaint — unconfirmed, not visual evidence"].includes(label) && !value.startsWith("Unknown —"));
     const observations = assessment?.observations.length ? `<ul>${assessment.observations.map((observation, index) => `<li><a class="saved-text" href="#${anchor}-observation-${index + 1}">${escape(observation.text)}</a></li>`).join("")}</ul>` : list(scan.result?.visibleObservations ?? [], "No saved AI observation is available.");
     return `<article class="scan-overview"><h3><a href="#${anchor}">Scan ${number} — full evidence and photos</a></h3>${vehicle.length ? prose(vehicle.map(([label, value]) => `${label}: ${value}`).join("; ")) : prose("Vehicle details not recorded for this scan.")}
       ${scan.result ? `<div class="safety"><strong>Saved ${scan.result.isSafetyCritical || scan.result.safetyTriage === "needs_professional" ? "safety action" : "next action"} — ${escape(words(scan.result.safetyTriage))}</strong>${prose(scan.result.nextAction || "No specific action recorded.")}</div>` : prose("No AI result or safety action is saved; this is not a safety clearance.")}

@@ -138,14 +138,17 @@ describe("human service record validation", () => {
   });
 
   it("allowlists vehicle facts and removes private/shop context and stale confirmations", () => {
-    const context = confirmVehicleContextField({ make: "Toyota", vin: "1hgcm82633a004352", mileage: "120000", mileageUnit: "km", modifications: { status: "modified", details: "Reported intake modification" }, symptom: "Reported noise", notes: "PRIVATE_VEHICLE_NOTE", customerName: "PRIVATE_CUSTOMER", bayOrRo: "PRIVATE_JOB" }, "make", true, WHEN);
+    let context = confirmVehicleContextField({ make: "Toyota", vin: "1hgcm82633a004352", buildDetails: "LE, FWD, built 06/2014", mileage: "120000", mileageUnit: "km", modifications: { status: "modified", details: "Reported intake modification" }, symptom: "Reported noise", notes: "PRIVATE_VEHICLE_NOTE", customerName: "PRIVATE_CUSTOMER", bayOrRo: "PRIVATE_JOB" }, "make", true, WHEN);
+    context = confirmVehicleContextField(context, "buildDetails", true, WHEN);
     const normalized = normalizeServiceRecord({ ...measurement(), vehicleContext: { ...context, plate: "PRIVATE_PLATE", technicianName: "PRIVATE_TECH", jobTitle: "PRIVATE_TITLE" } })!;
-    expect(normalized.vehicleContext).toMatchObject({ make: "Toyota", vin: "1HGCM82633A004352", mileageUnit: "km", symptom: "Reported noise" });
+    expect(normalized.vehicleContext).toMatchObject({ make: "Toyota", vin: "1HGCM82633A004352", buildDetails: "LE, FWD, built 06/2014", mileageUnit: "km", symptom: "Reported noise" });
     expect(normalized.vehicleContext?.confirmedFields?.make).toBeDefined();
+    expect(normalized.vehicleContext?.confirmedFields?.buildDetails).toBeDefined();
     expect(JSON.stringify(normalized.vehicleContext)).not.toContain("PRIVATE_");
     const edited = normalizeServiceRecord({ ...normalized, vehicleContext: { ...normalized.vehicleContext, make: "Other make" } });
     expect(edited?.vehicleContext?.confirmedFields?.make).toBeUndefined();
     expect(normalizeServiceRecord({ ...measurement(), vehicleContext: { engine: "x".repeat(121) } })).toBeUndefined();
+    expect(normalizeServiceRecord({ ...measurement(), vehicleContext: { buildDetails: "x".repeat(121) } })).toBeUndefined();
   });
 });
 

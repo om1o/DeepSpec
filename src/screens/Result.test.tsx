@@ -11,6 +11,7 @@ import * as reportService from "../services/report";
 import * as cloudSync from "../services/cloudSync";
 import { getLookup, getLookups, LOOKUPS_STORAGE_KEY, updateLookup } from "../services/storage";
 import { emptyPartInspection } from "../lib/partInspection";
+import { confirmVehicleContextField } from "../lib/vehicleContext";
 import type { Lookup, ScanAnalysisState } from "../types";
 
 const cloudHistoryMocks = vi.hoisted(() => ({
@@ -101,6 +102,13 @@ describe("Result", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
+  });
+
+  it("shows legacy AI-supported fitment as unresolved even with a reviewed VIN", () => {
+    const vehicleContext = confirmVehicleContextField({ vin: "1HGCM82633A004352", buildDetails: "LX, 2WD" }, "vin", true);
+    renderResult({ ...successfulScan, vehicleContext, result: { ...successfulScan.result!, fitmentConfidence: "supported" } });
+    expect(within(screen.getByRole("region", { name: "Replacement fitment" })).getByText("Catalog verification needed.")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Replacement fitment" })).toHaveTextContent("photo label, or AI answer alone does not verify fitment");
   });
 
   it("rejects a previous account's result retained in browser history", () => {
@@ -1197,13 +1205,14 @@ describe("Result", () => {
     const report = vi.spyOn(reportService, "buildScanReport");
     await userEvent.click(screen.getByRole("button", { name: "Share", exact: true }));
     expect(report).toHaveBeenCalledWith(expect.objectContaining({
-      result: successfulScan.result, errorCode: undefined, errorMessage: undefined,
+      result: expect.objectContaining({ partName: "Alternator", fitmentConfidence: "needs_vehicle_context", requiredNextEvidence: expect.arrayContaining(["VIN"]) }),
+      errorCode: undefined, errorMessage: undefined,
     }));
     if (saveAction === "Save inspection") await userEvent.click(screen.getByText("Human inspection — saved"));
     await userEvent.click(screen.getByRole("button", { name: saveAction, exact: true }));
     expect(getLookups()).toHaveLength(1);
     expect(getLookup(failedLookup.id)).toMatchObject({
-      id: failedLookup.id, result: successfulScan.result, notes: failedLookup.notes,
+      id: failedLookup.id, result: { partName: "Alternator", fitmentConfidence: "needs_vehicle_context", requiredNextEvidence: expect.arrayContaining(["VIN"]) }, notes: failedLookup.notes,
       inspection: expect.objectContaining({ inspectorName: "Pat", functionalStatus: "not_tested" }), chatHistory: failedLookup.chatHistory,
       trainingLabel: "Alternator", scanCategory: "electrical", trainingStatus: "raw_unreviewed",
       provenance: { analysisSource: "manual_retry" },

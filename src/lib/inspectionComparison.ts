@@ -33,7 +33,7 @@ export function normalizeComparisonTimestamp(value: unknown): string | undefined
 function vehicle(value: unknown): VehicleContext | null | undefined {
   if (value === null) return null;
   if (!object(value)) return undefined;
-  for (const key of ["vin", "year", "make", "model", "engine", "mileage", "symptom"] as const) if (value[key] !== undefined && !text(value[key], key === "symptom" ? 500 : 120)) return undefined;
+  for (const key of ["vin", "year", "make", "model", "engine", "buildDetails", "mileage", "symptom"] as const) if (value[key] !== undefined && !text(value[key], key === "symptom" ? 500 : 120)) return undefined;
   if (value.mileageUnit !== undefined && !member(value.mileageUnit, ["mi", "km", "unknown"])) return undefined;
   if (value.modifications !== undefined) {
     if (!object(value.modifications) || !member(value.modifications.status, ["unknown", "none_known", "modified"]) || (value.modifications.details !== undefined && !text(value.modifications.details, 600))) return undefined;

@@ -17,6 +17,14 @@ function setup(initial?: ShopVehicleContext, disabled = false) {
 }
 
 describe("VehicleContextEditor", () => {
+  it("allows build options to be reviewed and clears their confirmation on edit", async () => {
+    const { latest } = setup();
+    fireEvent.change(screen.getByLabelText("Build / option details"), { target: { value: "LX, 2WD, built 03/2003" } });
+    await userEvent.click(screen.getByRole("button", { name: "Confirm build / option details" }));
+    expect(isVehicleFieldConfirmed(latest(), "buildDetails")).toBe(true);
+    fireEvent.change(screen.getByLabelText("Build / option details"), { target: { value: "EX, 2WD" } });
+    expect(isVehicleFieldConfirmed(latest(), "buildDetails")).toBe(false);
+  });
   it("keeps supplied VIN unconfirmed until the user explicitly confirms it", async () => {
     const { changed, latest } = setup({ vin: "1HGCM82633A004352" });
     expect(changed).not.toHaveBeenCalled();

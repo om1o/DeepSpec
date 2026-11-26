@@ -1,6 +1,6 @@
 import { createAnalysisAttemptId } from "../lib/analysisAttempt";
 import { prepareRetryFrame } from "../lib/retryFrame";
-import { applyShopFitmentContext } from "../lib/shopFitmentContext";
+import { applyShopFitmentContext, fitmentStatusLabel, getFitmentStatus } from "../lib/shopFitmentContext";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { BrandLockup } from "../components/BrandLockup";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -434,6 +434,13 @@ function ResultView({ id }: { id: string | undefined }) {
               onSaveAndAsk={handleSaveAndAsk}
               onSaveOnly={handleSaveOnly}
             />
+          ) : null}
+          {scanState?.result ? (
+            <section aria-label="Replacement fitment" className="rounded-xl border border-[var(--ds-border)] bg-[var(--ds-surface)] p-4 text-sm">
+              <h2 className="font-bold">Replacement fitment</h2>
+              <p className="mt-1">{fitmentStatusLabel(getFitmentStatus(scanState.result, scanState.vehicleContext))}.</p>
+              <p className="mt-1 text-[var(--ds-fg-3)]">Before ordering, check the exact part number and required vehicle options in an authorized OEM or licensed parts catalog. A VIN, photo label, or AI answer alone does not verify fitment.</p>
+            </section>
           ) : null}
           {scanState?.errorMessage ? (
             <AnalysisError 

@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { JobInspectionHandoff, JobInspectionThumbnail } from "../components/shop/JobInspectionHandoff";
 import Button from "../components/ui/Button";
 import { getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
+import { fitmentStatusLabel, getFitmentStatus } from "../lib/shopFitmentContext";
 import { assertJobInspectionContextCurrent, readJobInspectionContext } from "../services/jobInspectionHandoff";
 import { downloadTextFile } from "../services/report";
 import { subscribeToLookupChanges } from "../services/storage";
@@ -147,6 +148,7 @@ function ShopJobView({ jobId, scope }: { jobId?: string; scope: AccountScope }) 
                 <Detail label="VIN" value={job.vin || "Missing"} warn={!job.vin} />
                 <Detail label="Mileage" value={job.mileage ? `${job.mileage} ${job.mileageUnit ?? "unit unknown"}` : "Not provided"} />
                 <Detail label="Engine" value={job.engine || "Not provided"} />
+                <Detail label="Build / option details" value={job.buildDetails || "Not provided"} />
                 <Detail label="Customer" value={job.customerName || "Not provided"} />
                 <Detail label="Bay / RO" value={job.bayOrRo || "Not provided"} />
               </div>
@@ -284,7 +286,7 @@ function ScanRow({ scan, onOpen }: { scan: Lookup; onOpen: MouseEventHandler<HTM
           </span>
         </div>
         <p className="mt-1 text-xs font-semibold text-slate-500">
-          Fitment: {scan.result?.fitmentConfidence ?? "needs_vehicle_context"}
+          Fitment: {scan.result ? fitmentStatusLabel(getFitmentStatus(scan.result, scan.vehicleContext)) : "Not established"}
         </p>
         <p className="mt-2 line-clamp-2 text-sm leading-5 text-slate-600">
           {scan.result?.whatItDoes ?? scan.errorMessage ?? "Open to review this scan."}
