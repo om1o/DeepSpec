@@ -11,7 +11,7 @@ import { readCloudLookup } from "../services/cloudHistory";
 import { LOOKUPS_STORAGE_KEY } from "../services/storage";
 import type { ChatMessage } from "../types";
 import type { Lookup } from "../types";
-import { PROFESSIONAL_SAFETY_ACTION } from "../lib/safetyGuidance";
+import { PROFESSIONAL_SAFETY_ACTION, SAFETY_FITMENT_ACTION } from "../lib/safetyGuidance";
 
 vi.mock("../services/aiService", async () => {
   const actual = await vi.importActual<typeof import("../services/aiService")>("../services/aiService");
@@ -85,6 +85,82 @@ describe("Chat", () => {
     renderChat(`/result/${lookup.id}/chat`);
     const warning = (await screen.findByText("Safety check needed")).closest("section")!;
     expect(within(warning).getByText(PROFESSIONAL_SAFETY_ACTION)).toBeInTheDocument();
+  });
+
+  it("masks older assistant advice on a safety-critical scan without rewriting history", async () => {
+    const oldAnswer = "Keep driving and test the brakes.";
+    const critical = { ...lookup, result: { ...lookup.result!, scanCategory: "brakes" as const, isSafetyCritical: true }, chatHistory: [createChatMessage("assistant", oldAnswer)] };
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([critical]));
+    renderChat(`/result/${lookup.id}/chat`);
+    expect(screen.queryByText(oldAnswer)).not.toBeInTheDocument();
+    expect(within(screen.getByRole("log", { name: "Conversation" })).getByText(PROFESSIONAL_SAFETY_ACTION)).toBeInTheDocument();
+    expect(getLookup(lookup.id)?.chatHistory[0].content).toBe(oldAnswer);
+  });
+
+  it("uses the latest local safety status before sending a follow-up", async () => {
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    sendFollowUpMock.mockResolvedValue("Keep driving and test the brakes.");
+    renderChat(`/result/${lookup.id}/chat`);
+    const critical = { ...lookup, result: { ...lookup.result!, scanCategory: "brakes" as const, isSafetyCritical: true } };
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([critical]));
+    await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "Can I drive?");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(sendFollowUpMock).toHaveBeenCalledWith(expect.objectContaining({ result: expect.objectContaining({ isSafetyCritical: true }) }), "Can I drive?");
+    expect(screen.queryByText("Keep driving and test the brakes.")).not.toBeInTheDocument();
+    expect(getLookup(lookup.id)?.chatHistory.at(-1)?.content).toBe(PROFESSIONAL_SAFETY_ACTION);
+  });
+
+  it("replaces an in-flight provider reply when another tab marks the scan critical", async () => {
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    let finishReply!: (value: string) => void;
+    sendFollowUpMock.mockReturnValueOnce(new Promise((resolve) => { finishReply = resolve; }));
+    renderChat(`/result/${lookup.id}/chat`);
+    await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "Can I drive?");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(sendFollowUpMock).toHaveBeenCalledWith(expect.objectContaining({ result: expect.objectContaining({ isSafetyCritical: false }) }), "Can I drive?");
+    const critical = { ...lookup, result: { ...lookup.result!, scanCategory: "brakes" as const, isSafetyCritical: true } };
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([critical]));
+    await act(async () => { finishReply("Keep driving and test the brakes."); });
+    expect(screen.queryByText("Keep driving and test the brakes.")).not.toBeInTheDocument();
+    expect(getLookup(lookup.id)?.chatHistory.at(-1)?.content).toBe(PROFESSIONAL_SAFETY_ACTION);
+    expect(screen.getByText("Safety check needed")).toBeInTheDocument();
+  });
+
+  it("masks a pending reply after a cross-tab safety change and saves a fixed action on retry", async () => {
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([lookup]));
+    sendFollowUpMock.mockResolvedValue("Keep driving and test the brakes.");
+    renderChat(`/result/${lookup.id}/chat`);
+    await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "Can I drive?");
+    const failedKey = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    const originalWrite = Storage.prototype.setItem;
+    const writeSpy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (key, value) {
+      if (key === failedKey) throw new DOMException("Full", "QuotaExceededError");
+      originalWrite.call(this, key, value);
+    });
+    try {
+      await userEvent.click(screen.getByRole("button", { name: "Send" }));
+      expect(screen.getByRole("button", { name: "Retry saving answer" })).toBeInTheDocument();
+    } finally {
+      writeSpy.mockRestore();
+    }
+    const critical = { ...lookup, result: { ...lookup.result!, scanCategory: "brakes" as const, isSafetyCritical: true } };
+    localStorage.setItem(failedKey, JSON.stringify([critical]));
+    act(() => { window.dispatchEvent(new StorageEvent("storage", { key: failedKey })); });
+    expect(screen.queryByText("Keep driving and test the brakes.")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Retry saving answer" }));
+    expect(getLookup(lookup.id)?.chatHistory.at(-1)?.content).toBe(PROFESSIONAL_SAFETY_ACTION);
+    expect(sendFollowUpMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the guarded fitment boundary visible on a critical conversation", async () => {
+    const critical = { ...lookup, result: { ...lookup.result!, scanCategory: "brakes" as const, isSafetyCritical: true } };
+    localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([critical]));
+    sendFollowUpMock.mockResolvedValue(SAFETY_FITMENT_ACTION);
+    renderChat(`/result/${lookup.id}/chat`);
+    await userEvent.type(screen.getByLabelText("Ask a follow-up question"), "Will this brake part fit my car?");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText(/Exact replacement fitment is unverified/)).toBeInTheDocument();
+    expect(getLookup(lookup.id)?.chatHistory.at(-1)?.content).toBe(SAFETY_FITMENT_ACTION);
   });
 
   it("keeps a failed question and shows its connection reference until a manual retry succeeds", async () => {
@@ -768,7 +844,7 @@ describe("Chat", () => {
     writeSpy.mockRestore();
     expect(deleteLookup(lookup.id).ok).toBe(true);
     await userEvent.click(screen.getByRole("button", { name: "Retry saving answer" }));
-    expect(screen.getByText("This saved scan was not found.")).toBeInTheDocument();
+    expect(screen.getByText("This saved scan changed or was removed. Reopen saved scans.")).toBeInTheDocument();
     expect(getLookup(lookup.id)).toBeNull();
     expect(sendFollowUpMock).toHaveBeenCalledTimes(1);
   });

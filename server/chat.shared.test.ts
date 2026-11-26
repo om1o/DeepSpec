@@ -1,4 +1,5 @@
 import { createChatResponse } from "./chat.shared";
+import { PROFESSIONAL_SAFETY_ACTION } from "../src/lib/safetyGuidance";
 import { confirmVehicleContextField } from "../src/lib/vehicleContext";
 import type { PhotoReview } from "../src/types";
 
@@ -56,6 +57,17 @@ describe("createChatResponse", () => {
     const response = await createChatResponse({ userMessage: "Will this alternator fit my car with VIN 1HGCM82633A004352?" }, { GEMINI_API_KEY: "test-key" });
     expect(response).toMatchObject({ status: 200, body: { message: expect.stringContaining("Exact replacement fitment is unverified") } });
     expect(response.body).toMatchObject({ message: expect.stringContaining("authorized OEM or licensed parts catalog") });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+  it("keeps the safety action and catalog boundary together for safety-critical fitment", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: "Keep driving and test the brakes." }] } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const response = await createChatResponse({ userMessage: "Will this brake part fit my car?", savedSafetyCritical: true }, { GEMINI_API_KEY: "test-key" });
+    expect(response).toMatchObject({ status: 200, body: { message: expect.stringContaining("Exact replacement fitment is unverified") } });
+    expect(response.body).toMatchObject({ message: expect.stringContaining("authorized OEM or licensed parts catalog") });
+    expect(response.body).toMatchObject({ message: expect.stringContaining(PROFESSIONAL_SAFETY_ACTION) });
+    expect(JSON.stringify(response)).not.toContain("Keep driving");
     expect(fetchSpy).not.toHaveBeenCalled();
   });
   it("does not treat saved fitment context as the current question", async () => {

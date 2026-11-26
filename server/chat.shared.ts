@@ -1,7 +1,7 @@
 import { CHAT_USER_MESSAGE_MAX_CHARS, FOLLOWUP_PROMPT } from "../src/services/systemPrompts.js";
 import type { PhotoRelationship, PhotoReview, SelectedPartReference, SourceLink, VehicleContext } from "../src/types/index.js";
 import { formatVehicleContext, providerVehicleContext } from "../src/lib/vehicleContext.js";
-import { PROFESSIONAL_SAFETY_ACTION } from "../src/lib/safetyGuidance.js";
+import { SAFETY_CHAT_ACTION, SAFETY_FITMENT_ACTION, UNVERIFIED_FITMENT_BOUNDARY } from "../src/lib/safetyGuidance.js";
 import { INDEPENDENT_PHOTO_COMPARISON_MESSAGE, normalizePhotoReview, photoReviewForRelationship } from "../src/lib/photoReview.js";
 import { buildConditionCoverage, formatConditionCoverage, UNLINKED_CONDITION_FLAGS_MESSAGE } from "../src/lib/conditionCoverage.js";
 import { parseInspectionPhotos, photoCaption, buildPhotoEvidencePrompt, type InspectionPhoto } from "./inspectionPhotos.shared.js";
@@ -55,13 +55,14 @@ export async function createChatResponse(body: unknown, env: Record<string, stri
   const currentQuestion = questionIndex < 0 ? parsed.userMessage : parsed.userMessage.slice(questionIndex + questionMarker.length);
   // No authorized catalog application is available to this endpoint.
   if (asksForExactFitment(currentQuestion)) {
+    if (parsed.savedSafetyCritical) return { status: 200, body: { message: SAFETY_FITMENT_ACTION } };
     const safetyReminder = /\b(?:safe|unsafe|dangerous|drive|driving)\b/i.test(currentQuestion)
       ? " I cannot assess driving safety from this request; have a qualified mechanic inspect the vehicle before driving."
       : "";
-    return { status: 200, body: { message: `Exact replacement fitment is unverified. Confirm the vehicle VIN and build/options, then check the exact part number in an authorized OEM or licensed parts catalog before ordering. A photo, VIN decode, or visible label alone cannot establish compatibility. This answer addresses fitment only.${safetyReminder}` } };
+    return { status: 200, body: { message: `${UNVERIFIED_FITMENT_BOUNDARY}${safetyReminder}` } };
   }
   if (parsed.savedSafetyCritical) {
-    return { status: 200, body: { message: `${PROFESSIONAL_SAFETY_ACTION} I cannot give a driving test or repair procedure for this scan; a qualified mechanic should decide the next inspection in person.` } };
+    return { status: 200, body: { message: SAFETY_CHAT_ACTION } };
   }
 
   const models = getChatModels(env);
