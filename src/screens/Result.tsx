@@ -23,6 +23,7 @@ import { ServiceRecordLog } from "../components/result/ServiceRecordLog";
 import { ScanComparisonReview } from "../components/result/ScanComparisonReview";
 import { RequestedEvidenceHistory } from "../components/result/RequestedEvidenceHistory";
 import { DiagnosticReportReview } from "../components/result/DiagnosticReportReview";
+import { ModelRecallReview } from "../components/result/ModelRecallReview";
 import { TrainingConsentPanel } from "../components/result/TrainingConsentPanel";
 import { IntakeDraft } from "../components/result/IntakeDraft";
 import { ScanDebugOverlay } from "../components/result/ScanDebugOverlay";
@@ -442,6 +443,7 @@ function ResultView({ id }: { id: string | undefined }) {
               <p className="mt-1 text-[var(--ds-fg-3)]">Before ordering, check the exact part number and required vehicle options in an authorized OEM or licensed parts catalog. A VIN, photo label, or AI answer alone does not verify fitment.</p>
             </section>
           ) : null}
+          {scanState ? <ModelRecallReview vehicleContext={scanState.vehicleContext} /> : null}
           {scanState?.errorMessage ? (
             <AnalysisError 
               code={scanState.errorCode}

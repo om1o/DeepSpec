@@ -3,6 +3,7 @@ import { normalizeConditionAssessment } from "../src/lib/conditionAssessment.js"
 import { normalizePhotoReview } from "../src/lib/photoReview.js";
 import { formatVehicleContext, providerVehicleContext } from "../src/lib/vehicleContext.js";
 import { getFitmentStatus } from "../src/lib/shopFitmentContext.js";
+import { PROFESSIONAL_SAFETY_ACTION, withSafeGuidance } from "../src/lib/safetyGuidance.js";
 import { randomUUID } from "node:crypto";
 import { observeIdentification } from "./identifyDiagnostics.shared.js";
 import {
@@ -2019,7 +2020,7 @@ function normalizeNextAction(
   partName: string,
 ) {
   if (safetyTriage === "needs_professional") {
-    return ensureProfessionalNextAction(nextAction);
+    return PROFESSIONAL_SAFETY_ACTION;
   }
 
   if (partName.toLowerCase() === "engine assembly") {
@@ -2140,7 +2141,7 @@ function normalizeIdentificationResult(
   const requiredNextEvidence = normalizeRequiredNextEvidence(result.requiredNextEvidence, confirmationNeed, needsBetterPhoto);
   const nextAction = normalizeNextAction(result.nextAction, safety.safetyTriage, needsBetterPhoto, partName);
 
-  return {
+  return withSafeGuidance({
     ...result,
     partName,
     primaryPart: normalizePrimaryPart(result.primaryPart, partName, confidence, resolvedScanCategory, cleanEvidence),
@@ -2169,7 +2170,7 @@ function normalizeIdentificationResult(
     safetyTriage: safety.safetyTriage,
     isSafetyCritical: safety.isSafetyCritical,
     needsBetterPhoto,
-  };
+  });
 }
 
 function guardSelectedPartIdentity(result: IdentificationResult): { result: IdentificationResult; needsCloseUp: boolean } {
@@ -3210,13 +3211,6 @@ function buildOcrContext(text: string) {
     text,
     "Use this only as visible label evidence. Do not invent OEM fitment, pricing, or compatibility from it.",
   ].join("\n");
-}
-
-function ensureProfessionalNextAction(nextAction: string) {
-  const cleaned = cleanText(nextAction, "Check this safety item before driving or repairing.");
-  return /before driving|before repairing|do not drive|check this safety item/i.test(cleaned)
-    ? cleaned
-    : `${cleaned} Check this safety item before driving or repairing.`;
 }
 
 function cleanText(value: string, fallback: string) {

@@ -5,6 +5,7 @@ import { normalizePartInspection, withLatestInspection } from "../lib/partInspec
 import { normalizeConditionAssessment } from "../lib/conditionAssessment";
 import { normalizePhotoReview } from "../lib/photoReview";
 import { normalizeVehicleContext, vehicleContextsMatch } from "../lib/vehicleContext";
+import { withSafeGuidance } from "../lib/safetyGuidance";
 import { accountStorageKey, getAccountScope, isAccountScopeCurrent, type AccountScope } from "../lib/accountScope";
 import { inspectionDraftKey } from "./inspectionDraft";
 import { isEvidenceImage, normalizeVisualEvidence } from "./visualEvidence";
@@ -955,7 +956,7 @@ function normalizeStoredIdentificationResult(value: unknown, allowedPhotoIds: re
 
   const conditionAssessment = normalizeConditionAssessment(result.conditionAssessment, allowedPhotoIds);
   const photoReview = normalizePhotoReview(result.photoReview, allowedPhotoIds);
-  return {
+  return withSafeGuidance({
     partName: cleanText(result.partName, 80),
     confidence: result.confidence,
     confidenceScore: normalizeConfidenceScore(result.confidenceScore, result.confidence),
@@ -983,7 +984,7 @@ function normalizeStoredIdentificationResult(value: unknown, allowedPhotoIds: re
     evidence: cleanStringArray(result.evidence, 8, 320),
     sourceLinks: normalizeSourceLinks(result.sourceLinks),
     ...(normalizeIdentifyModelRun(result.modelRun) ? { modelRun: normalizeIdentifyModelRun(result.modelRun) } : {}),
-  };
+  });
 }
 
 function normalizeIdentifyModelRun(value: unknown): IdentifyModelRun | undefined {

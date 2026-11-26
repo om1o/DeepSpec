@@ -35,6 +35,8 @@ insert into public.dataset_members (
 
 Use `human_verified_prediction` when the verified label confirms the original identification. The verified label, original prediction and user correction remain distinct. The true check flags are assertions by the human reviewer, not results of an automated privacy detector.
 
+Human repair and follow-up records are separate from this dataset. The current per-scan consent covers the photo, analysis and correction, not service history or a reported symptom outcome. The exporter requests and writes an explicit allowlist of reviewed-scan fields, so adding a column to the export view cannot silently copy service outcomes or private notes into a manifest. Linking a follow-up outcome to an evaluation case requires a separate explicit permission flow and human review of that outcome and its record history; a user's report that a symptom was not observed is not proof of a permanent fix or a ground-truth part label.
+
 Membership and version records reject updates. Revise a decision by creating another version; privileged deletion is available for removal. Deleting the source scan or selected model run cascades membership. Browser users cannot read or modify the dataset tables or export queue.
 
 ## Export and withdrawal

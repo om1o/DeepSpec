@@ -11,6 +11,14 @@ const HASH = /^[0-9a-f]{64}$/i;
 // The SQL view uses MD5 only as a change fingerprint; image integrity uses SHA-256.
 const ROW_FINGERPRINT = /^[0-9a-f]{32}$/i;
 const TYPES = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+// The current consent covers the reviewed scan, prediction and correction, not service history.
+const EXPORT_COLUMNS = [
+  "id", "dataset_version", "user_id", "scan_local_id", "consent_revision", "policy_version", "scan_hash",
+  "model_run_id", "model_run_hash", "label", "label_source", "reviewer_reference", "original_prediction", "correction",
+  "provider", "model", "prompt_version", "pipeline_version", "original_image_path", "original_image_hash",
+  "original_image_mime_type", "original_image_byte_length", "isolated_image_path", "isolated_image_hash",
+  "isolated_image_mime_type", "isolated_image_byte_length", "isolated_image_kind", "eligible",
+];
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
 const canonical = value => JSON.stringify(value, Object.keys(value).sort());
 const snapshot = rows => rows.map(canonical).sort().join("\n");
@@ -58,7 +66,7 @@ export function createExportClient({ url, key, fetchImpl = fetch }) {
   }
   return {
     async list(version) {
-      const query = new URLSearchParams({ select: "*", dataset_version: `eq.${version}`, eligible: "eq.true", order: "id.asc", limit: String(MAX_ROWS + 1) });
+      const query = new URLSearchParams({ select: EXPORT_COLUMNS.join(","), dataset_version: `eq.${version}`, eligible: "eq.true", order: "id.asc", limit: String(MAX_ROWS + 1) });
       const response = await request(`/rest/v1/dataset_export_queue?${query}`, { Prefer: "count=exact" });
       const total = response.headers.get("content-range")?.split("/")[1];
       if (total && total !== "*" && Number(total) > MAX_ROWS) throw new Error("Dataset exceeds the 200-membership export limit.");
@@ -100,7 +108,7 @@ export async function exportReviewedDataset({ version, outputDir, client }) {
         const file = `images/${row.id}-${prefix}.${TYPES[mime]}`;
         await writeFile(join(staging, file), bytes, { flag: "wx" }); files[prefix] = file;
       }
-      members.push({ ...row, files });
+      members.push({ ...Object.fromEntries(EXPORT_COLUMNS.map(field => [field, row[field]])), files });
     }
     const latest = await client.list(version); validateRows(latest, version);
     if (snapshot(rows) !== snapshot(latest)) throw new Error("Dataset eligibility or provenance changed during export. Nothing was accepted; retry from current consent.");

@@ -2,6 +2,7 @@ import { setActiveAccount } from "../lib/accountScope";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConditionAssessment, PhotoReview } from "../types";
 import { confirmVehicleContextField } from "../lib/vehicleContext";
+import { PROFESSIONAL_SAFETY_ACTION } from "../lib/safetyGuidance";
 
 type SelectResult = { data: unknown; error: { message?: string } | null };
 
@@ -89,6 +90,18 @@ describe("readCloudLookupForReport", () => {
     expect(result.unavailableImages).toEqual([{ kind: "photo", photoId: "detail" }, { kind: "cutout" }, { kind: "cutout", selectionName: "Missing mask" }]);
     expect(await readCloudLookup("scan-1")).toMatchObject({ ok: false });
     expect(mocks.eq).toHaveBeenCalledWith("user_id", "user-1"); expect(mocks.eq).toHaveBeenCalledWith("local_id", "scan-1");
+  });
+
+  it("replaces unsafe action fields in an older cloud safety scan", async () => {
+    mocks.select.mockReturnValue({ data: [{ ...reportRow(), scan_category: "brakes", result_json: {
+      partName: "Brake line", scanCategory: "brakes", nextAction: "Keep driving before driving.",
+      requiredNextEvidence: ["Keep driving."], safetyTriage: "can_help", isSafetyCritical: false,
+    } }], error: null });
+    const { readCloudLookupForReport } = await import("./cloudHistory");
+    const response = await readCloudLookupForReport("scan-1");
+    expect(response.ok).toBe(true);
+    if (!response.ok || !response.value) throw new Error("expected cloud report");
+    expect(response.value.result).toMatchObject({ nextAction: PROFESSIONAL_SAFETY_ACTION, requiredNextEvidence: [PROFESSIONAL_SAFETY_ACTION], safetyTriage: "needs_professional" });
   });
 
   it("keeps a cloud-only legacy root and its condition references without substituting a brand image when signing fails", async () => {

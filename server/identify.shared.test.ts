@@ -1685,7 +1685,7 @@ describe("createIdentifyResponse", () => {
       scanCategory: "fuel",
       safetyTriage: "can_help",
       isSafetyCritical: true,
-      nextAction: "Do not touch the damaged line.",
+      nextAction: "Keep driving to see whether the leak worsens before driving.",
     };
 
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -1716,7 +1716,7 @@ describe("createIdentifyResponse", () => {
         result: {
           safetyTriage: "needs_professional",
           isSafetyCritical: true,
-          nextAction: expect.stringContaining("Check this safety item"),
+          nextAction: "Have a qualified mechanic inspect this safety-related item before driving or repairing. A photo cannot confirm it is safe to use.",
         },
       },
     });

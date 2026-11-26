@@ -110,7 +110,19 @@ describe("aiService", () => {
     }
     expect(requests[1].userMessage).toContain("User question: What part is this?");
     expect(requests[2].userMessage).toContain("User question: Can you tell its part number?");
+    expect(requests[1].savedSafetyCritical).toBe(false);
+    expect(requests[2].savedSafetyCritical).toBe(false);
     expect(String(requests[2].userMessage).length).toBeLessThanOrEqual(3000);
+  });
+
+  it.each([false, true])("sends structured safety status for single and grouped follow-ups (group=%s)", async (group) => {
+    const frame = { id: "photo-1", label: "overview" as const, imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-26T00:00:00Z" };
+    const lookup = { frame, ...(group ? { photos: [frame] } : {}),
+      result: { ...result, scanCategory: "brakes", isSafetyCritical: false, safetyTriage: "can_help" },
+      scanCategory: "brakes", trainingLabel: "Brake line", chatHistory: [] } as Parameters<typeof sendFollowUpDetails>[0];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "Fixture reply." }), { status: 200 }));
+    await sendFollowUpDetails(lookup, "What should I check next?");
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)).savedSafetyCritical).toBe(true);
   });
 
   it.each([null, { photoId: "missing", rectangle: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 } },

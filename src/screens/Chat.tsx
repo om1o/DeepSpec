@@ -1,5 +1,6 @@
-import { getAccountScope, isAccountScopeCurrent } from "../lib/accountScope";
+import { accountStorageKey, getAccountScope, isAccountScopeCurrent } from "../lib/accountScope";
 import { mergeCloudLookup } from "../lib/lookupMerge";
+import { PROFESSIONAL_SAFETY_ACTION, safeChatContent, withSafeGuidance } from "../lib/safetyGuidance";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { BrandLockup } from "../components/BrandLockup";
@@ -11,7 +12,7 @@ import { AIServiceError, getAIErrorDetails, getAIErrorMessage, sendFollowUp, sen
 import { syncLookupChatToCloud } from "../services/cloudSync";
 import { isCloudSyncEnabled } from "../services/cloudSyncPolicy";
 import { readCloudLookup } from "../services/cloudHistory";
-import { appendChatMessages, createChatMessage, getLookup, saveExistingLookup } from "../services/storage";
+import { appendChatMessages, createChatMessage, getLookup, LOOKUPS_STORAGE_KEY, saveExistingLookup } from "../services/storage";
 import type { ChatMessage, Lookup } from "../types";
 import "./chatWorkspace.css";
 
@@ -61,6 +62,27 @@ function ChatConversation({ id }: { id: string | undefined }) {
     isMountedRef.current = true;
     return () => { isMountedRef.current = false; };
   }, []);
+
+  useEffect(() => {
+    if (!id) return;
+    const storageKey = accountStorageKey(LOOKUPS_STORAGE_KEY);
+    const refreshLocalScan = (event: StorageEvent) => {
+      if (event.key !== storageKey || !isMountedRef.current || !isAccountScopeCurrent(accountScopeRef.current)) return;
+      const current = getLookup(id);
+      if (!current) {
+        setLookup(null);
+        setLookupLoadState("not_found");
+        return;
+      }
+      try {
+        setLookup(cloudEvidenceRef.current ? mergeChatPhotoReferences(current, cloudEvidenceRef.current.lookup) : current);
+      } catch {
+        setLookup(current);
+      }
+    };
+    window.addEventListener("storage", refreshLocalScan);
+    return () => window.removeEventListener("storage", refreshLocalScan);
+  }, [id]);
 
   function isCurrentConversation() {
     return isMountedRef.current && isAccountScopeCurrent(accountScopeRef.current);
@@ -168,8 +190,10 @@ function ChatConversation({ id }: { id: string | undefined }) {
     if (shouldSaveUserMessage) setPendingQuestion(trimmedQuestion);
 
     try {
-      let requestLookup = lookup;
-      if (hasCloudPhotos(lookup)) {
+      const currentAtSend = getLookup(lookup.id);
+      if (!currentAtSend?.result) throw new AIServiceError("invalid_input", "This saved scan changed or was removed. Reopen saved scans.");
+      let requestLookup = currentAtSend;
+      if (hasCloudPhotos(currentAtSend)) {
         let refreshed = cloudEvidenceRef.current;
         if (!refreshed || Date.now() - refreshed.refreshedAt >= CLOUD_PHOTO_REFRESH_MS) {
           const cloud = await readCloudLookup(lookup.id);
@@ -189,12 +213,18 @@ function ChatConversation({ id }: { id: string | undefined }) {
         ? await sendFollowUpDetails(requestLookup, trimmedQuestion, options)
         : { message: await sendFollowUp(requestLookup, trimmedQuestion) };
       if (!isCurrentConversation()) return;
+      const currentAfterReply = getLookup(lookup.id);
+      if (!currentAfterReply?.result) throw new AIServiceError("invalid_input", "This saved scan changed or was removed. Reopen saved scans.");
+      const safetyCritical = withSafeGuidance(currentAfterReply.result).isSafetyCritical;
+      setLookup(cloudEvidenceRef.current
+        ? mergeChatPhotoReferences(currentAfterReply, cloudEvidenceRef.current.lookup)
+        : currentAfterReply);
       const userMessage = shouldSaveUserMessage ? createChatMessage("user", trimmedQuestion) : null;
       const assistantMessage = {
-        ...createChatMessage("assistant", answer.message),
-        ...(answer.sources?.length ? { sources: answer.sources } : {}),
+        ...createChatMessage("assistant", safetyCritical ? safeChatContent(answer.message) : answer.message),
+        ...(!safetyCritical && answer.sources?.length ? { sources: answer.sources } : {}),
       };
-      if (answer.searchSuggestions) {
+      if (!safetyCritical && answer.searchSuggestions) {
         setSearchSuggestionsByMessage((current) => ({ ...current, [assistantMessage.id]: answer.searchSuggestions! }));
       }
       // Reuse these IDs on every persistence retry, including partial writes.
@@ -216,7 +246,19 @@ function ChatConversation({ id }: { id: string | undefined }) {
 
   function persistExchange(messages: ChatMessage[]) {
     if (!isCurrentConversation() || !lookup || isChatDisabled || isCloudSyncing) return;
-    const savedConversation = appendChatMessages(lookup.id, messages);
+    const current = getLookup(lookup.id);
+    if (!current?.result) {
+      setError("This saved scan changed or was removed. Reopen saved scans.");
+      setErrorCode("storage");
+      return;
+    }
+    const safeMessages = withSafeGuidance(current.result).isSafetyCritical
+      ? messages.map((message) => message.role === "assistant"
+        ? { ...message, content: safeChatContent(message.content), sources: undefined }
+        : message)
+      : messages;
+    if (safeMessages !== messages) setPendingExchange(safeMessages);
+    const savedConversation = appendChatMessages(lookup.id, safeMessages);
     if (!isCurrentConversation()) return;
     if (!savedConversation.ok || !savedConversation.value) {
       setError(savedConversation.ok ? "This saved scan was not found." : savedConversation.message);
@@ -319,7 +361,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
     retryLabel: "Retry cloud save",
     title: "Conversation needs cloud sync",
   } : getAIErrorDetails(errorCode) : null;
-  const showSafetyWarning = lookup.result?.isSafetyCritical || lookup.result?.safetyTriage === "needs_professional";
+  const showSafetyWarning = Boolean(lookup.result && withSafeGuidance(lookup.result).isSafetyCritical);
   const lastUnansweredUserMessage = getLastUnansweredUserMessage(lookup);
   const canRetryLastQuestion = Boolean(error && errorCode !== "feature_disabled" && errorCode !== "rate_limited" && errorCode !== "response_blocked" && !pendingExchange && (pendingQuestion || lastUnansweredUserMessage) && canChat && !isSending);
   const visibleMessages = [...lookup.chatHistory, ...(pendingExchange ?? []).filter((message) => !lookup.chatHistory.some((saved) => saved.id === message.id))];
@@ -351,7 +393,7 @@ function ChatConversation({ id }: { id: string | undefined }) {
             {showSafetyWarning ? (
               <section className="ds-chat-safety rounded-2xl border border-[var(--ds-warn-line)] bg-[var(--ds-warn-soft)] p-3">
                 <p className="text-sm font-extrabold text-[var(--ds-warn-ink)]">Safety check needed</p>
-                <p className="mt-1 text-sm leading-6 text-[var(--ds-fg-2)]">Confirm this before driving or repairing.</p>
+                <p className="mt-1 text-sm leading-6 text-[var(--ds-fg-2)]">{PROFESSIONAL_SAFETY_ACTION}</p>
               </section>
             ) : null}
 
@@ -363,9 +405,9 @@ function ChatConversation({ id }: { id: string | undefined }) {
                     className={message.role === "user" ? "ds-chat-message ds-chat-message-user ml-auto" : "ds-chat-message ds-chat-message-assistant mr-auto"}
                   >
                     <p className="mb-1 text-xs font-bold opacity-80">{message.role === "user" ? "You" : "DeepSpec"}</p>
-                    <ChatMessageContent content={message.content} markdown={message.role === "assistant"} />
-                    {message.role === "assistant" && message.sources?.length ? <ScanSources sources={message.sources} title="Sources used for this answer" /> : null}
-                    {searchSuggestionsByMessage[message.id] ? (
+                    <ChatMessageContent content={showSafetyWarning && message.role === "assistant" ? safeChatContent(message.content) : message.content} markdown={message.role === "assistant"} />
+                    {!showSafetyWarning && message.role === "assistant" && message.sources?.length ? <ScanSources sources={message.sources} title="Sources used for this answer" /> : null}
+                    {!showSafetyWarning && searchSuggestionsByMessage[message.id] ? (
                       <iframe
                         title="Google Search suggestions"
                         className="ds-chat-search-suggestions"

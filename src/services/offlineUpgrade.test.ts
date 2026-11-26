@@ -135,8 +135,9 @@ describe("offlineUpgrade", () => {
 
   it("preserves vehicle context and normalizes fitment during an explicit upgrade", async () => {
     const vehicleContext = { year: "2012", make: "Honda", model: "Civic" };
-    const created = createLookup({ frame, vehicleContext, result: makeResult("on-device") });
-    vi.mocked(identifyCapturedFrame).mockResolvedValue({ ...makeResult("gemini"), fitmentConfidence: "supported" });
+    const ordinaryResult = { ...makeResult("on-device"), partName: "Alternator", scanCategory: "electrical" as const };
+    const created = createLookup({ frame, vehicleContext, result: ordinaryResult });
+    vi.mocked(identifyCapturedFrame).mockResolvedValue({ ...ordinaryResult, modelRun: makeResult("gemini").modelRun, fitmentConfidence: "supported" });
     expect(await upgradeOfflineEstimates()).toBe(1);
     expect(identifyCapturedFrame).toHaveBeenCalledWith(frame, undefined, undefined, { vehicleContext });
     expect(getLookup(created.value.id)?.result).toMatchObject({ fitmentConfidence: "needs_vehicle_context", requiredNextEvidence: expect.arrayContaining(["VIN"]) });

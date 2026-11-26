@@ -8,6 +8,7 @@ import { validatePhotoGroup } from "./photoDraft";
 import { normalizeConditionAssessment } from "../lib/conditionAssessment";
 import { normalizePhotoReview, photoReviewForRelationship } from "../lib/photoReview";
 import { buildConditionHandoff } from "../lib/conditionHandoff";
+import { withSafeGuidance } from "../lib/safetyGuidance";
 import { providerVehicleContext } from "../lib/vehicleContext";
 import { hasFirstPhotoIdentityScopePipeline, isPhotoRelationship } from "../lib/photoRelationship";
 import { isAIRequestId } from "../lib/aiRequestId";
@@ -473,6 +474,7 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
   if (!trimmedQuestion) {
     throw new AIServiceError("invalid_input", "Ask a question first.");
   }
+  const savedSafetyCritical = Boolean(lookup.result && withSafeGuidance(lookup.result).isSafetyCritical);
 
   const scope = getAccountScope();
   if (!isAccountScopeCurrent(scope)) throw new AIServiceError("invalid_input", "Reopen this scan before asking a question.");
@@ -485,6 +487,7 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
     const conditionAssessment = normalizeConditionAssessment(lookup.result?.conditionAssessment, photos.map((photo) => photo.id));
     const result = await postAI<ChatApiSuccess>("/api/chat", {
       userMessage: buildFollowUpContext(lookup, trimmedQuestion), photos, photoRelationship, savedIdentityScope,
+      savedSafetyCritical,
       ...(selectedPart ? { selectedPart } : {}),
       ...(photoReview ? { photoReview } : {}),
       ...(conditionAssessment ? { conditionAssessment } : {}),
@@ -510,6 +513,7 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
   const conditionAssessment = normalizeConditionAssessment(lookup.result?.conditionAssessment, ["photo-1"]);
   const result = await postAI<ChatApiSuccess>("/api/chat", {
     userMessage: buildFollowUpContext(lookup, trimmedQuestion),
+    savedSafetyCritical,
     photoRelationship,
     savedIdentityScope,
     ...(selectedPart ? { selectedPart } : {}),
@@ -660,7 +664,7 @@ function assertIdentificationResult(value: unknown, allowedPhotoIds: readonly st
     throw new AIServiceError("invalid_response", "Deep Spec received an unreadable AI response.");
   }
 
-  return withValidatedConditionAssessment(value, allowedPhotoIds);
+  return withSafeGuidance(withValidatedConditionAssessment(value, allowedPhotoIds));
 }
 
 function isIdentificationResult(value: unknown): value is IdentificationResult {

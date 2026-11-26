@@ -1,6 +1,6 @@
 // Bump when identification instructions or routing/normalization change.
 export const IDENTIFY_PROMPT_VERSION = "identify-2026-11-16-selected-part-v1";
-export const IDENTIFY_PIPELINE_VERSION = "identify-pipeline-2026-11-16-selected-part-v1";
+export const IDENTIFY_PIPELINE_VERSION = "identify-pipeline-2026-11-26-safety-guidance-v1";
 
 // General evidence limits, not a component specification or a diagnosis.
 // Source rationale and the live regression cases: docs/ai-evidence-next-checks.md.

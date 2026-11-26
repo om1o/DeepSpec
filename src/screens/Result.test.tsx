@@ -12,6 +12,7 @@ import * as cloudSync from "../services/cloudSync";
 import { getLookup, getLookups, LOOKUPS_STORAGE_KEY, updateLookup } from "../services/storage";
 import { emptyPartInspection } from "../lib/partInspection";
 import { confirmVehicleContextField } from "../lib/vehicleContext";
+import { PROFESSIONAL_SAFETY_ACTION } from "../lib/safetyGuidance";
 import type { Lookup, ScanAnalysisState } from "../types";
 
 const cloudHistoryMocks = vi.hoisted(() => ({
@@ -111,6 +112,14 @@ describe("Result", () => {
     expect(screen.getByRole("region", { name: "Replacement fitment" })).toHaveTextContent("photo label, or AI answer alone does not verify fitment");
   });
 
+  it("offers an official VIN recall check without treating the scan as recall clearance", () => {
+    renderResult(successfulScan);
+    const panel = screen.getByRole("region", { name: "Safety recalls" });
+    expect(within(panel).getByRole("link", { name: /Check this vehicle's VIN at NHTSA/ })).toHaveAttribute("href", "https://www.nhtsa.gov/recalls");
+    expect(panel).toHaveTextContent("A model-wide campaign may not apply to this vehicle");
+    expect(within(panel).queryByRole("button", { name: "Search model-wide recalls" })).not.toBeInTheDocument();
+  });
+
   it("rejects a previous account's result retained in browser history", () => {
     const oldState = withAccountRouteState(successfulScan);
     setActiveAccount("other-user");
@@ -150,7 +159,7 @@ describe("Result", () => {
     expect(areaMocks.prepare).toHaveBeenLastCalledWith(expect.objectContaining({ id: local.id }), "o1", photoId, expect.any(Object), expect.any(AbortSignal));
   });
 
-  it("shows the complete safety action separately from a request for another photo", async () => {
+  it("replaces a legacy safety action and photo request with professional inspection guidance", async () => {
     const safetyAction = "Do not drive until the brake mounting bracket has been checked. A qualified technician should inspect the apparent crack and mounting points before deciding whether the assembly can be reused.";
     const local = makeLookup({ result: { ...successfulScan.result!, partName: "Brake mounting bracket", isSafetyCritical: true,
       safetyTriage: "needs_professional", needsBetterPhoto: false, nextAction: safetyAction,
@@ -162,13 +171,12 @@ describe("Result", () => {
     } });
     localStorage.setItem(accountStorageKey(LOOKUPS_STORAGE_KEY), JSON.stringify([local]));
     renderResult({ ...successfulScan, savedLookup: local }, `/result/${local.id}`);
-    expect(screen.getByRole("region", { name: "Safety action" })).toHaveTextContent(safetyAction);
-    expect(screen.getByRole("region", { name: "Condition evidence" })).toHaveTextContent("Photograph the reverse side.");
-    await userEvent.click(screen.getByRole("button", { name: "Collect requested photo" }));
-    expect(screen.getByRole("region", { name: "Safety action" })).toHaveTextContent(safetyAction);
-    expect(screen.getByRole("button", { name: "Start requested photo capture" })).toBeDisabled();
+    expect(screen.getByRole("region", { name: "Safety action" })).toHaveTextContent(PROFESSIONAL_SAFETY_ACTION);
+    expect(screen.getByRole("region", { name: "Condition evidence" })).toHaveTextContent(PROFESSIONAL_SAFETY_ACTION);
+    expect(screen.getByRole("region", { name: "Condition evidence" })).not.toHaveTextContent("Photograph the reverse side.");
+    expect(screen.queryByRole("button", { name: "Collect requested photo" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: "Sources", exact: true }));
-    expect(screen.getByRole("region", { name: "Safety action" })).toHaveTextContent(safetyAction);
+    expect(screen.getByRole("region", { name: "Safety action" })).toHaveTextContent(PROFESSIONAL_SAFETY_ACTION);
   });
 
   it("previews the requested earlier photo as Original and opens a separate capture without AI", async () => {
