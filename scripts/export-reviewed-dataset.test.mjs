@@ -34,6 +34,13 @@ describe("reviewed dataset export", () => {
     expect(manifest.reported_outcomes).toEqual([{ dataset_member_id: row.id, dataset_version: "v1", record_id: outcome.record_id, reported_outcome: "symptom_not_observed", reporting_basis: "personally_performed", consent_revision: 1, policy_version: "2026-11-26-v1", reviewer_reference: "outcome-reviewer", reviewed_history_hash: fingerprint }]);
     expect(JSON.stringify(manifest)).not.toMatch(/private|photo|vin|notes|recorder_name/);
   });
+  it("accepts an approved outcome for a human-verified prediction without a correction", async () => {
+    const options = await fixture({ listOutcomes: async () => [outcome], download: async () => { throw new Error("Outcome export must not download photos"); } });
+    await exportReviewedDataset({ ...options, includeOutcomes: true });
+    const manifest = JSON.parse(await readFile(join(options.outputDir, "manifest.json"), "utf8"));
+    expect(manifest.reported_outcomes).toEqual([expect.objectContaining({ dataset_member_id: row.id, reported_outcome: outcome.reported_outcome })]);
+    expect(manifest.members).toBeUndefined();
+  });
   it("rejects withdrawn, missing, or changed outcome evidence without an accepted export", async () => {
     await rejectsClean({ ...await fixture({ list: async () => [corrected], listOutcomes: async () => [] }), includeOutcomes: true }, /separately consented/);
     let calls = 0;
@@ -41,8 +48,8 @@ describe("reviewed dataset export", () => {
     calls = 0;
     await rejectsClean({ ...await fixture({ list: async () => [corrected], listOutcomes: async () => [{ ...outcome, consent_revision: ++calls }] }), includeOutcomes: true }, /Outcome consent, review or history changed/);
   });
-  it("rejects an outcome attached to an uncorrected or wrong case", async () => {
-    await rejectsClean({ ...await fixture({ listOutcomes: async () => [outcome] }), includeOutcomes: true }, /Invalid or unreviewed outcome/);
+  it("rejects a correction-sourced case without correction text or an outcome attached to the wrong case", async () => {
+    await rejectsClean({ ...await fixture({ list: async () => [{ ...corrected, correction: null }], listOutcomes: async () => [outcome] }), includeOutcomes: true }, /Invalid or unreviewed outcome/);
     await rejectsClean({ ...await fixture({ list: async () => [corrected], listOutcomes: async () => [{ ...outcome, dataset_member_id: "50000000-0000-4000-8000-000000000001" }] }), includeOutcomes: true }, /Invalid or unreviewed outcome/);
   });
   it("does not export unconsented service outcomes or unexpected private view fields", async () => {

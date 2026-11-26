@@ -60,12 +60,12 @@ function validateRows(rows, version) {
 }
 
 function validateOutcomes(rows, version, members) {
-  if (!Array.isArray(rows) || rows.length !== members.length) throw new Error("Every reviewed correction needs one separately consented, reviewed outcome for this export.");
+  if (!Array.isArray(rows) || rows.length !== members.length) throw new Error("Every reviewed case needs one separately consented, reviewed outcome for this export.");
   const byId = new Map(members.map(member => [member.id, member]));
   const seen = new Set();
   for (const row of rows) {
     const member = byId.get(row.dataset_member_id);
-    if (!member || seen.has(row.dataset_member_id) || member.label_source !== "human_verified_correction" || !member.correction?.trim()
+    if (!member || seen.has(row.dataset_member_id) || (member.label_source === "human_verified_correction" && !member.correction?.trim())
       || row.dataset_version !== version || row.eligible !== true || !UUID.test(row.record_id ?? "")
       || !OUTCOMES.has(row.reported_outcome) || !BASES.has(row.reporting_basis)
       || !Number.isSafeInteger(row.consent_revision) || row.consent_revision < 1

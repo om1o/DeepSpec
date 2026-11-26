@@ -62,7 +62,7 @@ create policy service_outcome_consent_update_owner on public.service_outcome_con
   using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
 
 -- A curator deliberately chooses one reviewed follow-up record for one
--- immutable, human-reviewed correction in an evaluation dataset version.
+-- immutable, human-reviewed identification in an evaluation dataset version.
 create table public.dataset_outcome_reviews (
   dataset_member_id uuid primary key references public.dataset_members(id) on delete cascade,
   user_id uuid not null,
@@ -94,8 +94,8 @@ select o.dataset_member_id, e.dataset_version, o.record_id,
   o.consent_revision, o.policy_version, o.reviewer_reference,
   o.reviewed_history_hash,
   coalesce(e.eligible and v.purpose = 'evaluation'
-    and e.label_source = 'human_verified_correction'
-    and nullif(trim(e.correction), '') is not null
+    and (e.label_source = 'human_verified_prediction'
+      or (e.label_source = 'human_verified_correction' and nullif(trim(e.correction), '') is not null))
     and o.user_id = d.user_id and o.scan_local_id = d.scan_local_id
     and c.evaluation_consent and c.revision = o.consent_revision
     and c.policy_version = o.policy_version
