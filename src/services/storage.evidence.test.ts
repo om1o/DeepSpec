@@ -22,7 +22,7 @@ const conditionAssessment = (photoId: string): ConditionAssessment => ({
 const identification: IdentificationResult = {
   partName: "Rocker panel", confidence: "low", scanCategory: "body", candidateMatches: [],
   whatItDoes: "Body structure", visibleObservations: ["Orange flaking"], evidenceRegions: [], concerns: [],
-  safetyTriage: "needs_professional", isSafetyCritical: true, nextAction: "Have the area inspected.", needsBetterPhoto: true,
+  safetyTriage: "can_help", isSafetyCritical: false, nextAction: "Have the area inspected.", needsBetterPhoto: true,
   evidence: ["Visible edge"], sourceLinks: [],
 };
 const photoReview: PhotoReview = { version: 1, photos: [
