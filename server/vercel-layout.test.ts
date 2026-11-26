@@ -8,6 +8,7 @@ import billingWebhook from "../api/billing-webhook";
 import chat from "../api/chat";
 import identify from "../api/identify";
 import vehicleReference from "../api/vehicle-reference";
+import { modelRecallSourceUrl } from "../src/services/modelRecalls";
 
 const endpoints = [
   { name: "account-entitlement", handler: accountEntitlement },
@@ -54,6 +55,15 @@ describe("Vercel Hobby deployment layout", () => {
     expect(headers["Permissions-Policy"]).toContain("camera=(self)");
     expect(headers["X-Content-Type-Options"]).toBe("nosniff");
     expect(headers["X-Frame-Options"]).toBe("DENY");
+  });
+
+  it("allows the model recall request through the hosted connect-src policy", () => {
+    const config = JSON.parse(readFileSync(resolve(process.cwd(), "vercel.json"), "utf8"));
+    const csp = config.headers[0].headers.find(({ key }) => key === "Content-Security-Policy").value as string;
+    const connectSources = csp.split(";").find((directive) => directive.trim().startsWith("connect-src "))?.trim().split(/\s+/).slice(1);
+    const recallOrigin = new URL(modelRecallSourceUrl({ year: 2012, make: "Acura", model: "RDX" })).origin;
+
+    expect(connectSources).toContain(recallOrigin);
   });
 
   it("keeps only HTTP entry points in api, within the 12-function limit", () => {
