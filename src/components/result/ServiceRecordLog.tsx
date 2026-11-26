@@ -7,6 +7,7 @@ import { downloadTextFile } from "../../services/report";
 import { appendServiceRecord, importServiceRecords, readServiceRecords, subscribeServiceRecords } from "../../services/serviceRecordStore";
 import { readCloudServiceRecords, syncServiceRecords } from "../../services/serviceRecordCloud";
 import { isCloudSyncEnabled } from "../../services/cloudSyncPolicy";
+import { ServiceOutcomeConsentPanel } from "./ServiceOutcomeConsentPanel";
 import { correctionServiceRecordDraft, newServiceRecordDraft, requestedServiceRecordDraft, readServiceRecordDraft, serviceRecordContextForLookup, serviceRecordContextsMatch, serviceRecordDraftVehicleContext, serviceRecordFromDraft, writeServiceRecordDraft, type ServiceRecordContext, type ServiceRecordDraft, type ServiceRecordDraftRead, type ServiceRecordFields } from "../../services/serviceRecordDraft";
 import { assertRequestedMeasurementCurrent, prepareRequestedMeasurement, verifyRequestedMeasurement } from "../../services/requestedMeasurement";
 import type { Lookup } from "../../types";
@@ -300,6 +301,7 @@ export function ServiceRecordLog({ lookup, disabled = false, requestedMeasuremen
         {status === "conflicting_correction" ? <p className="mt-2 text-sm text-amber-700">Correction fork: multiple records revise the same entry. Review all versions; none is silently preferred.</p> : null}
         <dl className="mt-2 space-y-1 text-sm">{serviceRecordRows(record, { includeRecorder: true, includePrivateNotes: true }).map(([label, value], index) => <div key={`${label}-${index}`}><dt className="font-semibold">{label}</dt><dd className="whitespace-pre-wrap break-words">{value}</dd></div>)}</dl>
         {record.kind !== "retraction" ? <div className="mt-2 flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled={busy || disabled || !draftReady || dirty || recoveryPending || status !== "current"} onClick={() => correct(record, false)}>Correct entry</button><button type="button" className={buttonClass} disabled={busy || disabled || !draftReady || dirty || recoveryPending || status !== "current"} onClick={() => correct(record, true)}>Retract entry</button></div> : null}
+        {record.kind === "follow_up" ? <ServiceOutcomeConsentPanel scanId={lookup.id} recordId={record.id} current={status === "current"} disabled={busy || disabled || !loaded} /> : null}
       </li>;
     })}</ol>
     {!loaded ? <p className="mt-3 text-sm">Device history must load before a record can be saved. Reopen this scan to retry a device read.</p> : null}

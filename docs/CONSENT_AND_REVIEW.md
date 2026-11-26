@@ -10,6 +10,8 @@ Consent covers the scan photo, analysis and corrections for reviewed future mode
 
 Cloud confirmation is required. Failed, timed-out or conflicting writes show uncertainty and require reloading status. Aborting a client request does not guarantee that the database rolled it back. The component does not use device storage as the authority. Account-generation checks reject stale asynchronous responses after account changes.
 
+Saved follow-up service records offer a separate, default-off **outcome evaluation** choice under policy `2026-11-26-v1`. It applies to one record, not the entire scan or all service history. The reviewer can inspect the record and its correction history, but the outcome-only export carries only a structured self-reported category, reporting-basis enum and minimal review/link provenance. It omits notes, photos, VIN and recorder name. The owner can withdraw consent for a corrected or retracted record; new opt-in is blocked for those entries. This consent does not permit training or make a reported outcome ground truth. Cloud sync must be enabled and the record synced before consent can be saved.
+
 Updates compare the revision last read. A stale tab cannot overwrite a withdrawal using the old revision. Concurrent first-time inserts conflict instead of blindly upserting. A direct malicious client can still change its own consent, as intended; revision comparisons protect the application workflow rather than imposing a lock on the owner.
 
 ## Data and permissions
@@ -21,6 +23,9 @@ Updates compare the revision last read. A stale tab cannot overwrite a withdrawa
 | `feedback_reviews` | None | Administrator new/reviewed/confirmed_issue/fixed state and notes. |
 | `feedback_review_queue` | None | Existing reports joined with current review state; unreviewed reports appear as new. |
 | `scan_training_review_queue` | None | Consent and review state with a live readiness-for-dataset-review calculation. |
+| `service_outcome_consents` | Owner select; insert ownership/choice/policy; update choice/policy only | Separate revocable per-record evaluation choice, server revision and timestamp. |
+| `dataset_outcome_reviews` | None | Administrator choice of one follow-up record for an evaluation member, human category check and exact history fingerprint. |
+| `dataset_outcome_export_queue` | None | Live outcome eligibility and restricted structured projection for a service-role exporter. |
 
 All tables use RLS and explicit grants. Views use `security_invoker=true` and are granted only to `service_role`; use an administrator SQL session or a trusted server, never expose a service key to a browser. The consent timestamp trigger is security-invoker in the private schema and cannot be invoked as a browser RPC.
 
@@ -83,6 +88,8 @@ Withdrawal makes readiness false immediately in the database. Re-opting in advan
 The fingerprint covers `scan_lookups` metadata, including its recorded image hash. It does **not** verify current Storage bytes or all child tables. Storage paths can be overwritten. The separate administrator exporter fetches and hashes actual image bytes, checks current eligibility again, and records versioned membership. Human privacy/rights/quality review remains required. Queue readiness alone never authorizes an export.
 
 A withdrawal cannot promise to undo training already completed. Versioned membership now supports exclusion and source-deletion cascades, but previously copied exports need explicit purging. A complete immutable consent event history is not implemented. See the dataset operator instructions for these boundaries.
+
+The same point-in-time limit applies to outcome evaluation exports: withdrawal immediately prevents future eligible reads, while already copied manifests must be located and purged by the operator. No automatic recall of exported copies is implemented. Outcome review and curation steps are in [the dataset workflow](DATASET_LINEAGE.md).
 
 ## Verification
 

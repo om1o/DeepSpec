@@ -12,6 +12,8 @@ const hash = createHash("sha256").update(bytes).digest("hex");
 const fingerprint = createHash("md5").update(bytes).digest("hex");
 const owner = "10000000-0000-4000-8000-000000000001";
 const row = { id: "20000000-0000-4000-8000-000000000001", dataset_version: "v1", user_id: owner, scan_local_id: "scan-1", consent_revision: 1, policy_version: "2026-09-27-v1", scan_hash: fingerprint, model_run_id: "30000000-0000-4000-8000-000000000001", model_run_hash: fingerprint, label: "Alternator", label_source: "human_verified_prediction", original_prediction: "Alternator", correction: null, provider: "test", model: "test-model", prompt_version: "v1", pipeline_version: "v1", reviewer_reference: "test-reviewer", original_image_path: `${owner}/scan-1.jpg`, original_image_hash: hash, original_image_mime_type: "image/jpeg", original_image_byte_length: bytes.length, isolated_image_path: null, eligible: true };
+const corrected = { ...row, label: "Compressor", label_source: "human_verified_correction", correction: "Compressor" };
+const outcome = { dataset_member_id: row.id, dataset_version: "v1", record_id: "40000000-0000-4000-8000-000000000001", reported_outcome: "symptom_not_observed", reporting_basis: "personally_performed", consent_revision: 1, policy_version: "2026-11-26-v1", reviewer_reference: "outcome-reviewer", reviewed_history_hash: fingerprint, eligible: true };
 async function fixture(overrides = {}) {
   const root = await mkdtemp(join(tmpdir(), "deepspec-export-test-")); roots.push(root);
   return { root, outputDir: join(root, "dataset"), version: "v1", client: { list: async () => [structuredClone(row)], download: async () => ({ bytes, mime: "image/jpeg" }), ...overrides } };
@@ -22,6 +24,27 @@ async function rejectsClean(options, pattern) {
 }
 
 describe("reviewed dataset export", () => {
+  it("exports only a separately consented, reviewed self-reported outcome with a corrected case", async () => {
+    const options = await fixture({ list: async () => [corrected], listOutcomes: async () => [{ ...outcome, notes: "private", recorder_name: "private", vin: "private", photo: "private" }], download: async () => { throw new Error("Outcome export must not download photos"); } });
+    await exportReviewedDataset({ ...options, includeOutcomes: true });
+    const manifest = JSON.parse(await readFile(join(options.outputDir, "manifest.json"), "utf8"));
+    expect(manifest.format_version).toBe(2);
+    expect(manifest.members).toBeUndefined();
+    expect(await readdir(options.outputDir)).toEqual(["manifest.json"]);
+    expect(manifest.reported_outcomes).toEqual([{ dataset_member_id: row.id, dataset_version: "v1", record_id: outcome.record_id, reported_outcome: "symptom_not_observed", reporting_basis: "personally_performed", consent_revision: 1, policy_version: "2026-11-26-v1", reviewer_reference: "outcome-reviewer", reviewed_history_hash: fingerprint }]);
+    expect(JSON.stringify(manifest)).not.toMatch(/private|photo|vin|notes|recorder_name/);
+  });
+  it("rejects withdrawn, missing, or changed outcome evidence without an accepted export", async () => {
+    await rejectsClean({ ...await fixture({ list: async () => [corrected], listOutcomes: async () => [] }), includeOutcomes: true }, /separately consented/);
+    let calls = 0;
+    await rejectsClean({ ...await fixture({ list: async () => [corrected], listOutcomes: async () => ++calls === 1 ? [outcome] : [] }), includeOutcomes: true }, /separately consented/);
+    calls = 0;
+    await rejectsClean({ ...await fixture({ list: async () => [corrected], listOutcomes: async () => [{ ...outcome, consent_revision: ++calls }] }), includeOutcomes: true }, /Outcome consent, review or history changed/);
+  });
+  it("rejects an outcome attached to an uncorrected or wrong case", async () => {
+    await rejectsClean({ ...await fixture({ listOutcomes: async () => [outcome] }), includeOutcomes: true }, /Invalid or unreviewed outcome/);
+    await rejectsClean({ ...await fixture({ list: async () => [corrected], listOutcomes: async () => [{ ...outcome, dataset_member_id: "50000000-0000-4000-8000-000000000001" }] }), includeOutcomes: true }, /Invalid or unreviewed outcome/);
+  });
   it("does not export unconsented service outcomes or unexpected private view fields", async () => {
     const options = await fixture({ list: async () => [{ ...row, service_outcome: "symptom_not_observed", service_record_json: { check: "Private follow-up" }, customer_note: "Private note" }] });
     await exportReviewedDataset(options);
@@ -85,6 +108,15 @@ describe("reviewed dataset export", () => {
 });
 
 describe("server-only export transport", () => {
+  it("requests only the reviewed outcome projection, never service notes or photos", async () => {
+    const requests = [];
+    const client = createExportClient({ url: "https://project.supabase.co", key: "test-server-key", fetchImpl: async (url) => { requests.push(url); return new Response(JSON.stringify([outcome]), { headers: { "content-range": "0-0/1" } }); } });
+    expect(await client.listOutcomes("v1")).toEqual([outcome]);
+    const select = requests[0].searchParams.get("select");
+    expect(requests[0].pathname).toContain("dataset_outcome_export_queue");
+    expect(select).toContain("reported_outcome");
+    expect(select).not.toMatch(/record_json|notes|photo|vin|recorded_by/);
+  });
   it("uses fixed origin, eligible filter, bounded request, no redirects and exact count", async () => {
     const requests = [];
     const client = createExportClient({ url: "https://project.supabase.co", key: "test-server-key", fetchImpl: async (url, options) => { requests.push({ url, options }); return new Response(JSON.stringify([row]), { headers: { "content-range": "0-0/1" } }); } });

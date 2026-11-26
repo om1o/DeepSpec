@@ -19,6 +19,12 @@ const EXPORT_COLUMNS = [
   "original_image_mime_type", "original_image_byte_length", "isolated_image_path", "isolated_image_hash",
   "isolated_image_mime_type", "isolated_image_byte_length", "isolated_image_kind", "eligible",
 ];
+const OUTCOME_COLUMNS = [
+  "dataset_member_id", "dataset_version", "record_id", "reported_outcome", "reporting_basis",
+  "consent_revision", "policy_version", "reviewer_reference", "reviewed_history_hash", "eligible",
+];
+const OUTCOMES = new Set(["not_checked", "symptom_observed", "symptom_not_observed", "inconclusive"]);
+const BASES = new Set(["personally_performed", "reported_by_another", "transcribed_document"]);
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
 const canonical = value => JSON.stringify(value, Object.keys(value).sort());
 const snapshot = rows => rows.map(canonical).sort().join("\n");
@@ -53,6 +59,22 @@ function validateRows(rows, version) {
   }
 }
 
+function validateOutcomes(rows, version, members) {
+  if (!Array.isArray(rows) || rows.length !== members.length) throw new Error("Every reviewed correction needs one separately consented, reviewed outcome for this export.");
+  const byId = new Map(members.map(member => [member.id, member]));
+  const seen = new Set();
+  for (const row of rows) {
+    const member = byId.get(row.dataset_member_id);
+    if (!member || seen.has(row.dataset_member_id) || member.label_source !== "human_verified_correction" || !member.correction?.trim()
+      || row.dataset_version !== version || row.eligible !== true || !UUID.test(row.record_id ?? "")
+      || !OUTCOMES.has(row.reported_outcome) || !BASES.has(row.reporting_basis)
+      || !Number.isSafeInteger(row.consent_revision) || row.consent_revision < 1
+      || row.policy_version !== "2026-11-26-v1" || !row.reviewer_reference?.trim()
+      || !ROW_FINGERPRINT.test(row.reviewed_history_hash ?? "")) throw new Error("Invalid or unreviewed outcome provenance; export refused.");
+    seen.add(row.dataset_member_id);
+  }
+}
+
 export function createExportClient({ url, key, fetchImpl = fetch }) {
   const origin = new URL(url);
   if (origin.protocol !== "https:" || origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash || !key) throw new Error("A bare HTTPS Supabase URL and server-only service key are required.");
@@ -74,6 +96,14 @@ export function createExportClient({ url, key, fetchImpl = fetch }) {
       if (!total || !/^\d+$/.test(total) || !Array.isArray(rows) || Number(total) !== rows.length) throw new Error("Complete dataset membership count could not be verified; export refused.");
       return rows;
     },
+    async listOutcomes(version) {
+      const query = new URLSearchParams({ select: OUTCOME_COLUMNS.join(","), dataset_version: `eq.${version}`, eligible: "eq.true", order: "dataset_member_id.asc", limit: String(MAX_ROWS + 1) });
+      const response = await request(`/rest/v1/dataset_outcome_export_queue?${query}`, { Prefer: "count=exact" });
+      const total = response.headers.get("content-range")?.split("/")[1];
+      const rows = await response.json();
+      if (!total || !/^\d+$/.test(total) || Number(total) !== rows.length || !Array.isArray(rows) || rows.length > MAX_ROWS) throw new Error("Complete reviewed outcome count could not be verified; export refused.");
+      return rows;
+    },
     async download(path) {
       const response = await request(`/storage/v1/object/authenticated/scan-images/${path.split("/").map(encodeURIComponent).join("/")}`);
       const advertised = Number(response.headers.get("content-length"));
@@ -89,17 +119,19 @@ export function createExportClient({ url, key, fetchImpl = fetch }) {
   };
 }
 
-export async function exportReviewedDataset({ version, outputDir, client }) {
+export async function exportReviewedDataset({ version, outputDir, client, includeOutcomes = false }) {
   if (typeof version !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(version)) throw new Error("Dataset version must be an explicit 1–80 character identifier.");
   if (!outputDir) throw new Error("A fresh output directory is required.");
   const target = resolve(outputDir); await requireAbsent(target);
   const rows = await client.list(version); validateRows(rows, version);
+  const outcomeRows = includeOutcomes ? await client.listOutcomes(version) : [];
+  if (includeOutcomes) validateOutcomes(outcomeRows, version, rows);
   await mkdir(dirname(target), { recursive: true });
   const staging = await mkdtemp(join(dirname(target), `.${basename(target)}-staging-${randomUUID()}-`));
   try {
-    await mkdir(join(staging, "images"));
+    if (!includeOutcomes) await mkdir(join(staging, "images"));
     const members = [];
-    for (const row of rows) {
+    for (const row of includeOutcomes ? [] : rows) {
       const files = {};
       for (const prefix of ["original", "isolated"]) {
         const expected = validateImage(row, prefix); if (!expected) continue;
@@ -112,10 +144,17 @@ export async function exportReviewedDataset({ version, outputDir, client }) {
     }
     const latest = await client.list(version); validateRows(latest, version);
     if (snapshot(rows) !== snapshot(latest)) throw new Error("Dataset eligibility or provenance changed during export. Nothing was accepted; retry from current consent.");
-    const manifest = { format_version: 1, dataset_version: version, exported_at: new Date().toISOString(), limits: "Point-in-time export. Later withdrawal or deletion requires purging affected exports and re-exporting. This does not unlearn completed training.", members };
+    if (includeOutcomes) {
+      const currentOutcomes = await client.listOutcomes(version);
+      validateOutcomes(currentOutcomes, version, latest);
+      if (snapshot(outcomeRows) !== snapshot(currentOutcomes)) throw new Error("Outcome consent, review or history changed during export. Nothing was accepted; retry from current evidence.");
+    }
+    const manifest = { format_version: includeOutcomes ? 2 : 1, dataset_version: version, exported_at: new Date().toISOString(), limits: includeOutcomes ? "Point-in-time evaluation export. Later withdrawal or deletion requires purging affected exports and re-exporting." : "Point-in-time export. Later withdrawal or deletion requires purging affected exports and re-exporting. This does not unlearn completed training.",
+      ...(!includeOutcomes ? { members } : {}),
+      ...(includeOutcomes ? { reported_outcomes: outcomeRows.map(row => Object.fromEntries(OUTCOME_COLUMNS.filter(field => field !== "eligible").map(field => [field, row[field]]))) } : {}) };
     await writeFile(join(staging, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", { flag: "wx" });
     await requireAbsent(target); await rename(staging, target);
-    return { outputDir: target, members: members.length };
+    return { outputDir: target, members: rows.length };
   } catch (error) {
     // Only this call's freshly created sibling staging directory can be removed.
     if (dirname(staging) !== dirname(target) || !basename(staging).startsWith(`.${basename(target)}-staging-`)) throw new Error("Unexpected staging location; cleanup refused.", { cause: error });
@@ -125,14 +164,14 @@ export async function exportReviewedDataset({ version, outputDir, client }) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const [version, outputDir, ...extra] = process.argv.slice(2);
-  const usage = "Usage: node scripts/export-reviewed-dataset.mjs DATASET_VERSION NEW_OUTPUT_DIRECTORY\nRequires server-only SUPABASE_URL and SUPABASE_SECRET_KEY (legacy SUPABASE_SERVICE_ROLE_KEY is a rotation fallback). Maximum 200 eligible memberships, 2 MiB per image.\nPoint-in-time export: later consent withdrawal or deletion requires purge and re-export; completed training is not unlearned.";
+  const usage = "Usage: node scripts/export-reviewed-dataset.mjs DATASET_VERSION NEW_OUTPUT_DIRECTORY [--with-reviewed-outcomes]\nRequires server-only SUPABASE_URL and SUPABASE_SECRET_KEY (legacy SUPABASE_SERVICE_ROLE_KEY is a rotation fallback). Maximum 200 eligible memberships, 2 MiB per image.\nThe optional outcome export requires separate per-record consent and approved human review for every member. Outcomes are self-reported, not repair proof.\nPoint-in-time export: later consent withdrawal or deletion requires purge and re-export; completed training is not unlearned.";
   if (version === "--help" && !outputDir) {
     console.log(usage);
   } else {
-  try {
-    if (extra.length || !version || !outputDir) throw new Error(usage);
-    const client = createExportClient({ url: process.env.SUPABASE_URL, key: readSupabaseAdminKey() });
-    console.log(JSON.stringify(await exportReviewedDataset({ version, outputDir, client })));
-  } catch (error) { console.error(error instanceof Error ? error.message : "Export failed."); process.exitCode = 1; }
+    try {
+      if (extra.length > 1 || (extra.length === 1 && extra[0] !== "--with-reviewed-outcomes") || !version || !outputDir) throw new Error(usage);
+      const client = createExportClient({ url: process.env.SUPABASE_URL, key: readSupabaseAdminKey() });
+      console.log(JSON.stringify(await exportReviewedDataset({ version, outputDir, client, includeOutcomes: extra[0] === "--with-reviewed-outcomes" })));
+    } catch (error) { console.error(error instanceof Error ? error.message : "Export failed."); process.exitCode = 1; }
   }
 }
