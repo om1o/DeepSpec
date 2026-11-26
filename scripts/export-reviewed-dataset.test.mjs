@@ -22,6 +22,15 @@ async function rejectsClean(options, pattern) {
 }
 
 describe("reviewed dataset export", () => {
+  it("does not export unconsented service outcomes or unexpected private view fields", async () => {
+    const options = await fixture({ list: async () => [{ ...row, service_outcome: "symptom_not_observed", service_record_json: { check: "Private follow-up" }, customer_note: "Private note" }] });
+    await exportReviewedDataset(options);
+    const manifest = JSON.parse(await readFile(join(options.outputDir, "manifest.json"), "utf8"));
+    expect(manifest.members[0]).toMatchObject({ label: "Alternator", reviewer_reference: "test-reviewer" });
+    expect(manifest.members[0]).not.toHaveProperty("service_outcome");
+    expect(manifest.members[0]).not.toHaveProperty("service_record_json");
+    expect(manifest.members[0]).not.toHaveProperty("customer_note");
+  });
   it("exports original plus optional crop with full manifest provenance and generated file names", async () => {
     const cropped = { ...row, isolated_image_path: `${owner}/crop.png`, isolated_image_hash: hash, isolated_image_mime_type: "image/png", isolated_image_byte_length: bytes.length, isolated_image_kind: "crop" };
     const options = await fixture({ list: async () => [cropped], download: async path => ({ bytes, mime: path.endsWith("png") ? "image/png" : "image/jpeg" }) });
@@ -81,6 +90,8 @@ describe("server-only export transport", () => {
     const client = createExportClient({ url: "https://project.supabase.co", key: "test-server-key", fetchImpl: async (url, options) => { requests.push({ url, options }); return new Response(JSON.stringify([row]), { headers: { "content-range": "0-0/1" } }); } });
     expect(await client.list("v1")).toEqual([row]);
     expect(requests[0].url.origin).toBe("https://project.supabase.co");
+    expect(requests[0].url.searchParams.get("select")).not.toBe("*");
+    expect(requests[0].url.searchParams.get("select")).not.toContain("outcome");
     expect(requests[0].url.searchParams.get("eligible")).toBe("eq.true");
     expect(requests[0].options.redirect).toBe("error");
     expect(requests[0].options.headers.Prefer).toBe("count=exact");
