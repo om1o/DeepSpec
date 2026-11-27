@@ -15,7 +15,7 @@ import { LinkedPhotoGroupReview } from "./LinkedPhotoGroupReview";
 
 const STATUS_TEXT: Record<ComponentMapStatus, string> = { needs_view: "Needs view", inspected: "Inspected", not_visible: "Not visible" };
 const BUTTON = "min-h-11 rounded-lg border border-[var(--ds-border)] px-3 py-2 text-sm disabled:opacity-50";
-const FIELD = "mt-1 block w-full rounded-lg border border-[var(--ds-border)] bg-[var(--ds-surface)] p-2";
+const FIELD = "mt-1 block min-h-11 w-full rounded-lg border border-[var(--ds-border)] bg-[var(--ds-surface)] p-2 text-base";
 const DEFAULT_BOX: VisualFocusBox = { x: 0.2, y: 0.2, width: 0.3, height: 0.3, confidence: 0 };
 const errorText = (error: unknown) => error instanceof Error ? error.message : "The map could not be saved. Your edits remain here.";
 const availableImage = (value: unknown): value is string => isEvidenceImage(value)
