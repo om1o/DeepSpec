@@ -52,6 +52,16 @@ describe("createChatResponse", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("serves fixed safety and fitment replies when Gemini is not configured", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const env = { DEEPSPEC_ENABLE_CHAT: "true", NODE_ENV: "production" };
+    await expect(createChatResponse({ userMessage: "Can I drive?", savedSafetyCritical: true }, env))
+      .resolves.toMatchObject({ status: 200, body: { message: expect.stringContaining("qualified mechanic") } });
+    await expect(createChatResponse({ userMessage: "Will this part fit my car?" }, env))
+      .resolves.toMatchObject({ status: 200, body: { message: expect.stringContaining("Exact replacement fitment is unverified") } });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("answers exact compatibility questions without an unsourced model claim or provider call", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const response = await createChatResponse({ userMessage: "Will this alternator fit my car with VIN 1HGCM82633A004352?" }, { GEMINI_API_KEY: "test-key" });
