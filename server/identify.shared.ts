@@ -2140,6 +2140,11 @@ function normalizeIdentificationResult(
   const conditionEvidenceRequest = result.conditionAssessment?.nextEvidence?.request;
   const requiredNextEvidence = normalizeRequiredNextEvidence(result.requiredNextEvidence, confirmationNeed, needsBetterPhoto);
   const nextAction = normalizeNextAction(result.nextAction, safety.safetyTriage, needsBetterPhoto, partName);
+  const orderedNextEvidence = conditionEvidenceRequest
+    ? selectedIdentity?.needsCloseUp
+      ? [...requiredNextEvidence.filter((item) => item !== conditionEvidenceRequest), conditionEvidenceRequest]
+      : [conditionEvidenceRequest, ...requiredNextEvidence.filter((item) => item !== conditionEvidenceRequest)]
+    : requiredNextEvidence;
 
   return withSafeGuidance({
     ...result,
@@ -2152,9 +2157,7 @@ function normalizeIdentificationResult(
     candidateParts: normalizeCandidateParts(result.candidateParts, candidateMatches, partName, confidence, resolvedScanCategory),
     possibleVehicleContexts: normalizePossibleVehicleContexts(result.possibleVehicleContexts),
     measurements: normalizeMeasurements(result.measurements, measurementContext),
-    requiredNextEvidence: conditionEvidenceRequest
-      ? [conditionEvidenceRequest, ...requiredNextEvidence.filter((item) => item !== conditionEvidenceRequest)]
-      : requiredNextEvidence,
+    requiredNextEvidence: orderedNextEvidence,
     fitmentConfidence: getFitmentStatus(result, vehicleContext ?? undefined),
     scanCategory: resolvedScanCategory,
     candidateMatches,
@@ -2164,7 +2167,7 @@ function normalizeIdentificationResult(
     concerns: cleanList(result.concerns),
     evidence: cleanEvidence,
     sourceLinks,
-    nextAction: conditionEvidenceRequest && !safety.isSafetyCritical
+    nextAction: conditionEvidenceRequest && !selectedIdentity?.needsCloseUp && !safety.isSafetyCritical
       ? conditionEvidenceRequest
       : nextAction,
     safetyTriage: safety.safetyTriage,

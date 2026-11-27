@@ -189,6 +189,36 @@ describe("selected-part provider transport", () => {
     }
   });
 
+  it("keeps the selected-label close-up first when condition evidence asks for another photo", async () => {
+    const labelRequest = "Take one straight-on close-up of the selected part's label with the text filling the frame and in focus.";
+    const conditionRequest = "Photograph the mounting bracket from the side.";
+    const conditionAssessment = {
+      version: 2,
+      observations: [{ id: "surface", text: "Discoloration is visible.", photoIds: ["original"], regionLabel: "mounting edge",
+        areas: [{ photoId: "original", rectangle: { x: 0.2, y: 0.2, width: 0.2, height: 0.2 } }] }],
+      possibleCauses: [{ text: "Corrosion is possible but unconfirmed.", observationIds: ["surface"] }],
+      unknowns: ["The mounting point condition is unknown."],
+      nextEvidence: { kind: "photo", request: conditionRequest, purpose: "Show the bracket edge.", photoIds: ["original"] },
+    };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify({
+        ...identification,
+        partName: "Alternator ALT-987",
+        evidence: ["A vented housing is visible; the selected label is unreadable."],
+        conditionAssessment,
+      }) }] } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+
+    const response = await createIdentifyResponse({ photos, selectedPart }, { GEMINI_API_KEY: "test-key" });
+    expect(response.status).toBe(200);
+    if (response.status !== 200) return;
+    expect(response.body.result.partName).toBe("Alternator");
+    expect(response.body.result.needsBetterPhoto).toBe(true);
+    expect(response.body.result.nextAction).toBe(labelRequest);
+    expect(response.body.result.requiredNextEvidence).toEqual([labelRequest, conditionRequest]);
+    expect(response.body.result.conditionAssessment).toEqual(conditionAssessment);
+  });
+
   it("retains a readable selected-label transcription as evidence without treating it as verified fitment", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
       candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify({

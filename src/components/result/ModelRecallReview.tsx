@@ -34,6 +34,7 @@ function ModelRecallLookup({ vehicleContext, query, queryKey }: Props & { query:
   return <section aria-label="Safety recalls" className="break-words rounded-xl border border-[var(--ds-border)] bg-[var(--ds-surface)] p-4 text-sm">
     <h2 className="font-bold">Safety recalls</h2>
     <p className="mt-1 text-[var(--ds-fg-3)]">A model-wide campaign may not apply to this vehicle. Use NHTSA&apos;s VIN lookup to check listed unrepaired recalls for a specific VIN; its coverage has limits.</p>
+    <p className="mt-1 text-[var(--ds-fg-3)]">This search sends the displayed year, make, and model to NHTSA. Remove private identifiers from those fields before searching.</p>
     <a className="mt-2 inline-block min-h-11 content-center font-semibold underline" href={NHTSA_VIN_RECALL_URL} target="_blank" rel="noopener noreferrer">Check this vehicle&apos;s VIN at NHTSA</a>
     {query ? <>
       <p className="mt-2">Model search: {query.year} {query.make} {query.model}.</p>

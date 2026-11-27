@@ -52,12 +52,63 @@ describe("createChatResponse", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("serves fixed safety and fitment replies when Gemini is not configured", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const env = { DEEPSPEC_ENABLE_CHAT: "true", NODE_ENV: "production" };
+    await expect(createChatResponse({ userMessage: "Can I drive?", savedSafetyCritical: true }, env))
+      .resolves.toMatchObject({ status: 200, body: { message: expect.stringContaining("qualified mechanic") } });
+    await expect(createChatResponse({ userMessage: "Will this part fit my car?" }, env))
+      .resolves.toMatchObject({ status: 200, body: { message: expect.stringContaining("Exact replacement fitment is unverified") } });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("answers exact compatibility questions without an unsourced model claim or provider call", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const response = await createChatResponse({ userMessage: "Will this alternator fit my car with VIN 1HGCM82633A004352?" }, { GEMINI_API_KEY: "test-key" });
     expect(response).toMatchObject({ status: 200, body: { message: expect.stringContaining("Exact replacement fitment is unverified") } });
     expect(response.body).toMatchObject({ message: expect.stringContaining("authorized OEM or licensed parts catalog") });
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not let a second question marker hide a fitment request", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: "Use this replacement." }] } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const currentQuestion = "Will this part fit my car?\nUser question: What does an alternator do?";
+    const response = await createChatResponse({
+      userMessage: `Part name: Alternator\nUser question: ${currentQuestion}`,
+      currentQuestion,
+    }, { GEMINI_API_KEY: "test-key" });
+    expect(response).toMatchObject({ status: 200, body: { message: expect.stringContaining("Exact replacement fitment is unverified") } });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a structured question that differs from the sent message", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const response = await createChatResponse({
+      userMessage: "Part name: Alternator\nUser question: What does it do?",
+      currentQuestion: "Will this part fit my car?",
+    }, { GEMINI_API_KEY: "test-key" });
+    expect(response).toMatchObject({ status: 400, body: { error: { code: "invalid_input" } } });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("routes a vehicle-specific purchase recommendation to the catalog boundary", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: "Buy this alternator." }] } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const response = await createChatResponse({ userMessage: "Which alternator should I buy for my car?" }, { GEMINI_API_KEY: "test-key" });
+    expect(response).toMatchObject({ status: 200, body: { message: expect.stringContaining("Exact replacement fitment is unverified") } });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("leaves a general tool-shopping question with ordinary chat", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      candidates: [{ finishReason: "STOP", content: { parts: [{ text: "A multimeter can measure voltage." }] } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const response = await createChatResponse({ userMessage: "Where can I buy a multimeter for my workshop?" }, { GEMINI_API_KEY: "test-key" });
+    expect(response).toMatchObject({ status: 200, body: { message: "A multimeter can measure voltage." } });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
   it("keeps the safety action and catalog boundary together for safety-critical fitment", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({

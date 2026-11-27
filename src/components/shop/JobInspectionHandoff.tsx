@@ -48,7 +48,7 @@ export function JobInspectionHandoff({ context, disabled = false }: Props) {
     {missingOriginals.length ? <p role="alert" className="mt-3 break-words text-sm">First original unavailable: {missingOriginals.map((scan) => scan.id).join(", ")}. No other photo or cutout is substituted.</p> : null}
     <label className="mt-4 block text-sm font-bold">
       Overview inspection
-      <select className="mt-2 min-h-11 w-full rounded-lg border border-slate-300 bg-white p-2" value={selected?.id ?? ""} disabled={disabled || !eligible.length} onChange={(event) => select(event.target.value)}>
+      <select className="mt-2 min-h-11 w-full rounded-lg border border-slate-300 bg-white p-2 text-base" value={selected?.id ?? ""} disabled={disabled || !eligible.length} onChange={(event) => select(event.target.value)}>
         <option value="">Choose an inspection…</option>
         {eligible.map((scan) => <option key={scan.id} value={scan.id}>{scanTitle(scan)} — saved {displayDate(scan.createdAt)} — {scan.id}</option>)}
       </select>

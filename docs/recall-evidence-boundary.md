@@ -1,8 +1,10 @@
 # Safety recall evidence boundary
 
 The result page offers an explicit search of NHTSA's public recalls API using
-the scan's year, make, and model. It sends only those three fields, never the
-VIN, photo, symptom, or account details. The request is limited in time and
+the scan's year, make, and model. It sends those three values as query parameters,
+with no dedicated VIN, photo, symptom, or account fields. VIN-shaped tokens
+pasted into make or model are rejected; the UI asks users to remove other private
+identifiers from those free-text fields. The request is limited in time and
 response size, and its results are not stored as a vehicle-specific finding.
 
 The API's year/make/model campaigns are **model-wide possibilities**. They do

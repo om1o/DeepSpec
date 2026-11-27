@@ -25,6 +25,7 @@ describe("ModelRecallReview", () => {
     expect(within(panel).getByRole("link", { name: /Check this vehicle's VIN at NHTSA/ })).toHaveAttribute("href", NHTSA_VIN_RECALL_URL);
     expect(within(panel).queryByRole("button", { name: "Search model-wide recalls" })).not.toBeInTheDocument();
     expect(panel).toHaveTextContent("Add a valid year, make, and model");
+    expect(panel).toHaveTextContent("sends the displayed year, make, and model to NHTSA");
   });
 
   it("labels campaigns as model-wide, preserves source, and never calls them VIN-open recalls", async () => {

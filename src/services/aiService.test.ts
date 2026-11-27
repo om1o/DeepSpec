@@ -110,6 +110,8 @@ describe("aiService", () => {
     }
     expect(requests[1].userMessage).toContain("User question: What part is this?");
     expect(requests[2].userMessage).toContain("User question: Can you tell its part number?");
+    expect(requests[1].currentQuestion).toBe("What part is this?");
+    expect(requests[2].currentQuestion).toBe("Can you tell its part number?");
     expect(requests[1].savedSafetyCritical).toBe(false);
     expect(requests[2].savedSafetyCritical).toBe(false);
     expect(String(requests[2].userMessage).length).toBeLessThanOrEqual(3000);
@@ -123,6 +125,16 @@ describe("aiService", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "Fixture reply." }), { status: 200 }));
     await sendFollowUpDetails(lookup, "What should I check next?");
     expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)).savedSafetyCritical).toBe(true);
+  });
+
+  it("sends the full multiline question as a separate field", async () => {
+    const frame = { imageBase64: "data:image/png;base64,aGVsbG8=", capturedAt: "2026-11-26T00:00:00Z" };
+    const question = "Will this part fit my car?\nUser question: What does an alternator do?";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ message: "Fixture reply." }), { status: 200 }));
+    await sendFollowUpDetails({ frame, result, chatHistory: [] } as never, question);
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.currentQuestion).toBe(question);
+    expect(body.userMessage).toContain(`User question: ${question}`);
   });
 
   it.each([null, { photoId: "missing", rectangle: { x: 0.1, y: 0.2, width: 0.3, height: 0.4 } },
