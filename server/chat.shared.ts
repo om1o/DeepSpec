@@ -39,11 +39,6 @@ export async function createChatResponse(body: unknown, env: Record<string, stri
     return errorResponse(503, "feature_disabled", "Follow-up chat is unavailable in this beta.");
   }
 
-  const apiKey = env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return errorResponse(500, "not_configured", "Deep Spec chat is not configured. Add GEMINI_API_KEY on the server.");
-  }
-
   const parsed = parseChatRequest(body);
   if ("error" in parsed) {
     return parsed.error;
@@ -63,6 +58,11 @@ export async function createChatResponse(body: unknown, env: Record<string, stri
   }
   if (parsed.savedSafetyCritical) {
     return { status: 200, body: { message: SAFETY_CHAT_ACTION } };
+  }
+
+  const apiKey = env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return errorResponse(500, "not_configured", "Deep Spec chat is not configured. Add GEMINI_API_KEY on the server.");
   }
 
   const models = getChatModels(env);
