@@ -27,7 +27,7 @@ export function PartInspectionForm({ lookup, onSaved }: { lookup: Lookup; onSave
     && recovery.record?.displayedInspection === JSON.stringify(lookup.inspection ?? null);
   const hasUnsavedChanges = (Object.keys(emptyPartInspection) as (keyof PartInspectionDraft)[])
     .some((key) => draft[key] !== savedDraft[key]);
-  const fieldClass = "mt-1 w-full rounded-xl border border-neutral-300 bg-[var(--ds-elevated)] p-3 text-sm text-[var(--ds-fg-1)]";
+  const fieldClass = "mt-1 w-full rounded-xl border border-neutral-300 bg-[var(--ds-elevated)] p-3 text-base text-[var(--ds-fg-1)]";
   function keepDraft(next: PartInspectionDraft) {
     if (deviceInspection.current !== undefined && !getLookup(lookup.id)) {
       setDraftNotice("Scan removed from this device. Download your notes before leaving; this form will not recreate its device draft.");
@@ -142,16 +142,16 @@ export function PartInspectionForm({ lookup, onSaved }: { lookup: Lookup; onSave
           <p className="text-sm font-bold">Unfinished inspection found on this device</p>
           <p className="mt-1 text-xs leading-relaxed">{recovery.record ? (recoveryMatches ? "Restore your notes or discard this draft. Your saved inspection has not changed." : "The saved inspection has changed since this draft began. Download the old notes to compare; restoring over the saved version is blocked.") : recovery.message}</p>
           <div className="mt-3 flex flex-wrap gap-2">
-            {recovery.record ? <><button type="button" disabled={!recoveryMatches} onClick={restoreDraft} className="rounded-full border border-amber-400 px-4 py-2 text-sm font-bold disabled:opacity-50">Restore draft</button>
-              <button type="button" onClick={() => downloadDraft(recovery.record!.draft)} className="rounded-full border border-amber-400 px-4 py-2 text-sm font-bold">Download recovery copy</button></> : null}
-            <button type="button" onClick={discardDraft} className="rounded-full border border-amber-400 px-4 py-2 text-sm font-bold">Discard draft</button>
+            {recovery.record ? <><button type="button" disabled={!recoveryMatches} onClick={restoreDraft} className="min-h-11 rounded-full border border-amber-400 px-4 py-2 text-sm font-bold disabled:opacity-50">Restore draft</button>
+              <button type="button" onClick={() => downloadDraft(recovery.record!.draft)} className="min-h-11 rounded-full border border-amber-400 px-4 py-2 text-sm font-bold">Download recovery copy</button></> : null}
+            <button type="button" onClick={discardDraft} className="min-h-11 rounded-full border border-amber-400 px-4 py-2 text-sm font-bold">Discard draft</button>
           </div>
         </aside> : null}
         {hasUnsavedChanges && !recoveryPending ? <aside aria-label="Inspection draft recovery" className="mb-4 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-amber-950">
           <p className="text-sm font-bold">Unsaved inspection changes</p>
           <p className="mt-1 text-xs leading-relaxed">Save the completed inspection when ready. Download a copy to keep your notes outside this browser.</p>
-          <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => downloadDraft()} className="rounded-full border border-amber-400 px-4 py-2 text-sm font-bold">Download draft</button>
-            <button type="button" disabled={saving} onClick={discardDraft} className="rounded-full border border-amber-400 px-4 py-2 text-sm font-bold">Discard draft</button></div>
+          <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => downloadDraft()} className="min-h-11 rounded-full border border-amber-400 px-4 py-2 text-sm font-bold">Download draft</button>
+            <button type="button" disabled={saving} onClick={discardDraft} className="min-h-11 rounded-full border border-amber-400 px-4 py-2 text-sm font-bold">Discard draft</button></div>
         </aside> : null}
         {draftNotice ? <p className="mb-3 text-sm text-[var(--ds-fg-3)]">{draftNotice}</p> : null}
         <fieldset disabled={saving || recoveryPending} className="space-y-3">
