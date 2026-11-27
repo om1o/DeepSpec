@@ -107,9 +107,9 @@ function ReportPreparation({ lookupId, disabled = false, jobContext, scope }: Ex
       <p className="text-xs text-[var(--ds-fg-3)]">The file includes photos, component notes, corrections and inspection findings. Photos may show identifiers or retain image metadata. Anyone you give the file to can open it.</p>
       <fieldset className="space-y-2" disabled={working}>
         <legend className="mb-2 font-semibold">Optional details</legend>
-        <label className="flex min-h-10 items-center gap-3"><input type="checkbox" checked={options.includeVin} onChange={(event) => setOptions({ ...options, includeVin: event.target.checked })} />Include saved VIN</label>
-        <label className="flex min-h-10 items-center gap-3"><input type="checkbox" checked={options.includePrivateNotes} onChange={(event) => setOptions({ ...options, includePrivateNotes: event.target.checked })} />Include private scan and vehicle notes</label>
-        <label className="flex min-h-10 items-center gap-3"><input type="checkbox" checked={options.includeDiagnosticOriginals ?? false} onChange={(event) => setOptions({ ...options, includeDiagnosticOriginals: event.target.checked })} />Include original diagnostic files, unredacted</label>
+        <label className="flex min-h-11 items-center gap-3"><input type="checkbox" checked={options.includeVin} onChange={(event) => setOptions({ ...options, includeVin: event.target.checked })} />Include saved VIN</label>
+        <label className="flex min-h-11 items-center gap-3"><input type="checkbox" checked={options.includePrivateNotes} onChange={(event) => setOptions({ ...options, includePrivateNotes: event.target.checked })} />Include private scan and vehicle notes</label>
+        <label className="flex min-h-11 items-center gap-3"><input type="checkbox" checked={options.includeDiagnosticOriginals ?? false} onChange={(event) => setOptions({ ...options, includeDiagnosticOriginals: event.target.checked })} />Include original diagnostic files, unredacted</label>
       </fieldset>
       {options.includeDiagnosticOriginals ? <p className="text-xs font-semibold">Original diagnostic files may contain VINs, registration plates, names and other identifiers even when Include saved VIN is off. The exported originals keep their exact bytes.</p> : null}
       <p className="text-xs text-[var(--ds-fg-3)]">Saved customer and registration plate fields and chat messages are excluded. Photos, extracted diagnostic text and free-text notes can still contain identifiers. Review them before sharing.</p>
