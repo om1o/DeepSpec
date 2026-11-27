@@ -50,6 +50,16 @@ describe("NHTSA model recall lookup", () => {
     });
   });
 
+  it("matches NHTSA names independently of the device locale", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response(payload([{ ...campaign, Make: "INFINITI", Model: "G37" }])));
+    const localeLower = String.prototype.toLocaleLowerCase;
+    vi.spyOn(String.prototype, "toLocaleLowerCase").mockImplementation(function (this: string, locales?: string | string[]) {
+      return localeLower.call(this, locales ?? "tr");
+    });
+    await expect(requestModelRecalls({ year: "2012", make: "Infiniti", model: "G37" }, getAccountScope(), fetcher))
+      .resolves.toMatchObject({ recalls: [{ campaignNumber: "19V182000" }] });
+  });
+
   it.each([
     payload([{ ...campaign, Model: "MDX" }]),
     { Count: 2, results: [campaign] },
