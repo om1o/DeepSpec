@@ -77,7 +77,7 @@ function parseModelRecalls(value: unknown, query: ModelRecallQuery): ModelRecall
 }
 
 function sameName(value: unknown, expected: string): boolean {
-  return typeof value === "string" && value.trim().replace(/\s+/g, " ").toLocaleLowerCase() === expected.toLocaleLowerCase();
+  return typeof value === "string" && value.trim().replace(/\s+/g, " ").toLowerCase() === expected.toLowerCase();
 }
 
 function field(value: unknown, limit: number): string | null {
