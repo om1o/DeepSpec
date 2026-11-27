@@ -12,7 +12,7 @@ import { assertRequestedMeasurementCurrent, prepareRequestedMeasurement, verifyR
 import type { Lookup } from "../../types";
 import type { ServiceRecord } from "../../types/serviceRecord";
 
-const fieldClass = "mt-1 w-full rounded-xl border border-[var(--ds-border)] bg-[var(--ds-page)] p-3 text-sm text-[var(--ds-fg-1)]";
+const fieldClass = "mt-1 w-full rounded-xl border border-[var(--ds-border)] bg-[var(--ds-page)] p-3 text-base text-[var(--ds-fg-1)]";
 const buttonClass = "min-h-11 rounded-full border border-[var(--ds-border)] px-4 py-2 text-sm font-bold disabled:opacity-50";
 const kindLabels = { measurement: "Measurement", repair: "Repair / work", follow_up: "Follow-up check", retraction: "Retraction" };
 
