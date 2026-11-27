@@ -25,6 +25,14 @@ describe("NHTSA model recall lookup", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it.each(["make", "model"] as const)("does not send a VIN pasted into %s", async (field) => {
+    const fetcher = vi.fn<typeof fetch>();
+    const pasted = { ...vehicle, [field]: `${vehicle[field]} ${vehicle.vin}` };
+    expect(normalizeModelRecallQuery(pasted)).toBeNull();
+    await expect(requestModelRecalls(pasted, getAccountScope(), fetcher)).rejects.toThrow("valid year, make, and model");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("uses an explicit single GET without a VIN and preserves model-wide provenance", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response(payload()));
     const result = await requestModelRecalls(vehicle, getAccountScope(), fetcher);

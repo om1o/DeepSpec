@@ -5,6 +5,7 @@ export const NHTSA_VIN_RECALL_URL = "https://www.nhtsa.gov/recalls";
 export const MODEL_RECALL_TIMEOUT_MS = 20_000;
 export const MAX_MODEL_RECALL_RESPONSE_BYTES = 256 * 1024;
 const API_URL = "https://api.nhtsa.gov/recalls/recallsByVehicle";
+const VIN_TOKEN = /\b[A-HJ-NPR-Z0-9]{17}\b/i;
 
 export type ModelRecallQuery = { year: number; make: string; model: string };
 export type ModelRecall = { campaignNumber: string; component: string; summary: string; consequence: string; remedy: string };
@@ -17,7 +18,8 @@ export function normalizeModelRecallQuery(value: VehicleContext | undefined): Mo
   const yearText = value?.year?.trim();
   const make = value?.make?.trim().replace(/\s+/g, " ");
   const model = value?.model?.trim().replace(/\s+/g, " ");
-  if (!yearText || !/^\d{4}$/.test(yearText) || !make || !model || make.length > 80 || model.length > 80) return null;
+  if (!yearText || !/^\d{4}$/.test(yearText) || !make || !model || make.length > 80 || model.length > 80
+    || VIN_TOKEN.test(make) || VIN_TOKEN.test(model)) return null;
   const year = Number(yearText);
   if (year < 1949 || year > new Date().getUTCFullYear() + 1) return null;
   return { year, make, model };
@@ -27,7 +29,7 @@ export function modelRecallSourceUrl(query: ModelRecallQuery): string {
   return `${API_URL}?${new URLSearchParams({ make: query.make, model: query.model, modelYear: String(query.year) })}`;
 }
 
-/** Explicit model-wide lookup only. It never sends a VIN or photo to NHTSA. */
+/** Explicit model-wide lookup using year, make, and model fields only. */
 export async function requestModelRecalls(value: VehicleContext, scope: AccountScope = getAccountScope(), fetchImpl: typeof fetch = fetch): Promise<ModelRecallResult> {
   const query = normalizeModelRecallQuery(value);
   if (!query) throw new Error("Enter a valid year, make, and model before searching recalls.");
