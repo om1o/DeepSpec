@@ -32,7 +32,7 @@ const LEGACY_FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
 const RETRYABLE_PROVIDER_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 const BLOCKED_FINISH_REASONS = new Set(["SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "IMAGE_RECITATION"]);
 type SavedIdentityScope = "first_photo" | "unrecorded" | "none";
-type ChatRequest = { userMessage: string; savedSafetyCritical: boolean; photos: InspectionPhoto[]; photoRelationship: PhotoRelationship; selectedPart?: SelectedPartReference; savedIdentityScope: SavedIdentityScope; photoReview?: PhotoReview; conditionCoverage: ReturnType<typeof buildConditionCoverage>; research: boolean; sourceUrls: string[]; vehicleContext?: VehicleContext };
+type ChatRequest = { userMessage: string; currentQuestion?: string; savedSafetyCritical: boolean; photos: InspectionPhoto[]; photoRelationship: PhotoRelationship; selectedPart?: SelectedPartReference; savedIdentityScope: SavedIdentityScope; photoReview?: PhotoReview; conditionCoverage: ReturnType<typeof buildConditionCoverage>; research: boolean; sourceUrls: string[]; vehicleContext?: VehicleContext };
 
 export async function createChatResponse(body: unknown, env: Record<string, string | undefined>): Promise<ChatResponse> {
   if (!isChatEnabled(env)) {
@@ -47,7 +47,7 @@ export async function createChatResponse(body: unknown, env: Record<string, stri
   // The client appends the current question after saved facts and prior chat.
   const questionMarker = "\nUser question: ";
   const questionIndex = parsed.userMessage.lastIndexOf(questionMarker);
-  const currentQuestion = questionIndex < 0 ? parsed.userMessage : parsed.userMessage.slice(questionIndex + questionMarker.length);
+  const currentQuestion = parsed.currentQuestion ?? (questionIndex < 0 ? parsed.userMessage : parsed.userMessage.slice(questionIndex + questionMarker.length));
   // No authorized catalog application is available to this endpoint.
   if (asksForExactFitment(currentQuestion)) {
     if (parsed.savedSafetyCritical) return { status: 200, body: { message: SAFETY_FITMENT_ACTION } };
@@ -329,6 +329,11 @@ function parseChatRequest(body: unknown): ChatRequest | { error: ChatResponse } 
   if (body.savedSafetyCritical !== undefined && typeof body.savedSafetyCritical !== "boolean") {
     return { error: errorResponse(400, "invalid_input", "Saved safety status must be true or false.") };
   }
+  if (body.currentQuestion !== undefined && (typeof body.currentQuestion !== "string" || !body.currentQuestion.trim()
+    || body.currentQuestion.length > 500 || body.userMessage.length > CHAT_USER_MESSAGE_MAX_CHARS
+    || !body.userMessage.endsWith(`\nUser question: ${body.currentQuestion}`))) {
+    return { error: errorResponse(400, "invalid_input", "Current question does not match the follow-up message.") };
+  }
   if (body.research !== undefined && typeof body.research !== "boolean") {
     return { error: errorResponse(400, "invalid_input", "Research must be explicitly enabled or disabled.") };
   }
@@ -343,6 +348,7 @@ function parseChatRequest(body: unknown): ChatRequest | { error: ChatResponse } 
 
   return {
     userMessage: userMessage.slice(0, CHAT_USER_MESSAGE_MAX_CHARS),
+    ...(typeof body.currentQuestion === "string" ? { currentQuestion: body.currentQuestion } : {}),
     savedSafetyCritical: body.savedSafetyCritical === true,
     photos: parsedPhotos.photos,
     photoRelationship: parsedPhotos.photoRelationship,
@@ -428,7 +434,8 @@ function asksForExactIdentifier(message: string) {
 function asksForExactFitment(message: string) {
   return (/\b(?:fit|fits|fitment|compatible|compatibility|interchangeable)\b/i.test(message)
     && /\b(?:this|that|my|your|vin|vehicle|car|truck|part|component|model|engine)\b/i.test(message))
-    || /\b(?:replacement|part number)\b.{0,120}\b(?:for|fit|compatible)\b/i.test(message);
+    || /\b(?:replacement|part number)\b.{0,120}\b(?:for|fit|compatible)\b/i.test(message)
+    || /\b(?:which|what|should|can)\b.{0,100}\b(?:buy|order)\b.{0,80}\bfor\s+(?:my|your|this|that)\s+(?:car|truck|vehicle|engine)\b/i.test(message);
 }
 
 function statesIdentifierLimit(message: string) {

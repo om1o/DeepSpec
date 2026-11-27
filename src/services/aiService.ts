@@ -487,6 +487,7 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
     const conditionAssessment = normalizeConditionAssessment(lookup.result?.conditionAssessment, photos.map((photo) => photo.id));
     const result = await postAI<ChatApiSuccess>("/api/chat", {
       userMessage: buildFollowUpContext(lookup, trimmedQuestion), photos, photoRelationship, savedIdentityScope,
+      currentQuestion: trimmedQuestion,
       savedSafetyCritical,
       ...(selectedPart ? { selectedPart } : {}),
       ...(photoReview ? { photoReview } : {}),
@@ -513,6 +514,7 @@ export async function sendFollowUpDetails(lookup: Lookup, question: string, opti
   const conditionAssessment = normalizeConditionAssessment(lookup.result?.conditionAssessment, ["photo-1"]);
   const result = await postAI<ChatApiSuccess>("/api/chat", {
     userMessage: buildFollowUpContext(lookup, trimmedQuestion),
+    currentQuestion: trimmedQuestion,
     savedSafetyCritical,
     photoRelationship,
     savedIdentityScope,
