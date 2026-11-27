@@ -25,6 +25,14 @@ describe("NHTSA model recall lookup", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it.each(["make", "model"] as const)("does not send a VIN pasted into %s", async (field) => {
+    const fetcher = vi.fn<typeof fetch>();
+    const pasted = { ...vehicle, [field]: `${vehicle[field]} ${vehicle.vin}` };
+    expect(normalizeModelRecallQuery(pasted)).toBeNull();
+    await expect(requestModelRecalls(pasted, getAccountScope(), fetcher)).rejects.toThrow("valid year, make, and model");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("uses an explicit single GET without a VIN and preserves model-wide provenance", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response(payload()));
     const result = await requestModelRecalls(vehicle, getAccountScope(), fetcher);
@@ -48,6 +56,16 @@ describe("NHTSA model recall lookup", () => {
     await expect(requestModelRecalls(vehicle, getAccountScope(), fetcher)).resolves.toMatchObject({
       recalls: [{ campaignNumber: "19V182000", consequence: "", remedy: "" }],
     });
+  });
+
+  it("matches NHTSA names independently of the device locale", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response(payload([{ ...campaign, Make: "INFINITI", Model: "G37" }])));
+    const localeLower = String.prototype.toLocaleLowerCase;
+    vi.spyOn(String.prototype, "toLocaleLowerCase").mockImplementation(function (this: string, locales?: string | string[]) {
+      return localeLower.call(this, locales ?? "tr");
+    });
+    await expect(requestModelRecalls({ year: "2012", make: "Infiniti", model: "G37" }, getAccountScope(), fetcher))
+      .resolves.toMatchObject({ recalls: [{ campaignNumber: "19V182000" }] });
   });
 
   it.each([
