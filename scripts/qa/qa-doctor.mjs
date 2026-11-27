@@ -64,11 +64,12 @@ export async function runDoctor(options = {}) {
   checks.push(...await checkAuthSessionAndDatabase(supabase));
   checks.push(await checkPlaywrightInstalled(browserState));
   checks.push(await checkBrowserLaunch(browserState));
-  checks.push(await checkPageLoad(browserState, base.baseUrl));
-  checks.push(await checkScreenshot(browserState));
+  const pageLoad = await checkPageLoad(browserState, base.baseUrl);
+  checks.push(pageLoad);
+  checks.push(await checkScreenshot(browserState, pageLoad));
   checks.push(checkCapturedConsole(browserState));
-  checks.push(checkCapturedNetwork(browserState));
-  checks.push(await checkSelectors(browserState));
+  checks.push(checkCapturedNetwork(browserState, pageLoad));
+  checks.push(await checkSelectors(browserState, pageLoad));
 
   if (browserState.browser) {
     await browserState.browser.close();
@@ -108,6 +109,10 @@ function checkResult(name, passed, details, classification, extra = {}) {
     details,
     ...extra,
   };
+}
+
+function skippedResult(name, details) {
+  return { name, status: "skipped", classification: "none", details };
 }
 
 async function checkAppServer(baseUrl) {
@@ -371,7 +376,11 @@ async function checkPageLoad(state, baseUrl) {
   }
 }
 
-async function checkScreenshot(state) {
+export async function checkScreenshot(state, pageLoad) {
+  if (pageLoad.status !== "passed") {
+    return skippedResult("screenshot is not blank", "Skipped because /auth did not load successfully.");
+  }
+
   if (!state.page) {
     return checkResult(
       "screenshot is not blank",
@@ -432,7 +441,7 @@ function checkCapturedConsole(state) {
   );
 }
 
-function checkCapturedNetwork(state) {
+function checkCapturedNetwork(state, pageLoad) {
   if (!state.page) {
     return checkResult(
       "network errors are captured",
@@ -453,7 +462,7 @@ function checkCapturedNetwork(state) {
       : ignoredErrors.length
         ? `Only ignored Vite dev-server aborted requests were captured (${ignoredErrors.length}).`
         : "Network instrumentation is active and no network errors were captured.",
-    "network/transient issue",
+    pageLoad.status === "failed" ? pageLoad.classification : "network/transient issue",
     { errors: actionableErrors, ignoredErrors },
   );
 }
@@ -469,7 +478,11 @@ function isBenignNetworkNoise(error) {
     || /https:\/\/fonts\.gstatic\.com\//.test(error.url ?? "");
 }
 
-async function checkSelectors(state) {
+export async function checkSelectors(state, pageLoad) {
+  if (pageLoad.status !== "passed") {
+    return skippedResult("selectors are not stale", "Skipped because /auth did not load successfully.");
+  }
+
   if (!state.page) {
     return checkResult(
       "selectors are not stale",

@@ -4,9 +4,20 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { checkAuthSessionAndDatabase, checkPlaywrightInstalled, checkPublicAuthConfiguration } from "./qa-doctor.mjs";
+import { checkAuthSessionAndDatabase, checkPlaywrightInstalled, checkPublicAuthConfiguration, checkScreenshot, checkSelectors } from "./qa-doctor.mjs";
 
 const config = { url: "https://example.supabase.co/", key: "sb_publishable_test_only" };
+
+it("skips screenshot and selector diagnosis when /auth navigation fails", async () => {
+  const page = { screenshot: vi.fn(), waitForFunction: vi.fn() };
+  const state = { page };
+  const pageLoad = { status: "failed", classification: "stale environment" };
+
+  expect(await checkScreenshot(state, pageLoad)).toMatchObject({ status: "skipped", classification: "none" });
+  expect(await checkSelectors(state, pageLoad)).toMatchObject({ status: "skipped", classification: "none" });
+  expect(page.screenshot).not.toHaveBeenCalled();
+  expect(page.waitForFunction).not.toHaveBeenCalled();
+});
 
 it("writes a diagnostic report when invoked directly without configuration", () => {
   const directory = mkdtempSync(join(tmpdir(), "deepspec-doctor-cli-"));
