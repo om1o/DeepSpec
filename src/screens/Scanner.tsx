@@ -1427,7 +1427,7 @@ export default function Scanner() {
         <div className="flex flex-col items-center">
           <BrandLockup size="sm" />
         </div>
-        {!activeShopJob && !routeCaptureTarget && !routeComparisonTarget ? <button type="button" disabled={isAnalyzing || photoDraftBusy || Boolean(scanReview)} onClick={() => { setVehicleEdit(vehicleProfile); setShowVehicleEditor(true); }} className="rounded-full border border-white/25 bg-slate-950/80 px-3 py-2 text-sm disabled:opacity-40">Car details</button> : <div className="size-10" aria-hidden="true" />}
+        {!activeShopJob && !routeCaptureTarget && !routeComparisonTarget ? <button type="button" disabled={isAnalyzing || photoDraftBusy || Boolean(scanReview)} onClick={() => { setVehicleEdit(vehicleProfile); setShowVehicleEditor(true); }} className="min-h-11 rounded-full border border-white/25 bg-slate-950/80 px-3 py-2 text-sm disabled:opacity-40">Car details</button> : <div className="size-10" aria-hidden="true" />}
       </header>
 
       {showVehicleEditor ? <section role="dialog" aria-modal="true" aria-label="Car details for new photos" className="fixed inset-0 z-[90] overflow-y-auto bg-slate-950 p-5 text-white">
