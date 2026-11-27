@@ -43,7 +43,7 @@ function validateRun(run, field) {
   const nextPhotoRequest = requireOptionalText(run.nextPhotoRequest, `${field}.nextPhotoRequest`);
   if (run.nextPhotoUseful !== null && typeof run.nextPhotoUseful !== "boolean") throw new Error(`${field}.nextPhotoUseful must be true, false, or null`);
   if (!nextPhotoRequest && run.nextPhotoUseful !== null) throw new Error(`${field}.nextPhotoUseful needs a nextPhotoRequest`);
-  if (run.elapsedSeconds !== null && (typeof run.elapsedSeconds !== "number" || !Number.isFinite(run.elapsedSeconds) || run.elapsedSeconds < 0)) throw new Error(`${field}.elapsedSeconds must be nonnegative or null`);
+  if (run.elapsedSeconds !== null && (typeof run.elapsedSeconds !== "number" || !Number.isFinite(run.elapsedSeconds) || run.elapsedSeconds <= 0)) throw new Error(`${field}.elapsedSeconds must be positive or null`);
   if (!Number.isInteger(run.retakes) || run.retakes < 0) throw new Error(`${field}.retakes must be a nonnegative integer`);
   return { ...run, topChoice, exactPartNumber, nextPhotoRequest };
 }

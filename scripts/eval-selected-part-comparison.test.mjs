@@ -79,6 +79,16 @@ describe("selected-part product comparison", () => {
     expect(summary.chatgpt).toMatchObject({ exactIdEligible: 1, exactIdClaimed: 1, exactIdCorrect: 0, exactIdPrecision: 0, exactIdCoverage: 0 });
   });
 
+  it("rejects zero elapsed time so missing timing cannot look instantaneous", () => {
+    const first = comparison().cases[0];
+    expect(() => scoreComparison(comparison({ cases: [{ ...first, runs: {
+      deepspec: run({ elapsedSeconds: 0 }), chatgpt: run(),
+    } }] }))).toThrow(/elapsedSeconds/i);
+    expect(scoreComparison(comparison({ cases: [{ ...first, runs: {
+      deepspec: run({ elapsedSeconds: null }), chatgpt: run(),
+    } }] })).timing.missingPairs).toBe(1);
+  });
+
   it("rejects missing paired runs, repeated physical parts, and absent ground truth", () => {
     const first = comparison().cases[0];
     expect(() => scoreComparison(comparison({ cases: [] }))).toThrow(/at least one reviewed case/i);
